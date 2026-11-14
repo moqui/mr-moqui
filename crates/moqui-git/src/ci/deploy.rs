@@ -15,7 +15,8 @@
 //! Deployments (plans/Dogfood.md §8.6, DG10; docs/interfaces/Pipelines.md "Deployments"). A `GitDeployment` is a
 //! branch's head asked to be deployed to an environment of its repository. The environment's pipeline runs for the
 //! commit with the `deploy` event, through the engine's queue, so the run check still decides trust; when that run
-//! passes, the deployment waits for an approver if the environment requires one (never the requester); then the deploy
+//! passes, the deployment waits for `decide#GitDeployment` if the environment requires approval or its branch is one no
+//! branch rule protects (never the requester; a run's own approval does not count for it); then the deploy
 //! step posts an attestation of the passed run ([`super::attest`]), signed with the token the target issued, to the
 //! target instance's Component-Deploy REST, which fetches the branch, checks it is still at that commit, and deploys
 //! it. A repository that is not a Moqui component (the framework's own) is not deployed here: its change ships as a
@@ -68,7 +69,9 @@ pub struct Requested {
 
 /// Ask for the deployment of `commit_id`, the head of the branch `ref_name`, to `environment`, as `user_id`, and
 /// queue the environment's pipeline for it with the `deploy` event. The caller checked the rights, the branch and the
-/// environment.
+/// environment; `protected` says whether a branch rule protects the branch. One that none protects (named by the
+/// environment's `allowedRefs` only, so whoever pushes to it chose the commit and its pipeline file) waits for an
+/// approver whatever the environment's `approvalRequired` says.
 ///
 /// # Errors
 ///
@@ -80,8 +83,10 @@ pub fn request(
     ref_name: &str,
     commit_id: &str,
     user_id: Option<String>,
+    protected: bool,
 ) -> Result<Requested, Error> {
     let _rows = crate::rows_guard();
+    let approval = super::is_yes(environment, "approvalRequired") || !protected;
     let repository = field(environment, "repositoryId").unwrap_or_default();
     let pipeline = field(environment, "requiredPipeline").unwrap_or_default();
     let mut row = EntityValue::make(entity, DEPLOYMENT)?;
@@ -94,6 +99,7 @@ pub fn request(
     row.set("refName", Value::string(ref_name));
     row.set("statusId", Value::string(REQUESTED));
     row.set("requestedByUserId", opt(user_id.clone()));
+    row.set("approvalRequired", Value::string(if approval { "Y" } else { "N" }));
     row.set("createdDate", moqui_core::user::now_value());
     row.create(entity)?;
     write_status(entity, &row, "pending", "Requested");
@@ -214,50 +220,26 @@ fn after_run(entity: &EntityFacade, run: &EntityValue, deployment: &EntityValue)
     let Some(environment) = environment else {
         return end(entity, &id, WAITING_PIPELINE, FAILED, "its environment is gone", vec![]);
     };
-    if super::is_yes(&environment, "approvalRequired") {
-        // the run itself waited for an approver (a job in the environment, for its secrets): that approval counts
-        // once, when it was an approver's other than the requester's
-        let repository = field(deployment, "repositoryId").unwrap_or_default();
-        let approved_by = field(run, "approvedByUserId").filter(|approver| {
-            field(run, "approvalState").as_deref() == Some("approved")
-                && Some(approver) != field(deployment, "requestedByUserId").as_ref()
-                && is_approver(&environment, &repository, approver)
-        });
-        let Some(approver) = approved_by else {
-            if set_fields(
-                entity,
-                DEPLOYMENT,
-                "deploymentId",
-                &id,
-                Some(WAITING_PIPELINE),
-                vec![("statusId", Value::string(WAITING_APPROVAL))],
-            )? {
-                if let Some(row) = one(entity, DEPLOYMENT, "deploymentId", &id)? {
-                    write_status(entity, &row, "pending", "Waiting for approval");
-                    notify(&row, &environment, "waits for approval", true);
-                }
-            }
-            return Ok(());
-        };
-        return ready(
+    // decide#GitDeployment is the one approval step: an approval of the run (a job in the environment, for its
+    // secrets) is of the run, not of the deploy, and does not count for it (plans/Vault-Instances.md §4.6, where
+    // approving opens the lease)
+    if super::is_yes(deployment, "approvalRequired") || super::is_yes(&environment, "approvalRequired") {
+        if set_fields(
             entity,
+            DEPLOYMENT,
+            "deploymentId",
             &id,
-            WAITING_PIPELINE,
-            vec![
-                ("approvedByUserId", Value::string(approver)),
-                ("approvedDate", moqui_core::user::now_value()),
-            ],
-        );
+            Some(WAITING_PIPELINE),
+            vec![("statusId", Value::string(WAITING_APPROVAL))],
+        )? {
+            if let Some(row) = one(entity, DEPLOYMENT, "deploymentId", &id)? {
+                write_status(entity, &row, "pending", "Waiting for approval");
+                notify(&row, &environment, "waits for approval", true);
+            }
+        }
+        return Ok(());
     }
     ready(entity, &id, WAITING_PIPELINE, vec![])
-}
-
-/// Whether `user_id` approves deployments to `environment`, decided as that user: a member of its approver group
-/// who views the repository, else a maintainer (the delete right).
-pub(crate) fn is_approver(environment: &EntityValue, repository_id: &str, user_id: &str) -> bool {
-    let group = field(environment, "approverGroupId");
-    let repository = repository_id.to_string();
-    moqui_core::user::as_user(user_id, move || approver_now(group.as_deref(), &repository)).unwrap_or(false)
 }
 
 /// Whether the current user approves for an environment of `repository_id` whose approver group is `group`.
@@ -371,7 +353,7 @@ pub fn cancel(entity: &EntityFacade, deployment: &EntityValue, user_id: Option<&
                     &[("statusId", Value::string(CANCELLED))],
                 );
                 if let Some(row) = one(entity, DEPLOYMENT, "deploymentId", &id)? {
-                    write_status(entity, &row, "error", &message);
+                    write_status(entity, &row, "error", public_description(CANCELLED));
                     notify_end(entity, &row);
                 }
             }
@@ -401,6 +383,17 @@ fn not_started(id: &str) -> Condition {
     ])
 }
 
+/// The description of a deployment's commit status as it ends: a status is read by whoever views the repository, so
+/// it says no more than how it ended; why is in `errorText`, which only a maintainer reads (get#GitDeployment).
+fn public_description(state: &str) -> &'static str {
+    match state {
+        DEPLOYED => "Deployed",
+        REFUSED => "Deploy refused",
+        CANCELLED => "Deploy cancelled",
+        _ => "Deploy failed",
+    }
+}
+
 /// End a deployment that is still in `from`: its `errorText`, the status and the notices.
 fn end(
     entity: &EntityFacade,
@@ -419,7 +412,7 @@ fn end(
     if set_fields(entity, DEPLOYMENT, "deploymentId", id, Some(from), fields)? {
         if let Some(row) = one(entity, DEPLOYMENT, "deploymentId", id)? {
             let state = if to == FAILED { "failure" } else { "error" };
-            write_status(entity, &row, state, message);
+            write_status(entity, &row, state, public_description(to));
             notify_end(entity, &row);
         }
     }
@@ -517,7 +510,7 @@ pub fn resume(entity: &EntityFacade, now: i64) -> Result<(usize, usize), Error> 
                 ];
                 if set_fields(entity, DEPLOYMENT, "deploymentId", &id, Some(DEPLOYING), fields)? {
                     if let Some(row) = one(entity, DEPLOYMENT, "deploymentId", &id)? {
-                        write_status(entity, &row, "failure", "The deploy step never ended");
+                        write_status(entity, &row, "failure", public_description(FAILED));
                         notify_end(entity, &row);
                     }
                     ended += 1;
@@ -564,14 +557,15 @@ pub fn step(entity: &EntityFacade, id: &str) -> Result<(), Error> {
     };
     let answer = call_target(entity, &deployment);
     let mut fields = vec![("componentName", opt(answer.component.clone()))];
-    let (to, state, description) = match &answer.outcome {
+    // the target's own words go to errorText only, never to the public status
+    let (to, state) = match &answer.outcome {
         Ok(result) => {
             fields.push(("deployResult", Value::string(result)));
-            (DEPLOYED, "success", "Deployed".to_string())
+            (DEPLOYED, "success")
         }
         Err(why) => {
             fields.push(("errorText", Value::string(why)));
-            (FAILED, "failure", why.clone())
+            (FAILED, "failure")
         }
     };
     fields.push(("statusId", Value::string(to)));
@@ -596,7 +590,7 @@ pub fn step(entity: &EntityFacade, id: &str) -> Result<(), Error> {
         }
     }
     if let Some(row) = one(entity, DEPLOYMENT, "deploymentId", id)? {
-        write_status(entity, &row, state, &description);
+        write_status(entity, &row, state, public_description(to));
         notify_end(entity, &row);
     }
     Ok(())
@@ -672,13 +666,49 @@ pub(crate) fn endpoint(target_url: &str) -> Result<String, String> {
     Ok(format!("{base}{REST_PATH}"))
 }
 
+/// A clone URL the target fetches from: `https` or `ssh`, with no credentials in it (the target fetches with none, and
+/// the URL is read by maintainers and sent in the attestation); `ssh://git@host/...` names the ssh account, which is
+/// no secret. Why not.
+pub(crate) fn check_clone_url(url: &str) -> Result<(), String> {
+    let refused = || Err("the clone URL must be https:// or ssh://, with no user or password in it".to_string());
+    let Some((scheme, rest)) = url.trim().split_once("://") else {
+        return refused();
+    };
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme != "https" && scheme != "ssh" {
+        return refused();
+    }
+    let authority = rest.split('/').next().unwrap_or_default();
+    let (userinfo, host) = match authority.rsplit_once('@') {
+        Some((userinfo, host)) => (Some(userinfo), host),
+        None => (None, authority),
+    };
+    let account_only = scheme == "ssh" && userinfo.is_some_and(|user| !user.is_empty() && !user.contains(':'));
+    if host.is_empty() || (userinfo.is_some() && !account_only) {
+        return refused();
+    }
+    Ok(())
+}
+
+/// The data types an environment names (`dataTypes`, separated by commas or spaces), which its attestations carry.
+fn data_types(environment: &EntityValue) -> Vec<String> {
+    field(environment, "dataTypes")
+        .unwrap_or_default()
+        .split([',', ' '])
+        .map(str::trim)
+        .filter(|kind| !kind.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 fn attest_and_post(entity: &EntityFacade, deployment: &EntityValue, component: &str) -> Result<String, String> {
     let repository = field(deployment, "repositoryId").unwrap_or_default();
     let environment = field(deployment, "environmentId")
         .and_then(|id| one(entity, CI_ENVIRONMENT, "environmentId", &id).ok().flatten())
         .ok_or_else(|| "its environment is gone".to_string())?;
     let name = field(&environment, "name").unwrap_or_default();
-    let url = endpoint(&field(&environment, "targetUrl").unwrap_or_default())?;
+    let target = field(&environment, "targetUrl").unwrap_or_default();
+    let url = endpoint(&target)?;
     let Some(token) = target_token(&environment) else {
         return Err(format!("environment {name} has no token from its target"));
     };
@@ -694,7 +724,8 @@ fn attest_and_post(entity: &EntityFacade, deployment: &EntityValue, component: &
         .unwrap_or_else(|| format!("{base}/git/{}.git", crate::server::path::path_of(&repository)));
     let attestation = super::attest::Attestation {
         kind: super::attest::KIND.to_string(),
-        v: 1,
+        v: super::attest::VERSION,
+        audience: super::attest::base_url(&target),
         repository_url,
         ref_name: field(deployment, "refName").unwrap_or_default(),
         commit_id: field(deployment, "commitId").unwrap_or_default(),
@@ -707,6 +738,7 @@ fn attest_and_post(entity: &EntityFacade, deployment: &EntityValue, component: &
         deployment_id: field(deployment, "deploymentId").unwrap_or_default(),
         issued_at: now_millis(),
         source: base,
+        data_types: data_types(&environment),
     };
     let signed = super::attest::sign(&token, &attestation)?;
     let answered = post(&url, &attestation.deployment_id, &signed)?;

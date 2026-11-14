@@ -116,13 +116,15 @@ pub fn deploy_attested(
     _factory: &Arc<ExecutionContextFactory>,
     _attestation_text: &str,
     _signature: &str,
-    _data_types: &[String],
 ) -> Result<AttestedDeploy, String> {
     Err(NO_GIT.to_string())
 }
 
-/// No component is kept in a repository in this build: nothing to apply.
-pub fn install(_factory: &Arc<ExecutionContextFactory>) {}
+/// No component is kept in a repository in this build: nothing to apply. The gate's conf is still read here, at
+/// start, so a conf reload does not change it.
+pub fn install(factory: &Arc<ExecutionContextFactory>) {
+    let _ = super::gate::conf(factory);
+}
 
 /// No component is kept in a repository in this build: nothing to write out.
 pub fn restore(_factory: &Arc<ExecutionContextFactory>) -> usize {

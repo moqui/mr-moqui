@@ -25,9 +25,11 @@
 //! `COMPONENT_DEPLOY` permission, and on a production instance also `component_deploy_enabled=true`.
 //!
 //! An attested deploy ([`deploy_attested`]) is a source server's deployment: an attestation, signed with the secret
-//! this server issued, that a commit passed its environment's pipeline stands for the permission and pins that
-//! component and commit. With `component-deploy` `require-passed-run`, nothing else is put in place (the gate,
-//! docs/tools/Component-Deploy.md).
+//! this server issued, addressed to this server and of a component, repository and branch its `component-deploy`
+//! `allow` entries name, that a commit passed its environment's pipeline stands for the permission and pins that
+//! component and commit. With `component-deploy` `require-passed-run`, nothing else is put in place, by a deploy, an
+//! update, a start or another cluster member (the gate, docs/tools/Component-Deploy.md; its conf is read once at
+//! start, [`super::gate`]).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -45,6 +47,13 @@ use super::load::{self, LoadPreview, LoadReport, Mode, Shared};
 use crate::reload;
 
 const DEPLOYED: &str = "moqui.server.DeployedComponent";
+/// The last attestation each component took, kept when its `DeployedComponent` row goes.
+const ATTESTATIONS: &str = "moqui.server.DeployedComponentAttestation";
+/// How long an attested deploy waits for another of the same component, on any cluster member, to end.
+const ATTESTED_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
+/// What an unauthenticated caller is told of an attestation whose signature this server does not take, whether it has
+/// a secret or not.
+const NOT_ACCEPTED: &str = "the attestation is not accepted";
 const GIT_REPOSITORY: &str = "moqui.resource.GitRepository";
 /// The component directory the database and bare storages write to, under the runtime: the add-on set, where a clone
 /// goes too, so every add-on is in one place whatever its storage.
@@ -180,6 +189,17 @@ fn gate_commit(factory: &ExecutionContextFactory, name: &str, commit: &str) -> R
             short(&attested.commit),
             short(commit)
         )),
+        None if super::require_passed_run(factory) => Err(super::GATE_REFUSAL.to_string()),
+        None => Ok(()),
+    }
+}
+
+/// The gate's check before a deploy or update of `name` begins: an attested deploy of its own component only; with
+/// `require-passed-run`, no unattested one ([`gate_commit`] checks the commit once it is known).
+fn gate_component(factory: &ExecutionContextFactory, name: &str) -> Result<(), String> {
+    match attested() {
+        Some(attested) if attested.component == name => Ok(()),
+        Some(attested) => Err(format!("the attestation is for {}, not {name}", attested.component)),
         None if super::require_passed_run(factory) => Err(super::GATE_REFUSAL.to_string()),
         None => Ok(()),
     }
@@ -370,7 +390,7 @@ pub fn deploy(factory: &Arc<ExecutionContextFactory>, name: &str, mode: Mode, da
         problems: vec![problem],
         ..LoadReport::default()
     };
-    if let Err(err) = gate() {
+    if let Err(err) = gate_component(factory, name).and_then(|()| gate()) {
         return failed(err);
     }
     let row = match deployed_row(factory, name) {
@@ -538,7 +558,7 @@ pub fn update(factory: &Arc<ExecutionContextFactory>, name: &str, data_types: &[
         status: "failed".to_string(),
         ..LoadReport::default()
     };
-    if let Err(err) = gate() {
+    if let Err(err) = gate_component(factory, name).and_then(|()| gate()) {
         report.problems.push(err);
         return report;
     }
@@ -614,35 +634,222 @@ pub struct AttestedDeploy {
     pub report: Option<LoadReport>,
 }
 
-/// Verify an attestation (`text`, `signature`) with the conf's `component-deploy` `attestation-secret`, as of `now`
-/// (milliseconds), no older than its `max-age-seconds`.
+/// Verify an attestation (`text`, `signature`) with the `component-deploy` conf as it was at start ([`super::gate`]),
+/// as of `now` (milliseconds): signed with its `attestation-secret`, no older than its `max-age-seconds`, addressed to
+/// one of this server's public URLs, and of a component, repository URL and branch an `allow` entry names.
 ///
 /// # Errors
 ///
-/// Why it is refused; a signature that does not verify counts as a failed sign-in for web protection.
+/// Why it is refused. A signature that does not verify, and any attestation on a server with no secret, is one
+/// refusal ([`NOT_ACCEPTED`], so an unauthenticated caller does not learn whether a secret is set) and counts as a
+/// failed sign-in for web protection; the log says which.
 pub fn verify_attestation(
     factory: &ExecutionContextFactory,
     text: &str,
     signature: &str,
     now: i64,
 ) -> Result<moqui_git::ci::attest::Attestation, String> {
-    let secret = factory.conf_setting("component-deploy", "attestation-secret");
-    let max_age = factory
-        .conf_number("component-deploy", "max-age-seconds", 300_i64)
-        .max(1);
-    moqui_git::ci::attest::verify(&secret, text, signature, now, max_age.saturating_mul(1000)).map_err(|refusal| {
-        if refusal == moqui_git::ci::attest::Refusal::Signature {
+    use moqui_git::ci::attest::{self, Refusal};
+    let conf = super::gate::conf(factory);
+    let attestation = match attest::verify(&conf.secret, text, signature, now, conf.max_age_millis) {
+        Ok(attestation) => attestation,
+        Err(refusal @ (Refusal::NoSecret | Refusal::Signature)) => {
             moqui_core::web::note_auth_failure();
+            tracing::warn!("An attested component deploy was refused: {refusal}");
+            return Err(NOT_ACCEPTED.to_string());
         }
-        refusal.to_string()
+        Err(refusal) => return Err(refusal.to_string()),
+    };
+    attest::check_audience(&attestation, &conf.public_urls).map_err(|refusal| refusal.to_string())?;
+    if conf
+        .allowed(
+            &attestation.component,
+            &attestation.repository_url,
+            attestation.branch(),
+        )
+        .is_none()
+    {
+        return Err(format!(
+            "this server takes no attested deploy of {} from {} branch {} (component-deploy allow)",
+            attestation.component,
+            moqui_core::outbound::redacted(&attestation.repository_url),
+            attestation.branch()
+        ));
+    }
+    Ok(attestation)
+}
+
+/// Claim `attestation` for its component, before its deploy: one conditional update, committed at once, that holds
+/// only when the component took no attestation issued at or after it, so of two deploys of the same or a replayed
+/// attestation, on any member, one goes on; and none rolls the component back to an older attested commit. The record
+/// is kept apart from the `DeployedComponent` row, so a discard or a remove keeps it.
+///
+/// # Errors
+///
+/// When the component took one as new or newer, or the record is not written.
+pub(crate) fn claim_attestation(
+    factory: &Arc<ExecutionContextFactory>,
+    attestation: &moqui_git::ci::attest::Attestation,
+) -> Result<(), String> {
+    let name = attestation.component.as_str();
+    let facade = factory.entity().ok_or_else(|| "no entity facade".to_string())?;
+    let claimed = in_context(factory, || -> Result<u64, String> {
+        let there = facade
+            .find(ATTESTATIONS)
+            .and_then(|find| {
+                find.condition(Condition::equals("componentName", Value::string(name)))
+                    .disable_authz()
+                    .use_cache(false)
+                    .count()
+            })
+            .map_err(|err| err.to_string())?
+            > 0;
+        if !there {
+            let mut row = facade.make_value(ATTESTATIONS).map_err(|err| err.to_string())?;
+            row.set("componentName", Value::string(name));
+            // another deploy may make it first: then the update below decides
+            if let Err(err) = row.create(&facade) {
+                tracing::debug!("The attestation record of {name} was made by another deploy: {err}");
+            }
+        }
+        let issued = moqui_core::user::stamp_value(attestation.issued_at);
+        let newer_only = Condition::and(vec![
+            Condition::equals("componentName", Value::string(name)),
+            Condition::or(vec![
+                Condition::is_null("issuedDate"),
+                Condition::less("issuedDate", issued.clone()),
+            ]),
+        ]);
+        moqui_git::claim_where(
+            &facade,
+            ATTESTATIONS,
+            &[
+                ("issuedDate", issued),
+                ("deploymentId", Value::string(&attestation.deployment_id)),
+                ("commitId", Value::string(&attestation.commit_id)),
+                ("repositoryUrl", Value::string(&attestation.repository_url)),
+                ("branch", Value::string(attestation.branch())),
+                ("environment", Value::string(&attestation.environment)),
+                ("source", Value::string(&attestation.source)),
+                ("takenDate", moqui_core::service::util::now_stamp()),
+            ],
+            &newer_only,
+        )
+        .map_err(|err| err.to_string())
     })
+    .map_err(|err| format!("the attestation of {name} was not recorded: {err}"))?;
+    if claimed == 0 {
+        return Err(format!(
+            "an attestation no newer than the last one {name} took is not taken again"
+        ));
+    }
+    Ok(())
+}
+
+/// Keep the commit an attested deploy put in place, on the record its claim made (unless a newer claim replaced it):
+/// the commit a start writes from the database under the gate.
+fn record_deployed(factory: &Arc<ExecutionContextFactory>, attestation: &moqui_git::ci::attest::Attestation) {
+    let Some(facade) = factory.entity() else {
+        return;
+    };
+    let name = attestation.component.as_str();
+    let written = in_context(factory, || {
+        moqui_git::claim_where(
+            &facade,
+            ATTESTATIONS,
+            &[("deployedCommitId", Value::string(&attestation.commit_id))],
+            &Condition::and(vec![
+                Condition::equals("componentName", Value::string(name)),
+                Condition::equals("deploymentId", Value::string(&attestation.deployment_id)),
+            ]),
+        )
+    });
+    if let Err(err) = written {
+        tracing::error!("Could not record the attested commit component {name} took: {err}");
+    }
+}
+
+/// The commits the attestation record of `name` names: the one it attests (`commitId`) and the one an attested deploy
+/// put in place (`deployedCommitId`), each empty when there is none.
+fn attested_commits(factory: &Arc<ExecutionContextFactory>, name: &str) -> (String, String) {
+    let Some(facade) = factory.entity() else {
+        return (String::new(), String::new());
+    };
+    let row = in_context(factory, || {
+        facade.find(ATTESTATIONS).and_then(|find| {
+            find.condition(Condition::equals("componentName", Value::string(name)))
+                .disable_authz()
+                .use_cache(false)
+                .one()
+        })
+    });
+    match row {
+        Ok(Some(row)) => (text(&row, "commitId"), text(&row, "deployedCommitId")),
+        Ok(None) => (String::new(), String::new()),
+        Err(err) => {
+            tracing::error!("Could not read the attestation record of {name}: {err}");
+            (String::new(), String::new())
+        }
+    }
+}
+
+/// Under the gate, whether this member applies another member's deploy or update of `name` to `to`: only the commit
+/// its attestation names (a message is not a deploy service, and a row is not an attestation).
+pub(crate) fn gate_remote(factory: &Arc<ExecutionContextFactory>, name: &str, to: &str) -> Result<(), String> {
+    if !super::require_passed_run(factory) {
+        return Ok(());
+    }
+    let (attested, _) = attested_commits(factory, name);
+    if to.is_empty() || attested != to {
+        return Err(format!(
+            "{name} at {} is not the commit its last attestation names ({}): not applied under require-passed-run",
+            short(to),
+            short(&attested)
+        ));
+    }
+    Ok(())
+}
+
+/// Under the gate, whether a start writes `name` at `commit` from the database: only the commit an attested deploy put
+/// in place; not an empty one (the repository's head), not one a row was set to by other means.
+pub(crate) fn gate_restore(factory: &Arc<ExecutionContextFactory>, name: &str, commit: &str) -> Result<(), String> {
+    if !super::require_passed_run(factory) {
+        return Ok(());
+    }
+    let (_, deployed) = attested_commits(factory, name);
+    if commit.is_empty() || deployed != commit {
+        return Err(format!(
+            "{name} at {} is not the commit an attested deploy put in place ({}): not written under \
+             require-passed-run; deploy it again from its repository's environment",
+            if commit.is_empty() { "its head" } else { short(commit) },
+            short(&deployed)
+        ));
+    }
+    Ok(())
+}
+
+/// What a fetch for an attested deploy staged must be: the attested component at the attested commit (the branch
+/// moved, or holds another component, else).
+fn check_staged(staged: &DeployPreview, attestation: &moqui_git::ci::attest::Attestation) -> Result<(), String> {
+    if staged.component != attestation.component || staged.commit != attestation.commit_id {
+        return Err(format!(
+            "the branch {} holds {} at {}, the attestation is for {} at {}",
+            attestation.branch(),
+            staged.component,
+            short(&staged.commit),
+            attestation.component,
+            short(&attestation.commit_id)
+        ));
+    }
+    Ok(())
 }
 
 /// Deploy the commit an attestation names (`deploy#AttestedComponent`, the source server's deploy step): verified
-/// ([`verify_attestation`]) and newer than the last attestation the component took, so none is replayed; then, for a
-/// component deployed from a repository, its update to the commit (from the same repository URL only), else a fetch
-/// and a deploy kept in the database. The branch must still be at the attested commit when it is fetched, and the
-/// gate lets in that component at that commit only.
+/// ([`verify_attestation`]); then, holding the component's cluster-wide lock, claimed ([`claim_attestation`]: newer
+/// than the last attestation the component took, so none is replayed); then, for a component deployed from a
+/// repository, its update to the commit (from the same repository URL and branch only), else a fetch and a deploy kept
+/// in the database, with the data types the attestation names. The branch must still be at the attested commit when it
+/// is fetched, and the gate lets in that component at that commit only.
 ///
 /// # Errors
 ///
@@ -651,7 +858,6 @@ pub fn deploy_attested(
     factory: &Arc<ExecutionContextFactory>,
     attestation_text: &str,
     signature: &str,
-    data_types: &[String],
 ) -> Result<AttestedDeploy, String> {
     let attestation = verify_attestation(
         factory,
@@ -661,14 +867,15 @@ pub fn deploy_attested(
     )?;
     let name = attestation.component.clone();
     check_name(&name)?;
+    let facade = factory.entity().ok_or_else(|| "no entity facade".to_string())?;
+    // one attested deploy of a component at a time across the cluster, from its claim to its record
+    let _lock = in_context(factory, || {
+        moqui_git::lock_named(&facade, &format!("component-deploy:{name}"), ATTESTED_LOCK_WAIT)
+    })
+    .map_err(|err| format!("another deploy of {name} is under way: {err}"))?;
+    claim_attestation(factory, &attestation)?;
     let row = deployed_row(factory, &name)?;
-    if let Some(last) = row.as_ref().and_then(|row| stamp_millis(row, "attestedDate")) {
-        if attestation.issued_at <= last {
-            return Err(format!(
-                "an attestation no newer than the last one {name} took is not taken again"
-            ));
-        }
-    }
+    let data_types = attestation.data_types.clone();
     let _scope = AttestedScope::enter(Attested {
         component: name.clone(),
         commit: attestation.commit_id.clone(),
@@ -679,12 +886,19 @@ pub fn deploy_attested(
         deployment_id: attestation.deployment_id.clone(),
         ..AttestedDeploy::default()
     };
-    let wanted_url = attestation.repository_url.trim().trim_end_matches('/').to_string();
+    let wanted_url = super::gate::same_url(&attestation.repository_url);
     match row.filter(|row| text(row, "source") == "git" && text(row, "status") == "deployed") {
         Some(row) => {
-            if text(&row, "remoteUrl").trim().trim_end_matches('/') != wanted_url {
+            if super::gate::same_url(&text(&row, "remoteUrl")) != wanted_url {
                 return Err(format!(
                     "{name} is deployed from another repository URL than the attestation's"
+                ));
+            }
+            if text(&row, "branch") != attestation.branch() {
+                return Err(format!(
+                    "{name} is deployed from the branch {}, the attestation is for {}",
+                    text(&row, "branch"),
+                    attestation.branch()
                 ));
             }
             let preview = preview_update(factory, &name)?;
@@ -699,7 +913,7 @@ pub fn deploy_attested(
             if preview.from == preview.to {
                 done.status = "up-to-date".to_string();
             } else {
-                let report = update(factory, &name, data_types);
+                let report = update(factory, &name, &data_types);
                 if report.status == "failed" {
                     return Err(format!("{name} was not updated: {}", report.problems.join("; ")));
                 }
@@ -715,17 +929,11 @@ pub fn deploy_attested(
                 ..DeployRequest::default()
             };
             let staged = preview(factory, &request)?;
-            if staged.component != name || staged.commit != attestation.commit_id {
+            if let Err(err) = check_staged(&staged, &attestation) {
                 let _ = discard(factory, &staged.component);
-                return Err(format!(
-                    "the branch {} holds {} at {}, the attestation is for {name} at {}",
-                    attestation.branch(),
-                    staged.component,
-                    short(&staged.commit),
-                    short(&attestation.commit_id)
-                ));
+                return Err(err);
             }
-            let report = deploy(factory, &name, Mode::Now, data_types);
+            let report = deploy(factory, &name, Mode::Now, &data_types);
             if report.status == "failed" {
                 return Err(format!("{name} was not deployed: {}", report.problems.join("; ")));
             }
@@ -733,7 +941,7 @@ pub fn deploy_attested(
             done.report = Some(report);
         }
     }
-    record_attested(factory, &name, &attestation);
+    record_deployed(factory, &attestation);
     tracing::warn!(
         target: moqui_core::live_settings::AUDIT,
         "Component {name} at {} {} by the attested deployment {} of {} (environment {}, pipeline {} run {})",
@@ -746,44 +954,6 @@ pub fn deploy_attested(
         attestation.run_num
     );
     Ok(done)
-}
-
-/// Keep the deployment and the issue time of the attestation a component took, so an older one is refused.
-fn record_attested(
-    factory: &Arc<ExecutionContextFactory>,
-    name: &str,
-    attestation: &moqui_git::ci::attest::Attestation,
-) {
-    let Some(facade) = factory.entity() else {
-        return;
-    };
-    let written = in_context(factory, || {
-        facade
-            .find(DEPLOYED)?
-            .condition(Condition::equals("componentName", Value::string(name)))
-            .disable_authz()
-            .update_all([
-                (
-                    "attestedDeploymentId".to_string(),
-                    Value::string(&attestation.deployment_id),
-                ),
-                (
-                    "attestedDate".to_string(),
-                    moqui_core::user::stamp_value(attestation.issued_at),
-                ),
-            ])
-    });
-    if let Err(err) = written {
-        tracing::error!("Could not record the attestation component {name} took: {err}");
-    }
-}
-
-/// A date field in milliseconds.
-fn stamp_millis(row: &moqui_core::entity::EntityValue, field: &str) -> Option<i64> {
-    match moqui_lib::object::basic_convert(row.get(field)?, "Timestamp").value {
-        Value::Timestamp(stamp) => Some(stamp.as_millisecond()),
-        _ => None,
-    }
 }
 
 /// Whether this server has live cluster members besides itself.
@@ -814,6 +984,11 @@ struct Subscribed(#[allow(dead_code)] moqui_core::notify::Subscription);
 /// repository and the component loaded or reloaded, without its data, which is in the shared database. Called once
 /// at start.
 pub fn install(factory: &Arc<ExecutionContextFactory>) {
+    // the gate's conf is read here, at start, and kept: a conf reload does not change it
+    let gate = super::gate::conf(factory);
+    if gate.require_passed_run {
+        tracing::info!("Component deploys are kept to attested commits (component-deploy require-passed-run)");
+    }
     let weak = Arc::downgrade(factory);
     let listener: moqui_core::notify::Listener = Arc::new(move |message| {
         if message.origin_id == moqui_core::notify::origin_id() {
@@ -853,6 +1028,10 @@ fn apply_remote(factory: &Arc<ExecutionContextFactory>, body: &serde_json::Value
             .to_string()
     };
     let (name, action, from, to) = (field("componentName"), field("action"), field("from"), field("to"));
+    if let Err(err) = gate_remote(factory, &name, &to) {
+        tracing::error!("Component {name}: another member's {action} is not applied here: {err}");
+        return;
+    }
     let Ok(git) = provider(factory) else {
         return;
     };
@@ -985,6 +1164,10 @@ pub fn restore(factory: &Arc<ExecutionContextFactory>) -> usize {
             continue;
         }
         let commit = text(&row, "commitId");
+        if let Err(err) = gate_restore(factory, &name, &commit) {
+            tracing::error!("Component {name}: its files are not written from the database: {err}");
+            continue;
+        }
         let revision = Some(commit.as_str()).filter(|commit| !commit.is_empty());
         match git.write_tree(&text(&row, "gitRepositoryId"), revision, &location) {
             Ok(tree) => {

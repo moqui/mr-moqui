@@ -214,14 +214,30 @@ fn a_working_clone_fetch_is_refused_in_sim_mode() {
 
 const SECRET: &str = "issued-by-this-target-0123456789";
 const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+const OTHER_COMMIT: &str = "fedcba9876543210fedcba9876543210fedcba98";
+const SOURCE_URL: &str = "https://source.example.com/git/site.git";
+const TARGET_URL: &str = "https://target.example.com";
 
-/// An attestation of `site` at [`COMMIT`], issued at `issued_at`, signed with `secret`: its text and signature.
-fn attested(secret: &str, issued_at: i64) -> (String, String) {
-    use moqui_git::ci::attest::{sign, Attestation, KIND};
-    let attestation = Attestation {
+/// The conf of a target with the gate on, its secret, its public URL, and allow entries for `site` from
+/// [`SOURCE_URL`] on main and release.
+fn gate_conf() -> String {
+    format!(
+        r#"<moqui-conf><component-deploy require-passed-run="true" attestation-secret="{SECRET}" max-age-seconds="300"
+            public-urls="{TARGET_URL}">
+            <allow component="site" repository-url="{SOURCE_URL}" branch="main"/>
+            <allow component="site" repository-url="{SOURCE_URL}" branch="release"/>
+        </component-deploy></moqui-conf>"#
+    )
+}
+
+/// An attestation of `site` at [`COMMIT`] on main, for [`TARGET_URL`], issued at `issued_at`.
+fn attestation(issued_at: i64) -> moqui_git::ci::attest::Attestation {
+    use moqui_git::ci::attest::{Attestation, KIND, VERSION};
+    Attestation {
         kind: KIND.to_string(),
-        v: 1,
-        repository_url: "https://source.example.com/git/site.git".to_string(),
+        v: VERSION,
+        audience: TARGET_URL.to_string(),
+        repository_url: SOURCE_URL.to_string(),
         ref_name: "refs/heads/main".to_string(),
         commit_id: COMMIT.to_string(),
         component: "site".to_string(),
@@ -230,27 +246,50 @@ fn attested(secret: &str, issued_at: i64) -> (String, String) {
         run_num: 3,
         run_status: "success".to_string(),
         environment: "prod".to_string(),
-        deployment_id: "D100".to_string(),
+        deployment_id: format!("D{issued_at}"),
         issued_at,
         source: "https://source.example.com".to_string(),
-    };
-    let signed = sign(secret, &attestation).unwrap();
+        data_types: Vec::new(),
+    }
+}
+
+/// `attestation` signed with `secret`: its text and signature.
+fn signed(secret: &str, attestation: &moqui_git::ci::attest::Attestation) -> (String, String) {
+    let signed = moqui_git::ci::attest::sign(secret, attestation).unwrap();
     (signed.text, signed.signature)
 }
 
-/// The gate (docs/tools/Component-Deploy.md "The gate"): with `require-passed-run` an unattested commit is refused, a
-/// stale or forged attestation is refused (a forged one counting as a failed sign-in), and a good one lets in its
-/// component at its commit only, for the deploy it is verified for. A replayed one is refused once a newer one was
-/// taken, and a good one goes on to the fetch (stopped here by sim mode).
-#[test]
-fn the_gate_refuses_an_unattested_stale_forged_or_replayed_deploy_and_takes_a_good_one() {
-    use super::{deploy_attested, gate, gate_commit, verify_attestation, Attested, AttestedScope};
-    let conf = format!(
-        r#"<moqui-conf><component-deploy require-passed-run="true" attestation-secret="{SECRET}" max-age-seconds="300"/></moqui-conf>"#
-    );
-    let context = ExecutionContextFactory::test_context_with_conf(&conf);
+/// [`attestation`] issued at `issued_at`, signed with `secret`.
+fn attested(secret: &str, issued_at: i64) -> (String, String) {
+    signed(secret, &attestation(issued_at))
+}
+
+/// A target with the gate's conf, an in-memory database, entered.
+fn target(conf: &str) -> (moqui_core::context::ExecutionContext, moqui_core::entity::EntityFacade) {
+    let context = ExecutionContextFactory::test_context_with_conf(conf);
     let entity = moqui_core::testing::open();
     context.factory().set_entity(entity.clone());
+    (context, entity)
+}
+
+/// A `DeployedComponent` row of `site` with these fields.
+fn deployed(entity: &moqui_core::entity::EntityFacade, fields: &[(&str, &str)]) {
+    let mut row = entity.make_value("moqui.server.DeployedComponent").unwrap();
+    row.set("componentName", moqui_lib::object::Value::string("site"));
+    for (name, value) in fields {
+        row.set(*name, moqui_lib::object::Value::string(*value));
+    }
+    row.create_or_update(entity).unwrap();
+}
+
+/// The gate (docs/tools/Component-Deploy.md "The gate"): with `require-passed-run` an unattested commit is refused; a
+/// good attestation lets in its component at its commit only, for the deploy it is verified for; a stale one, one
+/// addressed to another server, and one of a component, repository URL or branch no allow entry names are refused;
+/// a forged or altered one is one generic refusal, counted as a failed sign-in.
+#[test]
+fn the_gate_refuses_an_unattested_stale_forged_misaddressed_or_unallowed_deploy_and_takes_a_good_one() {
+    use super::{gate, gate_commit, verify_attestation, Attested, AttestedScope, NOT_ACCEPTED};
+    let (context, _entity) = target(&gate_conf());
     let factory = context.factory();
     let _entered = context.enter();
     let now = moqui_core::service::util::now_millis();
@@ -262,11 +301,8 @@ fn the_gate_refuses_an_unattested_stale_forged_or_replayed_deploy_and_takes_a_go
     );
     // a good attestation verifies, and in its deploy lets in its component at its commit only
     let (text, signature) = attested(SECRET, now - 1_000);
-    let attestation = verify_attestation(factory, &text, &signature, now).unwrap();
-    assert_eq!(
-        (attestation.component.as_str(), attestation.commit_id.as_str()),
-        ("site", COMMIT)
-    );
+    let good = verify_attestation(factory, &text, &signature, now).unwrap();
+    assert_eq!((good.component.as_str(), good.commit_id.as_str()), ("site", COMMIT));
     {
         let _scope = AttestedScope::enter(Attested {
             component: "site".to_string(),
@@ -274,64 +310,385 @@ fn the_gate_refuses_an_unattested_stale_forged_or_replayed_deploy_and_takes_a_go
         });
         assert!(gate().is_ok(), "the attestation stands for the permission");
         assert!(gate_commit(factory, "site", COMMIT).is_ok());
-        assert!(gate_commit(factory, "site", &COMMIT.replace('0', "f")).is_err());
+        assert!(gate_commit(factory, "site", OTHER_COMMIT).is_err());
         assert!(gate_commit(factory, "other", COMMIT).is_err());
     }
     assert!(gate_commit(factory, "site", COMMIT).is_err(), "only for its own deploy");
     assert!(gate().is_err(), "no attestation, no permission: COMPONENT_DEPLOY again");
 
-    // stale, forged (another secret), altered
+    // stale
     let (old, old_signature) = attested(SECRET, now - 301_000);
     let err = verify_attestation(factory, &old, &old_signature, now).unwrap_err();
     assert!(err.contains("too old"), "{err}");
+    // forged (another secret) and altered: one refusal, a failed sign-in, the secret in neither
     let _ = moqui_core::web::take_auth_failure();
     let (forged, forged_signature) = attested("another-secret-entirely-0123456789", now);
-    let err = verify_attestation(factory, &forged, &forged_signature, now).unwrap_err();
-    assert!(err.contains("signature does not verify"), "{err}");
+    assert_eq!(
+        verify_attestation(factory, &forged, &forged_signature, now),
+        Err(NOT_ACCEPTED.to_string())
+    );
     assert!(
         moqui_core::web::take_auth_failure(),
         "a forged attestation is a failed sign-in"
     );
     let err = verify_attestation(factory, &text.replace("\"site\"", "\"other\""), &signature, now).unwrap_err();
-    assert!(err.contains("signature does not verify"), "{err}");
-    assert!(!err.contains(SECRET));
-
-    // replayed: the component took a newer attestation already
-    {
-        let _authz = context.disable_authz();
-        let mut row = entity.make_value("moqui.server.DeployedComponent").unwrap();
-        row.set("componentName", moqui_lib::object::Value::string("site"));
-        row.set("status", moqui_lib::object::Value::string("removed"));
-        row.set("attestedDate", moqui_core::user::stamp_value(now));
-        row.create(&entity).unwrap();
+    assert_eq!(err, NOT_ACCEPTED);
+    // addressed to another server that shares the secret
+    let mut elsewhere = attestation(now);
+    elsewhere.audience = "https://other-target.example.com".to_string();
+    let (text, signature) = signed(SECRET, &elsewhere);
+    let err = verify_attestation(factory, &text, &signature, now).unwrap_err();
+    assert!(err.contains("addressed to another server"), "{err}");
+    // signed, but of a component, a repository or a branch no allow entry names
+    for (component, url, branch) in [
+        ("admin-tools", SOURCE_URL, "refs/heads/main"),
+        ("site", "https://attacker.example.com/site.git", "refs/heads/main"),
+        ("site", SOURCE_URL, "refs/heads/experiment"),
+    ] {
+        let mut unallowed = attestation(now);
+        unallowed.component = component.to_string();
+        unallowed.repository_url = url.to_string();
+        unallowed.ref_name = branch.to_string();
+        let (text, signature) = signed(SECRET, &unallowed);
+        let err = verify_attestation(factory, &text, &signature, now).unwrap_err();
+        assert!(
+            err.contains("component-deploy allow"),
+            "{component} {url} {branch}: {err}"
+        );
     }
-    let err = deploy_attested(factory, &text, &signature, &[]).unwrap_err();
-    assert!(err.contains("not taken again"), "{err}");
-    // a newer good one passes the gate and goes on to the fetch, which this test's factory (sim mode, no git
-    // resources) does not make
-    let (fresh, fresh_signature) = attested(SECRET, now + 1_000);
-    entity.set_sim_active(true);
-    let err = deploy_attested(factory, &fresh, &fresh_signature, &[]).unwrap_err();
-    entity.set_sim_active(false);
-    assert!(
-        err.contains("sim mode") || err.contains("git resources are not installed"),
-        "{err}"
-    );
+    // the allow entry's URL compares without the case of its host or a trailing slash
+    let mut cased = attestation(now);
+    cased.repository_url = "https://Source.Example.com/git/site.git/".to_string();
+    let (text, signature) = signed(SECRET, &cased);
+    assert!(verify_attestation(factory, &text, &signature, now).is_ok());
 }
 
-/// With no secret this server takes no attested deploy, and with the gate off an unattested deploy is let through to
-/// the permission check, as before.
+/// With no secret this server takes no attested deploy, and says so as it says of a forged signature (an
+/// unauthenticated caller does not learn whether a secret is set); a server that does not know its own public URL
+/// takes none either; with the gate off an unattested deploy is let through to the permission check, as before.
 #[test]
-fn a_server_with_no_secret_takes_no_attested_deploy_and_the_gate_is_off_by_default() {
-    use super::{gate_commit, verify_attestation};
+fn a_server_with_no_secret_refuses_as_for_a_forged_signature_and_the_gate_is_off_by_default() {
+    use super::{gate_commit, verify_attestation, NOT_ACCEPTED};
     let context = ExecutionContextFactory::test_context();
     let factory = context.factory();
     let _entered = context.enter();
     let now = moqui_core::service::util::now_millis();
     assert!(gate_commit(factory, "site", COMMIT).is_ok());
     let (text, signature) = attested(SECRET, now);
+    let _ = moqui_core::web::take_auth_failure();
+    assert_eq!(
+        verify_attestation(factory, &text, &signature, now),
+        Err(NOT_ACCEPTED.to_string())
+    );
+    assert!(moqui_core::web::take_auth_failure());
+
+    let unknown = format!(
+        r#"<moqui-conf><component-deploy attestation-secret="{SECRET}"><allow component="site"
+            repository-url="{SOURCE_URL}" branch="main"/></component-deploy></moqui-conf>"#
+    );
+    let context = ExecutionContextFactory::test_context_with_conf(&unknown);
+    let factory = context.factory();
+    let _entered = context.enter();
     let err = verify_attestation(factory, &text, &signature, now).unwrap_err();
-    assert!(err.contains("takes no attested deploys"), "{err}");
+    assert!(err.contains("addressed to another server"), "{err}");
+}
+
+/// The claim of an attestation (docs/tools/Component-Deploy.md "The gate"): of many deploys of one attestation at
+/// once, one claims it; an older or equal one after it is refused; and the record outlives the component's row.
+#[test]
+fn an_attestation_is_claimed_once_and_never_for_an_older_one() {
+    use super::claim_attestation;
+    let (context, entity) = target(&gate_conf());
+    let factory = std::sync::Arc::clone(context.factory());
+    let now = moqui_core::service::util::now_millis();
+
+    // the component took one before (its record is made once, under the primary key, which this test's in-memory
+    // database does not enforce): the claims of the next race on the conditional update alone
+    claim_attestation(&factory, &attestation(now - 10)).unwrap();
+    let same = attestation(now);
+    let threads: Vec<_> = (0..8)
+        .map(|_| {
+            let factory = std::sync::Arc::clone(&factory);
+            let same = same.clone();
+            std::thread::spawn(move || claim_attestation(&factory, &same).is_ok())
+        })
+        .collect();
+    let claimed = threads
+        .into_iter()
+        .filter_map(|thread| thread.join().ok())
+        .filter(|ok| *ok)
+        .count();
+    assert_eq!(claimed, 1, "one deploy of an attestation goes on");
+    let err = claim_attestation(&factory, &same).unwrap_err();
+    assert!(err.contains("not taken again"), "{err}");
+    // older: no rolling back to an older attested commit
+    let err = claim_attestation(&factory, &attestation(now - 1)).unwrap_err();
+    assert!(err.contains("not taken again"), "{err}");
+    // newer: taken, and the older one stays refused
+    assert!(claim_attestation(&factory, &attestation(now + 1)).is_ok());
+    assert!(claim_attestation(&factory, &attestation(now)).is_err());
+    // the component's row discarded (a staged deploy dropped): the record stays, and so does the refusal
+    let _entered = context.enter();
+    deployed(&entity, &[("status", "staged")]);
+    {
+        let _authz = context.disable_authz();
+        let row = entity
+            .find("moqui.server.DeployedComponent")
+            .unwrap()
+            .condition(moqui_db::sql::Condition::equals(
+                "componentName",
+                moqui_lib::object::Value::string("site"),
+            ))
+            .one()
+            .unwrap()
+            .unwrap();
+        row.delete(&entity).unwrap();
+    }
+    assert!(claim_attestation(&factory, &attestation(now + 1)).is_err());
+}
+
+/// `deploy_attested` claims its attestation before it fetches, so a replay of it is refused though the first deploy
+/// did not finish (here the fetch is refused by sim mode); a newer one is claimed and goes on to the fetch.
+#[test]
+fn an_attested_deploy_records_its_claim_so_a_replay_is_refused() {
+    use super::deploy_attested;
+    let (context, entity) = target(&gate_conf());
+    let factory = context.factory();
+    let _entered = context.enter();
+    let now = moqui_core::service::util::now_millis();
+    let (text, signature) = attested(SECRET, now - 1_000);
+    entity.set_sim_active(true);
+    let first = deploy_attested(factory, &text, &signature).unwrap_err();
+    let replay = deploy_attested(factory, &text, &signature).unwrap_err();
+    let (fresh, fresh_signature) = attested(SECRET, now);
+    let newer = deploy_attested(factory, &fresh, &fresh_signature).unwrap_err();
+    entity.set_sim_active(false);
+    assert!(
+        first.contains("sim mode") || first.contains("git resources are not installed"),
+        "{first}"
+    );
+    assert!(replay.contains("not taken again"), "{replay}");
+    assert!(!newer.contains("not taken again"), "{newer}");
+}
+
+/// An attested deploy of a component deployed from git already updates it only from the same repository URL and the
+/// same branch; what a fetch staged must be the attested component at the attested commit.
+#[test]
+fn an_attested_deploy_takes_only_its_components_repository_url_branch_and_staged_commit() {
+    use super::{check_staged, deploy_attested, DeployPreview};
+    let (context, entity) = target(&gate_conf());
+    let factory = context.factory();
+    let _entered = context.enter();
+    let now = moqui_core::service::util::now_millis();
+    deployed(
+        &entity,
+        &[
+            ("source", "git"),
+            ("status", "deployed"),
+            ("storage", "database"),
+            ("remoteUrl", "https://elsewhere.example.com/site.git"),
+            ("branch", "main"),
+        ],
+    );
+    let (text, signature) = attested(SECRET, now - 2_000);
+    let err = deploy_attested(factory, &text, &signature).unwrap_err();
+    assert!(err.contains("another repository URL"), "{err}");
+    deployed(&entity, &[("remoteUrl", SOURCE_URL), ("branch", "main")]);
+    let mut release = attestation(now - 1_000);
+    release.ref_name = "refs/heads/release".to_string();
+    let (text, signature) = signed(SECRET, &release);
+    let err = deploy_attested(factory, &text, &signature).unwrap_err();
+    assert!(err.contains("deployed from the branch main"), "{err}");
+
+    let good = attestation(now);
+    let staged = |component: &str, commit: &str| DeployPreview {
+        component: component.to_string(),
+        commit: commit.to_string(),
+        ..DeployPreview::default()
+    };
+    assert!(check_staged(&staged("site", COMMIT), &good).is_ok());
+    let err = check_staged(&staged("site", OTHER_COMMIT), &good).unwrap_err();
+    assert!(err.contains("the branch main holds site at fedcba987654"), "{err}");
+    assert!(check_staged(&staged("other", COMMIT), &good).is_err());
+}
+
+/// The gate's checks inside `deploy` and `update`: with `require-passed-run`, no unattested deploy or update; an
+/// attestation lets in its own component only, and in `deploy` its own commit only.
+#[test]
+fn deploy_and_update_check_the_attested_component_and_commit() {
+    use super::{deploy, update, Attested, AttestedScope};
+    let (context, entity) = target(&gate_conf());
+    let factory = context.factory();
+    let _entered = context.enter();
+    let location = std::env::temp_dir().join(format!("moqui-gate-deploy-{}", std::process::id()));
+    deployed(
+        &entity,
+        &[
+            ("source", "git"),
+            ("status", "staged"),
+            ("storage", "database"),
+            ("commitId", COMMIT),
+            ("location", &location.join("site").display().to_string()),
+        ],
+    );
+    let problems = |report: crate::deploy::load::LoadReport| report.problems.join("; ");
+
+    let refused = deploy(factory, "site", crate::deploy::load::Mode::Now, &[]);
+    assert_eq!(problems(refused), crate::deploy::GATE_REFUSAL);
+    let refused = update(factory, "site", &[]);
+    assert_eq!(problems(refused), crate::deploy::GATE_REFUSAL);
+    {
+        let _scope = AttestedScope::enter(Attested {
+            component: "other".to_string(),
+            commit: COMMIT.to_string(),
+        });
+        let refused = problems(deploy(factory, "site", crate::deploy::load::Mode::Now, &[]));
+        assert!(refused.contains("the attestation is for other, not site"), "{refused}");
+        let refused = problems(update(factory, "site", &[]));
+        assert!(refused.contains("the attestation is for other, not site"), "{refused}");
+    }
+    {
+        let _scope = AttestedScope::enter(Attested {
+            component: "site".to_string(),
+            commit: OTHER_COMMIT.to_string(),
+        });
+        let refused = problems(deploy(factory, "site", crate::deploy::load::Mode::Now, &[]));
+        assert!(
+            refused.contains("the attestation is for site at fedcba987654"),
+            "{refused}"
+        );
+    }
+    {
+        let _scope = AttestedScope::enter(Attested {
+            component: "site".to_string(),
+            commit: COMMIT.to_string(),
+        });
+        // past the gate: the deploy goes on to the staged files, which this test did not write
+        let report = problems(deploy(factory, "site", crate::deploy::load::Mode::Now, &[]));
+        assert!(report.contains("staged files of site are gone"), "{report}");
+    }
+}
+
+/// Under the gate a start writes from the database only the commit an attested deploy put in place (never the
+/// repository's head), and another cluster member applies only the commit the last attestation names; with the gate
+/// off, both as before.
+#[test]
+fn under_the_gate_a_start_and_another_member_write_only_an_attested_commit() {
+    use super::{gate_remote, gate_restore};
+    let (context, entity) = target(&gate_conf());
+    let factory = context.factory();
+    let _entered = context.enter();
+    assert!(gate_remote(factory, "site", COMMIT).is_err(), "no attestation taken");
+    assert!(gate_restore(factory, "site", COMMIT).is_err());
+    {
+        let _authz = context.disable_authz();
+        let mut row = entity.make_value("moqui.server.DeployedComponentAttestation").unwrap();
+        row.set("componentName", moqui_lib::object::Value::string("site"));
+        row.set("commitId", moqui_lib::object::Value::string(OTHER_COMMIT));
+        row.set("deployedCommitId", moqui_lib::object::Value::string(COMMIT));
+        row.create(&entity).unwrap();
+    }
+    assert!(gate_remote(factory, "site", OTHER_COMMIT).is_ok());
+    assert!(gate_remote(factory, "site", COMMIT).is_err());
+    assert!(gate_remote(factory, "site", "").is_err());
+    assert!(gate_restore(factory, "site", COMMIT).is_ok());
+    assert!(gate_restore(factory, "site", OTHER_COMMIT).is_err());
+    let err = gate_restore(factory, "site", "").unwrap_err();
+    assert!(err.contains("its head"), "{err}");
+
+    let open = ExecutionContextFactory::test_context();
+    let _entered = open.enter();
+    assert!(gate_remote(open.factory(), "site", COMMIT).is_ok());
+    assert!(gate_restore(open.factory(), "site", "").is_ok());
+}
+
+/// A component deployed from a `db` repository (its source another `db` repository, `git://site-src`, so no network):
+/// an attestation of a commit the branch has moved past is refused; `update` inside an attestation of another commit
+/// than the branch's head is refused by its own commit check; an attestation of the head updates the component, and
+/// the record then names that commit as the one a start writes.
+#[test]
+fn an_attested_update_puts_in_place_only_the_attested_head() {
+    use super::{deploy_attested, gate_restore, update, Attested, AttestedScope};
+    let (context, entity) = target(&gate_conf());
+    let factory = context.factory();
+    moqui_git::install(factory).unwrap();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    let dir = std::env::temp_dir().join(format!("moqui-gate-update-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let git = moqui_git::provider(factory).unwrap();
+    let repository = |id: &str, remote: Option<&str>| {
+        let mut row = entity.make_value("moqui.resource.GitRepository").unwrap();
+        row.set("repositoryId", moqui_lib::object::Value::string(id));
+        row.set("repositoryKind", moqui_lib::object::Value::string("db"));
+        row.set("branch", moqui_lib::object::Value::string("main"));
+        if let Some(remote) = remote {
+            row.set("remoteUrl", moqui_lib::object::Value::string(remote));
+        }
+        row.create(&entity).unwrap();
+    };
+    repository("site-src", None);
+    let resources = factory.resource();
+    resources
+        .write_bytes("git://site-src/component.xml", br#"<component name="site"/>"#)
+        .unwrap();
+    let first = git.branch_head("site-src").unwrap().unwrap();
+    repository("component-site", Some("git://site-src"));
+    git.import("component-site", None).unwrap();
+    let location = dir.join("addon").join("site");
+    git.write_tree("component-site", Some(&first), &location).unwrap();
+    deployed(
+        &entity,
+        &[
+            ("source", "git"),
+            ("status", "deployed"),
+            ("storage", "database"),
+            ("gitRepositoryId", "component-site"),
+            ("commitId", &first),
+            ("location", &location.display().to_string()),
+            ("remoteUrl", SOURCE_URL),
+            ("branch", "main"),
+        ],
+    );
+    resources
+        .write_bytes("git://site-src/screen/Site.xml", b"<screen/>")
+        .unwrap();
+    let second = git.branch_head("site-src").unwrap().unwrap();
+    let now = moqui_core::service::util::now_millis();
+
+    // the branch moved past the attested commit
+    let mut moved = attestation(now - 2_000);
+    moved.commit_id.clone_from(&first);
+    let (text, signature) = signed(SECRET, &moved);
+    let err = deploy_attested(factory, &text, &signature).unwrap_err();
+    assert!(err.contains("deploy its new head"), "{err}");
+    // update's own check of the commit it is about to put in place
+    {
+        let _scope = AttestedScope::enter(Attested {
+            component: "site".to_string(),
+            commit: first.clone(),
+        });
+        let report = update(factory, "site", &[]);
+        let problems = report.problems.join("; ");
+        assert!(problems.contains("the attestation is for site at"), "{problems}");
+        assert!(
+            problems.contains(&format!("not site at {}", &second[..12])),
+            "{problems}"
+        );
+    }
+    // the head, attested: updated, and recorded as the commit a start writes
+    let mut head = attestation(now);
+    head.commit_id.clone_from(&second);
+    let (text, signature) = signed(SECRET, &head);
+    let done = deploy_attested(factory, &text, &signature).unwrap();
+    assert_eq!(
+        (done.status.as_str(), done.commit.as_str()),
+        ("deployed", second.as_str())
+    );
+    assert!(location.join("screen/Site.xml").is_file());
+    assert!(gate_restore(factory, "site", &second).is_ok());
+    assert!(gate_restore(factory, "site", &first).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

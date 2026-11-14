@@ -358,7 +358,8 @@ fn deploy_component(
 /// `deploy#AttestedComponent`: a source server's deploy step (REST `POST /rest/s1/moqui/components/deploy`, no
 /// session): the `attestation` text and its `signature`, made with the secret this server issued (`component-deploy`
 /// `attestation-secret`), say a commit passed its environment's pipeline; that commit, still the branch's head, is
-/// deployed or the component updated to it, with its data of `dataTypes`. The attestation is the authority, so no
+/// deployed or the component updated to it, with its data of the types the attestation names (signed; no request
+/// parameter widens them). The attestation is the authority, so no
 /// user signs in. Out: `componentName`, `commitId`, `deployStatus` (deployed or up-to-date), `deploymentId`,
 /// `report`.
 fn deploy_attested_component(
@@ -375,12 +376,8 @@ fn deploy_attested_component(
         .map(moqui_lib::object::to_plain_string)
         .unwrap_or_default();
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-    match crate::deploy::git::deploy_attested(
-        &factory,
-        &attestation,
-        &parameter(parameters, "signature"),
-        &list_parameter(parameters, "dataTypes"),
-    ) {
+    // the data types are the attestation's, signed with it; a request parameter would be the caller's
+    match crate::deploy::git::deploy_attested(&factory, &attestation, &parameter(parameters, "signature")) {
         Ok(done) => {
             out.insert("componentName".to_string(), Value::string(&done.component));
             out.insert("commitId".to_string(), Value::string(&done.commit));
@@ -452,3 +449,7 @@ fn update_component(
     out.insert("report".to_string(), json_value(&report));
     Ok(out)
 }
+
+#[cfg(test)]
+#[path = "services_tests.rs"]
+mod tests;

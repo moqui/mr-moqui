@@ -206,6 +206,24 @@ fn a_components_git_ci_attributes_merge_over_the_default() {
     assert_eq!(ci.attribute("max-jobs").as_deref(), Some("50"));
     assert_eq!(base.children_named("git-ci").len(), 1);
 
+    // the runtime's component-deploy turns the gate on and names its allow entries over the default's
+    let base = MNode::parse_text(
+        "moqui-conf",
+        r#"<moqui-conf><component-deploy require-passed-run="false" max-age-seconds="300"/></moqui-conf>"#,
+    )
+    .unwrap();
+    let over = MNode::parse_text(
+        "moqui-conf",
+        r#"<moqui-conf><component-deploy require-passed-run="true"><allow component="site"
+                repository-url="https://source.example.com/git/site.git" branch="main"/></component-deploy></moqui-conf>"#,
+    )
+    .unwrap();
+    super::merge_conf(&base, &over);
+    let deploy = base.first_named("component-deploy").unwrap();
+    assert_eq!(deploy.attribute("require-passed-run").as_deref(), Some("true"));
+    assert_eq!(deploy.attribute("max-age-seconds").as_deref(), Some("300"));
+    assert_eq!(deploy.children_named("allow").len(), 1);
+
     // each top-level element of the default conf is merged: a component's copy of it changes the one element
     let defaults = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

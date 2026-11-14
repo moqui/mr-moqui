@@ -19,8 +19,11 @@
         (docs/tools/Component-Deploy.md). -->
     <default-property name="component_deploy_enabled" value=""/>
     <!-- The secret this server issued to a source server for attested deploys (component-deploy attestation-secret):
-        at least 16 characters, set in runtime/.env; empty takes none. -->
+        at least 32 characters (openssl rand -hex 32), set in runtime/.env; empty takes none. Read at start. -->
     <default-property name="component_deploy_attestation_key" value=""/>
+    <!-- This server's public base URLs an attestation must be addressed to (component-deploy public-urls), separated
+        by spaces or commas; empty for the webroot webapp's URL when webapp_http_host is set. -->
+    <default-property name="component_deploy_public_urls" value=""/>
 
     <!-- Locale and Time Zone Properties -->
     <default-property name="default_locale" value="en_US"/>
@@ -1483,14 +1486,17 @@
         own device, shared for a hot desk or point of sale); choose has the sign-in ask. The server does not read it. -->
     <client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"/>
 
-    <!-- Deploying a component on this server (docs/tools/Component-Deploy.md "The gate"). attestation-secret is the
-        secret this server issued to a source server (the token of the source's environment): with it,
-        deploy#AttestedComponent (REST POST /rest/s1/moqui/components/deploy) takes a deploy whose attestation, signed
-        with it and at most max-age-seconds old, says the commit passed the environment's pipeline. With
+    <!-- Deploying a component on this server (docs/tools/Component-Deploy.md "The gate"), read once at start.
+        attestation-secret is the secret this server issued to a source server (the token of the source's
+        environment): with it, deploy#AttestedComponent (REST POST /rest/s1/moqui/components/deploy) takes a deploy
+        whose attestation, signed with it, at most max-age-seconds old and addressed to one of public-urls, says the
+        commit passed the environment's pipeline, of a component, repository URL and branch an allow entry names
+        (none here: a runtime conf names them, as
+        <allow component="site" repository-url="https://git.example.com/git/site.git" branch="main"/>). With
         require-passed-run true, deploy#Component, update#Component and load#Component refuse anything else: a deploy
         from this server's own pages needs such an attestation too. -->
     <component-deploy require-passed-run="false" attestation-secret="${component_deploy_attestation_key}"
-            max-age-seconds="300"/>
+            max-age-seconds="300" public-urls="${component_deploy_public_urls}"/>
 
     <!-- Rust: java names for fresh schemas; set entity_sql_name_style=legacy before opening an old Rust database. -->
     <entity-facade sql-name-style="${entity_sql_name_style ?: 'java'}"
