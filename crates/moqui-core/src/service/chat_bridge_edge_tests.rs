@@ -159,6 +159,7 @@ fn pair(facade: &EntityFacade, node: &str) {
 
 fn replicate_bridge(facade: &EntityFacade, node: &str, bridge: &str) {
     let batch = crate::edge::replica::Batch {
+        sender_token: 0,
         set_name: REPLICA_SET.to_string(),
         epoch: "e1".to_string(),
         base_seq: 0,

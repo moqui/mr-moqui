@@ -15,7 +15,7 @@
 //! The XMPP tunnel (plans/archive/Edge-Node.md §5.4, E9): outside XMPP clients sign in through the edge node's tunnel ports
 //! and chat with each other on the local node, which ends their TLS. Both ends are real servers in the test's own
 //! process, as in `edge_web.rs`: the local node with `xmpp_domain` and a direct TLS port of its own, then the edge node
-//! (`node_role=edge`), which inherits those properties and still starts no XMPP server, with `edge_xmpp_port`
+//! (`node_role=front_edge`), which inherits those properties and still starts no XMPP server, with `edge_xmpp_port`
 //! (STARTTLS) and `edge_xmpp_tls_port` (direct TLS).
 //!
 //! Ann is tokio-xmpp over the direct TLS tunnel (SCRAM-SHA-256-PLUS with the local node's tls-exporter, so the TLS is
@@ -151,7 +151,7 @@ fn outside_xmpp_clients_chat_through_the_edge_nodes_tunnel_ports() {
         "edge-xmpp-edge",
         "",
         &[
-            ("node_role", "edge"),
+            ("node_role", "front_edge"),
             ("webapp_https_listen_port", &edge_port_text),
             ("edge_xmpp_port", &tunnel_text),
             ("edge_xmpp_tls_port", &tunnel_tls_text),

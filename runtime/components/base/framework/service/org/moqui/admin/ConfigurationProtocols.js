@@ -161,7 +161,7 @@ const smtpConfigured = (facts, listening) => ({
     internet: text(facts.conf("smtp-server/@internet", ""))
         ? yes(facts.conf("smtp-server/@internet", ""))
         : yes(facts.prop("smtp_internet")),
-    edgeNode: facts.prop("node_role") === "edge"
+    edgeNode: ["front", "front_edge", "edge"].includes(text(facts.prop("node_role")).toLowerCase())
 })
 
 // ===== the protocols =====

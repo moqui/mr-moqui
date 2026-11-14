@@ -31,11 +31,14 @@ use moqui_lib::sync::InstallSlot;
 
 pub mod calls;
 pub mod claims;
+pub mod cluster_list;
+pub mod cluster_state;
 pub mod conf;
 pub mod delegate;
 pub mod hosts;
 pub mod media;
 pub mod owner;
+pub mod pool;
 pub mod ports;
 pub mod queue;
 pub mod replica;
@@ -44,13 +47,14 @@ pub mod signal;
 pub mod sip;
 
 pub use conf::{settings, EdgeSettings, ReplicaEntity, ReplicaSet};
+pub use pool::{BalanceMemberInfo, BalancingInfo, ClusterMemberInfo, MemberState, PoolMemberInfo};
 pub use setup::{Configured, EdgeOffer, EdgeSetup};
 
 /// The message when no edge link is installed.
 pub const NOT_BUILT: &str = "edge link not built into this host";
 
-/// The property that sets a node's role ([`NodeRole`]): `edge`, `all-in-one`, or empty for a normal node
-/// (plans/archive/Edge-Node.md §5.6, §10).
+/// The property that sets a node's role ([`NodeRole`]): `front`, `front_edge`, `edge`, `all-in-one`, or empty for a
+/// normal node (plans/Edge-Node2.md §4.3).
 pub const NODE_ROLE: &str = "node_role";
 /// A local node's link properties, in `runtime/.env`, written by pairing and removed by unpairing (§5.1).
 pub const NODE_URL: &str = "edge_node_url";
@@ -59,6 +63,22 @@ pub const NODE_PIN: &str = "edge_node_pin";
 /// The edge node's instance id, pinned at pairing beside its key (E7): the node its calls' media is on, which a link
 /// whose Hello names another id is refused for, so an edge node cannot take another media node's id.
 pub const NODE_ID: &str = "edge_node_id";
+/// The pairing this node and the members of its cluster are known by on the edge node (plans/Edge-Node2.md §4.4): the
+/// instance id of the member that paired, written beside the key at pairing. The edge node keys its rows by it and
+/// the local node its queue rows and receipts, so every member of a pool, and a standby that takes over, is the same
+/// pairing. A node paired before E17 has none, and is its own instance id.
+pub const NODE_PAIRING: &str = "edge_node_pairing";
+/// A node's link properties for its front node (plans/Edge-Node2.md §4.7), in `runtime/.env`, written by pairing with a
+/// node whose Hello names the role `front` and removed by unpairing it: a second pairing beside `edge_node_*`. A local
+/// node pairs with the front for its web names when its edge cluster's members are `edge` (they forward no web access),
+/// and an edge node (`front_edge` or `edge`) pairs with the front that faces its visitors. Over this pairing go web
+/// access and ports only.
+pub const FRONT_URL: &str = "front_node_url";
+pub const FRONT_KEY: &str = "front_node_key";
+pub const FRONT_PIN: &str = "front_node_pin";
+/// The front node's instance ids, learned on pinned links, as [`NODE_ID`] is for the edge pairing: a web protection
+/// ban goes up to them too.
+pub const FRONT_ID: &str = "front_node_id";
 /// An edge node's long-lived link key (a generated secret), which its up and down connections present instead of the
 /// web certificate, so a renewed web certificate does not break a link.
 pub const LINK_KEY: &str = "edge_link_key";
@@ -67,23 +87,54 @@ pub const LINK_KEY: &str = "edge_link_key";
 pub const HOST_PASSTHROUGH: &str = "EdgeHostPassthrough";
 /// A host whose TLS the edge node ends, forwarding each request down the link as HTTP/2 (§5.3).
 pub const HOST_TERMINATE: &str = "EdgeHostTerminate";
+/// On a front node, an edge member's own link name (plans/Edge-Node2.md §4.7): passed through untouched, as a
+/// passthrough host, but to that one member of its pairing (`EdgeHost.memberId`), never balanced. The front writes it
+/// from the member's Hello; Configure and the System app do not set it.
+pub const HOST_LINK_NAME: &str = "EdgeHostLinkName";
+
+/// Why a front node starts none of the edge set's services (plans/Edge-Node2.md §4.7): call media and TURN, SIP, the
+/// SMTP listener and MX delivery, an XMPP server; the startup report shows each off with it.
+pub const FRONT_ONLY: &str = "a front node (node_role front) has only the front set";
+
+/// Whether `factory`'s node is a front node, logging once per area named in `what` that its setting is ignored when
+/// `configured`: the start of an edge set's service asks it (plans/Edge-Node2.md §4.7).
+pub fn front_refuses(factory: &crate::context::ExecutionContextFactory, what: &str, configured: bool) -> bool {
+    if !settings(factory).role.front_only() {
+        return false;
+    }
+    if configured {
+        tracing::warn!("{what} is set on a front node (node_role front), which has only the front set: not started");
+    }
+    true
+}
 
 /// `node_role`, trimmed and lowercase.
 pub fn node_role() -> String {
     moqui_lib::env::get_prop_or_env(NODE_ROLE).trim().to_ascii_lowercase()
 }
 
-/// A node's role (`node_role`, plans/archive/Edge-Node.md §5.6, §10).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// A node's role (`node_role`, plans/Edge-Node2.md §4.3, decision 16): which of the two option sets it has. The
+/// **front** set faces browsers: links taken, web access by host name, TCP ports, balancing, web protection and
+/// certificates. The **edge** set is the rest of an edge node: delegate, queue and replicate, the mail edge, chat
+/// webhooks, the media node and TURN, SIP, mr-pass's sites. Every role but a normal node's takes links.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum NodeRole {
     /// A normal node (`node_role` empty): its own data, and a local node when paired with an edge node.
     #[default]
     Normal,
-    /// A dedicated edge node (`node_role=edge`): no business data of its own; every name, address, number and bridge
-    /// not its own is a paired node's, and some paths switch as a whole.
+    /// A front node (`node_role=front`, plans/Edge-Node2.md §4.7): the front set alone. Its Hello offers only web
+    /// access and ports; it starts none of the edge set's services and refuses the edge set's calls on its links, and
+    /// dials no other node.
+    Front,
+    /// An edge node as built before E17 (`node_role=front_edge`): both sets, so it balances a local cluster with no
+    /// other node. No business data of its own.
+    FrontEdge,
+    /// An edge node behind a front node (`node_role=edge`): the edge set alone. It takes its local nodes' links for
+    /// the queue, delegate, replicate, comms and PASS, and forwards no web access itself and binds no ports; its sites
+    /// are reached through the front, which it dials (`front_node_url`).
     Edge,
-    /// An all-in-one node (`node_role=all-in-one`, E12): a full server that also takes the link of one paired local
-    /// node, and routes each item by its owner ([`owner`]).
+    /// An all-in-one node (`node_role=all-in-one`, E12): a full server with both sets, which also takes the links of
+    /// paired local nodes and routes each item by its owner ([`owner`]).
     AllInOne,
 }
 
@@ -93,13 +144,16 @@ impl NodeRole {
     pub fn parse(raw: &str) -> Self {
         match raw.trim().to_ascii_lowercase().as_str() {
             "" | "normal" => Self::Normal,
+            "front" => Self::Front,
+            "front_edge" => Self::FrontEdge,
             "edge" => Self::Edge,
             "all-in-one" => Self::AllInOne,
             other => {
                 static LOGGED: std::sync::Once = std::sync::Once::new();
                 LOGGED.call_once(|| {
                     tracing::error!(
-                        "{NODE_ROLE}={other} is not a node role (edge, all-in-one, or empty); this is a normal node"
+                        "{NODE_ROLE}={other} is not a node role (front, front_edge, edge, all-in-one, or empty); this \
+                         is a normal node"
                     );
                 });
                 Self::Normal
@@ -111,14 +165,17 @@ impl NodeRole {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Normal => "",
+            Self::Front => "front",
+            Self::FrontEdge => "front_edge",
             Self::Edge => "edge",
             Self::AllInOne => "all-in-one",
         }
     }
 
-    /// A dedicated edge node: no business data of its own.
+    /// A dedicated edge node of any set (`front`, `front_edge` or `edge`): no business data of its own, so every name,
+    /// address, number and bridge not its own is a paired node's, and some paths switch as a whole.
     pub fn edge_node(self) -> bool {
-        self == Self::Edge
+        matches!(self, Self::Front | Self::FrontEdge | Self::Edge)
     }
 
     /// An all-in-one node: a full server that also takes a paired node's link.
@@ -126,10 +183,32 @@ impl NodeRole {
         self == Self::AllInOne
     }
 
-    /// The edge end of a link: a dedicated edge node or an all-in-one node. It accepts links, runs the
+    /// The front set: web access by host name, TCP ports, balancing (plans/Edge-Node2.md §4.3).
+    pub fn has_front(self) -> bool {
+        matches!(self, Self::Front | Self::FrontEdge | Self::AllInOne)
+    }
+
+    /// The edge set: delegate, queue and replicate, mail, chat, calls, SIP and PASS (plans/Edge-Node2.md §4.3).
+    pub fn has_edge(self) -> bool {
+        matches!(self, Self::FrontEdge | Self::Edge | Self::AllInOne)
+    }
+
+    /// The edge end of a link: every role but a normal node's. It accepts links; with the edge set it runs the
     /// [`queue`]'s receiving side and sends the listed services' calls of a paired node's items down the link.
     pub fn takes_links(self) -> bool {
-        matches!(self, Self::Edge | Self::AllInOne)
+        self != Self::Normal
+    }
+
+    /// A front node (`front`): the front set alone, with no mail, media, SIP, queue, replication or mr-pass
+    /// (plans/Edge-Node2.md §4.7).
+    pub fn front_only(self) -> bool {
+        self == Self::Front
+    }
+
+    /// The node may dial a front node (plans/Edge-Node2.md §4.7, §4.11): every role but `front`. A normal node's link
+    /// to its front is its second pairing; a node with the edge set dials its front as well as taking links.
+    pub fn dials_front(self) -> bool {
+        self != Self::Front
     }
 }
 
@@ -139,12 +218,12 @@ pub fn node_role_kind() -> NodeRole {
     NodeRole::parse(&node_role())
 }
 
-/// Whether this node is a dedicated edge node (`node_role=edge`).
+/// Whether this node is a dedicated edge node (`front`, `front_edge` or `edge`).
 pub fn is_edge_node() -> bool {
     node_role_kind().edge_node()
 }
 
-/// Whether this node takes links: a dedicated edge node or an all-in-one node.
+/// Whether this node takes links: any role but a normal node's.
 pub fn takes_links() -> bool {
     node_role_kind().takes_links()
 }
@@ -205,6 +284,9 @@ pub struct EdgeInfo {
     /// realm, and its phones ring only with the registrar on.
     pub sip_domain: String,
     pub sip_registrar: bool,
+    /// Its `node_role` as its Hello names it (`front`, `front_edge`, `edge`, `all-in-one`); empty from a node before
+    /// E19. Pairing with a `front` keeps the pairing as this node's front pairing ([`FRONT_URL`]).
+    pub role: String,
     /// The link versions are close enough to link.
     pub compatible: bool,
     /// Why not, when not compatible.
@@ -229,6 +311,46 @@ pub struct LinkStatus {
     /// On an edge node, the fingerprint of its own link key (SHA-256 of the public key, hex), for the operator to
     /// compare with what a local node's check shows; empty on any other node.
     pub link_fingerprint: String,
+    /// On a local node, its link to each member of its edge cluster (plans/Edge-Node2.md §4.6), in instance id order:
+    /// one link for a single edge node. The fields above are of the link that carries this node's work up, else of the
+    /// first.
+    pub members: Vec<EdgeMemberLink>,
+}
+
+/// A local node's link to one member of its edge cluster (plans/Edge-Node2.md §4.6), for System › Edge Node.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EdgeMemberLink {
+    /// The edge member's instance id, as its Hello named it; empty until a link to the URL it was paired with came up.
+    pub instance_id: String,
+    /// Where it is dialed: its `edge_link_url`, else the URL this node paired with.
+    pub url: String,
+    pub state: LinkState,
+    pub generation: u64,
+    pub rtt_ms: Option<f64>,
+    pub last_connect: Option<i64>,
+    pub last_error: String,
+    pub reconnects: u64,
+    /// This link carries the node's work up: its outbox, its replicated sets and the edge node's call rows (one link at
+    /// a time).
+    pub carries_work: bool,
+    /// Gone from the edge cluster's list: not dialed again once this link ends.
+    pub retired: bool,
+}
+
+/// A member of this edge node's cluster as its Hello answer lists it (plans/Edge-Node2.md §4.6), for System › Edge
+/// Clients.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EdgeClusterMember {
+    pub instance_id: String,
+    /// Its `edge_link_url`: where local nodes dial it; empty when it has none.
+    pub link_url: String,
+    /// Its heartbeat is within the cluster's liveness window: only live members are listed to local nodes.
+    pub live: bool,
+    /// How long ago its heartbeat was written, in milliseconds, by the database's clock.
+    pub heartbeat_age_ms: u64,
+    pub version: String,
+    /// It is the member answering.
+    pub this_member: bool,
 }
 
 /// What pairing pinned, for the operator to confirm.
@@ -266,6 +388,18 @@ pub struct EdgeClientInfo {
     pub setup_json: String,
     /// When its last Configure came.
     pub setup_date: Option<i64>,
+    /// Its members linked now (plans/Edge-Node2.md §4.4): each links with the pairing's key; `generation` is the
+    /// newest of theirs.
+    pub members_linked: u32,
+    /// The member last linked (`lastMemberId`), the node that paired before any.
+    pub last_member_id: String,
+    /// A new node taking the pairing over is held for approval (`holdNewMember`, §4.5), and the one approved.
+    pub hold_new_member: bool,
+    pub approved_member_id: String,
+    /// The last takeover by a new node (§4.5): when, from which member, by which.
+    pub takeover_date: Option<i64>,
+    pub takeover_from_id: String,
+    pub takeover_to_id: String,
     /// Its own size cap on the items waiting for it, in megabytes (`queueMaxMegabytes`); `None` for the conf's.
     pub queue_max_megabytes: Option<i64>,
 }
@@ -278,6 +412,9 @@ pub struct EdgeHostInfo {
     pub paired_node_id: String,
     /// [`HOST_PASSTHROUGH`] or [`HOST_TERMINATE`].
     pub mode_enum_id: String,
+    /// The cookie a terminate host's requests are sticky by (plans/Edge-Node2.md §4.4), a cookie name; empty for the
+    /// conf's `<edge sticky-cookie>`. On a save, `None` leaves the row's as it is (a Configure's host names).
+    pub sticky_cookie: Option<String>,
 }
 
 /// The error of a delegated call while the link to the local node is down.
@@ -309,6 +446,11 @@ pub struct DelegateAnswer {
 
 /// The edge link of this process, installed by the host.
 pub trait EdgeLink: Send + Sync {
+    /// Whether it serves links now: false on a node that takes links whose HTTPS listener is off (the link is
+    /// installed, with no server), so the screens show the rows and the defaults in place of what is in memory.
+    fn serving(&self) -> bool {
+        true
+    }
     /// The local node's link (unpaired on a node with no `edge_node_url`).
     fn status(&self) -> LinkStatus;
     /// Connect to the edge node at `url`, check its certificate by WebPKI, and return its Hello and fingerprint,
@@ -328,6 +470,53 @@ pub trait EdgeLink: Send + Sync {
     fn revoke(&self, paired_node_id: &str) -> Result<bool, Error>;
     /// On an edge node: a Ping down the local node's down connection, in milliseconds.
     fn ping_client(&self, paired_node_id: &str) -> Result<f64, Error>;
+    /// On an edge node: the members of each pairing, of one when `paired_node_id` is given (plans/Edge-Node2.md §4.4),
+    /// from the links, the latest member lists and the nodes refused or held lately.
+    fn members(&self, paired_node_id: Option<&str>) -> Result<Vec<PoolMemberInfo>, Error> {
+        let _ = paired_node_id;
+        Err(Error::new(NOT_BUILT))
+    }
+    /// On an edge node: balancing's defaults and each member's traffic and set-aside (plans/Edge-Node2.md §4.10
+    /// Balancing), of one pairing when `paired_node_id` is given; in memory only.
+    fn balancing(&self, paired_node_id: Option<&str>) -> Result<BalancingInfo, Error> {
+        let _ = paired_node_id;
+        Err(Error::new(NOT_BUILT))
+    }
+    /// On an edge node: ask a linked member down its link to drain (`drain`) or to come back; its state after. The
+    /// state is the member's: nothing is stored here.
+    fn drain_member(&self, paired_node_id: &str, instance_id: &str, drain: bool) -> Result<MemberState, Error> {
+        let _ = (paired_node_id, instance_id, drain);
+        Err(Error::new(NOT_BUILT))
+    }
+    /// On an edge node: a Ping down the down connection of member `instance_id` of pairing `paired_node_id`, in
+    /// milliseconds (Clients' Ping on a member row, plans/Edge-Node2.md §4.10).
+    fn ping_member(&self, paired_node_id: &str, instance_id: &str) -> Result<f64, Error> {
+        let _ = (paired_node_id, instance_id);
+        Err(Error::new(NOT_BUILT))
+    }
+    /// On a node that takes links: the members of its cluster with their link addresses, live or not, as its Hello
+    /// answer lists the live ones to local nodes (plans/Edge-Node2.md §4.6).
+    fn edge_cluster(&self) -> Result<Vec<EdgeClusterMember>, Error> {
+        Err(Error::new(NOT_BUILT))
+    }
+    /// The node's link to its front node, its second pairing ([`FRONT_URL`], plans/Edge-Node2.md §4.7); `None` when
+    /// it has none.
+    fn front_status(&self) -> Option<LinkStatus> {
+        None
+    }
+    /// Tell the front node to revoke this node's key (when it can be reached), close that link and remove
+    /// `front_node_*`.
+    fn unpair_front(&self) -> Result<(), Error> {
+        Err(Error::new(NOT_BUILT))
+    }
+    /// On a local node: its state changed (drained or resumed here), so its links tell the edge node now rather than
+    /// at the next Ping.
+    fn state_changed(&self) {}
+    /// On an edge node: the key pinned for member `instance_id` of pairing `paired_node_id` was forgotten, so close its
+    /// link: its next one is admitted afresh (plans/Edge-Node2.md §4.11).
+    fn member_forgotten(&self, paired_node_id: &str, instance_id: &str) {
+        let _ = (paired_node_id, instance_id);
+    }
     /// On a node that takes links: the host name rows ([`hosts`]) changed, so load the table in memory again. Nothing
     /// while this node takes no links; a table that does not load is logged.
     fn hosts_changed(&self) {}
@@ -369,6 +558,11 @@ static LINK: InstallSlot<dyn EdgeLink> = InstallSlot::new();
 /// Use `link` for the edge link in this process.
 pub fn install_edge_link(link: Arc<dyn EdgeLink>) {
     LINK.install(link);
+}
+
+/// The installed link while it serves links ([`EdgeLink::serving`]); `None` with none installed or its listener off.
+pub fn serving_link() -> Option<Arc<dyn EdgeLink>> {
+    link().ok().filter(|link| link.serving())
 }
 
 /// Remove the installed link.

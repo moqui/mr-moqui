@@ -402,7 +402,7 @@ fn signature_of(signature: &ops::Signature) -> gix::actor::Signature {
     }
 }
 
-fn author_signature(author: &Author) -> gix::actor::Signature {
+pub(crate) fn author_signature(author: &Author) -> gix::actor::Signature {
     gix::actor::Signature {
         name: author.name.as_str().into(),
         email: author.email.as_str().into(),
@@ -414,7 +414,7 @@ fn author_signature(author: &Author) -> gix::actor::Signature {
 }
 
 /// A message with the `Moqui-User-Id` trailer of `author`, as a commit made through Moqui has.
-fn with_user_trailer(message: &str, author: &Author) -> String {
+pub(crate) fn with_user_trailer(message: &str, author: &Author) -> String {
     let mut message = message.trim_end().to_string();
     message.push('\n');
     if let Some(user_id) = &author.user_id {

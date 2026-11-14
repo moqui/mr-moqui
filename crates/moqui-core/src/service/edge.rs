@@ -43,6 +43,16 @@ pub(in crate::service) fn register(
     rust_service!(map, get_edge_domains)?;
     rust_service!(map, revoke_edge_client)?;
     rust_service!(map, ping_edge_client)?;
+    rust_service!(map, get_edge_members)?;
+    rust_service!(map, drain_edge_member)?;
+    rust_service!(map, get_local_cluster)?;
+    rust_service!(map, get_edge_balancing)?;
+    rust_service!(map, get_edge_cluster)?;
+    rust_service!(map, hold_new_members)?;
+    rust_service!(map, approve_edge_member)?;
+    rust_service!(map, clear_edge_takeover)?;
+    rust_service!(map, forget_edge_member)?;
+    rust_service!(map, deliver_items_again)?;
     rust_service!(map, get_edge_hosts)?;
     rust_service!(map, add_edge_host)?;
     rust_service!(map, remove_edge_host)?;
@@ -89,6 +99,8 @@ fn put_edge(out: &mut BTreeMap<String, Value>, edge: &EdgeInfo) {
     out.insert("publicNames".to_string(), strings(&edge.public_names));
     out.insert("mediaAddress".to_string(), Value::string(&edge.media_address));
     out.insert("turnUrls".to_string(), strings(&edge.turn_urls));
+    // its role: a front node is kept as this node's front pairing (plans/Edge-Node2.md §4.7)
+    out.insert("edgeRole".to_string(), Value::string(&edge.role));
     out.insert("compatible".to_string(), Value::Bool(edge.compatible));
     out.insert("message".to_string(), Value::string(&edge.message));
 }
@@ -104,12 +116,23 @@ fn generation(value: u64) -> Value {
 /// `get#LinkStatus`: the local node's link.
 fn get_link_status(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
     let mut out = BTreeMap::new();
+    let role = crate::edge::node_role_kind();
+    out.insert("nodeRole".to_string(), Value::string(role.as_str()));
+    // any role takes links (plans/Edge-Node2.md §4.3): what a screen asks rather than the role's names
+    out.insert("takesLinks".to_string(), Value::Bool(role.takes_links()));
+    // paired with a front node alone (plans/Edge-Node2.md §4.7), by what pairing wrote: the other node's role in the
+    // status is empty until its link first comes up
     out.insert(
-        "nodeRole".to_string(),
-        Value::string(crate::edge::node_role_kind().as_str()),
+        "frontOnly".to_string(),
+        Value::Bool(front_only(
+            &moqui_lib::env::get_prop_or_env(crate::edge::NODE_URL),
+            &moqui_lib::env::get_prop_or_env(crate::edge::FRONT_URL),
+        )),
     );
-    let Ok(link) = crate::edge::link() else {
-        let (state, error) = unlinked(crate::build_info::has_feature("edge"));
+    // a link installed with its HTTPS listener off serves no links: as with none started
+    let Some(link) = crate::edge::link().ok().filter(|link| link.serving()) else {
+        let built = crate::build_info::has_feature("edge") || crate::edge::link().is_ok();
+        let (state, error) = unlinked(built);
         out.insert("state".to_string(), Value::string(state));
         out.insert("lastError".to_string(), Value::string(error));
         return Ok(out);
@@ -124,7 +147,185 @@ fn get_link_status(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacade
     out.insert("reconnects".to_string(), generation(status.reconnects));
     out.insert("linkFingerprint".to_string(), Value::string(&status.link_fingerprint));
     put_edge(&mut out, &status.peer);
+    // its link to each member of its edge cluster (plans/Edge-Node2.md §4.6)
+    let members = status
+        .members
+        .iter()
+        .map(|member| {
+            let mut row = indexmap::IndexMap::default();
+            row.insert("instanceId".to_string(), Value::string(&member.instance_id));
+            row.insert("url".to_string(), Value::string(&member.url));
+            row.insert("state".to_string(), Value::string(member.state.as_str()));
+            row.insert("generation".to_string(), generation(member.generation));
+            row.insert("rttMs".to_string(), member.rtt_ms.map_or(Value::Null, Value::F64));
+            row.insert("lastConnectDate".to_string(), millis(member.last_connect));
+            row.insert("lastError".to_string(), Value::string(&member.last_error));
+            row.insert("reconnects".to_string(), generation(member.reconnects));
+            row.insert("carriesWork".to_string(), Value::Bool(member.carries_work));
+            row.insert("retired".to_string(), Value::Bool(member.retired));
+            Value::Map(row)
+        })
+        .collect();
+    out.insert("edgeMemberList".to_string(), Value::List(members));
+    // its front pairing beside the edge pairing (plans/Edge-Node2.md §4.7); a node paired with a front alone shows it
+    // above as its only link too
+    if let Some(front) = link.front_status() {
+        out.insert("frontState".to_string(), Value::string(front.state.as_str()));
+        out.insert("frontUrl".to_string(), Value::string(&front.url));
+        out.insert("frontName".to_string(), Value::string(&front.peer.name));
+        out.insert("frontFingerprint".to_string(), Value::string(&front.peer.fingerprint));
+        out.insert("frontLastError".to_string(), Value::string(&front.last_error));
+        out.insert("frontLastConnectDate".to_string(), millis(front.last_connect));
+    }
     Ok(out)
+}
+
+/// `get#EdgeCluster`: on a node that takes links, the members of its cluster with their link addresses
+/// (`edge_link_url`), live or not; its Hello answer lists the live ones to local nodes (plans/Edge-Node2.md §4.6).
+///
+/// Where no link serves (none installed, or its HTTPS listener off) the same list from the rows and this node's own
+/// properties, so System › Edge Clients › Edge cluster shows it; on a node that takes no links, refused.
+fn get_edge_cluster(_parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    takes_links("an edge cluster")?;
+    let members = match crate::edge::serving_link() {
+        Some(link) => link.edge_cluster()?,
+        None => cluster_rows()?,
+    };
+    // which member registers the SIP trunks (plans/Edge-Node2.md §4.6, SIP)
+    let registrar = {
+        let factory = current_factory()?;
+        let own = members
+            .iter()
+            .find(|member| member.this_member)
+            .map(|member| member.instance_id.clone())
+            .unwrap_or_default();
+        crate::edge::cluster_list::trunk_registrar(&factory, facade, &own)
+    };
+    let members = members
+        .iter()
+        .map(|member| {
+            let mut row = indexmap::IndexMap::default();
+            row.insert("instanceId".to_string(), Value::string(&member.instance_id));
+            row.insert("linkUrl".to_string(), Value::string(&member.link_url));
+            // what the Hello answer sends: an address that is not usable goes as none
+            row.insert(
+                "linkUrlUsable".to_string(),
+                Value::Bool(crate::edge::cluster_list::usable_link_url(&member.link_url).is_some()),
+            );
+            row.insert("live".to_string(), Value::Bool(member.live));
+            // u64::MAX is a member with no heartbeat written
+            row.insert(
+                "heartbeatAgeMs".to_string(),
+                i64::try_from(member.heartbeat_age_ms).map_or(Value::Null, Value::I64),
+            );
+            row.insert("version".to_string(), Value::string(&member.version));
+            row.insert("thisMember".to_string(), Value::Bool(member.this_member));
+            row.insert(
+                "registersTrunks".to_string(),
+                Value::Bool(registrar.as_deref() == Some(member.instance_id.as_str())),
+            );
+            Value::Map(row)
+        })
+        .collect();
+    // the front node this node (and so its cluster, which shares its .env) is paired with (plans/Edge-Node2.md §4.10)
+    // from the front dialer when one runs, else from what pairing wrote (the link not serving, or its dialer not
+    // started)
+    let running = crate::edge::serving_link().and_then(|link| link.front_status());
+    let front = front_rows(
+        running.as_ref(),
+        &moqui_lib::env::get_prop_or_env(crate::edge::FRONT_URL),
+        &moqui_lib::env::get_prop_or_env(crate::edge::FRONT_ID),
+    );
+    Ok(BTreeMap::from([
+        ("memberList".to_string(), Value::List(members)),
+        ("frontList".to_string(), Value::List(front)),
+    ]))
+}
+
+/// Whether a node with `edge_url` (`edge_node_url`) and `front_url` (`front_node_url`) is paired with a front node
+/// alone.
+fn front_only(edge_url: &str, front_url: &str) -> bool {
+    edge_url.trim().is_empty() && !front_url.trim().is_empty()
+}
+
+/// `get#EdgeCluster`'s `frontList`: this node's link to each front node of its front pairing (plans/Edge-Node2.md
+/// §4.7), from `front` when a link serves (its link to each member of the front's cluster, else the one link), else
+/// from what pairing wrote, `url` (`front_node_url`) and `ids` (`front_node_id`), as one row `notStarted`; none without
+/// a front pairing.
+fn front_rows(front: Option<&crate::edge::LinkStatus>, url: &str, ids: &str) -> Vec<Value> {
+    struct Link<'a> {
+        instance_id: &'a str,
+        url: &'a str,
+        state: &'a str,
+        rtt_ms: Option<f64>,
+        last_connect: Option<i64>,
+        last_error: &'a str,
+    }
+    let row = |link: Link, peer: &EdgeInfo| {
+        let mut row = indexmap::IndexMap::default();
+        row.insert("instanceId".to_string(), Value::string(link.instance_id));
+        row.insert("url".to_string(), Value::string(link.url));
+        row.insert("state".to_string(), Value::string(link.state));
+        row.insert("rttMs".to_string(), link.rtt_ms.map_or(Value::Null, Value::F64));
+        row.insert("lastConnectDate".to_string(), millis(link.last_connect));
+        row.insert("lastError".to_string(), Value::string(link.last_error));
+        row.insert("frontName".to_string(), Value::string(&peer.name));
+        row.insert("fingerprint".to_string(), Value::string(&peer.fingerprint));
+        Value::Map(row)
+    };
+    match front {
+        Some(front) if front.members.is_empty() => vec![row(
+            Link {
+                instance_id: "",
+                url: &front.url,
+                state: front.state.as_str(),
+                rtt_ms: front.rtt_ms,
+                last_connect: front.last_connect,
+                last_error: &front.last_error,
+            },
+            &front.peer,
+        )],
+        Some(front) => front
+            .members
+            .iter()
+            .map(|member| {
+                row(
+                    Link {
+                        instance_id: &member.instance_id,
+                        url: &member.url,
+                        state: member.state.as_str(),
+                        rtt_ms: member.rtt_ms,
+                        last_connect: member.last_connect,
+                        last_error: &member.last_error,
+                    },
+                    &front.peer,
+                )
+            })
+            .collect(),
+        None if !url.trim().is_empty() => vec![row(
+            Link {
+                instance_id: ids.trim(),
+                url: url.trim(),
+                state: "notStarted",
+                rtt_ms: None,
+                last_connect: None,
+                last_error: "",
+            },
+            &EdgeInfo::default(),
+        )],
+        None => Vec::new(),
+    }
+}
+
+/// This node's cluster as `get#EdgeCluster` lists it with no link serving: this member's address is its
+/// `edge_link_url` as it is now.
+fn cluster_rows() -> Result<Vec<crate::edge::EdgeClusterMember>, LibError> {
+    let factory = current_factory()?;
+    let facade = factory
+        .entity()
+        .ok_or_else(|| LibError::new("the entity facade is not installed"))?;
+    let own_url = moqui_lib::env::get_prop_or_env(crate::cluster::EDGE_LINK_URL_PROPERTY);
+    crate::edge::cluster_list::members(&factory, &facade, &crate::edge::pool::own_id(&factory), own_url.trim())
 }
 
 /// The state and error of `get#LinkStatus` with no link installed: `notBuilt` when this build has no edge link,
@@ -161,9 +362,14 @@ fn pair_edge_node(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) 
     Ok(out)
 }
 
-/// `unpair#EdgeNode`: revoke this node's key on the edge node and forget the link.
-fn unpair_edge_node(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
-    crate::edge::link()?.unpair()?;
+/// `unpair#EdgeNode`: revoke this node's key on the edge node and forget the link; with `front` true, its front
+/// pairing's (plans/Edge-Node2.md §4.7).
+fn unpair_edge_node(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+    if flag(parameters, "front") {
+        crate::edge::link()?.unpair_front()?;
+    } else {
+        crate::edge::link()?.unpair()?;
+    }
     Ok(BTreeMap::new())
 }
 
@@ -210,6 +416,19 @@ fn client_value(client: &EdgeClientInfo) -> Value {
         "queueMaxMegabytes".to_string(),
         client.queue_max_megabytes.map_or(Value::Null, Value::I64),
     );
+    row.insert(
+        "membersLinked".to_string(),
+        Value::I64(i64::from(client.members_linked)),
+    );
+    row.insert("lastMemberId".to_string(), Value::string(&client.last_member_id));
+    row.insert("holdNewMember".to_string(), Value::Bool(client.hold_new_member));
+    row.insert(
+        "approvedMemberId".to_string(),
+        Value::string(&client.approved_member_id),
+    );
+    row.insert("takeoverDate".to_string(), millis(client.takeover_date));
+    row.insert("takeoverFromId".to_string(), Value::string(&client.takeover_from_id));
+    row.insert("takeoverToId".to_string(), Value::string(&client.takeover_to_id));
     Value::Map(row)
 }
 
@@ -220,18 +439,18 @@ fn takes_links(what: &str) -> Result<(), LibError> {
         Ok(())
     } else {
         Err(LibError::new(format!(
-            "only a node that takes links (node_role edge or all-in-one) has {what}"
+            "only a node that takes links (a node_role set) has {what}"
         )))
     }
 }
 
-/// The pairings with their live links; on a node that takes links where no link is installed (no listener started
-/// it), their rows alone, so the screens show them. An installed link's own error is the answer.
+/// The pairings with their live links; on a node that takes links where no link serves (none installed, or its HTTPS
+/// listener off), their rows alone, so the screens show them. An installed link's own error is the answer.
 fn clients(facade: &EntityFacade) -> Result<Vec<EdgeClientInfo>, LibError> {
-    match crate::edge::link() {
-        Ok(link) => link.clients(),
-        Err(_) if crate::edge::takes_links() => crate::edge::hosts::clients(facade),
-        Err(err) => Err(err),
+    match crate::edge::serving_link() {
+        Some(link) => link.clients(),
+        None if crate::edge::takes_links() => crate::edge::hosts::clients(facade),
+        None => crate::edge::link()?.clients(),
     }
 }
 
@@ -354,11 +573,318 @@ fn revoke_edge_client(parameters: &BTreeMap<String, Value>, _facade: &EntityFaca
     Ok(BTreeMap::from([("revoked".to_string(), Value::Bool(revoked))]))
 }
 
-/// `ping#EdgeClient`: on an edge node, a Ping down a local node's down connection.
+/// `ping#EdgeClient`: on an edge node, a Ping down a local node's down connection: of member `instanceId` when given,
+/// else of a member that takes work.
 fn ping_edge_client(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
     let paired_node_id = required(parameters, "pairedNodeId")?;
-    let rtt = crate::edge::link()?.ping_client(&paired_node_id)?;
+    let rtt = match text(parameters, "instanceId") {
+        Some(member) => crate::edge::link()?.ping_member(&paired_node_id, &member)?,
+        None => crate::edge::link()?.ping_client(&paired_node_id)?,
+    };
     Ok(BTreeMap::from([("rttMs".to_string(), Value::F64(rtt))]))
+}
+
+fn member_value(member: &crate::edge::PoolMemberInfo) -> Value {
+    let mut row = indexmap::IndexMap::default();
+    row.insert("pairedNodeId".to_string(), Value::string(&member.paired_node_id));
+    row.insert("instanceId".to_string(), Value::string(&member.instance_id));
+    row.insert("linked".to_string(), Value::Bool(member.linked));
+    row.insert("down".to_string(), Value::Bool(member.down));
+    row.insert("generation".to_string(), generation(member.generation));
+    row.insert("remoteAddress".to_string(), Value::string(&member.remote_address));
+    row.insert("state".to_string(), Value::string(&member.state));
+    row.insert("binaryVersion".to_string(), Value::string(&member.binary_version));
+    row.insert("inCluster".to_string(), Value::Bool(member.in_cluster));
+    row.insert("liveInCluster".to_string(), Value::Bool(member.live_in_cluster));
+    row.insert(
+        "heartbeatAgeMs".to_string(),
+        member
+            .heartbeat_age_ms
+            .map_or(Value::Null, |age| Value::I64(i64::try_from(age).unwrap_or(i64::MAX))),
+    );
+    row.insert("version".to_string(), Value::string(&member.version));
+    row.insert("condition".to_string(), Value::string(&member.condition));
+    row.insert("message".to_string(), Value::string(&member.message));
+    row.insert("lastSeenDate".to_string(), millis(member.last_seen));
+    Value::Map(row)
+}
+
+/// `get#EdgeMembers`: on an edge node, the members of each pairing (of one with `pairedNodeId`), from the links, the
+/// member lists they send and the nodes refused or held lately (plans/Edge-Node2.md §4.4). On a node that takes links
+/// where no link serves (none installed, or its HTTPS listener off) none is linked and no list came, so there are none.
+fn get_edge_members(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+    takes_links("pool members")?;
+    let node = text(parameters, "pairedNodeId");
+    let members = match crate::edge::serving_link() {
+        Some(link) => link.members(node.as_deref())?,
+        None => Vec::new(),
+    };
+    Ok(BTreeMap::from([(
+        "memberList".to_string(),
+        Value::List(members.iter().map(member_value).collect()),
+    )]))
+}
+
+/// `get#EdgeBalancing`: on an edge node, balancing's defaults (the sticky cookie, the set-aside failures and time)
+/// and each member's requests in flight and in all, failures in a row and set-asides (plans/Edge-Node2.md §4.10
+/// Balancing), of one pairing with `pairedNodeId`.
+///
+/// On a node that takes links where no link serves (none installed, or its HTTPS listener off), the conf's defaults and no members,
+/// so the screens show them; on any other node, refused.
+fn get_edge_balancing(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+    takes_links("balancing")?;
+    let node = text(parameters, "pairedNodeId");
+    let info = match crate::edge::serving_link() {
+        Some(link) => link.balancing(node.as_deref())?,
+        None => {
+            let factory = current_factory()?;
+            let settings = crate::edge::settings(&factory);
+            crate::edge::BalancingInfo {
+                sticky_cookie: settings.sticky_cookie.clone(),
+                set_aside_failures: settings.set_aside_failures,
+                set_aside_seconds: settings.set_aside_for.as_secs(),
+                members: Vec::new(),
+            }
+        }
+    };
+    let count = |value: u64| Value::I64(i64::try_from(value).unwrap_or(i64::MAX));
+    let members = info
+        .members
+        .iter()
+        .map(|member| {
+            let mut row = indexmap::IndexMap::default();
+            row.insert("pairedNodeId".to_string(), Value::string(&member.paired_node_id));
+            row.insert("instanceId".to_string(), Value::string(&member.instance_id));
+            row.insert("linked".to_string(), Value::Bool(member.linked));
+            row.insert("state".to_string(), Value::string(&member.state));
+            row.insert("takesWork".to_string(), Value::Bool(member.takes_work));
+            row.insert("inFlight".to_string(), count(member.in_flight));
+            row.insert("requests".to_string(), count(member.requests));
+            row.insert("failuresInRow".to_string(), count(u64::from(member.failures_in_row)));
+            row.insert("setAsides".to_string(), count(member.set_asides));
+            row.insert("setAside".to_string(), Value::Bool(member.set_aside_until.is_some()));
+            row.insert("setAsideUntil".to_string(), millis(member.set_aside_until));
+            Value::Map(row)
+        })
+        .collect();
+    Ok(BTreeMap::from([
+        ("stickyCookie".to_string(), Value::string(&info.sticky_cookie)),
+        (
+            "setAsideFailures".to_string(),
+            count(u64::from(info.set_aside_failures)),
+        ),
+        ("setAsideSeconds".to_string(), count(info.set_aside_seconds)),
+        ("memberList".to_string(), Value::List(members)),
+    ]))
+}
+
+/// `drain#EdgeMember`: drain a member, or bring it back with `drain` false (plans/Edge-Node2.md §4.4, health). On an
+/// edge node the member named by `pairedNodeId` and `instanceId` is asked down its link; on a local node this node
+/// drains itself and tells its links. The state is the member's; the edge node keeps nothing.
+fn drain_edge_member(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+    let factory = current_factory()?;
+    let drain = !parameters.contains_key("drain") || flag(parameters, "drain");
+    // node_role as it is now, as the other services read it (the kept settings hold the role of their first read)
+    let state = if crate::edge::takes_links() {
+        let node = required(parameters, "pairedNodeId")?;
+        let member = required(parameters, "instanceId")?;
+        crate::edge::link()?.drain_member(&node, &member, drain)?
+    } else {
+        let state = crate::edge::pool::set_drained(&factory, drain)?;
+        if let Ok(link) = crate::edge::link() {
+            link.state_changed();
+        }
+        state
+    };
+    Ok(BTreeMap::from([("state".to_string(), Value::string(state.as_str()))]))
+}
+
+/// `get#LocalCluster`: on a local node, this member and its cluster as its links tell the edge node
+/// (plans/Edge-Node2.md §4.4, §4.10 "On a local node"): its instance id and state, the pairing it is known by, and each
+/// member of its cluster with its heartbeat's age, whether it is live and its version. The rows come from this node's
+/// database, so the list is there with the link down too.
+fn get_local_cluster(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+    let factory = current_factory()?;
+    let own = crate::edge::pool::own_id(&factory);
+    let state = crate::edge::pool::member_state(&factory);
+    let members: Vec<Value> = crate::edge::pool::cluster_members(&factory)
+        .iter()
+        .map(|member| {
+            let mut row = indexmap::IndexMap::default();
+            row.insert("instanceId".to_string(), Value::string(&member.instance_id));
+            row.insert("own".to_string(), Value::Bool(member.instance_id == own));
+            row.insert("live".to_string(), Value::Bool(member.live));
+            // u64::MAX is a member with no heartbeat written
+            row.insert(
+                "heartbeatAgeMs".to_string(),
+                i64::try_from(member.heartbeat_age_ms).map_or(Value::Null, Value::I64),
+            );
+            row.insert("version".to_string(), Value::string(&member.version));
+            Value::Map(row)
+        })
+        .collect();
+    let pairing = moqui_lib::env::get_prop_or_env(crate::edge::NODE_PAIRING);
+    Ok(BTreeMap::from([
+        ("instanceId".to_string(), Value::string(&own)),
+        ("state".to_string(), Value::string(state.as_str())),
+        ("pairingId".to_string(), Value::string(pairing.trim())),
+        ("memberList".to_string(), Value::List(members)),
+    ]))
+}
+
+/// The paired node `node`'s row, set with `fields`; false when there is none.
+fn update_client(facade: &EntityFacade, node: &str, fields: &[(&str, Value)]) -> Result<bool, LibError> {
+    let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::disable_authz);
+    let found = facade
+        .find("moqui.edge.EdgeClient")?
+        .eq("pairedNodeId", Value::string(node))
+        .disable_authz()
+        .one()?;
+    if found.is_none() {
+        return Ok(false);
+    }
+    let mut row = facade.make_value("moqui.edge.EdgeClient")?;
+    row.set("pairedNodeId", Value::string(node));
+    for (name, value) in fields {
+        row.set(*name, value.clone());
+    }
+    row.update(facade)?;
+    Ok(true)
+}
+
+/// `hold#NewMembers`: on an edge node, whether a new node taking pairing `pairedNodeId` over is held for approval
+/// (plans/Edge-Node2.md §4.5) rather than admitted with a notice.
+fn hold_new_members(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    takes_links("pairings")?;
+    let node = required(parameters, "pairedNodeId")?;
+    let hold = flag(parameters, "hold");
+    let updated = update_client(
+        facade,
+        &node,
+        &[("holdNewMember", Value::string(if hold { "Y" } else { "N" }))],
+    )?;
+    if !updated {
+        return Err(LibError::new(format!("{node} is not paired with this edge node")));
+    }
+    tracing::warn!(
+        "Edge node: a new node taking pairing {node} over is {}",
+        if hold {
+            "held for approval"
+        } else {
+            "admitted with a notice"
+        }
+    );
+    Ok(BTreeMap::from([("hold".to_string(), Value::Bool(hold))]))
+}
+
+/// `approve#EdgeMember`: on an edge node, approve the new node `instanceId` held for taking pairing `pairedNodeId`
+/// over (plans/Edge-Node2.md §4.5); its next link is admitted, as a takeover with its notice.
+fn approve_edge_member(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    takes_links("pairings")?;
+    let node = required(parameters, "pairedNodeId")?;
+    let member = required(parameters, "instanceId")?;
+    if !crate::edge::pool::valid_member_id(&member) {
+        return Err(LibError::new("instanceId is not an instance id"));
+    }
+    let updated = update_client(facade, &node, &[("approvedMemberId", Value::string(&member))])?;
+    if !updated {
+        return Err(LibError::new(format!("{node} is not paired with this edge node")));
+    }
+    tracing::warn!("Edge node: {member} is approved to take over pairing {node}");
+    Ok(BTreeMap::from([("approved".to_string(), Value::Bool(true))]))
+}
+
+/// `clear#EdgeTakeover`: on an edge node, let the node the last takeover of pairing `pairedNodeId` displaced link
+/// again (plans/Edge-Node2.md §4.5): until then it is refused, so the link does not go back and forth between two copies
+/// of the data. The takeover's date and nodes stay for Clients.
+fn clear_edge_takeover(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    takes_links("pairings")?;
+    let node = required(parameters, "pairedNodeId")?;
+    if !update_client(facade, &node, &[("takeoverFromId", Value::Null)])? {
+        return Err(LibError::new(format!("{node} is not paired with this edge node")));
+    }
+    tracing::warn!("Edge node: the node displaced from pairing {node} may link again");
+    Ok(BTreeMap::from([("cleared".to_string(), Value::Bool(true))]))
+}
+
+/// `forget#EdgeMember`: on an edge node, forget the key pinned for member `instanceId` of pairing `pairedNodeId`
+/// (plans/Edge-Node2.md §4.11), as for a member made again with a new key: its next link is a new node's.
+fn forget_edge_member(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    takes_links("pairings")?;
+    let node = required(parameters, "pairedNodeId")?;
+    let member = required(parameters, "instanceId")?;
+    let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::disable_authz);
+    if !crate::edge::pool::valid_member_id(&member) {
+        return Err(LibError::new("instanceId is not an instance id"));
+    }
+    // read for update in the service's transaction, so a link's pin made meanwhile is not lost
+    let row = facade
+        .find("moqui.edge.EdgeClient")?
+        .eq("pairedNodeId", Value::string(&node))
+        .for_update(true)
+        .disable_authz()
+        .one()?
+        .ok_or_else(|| LibError::new(format!("{node} is not paired with this edge node")))?;
+    let pins = crate::edge::pool::pinned_keys(&row.get("memberKeys").map(to_plain_string).unwrap_or_default());
+    let forgot = pins.iter().any(|(id, _)| *id == member) && !crate::edge::pool::forgotten(&pins, &member);
+    // kept as forgotten, not removed: with none linked an id with no key pinned would come back as the last member
+    update_client(
+        facade,
+        &node,
+        &[(
+            "memberKeys",
+            Value::string(crate::edge::pool::forget_key(&pins, &member)),
+        )],
+    )?;
+    tracing::warn!(
+        "Edge node: the key of member {member} of pairing {node} is forgotten; its next link is a new node's"
+    );
+    // its live link closes once this is committed, so the link that comes back finds the key forgotten
+    let close = move || {
+        if let Ok(link) = crate::edge::link() {
+            link.member_forgotten(&node, &member);
+        }
+    };
+    match facade
+        .transactions_for("moqui.edge.EdgeClient")
+        .ok()
+        .filter(|tx| tx.in_transaction())
+    {
+        Some(tx) => {
+            if let Err(err) = tx.on_commit(close) {
+                tracing::warn!("Edge node: the forgotten member's link is not closed after commit: {err}");
+            }
+        }
+        None => close(),
+    }
+    Ok(BTreeMap::from([("forgotten".to_string(), Value::Bool(forgot))]))
+}
+
+/// `deliver#ItemsAgain`: queue again the items delivered to pairing `pairedNodeId` since `sinceDate`
+/// (plans/Edge-Node2.md §4.5, "Deliver again since"), as after a standby was restored from a backup; receipts make an
+/// item its node has applied do nothing.
+fn deliver_items_again(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    takes_links("pairings' queues")?;
+    let factory = current_factory()?;
+    let node = required(parameters, "pairedNodeId")?;
+    let since = parameters
+        .get("sinceDate")
+        .and_then(crate::user::value_millis)
+        .ok_or_else(|| LibError::new("sinceDate is required, a date and time"))?;
+    let settings = crate::edge::settings(&factory);
+    let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::disable_authz);
+    if facade
+        .find("moqui.edge.EdgeClient")?
+        .eq("pairedNodeId", Value::string(&node))
+        .disable_authz()
+        .one()?
+        .is_none()
+    {
+        return Err(LibError::new(format!("{node} is not paired with this edge node")));
+    }
+    let count = crate::edge::queue::deliver_again_since(facade, &settings, &node, since)?;
+    tracing::warn!("Edge node: {count} items delivered to pairing {node} are queued again");
+    Ok(BTreeMap::from([("itemCount".to_string(), Value::I64(count))]))
 }
 
 fn host_value(host: &EdgeHostInfo) -> Value {
@@ -366,23 +892,47 @@ fn host_value(host: &EdgeHostInfo) -> Value {
     row.insert("hostName".to_string(), Value::string(&host.host_name));
     row.insert("pairedNodeId".to_string(), Value::string(&host.paired_node_id));
     row.insert("modeEnumId".to_string(), Value::string(&host.mode_enum_id));
+    row.insert(
+        "stickyCookie".to_string(),
+        Value::string(host.sticky_cookie.as_deref().unwrap_or_default()),
+    );
     Value::Map(row)
 }
 
 /// `get#EdgeHosts`: on a node that takes links, the public host names of the paired nodes (of one with
-/// `pairedNodeId`).
+/// `pairedNodeId`); an edge member's link name on a front (plans/Edge-Node2.md §4.7) with its `memberId`.
 fn get_edge_hosts(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
     takes_links("host names")?;
     let node = text(parameters, "pairedNodeId");
     let hosts = crate::edge::hosts::list(facade, node.as_deref())?;
-    Ok(BTreeMap::from([(
-        "hostList".to_string(),
-        Value::List(hosts.iter().map(host_value).collect()),
-    )]))
+    let members: BTreeMap<String, String> = if hosts
+        .iter()
+        .any(|host| host.mode_enum_id == crate::edge::HOST_LINK_NAME)
+    {
+        crate::edge::hosts::link_names(facade)?
+            .into_iter()
+            .map(|name| (name.host_name, name.member_id))
+            .collect()
+    } else {
+        BTreeMap::new()
+    };
+    let rows = hosts
+        .iter()
+        .map(|host| {
+            let mut row = host_value(host);
+            if let (Value::Map(map), Some(member)) = (&mut row, members.get(&host.host_name)) {
+                map.insert("memberId".to_string(), Value::string(member));
+            }
+            row
+        })
+        .collect();
+    Ok(BTreeMap::from([("hostList".to_string(), Value::List(rows))]))
 }
 
 /// `add#EdgeHost`: on a node that takes links, a public host name for a paired node, passthrough unless `modeEnumId`
-/// says terminate; for a name the node has already, its mode changes. The edge link loads its table again.
+/// says terminate; for a name the node has already, its mode changes. `stickyCookie`, when given, is the cookie its
+/// requests are sticky by (empty for the conf's, plans/Edge-Node2.md §4.4); left out, the name keeps its own. The edge
+/// link loads its table again.
 fn add_edge_host(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
     takes_links("host names")?;
     let mode = text(parameters, "modeEnumId").unwrap_or_else(|| HOST_PASSTHROUGH.to_string());
@@ -395,6 +945,9 @@ fn add_edge_host(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) ->
         host_name: required(parameters, "hostName")?,
         paired_node_id: required(parameters, "pairedNodeId")?,
         mode_enum_id: mode,
+        sticky_cookie: parameters
+            .get("stickyCookie")
+            .map(|cookie| to_plain_string(cookie).trim().to_string()),
     };
     let saved = crate::edge::hosts::add(facade, &host)?;
     tracing::info!(
@@ -406,10 +959,14 @@ fn add_edge_host(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) ->
     if let Ok(link) = crate::edge::link() {
         link.hosts_changed();
     }
-    Ok(BTreeMap::from([
+    let mut out = BTreeMap::from([
         ("hostName".to_string(), Value::string(&saved.host_name)),
         ("modeEnumId".to_string(), Value::string(&saved.mode_enum_id)),
-    ]))
+    ]);
+    if let Some(cookie) = &saved.sticky_cookie {
+        out.insert("stickyCookie".to_string(), Value::string(cookie));
+    }
+    Ok(out)
 }
 
 /// `remove#EdgeHost`: on a node that takes links, remove a public host name; the edge link loads its table again.
@@ -823,6 +1380,7 @@ fn host_list(parameters: &BTreeMap<String, Value>) -> Vec<EdgeHostInfo> {
                 host_name: name,
                 paired_node_id: String::new(),
                 mode_enum_id: HOST_PASSTHROUGH.to_string(),
+                sticky_cookie: None,
             })
             .collect();
     };
@@ -845,6 +1403,7 @@ fn host_list(parameters: &BTreeMap<String, Value>) -> Vec<EdgeHostInfo> {
                 } else {
                     mode.trim().to_string()
                 },
+                sticky_cookie: None,
             })
         })
         .collect()
@@ -882,6 +1441,7 @@ fn xmpp_choice(
                 host_name: domain.clone(),
                 paired_node_id: String::new(),
                 mode_enum_id: HOST_PASSTHROUGH.to_string(),
+                sticky_cookie: None,
             });
         }
         return Ok((domain, true));

@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- MR Moqui's own pipelines, for a server that hosts this repository (docs/interfaces/Pipelines.md; plans/Dogfood.md
+    §8.5). The jobs run in the moqui-build image (podman/Containerfile.build) in a pool named linux. The suites' rules
+    hold here as on a laptop (docs/Build-Test.md): the regression suite on every change, acceptance only nightly and
+    when asked, budgets not raised. A component's own repository needs no file: it gets the built-in pipeline. -->
+<ci xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/git-ci-3.xsd">
+    <!-- A push or a merge request: lint, the packages' feature sets, and the framework's regression suite -->
+    <pipeline name="check" on="push merge-request">
+        <env name="CARGO_BUILD_JOBS" value="4"/>
+        <env name="CARGO_TERM_COLOR" value="never"/>
+        <job name="lint" image="moqui-build" pool="linux" timeout-minutes="90">
+            <cache key="cargo-lint-${hash:Cargo.lock}-${hash:rust-toolchain.toml}" path="target"/>
+            <step run="cargo lint"/>
+            <step run="cargo lint-min"/>
+            <step run="scripts/check-packages.sh"/>
+        </job>
+        <job name="framework" image="moqui-build" pool="linux" timeout-minutes="180">
+            <cache key="cargo-test-${hash:Cargo.lock}-${hash:rust-toolchain.toml}" path="target"/>
+            <step run="./moq test-framework"/>
+        </job>
+    </pipeline>
+
+    <!-- A merge to main: the whole regression suite, with the components addons.xml names -->
+    <pipeline name="main" on="push manual" branches="master main">
+        <env name="CARGO_BUILD_JOBS" value="4"/>
+        <job name="regression" image="moqui-build" pool="linux" timeout-minutes="300">
+            <cache key="cargo-test-${hash:Cargo.lock}-${hash:rust-toolchain.toml}" path="target"/>
+            <step name="Get the components" run="./moq component-get"/>
+            <step run="./moq test-all"/>
+        </job>
+    </pipeline>
+
+    <!-- Nightly, and by hand before a release: every acceptance test -->
+    <pipeline name="nightly" on="schedule manual" cron="0 0 3 * * ?">
+        <env name="CARGO_BUILD_JOBS" value="4"/>
+        <job name="acceptance" image="moqui-build" pool="linux" timeout-minutes="360">
+            <cache key="cargo-test-${hash:Cargo.lock}-${hash:rust-toolchain.toml}" path="target"/>
+            <step name="Get the components" run="./moq component-get"/>
+            <step run="./moq accept-all --junit test-results"/>
+            <report junit="test-results/*/*.xml"/>
+        </job>
+    </pipeline>
+
+    <!-- A tag: the release's archive, kept as an artifact of the run -->
+    <pipeline name="release" on="tag" tags="v*">
+        <env name="CARGO_BUILD_JOBS" value="4"/>
+        <job name="archive" image="moqui-build" pool="linux" timeout-minutes="180">
+            <step run="./moq build --release"/>
+            <step run="./moq archive dist/mr-moqui.zip"/>
+            <artifact name="mr-moqui" path="dist/*.zip" retention-days="365"/>
+        </job>
+    </pipeline>
+</ci>

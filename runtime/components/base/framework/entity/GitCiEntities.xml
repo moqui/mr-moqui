@@ -1,0 +1,301 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Pipelines (docs/interfaces/Pipelines.md, plans/Dogfood.md §8): the records of the CI engine, beside the hosting rows of
+    ResourceEntities.xml. No Java counterpart. Entity filters do not apply to moqui.* entities: these rows are read
+    through the services of org.moqui.git.GitCiServices, which check the repository's rights, and written by the
+    engine (crates/moqui-git/src/ci). States are plain codes, as GitCommitStatus.state is. -->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+    <entity entity-name="GitPipelineRun" package="moqui.resource" use="nontransactional" cache="never">
+        <description>One run of a pipeline for a commit of a repository: its jobs are GitJobRun rows.</description>
+        <field name="pipelineRunId" type="id" is-pk="true"/>
+        <field name="repositoryId" type="id"/>
+        <field name="runNum" type="number-integer"><description>Per repository from 1</description></field>
+        <field name="pipelineName" type="text-medium"/>
+        <field name="definitionSource" type="text-short"><description>file (ci.xml at the commit) or builtin (a
+            component repository with no ci.xml)</description></field>
+        <field name="event" type="text-short"><description>push, merge-request, tag, schedule, manual or deploy</description></field>
+        <field name="refName" type="text-medium"><description>The full ref the run is for (refs/heads/main,
+            refs/tags/v1); a merge request's target branch ref for its event</description></field>
+        <field name="commitId" type="text-short"/>
+        <field name="mergeRequestId" type="id"/>
+        <field name="sourceRepositoryId" type="id"><description>The fork a merge request comes from, when it does</description></field>
+        <field name="triggeredByUserId" type="id"/>
+        <field name="ownerId" type="id-long"><description>Whose secrets and usage the run counts under, as the
+            application's run check gave it (a group, an account); empty when it gave none</description></field>
+        <field name="trusted" type="text-indicator"><description>Y for a ref of the repository itself pushed or asked
+            for by an account with the update right. An untrusted run gets no secrets, reads caches and writes none,
+            and uses only a pool that takes untrusted runs.</description></field>
+        <field name="protectedRef" type="text-indicator"><description>Y when a branch rule names the ref (or, for a
+            merge request, never): a secret of the protected or tags scope is given only then</description></field>
+        <field name="hidden" type="text-indicator"><description>Y for a run of a hidden merge request's head: read
+            only with authorization disabled, or by the merge request's author</description></field>
+        <field name="approvalState" type="text-short"><description>none, waiting or approved</description></field>
+        <field name="approvedByUserId" type="id"/>
+        <field name="statusId" type="text-short" enable-audit-log="true"><description>waiting (for approval), queued,
+            running, success, failure, error or cancelled</description></field>
+        <field name="statusMessage" type="text-long"><description>Why it is an error, was refused or waits</description></field>
+        <field name="environmentId" type="id"/>
+        <field name="retryOfRunId" type="id"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="startedDate" type="date-time"/>
+        <field name="finishedDate" type="date-time"/>
+        <!-- No foreign key: delete#GitRepository does not know these rows (delete#RepositoryRuns removes them). -->
+        <relationship type="one-nofk" related="moqui.resource.GitRepository"/>
+        <relationship type="one-nofk" related="moqui.resource.GitMergeRequest"/>
+        <relationship type="one-nofk" title="TriggeredBy" related="moqui.security.UserAccount">
+            <key-map field-name="triggeredByUserId" related="userId"/></relationship>
+        <relationship type="many" related="moqui.resource.GitJobRun" short-alias="jobs">
+            <key-map field-name="pipelineRunId"/></relationship>
+        <index name="GIT_RUN_NUM" unique="true"><index-field name="repositoryId"/><index-field name="runNum"/></index>
+        <index name="GIT_RUN_COMMIT"><index-field name="repositoryId"/><index-field name="commitId"/></index>
+        <index name="GIT_RUN_STATUS"><index-field name="statusId"/></index>
+        <index name="GIT_RUN_MR"><index-field name="mergeRequestId"/></index>
+    </entity>
+    <entity entity-name="GitPipelineSchedule" package="moqui.resource" use="nontransactional" cache="never">
+        <description>A pipeline of a repository's default branch that runs on schedule, kept by the engine whenever
+            that branch moves, so the schedule job reads no file.</description>
+        <field name="repositoryId" type="id" is-pk="true"/>
+        <field name="pipelineName" type="text-medium" is-pk="true"/>
+        <field name="cron" type="text-medium"/>
+        <field name="refName" type="text-medium"><description>The branch it runs on</description></field>
+        <field name="lastCheckDate" type="date-time"><description>It runs when its cron came due after this</description></field>
+    </entity>
+    <entity entity-name="GitJobRun" package="moqui.resource" use="nontransactional" cache="never">
+        <description>One job of a pipeline run, run once in a container or on a registered runner. Its commit status
+            has the context ci/pipeline/job.</description>
+        <field name="jobRunId" type="id" is-pk="true"/>
+        <field name="pipelineRunId" type="id"/>
+        <field name="repositoryId" type="id"/>
+        <field name="jobName" type="text-medium"/>
+        <field name="matrixKey" type="text-medium"><description>The matrix values, joined by a comma and a space; empty with no matrix</description></field>
+        <field name="attempt" type="number-integer"><description>From 1; a retry makes a new row with the next</description></field>
+        <field name="superseded" type="text-indicator"><description>Y once a retry replaced it: the run's state and the
+            jobs that need it follow the newest attempt</description></field>
+        <field name="needs" type="text-long"><description>The job names it waits for, separated by spaces</description></field>
+        <field name="poolName" type="text-medium"><description>The pool the file asks for</description></field>
+        <field name="runnerPoolId" type="id"><description>The pool it runs in, once chosen</description></field>
+        <field name="runnerId" type="id"><description>The registered runner that took it</description></field>
+        <field name="image" type="text-medium"/>
+        <field name="statusId" type="text-short" enable-audit-log="true"><description>waiting (for the jobs it needs,
+            or for the run's approval), queued, running, success, failure, error, cancelled or skipped (a job it
+            needs did not succeed)</description></field>
+        <field name="statusMessage" type="text-long"/>
+        <field name="exitCode" type="number-integer"/>
+        <field name="timeoutMinutes" type="number-integer"/>
+        <field name="jobSpec" type="text-very-long"><description>The job as planned, JSON: what the runner is given</description></field>
+        <field name="instanceHostId" type="id"/>
+        <field name="instanceRef" type="text-medium"><description>The container's id on the host</description></field>
+        <field name="tokenHash" type="text-medium"><description>The SHA-256 of the job token; cleared when the job ends</description></field>
+        <field name="tokenExpireDate" type="date-time"/>
+        <field name="logBlobId" type="id-long"><description>The whole log, once the job has ended</description></field>
+        <field name="logBytes" type="number-integer"/>
+        <field name="nextChunkSeq" type="number-integer"><description>The sequence the next log chunk takes, from 1</description></field>
+        <field name="minutesUsed" type="number-integer"><description>Started minutes of runner time</description></field>
+        <field name="testCount" type="number-integer"/>
+        <field name="testFailedCount" type="number-integer"/>
+        <field name="commitStatusId" type="id"><description>The latest GitCommitStatus it wrote</description></field>
+        <field name="queuedDate" type="date-time"/>
+        <field name="startedDate" type="date-time"/>
+        <field name="lastContactDate" type="date-time"><description>When its runner last called</description></field>
+        <field name="finishedDate" type="date-time"/>
+        <relationship type="one" related="moqui.resource.GitPipelineRun"/>
+        <relationship type="one-nofk" related="moqui.resource.GitRepository"/>
+        <relationship type="one-nofk" related="moqui.resource.GitRunnerPool"/>
+        <!-- No foreign key: ContentBlob is in the content group, which may be another database. The relationship is what
+            keeps the blob from gc#ContentBlobs. -->
+        <relationship type="one-nofk" title="Log" related="moqui.resource.ContentBlob">
+            <key-map field-name="logBlobId" related="blobId"/></relationship>
+        <index name="GIT_JOB_PIPELINE"><index-field name="pipelineRunId"/></index>
+        <index name="GIT_JOB_STATUS"><index-field name="statusId"/><index-field name="runnerPoolId"/></index>
+        <index name="GIT_JOB_TOKEN"><index-field name="tokenHash"/></index>
+    </entity>
+    <entity entity-name="GitJobStep" package="moqui.resource" use="nontransactional" cache="never">
+        <field name="jobRunId" type="id" is-pk="true"/>
+        <field name="stepSeq" type="number-integer" is-pk="true"><description>From 1, in the job's order</description></field>
+        <field name="stepName" type="text-medium"/>
+        <field name="command" type="text-very-long"/>
+        <field name="statusId" type="text-short"><description>pending, running, success, failure or skipped</description></field>
+        <field name="exitCode" type="number-integer"/>
+        <field name="firstChunkSeq" type="number-integer"><description>The first log chunk of the step</description></field>
+        <field name="startedDate" type="date-time"/>
+        <field name="finishedDate" type="date-time"/>
+        <relationship type="one" related="moqui.resource.GitJobRun"/>
+    </entity>
+    <entity entity-name="GitRunLogChunk" package="moqui.resource" use="nontransactional" cache="never">
+        <description>Lines of a running job's log, as its runner sent them, secrets masked. Removed when the job ends
+            and its log becomes one content blob (GitJobRun.logBlobId).</description>
+        <field name="jobRunId" type="id" is-pk="true"/>
+        <field name="chunkSeq" type="number-integer" is-pk="true"/>
+        <field name="stepSeq" type="number-integer"/>
+        <field name="byteOffset" type="number-integer"><description>Where the chunk starts in the whole log</description></field>
+        <field name="chunkText" type="text-very-long"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one" related="moqui.resource.GitJobRun"/>
+    </entity>
+    <entity entity-name="GitRunArtifact" package="moqui.resource" use="nontransactional" cache="never">
+        <description>A file a job uploaded, a content blob: an artifact (a tar.gz of the files), a report (one JUnit
+            XML file) or a cache (a tar.gz of the directory, by key).</description>
+        <field name="artifactId" type="id" is-pk="true"/>
+        <field name="jobRunId" type="id"/>
+        <field name="pipelineRunId" type="id"/>
+        <field name="repositoryId" type="id"/>
+        <field name="artifactKind" type="text-short"><description>artifact, report or cache</description></field>
+        <field name="name" type="text-medium"/>
+        <field name="path" type="text-medium"/>
+        <field name="blobId" type="id-long"/>
+        <field name="sizeBytes" type="number-integer"/>
+        <field name="sha256" type="id-long"/>
+        <field name="cacheKey" type="text-medium"><description>A cache's key, hashes and matrix values expanded</description></field>
+        <field name="protectedRef" type="text-indicator"><description>A cache written by a run for a protected ref:
+            such a run reads only these, and any other run reads both</description></field>
+        <field name="keep" type="text-indicator"><description>Y: not removed when it expires</description></field>
+        <field name="expireDate" type="date-time"/>
+        <field name="lastUsedDate" type="date-time"><description>When a cache was last restored</description></field>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.resource.GitJobRun"/>
+        <relationship type="one-nofk" related="moqui.resource.GitRepository"/>
+        <relationship type="one-nofk" related="moqui.resource.ContentBlob"/>
+        <index name="GIT_ARTIFACT_JOB"><index-field name="jobRunId"/></index>
+        <index name="GIT_ARTIFACT_CACHE"><index-field name="repositoryId"/><index-field name="artifactKind"/><index-field name="cacheKey"/></index>
+        <index name="GIT_ARTIFACT_EXPIRE"><index-field name="expireDate"/></index>
+    </entity>
+    <entity entity-name="GitRunTestFailure" package="moqui.resource" use="nontransactional" cache="never">
+        <description>A test that failed in a job, from its JUnit reports.</description>
+        <field name="jobRunId" type="id" is-pk="true"/>
+        <field name="testSeq" type="number-integer" is-pk="true"/>
+        <field name="suiteName" type="text-medium"/>
+        <field name="testName" type="text-medium"/>
+        <field name="filePath" type="text-medium"/>
+        <field name="lineNumber" type="number-integer"/>
+        <field name="message" type="text-long"/>
+        <field name="durationMillis" type="number-integer"/>
+        <relationship type="one" related="moqui.resource.GitJobRun"/>
+    </entity>
+    <entity entity-name="GitCiSecret" package="moqui.resource" use="nontransactional" cache="never">
+        <description>A secret a job may ask for (a secret element in ci.xml), of a repository or of an owner the
+            application names (a group, an account). Given only to a job of a trusted run: for the protected scope on
+            a protected branch or tag, for tags on a protected tag, for environment in the job's environment. Its
+            value is never read back by a service.</description>
+        <field name="secretId" type="id" is-pk="true"/>
+        <field name="repositoryId" type="id"/>
+        <field name="ownerId" type="id-long"/>
+        <field name="name" type="text-medium"/>
+        <field name="secretValue" type="text-long" encrypt="true"/>
+        <field name="scope" type="text-short"><description>protected, tags or environment</description></field>
+        <field name="environmentId" type="id"/>
+        <field name="createdByUserId" type="id"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="lastUsedDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.resource.GitRepository"/>
+        <relationship type="one-nofk" related="moqui.resource.GitCiEnvironment"/>
+        <index name="GIT_CI_SECRET_REPO"><index-field name="repositoryId"/><index-field name="name"/></index>
+        <index name="GIT_CI_SECRET_OWNER"><index-field name="ownerId"/><index-field name="name"/></index>
+    </entity>
+    <entity entity-name="GitCiEnvironment" package="moqui.resource" use="nontransactional" cache="never">
+        <description>A place a repository deploys to, which scopes secrets. The target, the pipeline that must have
+            passed and the approval are for deployments (plans/Dogfood.md §8.6, DG10).</description>
+        <field name="environmentId" type="id" is-pk="true"/>
+        <field name="repositoryId" type="id"/>
+        <field name="ownerId" type="id-long"/>
+        <field name="name" type="text-medium"/>
+        <field name="targetUrl" type="text-medium"/>
+        <field name="targetToken" type="text-long" encrypt="true"/>
+        <field name="requiredPipeline" type="text-medium"/>
+        <field name="approvalRequired" type="text-indicator"/>
+        <field name="lastCommitId" type="text-short"/>
+        <field name="lastDeployDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.resource.GitRepository"/>
+        <index name="GIT_CI_ENV_NAME"><index-field name="repositoryId"/><index-field name="name"/></index>
+    </entity>
+    <entity entity-name="GitRunnerPool" package="moqui.resource" use="nontransactional" cache="never">
+        <description>Where jobs run: containers started on an InstanceHost through its host type's run services, or
+            the registered runners of the pool. A job's pool attribute names poolName.</description>
+        <field name="runnerPoolId" type="id" is-pk="true"/>
+        <field name="poolName" type="text-medium"><description>What a job's pool attribute names; default is the pool
+            of a job that names none</description></field>
+        <field name="description" type="text-medium"/>
+        <field name="ownerId" type="id-long"><description>Set by an application that gives a pool to one owner</description></field>
+        <field name="instanceHostId" type="id"/>
+        <field name="poolKind" type="text-short"><description>container or registered</description></field>
+        <field name="trusted" type="text-indicator"><description>Y: takes trusted runs only. N: takes untrusted runs,
+            and only those.</description></field>
+        <field name="enabled" type="text-indicator"/>
+        <field name="maxConcurrent" type="number-integer"><description>Jobs running at once; 1 when empty</description></field>
+        <field name="allowedImages" type="text-long"><description>Image patterns (* is any run of characters),
+            separated by spaces or lines. A job whose image none matches is an error. Empty allows none.</description></field>
+        <field name="cpuLimit" type="number-decimal"><description>CPUs of a job's container</description></field>
+        <field name="memoryMb" type="number-integer"/>
+        <field name="diskMb" type="number-integer"><description>The container's writable layer, where the host's
+            storage driver can limit it</description></field>
+        <field name="pidsLimit" type="number-integer"/>
+        <field name="maxMinutes" type="number-integer"><description>The longest a job of the pool runs</description></field>
+        <field name="egressRule" type="text-medium"><description>The container's network mode: bridge (the default),
+            none, or the name of a network of the host whose rules limit what a job reaches</description></field>
+        <field name="serverUrl" type="text-medium"><description>The URL the pool's runners reach this server by; the
+            conf's git-ci server-url, else the public URL, when empty</description></field>
+        <field name="registrationTokenHash" type="text-medium"><description>The SHA-256 of the token a runner
+            registers with (poolKind registered)</description></field>
+        <relationship type="one-nofk" related="moqui.server.instance.InstanceHost"/>
+        <index name="GIT_POOL_NAME"><index-field name="poolName"/></index>
+    </entity>
+    <entity entity-name="GitRunner" package="moqui.resource" use="nontransactional" cache="never">
+        <description>A registered runner: a long-lived machine that asks its pool for jobs.</description>
+        <field name="runnerId" type="id" is-pk="true"/>
+        <field name="runnerPoolId" type="id"/>
+        <field name="name" type="text-medium"/>
+        <field name="platform" type="text-medium"><description>What it said it is (macos-arm64)</description></field>
+        <field name="tokenHash" type="text-medium"/>
+        <field name="statusId" type="text-short"><description>active or revoked</description></field>
+        <field name="currentJobRunId" type="id"/>
+        <field name="registeredDate" type="date-time"/>
+        <field name="lastContactDate" type="date-time"/>
+        <relationship type="one" related="moqui.resource.GitRunnerPool"/>
+        <index name="GIT_RUNNER_TOKEN"><index-field name="tokenHash"/></index>
+    </entity>
+    <entity entity-name="GitRunnerUsage" package="moqui.resource" use="nontransactional" cache="never">
+        <description>The runner time of one job run, written when it ends, so an application can keep a quota.</description>
+        <field name="jobRunId" type="id" is-pk="true"/>
+        <field name="pipelineRunId" type="id"/>
+        <field name="repositoryId" type="id"/>
+        <field name="ownerId" type="id-long"/>
+        <field name="runnerPoolId" type="id"/>
+        <field name="trusted" type="text-indicator"/>
+        <field name="periodKey" type="text-short"><description>The month it ended in, yyyy-MM (UTC)</description></field>
+        <field name="secondsUsed" type="number-integer"/>
+        <field name="minutesUsed" type="number-integer"><description>Started minutes</description></field>
+        <field name="finishedDate" type="date-time"/>
+        <index name="GIT_USAGE_REPO"><index-field name="repositoryId"/><index-field name="periodKey"/></index>
+        <index name="GIT_USAGE_OWNER"><index-field name="ownerId"/><index-field name="periodKey"/></index>
+    </entity>
+    <entity entity-name="GitDeployment" package="moqui.resource" use="nontransactional" cache="never">
+        <description>A commit asked to be deployed to an environment (plans/Dogfood.md §8.6). The engine queues the
+            environment's pipeline with the deploy event; the approval, the deploy step and the gate are DG10.</description>
+        <field name="deploymentId" type="id" is-pk="true"/>
+        <field name="environmentId" type="id"/>
+        <field name="repositoryId" type="id"/>
+        <field name="commitId" type="text-short"/>
+        <field name="pipelineRunId" type="id"/>
+        <field name="statusId" type="text-short"><description>running, waiting, approved, refused, deployed or failed</description></field>
+        <field name="requestedByUserId" type="id"/>
+        <field name="decidedByUserId" type="id"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="decidedDate" type="date-time"/>
+        <field name="finishedDate" type="date-time"/>
+        <field name="resultText" type="text-long"/>
+        <relationship type="one" related="moqui.resource.GitCiEnvironment"/>
+        <relationship type="one-nofk" related="moqui.resource.GitRepository"/>
+        <index name="GIT_DEPLOY_ENV"><index-field name="environmentId"/><index-field name="createdDate"/></index>
+    </entity>
+</entities>

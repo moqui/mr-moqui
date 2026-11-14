@@ -912,3 +912,83 @@ fn ipv6_addresses_are_limited_by_their_64() {
     assert_eq!(limit_key(v4), v4);
     assert_eq!(limit_key("::ffff:192.0.2.7".parse().unwrap()), v4);
 }
+
+/// Behind a front node (plans/Edge-Node2.md §4.7): a connection that came down the member's front link starts with a
+/// PROXY header, which names the client (checked against the allow-list as a direct client is); a direct client's
+/// PROXY header is never read, only answered as a command not known.
+#[tokio::test]
+async fn a_front_links_proxy_header_names_the_client_and_a_direct_ones_is_not_read() {
+    let fake = Arc::new(Fake::default());
+    let (_stop, watch) = tokio::sync::watch::channel(false);
+    let mut allowed = config("192.0.2.10");
+    allowed.max_connections = 10;
+    let shared = shared(allowed, None, Arc::clone(&fake));
+    let taker = tunnel_taker(&shared, &watch);
+    let front: SocketAddr = "198.51.100.1:40000".parse().unwrap();
+    let open = |named: SocketAddr| {
+        let (ours, theirs) = tokio::io::duplex(64 * 1024);
+        assert!(taker(Box::new(theirs), named));
+        Client {
+            stream: BufReader::new(Box::new(ours)),
+        }
+    };
+    // a LOCAL header names no client: the one the front named for the tunnel must be allowed
+    let mut local = crate::proxy_header::V2_SIGNATURE.to_vec();
+    local.extend_from_slice(&[0x20, 0x00, 0, 0]);
+    let mut unnamed = open(front);
+    unnamed.send_bytes(&local).await;
+    assert_eq!(
+        unnamed.reply().await,
+        "554 5.7.1 mx.test does not take mail from this address"
+    );
+    let mut named = open("192.0.2.10:40000".parse().unwrap());
+    named.send_bytes(&local).await;
+    assert_eq!(named.reply().await, "220 mx.test ESMTP mr-moqui");
+    let tunnel = |client: [u8; 4]| {
+        let (ours, theirs) = tokio::io::duplex(64 * 1024);
+        assert!(taker(Box::new(theirs), front));
+        let mut header = crate::proxy_header::V2_SIGNATURE.to_vec();
+        header.extend_from_slice(&[0x21, 0x11, 0, 12]);
+        header.extend_from_slice(&client);
+        header.extend_from_slice(&[203, 0, 113, 25, 0x9C, 0x40, 0, 25]);
+        (
+            Client {
+                stream: BufReader::new(Box::new(ours)),
+            },
+            header,
+        )
+    };
+    let (mut client, header) = tunnel([192, 0, 2, 10]);
+    client.send_bytes(&header).await;
+    assert_eq!(client.reply().await, "220 mx.test ESMTP mr-moqui");
+    client.command("EHLO mx.sender.example").await;
+    client.command("MAIL FROM:<a@x.org>").await;
+    assert!(client.command("RCPT TO:<sales@example.com>").await.starts_with("250"));
+    client.command("DATA").await;
+    client.send("Subject: through the front\r\n\r\nhi\r\n.\r\n").await;
+    assert!(client.reply().await.starts_with("250 2.0.0"));
+    assert_eq!(fake.delivered.lock().unwrap()[0].envelope.client_ip, "192.0.2.10");
+    // a client the allow-list does not have is refused, though the front named it
+    let (mut stranger, header) = tunnel([198, 51, 100, 7]);
+    stranger.send_bytes(&header).await;
+    assert_eq!(
+        stranger.reply().await,
+        "554 5.7.1 mx.test does not take mail from this address"
+    );
+
+    // the listener's own port: a client that sends a PROXY header is not believed
+    let (address, direct_fake, _stop_direct) = start(config("127.0.0.1")).await;
+    let mut direct = Client::connect(address).await;
+    assert_eq!(direct.reply().await, "220 mx.test ESMTP mr-moqui");
+    assert_eq!(
+        direct.command("PROXY TCP4 192.0.2.10 127.0.0.1 40000 25").await,
+        "500 5.5.2 Command not recognized"
+    );
+    direct.command("EHLO gw").await;
+    direct.command("MAIL FROM:<a@x.org>").await;
+    direct.command("RCPT TO:<sales@example.com>").await;
+    direct.command("DATA").await;
+    direct.send("Subject: direct\r\n\r\nhi\r\n.\r\n").await;
+    assert!(direct.reply().await.starts_with("250 2.0.0"));
+    assert_eq!(direct_fake.delivered.lock().unwrap()[0].envelope.client_ip, "127.0.0.1");
+}

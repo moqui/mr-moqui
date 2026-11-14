@@ -51,6 +51,7 @@ pub mod error_info;
 mod misconfig;
 pub mod multipart;
 pub mod origin;
+pub mod protection_view;
 pub mod servlet;
 pub mod stream;
 pub(crate) mod upstream;

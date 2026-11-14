@@ -33,10 +33,13 @@ pub mod attributes;
 pub(crate) mod blame;
 pub(crate) mod browse;
 pub mod checkout;
+pub mod ci;
 pub(crate) mod db;
 pub(crate) mod delta;
 pub(crate) mod diff;
 pub(crate) mod events;
+pub(crate) mod file_commit;
+pub(crate) mod fork;
 pub(crate) mod fs;
 pub mod gc;
 pub(crate) mod hosting;
@@ -44,6 +47,7 @@ pub(crate) mod index;
 pub(crate) mod lfs_files;
 pub(crate) mod merge;
 pub(crate) mod ops;
+pub(crate) mod reach;
 pub(crate) mod revwalk;
 pub(crate) mod rules;
 pub mod server;
@@ -57,10 +61,18 @@ pub(crate) mod values;
 moqui_core::extension::submit! {
     moqui_core::extension::Extension {
         features: &["git"],
-        register_services: service::register,
+        register_services,
         register_native,
         ..moqui_core::extension::Extension::EMPTY
     }
+}
+
+/// The Rust services of the git services ([`service`]) and of the CI engine ([`ci`]).
+fn register_services(
+    map: &mut std::collections::BTreeMap<&'static str, moqui_core::extension::RustServiceFn>,
+) -> Result<(), String> {
+    service::register(map)?;
+    ci::register(map)
 }
 
 /// The `git` scheme's provider, made when the conf names it ([`install`] in a test).
@@ -181,6 +193,20 @@ pub(crate) struct Definition {
     pub credentials: fs::Credentials,
     /// The row has an `archivedDate`: pushes, ref writes, merges and writes are refused.
     pub archived: bool,
+    /// The root of the fork network this repository is in (`forkNetworkId`): its own id on the root.
+    pub network: Option<String>,
+}
+
+impl Definition {
+    /// The id the objects of a `db` repository are stored under: the root of its fork network, else its own.
+    pub(crate) fn objects_id(&self) -> &str {
+        self.network.as_deref().unwrap_or(&self.id)
+    }
+
+    /// Whether the repository is a fork: in a network whose root is another repository.
+    pub(crate) fn is_fork(&self) -> bool {
+        self.network.as_deref().is_some_and(|network| network != self.id)
+    }
 }
 
 /// The repository rows changing in transactions not yet ended (an open repository of one is not kept, as each thread
@@ -229,6 +255,11 @@ struct Inner {
     archives_building: std::sync::atomic::AtomicUsize,
     /// Parsed `.gitattributes` files, by blob.
     attributes: attributes::RulesCache,
+    /// The commits each repository's refs reach, for reads by id (`reach`).
+    reach: reach::ReachCache,
+    /// The pushes for review and proposals of each account with no push right that were refused, by the hour they
+    /// were refused in (`review-max-refused`).
+    review_refusals: Mutex<HashMap<String, (i64, u32)>>,
     /// The path index of each branch ("repositoryId\nbranch"), brought to the branch's head when it is used.
     indexes: Mutex<BoundedMap<String, Arc<Mutex<BranchIndex>>>>,
 }
@@ -305,6 +336,8 @@ impl GitProvider {
                 objects: std::sync::OnceLock::new(),
                 archives_building: std::sync::atomic::AtomicUsize::new(0),
                 attributes: attributes::rules_cache(),
+                reach: Mutex::new(reach::ReachSets::default()),
+                review_refusals: Mutex::new(HashMap::new()),
                 indexes: Mutex::new(BoundedMap::with_bytes(INDEX_BRANCHES, INDEX_BYTES)),
             }),
         }
@@ -361,6 +394,7 @@ impl GitProvider {
                 token: text(row.get("accessToken")),
             },
             archived: text(row.get("archivedDate")).is_some(),
+            network: text(row.get("forkNetworkId")),
         })
     }
 
@@ -376,7 +410,7 @@ impl GitProvider {
                 Box::new(fs::FsStore::open(&definition.path)?)
             }
             RepositoryKind::Local => Box::new(fs::FsStore::init(&definition.path, &definition.branch)?),
-            RepositoryKind::Db => Box::new(db::DbStore::new(self.entity()?, &definition.id, self.objects())),
+            RepositoryKind::Db => Box::new(db::DbStore::of(self.entity()?, &definition, self.objects())),
         };
         Ok(Repo { definition, store })
     }
@@ -548,29 +582,57 @@ impl GitProvider {
         // the row as it is now: archived or deleted since the repository was opened, nothing is written
         self.still_writable(&repo.definition.id)?;
         // the refs before, only when a gitECA rule listens for writes
-        let prior = if moqui_core::service::git_eca::listening_after("write") {
+        let pre = events::pre_listening("write");
+        let prior = if pre || moqui_core::service::git_eca::listening_after("write") {
             repo.store.list_refs("refs/").ok()
         } else {
             None
         };
+        let origin = events::UpdateOrigin {
+            source: "write",
+            transport: "internal",
+            user_id: moqui_core::user::current_user_id().ok().flatten(),
+            ..Default::default()
+        };
+        let name = ops::branch_ref(&repo.definition.branch);
         let committer = self.author();
         let author = self.version_author(&committer);
-        let made = ops::commit_as(repo.store.as_ref(), &repo.definition.branch, &author, &committer, edits)?;
+        let store = repo.store.as_ref();
+        let made = ops::commit_as(
+            store,
+            &repo.definition.branch,
+            &author,
+            &committer,
+            edits,
+            // the pre events of the branch's move: a rule's refusal is the write's error, and the branch stays
+            |old, new| {
+                if !pre {
+                    return Ok(());
+                }
+                let reference = events::RefUpdate {
+                    name: name.clone(),
+                    old,
+                    new: Some(new),
+                    change_type: if old.is_some() { "update" } else { "create" }.to_string(),
+                };
+                events::pre_check(
+                    store,
+                    &repo.definition.id,
+                    &repo.definition.branch,
+                    &origin,
+                    prior.as_deref().unwrap_or_default(),
+                    &reference,
+                )
+            },
+        )?;
         if let Some(id) = made {
             self.log_protected_write(repo, id);
             self.remember_head(&repo.definition.id, Some(id), None);
             if let Some(prior) = prior {
-                let name = ops::branch_ref(&repo.definition.branch);
                 let old = prior
                     .iter()
                     .find(|(candidate, _)| *candidate == name)
                     .map(|(_, id)| *id);
-                let origin = events::UpdateOrigin {
-                    source: "write",
-                    transport: "internal",
-                    user_id: moqui_core::user::current_user_id().ok().flatten(),
-                    ..Default::default()
-                };
                 let change = store::RefChange {
                     name,
                     old,
@@ -683,7 +745,11 @@ impl GitProvider {
     fn commit_named(&self, repo: &Repo, path: &[String], name: &str) -> Result<Option<ObjectId>, Error> {
         let name = name.trim();
         if name.len() == 40 {
-            return Ok(ObjectId::from_hex(name.as_bytes()).ok());
+            // by its id only when a ref of this repository reaches it: the store may be a fork network's
+            return match ObjectId::from_hex(name.as_bytes()) {
+                Ok(id) if self.reachable(repo, &id)? => Ok(Some(id)),
+                _ => Ok(None),
+            };
         }
         if name.len() < 7 || !name.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Ok(None);
@@ -899,6 +965,41 @@ impl GitProvider {
             moqui_core::entity::fence::Effect::RemoteCall,
             &format!("fetch of git repository {repository_id}"),
         )?;
+        let origin = events::UpdateOrigin {
+            source: "fetch",
+            transport: "internal",
+            user_id: moqui_core::user::current_user_id().ok().flatten(),
+            ..Default::default()
+        };
+        // the pre events of source fetch, when a rule listens: on the fetched objects, before a branch or tag moves
+        let mut gate = |store: &fs::FsStore, before: &[(String, ObjectId)], changes: &[store::RefChange]| {
+            let refs: Vec<events::RefUpdate> = changes
+                .iter()
+                .map(|change| events::RefUpdate {
+                    name: change.name.clone(),
+                    old: change.old,
+                    new: change.new,
+                    change_type: events::change_type(store, change.old, change.new).to_string(),
+                })
+                .collect();
+            let candidates: Vec<usize> = (0..refs.len()).collect();
+            let decided = events::pre_receive(
+                store,
+                repository_id,
+                &definition.branch,
+                &origin,
+                before,
+                &refs,
+                &candidates,
+            );
+            for message in &decided.messages {
+                moqui_core::context::ExecutionContext::with_current(|ec| ec.message().add_message(message.clone()));
+            }
+            match decided.refused {
+                Some(reason) => candidates.into_iter().map(|index| (index, reason.clone())).collect(),
+                None => decided.refused_refs.into_iter().collect(),
+            }
+        };
         let outcome = {
             let lock = self.lock_of(repository_id);
             let _turn = moqui_lib::sync::lock(&lock);
@@ -908,6 +1009,11 @@ impl GitProvider {
                 &definition.branch,
                 &definition.credentials,
                 true,
+                if events::pre_listening("fetch") {
+                    Some(&mut gate)
+                } else {
+                    None
+                },
             )
         };
         self.refresh(repository_id);
@@ -926,14 +1032,17 @@ impl GitProvider {
                             .join(", ")
                     );
                 }
-                self.remember_head(repository_id, fetched.head, Some(None));
+                // what a rule refused stays as it was: the fetch's error, kept on the row, beside what did move
+                let declined = (!fetched.refused.is_empty()).then(|| {
+                    let refs: Vec<String> = fetched
+                        .refused
+                        .iter()
+                        .map(|(name, reason)| format!("{name}: {reason}"))
+                        .collect();
+                    format!("declined: {}", refs.join("; "))
+                });
+                self.remember_head(repository_id, fetched.head, Some(declined.as_deref()));
                 if let Ok(repo) = self.repo(repository_id) {
-                    let origin = events::UpdateOrigin {
-                        source: "fetch",
-                        transport: "internal",
-                        user_id: moqui_core::user::current_user_id().ok().flatten(),
-                        ..Default::default()
-                    };
                     self.record_update(
                         repository_id,
                         &origin,
@@ -941,6 +1050,9 @@ impl GitProvider {
                         &fetched.before,
                         &fetched.changes,
                     );
+                }
+                if let Some(declined) = declined {
+                    return Err(Error::new(declined));
                 }
                 Ok(fetched.head.map(|id| id.to_string()))
             }
@@ -1221,7 +1333,7 @@ impl GitProvider {
             }
             let other = self.definition(other)?;
             let store: Box<dyn GitStore> = match other.kind {
-                RepositoryKind::Db => Box::new(db::DbStore::new(self.entity()?, &other.id, self.objects())),
+                RepositoryKind::Db => Box::new(db::DbStore::of(self.entity()?, &other, self.objects())),
                 _ => Box::new(fs::FsStore::open(&other.path)?),
             };
             (store, other.branch)
@@ -1248,7 +1360,7 @@ impl GitProvider {
                 "git-import-{repository_id}-{}",
                 jiff::Timestamp::now().as_millisecond()
             ));
-            fs::fetch(&path, &source, &definition.branch, &definition.credentials, false)?;
+            fs::fetch(&path, &source, &definition.branch, &definition.credentials, false, None)?;
             scratch = Some(path.clone());
             (Box::new(fs::FsStore::open(&path)?), definition.branch.clone())
         };
@@ -1286,6 +1398,29 @@ impl GitProvider {
         let name = ops::branch_ref(branch);
         let prior = repo.store.list_refs("refs/")?;
         let current = repo.store.read_ref(&name)?;
+        let origin = events::UpdateOrigin {
+            source: "import",
+            transport: "internal",
+            user_id: moqui_core::user::current_user_id().ok().flatten(),
+            ..Default::default()
+        };
+        if current != Some(head) {
+            // the pre events, on the objects just copied and before the branch moves: a refusal is the import's error
+            let reference = events::RefUpdate {
+                name: name.clone(),
+                old: current,
+                new: Some(head),
+                change_type: events::change_type(repo.store.as_ref(), current, Some(head)).to_string(),
+            };
+            events::pre_check(
+                repo.store.as_ref(),
+                repository_id,
+                &repo.definition.branch,
+                &origin,
+                &prior,
+                &reference,
+            )?;
+        }
         if !repo.store.compare_and_set_ref(&name, current, head)? {
             return Err(Error::new(format!(
                 "branch {branch} of {repository_id} moved during the import"
@@ -1294,12 +1429,6 @@ impl GitProvider {
         drop(_turn);
         self.remember_head(repository_id, Some(head), None);
         if current != Some(head) {
-            let origin = events::UpdateOrigin {
-                source: "import",
-                transport: "internal",
-                user_id: moqui_core::user::current_user_id().ok().flatten(),
-                ..Default::default()
-            };
             let change = store::RefChange {
                 name,
                 old: current,
@@ -1734,11 +1863,7 @@ impl moqui_core::native::ResourceProvider for GitProvider {
         }
         let store = repo.store.as_ref();
         let name = version_name.trim();
-        let commit_id = if name.len() == 40 {
-            ObjectId::from_hex(name.as_bytes()).ok()
-        } else {
-            self.commit_named(&repo, &path, name)?
-        };
+        let commit_id = self.commit_named(&repo, &path, name)?;
         let not_found = || Error::new(format!("version {version_name} not found: {location}"));
         let commit_id = commit_id.ok_or_else(not_found)?;
         if store.find(&commit_id)?.is_none() {

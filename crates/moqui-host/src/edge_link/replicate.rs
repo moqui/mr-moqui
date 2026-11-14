@@ -19,6 +19,12 @@
 //! with `moqui_core::edge::replica::apply_batch`. A set the local node holds back (`moqui_core::edge::sip::withheld`:
 //! the trunks and fallbacks while phones are off, plans/archive/Edge-Node.md §5.7 E10 phones) is sent empty, so the edge node's
 //! copy is emptied, and its changes are dropped; it is sent whole again when that changes.
+//!
+//! **From a pool** (plans/Edge-Node2.md §4.4): every member of a clustered local node links, and one sends. Each link
+//! runs [`keep_sender_lock`], which claims the lock row `moqui.edge.EdgeSenderLock` (`moqui_core::edge::replica::sender`)
+//! and tells this member's link tasks whether it holds it ([`sender_role`]): only the holder's [`Sender`] sends, and
+//! only its link keeps the edge node's `CallMediaNode` and `SipNode` rows and runs the minute's
+//! `refresh#PhoneFallbacks` (`dial.rs`, `keep_media_node`). The others pass their notes to it on a cluster topic.
 
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -26,7 +32,7 @@ use std::time::Duration;
 use futures_util::FutureExt as _;
 use moqui_core::context::{Error as CoreError, ExecutionContextFactory};
 use moqui_core::edge::replica::{self, Batch, BatchAnswer, Change, Replica, Work};
-use tokio::sync::Notify;
+use tokio::sync::{watch, Notify};
 
 use super::proto::{ReplicaChange, ReplicateRequest};
 use super::LinkClient;
@@ -55,6 +61,7 @@ pub(crate) fn batch_of(request: ReplicateRequest) -> Batch {
         seq: request.seq,
         snapshot: request.snapshot,
         snapshot_end: request.snapshot_end,
+        sender_token: request.sender_token,
         changes: request
             .changes
             .into_iter()
@@ -82,6 +89,109 @@ where
     .map_err(|err| err.message().to_string())
 }
 
+/// Whether this member is the sender, per factory, for its link tasks to wait on.
+struct SenderRole(watch::Sender<Option<u64>>);
+
+/// This member's sender role: its token ([`moqui_core::edge::replica::sender::Claim::token`]) while it holds the sender
+/// lock, as the last claim found, else `None`. Each link's tasks that only the sender runs wait on it.
+pub(crate) fn sender_role(factory: &ExecutionContextFactory) -> watch::Receiver<Option<u64>> {
+    factory.extension(|_| SenderRole(watch::channel(None).0)).0.subscribe()
+}
+
+/// What one claim of the sender lock found: its token while this member holds it. `None` when it did not hold it, when
+/// the claim failed (the database: two senders at once would cross the edge node's cursors, and the lease of a member
+/// that cannot renew lapses anyway), and when it did not come back in time (`None` from the timeout), so a member whose
+/// renewals stall stops sending before its lease can lapse and another can take the lock.
+fn held_after(claimed: Option<&Result<moqui_core::edge::replica::sender::Claim, String>>) -> Option<u64> {
+    match claimed {
+        Some(Ok(claim)) => claim.token(),
+        Some(Err(err)) => {
+            tracing::warn!("Edge replication: the sender lock could not be claimed: {err}");
+            None
+        }
+        None => {
+            tracing::warn!("Edge replication: the sender lock's claim did not come back before the lease; this member stops sending");
+            None
+        }
+    }
+}
+
+/// How long a holder may go without a claim coming back: its lease less a third, so it stops sending (by its own clock)
+/// before another member (by the database's) can take the lock over.
+fn hold_for(lease: Duration) -> Duration {
+    lease.saturating_sub(lease / 3)
+}
+
+/// Claim the sender lock for this member while its link lasts (`instance_id`, its cluster member id), every
+/// `SenderTiming::poll` while another holds it and every `SenderTiming::renew` (at most [`hold_for`] the lease) while
+/// it does, and tell this member's link tasks ([`sender_role`]) and its replication
+/// (`moqui_core::edge::replica::sender::set_sender`) what it found ([`held_after`]). A new link starts as not the sender
+/// until its first claim: what an earlier link found is not taken on trust. The lock is let go when the server stops or
+/// unpairs (`moqui_core::edge::replica::disable`); a link that ends keeps it until its lease lapses, so a link back soon
+/// goes on where it was.
+pub(crate) async fn keep_sender_lock(factory: Weak<ExecutionContextFactory>, instance_id: String) {
+    let Some(role) = factory.upgrade().map(|factory| {
+        moqui_core::edge::replica::sender::install_note_listener(&factory);
+        factory.extension(|_| SenderRole(watch::channel(None).0))
+    }) else {
+        return;
+    };
+    role.0.send_replace(None);
+    let mut held_since: Option<tokio::time::Instant> = None;
+    loop {
+        let Some(timing) = factory
+            .upgrade()
+            .map(|factory| moqui_core::edge::replica::sender::timing(&factory))
+        else {
+            return;
+        };
+        let started = tokio::time::Instant::now();
+        let instance = instance_id.clone();
+        let lease = timing.lease;
+        let claiming = crate::worker::on_pool_without_authz(&factory, move |factory| {
+            let facade = factory
+                .entity()
+                .ok_or_else(|| CoreError::new("the entity facade is not installed"))?;
+            Ok(moqui_core::edge::replica::sender::claim(
+                &facade,
+                moqui_core::edge::replica::sender::REPLICATE,
+                &instance,
+                lease,
+            )
+            .map_err(|err| err.to_string()))
+        });
+        let claimed = match held_since {
+            // a holder: the claim must come back before its hold runs out
+            Some(since) => tokio::time::timeout_at(since + hold_for(lease), claiming).await.ok(),
+            None => Some(claiming.await),
+        };
+        let claimed = match claimed {
+            Some(Ok(claim)) => Some(claim),
+            // the server is stopping
+            Some(Err(_)) => return,
+            None => None,
+        };
+        let held = held_after(claimed.as_ref());
+        if let Some(moqui_core::edge::replica::sender::Claim::Taken(_)) =
+            claimed.as_ref().and_then(|claim| claim.as_ref().ok())
+        {
+            tracing::info!("Edge replication: member {instance_id} took the sender lock");
+        }
+        if let Some(facade) = factory.upgrade().and_then(|factory| factory.entity()) {
+            moqui_core::edge::replica::sender::set_sender(&facade, held.map(|_| instance_id.as_str()));
+        }
+        held_since = held.map(|_| started);
+        role.0
+            .send_if_modified(|current| std::mem::replace(current, held) != held);
+        let pause = if held.is_some() {
+            timing.renew.min(hold_for(lease) / 2)
+        } else {
+            timing.poll
+        };
+        tokio::time::sleep(pause).await;
+    }
+}
+
 /// A batch to send: the set, the epoch, where it follows, and its records.
 struct Outgoing<'a> {
     set: &'a str,
@@ -99,6 +209,8 @@ pub(crate) struct Sender {
     pub replica: Arc<Replica>,
     pub client: LinkClient,
     pub timeout: Duration,
+    /// This member's token while it is the sender ([`sender_role`]): while it is not, nothing is sent.
+    pub role: watch::Receiver<Option<u64>>,
 }
 
 impl Sender {
@@ -123,6 +235,13 @@ impl Sender {
         };
         loop {
             let notified = wake.notified();
+            if self.role.borrow_and_update().is_none() {
+                // another member sends: wait until this one is the sender, which then sends each set whole
+                if self.role.changed().await.is_err() {
+                    return;
+                }
+                continue;
+            }
             let mut busy = false;
             for index in 0..sets {
                 // a set held back, or let go again, goes whole (empty while held back): compared with what its last
@@ -335,6 +454,7 @@ impl Sender {
             snapshot: batch.snapshot,
             snapshot_end: batch.snapshot_end,
             changes: batch.changes.iter().map(to_proto).collect(),
+            sender_token: (*self.role.borrow()).unwrap_or(0),
         };
         match tokio::time::timeout(self.timeout, self.client.replicate(request)).await {
             Ok(Ok(reply)) => Ok(if reply.into_inner().resync {

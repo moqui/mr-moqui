@@ -265,8 +265,18 @@ where
         .map_err(|err| err.message().to_string())
 }
 
+/// What every lease of one sender's deliveries starts with: its owner without the link's generation (the text after
+/// the last `/`), so a delivery on a new link lets go of the leases its earlier links left and of no other member's
+/// (plans/Edge-Node2.md §4.4).
+pub(crate) fn owner_prefix(owner: &str) -> String {
+    match owner.rfind('/') {
+        Some(at) => owner[..=at].to_string(),
+        None => format!("{owner}/"),
+    }
+}
+
 /// Deliver `node`'s items going `direction` through `send` until the task is dropped (its link ended). `owner` names
-/// this delivery in the items' leases.
+/// this delivery in the items' leases: this sender's id, then the link's generation after a last `/`.
 pub(crate) async fn deliver<S, F>(
     factory: Weak<ExecutionContextFactory>,
     node: String,
@@ -282,11 +292,12 @@ pub(crate) async fn deliver<S, F>(
         return;
     };
     let releasing = node.clone();
+    let prefix = owner_prefix(&owner);
     let released = on_pool(&factory, move |factory| {
         let facade = factory
             .entity()
             .ok_or_else(|| moqui_lib::error::Error::new("the entity facade is not installed"))?;
-        queue::release_leases(&facade, &releasing, direction)
+        queue::release_leases(&facade, &releasing, direction, &prefix)
     })
     .await;
     if let Err(err) = released {

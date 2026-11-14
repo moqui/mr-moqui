@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The edge link (plans/archive/Edge-Node.md §5.1, E1). The edge end is a real server (`node_role=edge`, the HTTPS listener on
+//! The edge link (plans/archive/Edge-Node.md §5.1, E1). The edge end is a real server (`node_role=front_edge`, the HTTPS listener on
 //! a certificate from a test authority) in the test's own process; the local end is the link's dialer driven with an
 //! explicit `LocalConfig`, which needs no factory and opens no port, so the two share the process without sharing
 //! properties. Pairing works once per code; a local node with no listening port links up and down, with Hello both
@@ -42,10 +42,10 @@ use crate::common::Gate;
 const SERVICES: &str = "org.moqui.edge.EdgeServices";
 
 /// A test certificate authority and the edge node's `localhost` certificate and key (PEM) it signed.
-struct Certs {
-    root: CertificateDer<'static>,
-    cert_pem: String,
-    key_pem: String,
+pub(crate) struct Certs {
+    pub(crate) root: CertificateDer<'static>,
+    pub(crate) cert_pem: String,
+    pub(crate) key_pem: String,
 }
 
 fn pem(label: &str, der: &[u8]) -> String {
@@ -58,7 +58,7 @@ fn pem(label: &str, der: &[u8]) -> String {
     format!("-----BEGIN {label}-----\n{}\n-----END {label}-----\n", lines.join("\n"))
 }
 
-fn certs() -> Certs {
+pub(crate) fn certs() -> Certs {
     let ca_key = rcgen::KeyPair::generate().unwrap();
     let mut ca_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
     ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
@@ -78,12 +78,12 @@ fn certs() -> Certs {
 }
 
 /// The edge node, with HTTPS on `port`, which a restart binds again.
-fn start_edge(label: &str, certs: &Certs, port: u16) -> Gate {
+pub(crate) fn start_edge(label: &str, certs: &Certs, port: u16) -> Gate {
     let port = port.to_string();
     crate::common::start_with_files(
         label,
         None,
-        &[("node_role", "edge"), ("webapp_https_listen_port", &port)],
+        &[("node_role", "front_edge"), ("webapp_https_listen_port", &port)],
         &[
             ("cert/default.crt", &certs.cert_pem),
             ("cert/default.key", &certs.key_pem),
@@ -92,7 +92,11 @@ fn start_edge(label: &str, certs: &Certs, port: u16) -> Gate {
 }
 
 /// An EdgeServices service on the edge node, as an administrator.
-fn call(gate: &Gate, verb_noun: &str, parameters: &[(&str, &str)]) -> Result<BTreeMap<String, Value>, String> {
+pub(crate) fn call(
+    gate: &Gate,
+    verb_noun: &str,
+    parameters: &[(&str, &str)],
+) -> Result<BTreeMap<String, Value>, String> {
     let factory = gate.server.factory();
     let context = factory.new_context();
     let _entered = context.enter();
@@ -105,12 +109,12 @@ fn call(gate: &Gate, verb_noun: &str, parameters: &[(&str, &str)]) -> Result<BTr
     moqui_core::service::sync(&format!("{SERVICES}.{verb_noun}"), &parameters).map_err(|err| err.to_string())
 }
 
-fn code(gate: &Gate) -> String {
+pub(crate) fn code(gate: &Gate) -> String {
     to_plain_string(&call(gate, "create#PairingCode", &[]).unwrap()["code"])
 }
 
 /// The paired node's row in get#EdgeClients.
-fn client(gate: &Gate, node: &str) -> BTreeMap<String, String> {
+pub(crate) fn client(gate: &Gate, node: &str) -> BTreeMap<String, String> {
     let out = call(gate, "get#EdgeClients", &[]).unwrap();
     let Some(Value::List(list)) = out.get("clientList") else {
         panic!("clientList: {out:?}")
@@ -127,7 +131,7 @@ fn client(gate: &Gate, node: &str) -> BTreeMap<String, String> {
         .unwrap_or_else(|| panic!("{node} is not paired: {out:?}"))
 }
 
-fn runtime() -> tokio::runtime::Runtime {
+pub(crate) fn runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -136,7 +140,7 @@ fn runtime() -> tokio::runtime::Runtime {
 }
 
 /// Short timings, so a lost link comes back in well under a second.
-fn quick(config: &mut LocalConfig) {
+pub(crate) fn quick(config: &mut LocalConfig) {
     config.backoff = Backoff {
         first: Duration::from_millis(100),
         max: Duration::from_millis(500),
@@ -255,7 +259,7 @@ fn role_answer(
     })
 }
 
-fn pair_config(url: &str, code: &str, node: &str, certs: &Certs) -> PairConfig {
+pub(crate) fn pair_config(url: &str, code: &str, node: &str, certs: &Certs) -> PairConfig {
     let mut config = PairConfig::new(url, code, node);
     config.trust_root = Some(certs.root.clone());
     config.connect_timeout = Duration::from_secs(5);
@@ -263,7 +267,12 @@ fn pair_config(url: &str, code: &str, node: &str, certs: &Certs) -> PairConfig {
 }
 
 /// Wait up to `limit` for the dialer's status to pass `check`.
-fn wait_status(dialer: &Dialer, limit: Duration, what: &str, check: impl Fn(&LinkStatus) -> bool) -> LinkStatus {
+pub(crate) fn wait_status(
+    dialer: &Dialer,
+    limit: Duration,
+    what: &str,
+    check: impl Fn(&LinkStatus) -> bool,
+) -> LinkStatus {
     let started = Instant::now();
     loop {
         let status = dialer.status();
@@ -275,7 +284,7 @@ fn wait_status(dialer: &Dialer, limit: Duration, what: &str, check: impl Fn(&Lin
     }
 }
 
-fn wait_until(limit: Duration, what: &str, check: impl Fn() -> bool) {
+pub(crate) fn wait_until(limit: Duration, what: &str, check: impl Fn() -> bool) {
     let started = Instant::now();
     while !check() {
         assert!(started.elapsed() < limit, "{what}");
@@ -407,8 +416,18 @@ fn pairing_links_both_ways_and_unpairing_cuts_the_link() {
     let fenced = rt.block_on(first.ping());
     assert!(fenced.is_err(), "the stale generation still answers");
     rt.block_on(second.ping()).unwrap();
-    // a down connection must name the live generation
-    let stale = rt.block_on(try_down(&local, first.generation)).unwrap_err();
+    // a down connection must name the live generation, and its token (plans/Edge-Node2.md §4.11)
+    let stale = rt
+        .block_on(try_down(&local, first.generation, &first.down_token))
+        .unwrap_err();
+    assert!(stale.message().contains("no up connection of generation"), "{stale:?}");
+    let stale = rt
+        .block_on(try_down(
+            &local,
+            second.generation,
+            &[0; moqui_host::edge_link::DOWN_TOKEN],
+        ))
+        .unwrap_err();
     assert!(stale.message().contains("no up connection of generation"), "{stale:?}");
     drop((first, second));
 
@@ -493,9 +512,10 @@ fn a_lost_link_recovers_and_revoking_on_the_edge_node_refuses_it() {
         "local-b",
     );
     quick(&mut local);
-    // a silent connection is noticed within about a second
+    // a silent connection is noticed within a few seconds
     local.keepalive = Duration::from_secs(1);
-    local.connect_timeout = Duration::from_millis(1500);
+    // within a Hello's wait the edge node checks the silent link no longer answers (plans/Edge-Node2.md §4.11)
+    local.connect_timeout = Duration::from_millis(3000);
     let (_shutdown, shutdown) = watch::channel(false);
     let dialer = Dialer::start(local.clone(), rt.handle(), shutdown, None).unwrap();
     let first = wait_status(&dialer, Duration::from_secs(10), "link up", |status| {

@@ -34,7 +34,7 @@
 //! - `send#BridgeDirect`: one message straight to an adapter, outside any room (a sign-in code by SMS): no delivery row,
 //!   no retry; the caller has checked it.
 //!
-//! On an edge node (`node_role=edge`) [`webhook`] and [`media`] are the edge node's own (`chat_bridge_edge.rs`): a
+//! On an edge node (`node_role=front_edge`) [`webhook`] and [`media`] are the edge node's own (`chat_bridge_edge.rs`): a
 //! webhook is checked with the local node's replicated bridge and queued, and a file is one the local node put there.
 
 use std::collections::BTreeMap;

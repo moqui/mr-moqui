@@ -49,6 +49,7 @@ What other systems, devices and clients reach, and what Moqui calls.
 |---|---|
 | [Web-Scripts.md](interfaces/Web-Scripts.md) | Servlets, filters, listeners and lifecycle actions in JavaScript, and the outbound REST client |
 | [Git-Hosting.md](interfaces/Git-Hosting.md) | Hosted git repositories over HTTPS and SSH, merge requests, gitECA rules, LFS |
+| [Pipelines.md](interfaces/Pipelines.md) | CI for hosted repositories: `ci.xml`, runs and statuses, trust and secrets, runner pools on Docker and Podman, `moqui ci-run` |
 | [Sync.md](interfaces/Sync.md) | CalDAV, CardDAV, WebDAV and SFTP for phones and desktop apps, with app passwords |
 | [Mail-Inbound.md](interfaces/Mail-Inbound.md) | Hosted and shared mail accounts through the SMTP listener behind an edge gateway |
 | [Call-Recording.md](interfaces/Call-Recording.md) | Recording a call: turning it on, the notice to every leg, the files and who may play them |

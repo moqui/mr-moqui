@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
+<!-- The front node of the full stack (conf/full-stack/README.md; plans/Edge-Node2.md §3, §4.7): the front option set
+    alone (node_role front) before an edge cluster, whose members pair with it once and each dial it, as one pairing
+    and its pool. It is conf/front/MoquiFrontConf.xml, whose comments say what each setting does; this one says what the
+    full stack adds. Nothing of it is set here by hand: the names and the link names come from the edge members, and the
+    mail port is a row.
+    - The sites. Each edge member gives the front its mr-pass sites' hosts (and its chat address's host) as terminate
+      hosts, so the front ends their TLS, sees the session cookie and balances them over the live members, sticky by it.
+      With front_edge members, every name of their local nodes too, each in its own mode, which the member forwards
+      down that node's link; with edge members a local node gives its names to the front itself, by a second pairing.
+    - The edge members' link names. Each member names its own edge_link_url in its Hello; the front keeps the host as
+      a link name of that member (Edge Clients › Domains) and passes its connections through untouched to that member
+      alone, picked by the server name before the link's ALPN, so a local node's link reaches the member as if dialed
+      directly. A link name is never balanced: while its member is not linked its connections are refused.
+    - Mail. Port 25 as an EdgePort row of kind smtp for the edge cluster's pairing (System › Edge Clients › Ports):
+      each connection goes to a live member's SMTP listener with a PROXY header naming the client, which makes every
+      check itself. MX records name the front.
+    - Not here: call media, TURN and SIP are at each edge member's own address. XMPP and SSH ports stay the edge
+      members' own with front_edge members; with edge members, which bind none, the front's ports take each local
+      node's domain by its front pairing.
+    Build and run as conf/front: Maximal (embedded Postgres is enough), the base components only. -->
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+    <default-property name="instance_purpose" value="production"/>
+    <default-property name="node_role" value="front"/>
+    <!-- before anything goes to an edge member; a ban an edge member starts is told up its front link, and the front
+        refuses that client for the pairing's names. A ban is not told on: one a local node starts reaches its own edge
+        members (and the front only by its own front pairing, with edge members), not the front through them. Every local node behind front_edge members is part of the edge
+        cluster's one pairing here, so a ban, a rule and a limit per pairing holds for the edge cluster as a whole. -->
+    <default-property name="webapp_web_protection" value="true"/>
+
+    <!-- .env: webapp_http_host, the front's own name (where the edge members pair, and its System app), with a WebPKI
+        certificate in runtime/cert; edge_public_addresses, its public addresses; edge_link_key and the other secrets
+        made at the first start. The sites' certificates are here, as terminate hosts: in runtime/cert, or System ›
+        Certificates with ACME. A passthrough name's certificate and each link name's are on the node that ends its
+        TLS, whose ACME challenge passes through. -->
+
+    <!-- Backups: the pairing, host names, the mail port and the certificates are rows (conf/front/MoquiFrontConf.xml). -->
+    <default-property name="embedded_db_backup_scheduled" value="true"/>
+
+    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+
+    <!-- Balancing the edge members: the sites' requests by the session cookie, the mail port and passthrough names by
+        the client's address. An edge member set aside after failures gets no new work for a while, and one drained on
+        the front's Edge Clients › Clients (Members, Drain) gets none until it resumes, for its rolling upgrade. -->
+    <edge sticky-cookie="moqui.session" set-aside-failures="3" set-aside-seconds="30"/>
+</moqui-conf>

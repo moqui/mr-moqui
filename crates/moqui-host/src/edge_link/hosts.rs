@@ -15,13 +15,17 @@
 //! The public host names an edge node answers for its paired local nodes (plans/archive/Edge-Node.md §5.3):
 //! `moqui.edge.EdgeHost` rows, and the table in memory the listener reads for each connection and request. Only a
 //! name in the table goes down a link, and only to its own node, so the edge node is no open proxy.
+//!
+//! Each member of an edge cluster keeps its own table (plans/Edge-Node2.md §4.6). A member that changes the rows loads
+//! its table and tells the others ([`Hosts::changed`]), which load theirs on the notice
+//! (`moqui_core::edge::cluster_state`).
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::edge::{EdgeHostInfo, HOST_PASSTHROUGH, HOST_TERMINATE};
+use moqui_core::edge::{EdgeHostInfo, HOST_LINK_NAME, HOST_PASSTHROUGH, HOST_TERMINATE};
 use moqui_lib::error::Error;
 use moqui_lib::sync::{read, write};
 
@@ -39,7 +43,8 @@ pub(crate) enum Mode {
 impl Mode {
     fn from_enum(id: &str) -> Option<Self> {
         match id {
-            HOST_PASSTHROUGH => Some(Self::Passthrough),
+            // an edge member's link name on a front: passed through, to its member alone (Route::member)
+            HOST_PASSTHROUGH | HOST_LINK_NAME => Some(Self::Passthrough),
             HOST_TERMINATE => Some(Self::Terminate),
             _ => None,
         }
@@ -51,6 +56,11 @@ impl Mode {
 pub(crate) struct Route {
     pub node: String,
     pub mode: Mode,
+    /// The cookie a terminate host's requests are sticky by (plans/Edge-Node2.md §4.4); `None` for the conf's.
+    pub sticky_cookie: Option<std::sync::Arc<str>>,
+    /// On a front node, an edge member's own link name (plans/Edge-Node2.md §4.7): the one member of the pairing its
+    /// connections go to, refused while that member is not linked; `None` for a host of the whole pool.
+    pub member: Option<std::sync::Arc<str>>,
 }
 
 /// The host names by their normal form ([`normalize`]) and what the active pairings' kept setups say, as one load
@@ -178,10 +188,27 @@ impl Hosts {
             .is_some_and(|bridges| bridges.iter().any(|id| id == bridge))
     }
 
+    /// After a change of the rows or the pairings made here: load the table, and tell the other members of an edge
+    /// cluster to load theirs (after the change commits), whether or not this load worked.
+    pub(crate) fn changed(&self, factory: &ExecutionContextFactory) -> Result<usize, Error> {
+        if let Ok(facade) = store::facade(factory) {
+            moqui_core::edge::cluster_state::tell(&facade, true, &[]);
+        }
+        self.load(factory)
+    }
+
     /// Replace the table with the rows, unless a load that began later has written it already.
     pub(crate) fn load(&self, factory: &ExecutionContextFactory) -> Result<usize, Error> {
         let load = self.loads.fetch_add(1, Ordering::AcqRel) + 1;
         let rows = list(factory, None)?;
+        let link_names: HashMap<String, String> = if rows.iter().any(|row| row.mode_enum_id == HOST_LINK_NAME) {
+            moqui_core::edge::hosts::link_names(&store::facade(factory)?)?
+                .into_iter()
+                .map(|name| (name.host_name, name.member_id))
+                .collect()
+        } else {
+            HashMap::new()
+        };
         let mut table = HashMap::with_capacity(rows.len());
         for row in rows {
             let Some(name) = normalize(&row.host_name) else {
@@ -190,16 +217,24 @@ impl Hosts {
             };
             match Mode::from_enum(&row.mode_enum_id) {
                 Some(mode) => {
+                    // a link name with no member read goes to no member: refused, never to the pool
+                    let member = (row.mode_enum_id == HOST_LINK_NAME)
+                        .then(|| std::sync::Arc::from(link_names.get(&row.host_name).map_or("", String::as_str)));
                     table.insert(
                         name,
                         Route {
                             node: row.paired_node_id,
                             mode,
+                            sticky_cookie: row
+                                .sticky_cookie
+                                .filter(|cookie| !cookie.is_empty())
+                                .map(|cookie| std::sync::Arc::from(cookie.as_str())),
+                            member,
                         },
                     );
                 }
                 None => tracing::error!(
-                    "Edge host {} has mode {}, which is not passthrough or terminate; it is left out",
+                    "Edge host {} has mode {}, which is not passthrough, terminate or a link name; it is left out",
                     row.host_name,
                     row.mode_enum_id
                 ),

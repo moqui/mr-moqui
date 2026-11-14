@@ -700,4 +700,32 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationTopics.js').execute('storeTopicSubscription', context))</script></actions>
     </service>
+
+    <!-- Web protection (plans/Edge-Node2.md §4.3): this server's, in memory; System › Security › Web Protection -->
+    <service verb="get" noun="WebProtection" type="rust" location="moqui_core::service::web_protection::get_web_protection"
+            allow-remote="false" transaction="ignore">
+        <description>What this server's web protection is limiting, denying and banning now: started (false on a server
+            whose web listeners did not start), enabled (the per-client parts are on), countMap (the counts of /metrics:
+            edge_connections_refused, edge_denied, edge_rate_limited, edge_banned_clients and the rest), ruleList (each
+            rate-limit, ban and client, path and user-agent rule: kind, name, hosts, detail and count, what it refused or
+            the bans it started since this server started) and banList (each client banned now: address, its IPv6
+            prefix for an IPv6 client; seconds left; source, the ban rule or the node that told it; node, set for a ban
+            a paired node told an edge node, which holds for that node's hosts only). Each server has its own counts; a
+            ban started on one is told to the others. Needs ADMIN_OPERATION_VIEW.</description>
+        <out-parameters>
+            <parameter name="started" type="Boolean"/>
+            <parameter name="enabled" type="Boolean"/>
+            <parameter name="countMap" type="Map"/>
+            <parameter name="ruleList" type="List"/>
+            <parameter name="banList" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="lift" noun="WebBan" type="rust" location="moqui_core::service::web_protection::lift_web_ban"
+            allow-remote="false" transaction="ignore">
+        <description>Lift every ban of a client address on this server, and tell the other members of its cluster and
+            the edge node it is paired with to lift theirs. lifted is false when it was not banned here.
+            Needs ADMIN_OPERATION_MANAGE.</description>
+        <in-parameters><parameter name="address" required="true"/></in-parameters>
+        <out-parameters><parameter name="lifted" type="Boolean"/></out-parameters>
+    </service>
 </services>

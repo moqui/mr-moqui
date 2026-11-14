@@ -1129,6 +1129,7 @@ fn claimed_items_are_refused_by_name_and_webhooks_go_by_owner() {
             host_name: "mx.server.example".to_string(),
             paired_node_id: String::new(),
             mode_enum_id: HOST_PASSTHROUGH.to_string(),
+            sticky_cookie: None,
         }],
         set_hosts: true,
         mail_domains: vec!["bounce.server.example".to_string(), "desk.example".to_string()],

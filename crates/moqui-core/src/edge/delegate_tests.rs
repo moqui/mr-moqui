@@ -91,7 +91,7 @@ fn an_edge_node_sends_a_delegated_call_to_the_link_before_any_link_is_started() 
     let _entered = ctx.enter();
     let parameters = BTreeMap::from([("message".to_string(), Value::string("hi"))]);
     // as boot reads it on an edge node (conf::init), before the host's listeners start
-    assert!(super::super::conf::settings_as(ctx.factory(), NodeRole::Edge).edge_node());
+    assert!(super::super::conf::settings_as(ctx.factory(), NodeRole::FrontEdge).edge_node());
     let err = crate::service::sync("a.B.call#Remote", &parameters).unwrap_err();
     // no link, or a link with no local node: offline either way, never run here (where it is not even defined)
     assert!(err.message().starts_with(OFFLINE), "{}", err.message());
@@ -182,7 +182,7 @@ fn a_dedicated_edge_node_sends_a_scoped_call_to_its_node() {
         r#"<moqui-conf><edge><delegate service="a.B.call#Scoped" allow-anonymous="true"/></edge></moqui-conf>"#,
     );
     let _entered = ctx.enter();
-    assert!(super::super::conf::settings_as(ctx.factory(), NodeRole::Edge).edge_node());
+    assert!(super::super::conf::settings_as(ctx.factory(), NodeRole::FrontEdge).edge_node());
     let unscoped = listed("a.B.call#Scoped").expect("every listed call on an edge node");
     assert_eq!(unscoped.node, None);
     assert_eq!(

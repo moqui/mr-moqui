@@ -34,7 +34,7 @@ use moqui_core::entity::EntityValue;
 
 /// Every entity for both test users, as a screen's inherited authorization gives them; the repository rights stay
 /// AT_GIT_REPOSITORY's.
-pub(super) fn grant_entities(fixture: &Fixture) {
+pub(crate) fn grant_entities(fixture: &Fixture) {
     let _entered = fixture.context.enter();
     let _authz = fixture.context.disable_authz();
     create(
@@ -71,7 +71,12 @@ pub(super) fn grant_entities(fixture: &Fixture) {
 /// The framework's own gitECA rules (`service/Git.gitecas.xml`), which a test factory without components does not
 /// load: merge requests follow their branches, webhooks follow pushes. Not the report definitions' pull: a test factory
 /// registers no report services, so it would fail on every push.
-fn framework_rules(fixture: &Fixture) {
+pub(crate) fn framework_rules(fixture: &Fixture) {
+    framework_rules_with(fixture, "");
+}
+
+/// [`framework_rules`] with more rules (`extra`, `giteca` elements) beside them.
+pub(crate) fn framework_rules_with(fixture: &Fixture, extra: &str) {
     let mut xml =
         std::fs::read_to_string(moqui_core::context::framework_dir().join("service/Git.gitecas.xml")).unwrap();
     let id = xml
@@ -82,11 +87,13 @@ fn framework_rules(fixture: &Fixture) {
         .expect("the rule's element starts before its id");
     let end = id + xml[id..].find("</giteca>").expect("the rule's element ends") + "</giteca>".len();
     xml.replace_range(start..end, "");
+    let close = xml.rfind("</gitecas>").expect("Git.gitecas.xml ends its rules");
+    xml.insert_str(close, extra);
     moqui_core::service::git_eca::install(fixture.context.factory(), &xml);
 }
 
 /// Call a service as `user`: its result and the errors it left.
-pub(super) fn call(
+pub(crate) fn call(
     fixture: &Fixture,
     user: &str,
     name: &str,
@@ -112,7 +119,7 @@ pub(super) fn call(
     }
 }
 
-pub(super) fn ok(fixture: &Fixture, user: &str, name: &str, parameters: &[(&str, Value)]) -> BTreeMap<String, Value> {
+pub(crate) fn ok(fixture: &Fixture, user: &str, name: &str, parameters: &[(&str, Value)]) -> BTreeMap<String, Value> {
     let (out, errors) = call(fixture, user, name, parameters);
     assert!(errors.trim().is_empty(), "{name}: {errors}");
     out
@@ -151,29 +158,29 @@ fn set_review(fixture: &Fixture, mr_id: &str, user: &str, status: &str) {
     row.update(&fixture.entity).unwrap();
 }
 
-pub(super) fn s(text: &str) -> Value {
+pub(crate) fn s(text: &str) -> Value {
     Value::string(text)
 }
 
-pub(super) fn get<'a>(out: &'a BTreeMap<String, Value>, key: &str) -> &'a str {
+pub(crate) fn get<'a>(out: &'a BTreeMap<String, Value>, key: &str) -> &'a str {
     out.get(key).and_then(Value::as_str).unwrap_or_default()
 }
 
-pub(super) fn list<'a>(out: &'a BTreeMap<String, Value>, key: &str) -> &'a [Value] {
+pub(crate) fn list<'a>(out: &'a BTreeMap<String, Value>, key: &str) -> &'a [Value] {
     match out.get(key) {
         Some(Value::List(items)) => items,
         _ => &[],
     }
 }
 
-pub(super) fn entry<'a>(value: &'a Value, key: &str) -> &'a Value {
+pub(crate) fn entry<'a>(value: &'a Value, key: &str) -> &'a Value {
     match value {
         Value::Map(entries) => entries.get(key).unwrap_or(&Value::Null),
         _ => &Value::Null,
     }
 }
 
-pub(super) fn text_of(value: &Value) -> String {
+pub(crate) fn text_of(value: &Value) -> String {
     to_plain_string(value)
 }
 
@@ -195,13 +202,13 @@ fn field(row: &EntityValue, name: &str) -> String {
 }
 
 /// A clone of a repository with one commit on main, pushed.
-pub(super) struct Work {
-    pub(super) dir: std::path::PathBuf,
-    pub(super) home: std::path::PathBuf,
+pub(crate) struct Work {
+    pub(crate) dir: std::path::PathBuf,
+    pub(crate) home: std::path::PathBuf,
 }
 
 impl Work {
-    pub(super) fn clone(fixture: &Fixture, base: &str, id: &str, user: &str) -> Self {
+    pub(crate) fn clone(fixture: &Fixture, base: &str, id: &str, user: &str) -> Self {
         let home = fixture.dir.join(format!("home-{id}-{user}"));
         std::fs::create_dir_all(&home).unwrap();
         let dir = fixture.dir.join(format!("work-{id}-{user}"));
@@ -213,7 +220,7 @@ impl Work {
         Self { dir, home }
     }
 
-    pub(super) fn commit(&self, files: &[(&str, &str)], message: &str) -> String {
+    pub(crate) fn commit(&self, files: &[(&str, &str)], message: &str) -> String {
         for (name, text) in files {
             write_file(&self.dir, name, text);
         }
@@ -222,15 +229,15 @@ impl Work {
         self.head()
     }
 
-    pub(super) fn head(&self) -> String {
+    pub(crate) fn head(&self) -> String {
         git_ok(&self.dir, &self.home, &["rev-parse", "HEAD"]).trim().to_string()
     }
 
-    pub(super) fn run(&self, args: &[&str]) -> (bool, String) {
+    pub(crate) fn run(&self, args: &[&str]) -> (bool, String) {
         git_in(&self.dir, &self.home, args)
     }
 
-    pub(super) fn ok(&self, args: &[&str]) -> String {
+    pub(crate) fn ok(&self, args: &[&str]) -> String {
         git_ok(&self.dir, &self.home, args)
     }
 }

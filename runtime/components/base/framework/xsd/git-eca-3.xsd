@@ -27,9 +27,12 @@ along with this software (see the LICENSE.md file). If not, see
                 Run the actions, when the condition is met, on an event of a git repository: a push to it, a fetch of
                 a mirror, an import, or a write through a git:// location.
 
-                The pre events run in a push before it is accepted: an error the actions leave in the message facade
-                refuses the push (pre-receive) or that ref (pre-ref-update), and the messages show on the client as
-                remote: lines. The post events run after the refs changed, each rule in a transaction of its own; a
+                The pre events run before a ref changes, for every way one does: a push (source push), a merge,
+                commit#GitFiles, create#GitRef, delete#GitRef and a write through git:// (source write), an import
+                and a mirror's fetch. An error the actions leave in the message facade refuses the change
+                (pre-receive) or that ref (pre-ref-update): a push shows it on the client as remote: lines, and a
+                service call has it as its error. A rule that must hold for every way names every source
+                (push,fetch,import,write). The post events run after the refs changed, each rule in a transaction of its own; a
                 rule that fails is logged and recorded on the moqui.resource.GitUpdate, and the others still run.
                 Rules run with authorization off.
 
@@ -39,8 +42,11 @@ along with this software (see the LICENSE.md file). If not, see
                 trailers, authorName, authorEmail, authorDate, committerName, committerEmail, committerDate,
                 parentIds, moquiUserId) with refName and isDefaultBranch for a commit event; tag (tagName, targetId,
                 commitId, annotated, message, taggerName, taggerEmail, taggerDate) for a tag event; pushOptions for a
-                push; for pre-receive the commits a push adds, as newCommits; and for the pre events of a push the
-                bytes of the pack it sent, as packBytes (0 with no pack), for a rule that keeps a quota.
+                push; for the pre events the commits the change would bring, as newCommits (each as commit) and
+                newCommitIds, with newCommitsTruncated when there are more than git-server eca-max-commits; forReview;
+                for a merge through a service isMerge, mergeRequestId, mergeMethodEnumId and mergeSourceCommitId; and
+                for the pre events of a push the bytes of the pack it sent, as packBytes (0 with no pack), for a rule
+                that keeps a quota.
             </xs:documentation>
         </xs:annotation>
         <xs:complexType>
@@ -56,10 +62,10 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="event" use="required">
                 <xs:simpleType>
                     <xs:restriction base="xs:token">
-                        <xs:enumeration value="pre-receive"><xs:annotation><xs:documentation>Once per push, before
-                            any ref changes.</xs:documentation></xs:annotation></xs:enumeration>
+                        <xs:enumeration value="pre-receive"><xs:annotation><xs:documentation>Once per push, or
+                            other change of refs, before any ref changes.</xs:documentation></xs:annotation></xs:enumeration>
                         <xs:enumeration value="pre-ref-update"><xs:annotation><xs:documentation>Once per ref of a
-                            push, before it changes.</xs:documentation></xs:annotation></xs:enumeration>
+                            push, or other change, before it changes.</xs:documentation></xs:annotation></xs:enumeration>
                         <xs:enumeration value="ref-update"><xs:annotation><xs:documentation>Once per ref that
                             changed: created, moved or deleted.</xs:documentation></xs:annotation></xs:enumeration>
                         <xs:enumeration value="commit"><xs:annotation><xs:documentation>Once per commit new to the
@@ -73,7 +79,8 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:attribute>
             <xs:attribute name="source" type="xs:string" default="push,fetch,import">
                 <xs:annotation><xs:documentation>A comma-separated list of push, fetch, import and write. A write
-                    (each save of a git:// file, such as a wiki page) only runs rules that name it.</xs:documentation></xs:annotation>
+                    (each save of a git:// file, such as a wiki page, and each ref a service writes: a merge,
+                    commit#GitFiles, create#GitRef, delete#GitRef) only runs rules that name it.</xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="repository-pattern" type="xs:string">
                 <xs:annotation><xs:documentation>A regular expression the whole repositoryId must match.</xs:documentation></xs:annotation>

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Pipelines follow merge requests (docs/interfaces/Pipelines.md "Events"): every change of a merge request goes through
+    org.moqui.git.GitReviewServices.queue#MergeRequestEvent (opened, synchronize for a new head, reopened, ready),
+    whoever made it: of a branch, of a fork and of a push to refs/for, and of a hidden merge request, for which the
+    service sends no webhook and still runs. So the engine queues its merge-request pipelines after it, with
+    authorization disabled as the event itself is queued. Not after an event that was refused (a caller without the
+    update right): nothing happened to the merge request. The pushes and tags are a gitECA rule (Git.gitecas.xml). -->
+<secas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-eca-3.xsd">
+    <seca id="GitCiQueueMergeRequestRuns" service="org.moqui.git.GitReviewServices.queue#MergeRequestEvent" when="post-service">
+        <condition><expression>action == 'opened' || action == 'synchronize' || action == 'reopened' || action == 'ready'</expression></condition>
+        <actions><service-call name="org.moqui.git.GitCiServices.queue#MergeRequestRuns"
+                in-map="{mergeRequestId: mergeRequestId, action: action}" disable-authz="true"/></actions>
+    </seca>
+</secas>

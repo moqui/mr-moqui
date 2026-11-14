@@ -51,21 +51,33 @@ fn pack_error(what: &str, err: impl std::fmt::Display) -> Error {
     Error::new(format!("{what}: {err}"))
 }
 
+/// How the error of a push that refers to an object it does not bring, and that it may not name, begins: the same
+/// for an object the store does not have and for one that is not the pusher's to read.
+pub(crate) const MISSING_OBJECT: &str = "the push is missing object ";
+
 /// Bases of a thin pack, looked up in the repository. A store error is kept and answered as a missing object, as the
 /// lookup can only say yes or no; the caller reports the kept error.
 struct StoreFind<'a> {
     store: &'a dyn GitStore,
     failed: Mutex<Option<Error>>,
+    /// The first base asked for that the store does not have.
+    missing: Mutex<Option<ObjectId>>,
+    /// The objects found: the bases the thin pack was completed with.
+    found: Mutex<HashSet<ObjectId>>,
 }
 
 impl gix::objs::Find for StoreFind<'_> {
     fn try_find<'a>(&self, id: &gix::hash::oid, buffer: &'a mut Vec<u8>) -> gix::Result<Option<gix::objs::Data<'a>>> {
         match self.store.find(&id.to_owned()) {
             Ok(Some((kind, data))) => {
+                moqui_lib::sync::lock(&self.found).insert(id.to_owned());
                 *buffer = data;
                 Ok(Some(gix::objs::Data::new(buffer, kind, gix::hash::Kind::Sha1)))
             }
-            Ok(None) => Ok(None),
+            Ok(None) => {
+                moqui_lib::sync::lock(&self.missing).get_or_insert(id.to_owned());
+                Ok(None)
+            }
             Err(err) => {
                 *moqui_lib::sync::lock(&self.failed) = Some(err);
                 Ok(None)
@@ -86,6 +98,13 @@ pub(crate) struct Quarantine<'a> {
     /// The objects of the repository the pushed ones refer to, found by [`Quarantine::check_closure`]: an accepted
     /// push freshens them.
     referenced: Mutex<Vec<ObjectId>>,
+    /// Those of them a pushed commit names as a parent or a pushed tag as its target: the history the push builds
+    /// on, which must be the repository's own (`crate::reach`).
+    linked: Mutex<Vec<ObjectId>>,
+    /// The objects of the repository a thin pack was completed with (the bases of its deltas). They are in the
+    /// indexed pack and are not the push's: the pusher only named them, so they are checked as what the pushed
+    /// objects refer to is.
+    bases: HashSet<ObjectId>,
 }
 
 impl std::fmt::Debug for Quarantine<'_> {
@@ -126,10 +145,14 @@ pub(crate) fn receive<'a>(
             MemoryCappedHashmap::new(DELTA_CACHE_BYTES),
         )),
         referenced: Mutex::new(Vec::new()),
+        linked: Mutex::new(Vec::new()),
+        bases: HashSet::new(),
     };
     let lookup = StoreFind {
         store: base,
         failed: Mutex::new(None),
+        missing: Mutex::new(None),
+        found: Mutex::new(HashSet::new()),
     };
     let interrupt = AtomicBool::new(false);
     let written = Bundle::write_to_directory(
@@ -150,7 +173,18 @@ pub(crate) fn receive<'a>(
     if let Some(err) = moqui_lib::sync::lock(&lookup.failed).take() {
         return Err(err);
     }
-    let written = written.map_err(|err| pack_error("reading the pushed pack", err))?;
+    let written = match (written, *moqui_lib::sync::lock(&lookup.missing)) {
+        (Ok(written), _) => written,
+        // a delta whose base is neither in the pack nor in the repository
+        (Err(err), Some(missing)) => {
+            tracing::debug!("a pushed pack was not read: {err}");
+            return Err(Error::new(format!(
+                "{MISSING_OBJECT}{missing}, which a pushed object refers to"
+            )));
+        }
+        (Err(err), None) => return Err(pack_error("reading the pushed pack", err)),
+    };
+    quarantine.bases = std::mem::take(&mut *moqui_lib::sync::lock(&lookup.found));
     if let Some(keep) = &written.keep_path {
         let _ = std::fs::remove_file(keep);
     }
@@ -198,18 +232,21 @@ impl Quarantine<'_> {
 
     /// Check that the pushed objects are whole: each parses as its kind, and every object one refers to (a commit's
     /// tree and parents, a tree's entries, a tag's target) is in the pack or the repository. A parent that is in
-    /// `shallow` (the pushing client is a shallow clone) may be missing. Submodule entries are passed over.
+    /// `shallow` (the pushing client is a shallow clone) may be missing; it is still one the push builds on
+    /// ([`Quarantine::linked`]), as a client says what is shallow. Submodule entries are passed over. An object
+    /// the thin pack was completed with is the repository's, not the push's.
     pub(crate) fn check_closure(&self, shallow: &HashSet<ObjectId>) -> Result<(), Error> {
         let ids = self.ids();
-        let in_pack: HashSet<ObjectId> = ids.iter().copied().collect();
+        let in_pack: HashSet<ObjectId> = ids.iter().filter(|id| !self.bases.contains(*id)).copied().collect();
         let mut outside: HashSet<ObjectId> = HashSet::new();
+        let mut linked: HashSet<ObjectId> = HashSet::new();
         let need = |id: ObjectId, outside: &mut HashSet<ObjectId>| {
             if !in_pack.contains(&id) {
                 outside.insert(id);
             }
         };
         for id in &ids {
-            if self.kind_in_pack(id)? == Some(Kind::Blob) {
+            if self.bases.contains(id) || self.kind_in_pack(id)? == Some(Kind::Blob) {
                 continue;
             }
             let (kind, data) = self
@@ -223,6 +260,9 @@ impl Quarantine<'_> {
                     for parent in commit.parents() {
                         if !shallow.contains(&parent) {
                             need(parent, &mut outside);
+                        }
+                        if !in_pack.contains(&parent) {
+                            linked.insert(parent);
                         }
                     }
                 }
@@ -239,6 +279,9 @@ impl Quarantine<'_> {
                     let tag = gix::objs::TagRef::from_bytes(&data, ops::HASH)
                         .map_err(|err| pack_error(&format!("pushed tag {id} is malformed"), err))?;
                     need(tag.target(), &mut outside);
+                    if !in_pack.contains(&tag.target()) {
+                        linked.insert(tag.target());
+                    }
                 }
                 Kind::Blob => {}
             }
@@ -248,12 +291,36 @@ impl Quarantine<'_> {
             let present = self.base.contains_many(chunk)?;
             if let Some(missing) = chunk.iter().find(|id| !present.contains(*id)) {
                 return Err(Error::new(format!(
-                    "the push is missing object {missing}, which a pushed object refers to"
+                    "{MISSING_OBJECT}{missing}, which a pushed object refers to"
                 )));
             }
         }
         *moqui_lib::sync::lock(&self.referenced) = outside;
+        *moqui_lib::sync::lock(&self.linked) = linked.into_iter().collect();
         Ok(())
+    }
+
+    /// The objects outside the pack that a pushed commit names as a parent or a pushed tag as its target, as
+    /// [`Quarantine::check_closure`] found them.
+    pub(crate) fn linked(&self) -> Vec<ObjectId> {
+        moqui_lib::sync::lock(&self.linked).clone()
+    }
+
+    /// Whether the push itself brought the object (not one its thin pack was completed with).
+    pub(crate) fn holds(&self, id: &ObjectId) -> bool {
+        !self.bases.contains(id)
+            && self
+                .bundle
+                .as_ref()
+                .is_some_and(|bundle| bundle.index.lookup(id).is_some())
+    }
+
+    /// Every object of the repository the push names and did not bring: what its objects refer to outside the
+    /// pack, as [`Quarantine::check_closure`] found them, and the bases its thin pack was completed with.
+    pub(crate) fn named(&self) -> Vec<ObjectId> {
+        let mut named: HashSet<ObjectId> = moqui_lib::sync::lock(&self.referenced).iter().copied().collect();
+        named.extend(self.bases.iter().copied());
+        named.into_iter().collect()
     }
 
     /// The kind of a pushed object from its entry's header (and those of its delta bases), without decoding it.

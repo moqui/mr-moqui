@@ -57,16 +57,38 @@ pub fn calls_enabled() -> bool {
     )
 }
 
-/// The edge node whose row the link may keep: set as a link comes up ([`allow_row`]), cleared by unpairing
+/// The edge nodes whose rows the links may keep: each edge node, or each member of an edge cluster (a media node and
+/// SIP node of its own, plans/Edge-Node2.md §4.6), added as its link comes up ([`allow_row`]), all cleared by unpairing
 /// ([`forget_rows`]), each under the lock, so a row written by a heartbeat or an Apply in flight is never made again
 /// after unpairing removed it.
 #[derive(Default)]
-struct Keeper(std::sync::Mutex<Option<String>>);
+struct Keeper(std::sync::Mutex<std::collections::BTreeSet<String>>);
 
-/// On a local node whose link to the edge node `instance_id` came up: its `CallMediaNode` row may be written.
+/// The most edge members whose rows a local node keeps.
+const MAX_ROWS: usize = 64;
+
+/// On a local node whose link to the edge node (or edge cluster member) `instance_id` came up: its `CallMediaNode` and
+/// `SipNode` rows may be written.
 pub fn allow_row(factory: &ExecutionContextFactory, instance_id: &str) {
+    if instance_id.is_empty() {
+        return;
+    }
     let keeper = factory.extension(|_| Keeper::default());
-    *moqui_lib::sync::lock(&keeper.0) = (!instance_id.is_empty()).then(|| instance_id.to_string());
+    let mut allowed = moqui_lib::sync::lock(&keeper.0);
+    if allowed.len() < MAX_ROWS || allowed.contains(instance_id) {
+        allowed.insert(instance_id.to_string());
+    } else {
+        tracing::error!(
+            "Edge link: the call rows of edge member {instance_id} are not kept, as {MAX_ROWS} are already"
+        );
+    }
+}
+
+/// On a local node whose edge cluster's list changed: only the members in `keep` may have their rows written; one gone
+/// from the list is forgotten (its rows go stale, and its calls end, as a media node that stopped).
+pub fn retain_rows(factory: &ExecutionContextFactory, keep: &[String]) {
+    let keeper = factory.extension(|_| Keeper::default());
+    moqui_lib::sync::lock(&keeper.0).retain(|id| keep.contains(id));
 }
 
 /// On a local node that unpairs: no edge node's row may be written from now on, and `remove` (which removes the rows)
@@ -74,7 +96,7 @@ pub fn allow_row(factory: &ExecutionContextFactory, instance_id: &str) {
 pub fn forget_rows<T>(factory: &ExecutionContextFactory, remove: impl FnOnce() -> T) -> T {
     let keeper = factory.extension(|_| Keeper::default());
     let mut allowed = moqui_lib::sync::lock(&keeper.0);
-    *allowed = None;
+    allowed.clear();
     remove()
 }
 
@@ -91,7 +113,7 @@ pub fn register_row(edge: &EdgeInfo, stopping: bool) -> Result<(), String> {
         .ok_or_else(|| "no execution context to write the media node row in".to_string())?;
     let keeper = factory.extension(|_| Keeper::default());
     let allowed = moqui_lib::sync::lock(&keeper.0);
-    if !stopping && allowed.as_deref() != Some(edge.instance_id.as_str()) {
+    if !stopping && !allowed.contains(edge.instance_id.as_str()) {
         return Err(format!(
             "the link to the edge node {} is not up or this node unpaired, so its media node row is not written",
             edge.instance_id
@@ -131,7 +153,7 @@ pub fn register_sip_row(edge: &EdgeInfo, stopping: bool) -> Result<(), String> {
         .ok_or_else(|| "no execution context to write the SIP node row in".to_string())?;
     let keeper = factory.extension(|_| Keeper::default());
     let allowed = moqui_lib::sync::lock(&keeper.0);
-    if !stopping && allowed.as_deref() != Some(edge.instance_id.as_str()) {
+    if !stopping && !allowed.contains(edge.instance_id.as_str()) {
         return Err(format!(
             "the link to the edge node {} is not up or this node unpaired, so its SIP node row is not written",
             edge.instance_id

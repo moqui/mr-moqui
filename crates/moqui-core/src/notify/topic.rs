@@ -53,6 +53,21 @@ pub const CALC_UPDATE: &str = "calc-update";
 /// "area", "left"}`), for the viewers of the document on the others.
 pub const CALC_PRESENCE: &str = "calc-presence";
 
+/// A local node's replication notes for the member of its cluster that sends replication (plans/Edge-Node2.md §4.4,
+/// "Work from the pool to the edge node"), `{"from", "notes": [[entity, key], ..], "whole": [entity, ..]}`: that member
+/// takes them, the others drop them (`crate::edge::replica::sender`).
+pub const EDGE_REPLICA_NOTE: &str = "edge-replica-note";
+
+/// A web protection ban made or lifted on one server (plans/Edge-Node2.md §4.3), `{"kind": "ban"|"lift", "address",
+/// "seconds", "ban", "from"}`, so the other members of its cluster, and the edge node it is paired with,
+/// refuse or serve that client too (the host's `guard_share`).
+pub const WEB_BAN: &str = "web-ban";
+
+/// An edge node's host table or replicated copies changed on one member of an edge cluster (plans/Edge-Node2.md
+/// §4.6), `{"from", "hosts": bool, "sets": [..]}`, so the other members load their host table again and build again
+/// what they keep from those sets (`crate::edge::cluster_state`).
+pub const EDGE_STATE: &str = "edge-state";
+
 /// Every topic of the bus, which are also the topics the cluster carries: the transports' receivers take only these.
 pub const TOPICS: &[&str] = &[
     ENTITY_CACHE_INVALIDATE,
@@ -64,6 +79,9 @@ pub const TOPICS: &[&str] = &[
     RTC_SIGNAL,
     RUNTIME_SETTINGS,
     COMPONENT_DEPLOY,
+    EDGE_REPLICA_NOTE,
+    WEB_BAN,
+    EDGE_STATE,
 ];
 
 const RECENT_IDS: usize = 1024;

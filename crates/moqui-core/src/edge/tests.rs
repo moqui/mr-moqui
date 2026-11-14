@@ -18,20 +18,33 @@ use super::*;
 fn a_node_role_is_read_in_any_case_and_an_unknown_one_is_a_normal_node() {
     assert_eq!(NodeRole::parse(""), NodeRole::Normal);
     assert_eq!(NodeRole::parse(" Edge "), NodeRole::Edge);
+    assert_eq!(NodeRole::parse("front_edge"), NodeRole::FrontEdge);
+    assert_eq!(NodeRole::parse("FRONT"), NodeRole::Front);
     assert_eq!(NodeRole::parse("all-in-one"), NodeRole::AllInOne);
     assert_eq!(NodeRole::parse("ALL-IN-ONE"), NodeRole::AllInOne);
     assert_eq!(NodeRole::parse("allinone"), NodeRole::Normal);
+    assert_eq!(NodeRole::parse("front-edge"), NodeRole::Normal);
     assert_eq!(NodeRole::parse("local"), NodeRole::Normal);
-    for role in [NodeRole::Normal, NodeRole::Edge, NodeRole::AllInOne] {
+    for role in ROLES {
         assert_eq!(NodeRole::parse(role.as_str()), role);
     }
 }
 
+const ROLES: [NodeRole; 5] = [
+    NodeRole::Normal,
+    NodeRole::Front,
+    NodeRole::FrontEdge,
+    NodeRole::Edge,
+    NodeRole::AllInOne,
+];
+
 #[test]
-fn an_edge_and_an_all_in_one_node_take_links_and_only_the_edge_node_is_dedicated() {
-    let roles = [NodeRole::Normal, NodeRole::Edge, NodeRole::AllInOne];
-    let of = |test: fn(NodeRole) -> bool| roles.map(test);
-    assert_eq!(of(NodeRole::edge_node), [false, true, false]);
-    assert_eq!(of(NodeRole::all_in_one), [false, false, true]);
-    assert_eq!(of(NodeRole::takes_links), [false, true, true]);
+fn every_role_takes_links_and_each_has_its_sets() {
+    // plans/Edge-Node2.md §4.3: normal, front, front_edge, edge, all-in-one
+    let of = |test: fn(NodeRole) -> bool| ROLES.map(test);
+    assert_eq!(of(NodeRole::takes_links), [false, true, true, true, true]);
+    assert_eq!(of(NodeRole::has_front), [false, true, true, false, true]);
+    assert_eq!(of(NodeRole::has_edge), [false, false, true, true, true]);
+    assert_eq!(of(NodeRole::edge_node), [false, true, true, true, false]);
+    assert_eq!(of(NodeRole::all_in_one), [false, false, false, false, true]);
 }

@@ -89,7 +89,7 @@ fn a_port_of_this_nodes_own_listeners_is_no_rows() {
         "webapp_https_listen_port" => " 443 ".to_string(),
         _ => String::new(),
     };
-    let reserved = |port: u16| reserved_in(port, properties);
+    let reserved = |port: u16| reserved_in(port, false, properties);
     assert_eq!(reserved(2222).as_deref(), Some("edge_ssh_tunnel_port"));
     assert_eq!(
         reserved(443).as_deref(),
@@ -106,4 +106,31 @@ fn a_port_of_this_nodes_own_listeners_is_no_rows() {
     assert!(reserved(20500).is_some_and(|what| what.starts_with("sip_rtp_ports")));
     assert!(reserved(50000).is_some_and(|what| what.starts_with("turn_relay_ports")));
     assert_eq!(reserved(47022), None);
+}
+
+#[test]
+fn a_front_node_takes_smtp_rows_and_its_edge_set_ports_are_free() {
+    let properties = |name: &str| match name {
+        "smtp_listen_port" => "25".to_string(),
+        _ => String::new(),
+    };
+    // a front node starts none of the edge set's listeners: their ports, set or usual, and ranges are free for a row
+    for port in [25, 5060, 5222, 3478, 10025, 20500, 50000] {
+        assert_eq!(reserved_in(port, true, properties), None, "{port}");
+    }
+    assert_eq!(reserved_in(443, true, properties).as_deref(), Some("webapp_https_port"));
+    assert_eq!(reserved_in(587, true, properties).as_deref(), Some("mail submission"));
+    assert_eq!(reserved_in(25, false, properties).as_deref(), Some("smtp_listen_port"));
+
+    // an smtp row is a front node's only
+    let (ctx, facade) = open();
+    super::super::conf::settings_as(ctx.factory(), super::super::NodeRole::FrontEdge);
+    paired(&facade, "edge-pool", "EdgeClientActive");
+    let refused = add(ctx.factory(), &facade, "47025", "edge-pool", "smtp").unwrap_err();
+    assert!(refused.to_string().contains("front node's"), "{refused}");
+    let (front_ctx, front_facade) = open();
+    super::super::conf::settings_as(front_ctx.factory(), super::super::NodeRole::Front);
+    paired(&front_facade, "edge-pool", "EdgeClientActive");
+    let added = add(front_ctx.factory(), &front_facade, "47025", "edge-pool", "SMTP").unwrap();
+    assert_eq!(added.tunnel_kind, "smtp");
 }

@@ -13,7 +13,7 @@
  */
 
 //! How work crosses the edge link (plans/archive/Edge-Node.md §5.2, E3). Both ends are real servers in the test's own process,
-//! as in `edge_web.rs`: the local node starts first, then the edge node (`node_role=edge`, set only after the local node
+//! as in `edge_web.rs`: the local node starts first, then the edge node (`node_role=front_edge`, set only after the local node
 //! read its edge conf); the local node's link is its dialer driven with an explicit `LocalConfig` serving the local
 //! server (`local_web`), stopped and started again to cut the link. Both have the same edge conf: the diagnostic
 //! `echo#Delegate` delegated, a test queue kind whose handler is a script service of a test component written into each
@@ -338,7 +338,10 @@ fn work_crosses_the_link_once_and_in_order_and_survives_a_cut() {
     let edge = crate::common::start_second_with(
         "edge-work-edge",
         EDGE_CONF,
-        &[("node_role", "edge"), ("webapp_https_listen_port", &edge_port_text)],
+        &[
+            ("node_role", "front_edge"),
+            ("webapp_https_listen_port", &edge_port_text),
+        ],
         &component_files(&[("cert/default.crt", &cert), ("cert/default.key", &key)]),
     );
     grant_handler(&local);
