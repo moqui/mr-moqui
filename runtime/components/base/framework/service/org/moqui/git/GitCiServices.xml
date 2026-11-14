@@ -1,0 +1,436 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Pipelines: the CI engine over the hosted git repositories (docs/interfaces/Pipelines.md, plans/Dogfood.md §8). No Java
+    counterpart. The bodies are Rust: crates/moqui-git/src/ci/service.rs. Reading a run follows viewing its
+    repository; a run of a hidden merge request's head is read with authorization disabled and includeHidden, or by
+    the user it is for. The moves need the update right on the repository, or authorization disabled. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- ========== what the rules and the ServiceJobs call ========== -->
+    <service verb="queue" noun="PushRuns" type="rust" location="moqui_git::ci::service::queue_push_runs">
+        <description>For the framework's post-receive gitECA rule (Git.gitecas.xml): queue the push pipelines of each
+            branch that moved and the tag pipelines of each tag created, at their new commits, as the user who pushed,
+            and keep the schedules of the default branch (GitPipelineSchedule). Nothing when the engine is off here
+            (git-ci enabled; with it empty, no enabled GitRunnerPool) or the commit has no ci.xml and no
+            component.xml.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="source"/>
+            <parameter name="userId"/>
+            <parameter name="refUpdates" type="List"><description>As org.moqui.GitServices.process#GitEca's</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="runList" type="List"><description>Maps: pipelineRunId, runNum, pipelineName,
+            statusId (queued, waiting or error)</description></parameter></out-parameters>
+    </service>
+    <service verb="queue" noun="MergeRequestRuns" type="rust" location="moqui_git::ci::service::queue_merge_request_runs">
+        <description>For the service ECA rule on queue#MergeRequestEvent (GitCi.secas.xml): queue the merge-request
+            pipelines of a merge request that was opened, reopened, made ready or whose head moved (synchronize), at
+            its head commit, for its target branch. A fork's or a pushed-for-review merge request's run is untrusted;
+            a hidden one's run is hidden with it.</description>
+        <in-parameters>
+            <parameter name="mergeRequestId" required="true"/>
+            <parameter name="action" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="runList" type="List"/></out-parameters>
+    </service>
+    <service verb="queue" noun="ScheduledRuns" type="rust" location="moqui_git::ci::service::queue_scheduled_runs">
+        <description>Queue the schedule pipelines whose cron came due since they were last checked (the
+            queue_ScheduledPipelineRuns_frequent ServiceJob). One that fails is logged and the others still run.</description>
+        <out-parameters><parameter name="queuedCount" type="Integer"/></out-parameters>
+    </service>
+    <service verb="start" noun="QueuedJobRuns" type="rust" location="moqui_git::ci::service::start_queued_job_runs">
+        <description>Start queued job runs, oldest first, up to each pool's maxConcurrent: a container through the
+            pool's host type, with the server's URL and a job token (the start_QueuedJobRuns_frequent ServiceJob; a
+            run is also started soon after it is queued). A job with no pool, an image its pool does not allow or a
+            host that does not start it is an error. Jobs of a pool of registered runners wait for a runner.</description>
+        <out-parameters>
+            <parameter name="startedCount" type="Integer"/>
+            <parameter name="refusedCount" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="end" noun="OverdueJobRuns" type="rust" location="moqui_git::ci::service::end_overdue_job_runs">
+        <description>End the job runs past their time limit, the ones whose runner is gone (its container lost or
+            exited with no result) and the queued ones no runner took, then remove from each host the containers of
+            this server whose job run is not running (the end_OverdueJobRuns_frequent ServiceJob).</description>
+        <out-parameters>
+            <parameter name="timedOutCount" type="Integer"/>
+            <parameter name="lostCount" type="Integer"/>
+            <parameter name="unclaimedCount" type="Integer"/>
+            <parameter name="removedCount" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="expire" noun="RunData" type="rust" location="moqui_git::ci::service::expire_run_data">
+        <description>The retention of run data (the expire_PipelineRunData_daily ServiceJob): artifacts, reports and
+            caches past their expireDate that are not kept, the logs of jobs that ended more than git-ci
+            log-retention-days ago, and log chunks an ended job left. gc#ContentBlobs then deletes the blobs.</description>
+        <out-parameters>
+            <parameter name="artifactCount" type="Integer"/>
+            <parameter name="logCount" type="Integer"/>
+            <parameter name="chunkJobCount" type="Integer"/>
+        </out-parameters>
+    </service>
+
+    <!-- ========== reads ========== -->
+    <service verb="find" noun="PipelineRuns" type="rust" location="moqui_git::ci::service::find_pipeline_runs">
+        <description>The runs of a repository the caller may view, newest first.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="refName"><description>A full ref (refs/heads/main)</description></parameter>
+            <parameter name="event"/>
+            <parameter name="statusId"/>
+            <parameter name="mergeRequestId"/>
+            <parameter name="commitId"/>
+            <parameter name="pipelineName"/>
+            <parameter name="pageIndex" type="Integer" default-value="0"/>
+            <parameter name="pageSize" type="Integer" default-value="20"/>
+            <parameter name="includeHidden" type="Boolean"><description>With authorization disabled: the runs of
+                hidden merge requests too</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="runList" type="List"><description>Maps: pipelineRunId, repositoryId, runNum,
+                pipelineName, definitionSource, event, refName, commitId, mergeRequestId, sourceRepositoryId,
+                triggeredByUserId, ownerId, trusted, protectedRef, hidden, approvalState, approvedByUserId, statusId,
+                statusMessage, environmentId, retryOfRunId, createdDate, startedDate, finishedDate, durationSeconds</description></parameter>
+            <parameter name="runCount" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="PipelineRun" type="rust" location="moqui_git::ci::service::get_pipeline_run">
+        <description>A run with its jobs, in the order needs gives.</description>
+        <in-parameters>
+            <parameter name="pipelineRunId"/>
+            <parameter name="repositoryId"><description>With runNum, in place of pipelineRunId</description></parameter>
+            <parameter name="runNum" type="Integer"/>
+            <parameter name="includeSuperseded" type="Boolean"><description>The attempts a retry replaced too</description></parameter>
+            <parameter name="includeHidden" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="run" type="Map"/>
+            <parameter name="jobList" type="List"><description>Maps: jobRunId, pipelineRunId, jobName, matrixKey,
+                attempt, superseded, needs (List), context, poolName, runnerPoolId, runnerId, image, statusId,
+                statusMessage, exitCode, timeoutMinutes, logBytes, hasLog, minutesUsed, testCount, testFailedCount,
+                commitStatusId, queuedDate, startedDate, finishedDate, durationSeconds</description></parameter>
+            <parameter name="canUpdate" type="Boolean"><description>The caller may cancel, retry and approve</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="JobRun" type="rust" location="moqui_git::ci::service::get_job_run">
+        <description>A job run with its steps, its failed tests and its artifacts and reports.</description>
+        <in-parameters>
+            <parameter name="jobRunId" required="true"/>
+            <parameter name="includeHidden" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="run" type="Map"/>
+            <parameter name="job" type="Map"/>
+            <parameter name="stepList" type="List"><description>Maps: stepSeq, stepName, command, statusId, exitCode,
+                firstChunkSeq, startedDate, finishedDate, durationSeconds</description></parameter>
+            <parameter name="failedTestList" type="List"><description>Maps: testSeq, suiteName, testName, filePath,
+                lineNumber, message, durationMillis</description></parameter>
+            <parameter name="artifactList" type="List"><description>Maps: artifactId, jobRunId, artifactKind (artifact
+                or report), name, path, sizeBytes, sha256, keep, expireDate, createdDate, fileName</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="JobLog" type="rust" location="moqui_git::ci::service::get_job_log">
+        <description>A piece of a job's log. While the job runs: the chunks after afterChunkSeq. Once it has ended
+            (finished): the stored log from offset, as text. A page that tails passes back nextChunkSeq and nextOffset
+            each time, so it loses no line when the job ends; with watch the caller is told of new lines on the
+            notification topic GitCiJobLog (message: jobRunId, nextChunkSeq, finished) for a few minutes after each
+            read.</description>
+        <in-parameters>
+            <parameter name="jobRunId" required="true"/>
+            <parameter name="afterChunkSeq" type="Integer" default-value="0"/>
+            <parameter name="limit" type="Integer" default-value="100"/>
+            <parameter name="offset" type="Integer" default-value="0"/>
+            <parameter name="maxBytes" type="Integer" default-value="262144"/>
+            <parameter name="watch" type="Boolean"/>
+            <parameter name="includeHidden" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="chunkList" type="List"><description>Maps: chunkSeq, stepSeq, text</description></parameter>
+            <parameter name="nextChunkSeq" type="Integer"/>
+            <parameter name="text"/>
+            <parameter name="nextOffset" type="Integer"/>
+            <parameter name="logBytes" type="Integer"/>
+            <parameter name="finished" type="Boolean"/>
+            <parameter name="statusId"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="RunArtifact" type="rust" location="moqui_git::ci::service::get_run_artifact">
+        <description>An artifact (a tar.gz) or a report of a run and a piece of its content, maxBytes from offset, so
+            a download is read in pieces. A cache is not found.</description>
+        <in-parameters>
+            <parameter name="artifactId" required="true"/>
+            <parameter name="offset" type="Integer" default-value="0"/>
+            <parameter name="maxBytes" type="Integer" default-value="1048576"/>
+            <parameter name="includeHidden" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="artifact" type="Map"/>
+            <parameter name="bytes" type="Object"/>
+            <parameter name="nextOffset" type="Integer"/>
+            <parameter name="done" type="Boolean"/>
+        </out-parameters>
+    </service>
+
+    <!-- ========== moves ========== -->
+    <service verb="run" noun="Pipeline" type="rust" location="moqui_git::ci::service::run_pipeline">
+        <description>Run a pipeline that has the manual event for a branch or a tag, as the caller. Needs the update
+            right on the repository. The application's run check is asked, as for every run.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="pipelineName" required="true"/>
+            <parameter name="refName"><description>A branch name or a full ref; the default branch when empty</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="pipelineRunId"/>
+            <parameter name="runNum" type="Integer"/>
+            <parameter name="statusId"/>
+        </out-parameters>
+    </service>
+    <service verb="rerun" noun="PipelineRun" type="rust" location="moqui_git::ci::service::rerun_pipeline_run">
+        <description>A new run of the same pipeline for the same commit and event, as the caller. A run that was
+            untrusted for where its commits came from stays untrusted. Needs the update right.</description>
+        <in-parameters>
+            <parameter name="pipelineRunId"/>
+            <parameter name="repositoryId"/>
+            <parameter name="runNum" type="Integer"/>
+            <parameter name="includeHidden" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="pipelineRunId"/>
+            <parameter name="runNum" type="Integer"/>
+            <parameter name="statusId"/>
+        </out-parameters>
+    </service>
+    <service verb="cancel" noun="PipelineRun" type="rust" location="moqui_git::ci::service::cancel_pipeline_run">
+        <description>Cancel a run that has not ended: its waiting and queued jobs are cancelled, its running jobs
+            ended and their containers removed. Needs the update right, or to be the user who asked for the run. A
+            run that has ended is an error.</description>
+        <in-parameters>
+            <parameter name="pipelineRunId"/>
+            <parameter name="repositoryId"/>
+            <parameter name="runNum" type="Integer"/>
+            <parameter name="includeHidden" type="Boolean"/>
+        </in-parameters>
+        <out-parameters><parameter name="statusId"/></out-parameters>
+    </service>
+    <service verb="retry" noun="JobRun" type="rust" location="moqui_git::ci::service::retry_job_run">
+        <description>Run an ended job again in its run, with the run's trust: a new attempt is queued, the jobs
+            skipped for it wait again, and the old attempt is superseded. Needs the update right. A job that still
+            runs is an error.</description>
+        <in-parameters>
+            <parameter name="jobRunId" required="true"/>
+            <parameter name="includeHidden" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="jobRunId"><description>The new attempt</description></parameter>
+            <parameter name="statusId"/>
+        </out-parameters>
+    </service>
+    <service verb="approve" noun="PipelineRun" type="rust" location="moqui_git::ci::service::approve_pipeline_run">
+        <description>Let a run that waits for approval start (an untrusted run, or one the application's run check
+            held). Needs the update right on the repository, or authorization disabled: an application with roles of
+            its own checks them and calls this with authorization disabled. The run stays untrusted: no secrets, no
+            cache writes, an untrusted pool. A run that does not wait is an error.</description>
+        <in-parameters>
+            <parameter name="pipelineRunId"/>
+            <parameter name="repositoryId"/>
+            <parameter name="runNum" type="Integer"/>
+            <parameter name="includeHidden" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="statusId"/>
+            <parameter name="approvalState"/>
+        </out-parameters>
+    </service>
+
+    <!-- ========== runner pools (an operator's, or the application's with authorization disabled) ========== -->
+    <service verb="find" noun="RunnerPools" type="rust" location="moqui_git::ci::service::find_runner_pools">
+        <description>The runner pools, each with the jobs running and queued in it.</description>
+        <in-parameters><parameter name="ownerId"/></in-parameters>
+        <out-parameters><parameter name="poolList" type="List"><description>Maps: runnerPoolId, poolName,
+            description, ownerId, instanceHostId, poolKind, trusted, enabled, maxConcurrent, allowedImages, cpuLimit,
+            memoryMb, diskMb, pidsLimit, maxMinutes, egressRule, serverUrl, hasRegistrationToken, runningCount,
+            queuedCount</description></parameter></out-parameters>
+    </service>
+    <service verb="store" noun="RunnerPool" type="rust" location="moqui_git::ci::service::store_runner_pool">
+        <description>Make or change a runner pool. A new one is named default, of containers, trusted, enabled, one
+            job at a time, and allows no image until allowedImages names some.</description>
+        <in-parameters>
+            <parameter name="runnerPoolId"/>
+            <parameter name="poolName"/>
+            <parameter name="description"/>
+            <parameter name="ownerId"/>
+            <parameter name="instanceHostId"/>
+            <parameter name="poolKind"><description>container or registered</description></parameter>
+            <parameter name="trusted" type="Boolean"><description>false: the pool takes untrusted runs, and only those</description></parameter>
+            <parameter name="enabled" type="Boolean"/>
+            <parameter name="maxConcurrent" type="Integer"/>
+            <parameter name="allowedImages"/>
+            <parameter name="cpuLimit"/>
+            <parameter name="memoryMb" type="Integer"/>
+            <parameter name="diskMb" type="Integer"/>
+            <parameter name="pidsLimit" type="Integer"/>
+            <parameter name="maxMinutes" type="Integer"/>
+            <parameter name="egressRule"/>
+            <parameter name="serverUrl"/>
+        </in-parameters>
+        <out-parameters><parameter name="runnerPoolId"/></out-parameters>
+    </service>
+    <service verb="delete" noun="RunnerPool" type="rust" location="moqui_git::ci::service::delete_runner_pool">
+        <description>Remove a pool that has no running job, with its registered runners.</description>
+        <in-parameters><parameter name="runnerPoolId" required="true"/></in-parameters>
+    </service>
+    <service verb="create" noun="RunnerPoolToken" type="rust" location="moqui_git::ci::service::create_runner_pool_token">
+        <description>A new registration token for a pool of registered runners, replacing the one it had. It is
+            stored hashed and shown once.</description>
+        <in-parameters><parameter name="runnerPoolId" required="true"/></in-parameters>
+        <out-parameters><parameter name="token"/></out-parameters>
+    </service>
+
+    <!-- ========== secrets and environments ========== -->
+    <service verb="find" noun="CiSecrets" type="rust" location="moqui_git::ci::service::find_ci_secrets">
+        <description>The secrets of a repository (the caller needs the update right) or of an owner (authorization
+            disabled), without their values.</description>
+        <in-parameters>
+            <parameter name="repositoryId"/>
+            <parameter name="ownerId"/>
+        </in-parameters>
+        <out-parameters><parameter name="secretList" type="List"><description>Maps: secretId, name, scope,
+            environmentId, environmentName, createdByUserId, createdDate, lastUsedDate</description></parameter></out-parameters>
+    </service>
+    <service verb="store" noun="CiSecret" type="rust" location="moqui_git::ci::service::store_ci_secret">
+        <description>Make a secret or change one. The value is encrypted, written here and never read back; left out
+            on a change, it stays. A name taken in the same scope is an error.</description>
+        <in-parameters>
+            <parameter name="repositoryId"/>
+            <parameter name="ownerId"/>
+            <parameter name="secretId"/>
+            <parameter name="name"/>
+            <parameter name="value" allow-html="any"/>
+            <parameter name="scope"><description>protected (the default), tags or environment</description></parameter>
+            <parameter name="environmentId"/>
+        </in-parameters>
+        <out-parameters><parameter name="secretId"/></out-parameters>
+    </service>
+    <service verb="delete" noun="CiSecret" type="rust" location="moqui_git::ci::service::delete_ci_secret">
+        <in-parameters>
+            <parameter name="repositoryId"/>
+            <parameter name="ownerId"/>
+            <parameter name="secretId" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="deleted" type="Boolean"/></out-parameters>
+    </service>
+    <service verb="find" noun="CiEnvironments" type="rust" location="moqui_git::ci::service::find_ci_environments">
+        <description>The environments of a repository the caller may view, or of an owner (authorization disabled).</description>
+        <in-parameters>
+            <parameter name="repositoryId"/>
+            <parameter name="ownerId"/>
+        </in-parameters>
+        <out-parameters><parameter name="environmentList" type="List"><description>Maps: environmentId, name,
+            targetUrl, requiredPipeline, approvalRequired, hasToken, lastCommitId, lastDeployDate</description></parameter></out-parameters>
+    </service>
+    <service verb="store" noun="CiEnvironment" type="rust" location="moqui_git::ci::service::store_ci_environment">
+        <description>Make or change an environment of a repository (the update right) or of an owner (authorization
+            disabled). The target's token is encrypted and never read back. The target, the required pipeline and the
+            approval are kept for deployments (plans/Dogfood.md §8.6), which are not built yet.</description>
+        <in-parameters>
+            <parameter name="repositoryId"/>
+            <parameter name="ownerId"/>
+            <parameter name="environmentId"/>
+            <parameter name="name"/>
+            <parameter name="targetUrl"/>
+            <parameter name="token" allow-html="any"/>
+            <parameter name="requiredPipeline"/>
+            <parameter name="approvalRequired" type="Boolean"/>
+        </in-parameters>
+        <out-parameters><parameter name="environmentId"/></out-parameters>
+    </service>
+    <service verb="delete" noun="CiEnvironment" type="rust" location="moqui_git::ci::service::delete_ci_environment">
+        <description>Remove an environment; refused while a secret is scoped to it.</description>
+        <in-parameters>
+            <parameter name="repositoryId"/>
+            <parameter name="ownerId"/>
+            <parameter name="environmentId" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="deleted" type="Boolean"/></out-parameters>
+    </service>
+
+    <!-- ========== usage, and a repository that goes ========== -->
+    <service verb="get" noun="RunnerUsage" type="rust" location="moqui_git::ci::service::get_runner_usage">
+        <description>The runner time of a repository (the caller views it) or of an owner (authorization disabled) in
+            a month, from the GitRunnerUsage rows written as job runs end, for an application's quota.</description>
+        <in-parameters>
+            <parameter name="repositoryId"/>
+            <parameter name="ownerId"/>
+            <parameter name="periodKey"><description>yyyy-MM (UTC); this month when empty</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="periodKey"/>
+            <parameter name="minutesUsed" type="Integer"/>
+            <parameter name="secondsUsed" type="Integer"/>
+            <parameter name="untrustedMinutesUsed" type="Integer"/>
+            <parameter name="jobCount" type="Integer"/>
+            <parameter name="runningCount" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="delete" noun="RepositoryRuns" type="rust" location="moqui_git::ci::service::delete_repository_runs">
+        <description>Remove every run of a repository with its jobs, steps, logs, artifacts, failures, usage, secrets,
+            environments and schedules, for an application that deletes the repository (delete#GitRepository does not
+            know these rows). Running jobs are cancelled first. Needs the delete right, or authorization disabled.</description>
+        <in-parameters><parameter name="repositoryId" required="true"/></in-parameters>
+        <out-parameters><parameter name="runCount" type="Integer"/></out-parameters>
+    </service>
+
+    <!-- ========== the application's hooks, as interfaces ========== -->
+    <service verb="check" noun="PipelineRun" type="interface">
+        <description>What the service the conf names (git-ci run-check-service) implements: asked, with authorization
+            disabled, before a run is queued, so the application can refuse it or hold it (a quota, pipelines turned
+            off), say an untrusted run may start without approval, lower its trust, and name whose secrets and usage
+            it counts under. With no service, or no decision, a trusted run is allowed and an untrusted one waits. An
+            error it leaves refuses the run with that message.</description>
+        <in-parameters>
+            <parameter name="repositoryId"/>
+            <parameter name="pipelineName"/>
+            <parameter name="event"/>
+            <parameter name="refName"/>
+            <parameter name="commitId"/>
+            <parameter name="mergeRequestId"/>
+            <parameter name="sourceRepositoryId"/>
+            <parameter name="pushedForReview" type="Boolean"/>
+            <parameter name="triggeredByUserId"/>
+            <parameter name="trusted" type="Boolean"><description>The engine's answer</description></parameter>
+            <parameter name="jobCount" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="decision"><description>allow, wait (for approve#PipelineRun) or refuse</description></parameter>
+            <parameter name="trusted" type="Boolean"><description>false lowers the engine's answer; true never raises it</description></parameter>
+            <parameter name="message"><description>Shown on the run and its statuses when it waits or is refused</description></parameter>
+            <parameter name="ownerId"/>
+            <parameter name="runnerPoolId"><description>The pool the run's jobs use, in place of the one their pool
+                attribute names; it must still take the run's trust</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="PipelineRunUrl" type="interface">
+        <description>What the service the conf names (git-ci run-url-service) implements: the page of a run, for the
+            target of its jobs' commit statuses. With no service the conf's run-url template is used.</description>
+        <in-parameters>
+            <parameter name="repositoryId"/>
+            <parameter name="pipelineRunId"/>
+            <parameter name="runNum"/>
+            <parameter name="jobRunId"/>
+        </in-parameters>
+        <out-parameters><parameter name="url"/></out-parameters>
+    </service>
+</services>

@@ -33,6 +33,7 @@ pub mod attributes;
 pub(crate) mod blame;
 pub(crate) mod browse;
 pub mod checkout;
+pub mod ci;
 pub(crate) mod db;
 pub(crate) mod delta;
 pub(crate) mod diff;
@@ -57,10 +58,18 @@ pub(crate) mod values;
 moqui_core::extension::submit! {
     moqui_core::extension::Extension {
         features: &["git"],
-        register_services: service::register,
+        register_services,
         register_native,
         ..moqui_core::extension::Extension::EMPTY
     }
+}
+
+/// The Rust services of the git services ([`service`]) and of the CI engine ([`ci`]).
+fn register_services(
+    map: &mut std::collections::BTreeMap<&'static str, moqui_core::extension::RustServiceFn>,
+) -> Result<(), String> {
+    service::register(map)?;
+    ci::register(map)
 }
 
 /// The `git` scheme's provider, made when the conf names it ([`install`] in a test).

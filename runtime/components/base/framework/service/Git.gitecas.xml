@@ -37,4 +37,11 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><service-call name="org.moqui.git.GitServices.push#GitMirror" in-map="{repositoryId:repositoryId}"
                 async="true"/></actions>
     </giteca>
+    <!-- Pipelines (docs/interfaces/Pipelines.md): a no-op when the engine is off here or the commit has no ci.xml and no
+        component.xml. Not for a mirror's fetch or an import: nobody with the update right pushed those commits. A
+        merge request's runs follow its events (GitCi.secas.xml). -->
+    <giteca rule-name="Pipelines run for pushes and tags" id="FrameworkQueuePipelineRuns" event="post-receive"
+            source="push,write" priority="9" run-on-error="true">
+        <actions><service-call name="org.moqui.git.GitCiServices.queue#PushRuns" in-map="context"/></actions>
+    </giteca>
 </gitecas>

@@ -587,6 +587,13 @@ Acceptance tests can be deleted freely, since nothing depends on them.
 - **Who runs it.** `./moq accept-all` on a schedule (nightly, or weekly while it is long) and before a release, with
   `--junit` for a dated summary. An agent runs an acceptance test only when the user asks, or when it adds or changes
   one (then that test, and its component's acceptance suite), never because code it uses changed (AGENTS.md).
+- **In CI.** A server that hosts the repository runs the suites as pipelines ([Pipelines](interfaces/Pipelines.md)):
+  the `ci.xml` at this repository's root runs the lints and `./moq test-framework` on every push and merge request,
+  `./moq test-all` on main, and `./moq accept-all --junit` nightly, in the `moqui-build` image; a component's own
+  repository needs no file and gets `./moq test <component> --junit` as its built-in pipeline. The same rules hold
+  there: budgets are not raised, and acceptance is never part of a push's checks. The engine's own opt-in test, one
+  container on a real Docker or Podman socket, is `cargo test -p moqui-git --test ci_docker` with
+  `MOQUI_CI_DOCKER_SOCKET` set.
 
 ### The regression budget
 

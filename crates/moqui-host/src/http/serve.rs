@@ -603,6 +603,7 @@ where
         !socket
             && !path.starts_with("/xmpp-upload/")
             && !path.starts_with("/git/")
+            && !path.starts_with("/ci/runner/")
             && !path.starts_with("/dav/")
             && !path.starts_with("/llm/v1")
             && !upload

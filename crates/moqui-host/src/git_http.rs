@@ -358,6 +358,90 @@ async fn handle_lfs(
         .unwrap_or_else(|_| plain(500, "an LFS response header was not valid"))
 }
 
+/// `/ci/runner/{*rest}`: the runner REST of the CI engine (docs/interfaces/Pipelines.md "The runner REST"), on the git pool
+/// as a clone is, an upload's body streamed in and a cache's out. It takes no session: each request carries a job,
+/// runner or pool token, taken only where credentials are ([`secure`]). The body is limited by what it is: the
+/// conf's `git-ci` `max-artifact-bytes` or `max-cache-bytes` for an upload, `max-log-batch-bytes` for the rest (the
+/// engine checks each kind's own limit as it stores it).
+pub(crate) async fn handle_runner(
+    State(state): State<Arc<HttpState>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    request: Request,
+) -> Response {
+    use moqui_git::ci::runner_http;
+
+    let over_tls = request.extensions().get::<TlsConnection>().is_some();
+    let client = request
+        .extensions()
+        .get::<ClientAddr>()
+        .map_or(peer.ip(), |client| client.0);
+    let (parts, body) = request.into_parts();
+    let header = |name: &str| {
+        parts
+            .headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string)
+    };
+    let ci_number = |name: &str, default: u64| {
+        Some(state.factory.conf_number("git-ci", name, default))
+            .filter(|size| *size > 0)
+            .unwrap_or(default)
+    };
+    let upload = parts.method == axum::http::Method::PUT;
+    let limit = if upload {
+        ci_number("max-artifact-bytes", 1024 * 1024 * 1024).max(ci_number("max-cache-bytes", 2 * 1024 * 1024 * 1024))
+    } else {
+        ci_number("max-log-batch-bytes", 1024 * 1024)
+    };
+    let content_length = header("content-length").and_then(|length| length.parse::<u64>().ok());
+    if content_length.is_some_and(|length| length > limit) {
+        return plain(413, &format!("the runner request is over {limit} bytes"));
+    }
+    let runner_request = runner_http::RunnerHttpRequest {
+        method: parts.method.as_str().to_string(),
+        path: parts.uri.path().strip_prefix("/ci/runner/").unwrap_or("").to_string(),
+        query: parts.uri.query().unwrap_or("").to_string(),
+        authorization: header("authorization"),
+        content_length,
+        secure: secure(&state, over_tls, &parts.headers, peer),
+        client_ip: client.to_string(),
+    };
+    let idle = idle_timeout(&state);
+    let (body_tx, body_rx) = mpsc::channel(QUEUED);
+    let (out_tx, out_rx) = mpsc::channel(QUEUED);
+    let (head_tx, head_rx) = oneshot::channel();
+    let factory = Arc::clone(&state.factory);
+    let guard = Arc::clone(&state.guard);
+    let submitted = server::pool(&factory).try_submit(Arc::clone(&factory), move || {
+        let mut reader = ChannelReader::new(body_rx);
+        let mut responder = Responder {
+            head: Some(head_tx),
+            body: ChannelWriter::new(out_tx, idle),
+        };
+        runner_http::serve(&runner_request, &mut reader, &mut responder);
+        let _ = std::io::Write::flush(&mut responder.body);
+        if moqui_core::web::take_auth_failure() {
+            guard.record(client, Event::AuthFailure);
+        }
+        Ok(())
+    });
+    if submitted.is_err() {
+        return state.guard.unavailable("the git server is busy; try again");
+    }
+    tokio::spawn(feed(body, body_tx, limit, idle));
+    let Ok((status, headers)) = head_rx.await else {
+        return plain(500, "the runner request ended without a response");
+    };
+    let mut response = Response::builder().status(status);
+    for (name, value) in headers {
+        response = response.header(name, value);
+    }
+    response
+        .body(axum::body::Body::new(ChannelBody::new(out_rx)))
+        .unwrap_or_else(|_| plain(500, "a runner response header was not valid"))
+}
+
 #[cfg(test)]
 #[path = "git_http_tests.rs"]
 mod tests;

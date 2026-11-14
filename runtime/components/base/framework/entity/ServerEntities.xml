@@ -152,6 +152,12 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="adminPort" type="number-integer"/>
         <field name="username" type="text-short"/>
         <field name="password" type="text-medium" encrypt="true"/>
+        <!-- For the run services (CI jobs, docs/interfaces/Pipelines.md): hostProtocol is unix (hostAddress the path of a
+            Docker or Podman API socket), http, or https with these, PEM -->
+        <field name="tlsCaCert" type="text-long"><description>The authority that signed the host's certificate, when
+            it is not a public one</description></field>
+        <field name="tlsClientCert" type="text-long"><description>The certificate this server presents</description></field>
+        <field name="tlsClientKey" type="text-long" encrypt="true"><description>Its private key</description></field>
         <relationship type="one" related="moqui.server.instance.InstanceHostType" short-alias="hostType"/>
     </entity>
     <entity entity-name="InstanceHostType" package="moqui.server.instance" use="configuration">
@@ -162,6 +168,12 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="stopService" type="text-medium"/>
         <field name="removeService" type="text-medium"/>
         <field name="checkService" type="text-medium"/>
+        <!-- A run that ends (a CI job's container): implementations of start#InstanceRun, inspect#InstanceRun,
+            remove#InstanceRun and cleanup#InstanceRuns of org.moqui.dev.InstanceServices -->
+        <field name="runStartService" type="text-medium"/>
+        <field name="runInspectService" type="text-medium"/>
+        <field name="runRemoveService" type="text-medium"/>
+        <field name="runCleanupService" type="text-medium"/>
 
         <seed-data>
             <moqui.server.instance.InstanceHostType hostTypeId="docker" description="Docker"
@@ -169,7 +181,18 @@ along with this software (see the LICENSE.md file). If not, see
                     startService="org.moqui.dev.InstanceServices.start#InstanceDocker"
                     stopService="org.moqui.dev.InstanceServices.stop#InstanceDocker"
                     removeService="org.moqui.dev.InstanceServices.remove#InstanceDocker"
-                    checkService="org.moqui.dev.InstanceServices.check#InstanceDocker"/>
+                    checkService="org.moqui.dev.InstanceServices.check#InstanceDocker"
+                    runStartService="org.moqui.dev.InstanceServices.start#RunDocker"
+                    runInspectService="org.moqui.dev.InstanceServices.inspect#RunDocker"
+                    runRemoveService="org.moqui.dev.InstanceServices.remove#RunDocker"
+                    runCleanupService="org.moqui.dev.InstanceServices.cleanup#RunsDocker"/>
+            <!-- Starts nothing and records what it was asked; a host's hostAddress says how it answers (success, fail,
+                hang, lost, exit). For tests of pipelines with no container host. -->
+            <moqui.server.instance.InstanceHostType hostTypeId="fake" description="Fake (records its calls, starts nothing)"
+                    runStartService="org.moqui.dev.InstanceServices.start#RunFake"
+                    runInspectService="org.moqui.dev.InstanceServices.inspect#RunFake"
+                    runRemoveService="org.moqui.dev.InstanceServices.remove#RunFake"
+                    runCleanupService="org.moqui.dev.InstanceServices.cleanup#RunsFake"/>
 
             <!-- see: https://docs.docker.com/engine/reference/commandline/dockerd/#bind-docker-to-another-host-port-or-a-unix-socket -->
             <moqui.server.instance.InstanceHost instanceHostId="LocalDocker" hostTypeId="docker"

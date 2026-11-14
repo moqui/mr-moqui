@@ -528,6 +528,17 @@ Repositories kept by the server (in the database, on disk, or a mirror of a remo
 | `GitServices.merge#GitRefs` | `repositoryId*`, `source*`, `target*`, `method`, `message`, `checkOnly` → `commitId`, `mergeable`, `conflictPaths` |
 | `GitServices.create#GitCommitStatus` | `repositoryId*`, `commitId*`, `state*`, `context`, `targetUrl`, `description`: a CI check |
 | `GitServices.store#GitWebhook` | `repositoryId*`, `url*`, `events`, `secret`, `active` → `webhookId` |
+| `GitCiServices.find#PipelineRuns` | `repositoryId*`, `refName`, `event`, `statusId`, `mergeRequestId`, `commitId`, `pipelineName`, `pageIndex`, `pageSize`, `includeHidden` → `runList`, `runCount`: pipeline runs ([Pipelines](../interfaces/Pipelines.md#services)) |
+| `GitCiServices.get#PipelineRun`, `get#JobRun` | `pipelineRunId` (or `repositoryId`, `runNum`); `jobRunId*` → `run`, `jobList`, `canUpdate`; `job`, `stepList`, `failedTestList`, `artifactList` |
+| `GitCiServices.get#JobLog` | `jobRunId*`, `afterChunkSeq`, `limit`, `offset`, `maxBytes`, `watch` → `chunkList`, `nextChunkSeq`, `text`, `nextOffset`, `logBytes`, `finished`, `statusId`; with `watch`, the topic `GitCiJobLog` |
+| `GitCiServices.get#RunArtifact` | `artifactId*`, `offset`, `maxBytes` → `artifact`, `bytes`, `nextOffset`, `done` |
+| `GitCiServices.run#Pipeline`, `rerun#PipelineRun` | `repositoryId*`, `pipelineName*`, `refName`; `pipelineRunId*` → `pipelineRunId`, `runNum`, `statusId`. Need update |
+| `GitCiServices.cancel#PipelineRun`, `approve#PipelineRun`, `retry#JobRun` | `pipelineRunId*`; `jobRunId*` → `statusId`, `approvalState`, `jobRunId`. Need update (approve: or authorization disabled) |
+| `GitCiServices.find#CiSecrets`, `store#CiSecret`, `delete#CiSecret` | `repositoryId` or `ownerId`; `secretId`, `name`, `value`, `scope` (`protected`, `tags`, `environment`), `environmentId` → `secretList` (no values), `secretId`, `deleted` |
+| `GitCiServices.find#CiEnvironments`, `store#CiEnvironment`, `delete#CiEnvironment` | `repositoryId` or `ownerId`; `environmentId`, `name`, `targetUrl`, `token`, `requiredPipeline`, `approvalRequired` → `environmentList`, `environmentId`, `deleted` |
+| `GitCiServices.find#RunnerPools`, `store#RunnerPool`, `delete#RunnerPool`, `create#RunnerPoolToken` | `runnerPoolId`, `poolName`, `instanceHostId`, `poolKind`, `trusted`, `enabled`, `maxConcurrent`, `allowedImages`, limits → `poolList`, `runnerPoolId`, `token` |
+| `GitCiServices.get#RunnerUsage`, `delete#RepositoryRuns` | `repositoryId` or `ownerId`, `periodKey` → `minutesUsed`, `secondsUsed`, `untrustedMinutesUsed`, `jobCount`, `runningCount`; `repositoryId*` → `runCount` |
+| `GitCiServices.check#PipelineRun`, `get#PipelineRunUrl` | Interfaces: what the conf's `git-ci` `run-check-service` and `run-url-service` receive and answer |
 | `GitReviewServices.create#MergeRequest` | `repositoryId*`, `sourceRef*`, `title*`, `targetRef`, `description`, `draft`, `reviewerUserIdList` → `mergeRequestId`, `mergeRequestNum` |
 | `GitReviewServices.submit#MergeRequestReview`, `merge#MergeRequest`, `find#MergeRequests` | `mergeRequestId*`, `decision*`, `note` → `statusId`; `commitId`, `conflictPaths` |
 
