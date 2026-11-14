@@ -67,12 +67,16 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="end" noun="OverdueJobRuns" type="rust" location="moqui_git::ci::service::end_overdue_job_runs">
         <description>End the job runs past their time limit, the ones whose runner is gone (its container lost or
             exited with no result) and the queued ones no runner took, then remove from each host the containers of
-            this server whose job run is not running (the end_OverdueJobRuns_frequent ServiceJob).</description>
+            this server whose job run is not running (the end_OverdueJobRuns_frequent ServiceJob). Then a deploy step
+            left waiting is started again, and one that began more than git-ci deploy-timeout-seconds ago and never
+            ended fails.</description>
         <out-parameters>
             <parameter name="timedOutCount" type="Integer"/>
             <parameter name="lostCount" type="Integer"/>
             <parameter name="unclaimedCount" type="Integer"/>
             <parameter name="removedCount" type="Integer"/>
+            <parameter name="deployStartedCount" type="Integer"/>
+            <parameter name="deployFailedCount" type="Integer"/>
         </out-parameters>
     </service>
     <service verb="expire" noun="RunData" type="rust" location="moqui_git::ci::service::expire_run_data">
@@ -409,25 +413,32 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="ownerId"/>
         </in-parameters>
         <out-parameters><parameter name="environmentList" type="List"><description>Maps: environmentId, name,
-            targetUrl, requiredPipeline, approvalRequired, hasToken, lastCommitId, lastDeployDate</description></parameter></out-parameters>
+            targetUrl, cloneUrl, requiredPipeline, approvalRequired, approverGroupId, allowedRefs, hasToken (never the
+            token), lastCommitId, lastDeploymentId, lastDeployDate</description></parameter></out-parameters>
     </service>
     <service verb="store" noun="CiEnvironment" type="rust" location="moqui_git::ci::service::secrets::store_ci_environment">
         <description>Make or change an environment of a repository (the delete right, a maintainer's) or of an owner
             (authorization disabled). The target's token is encrypted and never read back. Its secrets go only to a
             run of a protected ref or of a branch allowedRefs names, never to a merge request's, and with
-            approvalRequired only to an approved run. The target and the required pipeline are kept for deployments
-            (plans/Dogfood.md §8.6), which are not built yet.</description>
+            approvalRequired only to an approved run. For deployments (docs/interfaces/Pipelines.md "Deployments"):
+            the target instance (https, or http to a loopback IP literal), the token it issued (at least 16
+            characters: its component-deploy attestation-secret, which signs each attestation and is never sent), the
+            pipeline with the deploy event that must pass, and who approves.</description>
         <in-parameters>
             <parameter name="repositoryId"/>
             <parameter name="ownerId"/>
             <parameter name="environmentId"/>
             <parameter name="name"/>
-            <parameter name="targetUrl"/>
-            <parameter name="token" allow-html="any"/>
-            <parameter name="requiredPipeline"/>
+            <parameter name="targetUrl"><description>The target instance's base URL</description></parameter>
+            <parameter name="token" allow-html="any"><description>Written, never read back; left out on a change, it stays</description></parameter>
+            <parameter name="cloneUrl"><description>The URL the target fetches the repository from (https or ssh);
+                the repository's public clone URL when empty</description></parameter>
+            <parameter name="requiredPipeline"><description>The pipeline, with the deploy event, that must pass</description></parameter>
             <parameter name="approvalRequired" type="Boolean"/>
+            <parameter name="approverGroupId"><description>The user group whose members approve; a maintainer of
+                the repository (the delete right) when empty</description></parameter>
             <parameter name="allowedRefs"><description>Branch patterns, separated by spaces, whose runs get the
-                environment's secrets besides protected refs'</description></parameter>
+                environment's secrets, and which deploy to it, besides protected refs</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="environmentId"/></out-parameters>
     </service>
@@ -440,6 +451,76 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="environmentId" required="true"/>
         </in-parameters>
         <out-parameters><parameter name="deleted" type="Boolean"/></out-parameters>
+    </service>
+
+    <!-- ========== deployments (docs/interfaces/Pipelines.md "Deployments", plans/Dogfood.md §8.6) ========== -->
+    <service verb="request" noun="GitDeployment" type="rust" location="moqui_git::ci::service::deploys::request_git_deployment">
+        <description>Deploy the head of a branch to an environment of the repository, as the caller (the update right):
+            the environment's pipeline (requiredPipeline, which must have the deploy event) is queued for the commit
+            with the deploy event, so the run check decides as for any run; when it passes the deployment waits for an
+            approver if the environment requires one, then the deploy step posts an attestation of the passed run to
+            the target's Component-Deploy REST. The branch must be protected or named by the environment's
+            allowedRefs; the target deploys the commit only while it is still the branch's head. A repository the
+            caller does not view is not found. The status deploy/[environment] of the commit follows each move.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="environment"><description>The environment's name, or environmentId</description></parameter>
+            <parameter name="environmentId"/>
+            <parameter name="refName"><description>A branch, or refs/heads/...; the default branch when empty</description></parameter>
+            <parameter name="commitId"><description>When given, it must be the branch's head</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="deploymentId"/>
+            <parameter name="statusId"><description>waiting-pipeline, or failed with message (no such pipeline with the
+                deploy event, a run refused by the run check, pipelines off here)</description></parameter>
+            <parameter name="pipelineRunId"/>
+            <parameter name="message"/>
+        </out-parameters>
+    </service>
+    <service verb="decide" noun="GitDeployment" type="rust" location="moqui_git::ci::service::deploys::decide_git_deployment">
+        <description>Approve or refuse a deployment whose pipeline passed and that waits for approval: by a member of
+            the environment's approverGroupId who views the repository, else a maintainer (the delete right), or the
+            application with authorization disabled; never by who asked for it. An approved one deploys.</description>
+        <in-parameters>
+            <parameter name="deploymentId" required="true"/>
+            <parameter name="decision" required="true"><description>approve or refuse</description></parameter>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters><parameter name="statusId"/></out-parameters>
+    </service>
+    <service verb="cancel" noun="GitDeployment" type="rust" location="moqui_git::ci::service::deploys::cancel_git_deployment">
+        <description>Cancel a deployment whose deploy step has not begun, with its pipeline's run when that has not
+            ended: by the requester, or with the update right.</description>
+        <in-parameters><parameter name="deploymentId" required="true"/></in-parameters>
+        <out-parameters><parameter name="statusId"/></out-parameters>
+    </service>
+    <service verb="find" noun="GitDeployments" type="rust" location="moqui_git::ci::service::deploys::find_git_deployments">
+        <description>The deployments of a repository the caller views, newest first.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="environment"><description>The environment's name</description></parameter>
+            <parameter name="statusId"/>
+            <parameter name="commitId"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="deploymentList" type="List"><description>Maps: deploymentId, repositoryId,
+                environmentId, environment, commitId, refName, componentName, statusId (requested, waiting-pipeline,
+                waiting-approval, deploying, deployed, failed, refused, cancelled), pipelineRunId, runNum,
+                requestedByUserId, approvedByUserId, approvedDate, refusedByUserId, deployResult (the target's answer as
+                JSON), errorText, createdDate, startedDate, finishedDate</description></parameter>
+            <parameter name="deploymentCount" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="GitDeployment" type="rust" location="moqui_git::ci::service::deploys::get_git_deployment">
+        <description>One deployment of a repository the caller views; not found otherwise.</description>
+        <in-parameters><parameter name="deploymentId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="deployment" type="Map"><description>As find#GitDeployments</description></parameter>
+            <parameter name="canDecide" type="Boolean"/>
+            <parameter name="canCancel" type="Boolean"/>
+        </out-parameters>
     </service>
 
     <!-- ========== usage, and a repository that goes ========== -->

@@ -277,6 +277,7 @@ pub static CATALOG: &[Unit] = &[
     single("resource-watch", Class::Live),
     single("dev-reload", Class::Restart("the file watcher starts at boot")),
     single("dev-aide", Class::Live).attrs(&[("shared", BOOT)]),
+    single("component-deploy", Class::Live),
     // read by the desktop and mobile apps, not the server
     single("client-conf", Class::Live),
     sequence(

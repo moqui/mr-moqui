@@ -278,10 +278,14 @@ fn find_ci_environments(parameters: &Parameters, facade: &EntityFacade) -> Out {
                 copy("environmentId"),
                 copy("name"),
                 copy("targetUrl"),
+                copy("cloneUrl"),
                 copy("requiredPipeline"),
                 ("approvalRequired", Value::Bool(is_yes(row, "approvalRequired"))),
-                ("hasToken", Value::Bool(field(row, "targetToken").is_some())),
+                copy("approverGroupId"),
+                copy("allowedRefs"),
+                ("hasToken", Value::Bool(crate::ci::deploy::target_token(row).is_some())),
                 copy("lastCommitId"),
+                copy("lastDeploymentId"),
                 copy("lastDeployDate"),
             ])
         })
@@ -336,10 +340,50 @@ fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
         }
     };
     row.set("name", Value::string(&name));
-    for field_name in ["targetUrl", "requiredPipeline", "allowedRefs"] {
+    for field_name in [
+        "targetUrl",
+        "cloneUrl",
+        "requiredPipeline",
+        "allowedRefs",
+        "approverGroupId",
+    ] {
         if parameters.contains_key(field_name) {
             row.set(field_name, opt(text(parameters, field_name)));
         }
+    }
+    // the target and the clone URL are checked when stored, and again when a deployment calls the target
+    for field_name in ["targetUrl", "cloneUrl"] {
+        if let Some(url) = field(&row, field_name) {
+            let checked = if field_name == "targetUrl" {
+                crate::ci::deploy::endpoint(&url).map(|_| ())
+            } else if url.starts_with("https://") || url.starts_with("ssh://") {
+                Ok(())
+            } else {
+                Err("the clone URL must be https:// or ssh://".to_string())
+            };
+            if let Err(why) = checked {
+                add_error(why);
+                return none();
+            }
+        }
+    }
+    if let Some(group) = field(&row, "approverGroupId") {
+        let known = facade
+            .find("moqui.security.UserGroup")?
+            .eq("userGroupId", Value::string(&group))
+            .count()?
+            > 0;
+        if !known {
+            add_error(format!("no user group {group}"));
+            return none();
+        }
+    }
+    if text(parameters, "token").is_some_and(|token| token.len() < crate::ci::attest::MIN_SECRET) {
+        add_error(format!(
+            "the target's token is at least {} characters",
+            crate::ci::attest::MIN_SECRET
+        ));
+        return none();
     }
     if parameters.contains_key("approvalRequired") {
         row.set("approvalRequired", yes_no(flag(parameters, "approvalRequired")));

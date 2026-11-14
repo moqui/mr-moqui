@@ -746,8 +746,8 @@ asker may not read and is not attached to a hidden merge request's head by a use
 honoured with authorization disabled only: the application writes and reads the checks of a hidden head.
 
 **Reserved contexts.** A hosting application that writes checks of its own (a contributor agreement check) or runs
-the framework's [pipelines](Pipelines.md#statuses) names their prefixes in `git-server` `reserved-status-contexts`
-(`agreement/,ci/`): such a context is then refused from a user, whatever their rights (`GitReservedContext`), and
+the framework's [pipelines](Pipelines.md#statuses) and [deployments](Pipelines.md#deployments) names their prefixes in
+`git-server` `reserved-status-contexts` (`agreement/,ci/,deploy/`): such a context is then refused from a user, whatever their rights (`GitReservedContext`), and
 written with authorization disabled only, so a branch rule that requires it cannot be met by someone who may push
 posting it themselves. None is reserved by default: an outside CI posts `ci/...` with a user's token, as above.
 
@@ -881,8 +881,9 @@ authorization disabled, and asks the [outbound check](#outbound-check) first (`k
 What a repository sends out of the server, its webhook deliveries and its push mirror's pushes, waits on the
 application when `git-server` `outbound-check-service` names a service (interface `check#GitOutbound`; none by
 default). It is asked, with authorization off, before a push's or an event's deliveries are queued (once, when the
-repository has webhooks that take it), before a push mirror pushes and before `fetch#GitRefs` reaches another server,
-with `repositoryId`, `kind` (`webhook`, `push-mirror` or `fetch`) and `event`. `allowed` false (or `N`) holds them: no delivery is queued, and the push mirror records
+repository has webhooks that take it), before a push mirror pushes, before `fetch#GitRefs` reaches another server and
+before a deployment calls its environment's target ([Pipelines](Pipelines.md#deployments)), with `repositoryId`, `kind`
+(`webhook`, `push-mirror`, `fetch` or `deploy`) and `event` (for a deployment, its environment). `allowed` false (or `N`) holds them: no delivery is queued, and the push mirror records
 `not pushed: <message>` as its `lastPushMirrorError`. A service that fails holds them too. An application that hides a
 repository from all but its owners (or suspends one) answers false for it, as its run check (`git-ci`
 `run-check-service`, [Pipelines](Pipelines.md)) refuses its runs; deliveries queued before it was hidden are still

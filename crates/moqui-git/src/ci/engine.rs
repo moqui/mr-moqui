@@ -923,7 +923,7 @@ pub fn advance(entity: &EntityFacade, pipeline_run_id: &str) -> Result<(), Error
             "success"
         };
         let was = field(&run, "statusId").unwrap_or_default();
-        set_fields(
+        if set_fields(
             entity,
             PIPELINE_RUN,
             "pipelineRunId",
@@ -933,7 +933,10 @@ pub fn advance(entity: &EntityFacade, pipeline_run_id: &str) -> Result<(), Error
                 ("statusId", Value::string(ended)),
                 ("finishedDate", moqui_core::user::now_value()),
             ],
-        )?;
+        )? {
+            // a deployment that waited for this run moves on (docs/interfaces/Pipelines.md "Deployments")
+            super::deploy::run_ended(entity, pipeline_run_id);
+        }
     } else if queued_any {
         kick();
     }
@@ -1113,6 +1116,7 @@ pub fn cancel_run(entity: &EntityFacade, pipeline_run_id: &str) -> Result<(), Er
             finish_job(entity, &job_run_id, &cancelled)?;
         }
     }
+    super::deploy::run_ended(entity, pipeline_run_id);
     Ok(())
 }
 

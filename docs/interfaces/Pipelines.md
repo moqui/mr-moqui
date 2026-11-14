@@ -9,8 +9,9 @@ guide is for whoever sets it up and for an application that shows runs. No Java 
 Contents: [the file](#the-file) · [events](#events) · [jobs](#jobs) · [the built-in pipeline](#the-built-in-pipeline) ·
 [statuses](#statuses) · [trust and approval](#trust-and-approval) · [secrets](#secrets) ·
 [runners and drivers](#runners-and-drivers) · [images](#images) · [job tokens](#job-tokens) ·
-[the runner REST](#the-runner-rest) · [moqui ci-run](#moqui-ci-run) · [records](#records) · [services](#services) ·
-[the engine](#the-engine) · [limits and conf](#limits-and-conf) · [tests](#tests) · [not built](#not-built)
+[the runner REST](#the-runner-rest) · [moqui ci-run](#moqui-ci-run) · [deployments](#deployments) ·
+[records](#records) · [services](#services) · [the engine](#the-engine) · [limits and conf](#limits-and-conf) ·
+[tests](#tests) · [not built](#not-built)
 
 ## Set it up
 
@@ -70,7 +71,7 @@ no jobs and a status `ci/ci.xml` that says `ci.xml line 3: job j has no <step>`.
 | `merge-request` | A merge request was opened, reopened, made ready, or its head moved. `branches` is matched against its target. | The target branch, and the merge request's head |
 | `schedule` | The pipeline's `cron` came due (six fields, seconds first, as a ServiceJob's). Read from the default branch. | The first branch `branches` names, else the default branch, and its head |
 | `manual` | `run#Pipeline`, by a user with the update right | The branch or tag asked for |
-| `deploy` | A deployment to an environment ([not built](#not-built); the event and the records are there) | |
+| `deploy` | `request#GitDeployment`: the environment's `requiredPipeline` only ([deployments](#deployments)) | The branch asked for and its head |
 
 Pushes and tags are the framework's gitECA rule `FrameworkQueuePipelineRuns` (`Git.gitecas.xml`, `post-receive`, the
 sources `push` and `write`; not a mirror's fetch or an import, which nobody with the update right pushed). A merge
@@ -459,6 +460,70 @@ the job's calls (410, or 401 or 403: cancelled or past its time), on which it st
 again; only a call that does not connect or is answered 5xx is tried again. A job whose runner exits with no
 result is ended by the server ([the engine](#the-engine)).
 
+## Deployments
+
+A deployment puts the head of a branch on another instance, after the environment's pipeline passed for it and, when
+the environment requires one, an approver approved it (Dogfood §8.6). The code is `crates/moqui-git/src/ci/deploy.rs`
+and `attest.rs`; the target's side is Component-Deploy's ([the gate](../tools/Component-Deploy.md#the-gate)).
+
+**The environment** (`store#CiEnvironment`, a maintainer's, as its secrets are) names:
+
+| Field | |
+| --- | --- |
+| `targetUrl` | The target instance's base URL: `https`, or `http` to a loopback IP literal only (the instance and itself). Its address follows the webhooks' rules: a loopback, private or link-local one (written out or resolved) is refused unless `git-ci` `deploy-private-network="true"`. |
+| `token` (`targetToken`) | The secret the target issued: its `component-deploy` `attestation-secret`, at least 16 characters. Encrypted, never read back (`hasToken`), and never sent: it signs. |
+| `requiredPipeline` | The pipeline that must pass for the commit. It must have the `deploy` event (`on="deploy"`, beside others if it likes). |
+| `approvalRequired`, `approverGroupId` | Whether an approver approves once the pipeline passed, and who: the members of the group who view the repository, else a maintainer (the delete right). Never the requester. |
+| `allowedRefs` | The branches that deploy besides protected ones (as for the environment's secrets). |
+| `cloneUrl` | The URL the target fetches from (https or ssh); the repository's public clone URL when empty. |
+
+**The steps.** `request#GitDeployment` (the update right; a repository the caller does not view is not found) takes a
+branch (`refName`, the default branch when empty), protected or named by `allowedRefs`, and deploys its head
+(`commitId`, when given, must be that head: Component-Deploy fetches a branch). It writes a `GitDeployment`
+(`requested`) and queues `requiredPipeline` for the commit with the `deploy` event through the engine's queue, as the
+requester, so the run check decides trust and approval as for any run (`waiting-pipeline`; `failed` at once when the
+commit has no such pipeline, the run is refused, or pipelines are off here). A job of that pipeline in an environment
+that requires approval holds the run for a maintainer first, as any such run; an approval of the run by an approver
+other than the requester counts for the deployment too. When the run ends:
+
+- not `success`: the deployment is `failed` (`errorText` names the run and how it ended);
+- `success`, with `approvalRequired`: `waiting-approval` until `decide#GitDeployment` (`approve` or `refuse` with a
+  `reason`); refused is `refused`;
+- else, or approved: `deploying`, and the deploy step starts on a thread of its own once the transaction commits (a
+  step left waiting is started again by `end#OverdueJobRuns`; one that began more than `deploy-timeout-seconds` and
+  five minutes ago and never ended fails).
+
+`cancel#GitDeployment` (the requester, or the update right) cancels one whose step has not begun, with its run.
+
+**The deploy step**, claimed by one conditional update (`startedDate`), so one thread of one member calls the target:
+
+1. reads `component.xml` at the commit. A repository with none, the framework's own, is **not deployable here**: a
+   framework change ships as a new archive or image ([Run-Deploy](../Run-Deploy.md)), and the deployment fails saying
+   so, nothing built;
+2. checks the target URL and its token, and asks the outbound check (`git-server` `outbound-check-service`, kind
+   `deploy`, the environment as its event; [Git-Hosting](Git-Hosting.md#outbound-check));
+3. posts `{attestation, signature}` to `<targetUrl>/rest/s1/moqui/components/deploy` (`deploy#AttestedComponent`):
+   no redirect followed, at most `deploy-timeout-seconds` (600), 1 MiB of answer read;
+4. records the answer: `deployed` with `deployResult` (`status` deployed or up-to-date, `component`, `commitId`,
+   `problems`), the environment's `lastCommitId`, `lastDeploymentId` and `lastDeployDate`; or `failed` with the
+   target's errors in `errorText`.
+
+**The attestation** is the JSON text of `{kind: "moqui-deploy-attestation", v: 1, repositoryUrl, refName, commitId,
+component, pipeline, pipelineRunId, runNum, runStatus: "success", environment, deploymentId, issuedAt (milliseconds),
+source}`, and the signature is `sha256=` and the hex HMAC-SHA256, keyed with the token, of
+`moqui-deploy-attestation-v1\n` followed by that exact text. The target verifies the signature over the text it was
+sent, then that it is no older than its `max-age-seconds` (and not over a minute ahead of its clock), then deploys that
+component at that commit only, while the branch it fetches is still there.
+
+**Events.** Each move writes the commit status `deploy/<environment>`: `pending` (requested, waiting for its pipeline
+or approval, deploying), then `success` (deployed), `failure` (failed) or `error` (refused, cancelled), with the run's
+page as its target. Keep users from posting it as for `ci/`: `git-server` `reserved-status-contexts="ci/,deploy/"`.
+The requester is told each end, and the approver group when one is awaited or decided, on the notification topic
+`GitDeployment` (sub-topic the repository; `{deploymentId, repositoryId, environment, commitId, statusId}`).
+
+On moqui.org: a demo instance's environment with `allowedRefs="main"` and no approval, which a rule or a person asks
+for after each green merge; moqui.org's own with `approvalRequired` and its target set to `require-passed-run`.
+
 ## Records
 
 In `moqui.resource` (`framework/entity/GitCiEntities.xml`). States are plain codes.
@@ -472,11 +537,11 @@ In `moqui.resource` (`framework/entity/GitCiEntities.xml`). States are plain cod
 | `GitRunArtifact` | An upload: `artifactKind` (artifact, report, cache), `name`, `path`, `blobId`, `sizeBytes`, `sha256`, `cacheKey`, `protectedRef`, `keep`, `expireDate`, `lastUsedDate` |
 | `GitRunTestFailure` | A failed test: `suiteName`, `testName`, `filePath`, `lineNumber`, `message`, `durationMillis` |
 | `GitCiSecret` | `repositoryId` or `ownerId`, `name`, `secretValue` (encrypted), `scope`, `environmentId`, `lastUsedDate` |
-| `GitCiEnvironment` | `repositoryId` or `ownerId`, `name`, and for deployments `targetUrl`, `targetToken` (encrypted), `requiredPipeline`, `approvalRequired`, `lastCommitId`, `lastDeployDate` |
+| `GitCiEnvironment` | `repositoryId` or `ownerId`, `name`, `allowedRefs`, and for deployments `targetUrl`, `targetToken` (encrypted), `cloneUrl`, `requiredPipeline`, `approvalRequired`, `approverGroupId`, `lastCommitId`, `lastDeploymentId`, `lastDeployDate` |
 | `GitRunnerPool`, `GitRunner` | Pools and their registered runners |
 | `GitRunnerUsage` | The time of one job run, written when it ends: `repositoryId`, `ownerId`, `runnerPoolId`, `trusted`, `periodKey` (yyyy-MM), `secondsUsed`, `minutesUsed` (started minutes) |
 | `GitPipelineSchedule` | The schedule pipelines of a repository's default branch |
-| `GitDeployment` | For deployments ([not built](#not-built)) |
+| `GitDeployment` | A deployment ([deployments](#deployments)): `repositoryId`, `environmentId`, `environmentName`, `commitId`, `refName`, `componentName`, `pipelineRunId`, `statusId` (requested, waiting-pipeline, waiting-approval, deploying, deployed, failed, refused, cancelled), `requestedByUserId`, `approvedByUserId`, `approvedDate`, `refusedByUserId`, `deployResult`, `errorText` (never a secret), `createdDate`, `startedDate`, `finishedDate` |
 
 Logs and uploads are content blobs ([Git-Hosting](Git-Hosting.md)): the rows refer to them, and `gc#ContentBlobs`
 deletes a blob once no row does. `delete#GitRepository` removes a repository's rows of these entities with it, in
@@ -513,8 +578,12 @@ run's do once approved, and their token is the only thing that fetches the hidde
 | `retry#JobRun` | update | A new attempt of an ended job in its run, in the pool the old one ran in; the old one is `superseded`, the jobs skipped for it wait again. Not of a refused or never approved run, nor one the run check would now refuse, hold or trust less |
 | `approve#PipelineRun` | update, or authorization disabled; delete for a run with a job in an `approvalRequired` environment, never by who triggered it | A run that does not wait is an error |
 | `find#CiSecrets`, `store#CiSecret`, `delete#CiSecret` | delete (a maintainer) for a repository's; authorization disabled for an owner's | Values are written and never read; a move to another scope or environment needs a new value |
-| `find#CiEnvironments` | view (a repository's) | Without the target's token |
-| `store#CiEnvironment`, `delete#CiEnvironment` | as secrets | `allowedRefs`, `approvalRequired`; delete is refused while a secret is scoped to it |
+| `find#CiEnvironments` | view (a repository's) | Without the target's token (`hasToken`) |
+| `store#CiEnvironment`, `delete#CiEnvironment` | as secrets | `allowedRefs`, `approvalRequired`, and for deployments `targetUrl`, `token`, `cloneUrl`, `requiredPipeline`, `approverGroupId`; delete is refused while a secret is scoped to it |
+| `request#GitDeployment` | update | `repositoryId`, `environment` (or `environmentId`), `refName`, `commitId` → `deploymentId`, `statusId`, `pipelineRunId`, `message` |
+| `decide#GitDeployment` | an approver (the approver group, else delete), never the requester; or authorization disabled | `deploymentId`, `decision` (approve, refuse), `reason` → `statusId` |
+| `cancel#GitDeployment` | update, or the requester | `deploymentId` → `statusId` |
+| `find#GitDeployments`, `get#GitDeployment` | view | `repositoryId`, `environment`, `statusId`, `commitId`, paged → `deploymentList`, `deploymentCount`; `deploymentId` → `deployment`, `canDecide`, `canCancel` |
 | `find#RunnerPools`, `store#RunnerPool`, `delete#RunnerPool`, `create#RunnerPoolToken`, `revoke#Runner` | `GIT_CI_ADMIN`, or authorization disabled | A token's `validDays` and `revokeRunners` |
 | `get#RunnerUsage` | view, or authorization disabled for an owner's | A month's `minutesUsed`, `secondsUsed`, `untrustedMinutesUsed`, `jobCount`, and the `artifactBytes` and `cacheBytes` stored now, for an application's quota |
 | `delete#RepositoryRuns` | delete, or authorization disabled | Everything the engine keeps of a repository, as `delete#GitRepository` removes it |
@@ -539,7 +608,8 @@ answer with authorization off (the service vouches for it, a hidden run's file t
 call's own authorization, and sends it with the same headers (nosniff; an active type an attachment; inline sandboxed).
 
 The engine's own services are the rules' and the jobs': `queue#PushRuns` and `queue#MergeRequestRuns` (with
-authorization disabled only), `queue#ScheduledRuns`, `start#QueuedJobRuns`, `end#OverdueJobRuns`, `expire#RunData`.
+authorization disabled only), `queue#ScheduledRuns`, `start#QueuedJobRuns`, `end#OverdueJobRuns` (which also starts a
+deploy step left waiting), `expire#RunData`.
 
 ## The engine
 
@@ -624,6 +694,7 @@ the client's address arrives).
 | `runner-max-requests-per-minute`, `runner-command`, `start-inline` | 1200, `moqui ci-run`, true | |
 | `runner-max-registrations-per-minute`, `max-runners-per-pool` | 10, 50 | Registrations of one pool in a minute (429 past it); active runners a pool holds (a registration past it is 409 until one is revoked), so a leaked pool token mints only so many runner tokens. The minute count is each cluster member's own (n members allow n times it); the runner cap is counted under the pool's lease across the cluster, 0 no cap |
 | `container-user`, `container-read-only-root`, `container-workdir`, `container-tmp-mb`, `container-workspace-mb` | 1000:1000, true, `/workspace`, 1024, 4096 | A job's container and its services |
+| `deploy-timeout-seconds`, `deploy-private-network` | 600, false | How long a deployment's target is given; whether a target may be at a loopback, private or link-local address |
 
 ## Tests
 
@@ -632,7 +703,10 @@ The engine is tested against the fake host type with a real `git` push and the r
 `GitCi.secas.xml` loaded: a merge request of a branch, one from a real fork and real pushes to `refs/for/main`, a
 hidden one on a server with `review-start-hidden`, a merge, and the delete of a repository), the file's reader, planning, JUnit and the runner's pieces beside their
 code, and the container driver's requests against a small Docker API in the test, over TCP and a Unix socket
-(`ci/driver/docker_tests.rs`). One job on a real Docker or Podman socket is opt-in:
+(`ci/driver/docker_tests.rs`). Deployments are tested the same way (`server/ci_deploy_tests.rs`), with the deploy step's
+call over loopback to a target that verifies the attestation with `ci::attest::verify`, the code of the real target's
+`deploy#AttestedComponent`, whose gate is tested in moqui-devkit (`deploy/git_tests.rs`, `--features git`). One job on
+a real Docker or Podman socket is opt-in:
 
 ```sh
 MOQUI_CI_DOCKER_SOCKET=/var/run/docker.sock cargo test -p moqui-git --test ci_docker -- --nocapture
@@ -643,8 +717,13 @@ container through the driver's services, inspects it, and removes it.
 
 ## Not built
 
-- **Deployments** (Dogfood §8.6, DG10): the `deploy` event, `GitCiEnvironment` and `GitDeployment` are there so they
-  need no schema change; nothing queues a deploy run, decides one or deploys.
+- **Deployments**: an owner's environment (a repository's only); a private repository's fetch by the target (it
+  fetches with no credential, so the clone URL must be one the target reads); a tag, or a commit that is not its
+  branch's head; the REST of the hosting API for deployments (the services are there); building a framework archive
+  or image, which a framework deployment only reports as not deployable here. Deploys to managed instances
+  ([Vault-Instances](../../plans/Vault-Instances.md) §4.6) are to name an `InstanceEnvironment` from the environment;
+  `targetUrl` and `targetToken` stay for a target not managed here, the token read in one place
+  (`ci::deploy::target_token`) so it can become a vault item, and `decide#GitDeployment` stays the one approval step.
 - **A small static runner** for an image without the `moqui` binary.
 - **Windows registered runners**: steps run with `sh -c`, and a step past its time is killed by process group on
   Unix only.

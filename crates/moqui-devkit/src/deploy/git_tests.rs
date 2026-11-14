@@ -212,6 +212,128 @@ fn a_working_clone_fetch_is_refused_in_sim_mode() {
     assert!(!err.contains("secret-token"), "{err}");
 }
 
+const SECRET: &str = "issued-by-this-target-0123456789";
+const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+
+/// An attestation of `site` at [`COMMIT`], issued at `issued_at`, signed with `secret`: its text and signature.
+fn attested(secret: &str, issued_at: i64) -> (String, String) {
+    use moqui_git::ci::attest::{sign, Attestation, KIND};
+    let attestation = Attestation {
+        kind: KIND.to_string(),
+        v: 1,
+        repository_url: "https://source.example.com/git/site.git".to_string(),
+        ref_name: "refs/heads/main".to_string(),
+        commit_id: COMMIT.to_string(),
+        component: "site".to_string(),
+        pipeline: "release".to_string(),
+        pipeline_run_id: "100".to_string(),
+        run_num: 3,
+        run_status: "success".to_string(),
+        environment: "prod".to_string(),
+        deployment_id: "D100".to_string(),
+        issued_at,
+        source: "https://source.example.com".to_string(),
+    };
+    let signed = sign(secret, &attestation).unwrap();
+    (signed.text, signed.signature)
+}
+
+/// The gate (docs/tools/Component-Deploy.md "The gate"): with `require-passed-run` an unattested commit is refused, a
+/// stale or forged attestation is refused (a forged one counting as a failed sign-in), and a good one lets in its
+/// component at its commit only, for the deploy it is verified for. A replayed one is refused once a newer one was
+/// taken, and a good one goes on to the fetch (stopped here by sim mode).
+#[test]
+fn the_gate_refuses_an_unattested_stale_forged_or_replayed_deploy_and_takes_a_good_one() {
+    use super::{deploy_attested, gate, gate_commit, verify_attestation, Attested, AttestedScope};
+    let conf = format!(
+        r#"<moqui-conf><component-deploy require-passed-run="true" attestation-secret="{SECRET}" max-age-seconds="300"/></moqui-conf>"#
+    );
+    let context = ExecutionContextFactory::test_context_with_conf(&conf);
+    let entity = moqui_core::testing::open();
+    context.factory().set_entity(entity.clone());
+    let factory = context.factory();
+    let _entered = context.enter();
+    let now = moqui_core::service::util::now_millis();
+
+    // a deploy from this server's own pages, with no attestation
+    assert_eq!(
+        gate_commit(factory, "site", COMMIT),
+        Err(crate::deploy::GATE_REFUSAL.to_string())
+    );
+    // a good attestation verifies, and in its deploy lets in its component at its commit only
+    let (text, signature) = attested(SECRET, now - 1_000);
+    let attestation = verify_attestation(factory, &text, &signature, now).unwrap();
+    assert_eq!(
+        (attestation.component.as_str(), attestation.commit_id.as_str()),
+        ("site", COMMIT)
+    );
+    {
+        let _scope = AttestedScope::enter(Attested {
+            component: "site".to_string(),
+            commit: COMMIT.to_string(),
+        });
+        assert!(gate().is_ok(), "the attestation stands for the permission");
+        assert!(gate_commit(factory, "site", COMMIT).is_ok());
+        assert!(gate_commit(factory, "site", &COMMIT.replace('0', "f")).is_err());
+        assert!(gate_commit(factory, "other", COMMIT).is_err());
+    }
+    assert!(gate_commit(factory, "site", COMMIT).is_err(), "only for its own deploy");
+    assert!(gate().is_err(), "no attestation, no permission: COMPONENT_DEPLOY again");
+
+    // stale, forged (another secret), altered
+    let (old, old_signature) = attested(SECRET, now - 301_000);
+    let err = verify_attestation(factory, &old, &old_signature, now).unwrap_err();
+    assert!(err.contains("too old"), "{err}");
+    let _ = moqui_core::web::take_auth_failure();
+    let (forged, forged_signature) = attested("another-secret-entirely-0123456789", now);
+    let err = verify_attestation(factory, &forged, &forged_signature, now).unwrap_err();
+    assert!(err.contains("signature does not verify"), "{err}");
+    assert!(
+        moqui_core::web::take_auth_failure(),
+        "a forged attestation is a failed sign-in"
+    );
+    let err = verify_attestation(factory, &text.replace("\"site\"", "\"other\""), &signature, now).unwrap_err();
+    assert!(err.contains("signature does not verify"), "{err}");
+    assert!(!err.contains(SECRET));
+
+    // replayed: the component took a newer attestation already
+    {
+        let _authz = context.disable_authz();
+        let mut row = entity.make_value("moqui.server.DeployedComponent").unwrap();
+        row.set("componentName", moqui_lib::object::Value::string("site"));
+        row.set("status", moqui_lib::object::Value::string("removed"));
+        row.set("attestedDate", moqui_core::user::stamp_value(now));
+        row.create(&entity).unwrap();
+    }
+    let err = deploy_attested(factory, &text, &signature, &[]).unwrap_err();
+    assert!(err.contains("not taken again"), "{err}");
+    // a newer good one passes the gate and goes on to the fetch, which this test's factory (sim mode, no git
+    // resources) does not make
+    let (fresh, fresh_signature) = attested(SECRET, now + 1_000);
+    entity.set_sim_active(true);
+    let err = deploy_attested(factory, &fresh, &fresh_signature, &[]).unwrap_err();
+    entity.set_sim_active(false);
+    assert!(
+        err.contains("sim mode") || err.contains("git resources are not installed"),
+        "{err}"
+    );
+}
+
+/// With no secret this server takes no attested deploy, and with the gate off an unattested deploy is let through to
+/// the permission check, as before.
+#[test]
+fn a_server_with_no_secret_takes_no_attested_deploy_and_the_gate_is_off_by_default() {
+    use super::{gate_commit, verify_attestation};
+    let context = ExecutionContextFactory::test_context();
+    let factory = context.factory();
+    let _entered = context.enter();
+    let now = moqui_core::service::util::now_millis();
+    assert!(gate_commit(factory, "site", COMMIT).is_ok());
+    let (text, signature) = attested(SECRET, now);
+    let err = verify_attestation(factory, &text, &signature, now).unwrap_err();
+    assert!(err.contains("takes no attested deploys"), "{err}");
+}
+
 #[test]
 fn the_sets_components_xml_lists_are_component_directories_too() {
     let runtime = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime");

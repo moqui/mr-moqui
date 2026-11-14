@@ -47,6 +47,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="client-conf"/>
                 <xs:element minOccurs="0" ref="dev-reload"/>
                 <xs:element minOccurs="0" ref="dev-aide"/>
+                <xs:element minOccurs="0" ref="component-deploy"/>
                 <xs:element minOccurs="0" ref="entity-facade"/>
                 <xs:element minOccurs="0" ref="database-list"/>
                 <xs:element minOccurs="0" ref="repository-list"/>
@@ -2433,6 +2434,25 @@ along with this software (see the LICENSE.md file). If not, see
 
             <xs:attribute name="username" type="xs:string"/>
             <xs:attribute name="password" type="xs:string"/>
+            <xs:attribute name="deploy-timeout-seconds" type="xs:string" default="600"><xs:annotation><xs:documentation>How long a deployment's target is given to fetch and deploy a commit (docs/interfaces/Pipelines.md "Deployments").</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="deploy-private-network" type="xs:string" default="false"><xs:annotation><xs:documentation>true: a deployment may call a target at a loopback, private or link-local address (an internal staging host, the instance and itself); refused otherwise, as webhooks are.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="component-deploy">
+        <xs:annotation><xs:documentation>Deploying a component on this server (docs/tools/Component-Deploy.md "The
+            gate"): the attested deploys a source server's deployments make, and the gate that refuses any
+            other.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="require-passed-run" type="xs:string" default="false"><xs:annotation><xs:documentation>true:
+                deploy#Component, update#Component and load#Component refuse to deploy a commit unless the request
+                carries an attestation, signed with attestation-secret, that the commit passed its environment's
+                pipeline on the source server; a deploy from this server's own pages is refused.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="attestation-secret" type="xs:string"><xs:annotation><xs:documentation>The secret this
+                server issued to the source server (its environment's token), at least 16 characters; empty takes no
+                attested deploy. Set it from a property in runtime/.env (component_deploy_attestation_key).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-age-seconds" type="xs:string" default="300"><xs:annotation><xs:documentation>The
+                oldest attestation taken, by the time the source signed it.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
