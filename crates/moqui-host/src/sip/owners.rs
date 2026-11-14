@@ -21,17 +21,19 @@
 //!   media room, as the media driver keys the browsers' frames of that node's calls. A service call gets the ids back
 //!   bare ([`bare_ids`]) and runs as the item's owner (`moqui_core::edge::owner::with`), so a paired node's goes down
 //!   its link and the server's own runs here; its answer's ids are keyed again.
-//! - **Trunks** come from both sides ([`merge_config`]): the server's `get#EngineConfig` and the paired node's copy of
-//!   `voiceTrunks`. The dial policy and the blocked sources are the server's.
-//! - **An inbound call** goes by the number called ([`number_owner`]): the server's own `PhoneNumber`, else a number
-//!   the paired node's copy of `voiceFallbacks` has, else the owner of the trunk it came on.
-//! - **Phones** go by the domain they register to: the server's `sip_domain` (the registrar's own realm) is the server's,
-//!   the domain of the paired node's Configure (`sipDomain`) is the paired node's ([`paired_domain`]).
+//! - **Trunks** come from every side ([`merge_config`]): the server's `get#EngineConfig` and each pairing's copy of
+//!   `voiceTrunks` (E16). The dial policy and the blocked sources are the server's, else the first pairing's.
+//! - **An inbound call** goes by the number called ([`number_owner`]): the server's own `PhoneNumber`, else the
+//!   pairing that claims the number (a number of its trunks, or one with a fallback; a second pairing's copy of it is
+//!   held back as a replica conflict, E16), else the owner of the trunk it came on.
+//! - **Phones** go by the domain they register to ([`realm_owner`]): the server's `sip_domain` (the registrar's own
+//!   realm) is the server's, the domain of a pairing's Configure (`sipDomain`) is that pairing's ([`pairing_domains`]),
+//!   and a domain two pairings name is refused. On a dedicated edge node the registrar's own realm is the one
+//!   pairing's while only one is paired (E8).
 
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 use moqui_core::edge::claims::{self, ClaimKind};
 use moqui_core::edge::owner::Owner;
-use moqui_lib::object::{to_plain_string, Value};
 use serde_json::Value as Json;
 
 /// The fields that hold an id of a call, a leg, a trunk or a phone in the engine's messages and the services'.
@@ -111,23 +113,71 @@ pub(crate) fn owner_in(value: &Json) -> Owner {
         .map_or(Owner::Own, Owner::paired)
 }
 
-/// The owner of an inbound call's number: the server's when it has the number (`own`), else the paired node whose
-/// copies have it (`replica`), else the owner of the trunk it came on.
-pub(crate) fn number_owner(own: bool, replica: Option<String>, trunk: Owner) -> Owner {
+/// The owner of an inbound call's number: the server's when it has the number (`own`), else the pairing whose copies
+/// hold it (`holder`, its claim: a second pairing's copy of a number is held back as a replica conflict), else the
+/// owner of the trunk it came on.
+pub(crate) fn number_owner(own: bool, holder: Option<String>, trunk: Owner) -> Owner {
     if own {
         return Owner::Own;
     }
-    match replica.filter(|node| !node.is_empty()) {
+    match holder.filter(|node| !node.is_empty()) {
         Some(node) => Owner::paired(&node),
         None => trunk,
     }
 }
 
+/// Whose phones register in `realm`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum RealmOwner {
+    Is(Owner),
+    /// No one's: refused as a failed sign-in would be, or (a dedicated edge node with no pairing) answered 503 until
+    /// one pairs.
+    NoOne,
+    /// Two pairings name it: refused, logged with both.
+    Claimed(String),
+}
+
+/// Whose phones register in `realm` (E12, E16): the server's own in its realm `own` (not on a dedicated edge node,
+/// which has no phones of its own); else the one pairing whose domain it is (`pairings`, each pairing and its domain);
+/// else, on a dedicated edge node, the registrar's own realm `own` is the only pairing's while one is paired (E8).
+pub(crate) fn realm_owner(realm: &str, own: &str, dedicated: bool, pairings: &[(String, String)]) -> RealmOwner {
+    let realm = realm.trim().trim_end_matches('.');
+    if !dedicated && realm.eq_ignore_ascii_case(own) {
+        return RealmOwner::Is(Owner::Own);
+    }
+    let named: Vec<&str> = pairings
+        .iter()
+        .filter(|(_, domain)| !domain.is_empty() && domain.eq_ignore_ascii_case(realm))
+        .map(|(node, _)| node.as_str())
+        .collect();
+    match named.as_slice() {
+        [node] => RealmOwner::Is(Owner::paired(node)),
+        [] => match pairings {
+            [(only, _)] if dedicated && realm.eq_ignore_ascii_case(own) => RealmOwner::Is(Owner::paired(only)),
+            _ => RealmOwner::NoOne,
+        },
+        several => RealmOwner::Claimed(format!("the local nodes {} each name it", several.join(", "))),
+    }
+}
+
+/// The engine's key of the phone `username` of `owner` among the registrar's bindings: a pairing's phone registered
+/// in its own domain is keyed by the domain, as the registrar keys the bindings of a device realm
+/// (`moqui_sip::ua::aor_key`), so two pairings' phones of one username stay apart; the server's own, and a phone in
+/// a dedicated edge node's own realm, by the username alone.
+pub(crate) fn phone_key(username: &str, owner: &Owner, pairings: &[(String, String)]) -> String {
+    let domain = owner
+        .node()
+        .and_then(|node| pairings.iter().find(|(paired, _)| paired == node))
+        .map(|(_, domain)| domain.as_str())
+        .filter(|domain| !domain.is_empty());
+    moqui_sip::ua::aor_key(username, domain)
+}
+
 /// The engine's configuration from the server's own (`own`, `get#EngineConfig`'s answer, `None` on a dedicated edge
-/// node) and the paired node's (`paired`, its node and the answer from its copy, E8): every trunk of both, a paired
-/// node's keyed by the node; the policy and the blocked sources of the server's own when it has them, else the paired
-/// node's.
-pub(crate) fn merge_config(own: Option<Json>, paired: Option<(&str, Json)>) -> Json {
+/// node) and each pairing's (`paired`, its node and the answer from its copy, E8, E16): every trunk of each, a
+/// pairing's keyed by its node; the policy and the blocked sources of the server's own when it has them, else the
+/// first pairing's.
+pub(crate) fn merge_config(own: Option<Json>, paired: &[(String, Json)]) -> Json {
     let mut trunks = Vec::new();
     let mut policy = None;
     let mut blocked = None;
@@ -138,7 +188,7 @@ pub(crate) fn merge_config(own: Option<Json>, paired: Option<(&str, Json)>) -> J
         policy = own.get("policy").cloned();
         blocked = own.get("blockedSourceList").cloned();
     }
-    if let Some((node, config)) = paired {
+    for (node, config) in paired {
         if let Some(Json::Array(list)) = config.get("trunkList") {
             for trunk in list {
                 let mut trunk = trunk.clone();
@@ -155,71 +205,55 @@ pub(crate) fn merge_config(own: Option<Json>, paired: Option<(&str, Json)>) -> J
         "blockedSourceList": blocked.unwrap_or_else(|| Json::Array(Vec::new()))})
 }
 
-/// Who has the number `number` (E.164) on an all-in-one node: `Some(Own)` for the server's `PhoneNumber`, a paired
-/// node's when its copies have it, `None` when neither does (logged when it cannot be read).
-pub(crate) async fn number_holder(factory: &std::sync::Arc<ExecutionContextFactory>, number: &str) -> Option<Owner> {
+/// The owner of an inbound call to the number `number` (E.164) on a node that takes links ([`number_owner`]): the
+/// server's `PhoneNumber` (not on a dedicated edge node, which has none), else the pairing that claims it
+/// (`claims::replica_claim`: its `PhoneNumber` or `PhoneNumberFallback` copy; plans/Edge-Node2.md §4.1), else
+/// `trunk`, the owner of the trunk it came on. A number that cannot be read goes by its trunk (logged).
+pub(crate) async fn number_route(
+    factory: &std::sync::Arc<ExecutionContextFactory>,
+    number: &str,
+    trunk: Owner,
+    dedicated: bool,
+) -> Owner {
     let key = number.to_string();
     let found = crate::worker::on_pool(&std::sync::Arc::downgrade(factory), move |factory| {
         let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
         let facade = factory
             .entity()
             .ok_or_else(|| moqui_core::context::Error::new("no entity facade"))?;
-        let own = claims::own_claim(factory, &facade, ClaimKind::PhoneNumber, &key)?.is_some();
-        let replica = if own {
+        let own = !dedicated && claims::own_claim(factory, &facade, ClaimKind::PhoneNumber, &key)?.is_some();
+        let holder = if own {
             None
         } else {
             claims::replica_claim(&facade, ClaimKind::PhoneNumber, &key)?
         };
-        Ok((own, replica))
+        Ok((own, holder))
     })
     .await;
     match found {
-        Ok((false, None)) => None,
-        Ok((own, replica)) => Some(number_owner(own, replica, Owner::Own)),
+        Ok((own, holder)) => number_owner(own, holder, trunk),
         Err(err) => {
             tracing::error!("SIP: who has the number {number} was not read: {}", err.message());
-            None
+            trunk
         }
     }
 }
 
-/// The paired node and the SIP device domain of its last Configure (`sipDomain`, E12), lower case; `None` while no
-/// node is paired, the domain empty when it sent none.
-pub(crate) async fn paired_domain(factory: &std::sync::Arc<ExecutionContextFactory>) -> Option<(String, String)> {
+/// Each active pairing and the SIP device domain of its last Configure (`sipDomain`, E12, E16), lower case, in id
+/// order (empty while none is paired); `None` when they could not be read (logged).
+pub(crate) async fn pairing_domains(
+    factory: &std::sync::Arc<ExecutionContextFactory>,
+) -> Option<Vec<(String, String)>> {
     let read = crate::worker::on_pool(&std::sync::Arc::downgrade(factory), |factory| {
         let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
         let facade = factory
             .entity()
             .ok_or_else(|| moqui_core::context::Error::new("no entity facade"))?;
-        let rows = facade
-            .find("moqui.edge.EdgeClient")?
-            .eq("statusId", Value::string("EdgeClientActive"))
-            .select_field("pairedNodeId")
-            .select_field("setupJson")
-            .disable_authz()
-            .limit(2)
-            .list()?;
-        let [only] = rows.values() else { return Ok(None) };
-        let node = only.get("pairedNodeId").map(to_plain_string).unwrap_or_default();
-        let setup = only.get("setupJson").map(to_plain_string).unwrap_or_default();
-        Ok((!node.is_empty()).then(|| (node, domain_of(&setup))))
+        Ok(moqui_core::edge::sip::pairing_domains(&facade)?)
     })
     .await;
-    read.unwrap_or_else(|err| {
-        tracing::warn!("SIP: the paired node's SIP domain was not read: {}", err.message());
-        None
-    })
-}
-
-/// The `sipDomain` of a kept Configure (`EdgeClient.setupJson`), lower case with no trailing dot.
-pub(crate) fn domain_of(setup: &str) -> String {
-    let setup: Json = serde_json::from_str(setup).unwrap_or_default();
-    setup["sipDomain"]
-        .as_str()
-        .unwrap_or_default()
-        .trim()
-        .trim_end_matches('.')
-        .to_ascii_lowercase()
+    read.map_err(|err| tracing::warn!("SIP: the paired nodes' SIP domains were not read: {}", err.message()))
+        .ok()
 }
 
 #[cfg(test)]

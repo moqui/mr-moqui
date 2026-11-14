@@ -243,6 +243,7 @@ fn a_paired_node_holds_what_its_copies_and_configure_name() {
 fn a_configure_loses_the_servers_own_items_and_keeps_a_shared_mail_domain() {
     let (ctx, facade) = open();
     let factory = ctx.factory();
+    crate::edge::conf::settings_as(factory, crate::edge::NodeRole::AllInOne);
     create(
         &facade,
         ACCOUNT,
@@ -259,7 +260,7 @@ fn a_configure_loses_the_servers_own_items_and_keeps_a_shared_mail_domain() {
         "passSites": [],
         "xmppDomain": "chat.local.example",
     });
-    let found = check_setup_claims(factory, &facade, &mut setup);
+    let found = check_setup_claims(factory, &facade, "local-a", &mut setup);
     let refused: Vec<(&str, ClaimKind, &str, &str)> = found
         .refused
         .iter()
@@ -332,4 +333,82 @@ fn an_all_in_one_node_reserves_the_domains_of_its_own_receiving_accounts() {
         Some("the server's host name example.com")
     );
     assert_eq!(own("www.local.example"), None);
+}
+
+/// E16 (plans/Edge-Node2.md §4.1): on a dedicated edge node with several pairings the first claim holds. A Configure
+/// loses an XMPP domain, a SIP domain or a PASS site another pairing named first, told only that another node has it;
+/// a chat bridge id two pairings have is kept (the request's host name tells them apart), and so is a mail domain
+/// (split by address). A pairing never loses its own.
+#[test]
+fn a_configure_loses_what_another_pairing_named_first() {
+    let (ctx, facade) = open();
+    let factory = ctx.factory();
+    crate::edge::conf::settings_as(factory, crate::edge::NodeRole::Edge);
+    paired(
+        &facade,
+        "local-a",
+        r#"{"xmppDomain":"chat.a.example","sipDomain":"sip.a.example","passSites":["SITE_A"],"chatBridgeIds":["100000"]}"#,
+    );
+    paired(&facade, "local-b", "{}");
+    replicate(
+        &facade,
+        "local-a",
+        CHAT_SET,
+        vec![change(
+            BRIDGE,
+            serde_json::json!({"chatBridgeId": "100000"}),
+            serde_json::json!({"typeEnumId": "CbtSms"}),
+        )],
+    );
+    let mut setup = serde_json::json!({
+        "mailDomains": ["a.example", "b.example"],
+        "chatBridgeIds": ["100000"],
+        "passSites": ["site_a", "SITE_B"],
+        "xmppDomain": "Chat.A.example.",
+        "sipDomain": "sip.b.example",
+    });
+    let found = check_setup_claims(factory, &facade, "local-b", &mut setup);
+    let refused: Vec<(&str, &str, &str, bool)> = found
+        .refused
+        .iter()
+        .map(|item| (item.field, item.key.as_str(), item.holder.as_str(), item.by_pairing))
+        .collect();
+    assert_eq!(
+        refused,
+        vec![
+            ("xmppDomain", "Chat.A.example.", "paired node local-a", true),
+            ("passSites", "site_a", "paired node local-a", true),
+        ]
+    );
+    assert_eq!(setup["xmppDomain"], "");
+    assert_eq!(setup["passSites"], serde_json::json!(["SITE_B"]));
+    assert_eq!(
+        setup["chatBridgeIds"],
+        serde_json::json!(["100000"]),
+        "a bridge id may be both's"
+    );
+    assert_eq!(setup["sipDomain"], "sip.b.example");
+    assert_eq!(setup["mailDomains"], serde_json::json!(["a.example", "b.example"]));
+    assert!(found.shared_domains.is_empty());
+
+    // the holder's own Configure again keeps its own
+    let mut again = serde_json::json!({"xmppDomain": "chat.a.example", "passSites": ["SITE_A"]});
+    assert!(check_setup_claims(factory, &facade, "local-a", &mut again)
+        .refused
+        .is_empty());
+    assert_eq!(again["passSites"], serde_json::json!(["SITE_A"]));
+
+    // another pairing's claims are found apart from one's own
+    assert_eq!(
+        pairing_claim(&facade, ClaimKind::PassSite, "SITE_A", Some("local-b"))
+            .unwrap()
+            .as_deref(),
+        Some("local-a")
+    );
+    assert_eq!(
+        pairing_claim(&facade, ClaimKind::PassSite, "SITE_A", Some("local-a")).unwrap(),
+        None
+    );
+    assert_eq!(ClaimKind::from_id("PassSite"), Some(ClaimKind::PassSite));
+    assert_eq!(HELD_BY_ANOTHER, "another node has this name");
 }

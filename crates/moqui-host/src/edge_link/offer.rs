@@ -205,11 +205,11 @@ pub(crate) const CALLS_AREA: &str = "calls";
 /// The area name of the edge node's SIP engine (E8, E10 phones) in its Hello.
 pub(crate) const SIP_AREA: &str = "sip";
 
-/// For the SIP offer to local node `node`: (its numbers with a fallback in its copy of `voiceFallbacks`, other local
-/// nodes are active too). The engine reads the copies only of the only active node (`sip/edge.rs` `paired_node`).
-fn sip_copies(factory: &ExecutionContextFactory, node: &str) -> Result<(u32, bool), Error> {
+/// For the SIP offer to local node `node`: its numbers with a fallback in its copy of `voiceFallbacks`. The engine
+/// reads every pairing's copies (E16), so other pairings take nothing from this one.
+fn sip_copies(factory: &ExecutionContextFactory, node: &str) -> Result<u32, Error> {
     let Some(facade) = factory.entity() else {
-        return Ok((0, false));
+        return Ok(0);
     };
     let fallbacks = facade
         .find(moqui_core::edge::replica::VALUE)?
@@ -220,16 +220,7 @@ fn sip_copies(factory: &ExecutionContextFactory, node: &str) -> Result<(u32, boo
         )
         .disable_authz()
         .count()?;
-    let others = facade
-        .find("moqui.edge.EdgeClient")?
-        .eq("statusId", moqui_lib::object::Value::string("EdgeClientActive"))
-        .condition(moqui_core::entity::Condition::not_equals(
-            "pairedNodeId",
-            moqui_lib::object::Value::string(node),
-        ))
-        .disable_authz()
-        .count()?;
-    Ok((u32::try_from(fallbacks).unwrap_or(0), others > 0))
+    Ok(u32::try_from(fallbacks).unwrap_or(0))
 }
 
 fn host_setting(host: &EdgeHostInfo) -> HostSetting {
@@ -240,46 +231,94 @@ fn host_setting(host: &EdgeHostInfo) -> HostSetting {
     }
 }
 
-/// Where the XMPP tunnels go for local node `node`, by the tunnel ports' own rule (`tunnel::tunnel_node`): to the node
-/// `edge_xmpp_node` names, else to the only node linked. Answers (other node, needs a node): `edge_xmpp_node` names
-/// another node; or it is empty and `linked` is not exactly `node`, so the tunnels go nowhere until it names one.
-pub(crate) fn xmpp_node(config: &EdgeConfig, node: &str, linked: &[String]) -> (bool, bool) {
-    let named = config.xmpp_tunnel_node.as_str();
-    if named.is_empty() {
-        (false, !matches!(linked, [only] if only == node))
-    } else {
-        (named != node, false)
+/// The XMPP part of the offer to local node `node` (plans/Edge-Node2.md §4.1, E16): the ports of its own `EdgePort`
+/// rows when it has any (a pair of ports per node), else the ports of every domain (`edge_xmpp_port`,
+/// `edge_xmpp_tls_port`; on an all-in-one node without them, its own XMPP ports), which take its clients by the XMPP
+/// domain of its last Configure. `needs_node` when those cannot find it: it named no domain and is not the one active
+/// pairing (`tunnel::xmpp_route`). `other_node` is no longer set: no port goes to another node by a setting. A read
+/// that fails is logged, and the offer is the ports of every domain.
+pub(crate) fn xmpp_node(factory: &ExecutionContextFactory, node: &str, xmpp: &mut ProtoXmpp) {
+    xmpp.other_node = false;
+    if moqui_core::edge::settings(factory).all_in_one() {
+        let (own, own_tls) = crate::xmpp::client_ports(factory);
+        if xmpp.port == 0 {
+            xmpp.port = own.map_or(0, u32::from);
+        }
+        if xmpp.tls_port == 0 {
+            xmpp.tls_port = own_tls.map_or(0, u32::from);
+        }
     }
+    let read = store::facade(factory).and_then(|facade| {
+        let rows = moqui_core::edge::ports::list(&facade, Some(node))?;
+        let domain = super::tunnel::xmpp_domains(&facade)?
+            .into_iter()
+            .find(|(paired, _)| paired == node)
+            .map(|(_, domain)| domain)
+            .unwrap_or_default();
+        Ok((rows, domain, moqui_core::edge::claims::active_nodes(&facade)?))
+    });
+    let (rows, domain, active) = read.unwrap_or_else(|err| {
+        tracing::error!("Edge offer to {node}: its XMPP ports and domain were not read: {err}");
+        (Vec::new(), String::new(), Vec::new())
+    });
+    let row_port = |kind: &str| {
+        rows.iter()
+            .find(|row| row.tunnel_kind == kind)
+            .map(|row| u32::from(row.port))
+    };
+    let (starttls, direct) = (row_port(super::TUNNEL_XMPP), row_port(super::TUNNEL_XMPPS));
+    if starttls.is_some() || direct.is_some() {
+        xmpp.port = starttls.unwrap_or(0);
+        xmpp.tls_port = direct.unwrap_or(0);
+        xmpp.needs_node = false;
+    } else {
+        xmpp.needs_node = domain.is_empty() && !matches!(active.as_slice(), [only] if only == node);
+    }
+    xmpp.available = xmpp.port > 0 || xmpp.tls_port > 0;
 }
 
-/// What this edge node offers local node `node` now, with its host names here; `linked` is the nodes linked now.
+/// What this edge node offers local node `node` now, with its host names here. Nothing in it depends on the other
+/// nodes linked now (`_linked`): each area is by pairing (E16).
 pub(crate) fn offer(
     factory: &ExecutionContextFactory,
     config: &EdgeConfig,
     node: &str,
-    linked: &[String],
+    _linked: &[String],
 ) -> Result<Offer, Error> {
     let mut offer = base_offer(factory, config);
     offer.node_hosts = hosts::list(factory, Some(node))?.iter().map(host_setting).collect();
     if let Some(xmpp) = offer.xmpp.as_mut() {
-        (xmpp.other_node, xmpp.needs_node) = xmpp_node(config, node, linked);
+        xmpp_node(factory, node, xmpp);
     }
-    // the media driver keys rooms by call alone, so it takes call messages only while one local node is linked (E7)
-    if let Some(calls) = offer.calls.as_mut().filter(|calls| calls.available) {
-        calls.other_nodes = linked.iter().any(|other| other != node);
-    }
+    // the media driver keys rooms by node and call (E12) and each pairing has its own TURN secret (E16), so other
+    // pairings take nothing from this one's calls: `other_nodes` stays false
     if let Some(sip) = offer.sip.as_mut().filter(|sip| sip.available) {
-        // a count that does not read leaves the rest of the offer: no fallbacks said, other nodes as the links say
-        (sip.fallbacks, sip.other_nodes) = sip_copies(factory, node).unwrap_or_else(|err| {
+        // E16: this pairing's trunks and the realm of its phones, not another pairing's
+        sip.trunks = moqui_core::edge::media::sip_trunks_of(factory, node)
+            .into_iter()
+            .map(|trunk| SipTrunk {
+                voice_trunk_id: trunk.voice_trunk_id,
+                name: trunk.name,
+                state: trunk.state,
+                error: trunk.error,
+            })
+            .collect();
+        if let Some((domain, registrar)) = moqui_core::edge::sip::pairing_realm(factory, node, false) {
+            sip.domain = domain;
+            sip.registrar = registrar;
+        }
+        // a count that does not read leaves the rest of the offer: no fallbacks said
+        sip.fallbacks = sip_copies(factory, node).unwrap_or_else(|err| {
             tracing::error!("Edge offer to {node}: the SIP copies were not counted: {err}");
-            (0, linked.iter().any(|other| other != node))
+            0
         });
     }
     Ok(offer)
 }
 
-/// The text a Configure answers for a name another node holds: which node is not the asker's business.
-const HELD: &str = "another local node has this name";
+/// The text a Configure answers for a name another node holds: which node is not the asker's business
+/// (plans/Edge-Node2.md §4.1).
+const HELD: &str = moqui_core::edge::claims::HELD_BY_ANOTHER;
 /// The text for a name of the edge node's own.
 const OWN: &str = "the edge node answers for this name itself";
 
@@ -301,21 +340,23 @@ fn item_label(field: &str) -> &'static str {
         "chatBridgeIds" => "chat bridge",
         "xmppDomain" => "XMPP domain",
         "sipDomain" => "SIP domain",
+        "passSites" => "PASS site",
         _ => "item",
     }
 }
 
-/// On an all-in-one node, take out of local node `node`'s kept setup each item the server holds
-/// (`moqui_core::edge::claims::check_setup_claims`: a chat bridge, its XMPP or SIP domain, a mail domain held
-/// whole), each answered as a result with the setup field as its mode and an error naming the item; the
-/// server's holder is logged, not sent. A mail domain the server also has addresses in is kept and logged.
-fn refuse_own_items(
+/// Take out of local node `node`'s kept setup each item another holder has (`moqui_core::edge::claims::
+/// check_setup_claims`): on an all-in-one node the server (a chat bridge, its XMPP or SIP domain, a mail domain held
+/// whole), and another pairing (its XMPP or SIP domain, a PASS site: the first claim holds). Each is answered as a
+/// result with the setup field as its mode and an error: the server's own item named as such, another pairing's with
+/// only [`HELD`]. The holder is logged, not sent. A mail domain the server also has addresses in is kept and logged.
+fn refuse_claimed_items(
     factory: &ExecutionContextFactory,
     node: &str,
     setup: &mut serde_json::Value,
 ) -> Result<Vec<HostSetting>, Error> {
     let facade = store::facade(factory)?;
-    let found = moqui_core::edge::claims::check_setup_claims(factory, &facade, setup);
+    let found = moqui_core::edge::claims::check_setup_claims(factory, &facade, node, setup);
     for (domain, count) in &found.shared_domains {
         tracing::info!(
             "Edge node: local node {node} takes mail for {domain}, where the server also has {count} addresses of its \
@@ -333,7 +374,11 @@ fn refuse_own_items(
                 refused.holder
             );
             HostSetting {
-                error: format!("{label} {} is the server's own", refused.key),
+                error: if refused.by_pairing {
+                    HELD.to_string()
+                } else {
+                    format!("{label} {} is the server's own", refused.key)
+                },
                 host_name: refused.key,
                 mode: refused.field.to_string(),
             }
@@ -355,14 +400,11 @@ pub(crate) fn configure(
     request: ConfigureRequest,
     linked: &[String],
 ) -> Result<ConfigureReply, Error> {
-    let all_in_one = moqui_core::edge::settings(factory).all_in_one();
     let mut results = Vec::new();
-    // E12: the local node's SIP device domain, which only an all-in-one node's registrar takes its phones in
-    // (sip/owners.rs); a dedicated edge node's registrar has its own realm (E8), so the field is not kept there. A
-    // value that is not a domain is refused on its own, not the whole setup
+    // E12, E16: the local node's SIP device domain, which the registrar takes its phones in (sip/owners.rs), so two
+    // pairings' phones stay apart. A value that is not a domain is refused on its own, not the whole setup
     let sip_domain = match request.sip_domain.trim() {
         "" => String::new(),
-        _ if !all_in_one => String::new(),
         domain => match setup::check_host_name(domain) {
             Ok(domain) => domain,
             Err(why) => {
@@ -420,8 +462,8 @@ pub(crate) fn configure(
                 Ok(_) => kept.push(name),
                 Err(err) => {
                     tracing::warn!("Edge node: local node {node}'s host {name} was not taken: {err}");
-                    // a race with another node's add: its message names that node
-                    result.error = if err.message().contains("is a host of local node") {
+                    // a race with another node's add
+                    result.error = if err.message().contains(HELD) {
                         HELD.to_string()
                     } else {
                         "the edge node could not take this name".to_string()
@@ -453,28 +495,12 @@ pub(crate) fn configure(
         "xmppDomain": checked.xmpp_domain,
         "sipDomain": sip_domain,
     });
-    // an all-in-one node keeps its own items: each the server holds is refused by name and left out (§10)
-    if all_in_one {
-        results.extend(refuse_own_items(factory, node, &mut kept_setup)?);
-    }
+    // an all-in-one node keeps its own items, and each pairing those it named first: each another holds is refused and
+    // left out (§10; Edge-Node2 §4.1)
+    results.extend(refuse_claimed_items(factory, node, &mut kept_setup)?);
     // what is kept, after any refusal
     let xmpp_domain = kept_setup["xmppDomain"].as_str().unwrap_or_default().to_string();
     let count = |field: &str| kept_setup[field].as_array().map_or(0, Vec::len);
-    match xmpp_node(config, node, linked) {
-        _ if xmpp_domain.is_empty() => {}
-        (true, _) => tracing::warn!(
-            "Edge node: local node {node} set up XMPP for {}, but edge_xmpp_node names {}, so its clients are not \
-             tunneled there",
-            xmpp_domain,
-            config.xmpp_tunnel_node
-        ),
-        (_, true) => tracing::warn!(
-            "Edge node: local node {node} set up XMPP for {}, but edge_xmpp_node is empty and it is not the only node \
-             linked, so XMPP clients are refused: set edge_xmpp_node",
-            xmpp_domain
-        ),
-        _ => {}
-    }
     store::save_setup(factory, node, &kept_setup.to_string())?;
     tracing::info!(
         "Edge node: local node {node} set up: {} host names, {} mail domains, {} chat bridges, {} PASS sites, XMPP {}",
@@ -485,39 +511,28 @@ pub(crate) fn configure(
         },
         count("mailDomains"),
         count("chatBridgeIds"),
-        checked.pass_sites.len(),
+        count("passSites"),
         if xmpp_domain.is_empty() {
             "off"
         } else {
             xmpp_domain.as_str()
         }
     );
+    // the registrar takes the kept domain's phones now (sip/mod.rs, `Engine::paired_changed`, told at once), so the
+    // answer says it rather than what the engine took before; the local node keeps its SipNode row's realm from it
+    // (dial.rs, `Dialer::note_configured`)
+    crate::sip::pairings_changed();
     let mut offer = offer(factory, config, node, linked)?;
-    // the registrar takes the kept domain's phones now (sip/mod.rs, `Engine::paired_changed`), so the answer says it
-    // rather than the advert, which the SIP engine reads again only every few seconds; the local node keeps its
-    // SipNode row's realm from it (dial.rs, `Dialer::note_configured`)
-    if all_in_one {
-        if let Some(sip) = offer.sip.as_mut().filter(|sip| sip.available) {
-            let domain = kept_setup["sipDomain"].as_str().unwrap_or_default().to_string();
-            sip.registrar = !domain.is_empty() && registrar_enabled();
+    if let Some(sip) = offer.sip.as_mut().filter(|sip| sip.available) {
+        if let Some((domain, registrar)) = moqui_core::edge::sip::pairing_realm(factory, node, true) {
             sip.domain = domain;
+            sip.registrar = registrar;
         }
     }
     Ok(ConfigureReply {
         offer: Some(offer),
         hosts: results,
     })
-}
-
-/// Whether this server's SIP registrar is on (`sip_registrar_enabled`, as `sip::phones::registrar_from` reads it).
-fn registrar_enabled() -> bool {
-    matches!(
-        moqui_lib::env::get_prop_or_env("sip_registrar_enabled")
-            .trim()
-            .to_ascii_lowercase()
-            .as_str(),
-        "true" | "y" | "yes" | "1"
-    )
 }
 
 /// Whether a Configure is input this edge node takes, before anything is changed.
@@ -630,6 +645,7 @@ pub(crate) fn offer_of(offer: Offer) -> EdgeOffer {
                 .trunks
                 .into_iter()
                 .map(|trunk| SipTrunkState {
+                    paired_node_id: String::new(),
                     voice_trunk_id: trunk.voice_trunk_id,
                     name: trunk.name,
                     state: trunk.state,

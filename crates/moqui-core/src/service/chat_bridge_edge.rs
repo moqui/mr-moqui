@@ -16,8 +16,12 @@
 //! webhooks to the local node, and the files of the messages the local node sends by address to the edge node.
 //!
 //! - **Webhooks** (kind [`KIND_WEBHOOK`], edge node to local node). On the edge node [`webhook`] reads the bridge from
-//!   the local node's replicated set [`REPLICA_SET`] (its network, adapter, status and the webhook's public key, never
-//!   its `configJson`, whose provider keys stay on the local node), checks the network's signature with the adapter's
+//!   a local node's replicated set [`REPLICA_SET`]: by the bridge id within the request's host name
+//!   (plans/Edge-Node2.md §4.1), since ids come from separate databases and two pairings may have the same one. A host
+//!   name of a pairing (its `EdgeHost`, where the edge node answers the bridges that pairing routes through it) picks
+//!   that pairing's copy only; at the edge node's own names the id must be one pairing's. The copy holds the bridge's
+//!   network, adapter, status and the webhook's public key, never its `configJson`, whose provider keys stay on the
+//!   local node. The edge node checks the network's signature with the adapter's
 //!   [`verify_webhook`](super::ChatBridgeAdapter::verify_webhook), and queues the raw request, keyed by the network's
 //!   event id ([`webhook_event_id`](super::ChatBridgeAdapter::webhook_event_id)) so a repeat is dropped, and ordered by
 //!   their number. It answers 200 once the item is committed; a bad signature, an unknown bridge and a disabled one
@@ -119,26 +123,66 @@ fn retry_later(reason: String) -> BTreeMap<String, Value> {
 
 // ---- the edge node: webhooks in ----
 
-/// The bridge `bridge_id` as a paired local node replicated it: the node and the set's fields. None when no active
-/// node has it, or more than one does (one local node per edge node, decision 1).
-fn replicated_bridge(facade: &EntityFacade, bridge_id: &str) -> Result<Option<(String, serde_json::Value)>, LibError> {
+/// The pairing a request's host name names: the node of its `moqui.edge.EdgeHost`, else `None` (the edge node's own
+/// names, or a request with no host).
+pub(super) fn host_pairing(facade: &EntityFacade, request: &WebhookRequest) -> Result<Option<String>, LibError> {
+    host_name_pairing(facade, request.header("host"))
+}
+
+/// The pairing host name `host` (a `Host` header) names: the node of its `moqui.edge.EdgeHost`, else `None`.
+fn host_name_pairing(facade: &EntityFacade, host: Option<&str>) -> Result<Option<String>, LibError> {
+    let Some(host) = host.and_then(normal_host) else {
+        return Ok(None);
+    };
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-    let nodes = facade
-        .find("moqui.edge.EdgeClient")?
-        .eq("statusId", Value::string("EdgeClientActive"))
+    Ok(facade
+        .find("moqui.edge.EdgeHost")?
+        .eq("hostName", Value::string(&host))
         .select_field("pairedNodeId")
         .disable_authz()
-        .list()?;
+        .one()?
+        .and_then(|row| text_of(&row, "pairedNodeId")))
+}
+
+/// A `Host` header's name as `EdgeHost` keeps it: lower case, with no port or trailing dot.
+fn normal_host(host: &str) -> Option<String> {
+    let host = host.trim();
+    let host = match host.rsplit_once(':') {
+        Some((name, port)) if !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit()) => name,
+        _ => host,
+    };
+    let host = host.strip_suffix('.').unwrap_or(host).to_ascii_lowercase();
+    (!host.is_empty()).then_some(host)
+}
+
+/// The bridge `bridge_id` as a paired local node replicated it: the node and the set's fields. Looked up in the copies
+/// of pairing `only` when the request's host name names one, else of every active pairing. None when no active node
+/// has it, or (with no host naming a pairing) more than one does: ids of separate databases can collide, and then
+/// each pairing's webhooks must come to its own host name (plans/Edge-Node2.md §4.1).
+fn replicated_bridge(
+    facade: &EntityFacade,
+    bridge_id: &str,
+    only: Option<&str>,
+) -> Result<Option<(String, serde_json::Value)>, LibError> {
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let mut nodes = crate::edge::claims::active_nodes(facade)?;
+    if let Some(only) = only {
+        nodes.retain(|node| node == only);
+    }
     let key = BTreeMap::from([("chatBridgeId".to_string(), bridge_id.to_string())]);
     let mut found = Vec::new();
-    for node in nodes.values() {
-        let node = text_of(node, "pairedNodeId").unwrap_or_default();
+    for node in nodes {
         if let Some(value) = crate::edge::replica::get_value(facade, Some(&node), REPLICA_SET, BRIDGE, &key)? {
             found.push((node, value.fields));
         }
     }
     if found.len() > 1 {
-        tracing::error!("chat bridge {bridge_id}: more than one local node replicated it; its webhooks are refused");
+        let holders: Vec<&str> = found.iter().map(|(node, _)| node.as_str()).collect();
+        tracing::error!(
+            "chat bridge {bridge_id}: local nodes {} each replicated it, so its webhooks at this node's own names are \
+             refused: each node's network must post to that node's own host name",
+            holders.join(", ")
+        );
         return Ok(None);
     }
     Ok(found.pop())
@@ -186,13 +230,22 @@ pub(super) fn owner_of(own: bool, paired: Option<(String, serde_json::Value)>) -
 }
 
 /// On an all-in-one node: who has bridge `bridge_id`, given whether the server has its own row. The replica is read
-/// only then, as a dedicated edge node reads it.
+/// only then, as a dedicated edge node reads it. A request whose host name is a pairing's goes to that pairing's copy
+/// alone, the server's own row aside (plans/Edge-Node2.md §4.1).
 ///
 /// # Errors
 ///
 /// Returns the database's error.
-pub(super) fn bridge_owner(facade: &EntityFacade, bridge_id: &str, own: bool) -> Result<BridgeOwner, LibError> {
-    Ok(owner_of(own, replicated_bridge(facade, bridge_id)?))
+pub(super) fn bridge_owner(
+    facade: &EntityFacade,
+    bridge_id: &str,
+    own: bool,
+    request: &WebhookRequest,
+) -> Result<BridgeOwner, LibError> {
+    match host_pairing(facade, request)? {
+        Some(node) => Ok(owner_of(false, replicated_bridge(facade, bridge_id, Some(&node))?)),
+        None => Ok(owner_of(own, replicated_bridge(facade, bridge_id, None)?)),
+    }
 }
 
 /// The answer to a webhook of a bridge both the server and paired node `node` have: refused, logged as the claim
@@ -215,7 +268,8 @@ pub(super) fn webhook(
     bridge_id: &str,
     request: &WebhookRequest,
 ) -> WebhookResponse {
-    match replicated_bridge(facade, bridge_id) {
+    let found = host_pairing(facade, request).and_then(|only| replicated_bridge(facade, bridge_id, only.as_deref()));
+    match found {
         Ok(Some((node, fields))) => paired_webhook(factory, facade, bridge_id, request, &node, &fields),
         Ok(None) => WebhookResponse::not_signed(),
         Err(error) => {
@@ -845,12 +899,28 @@ fn active_node(facade: &EntityFacade, node: &str) -> Result<bool, LibError> {
 }
 
 /// A file at `/channels/{chatBridgeId}/media/{token}` on an edge node: one its local node put there for that bridge,
-/// while it has not run out. One that ran out is removed.
-pub(super) fn media(factory: &ExecutionContextFactory, bridge_id: &str, token: &str, now: i64) -> Option<MediaFile> {
+/// while it has not run out, and at a pairing's host name (`host`, the request's `Host`) only that pairing's file
+/// (plans/Edge-Node2.md §4.1). One that ran out is removed.
+pub(super) fn media(
+    factory: &ExecutionContextFactory,
+    host: Option<&str>,
+    bridge_id: &str,
+    token: &str,
+    now: i64,
+) -> Option<MediaFile> {
     let facade = factory.entity()?;
     if token.is_empty() || token.len() > 100 {
         return None;
     }
+    let only = match transaction(&facade, EDGE_MEDIA, TransactionAttribute::UseOrBegin, || {
+        host_name_pairing(&facade, host)
+    }) {
+        Ok(only) => only,
+        Err(error) => {
+            tracing::warn!("chat bridge {bridge_id}: the pairing of a file's host was not read: {error}");
+            return None;
+        }
+    };
     let id = sha256_hex(token);
     let row = transaction(&facade, EDGE_MEDIA, TransactionAttribute::UseOrBegin, || {
         facade
@@ -867,8 +937,11 @@ pub(super) fn media(factory: &ExecutionContextFactory, bridge_id: &str, token: &
             return None;
         }
     };
-    // not for a node that is no longer paired
+    // not for a node that is no longer paired, nor another pairing's at a pairing's host name
     let node = text_of(&row, "pairedNodeId").unwrap_or_default();
+    if only.as_ref().is_some_and(|only| *only != node) {
+        return None;
+    }
     match transaction(&facade, EDGE_MEDIA, TransactionAttribute::UseOrBegin, || {
         active_node(&facade, &node)
     }) {

@@ -28,6 +28,13 @@
 //!   unicast addresses too, never to loopback, private, link-local, shared or documentation ranges ([`is_public`]), nor
 //!   another port of a media node's address or of the listeners' own, so it cannot reach into the server's own networks
 //!   or the server itself.
+//! - **Pairings** (plans/Edge-Node2.md §4.1, E16): on an edge node a local node's legs are signed with a secret of
+//!   its pairing alone ([`pairing_secret`], derived from `turn_auth_secret`, the pairing's id and what changes each
+//!   time it pairs), which its link hands it, and their usernames name the pairing (`<expiry>:<legId>@<pairing>`,
+//!   [`PAIRING_SEPARATOR`]; only with [`TurnConfig::pairings`], on a node that takes links). Only a pairing in
+//!   [`Turn::set_pairings`] is taken, with its secret then: revoking one, or pairing it again, refuses its usernames
+//!   from then on and closes its
+//!   relays, with no new `turn_auth_secret`. A leg of a pairing is never an XMPP user's own.
 //! - **Quotas:** allocations per username and in all, and a bandwidth per allocation, past which data is dropped.
 //! - **Revocation** ([`Turn::revoke_leg`]): the leg's username is refused from then on, its allocations' relay sockets
 //!   close, and nothing more is relayed for them.
@@ -63,6 +70,12 @@ const MAX_WAIT: Duration = Duration::from_secs(1);
 
 /// The leg prefix of an XMPP user's own credential, which may relay to public addresses.
 pub const XMPP_LEG: &str = "xmpp.";
+
+/// Between a leg and the pairing it belongs to in a TURN username: `<expiry>:<legId>@<pairing>`.
+pub const PAIRING_SEPARATOR: char = '@';
+
+/// The longest leg part of a username (after the expiry): a leg id, and its pairing's id when it has one.
+const MAX_LEG: usize = 192;
 
 /// A public unicast address: not unspecified, loopback, private, shared (100.64/10), link-local, multicast, broadcast,
 /// documentation, benchmarking or unique-local; an IPv4-mapped IPv6 address and a 6to4 one (2002::/16) as the IPv4
@@ -116,6 +129,19 @@ pub fn password(secret: &[u8], username: &str) -> String {
     STANDARD.encode(mac.finalize().into_bytes())
 }
 
+/// The secret the credentials of the pairing `pairing` are signed with: base64 of HMAC-SHA1 of the pairing's id (behind
+/// a prefix no username has) with the shared secret. The edge node hands it to that pairing's local node only.
+pub fn pairing_secret(secret: &[u8], pairing: &str, salt: &str) -> String {
+    password(secret, &format!("moqui-turn-pairing\u{0}{pairing}\u{0}{salt}"))
+}
+
+/// The pairing a username's leg part names (`<legId>@<pairing>`), `None` for the server's own legs.
+pub fn pairing_of(leg: &str) -> Option<&str> {
+    leg.rsplit_once(PAIRING_SEPARATOR)
+        .map(|(_, pairing)| pairing)
+        .filter(|pairing| !pairing.is_empty())
+}
+
 /// A credential for a leg, good until `expiry` (Unix seconds): (username, password).
 pub fn credential(secret: &[u8], leg: &str, expiry: u64) -> (String, String) {
     let username = format!("{expiry}:{leg}");
@@ -146,6 +172,9 @@ pub struct TurnConfig {
     pub allowed_peers: Vec<SocketAddr>,
     pub max_allocations: usize,
     pub max_per_user: usize,
+    /// A node that takes links: a username may name a pairing (`<leg>@<pairing>`), checked with that pairing's
+    /// secret. Off, every username is the server's own, `@` and all.
+    pub pairings: bool,
     /// Each allocation's relayed data, each way, in kilobits a second.
     pub max_kbps: u64,
 }
@@ -159,6 +188,7 @@ impl Default for TurnConfig {
             max_allocations: 1_000,
             max_per_user: 2,
             max_kbps: 4_000,
+            pairings: false,
         }
     }
 }
@@ -209,6 +239,11 @@ pub struct Turn {
     servers: Vec<TurnServer>,
     users: HashSet<String>,
     revoked: HashMap<Arc<str>, Instant>,
+    /// The pairings whose legs are taken ([`Turn::set_pairings`]), each with what its secret is derived from besides
+    /// its id.
+    pairings: HashMap<String, String>,
+    /// The usernames of pairings given to the servers, with the pairing's salt they were given under.
+    user_salts: HashMap<String, String>,
     /// By (listener, client).
     allocations: HashMap<(SocketAddr, SocketAddr), Allocation>,
     /// Requests for an allocation, by (listener, client), with their username.
@@ -247,11 +282,12 @@ fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
-/// The leg of a username that is still good (not expired); None for one that is not ours.
+/// The leg of a username that is still good (not expired), with its pairing when it names one; None for one that is
+/// not ours.
 fn leg_of(username: &str, now_unix: u64) -> Option<&str> {
     let (expiry, leg) = username.split_once(':')?;
     let expiry: u64 = expiry.parse().ok()?;
-    (expiry > now_unix && !leg.is_empty() && leg.len() <= 64).then_some(leg)
+    (expiry > now_unix && !leg.is_empty() && leg.len() <= MAX_LEG).then_some(leg)
 }
 
 impl Turn {
@@ -271,6 +307,8 @@ impl Turn {
             servers,
             users: HashSet::new(),
             revoked: HashMap::new(),
+            pairings: HashMap::new(),
+            user_salts: HashMap::new(),
             allocations: HashMap::new(),
             asked: HashMap::new(),
             relays: HashMap::new(),
@@ -310,7 +348,7 @@ impl Turn {
                 media_node = true;
             }
         }
-        leg.is_some_and(|leg| leg.starts_with(XMPP_LEG))
+        leg.is_some_and(|leg| leg.starts_with(XMPP_LEG) && self.pairing(leg).is_none())
             && is_public(ip)
             && !media_node
             && !self
@@ -319,8 +357,76 @@ impl Turn {
                 .any(|s| s.listen_address().ip().to_canonical() == ip)
     }
 
+    /// A leg refused now: revoked, or of a pairing that is not taken.
     fn is_revoked(&self, leg: &str) -> bool {
         self.revoked.contains_key(leg)
+            || self
+                .pairing(leg)
+                .is_some_and(|pairing| !self.pairings.contains_key(pairing))
+    }
+
+    /// The pairing a leg names, on a node that takes links ([`TurnConfig::pairings`]); `None` for the server's own.
+    fn pairing<'a>(&self, leg: &'a str) -> Option<&'a str> {
+        self.config.pairings.then(|| pairing_of(leg)).flatten()
+    }
+
+    /// The password of `username`, whose leg part is `leg`: signed with its pairing's secret, else the shared one.
+    fn password_of(&self, username: &str, leg: &str) -> String {
+        match self.pairing(leg) {
+            Some(pairing) => {
+                let salt = self.pairings.get(pairing).map(String::as_str).unwrap_or_default();
+                password(pairing_secret(&self.config.secret, pairing, salt).as_bytes(), username)
+            }
+            None => password(&self.config.secret, username),
+        }
+    }
+
+    /// The pairings whose legs are taken from now on (an edge node's active ones), each with what its secret is
+    /// derived from besides its id: a username of any other is refused, the relays of one no longer here, or paired
+    /// again since (another salt), close, and the usernames of one paired again are checked with its new secret, so
+    /// a credential of the pairing before fails.
+    pub fn set_pairings(&mut self, now: Instant, pairings: HashMap<String, String>) {
+        self.pairings = pairings;
+        // the usernames given to the servers under a pairing's secret before: for one paired again since, given again
+        // with its new secret, and their relays closed
+        let renewed: Vec<String> = self
+            .user_salts
+            .iter()
+            .filter(|(username, salt)| {
+                let pairing = username.split_once(':').and_then(|(_, leg)| self.pairing(leg));
+                pairing.is_some_and(|pairing| self.pairings.get(pairing).is_some_and(|now| now != *salt))
+            })
+            .map(|(username, _)| username.clone())
+            .collect();
+        for username in &renewed {
+            let Some((_, leg)) = username.split_once(':') else {
+                continue;
+            };
+            let pass = self.password_of(username, leg);
+            for server in &mut self.servers {
+                server.add_user(username.clone(), pass.clone());
+            }
+            let salt = self
+                .pairing(leg)
+                .and_then(|pairing| self.pairings.get(pairing))
+                .cloned()
+                .unwrap_or_default();
+            self.user_salts.insert(username.clone(), salt);
+        }
+        let gone: Vec<Arc<str>> = self
+            .allocations
+            .values()
+            .filter(|a| {
+                renewed.contains(&a.username)
+                    || self
+                        .pairing(&a.leg)
+                        .is_some_and(|pairing| !self.pairings.contains_key(pairing))
+            })
+            .map(|a| Arc::clone(&a.leg))
+            .collect();
+        for leg in gone {
+            self.close_leg(now, &leg);
+        }
     }
 
     /// A message from a client arrived at the listener `listen`: on UDP a datagram, on a stream one message.
@@ -372,9 +478,15 @@ impl Turn {
                 return !self.users.contains(username);
             }
             if !self.users.contains(username) {
-                let pass = password(&self.config.secret, username);
+                let pass = good.map(|leg| self.password_of(username, leg)).unwrap_or_default();
                 for server in &mut self.servers {
                     server.add_user(username.clone(), pass.clone());
+                }
+                let salt = good
+                    .and_then(|leg| self.pairing(leg))
+                    .and_then(|pairing| self.pairings.get(pairing));
+                if let Some(salt) = salt.cloned() {
+                    self.user_salts.insert(username.clone(), salt);
                 }
                 self.users.insert(username.clone());
             }
@@ -497,6 +609,11 @@ impl Turn {
     /// A leg left or was removed: its username is refused from now on, and its relays close.
     pub fn revoke_leg(&mut self, now: Instant, leg: &str) {
         self.revoked.insert(leg.into(), now + REVOKED_FOR);
+        self.close_leg(now, leg);
+    }
+
+    /// The allocations of `leg` end: their relays close.
+    fn close_leg(&mut self, _now: Instant, leg: &str) {
         let gone: Vec<(SocketAddr, SocketAddr)> = self
             .allocations
             .iter()

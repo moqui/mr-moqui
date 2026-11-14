@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- The edge link (plans/archive/Edge-Node.md §5.1, §5.2, §5.7): what an edge node keeps of the local nodes paired with it, and
     the queues and receipts both ends keep. Every row that belongs to one local node is keyed by its pairedNodeId, the
-    local node's instance id (decision 1), so several local nodes on one edge node can come later. A local node keeps
+    local node's instance id (decision 1), so several local nodes share one edge node (plans/Edge-Node2.md §4.1). A local node keeps
     its own side of the link (the URL, its key and the edge node's pin) in runtime/.env, not here. The services are
     org.moqui.edge.EdgeServices; the link is crates/moqui-host/src/edge_link/. No Java counterpart. -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
@@ -53,8 +53,14 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="nodeName" type="text-medium"/>
         <field name="setupJson" type="text-long"><description>What the node's last Configure (the Edge Node wizard's
             Apply, plans/archive/Edge-Node.md §5.7) set besides its host names: a JSON object of mailDomains, chatBridgeIds and
-            passSites, checked as input from any client.</description></field>
+            passSites (the sites whose PASS authority this node is, which an mr-pass call for the site goes to), and
+            xmppDomain and sipDomain, checked as input from any client. A site, XMPP or SIP domain another pairing
+            named first is refused (plans/Edge-Node2.md §4.1).</description></field>
         <field name="setupDate" type="date-time"/>
+        <field name="queueMaxMegabytes" type="number-integer"><description>This pairing's own size cap on the items
+            waiting for it (plans/Edge-Node2.md §4.1), in place of the conf's queue-max-megabytes, which otherwise holds
+            for each pairing alone; the retention pass fails its oldest waiting items past it. Empty, 0 or less is
+            unset: the conf's cap holds.</description></field>
         <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
         <index name="EDGE_CLIENT_KEY"><index-field name="keyFingerprint"/></index>
     </entity>
@@ -298,5 +304,21 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="expireDate" type="date-time"/>
         <field name="createdDate" type="date-time"/>
         <index name="EDGE_MEDIA_EXPIRE"><index-field name="expireDate"/></index>
+    </entity>
+
+    <entity entity-name="EdgePort" package="moqui.edge" use="configuration" cache="never">
+        <description>On an edge node, a TCP port whose connections each go down one paired local node's link as a byte
+            tunnel (plans/Edge-Node2.md §4.1, §4.10 Ports, E16): tunnelKind ssh to the node's SSH server, xmpp
+            (STARTTLS) or xmpps (direct TLS) to its XMPP server, which ends the TLS. A port is one row; the edge node
+            listens on it while its pairing is active, within seconds of org.moqui.edge.EdgeServices adding it (on edge_ssh_tunnel_host or
+            edge_xmpp_host, every address when empty) and stops when it is removed. The conf's own tunnel ports are
+            apart: edge_ssh_tunnel_port goes to the one active pairing, and edge_xmpp_port and edge_xmpp_tls_port to the
+            node whose XMPP domain a client names.</description>
+        <field name="port" type="number-integer" is-pk="true"/>
+        <field name="pairedNodeId" type="id" not-null="true"/>
+        <field name="tunnelKind" type="text-short" not-null="true"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one" related="moqui.edge.EdgeClient"/>
+        <index name="EDGE_PORT_NODE"><index-field name="pairedNodeId"/></index>
     </entity>
 </entities>

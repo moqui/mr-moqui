@@ -54,8 +54,9 @@ use serde_json::Value as Json;
 use super::leg::{LegCommand, LegMedia};
 use super::{call_service, number, owners, text, Engine, Leg, RING_TIMEOUT};
 
-/// The paired node and its SIP device domain (E12), as the engine last read them, for the registrar's directory.
-pub(super) type Paired = Arc<Mutex<Option<(String, String)>>>;
+/// Each active pairing and its SIP device domain (E12, E16), as the engine last read them, for the registrar's
+/// directory; `None` until the first read.
+pub(super) type Paired = Arc<Mutex<Option<Vec<(String, String)>>>>;
 
 const AUTH_SERVICE: &str = "org.moqui.call.SipDeviceServices.get#SipDeviceAuth";
 /// On an edge node, the local node's check of a phone's digest answer (E8).
@@ -124,14 +125,24 @@ struct ServiceDirectory {
 }
 
 impl ServiceDirectory {
-    /// Whose phones register to `realm` (E12): the server's own in its realm, but on a dedicated edge node; the paired
-    /// node's in its domain (and on a dedicated edge node in any); `None` for a realm of no one (no node paired).
+    /// Whose phones register to `realm` (E12, E16, `owners::realm_owner`): the server's own in its realm, but on a
+    /// dedicated edge node; a pairing's in its domain; on a dedicated edge node the registrar's own realm is the one
+    /// pairing's while only one is paired. A realm two pairings name is no one's, logged.
     fn owner_of_realm(&self, realm: &str) -> Option<Owner> {
-        if !self.dedicated && realm.eq_ignore_ascii_case(&self.realm) {
-            return Some(Owner::Own);
+        let pairings = lock(&self.paired).clone().unwrap_or_default();
+        match owners::realm_owner(realm, &self.realm, self.dedicated, &pairings) {
+            owners::RealmOwner::Is(owner) => Some(owner),
+            owners::RealmOwner::NoOne => None,
+            owners::RealmOwner::Claimed(why) => {
+                tracing::warn!("SIP: a phone of the realm {realm} is refused: {why}");
+                None
+            }
         }
-        let paired = lock(&self.paired).clone()?;
-        (self.dedicated || paired.1.eq_ignore_ascii_case(realm)).then(|| Owner::paired(&paired.0))
+    }
+
+    /// Whether no pairing was read yet, or none is paired.
+    fn none_paired(&self) -> bool {
+        lock(&self.paired).as_ref().is_none_or(Vec::is_empty)
     }
 }
 
@@ -188,19 +199,18 @@ impl DeviceDirectory for ServiceDirectory {
             return Err("the server is stopping".to_string());
         };
         let mut owner = self.owner_of_realm(realm);
-        if owner.is_none() && lock(&self.paired).is_none() {
-            // paired since the engine last read it (it reads again every few seconds): read now, so a phone of a node
-            // that has just paired is not refused until then
-            let now = owners::paired_domain(&factory).await;
-            if now.is_some() {
-                *lock(&self.paired) = now;
+        if owner.is_none() {
+            // paired, or a domain configured, since the engine last read them (it reads again every few seconds):
+            // read now, so a phone of a node that has just paired is not refused until then
+            if let Some(now) = owners::pairing_domains(&factory).await {
+                *lock(&self.paired) = Some(now);
                 owner = self.owner_of_realm(realm);
             }
         }
         let owner = match owner {
             Some(owner) => owner,
-            // a dedicated edge node's phones wait for its local node, as while it is away
-            None if self.dedicated => return Err("no local node is paired".to_string()),
+            // a dedicated edge node's phones wait for a local node to pair, as while it is away
+            None if self.dedicated && self.none_paired() => return Err("no local node is paired".to_string()),
             None => return Ok(None),
         };
         if owner == Owner::Own {
@@ -264,16 +274,13 @@ fn transport_code(transport: Transport) -> &'static str {
 }
 
 impl Engine {
-    /// The registrar's key of the bindings of the phone a control names (its `username`, `sipDeviceId`): on an
-    /// all-in-one node a paired node's phone's are in that node's domain (E12, `moqui_sip::ua::aor_key`).
+    /// The registrar's key of the bindings of the phone a control names (its `username`, `sipDeviceId`): a pairing's
+    /// phone's are in that pairing's domain when it has one (E12, E16, `owners::phone_key`), so the same username in
+    /// two domains rings each its own phone.
     fn device_aor(&self, body: &Json) -> String {
         let username = text(body, "username");
-        let owner = owners::owner_in(body);
-        if self.dedicated || owner == Owner::Own {
-            return username;
-        }
-        let domain = lock(&self.paired).as_ref().map(|(_, domain)| domain.clone());
-        moqui_sip::ua::aor_key(&username, domain.as_deref())
+        let pairings = lock(&self.paired).clone().unwrap_or_default();
+        owners::phone_key(&username, &owners::owner_in(body), &pairings)
     }
 
     /// A binding added, refreshed or removed: kept as its `SipRegistration` row.

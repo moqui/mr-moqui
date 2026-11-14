@@ -245,3 +245,100 @@ fn a_records_claim_is_its_address_bridge_or_number() {
     }
     assert_eq!(ClaimKind::from_id("Other"), None);
 }
+
+/// E16 (plans/Edge-Node2.md §4.1): a dedicated edge node with two pairings keeps a later pairing's record that claims a
+/// mail address or a number the first already holds as a conflict, naming the first; a chat bridge id both have is
+/// applied for both. Once the first pairing is revoked the conflict is applied on a recheck.
+#[test]
+fn between_two_pairings_the_first_claim_holds() {
+    let (ctx, facade) = open(NodeRole::Edge);
+    let _entered = ctx.enter();
+    for node in [NODE, "local-b"] {
+        create(
+            &facade,
+            "moqui.edge.EdgeClient",
+            &[
+                ("pairedNodeId", node),
+                ("keyFingerprint", "ab"),
+                ("statusId", "EdgeClientActive"),
+            ],
+        );
+    }
+    replicate(&facade);
+    let later = |set: &str, changes: Vec<Change>| {
+        assert_eq!(
+            apply_batch(&facade, "local-b", &batch(set, 1, true, changes)).unwrap(),
+            BatchAnswer::Applied
+        );
+    };
+    later(
+        "mailRecipients",
+        vec![
+            change(
+                ACCOUNT,
+                serde_json::json!({"emailAccountId": "LA1"}),
+                Some(serde_json::json!({"emailAddress": "BOB@example.com", "accountKindEnumId": "EakHosted"})),
+            ),
+            change(
+                ACCOUNT,
+                serde_json::json!({"emailAccountId": "LB2"}),
+                Some(serde_json::json!({"emailAddress": "carol@example.org", "accountKindEnumId": "EakHosted"})),
+            ),
+        ],
+    );
+    later(
+        "chatBridges",
+        vec![change(
+            BRIDGE,
+            serde_json::json!({"chatBridgeId": "SHARED_ID"}),
+            Some(serde_json::json!({"typeEnumId": "CbtSms"})),
+        )],
+    );
+    let of_b = |set: &str, entity: &str, field: &str, id: &str| {
+        let pk = BTreeMap::from([(field.to_string(), id.to_string())]);
+        get_value(&facade, Some("local-b"), set, entity, &pk).unwrap().is_some()
+    };
+    assert!(
+        !of_b("mailRecipients", ACCOUNT, "emailAccountId", "LA1"),
+        "bob@ is local-a's"
+    );
+    assert!(of_b("mailRecipients", ACCOUNT, "emailAccountId", "LB2"));
+    assert!(
+        of_b("chatBridges", BRIDGE, "chatBridgeId", "SHARED_ID"),
+        "a bridge id may be both's"
+    );
+    assert!(
+        copy(&facade, "mailRecipients", ACCOUNT, "emailAccountId", "LA2"),
+        "the first holder keeps it"
+    );
+    let conflicts = list_conflicts(&facade, None).unwrap();
+    let found: Vec<(&str, &str, &str, &str)> = conflicts
+        .iter()
+        .map(|c| {
+            (
+                c.paired_node_id.as_str(),
+                c.claim_kind.as_str(),
+                c.item_key.as_str(),
+                c.owner_text.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        vec![("local-b", "MailAddress", "BOB@example.com", "paired node local-a")]
+    );
+    // still held: a recheck applies nothing
+    assert_eq!(recheck_conflicts(ctx.factory(), &facade, None).unwrap(), 0);
+
+    // the first pairing revoked: its claim goes, and the later record is applied
+    facade
+        .find("moqui.edge.EdgeClient")
+        .unwrap()
+        .eq("pairedNodeId", Value::string(NODE))
+        .disable_authz()
+        .update_all([("statusId".to_string(), Value::string("EdgeClientRevoked"))])
+        .unwrap();
+    assert_eq!(recheck_conflicts(ctx.factory(), &facade, Some("local-b")).unwrap(), 1);
+    assert!(of_b("mailRecipients", ACCOUNT, "emailAccountId", "LA1"));
+    assert!(list_conflicts(&facade, None).unwrap().is_empty());
+}

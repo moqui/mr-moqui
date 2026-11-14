@@ -167,6 +167,18 @@ pub fn check_text(factory: &Arc<ExecutionContextFactory>, path: &Path, text: &st
     problems
 }
 
+/// The schema problems of `root`, a parsed Moqui XML file or a merged conf, against the XSDs in `xsd_dir`: those
+/// [`check_text`] reports, as warnings, with no factory. `text`, when it is the file `root` was parsed from, places each
+/// attribute's problem on its own line; empty places it on its element's. None for a root no XSD defines.
+#[must_use]
+pub fn schema_problems(xsd_dir: &Path, root: &MNode, path: &str, text: &str) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    if let Some(digest) = schema::digest(xsd_dir, &root.name()) {
+        check_schema(&digest, root, None, path, &LineIndex::new(text), &mut problems);
+    }
+    problems
+}
+
 /// The framework's XSDs: the factory's framework directory, else the one this build knows (a test factory's framework
 /// directory may hold none).
 #[must_use]

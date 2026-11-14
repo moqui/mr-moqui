@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
+<!-- A dev group server (conf/dev-group/README.md): the team's production instance with IronStone BOSS. It hosts the
+    components' repositories, the Projects work items, and the LLM gateway with the team's model keys; developers' dev
+    instances and a shared dev-aide server use it. It runs the production purpose because it holds the team's real data:
+    a dev instance loads Dev AIDE, which gives its users code execution as the server's OS user. The runtime has mr-boss,
+    which brings mr-mantle (./moq component-get mr-boss), on Maximal, or on Enterprise as a cluster (conf/local-cluster/;
+    then make the repositories db ones). Set it up as one production server (docs/Run-Deploy.md). -->
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+    <default-property name="instance_purpose" value="production"/>
+
+    <!-- Git hosting (docs/interfaces/Git-Hosting.md). HTTPS clones work as soon as HTTPS does:
+        https://team.example.com/git/(repositoryId).git, with an access token as the password. Git over SSH: the SSH
+        server on every address, on a port other than the system's sshd (22); ssh_public_port is the port clone URLs
+        show, when clients reach it on another (a port redirect). Grant SSH_GIT to the developers' group: the seed data
+        grants it to ADMIN only. Commit trailers such as Task: PROJ-12 and branch names link commits to work items. -->
+    <default-property name="ssh_port" value="2222"/>
+    <default-property name="ssh_host" value="0.0.0.0"/>
+    <default-property name="ssh_public_port" value=""/>
+
+    <!-- The LLM gateway (docs/ai/Gateway.md) at /llm/v1: grant LlmGatewayUse to the developers' group, and for each
+        developer's key add an LlmApiClient row with the gateway scope (System › LLM › Gateway), whose allowedAliases,
+        dailyTokens and dailyCost limit that key. Each alias is a model name the developers call: a model of the registry
+        (System › LLM › Models; the endpoints' keys, as llm_openai_api_key, go in .env) or a feature whose binding it
+        follows. -->
+    <default-property name="llm_gateway_enabled" value="true"/>
+    <!-- MCP for coding agents (docs/ai/MCP.md): true turns it on, and /mcp/setup gives a client config to paste -->
+    <default-property name="mcp_enabled" value="false"/>
+
+    <!-- Backups: the team's data. The nightly backup_EmbeddedDatabase_daily job, paused in the seed data, runs from each
+        boot (false pauses it; docs/Run-Deploy.md, Backups). It backs up the embedded database only. -->
+    <default-property name="embedded_db_backup_scheduled" value="true"/>
+
+    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+
+    <llm-facade>
+        <gateway enabled="${llm_gateway_enabled}" require-client="true" timeout="300">
+            <alias name="default" feature="assist"/>
+        </gateway>
+    </llm-facade>
+</moqui-conf>

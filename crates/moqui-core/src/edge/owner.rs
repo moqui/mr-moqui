@@ -80,8 +80,9 @@ pub fn scoped() -> Option<Owner> {
 }
 
 /// The owner of what this thread handles on `factory`'s node: the scope [`with`] set, else by the node's role.
-/// - A dedicated edge node has no items of its own: the only active paired node (an error when none, or several, are
-///   paired), as its queue picks a node for an item that names none.
+/// - A dedicated edge node has no items of its own (plans/Edge-Node2.md §4.1: an all-in-one node with none): the only
+///   active paired node, as its queue picks a node for an item that names none. With none paired, or several, it
+///   cannot be told without a scope, and is an error: each engine that takes an item names its owner.
 /// - An all-in-one node and a normal node: [`Owner::Own`].
 pub fn current(factory: &ExecutionContextFactory) -> Result<Owner, Error> {
     if let Some(owner) = scoped() {

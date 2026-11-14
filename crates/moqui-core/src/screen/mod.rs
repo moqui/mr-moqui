@@ -130,11 +130,70 @@ pub fn serve_to(
     sink: Option<Box<dyn web::stream::OutputSink>>,
 ) -> WebResponse {
     let host = request.header("host").unwrap_or("");
-    let root = match info::root_screen_for_host(factory, host, "webroot") {
-        Ok(location) => location,
+    let root = match root_for_request(factory, host, "webroot", &request.path) {
+        Ok(root) => root,
         Err(err) => return web::early_error(factory, &request, 500, err.message()),
     };
     serve_at_to(factory, request, &root, sink)
+}
+
+/// The root screen `path` is served under on `host` in webapp `webapp_name`: the host's `root-screen`
+/// ([`info::root_for_host`]), or the default root for a path the host's root leaves to it ([`root_for_path`]).
+///
+/// # Errors
+///
+/// As [`info::root_for_host`].
+pub fn root_for_request(
+    factory: &ExecutionContextFactory,
+    host: &str,
+    webapp_name: &str,
+    path: &str,
+) -> Result<String, Error> {
+    info::root_for_host(factory, host, webapp_name).map(|root| root_for_path(factory, &root, path))
+}
+
+/// The root a request is served under on a host whose root screen is `root` (plans/Edge-Node2.md §4.2): the host's
+/// root, or the default root ([`info::default_root`], `webroot.xml`) for a first path name the host's root does not
+/// have, a subscreen, transition or file: a shared static file (`/js`, `/css`, `/libs`, `/images`) on any host, and
+/// any name with `framework-routes="include"`.
+fn root_for_path(factory: &ExecutionContextFactory, root: &info::HostRoot, path: &str) -> String {
+    if root.fallback {
+        return root.location.clone();
+    }
+    let names = public_site::screen_path_names(path);
+    let Some(first) = names.first() else {
+        return root.location.clone();
+    };
+    // `//name` is a sparse search of the tree, not a path: never a shared static file
+    let shared = !path.starts_with("//") && public_site::is_static_route(first);
+    if !(shared || root.framework_routes == info::FrameworkRoutes::Include) || root_has(factory, &root.location, &names)
+    {
+        return root.location.clone();
+    }
+    info::default_root(factory)
+}
+
+/// Whether the screen at `location` has the first of `names`: a subscreen or transition (with or without a render-mode
+/// extension), a file under its directory, or a walk it leaves to itself (a no-sub-path subscreen, an extra path). A
+/// screen that does not load counts as having it, so the walk reports the error.
+fn root_has(factory: &ExecutionContextFactory, location: &str, names: &[String]) -> bool {
+    let facade = ScreenFacade::of(factory);
+    let Ok(def) = facade.screen_def(factory, location) else {
+        return true;
+    };
+    let Some(first) = names.first() else {
+        return true;
+    };
+    let before_dot = first
+        .split_once('.')
+        .map(|(before, _)| before)
+        .filter(|before| !before.is_empty());
+    let named = |name: &str| def.subscreens.get(name).is_some() || def.has_transition(name);
+    named(first)
+        || before_dot.is_some_and(named)
+        || def.allow_extra_path
+        || def.subscreens.items.iter().any(|item| item.no_sub_path)
+        || static_files::file_under(factory, &facade, location, names).is_some()
 }
 
 /// Handle one request whose root screen is `root`.
@@ -623,13 +682,19 @@ fn dispatch_request(
             );
         }
     }
-    if let Some(route) = public_site::resolve(factory, request, root)? {
-        if route.root != root {
+    // A public site's path is routed once, here, to its site's root with the site bound by the conf (also when the
+    // host's root screen is the site's root, plans/Edge-Node2.md §4.2). Any other request has no bound site: a
+    // `resolvedSiteId` it sends is not one.
+    let routed_request;
+    let routed_root;
+    let bound_parameters;
+    let (request, root, parameters) = match public_site::resolve(factory, request)? {
+        Some(route) => {
             let mut routed = request.clone();
             routed.path = route.path.clone();
-            let mut bound_parameters = public_site::parameters(&route, parameters);
-            bound_parameters.insert("publicPath".to_string(), Value::string(&request.path));
-            bound_parameters.insert(
+            let mut bound = public_site::parameters(&route, parameters);
+            bound.insert("publicPath".to_string(), Value::string(&request.path));
+            bound.insert(
                 "publicHost".to_string(),
                 Value::string(
                     request
@@ -639,18 +704,19 @@ fn dispatch_request(
                         .unwrap_or(""),
                 ),
             );
-            return dispatch_request(
-                factory,
-                &routed,
-                &route.root,
-                &bound_parameters,
-                json_list,
-                login_error,
-                (header_authenticated, new_session),
-                fop_path,
-            );
+            routed_request = routed;
+            routed_root = route.root;
+            bound_parameters = bound;
+            (&routed_request, routed_root.as_str(), &bound_parameters)
         }
-    }
+        None if parameters.contains_key(public_site::BOUND_SITE_PARAMETER) => {
+            let mut unbound = parameters.clone();
+            unbound.remove(public_site::BOUND_SITE_PARAMETER);
+            bound_parameters = unbound;
+            (request, root, &bound_parameters)
+        }
+        None => (request, root, parameters),
+    };
     // `/fop/<path>`, Java's `MoquiFopServlet`: the screen at `<path>` as `html-print`, sent as PDF. The `filename`
     // parameter (else `saveFilename`) makes it a download.
     let fop_parameters;
@@ -867,6 +933,17 @@ fn error_page(
     );
     context.insert("showErrorDetail".to_string(), Value::Bool(!production && signed_in));
     let path = format!("/{page}");
+    // the root screen a host's root-screen names (a wrapper root, plans/Edge-Node2.md §4.2), without this error screen,
+    // shows the default root's
+    let default_root;
+    let host_root = info::root_for_host(factory, request.header("host").unwrap_or(""), "webroot")
+        .is_ok_and(|host_root| !host_root.fallback && host_root.location == root);
+    let root = if host_root && ScreenUrlInfo::parse(factory, root, &path, 0).is_err() {
+        default_root = info::default_root(factory);
+        default_root.as_str()
+    } else {
+        root
+    };
     let job = render::Job {
         request,
         root,
@@ -1048,7 +1125,10 @@ fn authenticate(request: &WebRequest, parameters: &BTreeMap<String, Value>) -> R
             let message = err.message().to_string();
             web::record_login_error(&message);
             if signed_in {
-                return Err(Error::of_kind(crate::context::ErrorKind::AuthenticationRequired, message));
+                return Err(Error::of_kind(
+                    crate::context::ErrorKind::AuthenticationRequired,
+                    message,
+                ));
             }
             return Ok((Some(message), false));
         }

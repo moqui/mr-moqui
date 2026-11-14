@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Edge Clients › Domains (plans/Edge-Node2.md §4.1, §4.10): what each pairing claims on this node. Host names
+    (org.moqui.edge.EdgeServices.get#EdgeHosts, add#EdgeHost, remove#EdgeHost) are the public names this node answers
+    for a pairing, each passthrough or terminate; a name another pairing has is refused ("another node has this
+    name": the first claim holds) and this list shows which one. What each pairing claims (get#EdgeDomains) is what its
+    own setup, the Edge Node wizard's Apply on the local node, sent besides its host names: its mail domains, XMPP
+    domain, SIP realm, chat bridges and PASS sites, with the numbers its replicated copies have. Replica conflicts
+    (get#ReplicaConflicts, recheck#ReplicaConflicts) are the records of a pairing's sets not applied because each claims
+    an item another owner holds: on an all-in-one node the server itself, and between pairings the one that claimed it
+    first. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Domains" default-menu-index="2">
+
+    <transition name="addHost">
+        <service-call name="org.moqui.edge.EdgeServices.add#EdgeHost" in-map="{hostName:hostName, pairedNodeId:pairedNodeId, modeEnumId:modeEnumId}" out-map="hostOut"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">${hostOut.hostName} now goes to ${pairedNodeId}</message></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="removeHost">
+        <service-call name="org.moqui.edge.EdgeServices.remove#EdgeHost" in-map="{hostName:hostName}" out-map="removeOut"/>
+        <actions><if condition="!ec.message.hasError()"><then>
+            <if condition="removeOut?.removed"><then><message type="success">Removed ${hostName}</message></then>
+                <else><message type="warning">No such host name</message></else></if>
+        </then></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="recheckConflicts">
+        <service-call name="org.moqui.edge.EdgeServices.recheck#ReplicaConflicts" out-map="recheckOut"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Checked again: ${recheckOut?.applied ?? 0} applied</message></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        // the holders a conflict can name: on an all-in-one node the server itself too
+        conflictsText = allInOne
+            ? L('Records a local node replicated that claim an item another owner holds: a mail address, a chat bridge or a phone number this server holds itself, or one another local node claimed first. The holder wins, and the record is not applied until the holder lets the item go; remove it on one side.')
+            : L('Records a local node replicated that claim a mail address or a phone number another local node claimed first. The first claim wins, and the record is not applied until that node lets the item go; remove it on one side.')
+        hostList = []
+        domainList = []
+        conflictList = []
+        nodeOptions = []
+        domainsError = ''
+        if (!isEdge) return
+        let hostsOut = {}
+        let domainsOut = {}
+        let conflictsOut = {}
+        ec.message.pushErrors()
+        try {
+            hostsOut = ec.service.sync().name('org.moqui.edge.EdgeServices.get#EdgeHosts').call() || {}
+            if (!ec.message.hasError()) domainsOut = ec.service.sync().name('org.moqui.edge.EdgeServices.get#EdgeDomains').call() || {}
+            if (!ec.message.hasError()) conflictsOut = ec.service.sync().name('org.moqui.edge.EdgeServices.get#ReplicaConflicts').call() || {}
+            if (ec.message.hasError()) domainsError = ec.message.getErrorsString()
+        } finally {
+            ec.message.clearErrors()
+            ec.message.popErrors()
+        }
+        if (domainsError) return
+        const join = (items) => Array.from(items || []).join(', ')
+        hostList = Array.from(hostsOut.hostList || []).map((host) => {
+            const terminate = host.modeEnumId === 'EdgeHostTerminate'
+            return {hostName: host.hostName, nodeId: host.pairedNodeId,
+                modeLabel: terminate ? L('Terminate') : L('Passthrough'), modeColor: terminate ? 'warning' : 'positive'}
+        })
+        domainList = Array.from(domainsOut.domainList || []).map((domain) => ({
+            nodeId: domain.pairedNodeId,
+            mailText: join(domain.mailDomains),
+            xmppDomain: domain.xmppDomain || '',
+            sipText: [domain.sipDomain || '', join(domain.phoneNumbers) + (domain.phoneNumbersCut ? ', ' + L('and more not shown') : '')]
+                .filter((part) => part).join(' · '),
+            chatText: join(domain.chatBridgeIds),
+            passText: join(domain.passSites),
+            setupText: domain.setupDate ? ec.l10n.format(domain.setupDate, '') : L('Not yet')}))
+        nodeOptions = domainList.map((domain) => ({nodeId: domain.nodeId}))
+        conflictList = Array.from(conflictsOut.conflictList || []).map((conflict) => ({
+            nodeId: conflict.pairedNodeId, setName: conflict.setName,
+            itemText: (conflict.claimLabel || '') + ' ' + (conflict.itemKey || ''),
+            ownerText: conflict.ownerText || '',
+            lastText: conflict.lastDate ? ec.l10n.format(conflict.lastDate, '') : ''}))
+    ]]></script></actions>
+    <widgets>
+        <section name="DomainsError" condition="domainsError"><widgets>
+            <container-box type="warning"><box-header title="The domains could not be read"/><box-body>
+                <label type="p" text="${domainsError}" style="q-mb-none"/>
+            </box-body></container-box>
+        </widgets></section>
+
+        <container-box><box-header title="Host names"/><box-toolbar>
+            <container-dialog id="AddHostDialog" button-text="Add a host name" icon="sym_o_add" width="560" title="Add a host name" type="default" condition="nodeOptions.length">
+                <form-single name="AddHost" transition="addHost">
+                    <field name="hostName"><default-field title="Host name" tooltip="A public name whose DNS points at this node, such as erp.example.com. A name goes to one local node: one another node has is refused"><text-line/></default-field></field>
+                    <field name="pairedNodeId"><default-field title="Local node"><drop-down>
+                        <list-options list="nodeOptions" key="${nodeId}" text="${nodeId}"/>
+                    </drop-down></default-field></field>
+                    <field name="modeEnumId"><default-field title="Mode" tooltip="Passthrough: the local node ends TLS with its own certificate, and this node sees no content; while its link is down the connection is refused. Terminate: this node ends TLS with its own certificate and forwards each request; while the link is down it shows an offline page"><drop-down no-current-selected-key="EdgeHostPassthrough">
+                        <option key="EdgeHostPassthrough" text="Passthrough"/>
+                        <option key="EdgeHostTerminate" text="Terminate"/>
+                    </drop-down></default-field></field>
+                    <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                </form-single>
+            </container-dialog>
+        </box-toolbar><box-body-nopad>
+            <label type="p" style="m-muted q-pa-sm q-mb-none" text="The public names this node answers for its local nodes, each for one. A passthrough name's TLS goes to the local node unopened; a terminate name's requests are forwarded. A local node's own setup adds and removes its names too."/>
+            <form-list name="HostList" list="hostList" skip-form="true" paginate="false">
+                <field name="hostName"><default-field title="Host name"><display style="text-weight-medium"/></default-field></field>
+                <field name="nodeId"><default-field title="Local node"><display/></default-field></field>
+                <field name="mode"><default-field title="Mode">
+                    <render-mode><text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${modeColor}">${modeLabel}</q-chip>]]></text><text type="tui"><![CDATA[${JSON.stringify({t: "text", text: modeLabel})}]]></text></render-mode>
+                </default-field></field>
+                <field name="tools" align="right"><default-field title="">
+                    <link url="removeHost" link-type="hidden-form-link" icon="sym_o_delete" text="Remove" style="m-btn-flat" btn-type="danger"
+                            confirmation="Remove ${hostName}? This node stops answering for it." parameter-map="{hostName:hostName}"/>
+                </default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="hostName"/><field-ref name="nodeId"/></column>
+                    <column><field-ref name="mode"/><field-ref name="tools"/></column>
+                </columns>
+            </form-list>
+            <section name="NoHosts" condition="!hostList.length"><widgets>
+                <label type="p" text="No host names yet. Add one for a paired local node, and point its DNS at this node." style="m-muted q-pa-sm q-mb-none"/>
+            </widgets></section>
+        </box-body-nopad></container-box>
+
+        <container-box><box-header title="What each local node claims"/><box-body-nopad>
+            <label type="p" style="m-muted q-pa-sm q-mb-none" text="What each local node's own setup, from its Edge Node wizard, sent besides its host names, and the numbers its copies have. Each name, domain, number and site belongs to one local node: the first to claim it."/>
+            <form-list name="DomainList" list="domainList" skip-form="true" paginate="false">
+                <field name="nodeId"><default-field title="Local node"><display style="text-weight-medium"/></default-field></field>
+                <field name="mailText"><default-field title="Mail domains" tooltip="Mail to these domains goes to this node, by its replicated recipients; another node may have other addresses in the same domain"><display/></default-field></field>
+                <field name="xmppDomain"><default-field title="XMPP domain"><display/></default-field></field>
+                <field name="sipText"><default-field title="SIP realm and numbers"><display/></default-field></field>
+                <field name="chatText"><default-field title="Chat bridges" tooltip="Bridge ids may be the same on two nodes: a webhook goes by the request's host name first"><display/></default-field></field>
+                <field name="passText"><default-field title="PASS sites" tooltip="The mr-pass sites whose authority this node is"><display/></default-field></field>
+                <field name="setupText"><default-field title="Set up"><display/></default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="nodeId"/><field-ref name="mailText"/></column>
+                    <column><field-ref name="xmppDomain"/><field-ref name="passText"/></column>
+                </columns>
+            </form-list>
+            <section name="NoDomains" condition="!domainList.length"><widgets>
+                <label type="p" text="No local node is paired." style="m-muted q-pa-sm q-mb-none"/>
+            </widgets></section>
+        </box-body-nopad></container-box>
+
+        <container-box><box-header title="Replica conflicts"/><box-toolbar>
+            <link url="recheckConflicts" link-type="hidden-form-link" icon="sym_o_refresh" text="Check again" style="m-btn-flat"
+                    condition="conflictList.length"/>
+        </box-toolbar><box-body-nopad>
+            <label type="p" style="m-muted q-pa-sm q-mb-none" text="${conflictsText}"/>
+            <form-list name="ConflictList" list="conflictList" skip-form="true" paginate="false">
+                <field name="itemText"><default-field title="Item"><display style="text-weight-medium"/></default-field></field>
+                <field name="nodeId"><default-field title="Local node"><display/></default-field></field>
+                <field name="setName"><default-field title="Set"><display/></default-field></field>
+                <field name="ownerText"><default-field title="Held by"><display/></default-field></field>
+                <field name="lastText"><default-field title="Last refused"><display/></default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="itemText"/><field-ref name="nodeId"/></column>
+                    <column><field-ref name="ownerText"/><field-ref name="lastText"/></column>
+                </columns>
+            </form-list>
+            <section name="NoConflicts" condition="!conflictList.length"><widgets>
+                <label type="p" text="No conflicts: every local node's records are applied." style="m-muted q-pa-sm q-mb-none"/>
+            </widgets></section>
+        </box-body-nopad></container-box>
+    </widgets>
+</screen>

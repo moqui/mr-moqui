@@ -13,13 +13,15 @@
  */
 
 //! The edge wizard's TURN check (plans/archive/Edge-Node.md §5.7, "As built (E10, calls)"): from the local node, as a browser
-//! would, an allocation on the edge node's TURN over UDP with the credential `make#IceServers` gave, then a permission
-//! for the IP of the edge node's media address, then the allocation deleted. A TURN permission is for an IP alone
+//! would, an allocation on the edge node's TURN over UDP (or over TCP, for a TURN with no UDP listener,
+//! plans/Edge-Node2.md §2.3) with the credential `make#IceServers` gave, then a permission for the IP of the edge
+//! node's media address, then the allocation deleted. A TURN permission is for an IP alone
 //! (RFC 8656); the edge node's TURN grants one only for an IP of its allowed peers, and its rule that data goes only
 //! to their ports is checked on the data, which the check sends none of. A `turn-client-proto` client on a socket of
 //! its own, a few seconds at most.
 
-use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
+use std::io::{Read as _, Write as _};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 
 use turn_client_proto::api::{Transmit, TurnClientApi, TurnConfig, TurnEvent};
@@ -30,8 +32,9 @@ const WAIT: Duration = Duration::from_secs(3);
 /// The port of a `turn:` URL that names none (RFC 7065).
 const DEFAULT_PORT: u16 = 3478;
 
-/// The `host:port` of a `turn:` URL over UDP (no `transport`, or `transport=udp`), or why it is not one.
-pub(crate) fn udp_server(url: &str) -> Result<String, String> {
+/// The `host:port` of a `turn:` URL and whether it is over TCP (`transport=tcp`), or why it is not one (a `turns:`
+/// URL, over TLS, is not checked).
+pub(crate) fn turn_server(url: &str) -> Result<(String, bool), String> {
     let url = url.trim();
     let Some(rest) = url.strip_prefix("turn:") else {
         return Err(format!("{url} is not a turn: URL"));
@@ -40,9 +43,6 @@ pub(crate) fn udp_server(url: &str) -> Result<String, String> {
     let tcp = query
         .split('&')
         .any(|part| part.trim().eq_ignore_ascii_case("transport=tcp"));
-    if tcp {
-        return Err(format!("{url} is TURN over TCP"));
-    }
     let authority = authority.trim();
     let (host, port) = match authority.strip_prefix('[') {
         // [v6] or [v6]:port
@@ -65,7 +65,30 @@ pub(crate) fn udp_server(url: &str) -> Result<String, String> {
     } else {
         port.parse().map_err(|_| format!("{url} has no port number"))?
     };
-    Ok(format!("{host}:{port}"))
+    Ok((format!("{host}:{port}"), tcp))
+}
+
+/// The connection to the TURN server: a UDP socket, or a TCP stream that carries its messages framed.
+enum Conn {
+    Udp(UdpSocket),
+    Tcp(TcpStream),
+}
+
+impl Conn {
+    fn send(&mut self, data: &[u8]) {
+        let _ = match self {
+            Conn::Udp(socket) => socket.send(data).map(drop),
+            Conn::Tcp(stream) => stream.write_all(data),
+        };
+    }
+
+    /// What came within the read timeout; none on a timeout, an error or a closed stream.
+    fn recv(&mut self, buf: &mut [u8]) -> Option<usize> {
+        match self {
+            Conn::Udp(socket) => socket.recv(buf).ok(),
+            Conn::Tcp(stream) => stream.read(buf).ok().filter(|n| *n > 0),
+        }
+    }
 }
 
 fn refused(server: SocketAddr) -> String {
@@ -78,7 +101,7 @@ fn refused(server: SocketAddr) -> String {
 /// A UDP allocation on the TURN server of `url` with `username` and `credential`, then a permission for the IP of `peer`
 /// (`ip:port`), then the allocation deleted: what was allocated, or why not.
 pub(crate) fn probe(url: &str, username: &str, credential: &str, peer: &str) -> Result<String, String> {
-    let server_text = udp_server(url)?;
+    let (server_text, tcp) = turn_server(url)?;
     let server: SocketAddr = server_text
         .to_socket_addrs()
         .map_err(|err| format!("{server_text} did not resolve: {err}"))?
@@ -93,22 +116,44 @@ pub(crate) fn probe(url: &str, username: &str, credential: &str, peer: &str) -> 
     } else {
         SocketAddr::from(([0_u16; 8], 0))
     };
+    let mut config = TurnConfig::new(TurnCredentials::new(username, credential));
+    config.set_anonymous_username(turn_client_proto::stun::auth::Feature::Disabled);
+    let unreachable = |err: std::io::Error| format!("The TURN server {server} cannot be reached: {err}");
+    if tcp {
+        let stream = TcpStream::connect_timeout(&server, WAIT).map_err(unreachable)?;
+        stream
+            .set_read_timeout(Some(Duration::from_millis(20)))
+            .map_err(unreachable)?;
+        let local = stream.local_addr().map_err(unreachable)?;
+        let client = turn_client_proto::tcp::TurnClientTcp::allocate(local, server, config);
+        return run(client, Conn::Tcp(stream), TransportType::Tcp, server, local, peer);
+    }
     let socket = UdpSocket::bind(any).map_err(|err| format!("No UDP socket for the TURN check: {err}"))?;
     socket
         .connect(server)
         .and_then(|()| socket.set_read_timeout(Some(Duration::from_millis(20))))
-        .map_err(|err| format!("The TURN server {server} cannot be reached: {err}"))?;
+        .map_err(unreachable)?;
     let local = socket
         .local_addr()
         .map_err(|err| format!("No UDP socket for the TURN check: {err}"))?;
-    let mut config = TurnConfig::new(TurnCredentials::new(username, credential));
-    config.set_anonymous_username(turn_client_proto::stun::auth::Feature::Disabled);
-    let mut client = turn_client_proto::udp::TurnClientUdp::allocate(local, server, config);
+    let client = turn_client_proto::udp::TurnClientUdp::allocate(local, server, config);
+    run(client, Conn::Udp(socket), TransportType::Udp, server, local, peer)
+}
+
+/// [`probe`]'s exchange on `conn` with the client `client` of its transport.
+fn run<C: TurnClientApi>(
+    mut client: C,
+    mut conn: Conn,
+    transport: TransportType,
+    server: SocketAddr,
+    local: SocketAddr,
+    peer: SocketAddr,
+) -> Result<String, String> {
     let start = Instant::now();
     let now = || turn_client_proto::types::Instant::from_nanos(i64::try_from(start.elapsed().as_nanos()).unwrap_or(0));
-    let send = |client: &mut turn_client_proto::udp::TurnClientUdp| {
+    let send = |client: &mut C, conn: &mut Conn| {
         while let Some(transmit) = client.poll_transmit(now()) {
-            let _ = socket.send(transmit.data.as_ref());
+            conn.send(transmit.data.as_ref());
         }
     };
     let mut buf = [0_u8; 2048];
@@ -131,12 +176,12 @@ pub(crate) fn probe(url: &str, username: &str, credential: &str, peer: &str) -> 
             });
         }
         let _ = client.poll(now());
-        send(&mut client);
-        if let Ok(n) = socket.recv(&mut buf) {
+        send(&mut client, &mut conn);
+        if let Some(n) = conn.recv(&mut buf) {
             answered = true;
             let transmit = Transmit {
                 data: &buf[..n],
-                transport: TransportType::Udp,
+                transport,
                 from: server,
                 to: local,
             };
@@ -147,6 +192,7 @@ pub(crate) fn probe(url: &str, username: &str, credential: &str, peer: &str) -> 
             match event {
                 TurnEvent::AllocationCreated(_, address) => {
                     relayed = Some(address);
+                    // the relay is UDP whatever the client's transport
                     if let Err(err) = client.create_permission(TransportType::Udp, peer.ip(), now()) {
                         done = Some(Err(format!("A permission for {} was not asked: {err}", peer.ip())));
                     }
@@ -175,7 +221,7 @@ pub(crate) fn probe(url: &str, username: &str, credential: &str, peer: &str) -> 
     };
     // an allocation made is given back at once, rather than left to its lifetime
     if relayed.is_some() && client.delete(now()).is_ok() {
-        send(&mut client);
+        send(&mut client, &mut conn);
     }
     outcome
 }

@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <!-- System › Certificates (plans/Edge-Node2.md §4.8), in crates/moqui-host/src/acme. Certificates are files in
+        runtime/cert, found by name; these services list them and get a certificate by ACME for a name an operator sets
+        up, and only for such a name (moqui.server.AcmeName). A refusal adds an error and answers reasonCode. -->
+    <service verb="get" noun="Certificates" type="rust" location="moqui_host::acme::services::get_certificates"
+            allow-remote="false" transaction="ignore">
+        <description>The names this node answers: its own host (webapp_http_host), each public-site host, the SMTP host
+            (smtp_hostname), the XMPP domain, each terminate host of a pairing on an edge node, each name set up with
+            ACME and each name with files in runtime/cert. For each: hostName, reasons (what makes it one of the names),
+            found, and certificate when the HTTPS listener would serve one for it: pair (the files' name: the name, its
+            wildcard or default), matchKind (exact, wildcard or default), file (under the runtime), layout (certbot,
+            nginx-proxy or mkcert), acmeWritten, issuer, notAfter (millis), daysLeft and problem (why the files do not
+            load). A name set up with ACME has acme: directoryUrl, contactEmail, renewing, statusId, lastAttemptDate,
+            lastError, notAfter, setUpDate, ordering (this server is ordering it now) and shadowed (another tool's files
+            for the name are served instead). Also listenPort (the HTTPS listener's port when it is bound), directoryUrl
+            (acme_directory_url), stagingUrl (Let's Encrypt's staging directory) and challengePort.</description>
+        <out-parameters>
+            <parameter name="certificateList" type="List"><parameter name="certificate" type="Map"/></parameter>
+            <parameter name="listenPort" type="Integer"/>
+            <parameter name="directoryUrl"/>
+            <parameter name="stagingUrl"/>
+            <parameter name="challengePort" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="setup" noun="AcmeName" type="rust" location="moqui_host::acme::services::setup_acme_name"
+            allow-remote="false" transaction="ignore">
+        <description>Set a name up to get its certificate from an ACME authority, then order it on a thread of its own:
+            the name's row shows the outcome (AcmeOrdering, then AcmeIssued or AcmeFailed with lastError), and the
+            renewal job (renew_AcmeCertificates_daily) is started. First it checks that the name has an address in DNS
+            and that a TLS connection to it on the challenge port (443) reaches this node, unless skipCheck. Refuses a
+            name that is not a DNS name (badName), a directory URL that is not https (badDirectory), terms not agreed
+            (termsNotAgreed), a contact that is not an email address (badContact), a runtime/cert/hostName/ directory
+            another tool wrote (otherTool), and a failed check (checkFailed, with what was found). A name set up before
+            takes the new authority, contact and terms, and renews again.</description>
+        <in-parameters>
+            <parameter name="hostName" required="true"/>
+            <parameter name="directoryUrl"><description>The authority's directory; acme_directory_url when empty.</description></parameter>
+            <parameter name="contactEmail"/>
+            <parameter name="termsAgreed" type="Boolean"/>
+            <parameter name="skipCheck" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="hostName"/>
+            <parameter name="checkText"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+    </service>
+    <service verb="renew" noun="AcmeName" type="rust" location="moqui_host::acme::services::renew_acme_name"
+            allow-remote="false" transaction="ignore">
+        <description>Order the certificate of a name set up with ACME again now, on a thread of its own. Refuses a name
+            not set up (notSetUp) and one being ordered (ordering).</description>
+        <in-parameters><parameter name="hostName" required="true"/></in-parameters>
+        <out-parameters><parameter name="hostName"/><parameter name="reasonCode"/></out-parameters>
+    </service>
+    <service verb="update" noun="AcmeName" type="rust" location="moqui_host::acme::services::update_acme_name"
+            allow-remote="false" transaction="ignore">
+        <description>Stop renewing a name set up with ACME (renewing false), or renew it again (true). Its certificate
+            stays until it runs out. Refuses a name not set up (notSetUp).</description>
+        <in-parameters>
+            <parameter name="hostName" required="true"/>
+            <parameter name="renewing" type="Boolean" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="renewing" type="Boolean"/><parameter name="reasonCode"/></out-parameters>
+    </service>
+    <service verb="remove" noun="AcmeName" type="rust" location="moqui_host::acme::services::remove_acme_name"
+            allow-remote="false" transaction="ignore">
+        <description>Forget a name set up with ACME: its rows, and its files in runtime/cert here now and on the other
+            members of a cluster within a minute. Its HTTPS is refused then, unless another certificate covers it. The
+            renewal job pauses with the last name. removed is false when the name was not set up.</description>
+        <in-parameters><parameter name="hostName" required="true"/></in-parameters>
+        <out-parameters><parameter name="removed" type="Boolean"/></out-parameters>
+    </service>
+    <service verb="renew" noun="AcmeCertificates" type="rust" location="moqui_host::acme::services::renew_acme_certificates"
+            allow-remote="false" transaction="ignore">
+        <description>The renewal job's service: renew, one after another, each name set up with ACME and renewing whose
+            certificate is missing or has a third of its life left (30 days with no issue date), leaving out one being
+            ordered and one that failed in the last six hours. One that fails is logged and the others go on. Never asks
+            for a name not set up.</description>
+        <out-parameters>
+            <parameter name="renewed" type="Integer"/>
+            <parameter name="failed" type="Integer"/>
+        </out-parameters>
+    </service>
+</services>

@@ -206,7 +206,7 @@ pub struct RequestPoolStatus {
     pub queue_cap: usize,
 }
 
-/// `(request-pool-max, worker-pool-max)`. Missing or non-integer attributes are 8 and 25.
+/// `(request-pool-max, worker-pool-max)`. Missing or non-integer attributes are 16 and 22.
 pub fn caps(conf_text: &str) -> (u32, u32) {
     let Ok(Some(tools)) = tools_of(conf_text) else {
         return (DEFAULT_REQUEST_WORKERS, DEFAULT_SERVICE_WORKERS);

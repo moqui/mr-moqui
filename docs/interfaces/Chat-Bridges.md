@@ -161,6 +161,13 @@ only connect out (Telegram's `getUpdates`, Slack Socket Mode, the Discord Gatewa
 all-in-one node ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node)) the webhook and media routes look for the server's
 own bridge or file first, then the local node's copy; a bridge id both sides have gets 409, naming it.
 
+With several local nodes on one edge node ([Run-Deploy](../Run-Deploy.md#several-local-nodes-on-one-edge-node)) bridge
+ids come from separate databases and may be the same, so a webhook goes by its host name first: at a local node's
+terminate host name only that node's bridges answer (the edge node queues them while it is away), and at the edge
+node's own names the one local node with the id, where an id two have gets 401, logged. A local node whose ids may
+collide sets `channels_public_url` to one of its terminate host names, so its networks' webhooks and its MMS files
+name it.
+
 ## Tests
 
 - `crates/moqui-core/src/service/chat_bridge_tests.rs`: an in-memory adapter registered only in the tests, with crash and

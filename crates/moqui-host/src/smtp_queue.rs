@@ -74,6 +74,9 @@ enum Lookup {
     NotLoaded,
     /// No paired node has it: 550.
     Unknown,
+    /// Two active pairings have it (plans/Edge-Node2.md §4.1): 451, logged, as on an all-in-one node when both sides
+    /// have one. Replication keeps the later claim as a conflict, so this is a race or an older copy.
+    Held(Vec<String>),
 }
 
 /// The recipients of each local node from the copies of its `mailRecipients` (`moqui_mail::delivery`).
@@ -127,19 +130,36 @@ impl Copies {
         Ok(())
     }
 
-    /// Where mail to `address` goes: a paired node's account first.
+    /// Where mail to `address` goes: the one active paired node's account that has it. The most specific match wins
+    /// between pairings: one node's account at the address as it is over another's only without its plus tag
+    /// (`joe+x@` and `joe@`), as on an all-in-one node; two at the same level is [`Lookup::Held`].
     fn find(&self, address: &str, delimiters: &str) -> Lookup {
         let mut not_paired = false;
-        for (node, map) in &self.nodes {
-            if let Some(account) = map.find(address, delimiters) {
-                if self.active.contains(node) {
-                    return Lookup::Found {
-                        node: node.clone(),
-                        account,
-                    };
+        let mut found: Vec<(String, String)> = Vec::new();
+        let levels: &[&str] = if delimiters.is_empty() {
+            &[""]
+        } else {
+            &["", delimiters]
+        };
+        for level in levels {
+            for (node, map) in &self.nodes {
+                if let Some(account) = map.find(address, level) {
+                    if self.active.contains(node) {
+                        found.push((node.clone(), account));
+                    } else {
+                        not_paired = true;
+                    }
                 }
-                not_paired = true;
             }
+            if !found.is_empty() {
+                break;
+            }
+        }
+        if found.len() > 1 {
+            return Lookup::Held(found.into_iter().map(|(node, _)| node).collect());
+        }
+        if let Some((node, account)) = found.pop() {
+            return Lookup::Found { node, account };
         }
         if not_paired {
             Lookup::NotPaired
@@ -222,6 +242,14 @@ fn split_sides(groups: Vec<Recipients>) -> (Vec<Recipients>, Vec<Recipients>) {
 /// The answer to `RCPT TO` of what the copies say.
 fn lookup_answer(lookup: Lookup) -> RcptAnswer {
     match lookup {
+        Lookup::Held(nodes) => {
+            let text = format!(
+                "mail address is held by paired nodes {}: an address belongs to one pairing",
+                nodes.join(", ")
+            );
+            tracing::error!("SMTP listener (edge mode): recipient refused, {text}");
+            RcptAnswer::TempFail("the address is held by more than one pairing".to_string())
+        }
         Lookup::Found { account, .. } => RcptAnswer::Local(account),
         Lookup::Unknown => RcptAnswer::Unknown,
         Lookup::NotPaired => RcptAnswer::TempFail("the local node of the address is not paired now".to_string()),

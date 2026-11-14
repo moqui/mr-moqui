@@ -397,14 +397,17 @@ fn structure(project: &Project, factory: &ExecutionContextFactory) -> BTreeMap<P
             found.insert(path.clone(), stamp(&path));
         }
     }
-    for entry in std::fs::read_dir(project.runtime.join("conf"))
-        .into_iter()
-        .flatten()
-        .flatten()
-    {
-        let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "xml") {
-            found.insert(path.clone(), stamp(&path));
+    // the conf files and the topology directories' (conf/edge/MoquiEdgeConf.xml), any of which MOQUI_CONF may name; a
+    // symbolic link to a directory is not followed, so a loop cannot hold the walk up
+    let mut conf_dirs = vec![project.runtime.join("conf")];
+    while let Some(dir) = conf_dirs.pop() {
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                conf_dirs.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "xml") {
+                found.insert(path.clone(), stamp(&path));
+            }
         }
     }
     found

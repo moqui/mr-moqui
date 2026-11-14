@@ -48,8 +48,16 @@ A local server behind an edge node ([Run-Deploy](../Run-Deploy.md), [plans/archi
 §5.4) keeps its XMPP server; the edge node starts none, and its tunnel ports pipe clients down the link.
 
 - On the edge node, `edge_xmpp_port` (STARTTLS, 5222) and `edge_xmpp_tls_port` (direct TLS, 5223) on
-  `edge_xmpp_host`; `edge_xmpp_node` names the local node when more than one is linked. At most 256 tunneled XMPP
-  connections at once.
+  `edge_xmpp_host`, one pair of ports for every local node's domain ([plans/Edge-Node2.md](../../plans/Edge-Node2.md)
+  §4.1, E16): each connection goes to the local node whose XMPP domain it names, by the TLS server name (SNI) on the
+  direct TLS port and by the `to` of the stream header the client sends in the clear on the STARTTLS port. The edge
+  node reads only that (at most 16 KB, within 10 seconds), passes the bytes it read on first, and sees no stanza. A
+  local node's domain is the one its Configure named (the wizard's Apply sends `xmpp_domain`). While one local node
+  is paired, a connection that names no domain or one of no node goes to it (refused while it is away); with several
+  paired it is refused, whichever are linked, as is a domain two nodes name. The domains are the host table's, which
+  Configure, pairing and revoking load again, so a connection reads no database. A pair of ports of one local node's own is an option: `EdgePort` rows of kind `xmpp` and
+  `xmpps` (System › Edge Clients › Ports, `org.moqui.edge.EdgeServices.add#EdgePort`), which go to that node whatever the
+  connection names. At most 256 tunneled XMPP connections at once on the shared pair, and as many on each row's port.
 - The local node serves each as a connection from the client's address: its blocks for failed sign-ins and its
   limits per source apply. So the edge node must see the clients' own addresses: behind a TCP load balancer that
   sends no PROXY header, every client would share one address, one per-source limit (20) and one sign-in block. The TLS ends there, with its certificates for the domain, so SCRAM-SHA-256-PLUS and FAST
@@ -65,8 +73,10 @@ A local server behind an edge node ([Run-Deploy](../Run-Deploy.md), [plans/archi
   connection through each tunnel port, whose TLS must be this node's own certificate, sending no credentials.
 - While the link is down clients cannot connect; they retry, and what was sent to them waits in the archive.
 - On an all-in-one node ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node)) the server's own XMPP server keeps
-  `xmpp_port` and `xmpp_tls_port`, and the tunnel ports, which must differ, serve the local node's domain. A tunnel
-  port the same as one of the server's is off, with an error logged, and not offered to the local node.
+  `xmpp_port` and `xmpp_tls_port`, and they take the local nodes' domains too: a connection that names a paired
+  node's domain goes down its link, the rest are the server's own. The offer gives a local node these ports when no
+  tunnel ports are set. Tunnel ports of their own are an option, and they too take the server's own domain; one the
+  same as the server's is not opened again.
 - Federation (C3b) will take 5269 (`xmpp_s2s_port`, off) on the edge node, with stanzas to local users queued while
   the local node is away ([plans/archive/Comms-Framework.md](../../plans/archive/Comms-Framework.md) §4.3).
 
@@ -256,6 +266,9 @@ message delivery outside the archive; reactions in the archive; receipts (XEP-01
 - `cargo test -p moqui-host --test it edge_xmpp` (about 4 s, two servers): outside clients through an edge node's
   tunnel ports, tokio-xmpp over direct TLS and a raw SASL2 client over STARTTLS, both with SCRAM-SHA-256-PLUS on the
   local node's TLS, trading direct messages; refused with the link down; no XMPP server on the edge node.
+- `cargo test -p moqui-host --test it edge_domains_comms` (about 5 s, two servers, two pairings): each pairing's
+  domain on the one pair of ports, by SNI and by the stream's `to`; another pairing's domain and a domain of no one
+  refused; a port row of one pairing reaching only it; a removed row's port closed.
 - `cargo test -p moqui-host --test it -- xmpp::` (about 6 s, two servers): an upload PUT answered before its body for
   an unknown token and a wrong length, a body over the slot's size 413, one past `xmpp_upload_seconds` 408, and two PUTs
   at once, the second waiting on the row and then 409; and a real server with tokio-xmpp as one client

@@ -89,12 +89,17 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="worker-pool-core" type="xs:integer"><xs:annotation><xs:documentation>
                 The core (minimum) size of the worker thread pool.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="worker-pool-max" type="xs:integer"><xs:annotation><xs:documentation>
-                The maximum size of the worker thread pool, 25 by default. Each worker can hold two connections
+                The maximum size of the worker thread pool, 22 by default. Each worker can hold two connections
                 (a transaction and a suspended one), so it counts twice in the startup check of the pool size.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="worker-pool-alive" type="xs:integer"><xs:annotation><xs:documentation>
                 The amount of time, in seconds, to keep idle worker threads alive (beyond core pool size).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="notification-topic-factory" type="xs:string"><xs:annotation><xs:documentation>
                 The ToolFactory to use to get a SimpleTopic for distributed NotificationMessage</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="request-pool-max" type="xs:integer"><xs:annotation><xs:documentation>
+                The number of request worker threads, 16 by default.
+                Each can hold two connections, so it counts twice in the startup check of the pool size.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="request-queue" type="xs:integer"><xs:annotation><xs:documentation>
+                The most requests that wait for a request worker, 64 by default.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="tool-factory">
@@ -452,6 +457,19 @@ along with this software (see the LICENSE.md file). If not, see
                         <xs:annotation><xs:documentation>A pattern to match the host name against (from ServletRequest.getServerName())</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="location" type="xs:string" use="required">
                         <xs:annotation><xs:documentation>The location of the root screen XML file</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="framework-routes">
+                        <xs:annotation><xs:documentation>What a host's own root screen serves beside its screens (not in
+                            Java; docs/Run-Deploy.md, "Several sites by host name"). Not set: its own screens, and the shared
+                            static files (/js, /css, /libs, /images) of the default root (host ".*") when its directory has no
+                            such file; the routes outside the screens (token routes, servlets, sockets) answer as on every
+                            host. include: its own screens first, then the default root's for a first path name it does not
+                            have (the shell, sign-in, the apps, /rest, the error screens). refuse: its own screens and the
+                            shared static files only; the token routes, the servlets and the host's own routes (sockets,
+                            /dav, /health, /metrics...) are Not Found on the host.</xs:documentation></xs:annotation>
+                        <xs:simpleType><xs:restriction base="xs:token">
+                            <xs:enumeration value="include"/>
+                            <xs:enumeration value="refuse"/>
+                        </xs:restriction></xs:simpleType></xs:attribute>
                 </xs:complexType></xs:element>
                 <xs:element minOccurs="0" maxOccurs="unbounded" name="error-screen"><xs:complexType>
                     <xs:attribute name="error" use="required"><xs:simpleType><xs:restriction base="xs:token">
@@ -1868,7 +1886,9 @@ along with this software (see the LICENSE.md file). If not, see
                 </xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="queue-max-megabytes" type="non-neg-int-expandable" default="1024">
-                <xs:annotation><xs:documentation>The waiting items' payloads at most; past it the oldest fail.
+                <xs:annotation><xs:documentation>The waiting items' payloads and content at most, for each paired
+                    node alone (on a node that takes links, a pairing's EdgeClient.queueMaxMegabytes above 0 in place of
+                    it); past it that node's oldest fail.
                 </xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="queue-max-attempts" type="non-neg-int-expandable" default="10">

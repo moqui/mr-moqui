@@ -28,7 +28,7 @@ use std::net::{IpAddr, SocketAddr};
 use moqui_lib::error::Error;
 use moqui_lib::object::{to_plain_string, Value};
 
-use super::setup::{set_env, CallsOffer, SetupLine};
+use super::setup::{set_env, SetupLine};
 use super::{EdgeInfo, LinkStatus};
 use crate::context::{ExecutionContext, ExecutionContextFactory};
 use crate::entity::EntityFacade;
@@ -330,7 +330,6 @@ pub fn apply(
     env_file: &std::path::Path,
     on: bool,
     edge: &EdgeInfo,
-    offer: &CallsOffer,
 ) -> Vec<SetupLine> {
     let mut lines = vec![set_env(
         "calls",
@@ -387,14 +386,6 @@ pub fn apply(
             format!("Browsers send call media to {}", edge.media_address),
         ),
     });
-    if offer.other_nodes {
-        lines.push(SetupLine::new(
-            "calls",
-            false,
-            "Other local nodes are linked to the edge node too, so it takes call messages from none of them (one \
-             local node per edge node for calls)",
-        ));
-    }
     lines.push(if edge.turn_urls.is_empty() {
         SetupLine::new(
             "calls",

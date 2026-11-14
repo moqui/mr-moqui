@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Edge Clients › Ports (plans/Edge-Node2.md §4.1 "SSH", §4.10 Ports): the TCP ports whose connections go down one
+    pairing's link each, as a byte tunnel to its SSH server (ssh) or its XMPP server (xmpp with STARTTLS, xmpps with
+    direct TLS), from the moqui.edge.EdgePort rows (org.moqui.edge.EdgeServices.get#EdgePorts, add#EdgePort,
+    remove#EdgePort). This node listens on a port within seconds of adding it and stops when it is removed; the list
+    says whether each listens now, and why not. A port of this node's own listeners, and one another row has, is
+    refused. The conf's own tunnel ports (edge_ssh_tunnel_port, edge_xmpp_port, edge_xmpp_tls_port) are apart: the SSH
+    one goes to the one active pairing only (refused with several, and while it is away), and the XMPP ones to the node whose XMPP domain a client names. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Ports" default-menu-index="3">
+
+    <transition name="addPort">
+        <service-call name="org.moqui.edge.EdgeServices.add#EdgePort" in-map="{port:port, pairedNodeId:pairedNodeId, tunnelKind:tunnelKind}" out-map="portOut"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Port ${portOut.port} now goes to ${portOut.pairedNodeId}</message></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="removePort">
+        <service-call name="org.moqui.edge.EdgeServices.remove#EdgePort" in-map="{port:port}" out-map="removeOut"/>
+        <actions><if condition="!ec.message.hasError()"><then>
+            <if condition="removeOut?.removed"><then><message type="success">Removed port ${port}</message></then>
+                <else><message type="warning">No such port</message></else></if>
+        </then></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        portList = []
+        nodeOptions = []
+        portsError = ''
+        if (!isEdge) return
+        let portsOut = {}
+        let clientsOut = {}
+        ec.message.pushErrors()
+        try {
+            portsOut = ec.service.sync().name('org.moqui.edge.EdgeServices.get#EdgePorts').call() || {}
+            if (!ec.message.hasError()) clientsOut = ec.service.sync().name('org.moqui.edge.EdgeServices.get#EdgeClients').call() || {}
+            if (ec.message.hasError()) portsError = ec.message.getErrorsString()
+        } finally {
+            ec.message.clearErrors()
+            ec.message.popErrors()
+        }
+        if (portsError) return
+        const kinds = {ssh: L('SSH'), xmpp: L('XMPP, STARTTLS'), xmpps: L('XMPP, direct TLS')}
+        portList = Array.from(portsOut.portList || []).map((port) => {
+            const [stateLabel, stateColor] = port.listening ? [L('Listening'), 'positive']
+                : port.errorText ? [L('Not listening'), 'negative'] : [L('Waiting'), 'grey']
+            return {port: String(port.port), nodeId: port.pairedNodeId, kindText: kinds[port.tunnelKind] || port.tunnelKind,
+                stateLabel, stateColor, errorText: port.errorText || ''}
+        })
+        nodeOptions = Array.from(clientsOut.clientList || []).filter((client) => client.statusId !== 'EdgeClientRevoked')
+            .map((client) => ({nodeId: client.pairedNodeId}))
+    ]]></script></actions>
+    <widgets>
+        <section name="PortsError" condition="portsError"><widgets>
+            <container-box type="warning"><box-header title="The ports could not be read"/><box-body>
+                <label type="p" text="${portsError}" style="q-mb-none"/>
+            </box-body></container-box>
+        </widgets></section>
+        <container-box><box-header title="Tunnel ports"/><box-toolbar>
+            <container-dialog id="AddPortDialog" button-text="Add a port" icon="sym_o_add" width="520" title="Add a tunnel port" type="default" condition="nodeOptions.length">
+                <form-single name="AddPort" transition="addPort">
+                    <field name="port"><default-field title="Port" tooltip="A TCP port on this node, not one of its own listeners. Open it in the firewall"><text-line size="6"/></default-field></field>
+                    <field name="pairedNodeId"><default-field title="Local node"><drop-down>
+                        <list-options list="nodeOptions" key="${nodeId}" text="${nodeId}"/>
+                    </drop-down></default-field></field>
+                    <field name="tunnelKind"><default-field title="To" tooltip="SSH goes to the node's SSH server. XMPP goes to its XMPP server, which ends the TLS: STARTTLS on a port like 5222, direct TLS on one like 5223"><drop-down no-current-selected-key="ssh">
+                        <option key="ssh" text="SSH"/>
+                        <option key="xmpp" text="XMPP, STARTTLS"/>
+                        <option key="xmpps" text="XMPP, direct TLS"/>
+                    </drop-down></default-field></field>
+                    <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                </form-single>
+            </container-dialog>
+        </box-toolbar><box-body-nopad>
+            <label type="p" style="m-muted q-pa-sm q-mb-none" text="TCP ports whose connections go to one local node each, unopened: to its SSH server, or to its XMPP server, which ends the TLS. A port of its own suits a client that cannot name the node, such as SSH."/>
+            <form-list name="PortList" list="portList" skip-form="true" paginate="false">
+                <field name="port"><default-field title="Port"><display style="text-weight-medium"/></default-field></field>
+                <field name="nodeId"><default-field title="Local node"><display/></default-field></field>
+                <field name="kindText"><default-field title="To"><display/></default-field></field>
+                <field name="state"><default-field title="State">
+                    <render-mode><text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${stateLabel}</q-chip>]]></text><text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateLabel})}]]></text></render-mode>
+                </default-field></field>
+                <field name="errorText"><default-field title="Why not"><display/></default-field></field>
+                <field name="tools" align="right"><default-field title="">
+                    <link url="removePort" link-type="hidden-form-link" icon="sym_o_delete" text="Remove" style="m-btn-flat" btn-type="danger"
+                            confirmation="Remove port ${port}? This node stops listening on it, and its open connections end." parameter-map="{port:port}"/>
+                </default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="port"/><field-ref name="nodeId"/></column>
+                    <column><field-ref name="state"/><field-ref name="tools"/></column>
+                </columns>
+            </form-list>
+            <section name="NoPorts" condition="!portList.length"><widgets>
+                <label type="p" text="No tunnel ports. Add one to reach a local node's SSH or XMPP server through this node." style="m-muted q-pa-sm q-mb-none"/>
+            </widgets></section>
+        </box-body-nopad></container-box>
+    </widgets>
+</screen>

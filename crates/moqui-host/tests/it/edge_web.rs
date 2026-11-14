@@ -426,15 +426,17 @@ fn the_apps_reach_the_local_node_through_the_edge_node_in_both_modes() {
         "add#EdgeHost",
         &[("hostName", TERM), ("pairedNodeId", "local-other")],
     );
-    assert!(taken.unwrap_err().contains("is a host of local node local-w"));
+    assert!(taken.unwrap_err().contains("another node has this name"));
+    // the conf's SSH tunnel port goes to the one active pairing only (E16), so the second one goes
+    call(&edge, "revoke#EdgeClient", &[("pairedNodeId", "local-other")]).unwrap();
     let hosts = call(&edge, "get#EdgeHosts", &[("pairedNodeId", "local-w")]).unwrap();
     let Some(Value::List(hosts)) = hosts.get("hostList") else {
         panic!("{hosts:?}")
     };
     assert_eq!(hosts.len(), 2);
-    // and System › Edge Clients lists them
+    // and System › Edge Clients › Domains lists them
     let admin = crate::common::sign_in(edge.server.address(), "john.doe", "moqui");
-    let page = crate::common::http_request("GET", "/System/EdgeClients", &[("Cookie", &admin)], "");
+    let page = crate::common::http_request("GET", "/System/EdgeClients/Domains", &[("Cookie", &admin)], "");
     let (status, _, page) = crate::common::exchange(edge.server.address(), &page);
     assert_eq!(status, 200, "{page}");
     assert!(

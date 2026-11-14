@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
+<!-- An edge node (conf/edge/README.md; plans/archive/Edge-Node.md): the production conf for a small cloud instance in
+    front of a local node, which dials it and keeps one link open. It gives the local node web access (its host names,
+    passthrough or terminate), an SSH tunnel, delegated calls, the queue and replication, mr-pass's sites with the local
+    node as their authority, mail, chat webhooks and MMS files, the media and TURN of its calls, SIP trunks and outside
+    phones, and XMPP clients' ports. The local node sets itself up with its System › Edge Node wizard, which reads what
+    this node offers and sends its part (System › Edge Clients shows it); each section below says what this node needs
+    for that area.
+    Build, archive and run with the release flag of ./moq: the Maximal package, or Enterprise with an external database;
+    both have the link. The runtime has the base components and mr-pass only (./moq component-get edge). Per-host
+    settings (names, addresses, ports) go in .env, which an upgrade keeps. -->
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+    <default-property name="instance_purpose" value="production"/>
+    <!-- takes links from paired local nodes on the HTTPS listener, told from browsers by ALPN; System › Edge Clients
+        makes pairing codes, lists the paired nodes, pings and revokes them -->
+    <default-property name="node_role" value="edge"/>
+    <!-- rate limits, connection limits and bans by client address, run before anything goes down a link. With a proxy
+        in front, name it in webapp_trusted_proxies (.env): a client-ip-header with no trusted proxies is ignored -->
+    <default-property name="webapp_web_protection" value="true"/>
+
+    <!-- The link and web access (.env): webapp_http_host, this node's public name. The HTTPS listener needs a WebPKI
+        certificate in runtime/cert, which local nodes check when they pair; no TLS-terminating proxy in front, since the
+        link needs ALPN and client certificates end to end. A local node dials 443 unless its edge node address has a
+        port, and the listener binds webapp_https_listen_port (8443 by default): bind 443 (docs/Run-Deploy.md, Listen
+        ports and URL ports) or give the port in the address. The links use this node's own key, edge_link_key,
+        generated into .env at the first start: a renewed web certificate does not touch them, a changed key means every
+        local node must pair again. edge_public_addresses: this node's public IPv4 and IPv6 addresses, comma-separated,
+        which the wizard checks the local node's A and AAAA records against.
+        A host name's mode is set on the local node (the wizard, or Edge Clients by hand). Passthrough, the default: this
+        node reads the name before any TLS and sends the connection down the link with a PROXY header; the local node
+        ends the TLS with its own certificate, and while the link is down the connection is refused. Terminate: this node
+        ends the TLS with its own certificate for the name and forwards each request, and while the link is down shows an
+        offline page (503), the page at edge_offline_page when set. -->
+
+    <!-- SSH (.env): edge_ssh_tunnel_port (and edge_ssh_tunnel_host, empty for every address) takes SSH connections for
+        the local node's SSH server (its ssh_port), each admitted by web protection first, while one local node is
+        linked. With several, each gets a port of its own: a moqui.edge.EdgePort row (System › Edge Clients › Ports). -->
+
+    <!-- PASS (plans/archive/Edge-Node.md §5.5): mr-pass here calls its local node as the PASS authority over gRPC down
+        the link, with no client secret (the link authenticates it). Set pass_backend_web_url in .env to the local node's
+        web address through this node (one of its host names), for the SSO front channel. While the link is down every
+        PASS page fails as unavailable. -->
+    <default-property name="pass_backend_url" value="edge:"/>
+
+    <!-- XMPP (docs/interfaces/XMPP.md, Behind an edge node): no XMPP server runs here; XMPP clients' ports tunnel to the
+        local node whose XMPP domain each connection names (the TLS server name, or the stream's to), which ends their
+        TLS with its certificates for the domain. One pair of ports takes every paired node's domain. Set in .env:
+                                     <default-property name="edge_xmpp_port" value="5222"/>
+                                     <default-property name="edge_xmpp_tls_port" value="5223"/>
+        (and edge_xmpp_host). _xmpp-client._tcp and _xmpps-client._tcp in public DNS name this node. -->
+
+    <!-- Mail (docs/interfaces/Mail-Inbound.md, The edge node as the gateway: each setting, the DNS to publish and the
+        Postfix alternative): the MTA in moqui (E5b). The SMTP listener takes port 25 from the internet itself (internet
+        mode): set smtp_listen_port 25, smtp_listen_host 0.0.0.0 (or :: for IPv6 too) and smtp_hostname (the MX name,
+        also the authserv-id) in .env. STARTTLS with the web certificate, the limits per address below, SPF, DKIM, DMARC
+        and ARC checked, Rspamd's verdict when mail_rspamd_url is set. RCPT TO is answered from the local node's
+        replicated accounts, so an unknown address is refused while it is away too, and each message is queued for it.
+        Mail the local node sends through an EmailServer with smtpHost edge: is DKIM-signed here (mail_dkim_key, made
+        into .env on first use) and delivered to each domain's MX, from bounce+(item)@ the domain
+        edge_mail_bounce_domain names (set it in .env, with its MX here).
+        Postfix and Rspamd beside it instead (E5a): in .env edge_mail_mta=postfix, smtp_internet=false,
+        smtp_listen_port=10024 and smtp_allowed_addresses=127.0.0.1,::1, and protocol="lmtp" on the smtp-server below;
+        mail out is relayed to Postfix on edge_mail_relay_port. -->
+    <default-property name="edge_mail_mta" value="moqui"/>
+    <default-property name="smtp_internet" value="true"/>
+    <default-property name="edge_mail_relay_host" value="127.0.0.1"/>
+    <default-property name="edge_mail_relay_port" value="10025"/>
+    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30"/>
+
+    <!-- Chat bridges and SMS (docs/interfaces/SMS.md): a network's webhook URL is this node's,
+        /channels/{chatBridgeId}/webhook. The signature is checked with the local node's replicated bridge and the
+        request queued for it; the files of the texts the local node sends (MMS) are served here at
+        /channels/{id}/media/. On the local node, channels_public_url is this node's address (the wizard sets it). -->
+    <default-property name="channels_webhooks_enabled" value="true"/>
+
+    <!-- Calls (docs/interfaces/WebRTC.md, The edge node as media node; TURN.md, On an edge node): this node is the media
+        node of its local node's calls, and their TURN. Set rtc_public_address in .env to this node's public address: the
+        media socket binds every address, and does not start without it. Recordings are queued to the local node in
+        segments of at most call_recording_segment_mb (32 at most, under the queue's 64 MiB content cap). Open UDP 10000
+        (media), UDP and TCP 3478 (TURN) and the relay range turn_relay_ports (49152-65535). -->
+    <default-property name="rtc_media_port" value="10000"/>
+    <default-property name="rtc_media_host" value="0.0.0.0"/>
+    <default-property name="turn_port" value="3478"/>
+    <default-property name="call_recording_segment_mb" value="16"/>
+
+    <!-- SIP (docs/interfaces/SIP.md, Behind an edge node): trunks and outside phones reach this node's SIP engine, whose
+        media is the call media above. Set in .env to take them (each listener is off until its port is set):
+                                     <default-property name="sip_port" value="5060"/>
+                                     <default-property name="sip_tls_port" value="5061"/>
+                                     <default-property name="sip_host" value="0.0.0.0"/>
+                                     <default-property name="sip_public_address" value="(this node's address)"/>
+        and sip_registrar_enabled=true for desk and soft phones outside the office (they sign in only while the local
+        node, which checks their passwords, is reachable). The trunks are the local node's, replicated here, so they
+        register and take calls while it is away; a call then gets its number's replicated fallback, else 480, so set the
+        trunk provider's failover number too. Open sip_port (UDP, TCP), sip_tls_port (TCP) and sip_rtp_ports (UDP,
+        20000-20999), to the trunk provider's addresses where it publishes them. -->
+
+    <!-- Backups: the link's queue (what waits for a local node that is away) is the only data here that matters. The
+        nightly backup_EmbeddedDatabase_daily job is paused in the seed data; this sets it running at each boot (false
+        pauses it). Give it a mirror on System › Operations › Jobs to keep a copy off this host (docs/Run-Deploy.md,
+        Backups). It backs up the embedded database only: with an external one it logs that it skipped, and the
+        database is backed up with its own tools. -->
+    <default-property name="embedded_db_backup_scheduled" value="true"/>
+
+    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+
+    <!-- How work crosses the link (plans/archive/Edge-Node.md §5.2): what waits for a local node that is away is kept 14
+        days (both nodes should keep the same period), and at most 1 GB of it for each paired node (a pairing's own
+        EdgeClient.queueMaxMegabytes in place of it, plans/Edge-Node2.md §4.1); then its oldest fails, logged. A payload
+        is at most 1 MiB, and a larger body (up to 64 MiB, a mail message) goes as its content. What the edge node
+        delegates, the queue kinds and the sets a local node replicates are in MoquiDefaultConf.xml, read by both ends,
+        with grants for _EDGE_ (the EDGE_DELEGATE artifact group); an entry may wait less than the link for its answer,
+        as SIP's routing does while the caller's phone rings:
+            <delegate service="org.moqui.call.VoiceServices.receive#PhoneCall" timeout-seconds="7"/>
+        To check a delegated call end to end, list org.moqui.edge.EdgeServices.echo#Delegate on both nodes. -->
+    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5"/>
+</moqui-conf>

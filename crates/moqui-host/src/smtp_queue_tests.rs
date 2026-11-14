@@ -122,6 +122,51 @@ fn the_recipients_of_each_node_come_from_its_copies() {
     );
 }
 
+/// Two pairings of one edge node (plans/Edge-Node2.md §4.1): each address goes to the pairing whose copies have it;
+/// one both have is refused with 451 rather than given to either.
+#[test]
+fn an_address_two_pairings_hold_gets_451_and_each_other_goes_to_its_own() {
+    let values = vec![
+        account("node-a", "100", "ann@a.example", "EakHosted", ""),
+        account("node-b", "100", "bob@b.example", "EakHosted", ""),
+        account("node-a", "101", "Info@shared.example", "EakHosted", ""),
+        account("node-b", "102", "info@shared.example", "EakShared", ""),
+    ];
+    let nodes = HashSet::from(["node-a".to_string(), "node-b".to_string()]);
+    let mut copies = Copies {
+        built_at: Some(1),
+        loaded: nodes.clone(),
+        nodes: build(&values),
+        active: nodes,
+    };
+    let found = |node: &str, account: &str| Lookup::Found {
+        node: node.to_string(),
+        account: account.to_string(),
+    };
+    assert_eq!(copies.find("ann@a.example", "+"), found("node-a", "100"));
+    assert_eq!(copies.find("bob+x@b.example", "+"), found("node-b", "100"));
+    let held = copies.find("info@shared.example", "+");
+    assert_eq!(held, Lookup::Held(vec!["node-a".to_string(), "node-b".to_string()]));
+    assert!(matches!(lookup_answer(held), RcptAnswer::TempFail(_)), "451, not 550");
+    // the most specific match wins: A's account at joe+x@ as it is over B's joe@ without the tag
+    let values = vec![
+        account("node-a", "200", "joe+x@d.example", "EakHosted", ""),
+        account("node-b", "201", "joe@d.example", "EakHosted", ""),
+    ];
+    let both = Copies {
+        nodes: build(&values),
+        built_at: Some(2),
+        loaded: copies.loaded.clone(),
+        active: copies.active.clone(),
+    };
+    assert_eq!(both.find("joe+x@d.example", "+"), found("node-a", "200"));
+    assert_eq!(both.find("joe+y@d.example", "+"), found("node-b", "201"));
+    assert_eq!(both.find("joe@d.example", "+"), found("node-b", "201"));
+    // once one pairing is revoked, the other's holds
+    copies.active.remove("node-b");
+    assert_eq!(copies.find("info@shared.example", "+"), found("node-a", "101"));
+}
+
 /// An all-in-one node's copies: paired node `node-a`, sent whole.
 fn all_in_one_copies() -> Copies {
     let values = vec![
@@ -242,10 +287,7 @@ fn an_exact_match_on_one_side_wins_over_a_match_without_the_plus_tag_on_the_othe
         answer("carol+home@server.example"),
         RcptAnswer::Local("node:node-a:201".to_string())
     );
-    assert_eq!(
-        leveled_lookup(&copies, "bob+work@server.example", "+").1,
-        Level::Exact
-    );
+    assert_eq!(leveled_lookup(&copies, "bob+work@server.example", "+").1, Level::Exact);
     assert_eq!(
         leveled_lookup(&copies, "carol+x@server.example", "+").1,
         Level::Stripped

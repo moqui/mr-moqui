@@ -128,6 +128,7 @@ async fn listen(label: &str, web: impl FnOnce(Router, ListenLimits) -> WebApp, h
         Some(super::super::Tls {
             acceptor: tokio_rustls::TlsAcceptor::from(Arc::new(config)),
             edge: None,
+            factory: std::sync::Weak::new(),
         }),
         web,
         Arc::new(Semaphore::new(limits.connections)),
@@ -323,6 +324,38 @@ async fn a_grpc_call_goes_to_the_listeners_services_and_the_rest_to_the_app() {
     send.ready().await.unwrap();
     let response = send.send_request(get_request("https://localhost/")).await.unwrap();
     assert_eq!(text(response).await, "host=localhost tls=true uri=/");
+    listener.stop().await;
+}
+
+/// A gRPC call to a host whose root screen refuses the framework's routes (plans/Edge-Node2.md §4.2) does not reach the
+/// listener's services: it goes to the app, which has no such route.
+#[tokio::test]
+async fn a_grpc_call_to_a_refusing_host_goes_to_the_app() {
+    let listener = listen(
+        "h2-grpc-refuse",
+        |app, limits| {
+            let mut web = plain_app(app, limits);
+            web.grpc = Some(tonic::service::Routes::default());
+            web.refusing_host = Some(Arc::new(|host: &str| host.starts_with("site.")));
+            web
+        },
+        true,
+    )
+    .await;
+    let mut send = listener.h2().await;
+    for (host, served) in [("site.localhost", false), ("localhost", true)] {
+        send.ready().await.unwrap();
+        let call = http::Request::post(format!("https://{host}/moqui.test.v1.Nothing/Call"))
+            .version(http::Version::HTTP_2)
+            .header(http::header::CONTENT_TYPE, "application/grpc")
+            .header("te", "trailers")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let response = send.send_request(call).await.unwrap();
+        // the services answer an unknown one as a gRPC status; the app answers 404 with no gRPC status
+        assert_eq!(response.headers().contains_key("grpc-status"), served, "{host}");
+        assert_eq!(response.status() == 404, !served, "{host}");
+    }
     listener.stop().await;
 }
 

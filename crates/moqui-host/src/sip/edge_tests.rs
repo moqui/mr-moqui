@@ -130,3 +130,16 @@ fn the_fallback_s_ids_and_the_offline_errors_are_told_apart() {
     )));
     assert!(!is_offline("notFound: no such number"));
 }
+
+#[test]
+fn a_kept_message_goes_back_to_the_pairing_whose_call_it_was() {
+    let (node, payload) = sidecar_parts(json!({"edgeNode": "local-2", "toNumber": "+15550002222"}));
+    assert_eq!(node.as_deref(), Some("local-2"));
+    assert_eq!(
+        payload,
+        json!({"toNumber": "+15550002222"}),
+        "the pairing is not queued"
+    );
+    let (node, _) = sidecar_parts(json!({"toNumber": "+15550002222"}));
+    assert_eq!(node, None, "a sidecar that names no pairing is left, not sent to any");
+}

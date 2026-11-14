@@ -49,6 +49,9 @@
 //!   as a normal node's, and its paired node's as an edge node's, each item by its owner: the trunks of both sides,
 //!   an inbound call by the number called, a phone by the domain it registers to, a call's services and its fallback
 //!   by the call's owner. It registers its own `SipNode` and advertises the paired node's domain over the link.
+//! - **Several pairings** (plans/Edge-Node2.md §4.1, E16): every pairing's trunks load, each keyed by its node; an
+//!   inbound call goes by the number called to the pairing whose copies have it, and a phone by its pairing's domain;
+//!   a number or a domain two pairings claim is refused. A message recorded is queued to its call's pairing.
 
 mod audio;
 mod edge;
@@ -96,7 +99,7 @@ const REGISTER_SERVICE: &str = "org.moqui.call.VoiceServices.register#SipNode";
 const REGISTER_EVERY: Duration = Duration::from_secs(20);
 /// How long a call given up (decided too late) takes no dial.
 const ABANDONED_FOR: Duration = Duration::from_secs(300);
-/// How often (in seconds) a node that takes links reads its paired node's SIP domain again (E12).
+/// How often (in seconds) a node that takes links reads its pairings' SIP domains again (E12, E16).
 const PAIRED_EVERY: u32 = 5;
 /// How long an outbound call rings before it is canceled.
 const RING_TIMEOUT: Duration = Duration::from_secs(60);
@@ -313,8 +316,10 @@ enum Command {
     FallbackTimeout {
         leg: String,
     },
-    /// E12: the paired node and its SIP device domain, read again (none while no node is paired).
-    Paired(Option<(String, String)>),
+    /// E12, E16: each active pairing and its SIP device domain, read again.
+    Paired(Vec<(String, String)>),
+    /// E16: a pairing's setup changed (its Configure): read the pairings again now.
+    ReadPairings,
 }
 
 fn engine() -> &'static Mutex<Option<UnboundedSender<Command>>> {
@@ -340,6 +345,7 @@ impl Drop for SipNode {
         if let Some(factory) = self.advertised.take().and_then(|factory| factory.upgrade()) {
             moqui_core::edge::media::set_sip_advert(&factory, None);
             moqui_core::edge::media::set_sip_trunks(&factory, Vec::new());
+            moqui_core::edge::media::set_sip_realms(&factory, None);
         }
         *lock(engine()) = None;
         self.ua.shutdown();
@@ -563,8 +569,9 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
         .filter_map(|(k, v)| v.map(|v| (k, v.to_string())))
         .collect();
     // a node that takes links tells its addresses in its Hello, and the local node keeps the row (E8). A dedicated edge
-    // node's registrar is the paired node's, in its own realm; an all-in-one node's own realm is its own, so it
-    // advertises the paired node's domain once its Configure names one (E12, `Engine::paired_changed`)
+    // node's registrar takes a pairing's phones in its own realm; an all-in-one node's own realm is its own. Each
+    // pairing's Hello and offer name the domain its Configure named instead (E12, E16,
+    // `moqui_core::edge::sip::pairing_realm`)
     let advert = links.then(|| {
         let address = |key: &str| {
             addresses
@@ -581,7 +588,7 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
             } else {
                 String::new()
             },
-            registrar: dedicated && settings.registrar.is_some(),
+            registrar: settings.registrar.is_some(),
         }
     });
     if let Some(advert) = &advert {
@@ -594,7 +601,6 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
         links,
         dedicated,
         paired,
-        advert,
         registrar: settings.registrar.is_some(),
         ports,
         public: settings.public,
@@ -831,10 +837,8 @@ struct Engine {
     links: bool,
     /// A dedicated edge node: no trunks, numbers or phones of its own; all are the paired node's.
     dedicated: bool,
-    /// The paired node and its SIP device domain, shared with the registrar's directory (E12).
+    /// Each pairing and its SIP device domain, shared with the registrar's directory (E12, E16).
     paired: phones::Paired,
-    /// What the link's Hello tells of this engine (E8), on a node that takes links.
-    advert: Option<moqui_core::edge::media::SipAdvert>,
     /// The registrar is on (`sip_registrar_enabled`).
     registrar: bool,
     ports: Arc<PortRange>,
@@ -897,6 +901,14 @@ impl RingTimers {
 }
 
 /// A step token from a services' answer or a control (`stepToken`), when it has one.
+/// A pairing's setup changed on this node (its Configure, E16): the SIP engine reads the pairings' domains again now,
+/// so its registrar takes a new domain's phones at once. Nothing while no engine runs.
+pub(crate) fn pairings_changed() {
+    if let Some(engine) = lock(engine()).as_ref() {
+        let _ = engine.send(Command::ReadPairings);
+    }
+}
+
 pub(crate) fn step_token(body: &Json) -> Option<String> {
     match body.get("stepToken") {
         Some(Json::String(token)) if !token.is_empty() => Some(token.clone()),
@@ -972,7 +984,7 @@ fn number(body: &Json, key: &str) -> Option<u64> {
 impl Engine {
     async fn run(mut self, mut events: UnboundedReceiver<UaEvent>, mut commands: UnboundedReceiver<Command>) {
         if self.links {
-            let paired = owners::paired_domain(&self.factory).await;
+            let paired = owners::pairing_domains(&self.factory).await.unwrap_or_default();
             self.paired_changed(paired);
         }
         if !self.reload().await {
@@ -1036,10 +1048,11 @@ impl Engine {
 
     /// On a node that takes links (E8): load the trunks again when a batch of their replicated set is applied, which is
     /// how a trunk or the policy changed on the local node reaches this engine, with the link up or after it comes
-    /// back. Every few seconds, the paired node and its SIP device domain are read again too (E12).
+    /// back. Every few seconds, the pairings and their SIP device domains are read again too (E12, E16): a pairing
+    /// that comes or goes loads the trunks again.
     fn watch_trunks(&self) {
         let (factory, commands) = (Arc::downgrade(&self.factory), self.commands.clone());
-        let mut paired = lock(&self.paired).clone();
+        let mut paired = lock(&self.paired).clone().unwrap_or_default();
         tokio::spawn(async move {
             // the count is of this process: the start's load read the copies before any batch came
             let mut seen = 0;
@@ -1049,10 +1062,17 @@ impl Engine {
                 let Some(factory) = factory.upgrade() else { return };
                 turn = turn.wrapping_add(1);
                 if turn.is_multiple_of(PAIRED_EVERY) {
-                    let now = owners::paired_domain(&factory).await;
-                    if now != paired {
+                    if let Some(now) = owners::pairing_domains(&factory).await.filter(|now| *now != paired) {
+                        let nodes_changed = now.iter().map(|(node, _)| node).ne(paired.iter().map(|(node, _)| node));
                         paired.clone_from(&now);
                         if commands.send(Command::Paired(now)).is_err() {
+                            return;
+                        }
+                        if nodes_changed
+                            && commands
+                                .send(Command::Control(serde_json::json!({"action": "reload"})))
+                                .is_err()
+                        {
                             return;
                         }
                     }
@@ -1072,10 +1092,10 @@ impl Engine {
         });
     }
 
-    /// Loads the trunks and the policy: the server's own (`get#EngineConfig`) but on a dedicated edge node, and the
-    /// paired node's from its replicated copy on a node that takes links (E8), keyed by that node (E12,
-    /// `owners::merge_config`); false when they did not load. On an all-in-one node the paired node's copy that does
-    /// not read is logged, and its own trunks load.
+    /// Loads the trunks and the policy: the server's own (`get#EngineConfig`) but on a dedicated edge node, and each
+    /// pairing's from its replicated copy on a node that takes links (E8, E16), keyed by that node (E12,
+    /// `owners::merge_config`); false when they did not load. On an all-in-one node the pairings' copies that do not
+    /// read are logged, and its own trunks load.
     async fn reload(&mut self) -> bool {
         let own = if self.dedicated {
             None
@@ -1096,17 +1116,14 @@ impl Engine {
                     return false;
                 }
                 Err(err) => {
-                    tracing::error!("SIP: the paired node's trunks did not load, its calls wait for a reload: {err}");
-                    None
+                    tracing::error!("SIP: the paired nodes' trunks did not load, their calls wait for a reload: {err}");
+                    Vec::new()
                 }
             }
         } else {
-            None
+            Vec::new()
         };
-        let config = owners::merge_config(
-            own,
-            paired.as_ref().map(|(node, config)| (node.as_str(), config.clone())),
-        );
+        let config = owners::merge_config(own, &paired);
         let policy = config.get("policy").cloned().unwrap_or(Json::Null);
         let defaults = DialPolicy::default();
         self.policy = DialPolicy {
@@ -1166,9 +1183,10 @@ impl Engine {
                     continue;
                 };
                 let srtp = text(trunk, "mediaEncryption") != "plain";
-                // the offer tells the paired node of its own trunks only, by their ids (E12)
-                if owners::owner_of(&id) != Owner::Own {
+                // the offer tells each pairing of its own trunks only, by their ids (E12, E16)
+                if let Some(node) = owners::owner_of(&id).node() {
                     loaded.push(moqui_core::edge::media::SipTrunkState {
+                        paired_node_id: node.to_string(),
                         voice_trunk_id: owners::bare(&id).to_string(),
                         name: text(trunk, "name"),
                         state: "loaded".to_string(),
@@ -1274,9 +1292,9 @@ impl Engine {
                     TrunkState::Failed(err) => ("failed", err),
                     TrunkState::Unregistered => ("unregistered", String::new()),
                 };
-                // the paired node's trunks only, for its offer (E10, E12)
-                if self.links && owners::owner_of(&trunk) != Owner::Own {
-                    moqui_core::edge::media::note_sip_trunk(&self.factory, owners::bare(&trunk), status, &error);
+                // a pairing's trunks only, for its offer (E10, E12, E16)
+                if let Some(node) = owners::owner_of(&trunk).node().filter(|_| self.links) {
+                    moqui_core::edge::media::note_sip_trunk(&self.factory, node, owners::bare(&trunk), status, &error);
                 }
                 self.note(
                     NOTE_TRUNK_SERVICE,
@@ -1303,45 +1321,42 @@ impl Engine {
         }
     }
 
-    /// The owner of an inbound call to `to` that came on the trunk `trunk` (the engine's key of it): on an all-in-one
-    /// node the server's when it has the number, else the paired node's when its copies have it, else the trunk's
-    /// owner (E12); elsewhere the trunk's (a dedicated edge node's are all the paired node's).
+    /// The owner of an inbound call to `to` that came on the trunk `trunk` (the engine's key of it), on a node that
+    /// takes links: the server's when it has the number, else the pairing whose copies have it, else the trunk's owner
+    /// (E12, E16, `owners::number_route`); elsewhere the trunk's.
     async fn number_owner(&self, to: &str, trunk: &str) -> Owner {
         let by_trunk = owners::owner_of(trunk);
-        if !self.links || self.dedicated {
+        if !self.links {
             return by_trunk;
         }
-        owners::number_holder(&self.factory, to).await.unwrap_or(by_trunk)
+        owners::number_route(&self.factory, to, by_trunk, self.dedicated).await
     }
 
-    /// The paired node and its SIP device domain, read again (E12): on an all-in-one node the registrar takes the
-    /// domain's phones (their answers checked by the paired node), and the link's Hello tells it.
-    fn paired_changed(&mut self, paired: Option<(String, String)>) {
-        *lock(&self.paired) = paired.clone();
-        if self.dedicated {
-            return;
-        }
-        let domain = paired.map(|(_, domain)| domain).unwrap_or_default();
-        let realms: Vec<String> = (self.registrar && !domain.is_empty())
-            .then(|| domain.clone())
-            .into_iter()
+    /// The pairings and their SIP device domains, read again (E12, E16): the registrar takes each domain's phones
+    /// (their answers checked by that pairing's node), and each pairing's Hello names its own.
+    fn paired_changed(&mut self, paired: Vec<(String, String)>) {
+        let before = lock(&self.paired).replace(paired.clone()).unwrap_or_default();
+        let mut realms: Vec<String> = paired
+            .iter()
+            .map(|(_, domain)| domain.clone())
+            .filter(|domain| self.registrar && !domain.is_empty())
             .collect();
-        self.ua.set_device_realms(&realms);
-        if let Some(advert) = &mut self.advert {
-            if advert.domain != domain {
+        realms.sort();
+        realms.dedup();
+        for (node, domain) in &paired {
+            if !before.contains(&(node.clone(), domain.clone())) {
                 tracing::info!(
-                    "SIP: the paired node's phones register to {}",
+                    "SIP: local node {node}'s phones register to {}",
                     if domain.is_empty() {
-                        "no domain"
+                        "the registrar's own realm"
                     } else {
                         domain.as_str()
                     }
                 );
             }
-            advert.registrar = !realms.is_empty();
-            advert.domain = domain;
-            moqui_core::edge::media::set_sip_advert(&self.factory, Some(advert.clone()));
         }
+        self.ua.set_device_realms(&realms);
+        moqui_core::edge::media::set_sip_realms(&self.factory, Some(paired));
     }
 
     /// A leg's RTP socket and its SDP for this side.
@@ -1579,6 +1594,15 @@ impl Engine {
             }
             Command::FallbackTimeout { leg } => self.forward_timed_out(&leg),
             Command::Paired(paired) => self.paired_changed(paired),
+            Command::ReadPairings if self.links => {
+                let (factory, commands) = (Arc::clone(&self.factory), self.commands.clone());
+                tokio::spawn(async move {
+                    if let Some(now) = owners::pairing_domains(&factory).await {
+                        let _ = commands.send(Command::Paired(now));
+                    }
+                });
+            }
+            Command::ReadPairings => {}
             Command::RingTimeout { leg, generation } => {
                 let Some(step) = self.ring_timers.fire(&leg, generation) else {
                     return;

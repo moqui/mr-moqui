@@ -27,7 +27,9 @@
 //! connection is closed (its allocations end with it, as on any close). A client that sends faster than the server
 //! takes its messages waits on its own connection, since the server's queue is bounded. A task never blocks: a write
 //! that does not finish in [`WRITE_TIMEOUT`] closes its connection. Dropping the [`TurnNode`] closes every connection.
-//! The media node revokes a leg's credential when the leg leaves ([`TurnNode::revoke`]).
+//! The media node revokes a leg's credential when the leg leaves ([`TurnNode::revoke`]). On a node that takes links
+//! the active pairings are handed in as they change ([`TurnNode::set_pairings`], E16): a local node's legs are signed
+//! with its pairing's own secret, which ends with the pairing.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs, UdpSocket};
@@ -217,6 +219,8 @@ pub(crate) fn settings(
         max_allocations: usize::try_from(number("turn_max_allocations", 1_000)).unwrap_or(1_000),
         max_per_user: 2,
         max_kbps: number("turn_max_kbps", 4_000),
+        // a node that takes links: its paired nodes' usernames name their pairings (E16)
+        pairings: moqui_core::edge::NodeRole::parse(&property("node_role")).takes_links(),
     };
     Ok(Some(TurnSettings {
         bind,
@@ -279,6 +283,7 @@ enum In {
         remote: SocketAddr,
     },
     Revoke(String),
+    Pairings(std::collections::HashMap<String, String>),
 }
 
 /// The TURN listeners, their tasks on the edge runtime and the thread of the server, stopped when dropped.
@@ -297,6 +302,12 @@ impl TurnNode {
     pub(crate) fn revoke(&self, leg: &str) {
         // waits only while the server's queue is full, which its thread drains
         let _ = self.tx.send(In::Revoke(leg.to_string()));
+    }
+
+    /// On a node that takes links, the pairings whose legs are taken now (plans/Edge-Node2.md §4.1, E16): a revoked
+    /// one's credentials are refused from then on and its relays close.
+    pub(crate) fn set_pairings(&self, pairings: std::collections::HashMap<String, String>) {
+        let _ = self.tx.send(In::Pairings(pairings));
     }
 }
 
@@ -445,6 +456,7 @@ fn run(
                     streams.remove(&(listen, remote));
                 }
                 In::Revoke(leg) => turn.revoke_leg(now, &leg),
+                In::Pairings(pairings) => turn.set_pairings(now, pairings),
             }
         }
         if let (Some(socket), Some(listen)) = (&udp, listen_udp) {

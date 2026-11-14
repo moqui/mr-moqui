@@ -170,10 +170,15 @@ fn websocket_accept(key: &[u8]) -> String {
 }
 
 impl WebFront {
-    /// Where `request` goes, when it names one of the paired nodes' hosts; `None` for the edge node's own.
+    /// Where `request` goes, when it names one of the paired nodes' hosts; `None` for the edge node's own, and for a
+    /// chat webhook or file of a bridge the host's node routes through this node (plans/Edge-Node2.md §4.1), which this
+    /// node answers by the bridge id within the host's name.
     pub(crate) fn target<B>(&self, request: &http::Request<B>) -> Option<Target> {
         let host = request_host(request)?;
         let route = self.server.hosts.route(&host)?;
+        if route.mode == Mode::Terminate && self.server.hosts.answers_here(&route.node, request.uri().path()) {
+            return None;
+        }
         let tls = request.extensions().get::<TlsConnection>().is_some();
         Some(match route.mode {
             Mode::Passthrough if tls => Target::Misdirected,

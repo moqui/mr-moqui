@@ -29,7 +29,7 @@ use super::proto::Hello;
 
 const CLIENT: &str = "moqui.edge.EdgeClient";
 const PAIRING_CODE: &str = "moqui.edge.EdgePairingCode";
-pub(crate) const ACTIVE: &str = "EdgeClientActive";
+pub(crate) const ACTIVE: &str = moqui_core::edge::hosts::ACTIVE;
 const REVOKED: &str = "EdgeClientRevoked";
 /// One message for every code that does not pair, so a guess learns nothing.
 const BAD_CODE: &str = "the pairing code is unknown, used or expired";
@@ -221,27 +221,7 @@ pub(crate) fn revoke_client(factory: &ExecutionContextFactory, node: &str) -> Re
 }
 
 pub(crate) fn list_clients(factory: &ExecutionContextFactory) -> Result<Vec<EdgeClientInfo>, Error> {
-    let facade = facade(factory)?;
-    transaction(&facade, CLIENT, || {
-        let rows = facade.find(CLIENT)?.order_by("pairedNodeId", false).list()?;
-        Ok(rows
-            .iter()
-            .map(|row| EdgeClientInfo {
-                paired_node_id: text(row.get("pairedNodeId")),
-                key_fingerprint: text(row.get("keyFingerprint")),
-                status_id: text(row.get("statusId")),
-                linked: false,
-                down: false,
-                generation: text(row.get("linkGeneration")).parse().unwrap_or(0),
-                last_connect: row.get("lastConnectDate").and_then(moqui_core::user::value_millis),
-                remote_address: text(row.get("lastAddress")),
-                binary_version: text(row.get("binaryVersion")),
-                link_version: text(row.get("linkVersion")).parse().unwrap_or(0),
-                setup_json: text(row.get("setupJson")),
-                setup_date: row.get("setupDate").and_then(moqui_core::user::value_millis),
-            })
-            .collect())
-    })
+    moqui_core::edge::hosts::clients(&facade(factory)?)
 }
 
 /// Keep what a node's Configure set besides its host names (a JSON object, checked by the caller).
@@ -265,6 +245,13 @@ pub(crate) fn save_setup(factory: &ExecutionContextFactory, node: &str, setup_js
         client.update(&facade)?;
         Ok(())
     })
+}
+
+/// The kept setup of each active pairing (`moqui_core::edge::claims::setups`), in id order: what the host table keeps
+/// of each pairing's chat bridges and PASS sites.
+pub(crate) fn setups(factory: &ExecutionContextFactory) -> Result<Vec<(String, serde_json::Value)>, Error> {
+    let facade = facade(factory)?;
+    transaction(&facade, CLIENT, || moqui_core::edge::claims::setups(&facade))
 }
 
 /// A new pairing code: shown once, kept as a hash.

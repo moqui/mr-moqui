@@ -56,7 +56,7 @@ with a messaging bridge and no trunk texts.
 - The webhook URL in the portal is the edge node's: `https://<edge node>/channels/<chatBridgeId>/webhook`. The edge node
   checks the signature with the bridge's public key (replicated to it; the API key stays on the local node), answers 200
   once the text is queued, and the local node takes it when its link is up, once, without checking it again.
-- `channels_webhooks_enabled=true` is on the edge node (MoquiEdgeConf.xml). On the local node `channels_public_url` is
+- `channels_webhooks_enabled=true` is on the edge node (`conf/edge/MoquiEdgeConf.xml`). On the local node `channels_public_url` is
   the edge node's address; the Edge Node wizard sets it.
 - MMS. Each file of a text that goes out is put on the edge node before the send, and the provider fetches it from
   there (`/channels/<chatBridgeId>/media/<token>`, for `channels_media_minutes`). While the link is down the text waits.
@@ -64,6 +64,10 @@ with a messaging bridge and no trunk texts.
 - On an all-in-one node ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node)) the server's own bridges and numbers and
   the local node's share the webhook route; each id and number belongs to one side, and the server refuses one the
   other side has.
+- With several local nodes on one edge node ([Run-Deploy](../Run-Deploy.md#several-local-nodes-on-one-edge-node)) a
+  number belongs to the first local node whose copies have it (another's record for it is kept as a conflict), and
+  bridge ids may be the same on two: a local node whose ids may collide sets `channels_public_url` to one of its
+  terminate host names and gives that address in the portal ([Chat-Bridges](Chat-Bridges.md#administration)).
 
 ## The number pair's room
 

@@ -519,7 +519,8 @@ pub struct DeclaredProvider {
 }
 
 /// The providers of `hook` that the app roots the current user may open declare, in a render or outside one: from the
-/// apps root of the render's root screen, else of the `webroot` webapp's root screen, in `sequence` order (ties in the
+/// apps root of the render's root screen, else of the `webroot` webapp's default root screen (a wrapper root of a host
+/// has the default root's apps, plans/Edge-Node2.md §4.2), in `sequence` order (ties in the
 /// apps' menu order). A provider of the same `name` declared by two apps is the first app's. Empty when there is no apps
 /// root or no provider.
 #[must_use]
@@ -534,9 +535,7 @@ pub fn declared_providers(factory: &Arc<crate::context::ExecutionContextFactory>
     // or a screen test rendered from an app root)
     let render_root =
         super::with_current_render(|state| state.url_info.path_defs.first().map(|def| def.location.clone())).flatten();
-    let conf_root = super::info::root_screen_for_host(factory, "", "webroot")
-        .ok()
-        .unwrap_or_else(|| super::ROOT_SCREEN.to_string());
+    let conf_root = super::info::default_root(factory);
     let Some(root) = render_root.into_iter().chain([conf_root]).find(|root| has_apps(root)) else {
         return Vec::new();
     };

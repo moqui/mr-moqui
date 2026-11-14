@@ -1021,7 +1021,7 @@ The builder of `makeRender()`. A render mode named `xsl-fo` is `html-print`.
 | Member | |
 |---|---|
 | `rootScreen(location)` | The root screen |
-| `rootScreenFromHost(host)`, `webappName(name)` | The root screen the webapp (`webroot` by default) has for a host, when no root screen is set |
+| `rootScreenFromHost(host)`, `webappName(name)` | The root screen the webapp (`webroot` by default) has for a host, when no root screen is set; the default root for a path the host's root leaves to it (`framework-routes`, a shared static file) |
 | `screenPath(path)` | The path under the root: text, or a list of names |
 | `renderMode(mode)` | The render mode |
 | `parameters(map)` | The request parameters |
@@ -1087,7 +1087,7 @@ empty, and a send needs a request.
 | `request`, `response` | The request and response (below) |
 | `getRequestDetails()` | The request and its parameters as text, without credential parameters; empty with no request |
 | `getHostName(withPort)` | The host the request was for; with `true`, with its port |
-| `getWebappRootUrl(requireFullUrl, useEncryption)` | Empty when a path-only link will do, else the scheme and host of the conf webapp; never the request's `Host` header |
+| `getWebappRootUrl(requireFullUrl, useEncryption)` | Empty when a path-only link will do, else the scheme and host of the conf webapp. The request's `Host` only when a `root-screen` pattern other than `.*` names it (a site of its own, [Run-Deploy](../Run-Deploy.md#several-sites-by-host-name)), with the conf's scheme and port; never another `Host` header |
 | `getWebappRootUrl(webappName, servletContextPath, requireFullUrl, useEncryption)` | The same for a named webapp |
 | `getResourceDistinctValue()` | A value that changes when the server starts, for the `?v=` of asset links |
 | `rotateSession()` | Gives the browser a new session id after authentication, keeping the session's state |

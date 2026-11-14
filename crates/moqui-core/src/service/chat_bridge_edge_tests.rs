@@ -131,11 +131,33 @@ fn the_paired_nodes_copy_is_read_for_the_owner() {
     let ctx = ExecutionContextFactory::test_context();
     let facade = crate::testing::open();
     ctx.factory().set_entity(facade.clone());
+    pair(&facade, "local-a");
+    replicate_bridge(&facade, "local-a", "LOCAL_BRIDGE");
+    let plain = request();
+    assert!(matches!(
+        bridge_owner(&facade, "LOCAL_BRIDGE", false, &plain).unwrap(),
+        BridgeOwner::Paired(node, _) if node == "local-a"
+    ));
+    assert_eq!(
+        bridge_owner(&facade, "LOCAL_BRIDGE", true, &plain).unwrap(),
+        BridgeOwner::Both("local-a".to_string())
+    );
+    assert_eq!(
+        bridge_owner(&facade, "OWN_BRIDGE", true, &plain).unwrap(),
+        BridgeOwner::Own
+    );
+    assert_eq!(bridge_owner(&facade, "NONE", false, &plain).unwrap(), BridgeOwner::None);
+}
+
+fn pair(facade: &EntityFacade, node: &str) {
     let mut client = facade.make_value("moqui.edge.EdgeClient").unwrap();
-    client.set("pairedNodeId", Value::string("local-a"));
+    client.set("pairedNodeId", Value::string(node));
     client.set("keyFingerprint", Value::string("ab"));
     client.set("statusId", Value::string("EdgeClientActive"));
-    client.create(&facade).unwrap();
+    client.create(facade).unwrap();
+}
+
+fn replicate_bridge(facade: &EntityFacade, node: &str, bridge: &str) {
     let batch = crate::edge::replica::Batch {
         set_name: REPLICA_SET.to_string(),
         epoch: "e1".to_string(),
@@ -145,19 +167,60 @@ fn the_paired_nodes_copy_is_read_for_the_owner() {
         snapshot_end: true,
         changes: vec![crate::edge::replica::Change {
             entity_name: BRIDGE.to_string(),
-            pk_json: r#"{"chatBridgeId":"LOCAL_BRIDGE"}"#.to_string(),
-            fields_json: Some(r#"{"typeEnumId":"CbtSms"}"#.to_string()),
+            pk_json: format!(r#"{{"chatBridgeId":"{bridge}"}}"#),
+            fields_json: Some(format!(r#"{{"typeEnumId":"CbtSms","adapterName":"{node}"}}"#)),
         }],
     };
-    crate::edge::replica::apply_batch(&facade, "local-a", &batch).unwrap();
-    assert!(matches!(
-        bridge_owner(&facade, "LOCAL_BRIDGE", false).unwrap(),
-        BridgeOwner::Paired(node, _) if node == "local-a"
-    ));
+    crate::edge::replica::apply_batch(facade, node, &batch).unwrap();
+}
+
+fn host(name: &str) -> WebhookRequest {
+    let mut request = request();
+    request.headers.push(("host".to_string(), name.to_string()));
+    request
+}
+
+/// E16 (plans/Edge-Node2.md §4.1): two pairings with the same bridge id, from their separate databases. The request's
+/// host name picks the pairing first: at a pairing's own host its copy alone; at a name of no pairing the id is
+/// ambiguous and refused. An id one pairing has is found at any name.
+#[test]
+fn a_bridge_id_two_pairings_have_goes_by_the_requests_host_name() {
+    let ctx = ExecutionContextFactory::test_context();
+    let facade = crate::testing::open();
+    ctx.factory().set_entity(facade.clone());
+    for node in ["local-a", "local-b"] {
+        pair(&facade, node);
+        replicate_bridge(&facade, node, "100000");
+    }
+    replicate_bridge(&facade, "local-b", "ONLY_B");
+    for (name, node) in [("a.example", "local-a"), ("b.example", "local-b")] {
+        let mut row = facade.make_value("moqui.edge.EdgeHost").unwrap();
+        row.set("hostName", Value::string(name));
+        row.set("pairedNodeId", Value::string(node));
+        row.set("modeEnumId", Value::string(crate::edge::HOST_TERMINATE));
+        row.create(&facade).unwrap();
+    }
+    let at = |name: &str, bridge: &str| {
+        replicated_bridge(&facade, bridge, host_pairing(&facade, &host(name)).unwrap().as_deref())
+            .unwrap()
+            .map(|(node, _)| node)
+    };
+    assert_eq!(at("A.example:443", "100000").as_deref(), Some("local-a"));
+    assert_eq!(at("b.example.", "100000").as_deref(), Some("local-b"));
     assert_eq!(
-        bridge_owner(&facade, "LOCAL_BRIDGE", true).unwrap(),
-        BridgeOwner::Both("local-a".to_string())
+        at("edge.example", "100000"),
+        None,
+        "ambiguous at the edge node's own name"
     );
-    assert_eq!(bridge_owner(&facade, "OWN_BRIDGE", true).unwrap(), BridgeOwner::Own);
-    assert_eq!(bridge_owner(&facade, "NONE", false).unwrap(), BridgeOwner::None);
+    assert_eq!(at("edge.example", "ONLY_B").as_deref(), Some("local-b"));
+    assert_eq!(
+        at("a.example", "ONLY_B"),
+        None,
+        "never another pairing's at a pairing's name"
+    );
+    // on an all-in-one node too: the pairing's name goes to its copy, the server's own row aside
+    assert!(matches!(
+        bridge_owner(&facade, "100000", true, &host("b.example")).unwrap(),
+        BridgeOwner::Paired(node, _) if node == "local-b"
+    ));
 }

@@ -101,3 +101,7 @@ impl Problem {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "runtime_conf_tests.rs"]
+mod runtime_conf_tests;

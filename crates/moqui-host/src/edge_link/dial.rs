@@ -911,8 +911,14 @@ impl Work {
             return none();
         };
         let Some(node) = factory.upgrade().map(|factory| {
-            // the edge node's TURN checks its own secret: the credentials of its TURN URLs are signed with it
-            moqui_core::edge::media::set_peer_turn(&factory, &up.edge.instance_id, &up.turn_secret);
+            // the edge node's TURN checks this pairing's secret: the credentials of its TURN URLs are signed with it and
+            // name the pairing (E16)
+            moqui_core::edge::media::set_peer_turn(
+                &factory,
+                &up.edge.instance_id,
+                &up.turn_secret,
+                &config.instance_id,
+            );
             // its media node row may be kept until unpairing (moqui_core::edge::calls::forget_rows)
             moqui_core::edge::calls::allow_row(&factory, &up.edge.instance_id);
             moqui_core::edge::queue::local_node_id(&factory)

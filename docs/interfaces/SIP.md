@@ -634,9 +634,20 @@ the RTP and the call media; the local node keeps the numbers, the users, the cal
   access number, gets 480, so the trunk's own failover can act. Call handling rules and schedules are not followed then.
 - **On an all-in-one node** ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node), plans/archive/Edge-Node.md §10): one engine
   for both sides. Trunks come from the server's own config and the local node's copy. An inbound call goes by the
-  number dialled: the server's own `PhoneNumber`, else the local node's fallback copy, else the trunk's owner. Phones
-  go by realm: the server's `sip_domain` is checked on the server, the local node's domain is delegated to it. The
-  local node's ids are keyed by node, and the fallback applies only to its numbers.
+  number dialled: the server's own `PhoneNumber`, else the local node's copies, else the trunk's owner. Phones go by
+  realm: the server's `sip_domain` is checked on the server, the local node's domain is delegated to it. The local
+  node's ids are keyed by node, and the fallback applies only to its numbers.
+- **Several local nodes** ([Edge-Node2](../../plans/Edge-Node2.md) §4.1, E16). One engine takes every pairing's
+  trunks, each pairing's keyed by its node. An inbound call goes by the number dialled to the pairing whose copies
+  have it: a number of its trunks (`PhoneNumber` replicates in `voiceTrunks`, its trunk alone), so a number with no
+  fallback row is found too, or one with a fallback; else by the trunk it came on. A number two pairings' copies have
+  is refused (404) and logged with both. Phones go by realm: a local node's `sip_domain` goes with its Configure, and
+  the edge node's registrar takes that pairing's phones in it, so its Hello and offer name it as the realm the local
+  node makes verifiers for; the same username in two domains rings each its own phone. A domain two pairings name is
+  refused. A local node that names no domain registers in the edge node's own `sip_domain`, which works while it is
+  the only one paired. A number's fallback is read from its owner's copy, and a message the engine recorded is queued
+  to the pairing whose call it was, also after a restart (its spool sidecar names the pairing). Each offer lists only
+  that pairing's trunks.
 
 ## Status
 

@@ -42,6 +42,26 @@ fn an_mta_sts_policy_names_the_mx_hosts_it_allows() {
 }
 
 #[test]
+fn each_pairing_with_rows_due_gets_its_share_of_the_sessions() {
+    assert_eq!(node_share(0, 0), MAX_IN_FLIGHT);
+    assert_eq!(node_share(1, 1), MAX_IN_FLIGHT, "one pairing has them all");
+    assert_eq!(
+        node_share(1, 2),
+        MAX_IN_FLIGHT - 1,
+        "one held back for another pairing's first row"
+    );
+    assert_eq!(node_share(2, 2), (MAX_IN_FLIGHT - 1) / 2);
+    assert_eq!(node_share(MAX_IN_FLIGHT * 3, MAX_IN_FLIGHT * 3), 1, "at least one each");
+    let mut flight = Flight::default();
+    flight.nodes.insert("node-a".to_string(), 2);
+    release(&mut flight, "node-a");
+    assert_eq!(flight.nodes.get("node-a"), Some(&1));
+    release(&mut flight, "node-a");
+    release(&mut flight, "node-b");
+    assert!(flight.nodes.is_empty());
+}
+
+#[test]
 fn the_retry_wait_doubles_to_four_hours() {
     assert_eq!(retry_after(1), Duration::from_secs(300));
     assert_eq!(retry_after(2), Duration::from_secs(600));
@@ -323,10 +343,18 @@ fn a_try_is_committed_when_its_report_cannot_be_queued_and_is_not_tried_again() 
     );
     assert_eq!((number(&a, "sentCount"), number(&a, "bouncedCount")), (1, 1));
     assert!(field_text(&a, "refusedText").starts_with("no@a.test: 550 no"));
-    assert!(due_rows(&facade, now_millis() + 1000)
+    // the rows of an active pairing are read for a round: b.test's, not a.test's, which is done
+    let mut client = facade.make_value("moqui.edge.EdgeClient").unwrap();
+    client.set("pairedNodeId", Value::string("node1"));
+    client.set("keyFingerprint", Value::string("ab"));
+    client.set("statusId", Value::string("EdgeClientActive"));
+    client.create(&facade).unwrap();
+    let due: Vec<String> = due_rows(&facade, &["node1".to_string()], now_millis() + 1000)
         .unwrap()
         .iter()
-        .all(|row| field_text(row, "domain") != "a.test"));
+        .map(|row| field_text(row, "domain"))
+        .collect();
+    assert_eq!(due, ["b.test"]);
     assert!(report(ctx.factory(), &facade, &field_text(&a, "mailDeliveryId")).is_err());
     assert!(report_rows(&facade)
         .unwrap()

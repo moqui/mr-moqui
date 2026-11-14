@@ -67,3 +67,63 @@ fn a_tunnel_port_takes_the_same_listener_only_on_the_same_port_and_an_overlappin
     assert!(!same_listener(any, 5223, ""));
     assert!(!same_listener("0.0.0.0:0".parse().unwrap(), 0, ""));
 }
+
+/// E16: one pair of XMPP ports for every pairing's domain.
+#[test]
+fn an_xmpp_connection_goes_to_the_pairing_whose_domain_it_names() {
+    let pairings = vec![
+        ("local-1".to_string(), "chat.one.example".to_string()),
+        ("local-2".to_string(), "chat.two.example".to_string()),
+        ("local-3".to_string(), String::new()),
+    ];
+    let active = |nodes: &[&str]| nodes.iter().map(|node| (*node).to_string()).collect::<Vec<_>>();
+    let both = active(&["local-1", "local-2"]);
+    let to = |node: &str| XmppRoute::Pairing(node.to_string());
+    assert_eq!(
+        xmpp_route(Some("chat.one.example"), None, &pairings, &both),
+        to("local-1")
+    );
+    assert_eq!(
+        xmpp_route(Some("chat.two.example"), None, &pairings, &both),
+        to("local-2")
+    );
+    assert!(matches!(
+        xmpp_route(Some("chat.three.example"), None, &pairings, &both),
+        XmppRoute::Refused(_)
+    ));
+    assert!(
+        matches!(xmpp_route(None, None, &pairings, &both), XmppRoute::Refused(_)),
+        "no domain, two paired"
+    );
+    // one pairing: it, whatever the client names, as before a node named its domain; whether it or another is linked
+    // never decides it (a pairing away is refused when its tunnel opens)
+    assert_eq!(xmpp_route(None, None, &pairings, &active(&["local-3"])), to("local-3"));
+    assert_eq!(
+        xmpp_route(Some("x.example"), None, &pairings, &active(&["local-3"])),
+        to("local-3")
+    );
+    // an all-in-one node's own domain, its subdomains and a stream naming none are its own
+    let own = Some("chat.own.example");
+    assert_eq!(
+        xmpp_route(Some("chat.own.example"), own, &pairings, &both),
+        XmppRoute::Own
+    );
+    assert_eq!(
+        xmpp_route(Some("rooms.chat.own.example"), own, &pairings, &both),
+        XmppRoute::Own
+    );
+    assert_eq!(xmpp_route(None, own, &pairings, &both), XmppRoute::Own);
+    assert_eq!(
+        xmpp_route(Some("chat.two.example"), own, &pairings, &both),
+        to("local-2")
+    );
+    // a domain two pairings name is refused
+    let doubled = vec![
+        ("local-1".to_string(), "chat.one.example".to_string()),
+        ("local-2".to_string(), "chat.one.example".to_string()),
+    ];
+    assert!(matches!(
+        xmpp_route(Some("chat.one.example"), None, &doubled, &both),
+        XmppRoute::Refused(why) if why.contains("local-1, local-2")
+    ));
+}

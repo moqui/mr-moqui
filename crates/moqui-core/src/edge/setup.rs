@@ -92,14 +92,15 @@ pub struct PassOffer {
 pub struct XmppOffer {
     /// A tunnel port is on.
     pub available: bool,
-    /// `edge_xmpp_port` (STARTTLS); 0 while off.
+    /// The STARTTLS port for this node's clients: its own (an `EdgePort` row), else the one of every domain
+    /// (`edge_xmpp_port`); 0 while off.
     pub port: u16,
-    /// `edge_xmpp_tls_port` (direct TLS); 0 while off.
+    /// The direct TLS port, the same way (`edge_xmpp_tls_port`); 0 while off.
     pub tls_port: u16,
-    /// `edge_xmpp_node` names another local node, so the tunnels do not come here.
+    /// No longer set (E16): no port goes to another node by a setting.
     pub other_node: bool,
-    /// `edge_xmpp_node` is empty and this node is not the only one linked, so the tunnels go to no node until it
-    /// names one.
+    /// The ports of every domain cannot find this node's clients: its last Configure named no XMPP domain and it is
+    /// not the one node linked (E16).
     pub needs_node: bool,
 }
 

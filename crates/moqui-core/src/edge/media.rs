@@ -29,6 +29,11 @@
 //!   paired node and the call for a call whose signaling came over a link, as call ids from two databases may be
 //!   the same. [`split_room`] gives back the node and the call id, for what goes out (a reply's `callSessionId`, the
 //!   services a room's work calls, the node its recording is queued to).
+//! - **Several pairings** (plans/Edge-Node2.md §4.1, E16). The edge node hands each local node a TURN secret of its
+//!   pairing alone (`moqui_rtc::turn::pairing_secret`), and the local node names its pairing in each username
+//!   ([`turn_username`]), so the TURN server checks it with that pairing's secret and refuses it once the pairing is
+//!   revoked ([`active_pairings`]). A trunk the SIP engine loaded is kept with its pairing, for that pairing's offer
+//!   only ([`sip_trunks_of`]).
 
 use std::sync::Mutex;
 
@@ -85,10 +90,36 @@ pub fn sip_advert(factory: &ExecutionContextFactory) -> Option<SipAdvert> {
     lock(&factory.extension(|_| SipAdverts::default()).0).clone()
 }
 
+#[derive(Default)]
+struct SipRealms(Mutex<Option<Vec<(String, String)>>>);
+
+/// On a node that takes links, the pairings and their SIP device domains as its SIP engine's registrar takes them now
+/// (E16); `None` as it stops.
+pub fn set_sip_realms(factory: &ExecutionContextFactory, realms: Option<Vec<(String, String)>>) {
+    *lock(&factory.extension(|_| SipRealms::default()).0) = realms;
+}
+
+/// The SIP device domain of the pairing `node` as the SIP engine's registrar takes it now: empty for one it takes in no
+/// domain of its own; `None` while the engine has not read the pairings.
+pub fn applied_sip_domain(factory: &ExecutionContextFactory, node: &str) -> Option<String> {
+    let slot = factory.extension(|_| SipRealms::default());
+    let realms = lock(&slot.0);
+    let realms = realms.as_ref()?;
+    Some(
+        realms
+            .iter()
+            .find(|(paired, _)| paired == node)
+            .map(|(_, domain)| domain.clone())
+            .unwrap_or_default(),
+    )
+}
+
 /// A trunk an edge node's SIP engine loaded (from its copy of `voiceTrunks`), with its state: what its offer tells the
 /// local node (plans/archive/Edge-Node.md §5.7, E10 phones).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SipTrunkState {
+    /// The pairing whose copy it came from (E16): its offer tells that pairing only.
+    pub paired_node_id: String,
     pub voice_trunk_id: String,
     pub name: String,
     /// `loaded` (no answer yet), `registered`, `ok` (a trunk that does not register answered OPTIONS), `failed` or
@@ -116,7 +147,10 @@ pub fn merge_sip_trunks(before: &[SipTrunkState], trunks: Vec<SipTrunkState>) ->
     trunks
         .into_iter()
         .map(|mut trunk| {
-            if let Some(old) = before.iter().find(|old| old.voice_trunk_id == trunk.voice_trunk_id) {
+            if let Some(old) = before
+                .iter()
+                .find(|old| old.voice_trunk_id == trunk.voice_trunk_id && old.paired_node_id == trunk.paired_node_id)
+            {
                 trunk.state.clone_from(&old.state);
                 trunk.error.clone_from(&old.error);
             }
@@ -125,11 +159,14 @@ pub fn merge_sip_trunks(before: &[SipTrunkState], trunks: Vec<SipTrunkState>) ->
         .collect()
 }
 
-/// On an edge node, a trunk's registration or ping answered: its state now.
-pub fn note_sip_trunk(factory: &ExecutionContextFactory, voice_trunk_id: &str, state: &str, error: &str) {
+/// On an edge node, the trunk `voice_trunk_id` of the pairing `node` answered its registration or ping: its state now.
+pub fn note_sip_trunk(factory: &ExecutionContextFactory, node: &str, voice_trunk_id: &str, state: &str, error: &str) {
     let slot = factory.extension(|_| SipTrunks::default());
     let mut trunks = lock(&slot.0);
-    if let Some(trunk) = trunks.iter_mut().find(|trunk| trunk.voice_trunk_id == voice_trunk_id) {
+    if let Some(trunk) = trunks
+        .iter_mut()
+        .find(|trunk| trunk.voice_trunk_id == voice_trunk_id && trunk.paired_node_id == node)
+    {
         trunk.state = state.to_string();
         trunk.error = error.to_string();
     }
@@ -140,23 +177,35 @@ pub fn sip_trunks(factory: &ExecutionContextFactory) -> Vec<SipTrunkState> {
     lock(&factory.extension(|_| SipTrunks::default()).0).clone()
 }
 
-/// The edge node's TURN secret on a local node, by the edge node's instance id.
+/// The trunks of the pairing `node` this node's SIP engine has loaded now: what its offer tells that pairing.
+pub fn sip_trunks_of(factory: &ExecutionContextFactory, node: &str) -> Vec<SipTrunkState> {
+    lock(&factory.extension(|_| SipTrunks::default()).0)
+        .iter()
+        .filter(|trunk| trunk.paired_node_id == node)
+        .cloned()
+        .collect()
+}
+
+/// The edge node's TURN secret on a local node, by the edge node's instance id, with the id this node paired as.
 struct PeerTurn {
     instance_id: String,
     secret: String,
+    pairing: String,
 }
 
 #[derive(Default)]
 struct PeerTurns(Mutex<Option<PeerTurn>>);
 
 /// On a local node, from a new link's Hello answer: the TURN secret of the edge node `instance_id` (empty when its TURN
-/// is off, which forgets the one before). Unpairing forgets it ([`clear_peer_turn`]); a link that is only lost keeps
-/// it, for the credentials of calls going on.
-pub fn set_peer_turn(factory: &ExecutionContextFactory, instance_id: &str, secret: &str) {
+/// is off, which forgets the one before), its pairing's own (E16), and `pairing`, the id this node paired as, which
+/// its credentials name ([`turn_username`]). Unpairing forgets it ([`clear_peer_turn`]); a link that is only lost
+/// keeps it, for the credentials of calls going on.
+pub fn set_peer_turn(factory: &ExecutionContextFactory, instance_id: &str, secret: &str, pairing: &str) {
     let slot = factory.extension(|_| PeerTurns::default());
     *lock(&slot.0) = (!instance_id.is_empty() && !secret.is_empty()).then(|| PeerTurn {
         instance_id: instance_id.to_string(),
         secret: secret.to_string(),
+        pairing: pairing.to_string(),
     });
 }
 
@@ -168,11 +217,95 @@ pub fn clear_peer_turn(factory: &ExecutionContextFactory) {
 /// The secret the TURN servers of the media node `instance_id` check credentials with: its edge node's, when it is
 /// this local node's edge node, else none (this node's own `turn_auth_secret` signs them).
 pub fn turn_secret(factory: &ExecutionContextFactory, instance_id: &str) -> Option<String> {
+    turn_peer(factory, instance_id).map(|(secret, _)| secret)
+}
+
+/// [`turn_secret`] with the pairing this node's credentials for that media node name.
+pub fn turn_peer(factory: &ExecutionContextFactory, instance_id: &str) -> Option<(String, String)> {
     let slot = factory.extension(|_| PeerTurns::default());
     let peer = lock(&slot.0);
     peer.as_ref()
         .filter(|peer| !instance_id.is_empty() && peer.instance_id == instance_id)
-        .map(|peer| peer.secret.clone())
+        .map(|peer| (peer.secret.clone(), peer.pairing.clone()))
+}
+
+/// Between a leg and its pairing in a TURN username (`moqui_rtc::turn::PAIRING_SEPARATOR`).
+const TURN_PAIRING_SEPARATOR: char = '@';
+
+/// The leg part of a TURN username for the leg `leg`: the leg alone for this node's own (`pairing` `None`), else the
+/// leg and the pairing it belongs to on the edge node (E16), whose TURN signs it with that pairing's secret.
+pub fn turn_username(expiry: u64, leg: &str, pairing: Option<&str>) -> String {
+    match pairing.filter(|pairing| !pairing.is_empty()) {
+        Some(pairing) => format!("{expiry}:{leg}{TURN_PAIRING_SEPARATOR}{pairing}"),
+        None => format!("{expiry}:{leg}"),
+    }
+}
+
+/// The leg the TURN server knows a leg `leg` of the media driver's room `room` by: with the room's pairing when it is
+/// a paired node's ([`turn_username`]), so ending it revokes that pairing's credential only.
+pub fn turn_leg(room: &str, leg: &str) -> String {
+    match split_room(room).0 {
+        Some(node) => format!("{leg}{TURN_PAIRING_SEPARATOR}{node}"),
+        None => leg.to_string(),
+    }
+}
+
+/// What a pairing's TURN secret is derived from besides its id: its key's fingerprint and when it paired, so a node
+/// that pairs again under the same id (after a revoke) gets a new secret, and the credentials of the pairing before
+/// are refused.
+fn turn_salt(row: &crate::entity::EntityValue) -> String {
+    let text = |field: &str| {
+        row.get(field)
+            .map(moqui_lib::object::to_plain_string)
+            .unwrap_or_default()
+    };
+    format!("{}|{}", text("keyFingerprint"), text("pairedDate"))
+}
+
+/// On a node that takes links, the active pairings (`EdgeClientActive`) by id, each with what its TURN secret is
+/// derived from besides its id: the TURN server takes their legs only, each with that pairing's secret.
+///
+/// # Errors
+///
+/// Returns the entity facade's error.
+pub fn active_pairings(facade: &crate::entity::EntityFacade) -> Result<Vec<(String, String)>, moqui_lib::error::Error> {
+    Ok(facade
+        .find("moqui.edge.EdgeClient")?
+        .eq("statusId", moqui_lib::object::Value::string("EdgeClientActive"))
+        .select_field("pairedNodeId")
+        .select_field("keyFingerprint")
+        .select_field("pairedDate")
+        .order_by("pairedNodeId", false)
+        .disable_authz()
+        .list()?
+        .values()
+        .iter()
+        .filter_map(|row| {
+            let node = row.get("pairedNodeId").map(moqui_lib::object::to_plain_string)?;
+            (!node.is_empty()).then(|| (node, turn_salt(row)))
+        })
+        .collect())
+}
+
+/// What the TURN secret of the active pairing `node` is derived from besides its id ([`active_pairings`]); `None`
+/// for a pairing that is not active.
+///
+/// # Errors
+///
+/// Returns the entity facade's error.
+pub fn pairing_turn_salt(
+    facade: &crate::entity::EntityFacade,
+    node: &str,
+) -> Result<Option<String>, moqui_lib::error::Error> {
+    Ok(facade
+        .find("moqui.edge.EdgeClient")?
+        .eq("pairedNodeId", moqui_lib::object::Value::string(node))
+        .eq("statusId", moqui_lib::object::Value::string("EdgeClientActive"))
+        .select_field("keyFingerprint")
+        .select_field("pairedDate")
+        .disable_authz()
+        .one()?
+        .map(|row| turn_salt(&row)))
 }
 
 /// Between a paired node's id and its call's id in a room key: a control character neither holds.

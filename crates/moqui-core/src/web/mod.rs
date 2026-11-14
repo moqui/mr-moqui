@@ -806,8 +806,11 @@ pub(crate) fn request_secure() -> Option<bool> {
 
 /// Java's `WebFacadeImpl.getWebappRootUrl`: empty, as the context path, when a path-only link will do, which is in a
 /// request whose security matches `use_encryption`; otherwise the scheme and host. Those are the render's base URL
-/// when it has one (an email, a render with no socket), else the conf `webapp`'s host and port. Never the request's
-/// `Host` header, which the sender of the request picks (Parity-Diffs P8-08).
+/// when it has one (an email, a render with no socket), else the conf `webapp`'s host and port. The request's `Host`
+/// header, which the sender of the request picks (Parity-Diffs P8-08), is used only when a `root-screen` of the
+/// webapp that does not refuse the framework's routes names that host (a site of its own, plans/Edge-Node2.md §4.2;
+/// [`crate::screen::info::link_host`]): the link keeps the request's site, with the conf's scheme and port. Outside a
+/// request it is always the conf's.
 pub fn webapp_root_url(webapp_name: &str, require_full_url: bool, use_encryption: Option<bool>) -> String {
     let secure = request_secure();
     let require_encryption = use_encryption.unwrap_or(secure.unwrap_or(false));
@@ -819,7 +822,32 @@ pub fn webapp_root_url(webapp_name: &str, require_full_url: bool, use_encryption
         return base.trim_end_matches('/').to_string();
     }
     let https = require_encryption || secure == Some(true);
-    ExecutionContext::with_current(|ec| ec.factory().webapp_root_url_for(webapp_name, Some(https))).unwrap_or_default()
+    ExecutionContext::with_current(|ec| {
+        let conf = ec.factory().webapp_root_url_for(webapp_name, Some(https));
+        if secure.is_none() {
+            return conf;
+        }
+        // the one normalized value is both checked and written
+        match crate::screen::info::link_host(ec.factory(), &host_name(true), webapp_name) {
+            Some(host) => with_host(&conf, &host),
+            None => conf,
+        }
+    })
+    .unwrap_or_default()
+}
+
+/// `url` (`scheme://host[:port]`) with its host replaced by `host`.
+fn with_host(url: &str, host: &str) -> String {
+    let Some((scheme, authority)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    let port = match authority.rsplit_once(':') {
+        Some((_, port)) if !authority.ends_with(']') && port.bytes().all(|byte| byte.is_ascii_digit()) => {
+            format!(":{port}")
+        }
+        _ => String::new(),
+    };
+    format!("{scheme}://{host}{port}")
 }
 
 pub(crate) fn base_url() -> String {

@@ -12,13 +12,15 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Replication conflicts on an all-in-one node (plans/archive/Edge-Node.md §10, E12): a record of a paired node's set that
-//! claims an item the server holds itself ([`claims::copy_claim`], [`claims::own_claim`]: a mail address, a chat bridge
-//! id, a phone number) is not applied. The server's own item wins. The record is logged as an error and kept as a
-//! `moqui.edge.EdgeReplicaConflict` row, keyed as its `EdgeReplicaValue` would be, and Edge Clients shows it; the rest
-//! of the batch goes on. A later batch that writes the record again checks it again, one that deletes it (or a full
-//! send without it) removes the row, and [`recheck_conflicts`] (also at the start of each batch of the set) applies the
-//! record once the server no longer holds the item. A dedicated edge node holds no such items and checks nothing.
+//! Replication conflicts (plans/archive/Edge-Node.md §10, E12; plans/Edge-Node2.md §4.1, E16): a record of a paired
+//! node's set that claims an item another owner holds ([`claims::copy_claim`]: a mail address, a chat bridge id, a phone
+//! number) is not applied. On an all-in-one node the server's own item wins ([`claims::own_claim`]); on any node that
+//! takes links, another active pairing's copy wins ([`claims::claim_among`]: the first claim holds), except a chat bridge
+//! id, which two pairings may share (the request's host name tells them apart). The record is logged as an error and
+//! kept as a `moqui.edge.EdgeReplicaConflict` row, keyed as its `EdgeReplicaValue` would be, and Edge Clients shows it;
+//! the rest of the batch goes on. A later batch that writes the record again checks it again, one that deletes it (or
+//! a full send without it) removes the row, and [`recheck_conflicts`] (also at the start of each batch of the set)
+//! applies the record once no other owner holds the item. A dedicated edge node with one pairing checks nothing.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -39,10 +41,65 @@ pub const CONFLICT: &str = "moqui.edge.EdgeReplicaConflict";
 /// The most conflict rows one check reads.
 const MAX_CONFLICTS: i64 = 10_000;
 
-/// The current context's factory when this node is an all-in-one node, whose own items replication must not take.
-pub(super) fn all_in_one_factory() -> Option<Arc<ExecutionContextFactory>> {
+/// Who else may hold what a paired node's records claim: the server (on an all-in-one node) and the other active
+/// pairings, read once for a batch or a recheck.
+pub(super) struct Owners {
+    factory: Option<Arc<ExecutionContextFactory>>,
+    all_in_one: bool,
+    /// The active pairings, in id order.
+    active: Vec<String>,
+    /// The copies' mail addresses, read once for the batch or recheck.
+    mail: claims::MailIndex,
+}
+
+impl Owners {
+    /// The factory a batch's checks run on.
+    pub(super) fn factory(&self) -> Option<&Arc<ExecutionContextFactory>> {
+        self.factory.as_ref()
+    }
+
+    /// The other holders `node`'s records are checked against: none on a node with no other owner.
+    fn others(&self, node: &str) -> Vec<String> {
+        self.active.iter().filter(|other| *other != node).cloned().collect()
+    }
+
+    /// Whether a record of `node` can claim anything another owner holds.
+    fn checks(&self, node: &str) -> bool {
+        self.all_in_one || self.active.iter().any(|other| other != node)
+    }
+}
+
+/// The owners of the current context's node when it takes links and has more than one owner: an all-in-one node (the
+/// server and its pairings), or a dedicated edge node with several active pairings. `None` otherwise, when nothing is
+/// checked. A list of pairings that cannot be read is logged, and the server alone is checked.
+pub(super) fn owners(facade: &EntityFacade) -> Option<Owners> {
     let factory = ExecutionContext::with_current(|ec| Arc::clone(ec.factory()))?;
-    super::super::settings(&factory).all_in_one().then_some(factory)
+    let mut owners = owners_of(&factory, facade)?;
+    owners.factory = Some(factory);
+    (owners.all_in_one || owners.active.len() > 1).then_some(owners)
+}
+
+/// The owners on `factory`'s node, `None` on a node that takes no links.
+fn owners_of(factory: &ExecutionContextFactory, facade: &EntityFacade) -> Option<Owners> {
+    let settings = super::super::settings(factory);
+    if !settings.takes_links() {
+        return None;
+    }
+    let active = match claims::active_nodes(facade) {
+        Ok(active) => active,
+        Err(error) => {
+            tracing::error!(
+                "Edge replication: the paired nodes were not read, so other pairings are not checked: {error}"
+            );
+            Vec::new()
+        }
+    };
+    Some(Owners {
+        factory: None,
+        all_in_one: settings.all_in_one(),
+        active,
+        mail: claims::MailIndex::default(),
+    })
 }
 
 /// A record of a paired node's set not applied for a claim of the server's own item.
@@ -75,17 +132,41 @@ fn conflict_of(row: &EntityValue) -> Conflict {
     }
 }
 
-/// The server's holder of the item `copy` claims, or `None`. A check that fails is a holder too, logged: the record
-/// waits as a conflict until a check reads.
-fn held(factory: &ExecutionContextFactory, facade: &EntityFacade, kind: ClaimKind, key: &str) -> Option<String> {
-    match claims::own_claim(factory, facade, kind, key) {
-        Ok(holder) => holder,
+/// The holder other than `node` of the item a record claims, or `None`: the server's (on an all-in-one node), else
+/// another pairing's ("paired node local-b"). A check that fails is a holder too, logged: the record waits as a
+/// conflict until a check reads.
+fn held(
+    factory: &ExecutionContextFactory,
+    owners: &Owners,
+    facade: &EntityFacade,
+    node: &str,
+    kind: ClaimKind,
+    key: &str,
+) -> Option<String> {
+    if owners.all_in_one {
+        match claims::own_claim(factory, facade, kind, key) {
+            Ok(Some(holder)) => return Some(holder),
+            Ok(None) => {}
+            Err(error) => {
+                tracing::error!(
+                    "Edge replication: whether the server holds {} {key} could not be read: {error}",
+                    kind.label()
+                );
+                return Some(format!("the server (the check failed: {error})"));
+            }
+        }
+    }
+    if kind == ClaimKind::ChatBridge {
+        return None;
+    }
+    match claims::claim_among_with(facade, kind, key, &owners.others(node), &owners.mail) {
+        Ok(holder) => holder.map(|other| format!("paired node {other}")),
         Err(error) => {
             tracing::error!(
-                "Edge replication: whether the server holds {} {key} could not be read: {error}",
+                "Edge replication: whether another pairing holds {} {key} could not be read: {error}",
                 kind.label()
             );
-            Some(format!("the server (the check failed: {error})"))
+            Some(format!("another pairing (the check failed: {error})"))
         }
     }
 }
@@ -106,16 +187,16 @@ fn conflict_find(
         .disable_authz())
 }
 
-/// In a batch from `node` on an all-in-one node: whether `change` is skipped because its record claims an item the
-/// server holds. Then the record is logged and kept as a conflict, and a copy applied before is removed. Otherwise
-/// (and for a delete) a conflict of the record is removed and the caller applies the change.
+/// In a batch from `node`: whether `change` is skipped because its record claims an item another owner holds. Then the
+/// record is logged and kept as a conflict, and a copy applied before is removed. Otherwise (and for a delete) a
+/// conflict of the record is removed and the caller applies the change.
 ///
 /// # Errors
 ///
 /// Returns the database's error writing the rows.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn skipped(
-    factory: &ExecutionContextFactory,
+    owners: &Owners,
     facade: &EntityFacade,
     node: &str,
     batch: &Batch,
@@ -129,15 +210,18 @@ pub(super) fn skipped(
         let fields: serde_json::Value = serde_json::from_str(fields).unwrap_or_default();
         claims::copy_claim(&change.entity_name, pk, &fields)
     });
-    let holder = claim
-        .as_ref()
-        .and_then(|(kind, key)| held(factory, facade, *kind, key).map(|holder| (*kind, key, holder)));
+    let holder = match (&owners.factory, claim.as_ref().filter(|_| owners.checks(node))) {
+        (Some(factory), Some((kind, key))) => {
+            held(factory, owners, facade, node, *kind, key).map(|holder| (*kind, key, holder))
+        }
+        _ => None,
+    };
     let Some((kind, key, holder)) = holder else {
         find()?.delete_all()?;
         return Ok(false);
     };
     tracing::error!(
-        "Edge replication from {node}: {} record {} of set {} claims {}, so it is skipped: the server's own item wins",
+        "Edge replication from {node}: {} record {} of set {} claims {}, so it is skipped: the first holder keeps it",
         change.entity_name,
         change.pk_json,
         batch.set_name,
@@ -188,10 +272,11 @@ pub(super) fn drop_older(facade: &EntityFacade, node: &str, batch: &Batch) -> Re
 }
 
 /// Check the conflicts (of `node` and `set_name` when given) again in the caller's transaction: a record whose item
-/// the server no longer holds is applied as its `EdgeReplicaValue` and its conflict removed; one still held has its
+/// no other owner holds any more is applied as its `EdgeReplicaValue` and its conflict removed; one still held has its
 /// holder and `lastDate` written again. One that fails is logged and the rest go on. The set of each record applied.
 pub(super) fn recheck_in(
     factory: &ExecutionContextFactory,
+    owners: &Owners,
     facade: &EntityFacade,
     node: Option<&str>,
     set_name: Option<&str>,
@@ -227,7 +312,14 @@ pub(super) fn recheck_in(
             );
             continue;
         };
-        let done = match held(factory, facade, kind, &conflict.item_key) {
+        let done = match held(
+            factory,
+            owners,
+            facade,
+            &conflict.paired_node_id,
+            kind,
+            &conflict.item_key,
+        ) {
             Some(holder) => {
                 let mut row = row.clone();
                 row.set("ownerText", Value::string(&holder));
@@ -239,7 +331,7 @@ pub(super) fn recheck_in(
         match done {
             Ok(true) => {
                 tracing::info!(
-                    "Edge replication from {}: {} no longer held by the server, so its {} record of set {} is applied",
+                    "Edge replication from {}: {} no longer held by another owner, so its {} record of set {} is applied",
                     conflict.paired_node_id,
                     format_args!("{} {}", kind.label(), conflict.item_key),
                     conflict.entity_name,
@@ -286,9 +378,10 @@ fn apply_value(facade: &EntityFacade, conflict: &EntityValue, now: &Value) -> Re
     Ok(())
 }
 
-/// On an all-in-one node, check the replication conflicts (of `paired_node_id` when given) again in a transaction of
-/// their own: each record whose item the server no longer holds is applied (Edge Clients' Check again, and
-/// `recheck#ReplicaConflicts`). How many were applied; 0 on another node.
+/// On a node that takes links, check the replication conflicts (of `paired_node_id` when given) again in a transaction
+/// of their own: each record whose item no other owner holds any more is applied (Edge Clients' Check again, and
+/// `recheck#ReplicaConflicts`). How many were applied; 0 on a local node. On a dedicated edge node left with one
+/// pairing, every conflict is applied.
 ///
 /// # Errors
 ///
@@ -298,11 +391,11 @@ pub fn recheck_conflicts(
     facade: &EntityFacade,
     paired_node_id: Option<&str>,
 ) -> Result<usize, Error> {
-    if !super::super::settings(factory).all_in_one() {
+    let Some(owners) = owners_of(factory, facade) else {
         return Ok(0);
-    }
+    };
     let applied = transaction(facade, CONFLICT, TransactionAttribute::ForceNew, || {
-        Ok(recheck_in(factory, facade, paired_node_id, None))
+        Ok(recheck_in(factory, &owners, facade, paired_node_id, None))
     })?;
     // a reader that keeps something built from a set's copies builds it again
     let sets: BTreeSet<&String> = applied.iter().collect();

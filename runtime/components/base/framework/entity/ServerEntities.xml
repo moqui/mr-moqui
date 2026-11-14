@@ -958,4 +958,62 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.server.ReadinessProvider" short-alias="provider" fk-name="SRV_SETTINGS_PROVIDER">
             <key-map field-name="providerKey"/></relationship>
     </entity>
+
+    <!-- ========== Certificates by ACME (plans/Edge-Node2.md §4.8): System › Certificates, moqui-host src/acme ========== -->
+    <entity entity-name="AcmeName" package="moqui.server" use="configuration" cache="never">
+        <description>A host name an operator set up on System › Certificates to get its certificate from an ACME
+            authority (Let's Encrypt by default). Nothing is ever requested for a name with no row. The order answers the
+            authority's TLS-ALPN-01 challenge on the HTTPS listener (port 443 as the authority sees it), and the
+            certificate is written in certbot's layout under runtime/cert/hostName/, which the listener reads. statusId is
+            AcmeOrdering while an order runs, AcmeIssued after one succeeded and AcmeFailed after one failed (lastError
+            says why). renewing is Y until the operator stops it: the renew_AcmeCertificates job then renews the name
+            before notAfter. termsAgreedDate is when the operator agreed to the authority's terms.</description>
+        <field name="hostName" type="text-medium" is-pk="true"/>
+        <field name="directoryUrl" type="text-medium" not-null="true"/>
+        <field name="contactEmail" type="text-medium"/>
+        <field name="termsAgreedDate" type="date-time"/>
+        <field name="setUpDate" type="date-time"/>
+        <field name="setUpByUserId" type="id"/>
+        <field name="renewing" type="text-indicator"/>
+        <field name="statusId" type="id"/>
+        <field name="lastAttemptDate" type="date-time"/>
+        <field name="lastError" type="text-long"/>
+        <field name="issuedDate" type="date-time"/>
+        <field name="notAfter" type="date-time"/>
+        <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
+        <relationship type="one-nofk" title="SetUpBy" related="moqui.security.UserAccount">
+            <key-map field-name="setUpByUserId" related="userId"/></relationship>
+    </entity>
+    <entity entity-name="AcmeChallenge" package="moqui.server" use="transactional" cache="never">
+        <description>The TLS-ALPN-01 challenge an order of hostName has open: the SHA-256 of its key authorization
+            (hex), until expireDate. A row so that any member of a cluster answers it: a handshake that offers ALPN
+            acme-tls/1 for the name gets a certificate made from it, and every other acme-tls/1 handshake is
+            refused.</description>
+        <field name="hostName" type="text-medium" is-pk="true"/>
+        <field name="keyAuthDigest" type="text-medium" not-null="true"/>
+        <field name="expireDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.server.AcmeName"/>
+    </entity>
+    <entity entity-name="AcmeCertificate" package="moqui.server" use="transactional" cache="never">
+        <description>The certificate an ACME order of hostName got: its chain and its private key (PEM, the key
+            encrypted), so every member of a cluster writes its own runtime/cert/hostName/fullchain.pem and
+            privkey.pem.</description>
+        <field name="hostName" type="text-medium" is-pk="true"/>
+        <field name="certificatePem" type="text-very-long"/>
+        <field name="privateKeyPem" type="text-very-long" encrypt="true"/>
+        <field name="issuer" type="text-medium"/>
+        <field name="directoryUrl" type="text-medium"/>
+        <field name="issuedDate" type="date-time"/>
+        <field name="notAfter" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.server.AcmeName"/>
+    </entity>
+    <entity entity-name="AcmeOrderLock" package="moqui.server" use="transactional" cache="never">
+        <description>The member of a cluster ordering hostName now, as ServiceJobRunLock is for a job: taken with the row
+            locked, and taken over once leaseExpireDate has passed (by the clock of the member that looks, so members'
+            clocks must agree within minutes of the 15-minute lease), so two members never order one name at once. A
+            name left AcmeOrdering with no live lock was cut off by a stop and counts as failed.</description>
+        <field name="hostName" type="text-medium" is-pk="true"/>
+        <field name="instanceId" type="text-short"/>
+        <field name="leaseExpireDate" type="date-time"/>
+    </entity>
 </entities>

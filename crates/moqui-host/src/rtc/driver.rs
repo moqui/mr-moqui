@@ -79,6 +79,23 @@ struct Driver<'a> {
     notices: RoomNotices,
     /// The call's media node of each room this node is a leg node of (W7).
     origins: HashMap<String, String>,
+    /// The most legs of one paired node's calls at once (`edge_call_legs_per_pairing`, E16); 0 for no cap.
+    pairing_legs: usize,
+}
+
+/// The default of `edge_call_legs_per_pairing`: the legs at once of one local node's calls on an edge node's media node.
+const PAIRING_LEGS: usize = 200;
+
+/// `edge_call_legs_per_pairing`: a number, else [`PAIRING_LEGS`]; 0 takes no cap.
+fn pairing_legs() -> usize {
+    let text = moqui_lib::env::get_prop_or_env("edge_call_legs_per_pairing");
+    match text.trim() {
+        "" => PAIRING_LEGS,
+        text => text.parse().unwrap_or_else(|_| {
+            tracing::error!("edge_call_legs_per_pairing {text} is not a number; {PAIRING_LEGS} holds");
+            PAIRING_LEGS
+        }),
+    }
 }
 
 /// The SFU's work counters ([`moqui_rtc::SfuStats`]) as the driver last copied them, for the telemetry gauges
@@ -153,6 +170,7 @@ pub(super) fn run(
         media: Media::default(),
         notices: RoomNotices::default(),
         origins: HashMap::new(),
+        pairing_legs: pairing_legs(),
     };
     let mut buf = vec![0u8; DATAGRAM];
     let gauges = SfuGauges::register(factory);
@@ -271,7 +289,7 @@ impl Driver<'_> {
             }
             Command::CloseLeg { room, leg } => {
                 if let Some(revoke) = &self.revoke {
-                    revoke(&leg);
+                    revoke(&moqui_core::edge::media::turn_leg(&room, &leg));
                 }
                 let key = LegKey::new(&room, &leg);
                 if let Some(generation) = self.sfu.generation(&key) {
@@ -307,7 +325,7 @@ impl Driver<'_> {
                     .collect();
                 for key in legs {
                     if let Some(revoke) = &self.revoke {
-                        revoke(&key.leg);
+                        revoke(&moqui_core::edge::media::turn_leg(&room, &key.leg));
                     }
                     if let Some(r) = self.routes.remove(&key) {
                         self.reply(
@@ -348,6 +366,9 @@ impl Driver<'_> {
                 .unwrap_or_default()
         };
         let result: Result<Option<Json>, SfuError> = match op {
+            "join" if self.over_pairing_cap(&key) => Err(SfuError::Rtc(
+                "the edge node has the most call legs of this local node at once".to_string(),
+            )),
             "join" => self
                 .sfu
                 .join(now, &key, generation, sdp())
@@ -449,6 +470,30 @@ impl Driver<'_> {
                 self.to_leg(&key, generation, notice);
             }
         }
+    }
+
+    /// Whether a new leg `key` of a paired node's room (E12 keys) would pass that node's cap of legs at once (E16):
+    /// one local node's calls do not take every leg the media node has. A leg already here (a rejoin) is not new.
+    fn over_pairing_cap(&self, key: &LegKey) -> bool {
+        let Some(node) = moqui_core::edge::media::split_room(&key.room).0 else {
+            return false;
+        };
+        if self.pairing_legs == 0 || self.routes.contains_key(key) {
+            return false;
+        }
+        let held = self
+            .routes
+            .keys()
+            .filter(|other| moqui_core::edge::media::split_room(&other.room).0 == Some(node))
+            .count();
+        if held >= self.pairing_legs {
+            tracing::warn!(
+                "Call media: local node {node} has {held} legs here, its most (edge_call_legs_per_pairing); a new one \
+                 is refused"
+            );
+            return true;
+        }
+        false
     }
 
     fn event(&mut self, event: SfuEvent) {

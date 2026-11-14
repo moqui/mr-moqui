@@ -14,7 +14,8 @@
 
 //! The embedded TURN server against `turn-client-proto` clients on simulated time (W4): a leg's credential allocates and
 //! relays to and from a media node; an expired credential, a name that is not ours and a revoked leg are refused, and
-//! revoking closes the relay; a relay peer that is no media node is refused; the per-username quota holds.
+//! revoking closes the relay; a relay peer that is no media node is refused; the per-username quota holds; a pairing's
+//! credential is taken only with its own secret while it is paired (E16).
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
@@ -23,7 +24,7 @@ use turn_client_proto::api::{TurnClientApi, TurnConfig as ClientConfig, TurnEven
 use turn_client_proto::udp::TurnClientUdp;
 use turn_server_proto::types::{TransportType, TurnCredentials};
 
-use super::{credential, frame_len, Turn, TurnConfig, TurnOutput};
+use super::{credential, frame_len, pairing_of, pairing_secret, Turn, TurnConfig, TurnOutput};
 use crate::sfu::Proto;
 
 const SECRET: &[u8] = b"turn-test-secret";
@@ -406,4 +407,113 @@ fn an_xmpp_users_credential_reaches_no_other_port_of_the_servers_own_addresses()
     assert!(turn.peer_allowed("[::ffff:9.9.9.9]:1".parse().unwrap(), true, Some("LEG1")));
     // an XMPP peer on the internet still is
     assert!(turn.peer_allowed("8.8.4.4:50000".parse().unwrap(), false, xmpp));
+}
+
+/// The pairings `ids`, each with its salt `ids`'s second part.
+fn pairings(ids: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+    ids.iter()
+        .map(|(id, salt)| ((*id).to_string(), (*salt).to_string()))
+        .collect()
+}
+
+impl Net {
+    /// A node that takes links: usernames may name pairings.
+    fn edge(max_per_user: usize) -> Self {
+        let mut net = Net::new(max_per_user);
+        let mut config = net.turn.config.clone();
+        config.pairings = true;
+        net.turn = Turn::new(config, &[(Proto::Udp, listen())]);
+        net
+    }
+}
+
+#[test]
+fn a_pairings_credential_is_taken_only_with_its_own_secret_while_it_is_paired() {
+    let mut net = Net::edge(2);
+    let pairing = |id: &str| pairing_secret(SECRET, id, "k1");
+    assert_ne!(pairing("local-1"), pairing("local-2"), "a secret of each pairing");
+    assert_eq!(pairing_of("100010@local-1"), Some("local-1"));
+    assert_eq!(pairing_of("100010"), None);
+    net.turn
+        .set_pairings(net.now, pairings(&[("local-1", "k1"), ("local-2", "k1")]));
+    let (user, pass) = credential(pairing("local-1").as_bytes(), "100010@local-1", unix_now() + 600);
+    let mut own = net.client(5000, &user, &pass);
+    // a leg named for another pairing, or signed with the shared secret, is refused
+    let (other, other_pass) = credential(pairing("local-1").as_bytes(), "100011@local-2", unix_now() + 600);
+    let mut crossed = net.client(5001, &other, &other_pass);
+    let (shared, shared_pass) = credential(SECRET, "100012@local-1", unix_now() + 600);
+    let mut by_shared = net.client(5002, &shared, &shared_pass);
+    net.run(&mut [&mut own, &mut crossed, &mut by_shared], Duration::from_secs(45));
+    let relayed = own.allocated().expect("the pairing's own allocation");
+    assert!(crossed.allocated().is_none() && by_shared.allocated().is_none());
+    // revoked: its relays close and its credentials are refused from then on, with the shared secret unchanged
+    net.turn.set_pairings(net.now, pairings(&[("local-2", "k1")]));
+    net.run(&mut [&mut own], Duration::from_millis(100));
+    assert!(net.closed.contains(&relayed));
+    assert_eq!(net.turn.allocation_count(), 0);
+    let (user, pass) = credential(pairing("local-1").as_bytes(), "100013@local-1", unix_now() + 600);
+    let mut after = net.client(5003, &user, &pass);
+    net.run(&mut [&mut after], Duration::from_secs(45));
+    assert!(after.allocated().is_none(), "a revoked pairing's new credential");
+    let (user, pass) = credential(pairing("local-2").as_bytes(), "100014@local-2", unix_now() + 600);
+    let mut still = net.client(5004, &user, &pass);
+    net.run(&mut [&mut still], Duration::from_secs(1));
+    assert!(still.allocated().is_some(), "the other pairing goes on");
+}
+
+#[test]
+fn a_pairing_paired_again_under_its_id_refuses_the_credentials_from_before() {
+    let mut net = Net::edge(2);
+    net.turn.set_pairings(net.now, pairings(&[("local-1", "key-a|t1")]));
+    let before = pairing_secret(SECRET, "local-1", "key-a|t1");
+    let (user, pass) = credential(before.as_bytes(), "100010@local-1", unix_now() + 600);
+    let mut first = net.client(5000, &user, &pass);
+    net.run(&mut [&mut first], Duration::from_secs(1));
+    let relayed = first.allocated().expect("the first pairing's allocation");
+    // revoked, then paired again under the same id with a new key: the credentials from before, the one seen
+    // already included, are refused, and its relay is closed
+    net.turn.set_pairings(net.now, pairings(&[]));
+    net.turn.set_pairings(net.now, pairings(&[("local-1", "key-b|t2")]));
+    net.run(&mut [&mut first], Duration::from_millis(100));
+    assert!(net.closed.contains(&relayed));
+    let mut again = net.client(5001, &user, &pass);
+    let (other, other_pass) = credential(before.as_bytes(), "100011@local-1", unix_now() + 600);
+    let mut fresh_name = net.client(5002, &other, &other_pass);
+    net.run(&mut [&mut again, &mut fresh_name], Duration::from_secs(45));
+    assert!(
+        again.allocated().is_none() && fresh_name.allocated().is_none(),
+        "the old secret's credentials"
+    );
+    let after = pairing_secret(SECRET, "local-1", "key-b|t2");
+    let (user, pass) = credential(after.as_bytes(), "100012@local-1", unix_now() + 600);
+    let mut now = net.client(5003, &user, &pass);
+    net.run(&mut [&mut now], Duration::from_secs(1));
+    assert!(now.allocated().is_some(), "the new pairing's credential");
+    // the salt changed while the pairing stayed (no revoke between): a username seen before takes the new secret
+    net.turn.set_pairings(net.now, pairings(&[("local-1", "key-c|t3")]));
+    let mut seen = net.client(5004, &user, &pass);
+    net.run(&mut [&mut seen], Duration::from_secs(45));
+    assert!(
+        seen.allocated().is_none(),
+        "a username seen before, with the secret before"
+    );
+}
+
+#[test]
+fn a_node_that_takes_no_links_reads_no_pairing_in_a_username() {
+    // an XMPP user id with an @ is the server's own leg: signed with the shared secret, relaying as an XMPP user's
+    let mut net = Net::new(2);
+    let public: SocketAddr = "8.8.8.8:3478".parse().unwrap();
+    assert!(net.turn.peer_allowed(public, false, Some("xmpp.ann@example")));
+    let (user, pass) = credential(SECRET, "xmpp.ann@example", unix_now() + 600);
+    let mut c = net.client(5000, &user, &pass);
+    net.run(&mut [&mut c], Duration::from_secs(1));
+    assert!(c.allocated().is_some());
+}
+#[test]
+fn a_pairings_leg_is_never_an_xmpp_users_own() {
+    let net = Net::edge(2);
+    let public: SocketAddr = "8.8.8.8:3478".parse().unwrap();
+    assert!(net.turn.peer_allowed(public, false, Some("xmpp.ann")));
+    assert!(!net.turn.peer_allowed(public, false, Some("xmpp.ann@local-1")));
 }

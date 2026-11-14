@@ -46,6 +46,9 @@ use moqui_calc as _;
 #[cfg(feature = "channels")]
 use moqui_channels as _;
 
+// Certificates by ACME from System › Certificates (plans/Edge-Node2.md §4.8), with the HTTPS listener.
+#[cfg(feature = "axum")]
+mod acme;
 pub mod chromium;
 // The database drivers (crates/moqui-drivers), at their old path.
 pub use moqui_drivers as db;

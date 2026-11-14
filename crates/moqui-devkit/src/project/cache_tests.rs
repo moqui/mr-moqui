@@ -192,3 +192,27 @@ fn a_projects_nested_record_is_of_the_related_entity_by_its_full_name() {
     );
     clean(&root);
 }
+
+/// The files whose change boots the project again include the confs in the topology directories under `conf/`
+/// (`conf/edge/MoquiEdgeConf.xml`), which `MOQUI_CONF` may name; a symbolic link to a directory (here a loop) is not
+/// followed.
+#[test]
+fn a_topology_conf_is_in_the_structure() {
+    let root = mr_clone("confdirs");
+    std::fs::create_dir_all(root.join("runtime/conf/edge")).unwrap();
+    std::fs::write(root.join("runtime/conf/MoquiDevConf.xml"), "<moqui-conf/>").unwrap();
+    std::fs::write(root.join("runtime/conf/edge/MoquiEdgeConf.xml"), "<moqui-conf/>").unwrap();
+    std::os::unix::fs::symlink(root.join("runtime/conf"), root.join("runtime/conf/edge/loop")).unwrap();
+    let project = super::super::detect(&root).unwrap();
+    let ctx = ExecutionContextFactory::test_context();
+    let found = structure(&project, ctx.factory());
+    assert!(
+        found.contains_key(&project.runtime.join("conf/MoquiDevConf.xml")),
+        "{found:?}"
+    );
+    assert!(
+        found.contains_key(&project.runtime.join("conf/edge/MoquiEdgeConf.xml")),
+        "{found:?}"
+    );
+    clean(&root);
+}

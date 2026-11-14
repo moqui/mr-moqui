@@ -645,8 +645,9 @@ pub fn apply_batch(facade: &EntityFacade, node: &str, batch: &Batch) -> Result<B
 }
 
 fn apply_batch_rows(facade: &EntityFacade, node: &str, batch: &Batch) -> Result<BatchAnswer, Error> {
-    // on an all-in-one node a record that claims an item the server holds is not applied (§10)
-    let own = conflicts::all_in_one_factory();
+    // a record that claims an item the server (on an all-in-one node, §10) or another pairing (Edge-Node2 §4.1)
+    // holds is not applied
+    let owners = conflicts::owners(facade);
     transaction(facade, VALUE, TransactionAttribute::ForceNew, || {
         let cursor = facade
             .find(CURSOR)?
@@ -666,15 +667,15 @@ fn apply_batch_rows(facade: &EntityFacade, node: &str, batch: &Batch) -> Result<
             return Ok(BatchAnswer::Resync);
         }
         let now = stamp_value(now_millis());
-        if let Some(factory) = &own {
-            conflicts::recheck_in(factory, facade, Some(node), Some(&batch.set_name));
+        if let Some((owners, factory)) = owners.as_ref().and_then(|owners| Some((owners, owners.factory()?))) {
+            conflicts::recheck_in(factory, owners, facade, Some(node), Some(&batch.set_name));
         }
         for change in &batch.changes {
             let pk: serde_json::Value = serde_json::from_str(&change.pk_json)
                 .map_err(|err| Error::new(format!("a bad key in the batch: {err}")))?;
             let hash = canonical_sha256(&pk);
-            if let Some(factory) = &own {
-                if conflicts::skipped(factory, facade, node, batch, change, &pk, &hash, &now)? {
+            if let Some(owners) = &owners {
+                if conflicts::skipped(owners, facade, node, batch, change, &pk, &hash, &now)? {
                     continue;
                 }
             }
@@ -714,7 +715,7 @@ fn apply_batch_rows(facade: &EntityFacade, node: &str, batch: &Batch) -> Result<
                 ]))
                 .disable_authz()
                 .delete_all()?;
-            if own.is_some() {
+            if owners.is_some() {
                 conflicts::drop_older(facade, node, batch)?;
             }
         }
@@ -808,6 +809,39 @@ pub fn list_values(
             find = find.eq("entityName", Value::string(name));
         }
         Ok(find.list()?.values().iter().map(replica_value).collect())
+    })
+}
+
+/// [`list_values`] reading only each copy's key (`pkJson`, so `fieldsJson` is neither read nor decrypted): the keys of
+/// set `set_name`'s copies of `entity` of `paired_node_id`, at most `limit`.
+///
+/// # Errors
+///
+/// Returns the entity facade's error.
+pub fn list_keys(
+    facade: &EntityFacade,
+    paired_node_id: &str,
+    set_name: &str,
+    entity: &str,
+    limit: usize,
+) -> Result<Vec<serde_json::Value>, Error> {
+    let full_name = crate::entity::info::entity_full_name(facade, entity).unwrap_or_else(|| entity.to_string());
+    transaction(facade, VALUE, TransactionAttribute::UseOrBegin, || {
+        let rows = facade
+            .find(VALUE)?
+            .eq("pairedNodeId", Value::string(paired_node_id))
+            .eq("setName", Value::string(set_name))
+            .eq("entityName", Value::string(&full_name))
+            .select_field("pkJson")
+            .order_by("pkHash", false)
+            .limit(i64::try_from(limit).unwrap_or(i64::MAX))
+            .disable_authz()
+            .list()?;
+        Ok(rows
+            .values()
+            .iter()
+            .map(|row| serde_json::from_str(&text(row, "pkJson")).unwrap_or(serde_json::Value::Null))
+            .collect())
     })
 }
 

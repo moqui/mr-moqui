@@ -363,7 +363,10 @@ fn an_outside_and_an_office_browser_call_through_the_edge_node_and_the_recording
     };
     // john's TURN credential is the edge node's: its URLs, signed with its secret (the allocation below is the check)
     let (urls, username, credential) = ice;
-    assert!(username.ends_with(&format!(":{caller_leg}")), "{username}");
+    assert!(
+        username.contains(&format!(":{caller_leg}@")),
+        "the leg and its pairing (E16): {username}"
+    );
     let turn_udp: SocketAddr = urls
         .iter()
         .find(|u| u.ends_with("transport=udp"))

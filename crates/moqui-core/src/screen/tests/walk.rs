@@ -437,23 +437,23 @@ fn a_double_slash_finds_a_screen_by_name() {
     );
 }
 
-struct Tree {
+pub(super) struct Tree {
     dir: PathBuf,
 }
 
 impl Tree {
-    fn new(name: &str) -> Self {
+    pub(super) fn new(name: &str) -> Self {
         let dir = std::env::temp_dir().join(format!("moqui-screen-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         Self { dir }
     }
 
-    fn path(&self, name: &str) -> String {
+    pub(super) fn path(&self, name: &str) -> String {
         self.dir.join(name).to_string_lossy().into_owned()
     }
 
-    fn write(&self, name: &str, text: &str) {
+    pub(super) fn write(&self, name: &str, text: &str) {
         let path = self.dir.join(name);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).unwrap();

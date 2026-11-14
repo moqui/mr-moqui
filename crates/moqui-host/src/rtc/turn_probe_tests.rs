@@ -13,7 +13,8 @@
  */
 
 //! The wizard's TURN check against the embedded TURN server on loopback, as an edge node runs it (E7): the credential
-//! of its own secret allocates and gets a permission for the media address's IP; one of another secret is refused.
+//! of its own secret allocates and gets a permission for the media address's IP, over UDP and over TCP (E16); one of
+//! another secret is refused.
 
 use std::net::SocketAddr;
 
@@ -35,6 +36,23 @@ fn turn_node(media: SocketAddr) -> (super::super::turn::TurnNode, String) {
     let node = super::super::turn::start(&dir, &settings).unwrap();
     let udp = node.bound.udp.expect("the UDP listener");
     (node, format!("turn:127.0.0.1:{}?transport=udp", udp.port()))
+}
+
+#[test]
+fn a_turn_with_tcp_is_checked_over_tcp() {
+    let media: SocketAddr = "127.0.0.1:10000".parse().unwrap();
+    let (node, _) = turn_node(media);
+    let tcp = node.bound.tcp.expect("the TCP listener");
+    let url = format!("turn:127.0.0.1:{}?transport=tcp", tcp.port());
+    let (username, password) = moqui_rtc::turn::credential(SECRET.as_bytes(), "edgeSetupProbe.t", expiry());
+    let done = probe(&url, &username, &password, &media.to_string()).unwrap();
+    assert!(
+        done.contains("permission for its media address's IP 127.0.0.1"),
+        "{done}"
+    );
+    let (username, password) = moqui_rtc::turn::credential(b"another-secret", "edgeSetupProbe.u", expiry());
+    let refused = probe(&url, &username, &password, &media.to_string()).unwrap_err();
+    assert!(refused.contains("refused the allocation"), "{refused}");
 }
 
 fn expiry() -> u64 {
@@ -62,15 +80,27 @@ fn a_credential_of_the_edge_nodes_secret_allocates_and_relays_to_its_media_addre
 }
 
 #[test]
-fn only_a_turn_url_over_udp_is_probed() {
+fn a_turn_url_is_probed_over_udp_or_tcp() {
     assert_eq!(
-        udp_server("turn:edge.example.net:3478?transport=udp").unwrap(),
-        "edge.example.net:3478"
+        turn_server("turn:edge.example.net:3478?transport=udp").unwrap(),
+        ("edge.example.net:3478".to_string(), false)
     );
-    assert_eq!(udp_server("turn:edge.example.net").unwrap(), "edge.example.net:3478");
-    assert_eq!(udp_server("turn:[2001:db8::5]:3479").unwrap(), "[2001:db8::5]:3479");
-    assert!(udp_server("turn:edge.example.net:3478?transport=tcp").is_err());
-    assert!(udp_server("turns:edge.example.net:5349?transport=tcp").is_err());
-    assert!(udp_server("turn::3478").is_err());
-    assert!(udp_server("turn:edge.example.net:port").is_err());
+    assert_eq!(
+        turn_server("turn:edge.example.net").unwrap(),
+        ("edge.example.net:3478".to_string(), false)
+    );
+    assert_eq!(
+        turn_server("turn:[2001:db8::5]:3479").unwrap(),
+        ("[2001:db8::5]:3479".to_string(), false)
+    );
+    assert_eq!(
+        turn_server("turn:edge.example.net:3478?transport=tcp").unwrap(),
+        ("edge.example.net:3478".to_string(), true)
+    );
+    assert!(
+        turn_server("turns:edge.example.net:5349?transport=tcp").is_err(),
+        "TLS is not checked"
+    );
+    assert!(turn_server("turn::3478").is_err());
+    assert!(turn_server("turn:edge.example.net:port").is_err());
 }
