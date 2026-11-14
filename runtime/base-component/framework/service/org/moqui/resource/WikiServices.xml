@@ -584,8 +584,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="parentWikiPageId"><description>The parent page by its id, instead of parentPath (a page tree drop);
                 in the same space</description></parameter>
             <parameter name="pageName" required="true">
-                <description>This is required for better usability. If pageName == wikiSpaceId is treated as the root page.</description>
-                <matches regexp="[\w\.\-,':()!\? ]*" message="A page name has letters, digits, spaces and . , ' - _ : ( ) ! ? only"/>
+                <description>This is required for better usability. If pageName == wikiSpaceId is treated as the root page.
+                    Letters of any script and decimal digits, plus spaces and . , ' - _ : ( ) ! ?</description>
             </parameter>
             <parameter name="wikiType" default-value="md"/>
             <parameter name="pageText" allow-html="any"><description>If WikiSpace.allowAnyHtml = Y will be stored as-is, otherwise filtered like parameter.allow-html=safe.</description></parameter>
@@ -606,6 +606,12 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- <log level="warn" message="update#WikiPage wikiSpaceId=${wikiSpaceId} pageName=${pageName} parentPath=[${parentPath}]"/> -->
             <if condition="pageName == wikiSpaceId"><set field="pageName" from="null"/></if>
             <if condition="parentPath == wikiSpaceId"><set field="parentPath" from="null"/></if>
+            <!-- letters of any script; the matches engine's \w is ASCII only, so the check is here -->
+            <script><![CDATA[
+                if (pageName && (pageName === '.' || pageName === '..' || !StringUtilities.isAlphaNumeric(pageName, ".,'-_:()!? ")))
+                    ec.message.addError(ec.l10n.localize("A page name has letters, digits, spaces and . , ' - _ : ( ) ! ? only"))
+            ]]></script>
+            <check-errors/>
             <set field="versionNote" from="versionNote ? String(versionNote).trim().substring(0, 255) : null"/>
             <!-- who the save is by: the user, or for a save made as the system the user it names (never with a user) -->
             <set field="historyUserId" from="ec.user.userId || (ec.artifactExecution.authzDisabled() ? (historyUserId || null) : null)"/>
@@ -1850,8 +1856,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="toWikiSpaceId"><description>Default the page's space</description></parameter>
             <parameter name="toParentPath"><description>The parent page's path in the target space; empty for the top level</description></parameter>
             <parameter name="toParentWikiPageId"><description>The parent page by its id, instead of toParentPath</description></parameter>
-            <parameter name="toPageName"><description>Default the page's name</description>
-                <matches regexp="[\w\.\-,':()!\? ]*" message="A page name has letters, digits, spaces and . , ' - _ : ( ) ! ? only"/></parameter>
+            <parameter name="toPageName"><description>Default the page's name. Letters of any script and decimal digits,
+                plus spaces and . , ' - _ : ( ) ! ?</description></parameter>
             <parameter name="versionNote"><description>The note of the move: the commit message on git</description></parameter>
             <parameter name="keepAlias" type="Boolean" default="true"/>
         </in-parameters>
@@ -1909,7 +1915,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (toParentPath.split('/').some((part) => part === '.' || part === '..')) return fail('A page path has no . or .. in it')
                 if (toParentPath === toWikiSpaceId) toParentPath = ''
                 if (!toPageName) toPageName = fromPath.slice(fromPath.lastIndexOf('/') + 1)
-                if (!/^[\w.\-,':()!? ]+$/.test(toPageName) || toPageName === '.' || toPageName === '..')
+                if (!StringUtilities.isAlphaNumeric(toPageName, ".,'-_:()!? ") || toPageName === '.' || toPageName === '..')
                     return fail("A page name has letters, digits, spaces and . , ' - _ : ( ) ! ? only")
                 const toPath = (toParentPath ? toParentPath + '/' : '') + toPageName
                 if (toWikiSpaceId === fromSpaceId && toPath === fromPath) return

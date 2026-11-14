@@ -1,7 +1,8 @@
 // Knowledge and notes (org.moqui.resource.WikiServices, IronStone M9) on the real database: a note in the user's notes space
 // (R22) moved into a space in a git repository with its history replayed, a page's links and backlinks across a rename,
 // a new top-level page that is its own file beside a nested page of the same name, a review approved and refused from the
-// notification tray, and search that leaves out another user's notes. The rules in full are the Rust tests in
+// notification tray, search that leaves out another user's notes, and a page named in Chinese, Japanese, Korean or
+// Arabic. The rules in full are the Rust tests in
 // crates/moqui-core/src/service/wiki_tests.rs.
 
 const WIKI = "org.moqui.resource.WikiServices"
@@ -165,5 +166,39 @@ feature("search leaves out another user's notes", {
     then({ mine, theirs }) {
         mine.map((row) => row.wikiSpaceId) == ["NOTES_wikiAuthor"]
         theirs.length == 0
+    },
+})
+
+feature("a page name may be letters of any script, and a slash or .. is still refused", {
+    when() {
+        ec.user.internalLoginUser("wikiAuthor")
+        const space = "SN" + RUN
+        wiki("create#WikiSpace", { wikiSpaceId: space, description: "Script names" })
+        const names = ["产品说明", "ミーティング", "회의", "دليل"]
+        const saved = names.map((name) => {
+            const out = wiki("update#WikiPage", { wikiSpaceId: space, pageName: name, pageText: "# " + name + "\n" })
+            const ref = wiki("get#WikiPageReference", { wikiSpaceId: space, pagePath: name })
+            return { name, pagePath: out.pagePath, text: ref.pageReference.getText() }
+        })
+        const moved = wiki("move#WikiPage", { wikiSpaceId: space, pagePath: "产品说明", toPageName: "产品说明二" })
+        const movedRef = wiki("get#WikiPageReference", { wikiSpaceId: space, pagePath: "产品说明二" })
+        const refuse = (pageName) => {
+            try {
+                wiki("update#WikiPage", { wikiSpaceId: space, pageName: pageName, pageText: "x\n" })
+                return ""
+            } catch (err) {
+                ec.message.clearErrors()
+                return String(err.message || err)
+            }
+        }
+        return { saved, moved, movedText: movedRef.pageReference.getText(), slash: refuse("产品/说明"), dots: refuse("..") }
+    },
+    then({ saved, moved, movedText, slash, dots }) {
+        saved.map((row) => row.pagePath) == ["产品说明", "ミーティング", "회의", "دليل"]
+        saved.every((row) => String(row.text).startsWith("# " + row.name))
+        moved.pagePath == "产品说明二"
+        String(movedText).startsWith("# 产品说明")
+        slash.includes("letters")
+        dots.includes("letters")
     },
 })
