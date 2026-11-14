@@ -1166,6 +1166,8 @@ is `documentType` (one id, a comma separated list or a list) or `indexName`.
 | `indexExists(target)` | Whether the index is there |
 | `documentTypes(target)` | The document ids of a type name or an options map |
 | `embedPending(options)` | Stores embeddings for `{indexName or documentType, batch, maxChars}`; how many |
+| `hasEmbedder()` | Whether an embedding model is installed |
+| `rankTexts(options)` | Ranks the `texts` of `{query, texts, limit}` (default 10) against `query` by meaning and words: `[{index, score, meaning, words}]`, best first, `index` the text's position. Needs an embedder (`search-facade semantic`); an empty query only embeds the texts, which are kept in memory for later calls. See [Semantic find](../ui/Semantic-Find.md) |
 | `processFeedPending(ids, stuckMinutes)` | Delivers the pending data feed rows of the ids, or every one: `{documentsIndexed, documentsDeleted, rowsDone, rowsLeft, rowsHeld, rowsStuck, rowsPending, oldestPendingSeconds, stuckError}` |
 | `rebuildFeed(options)` | Indexes the documents of `{dataFeedId, dataDocumentId, fromUpdateStamp, thruUpdateStamp, batchSize}` again; the count |
 | `flatten(map)` | A map with dotted keys |

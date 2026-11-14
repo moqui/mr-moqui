@@ -28,6 +28,7 @@ the html render mode, comes to use another file, add the file to that list.
 | `WebPush.xml` | not a file but the `/WebPush` transitions: status, store and delete of the browser's push subscription |
 | `ChatKeys.xml` | not a file but the `/ChatKeys` transitions: the browser's crypto device, its keys and to-device messages ([Chat keys](../../../../../../docs/interfaces/Chat-Keys.md)) |
 | `Device.xml` | not a file but the `/Device` page: a shared device's browser enters its registration code there, with nobody signed in ([Shared devices](../../../../../../docs/security/Shared-Devices.md)) |
+| `find.xml` | not a file but the `/find/rank` transition: ranks a page's sentences against a query for `js/MoquiFind.js` ([Semantic find](../../../../../../docs/ui/Semantic-Find.md)) |
 | `ReAuth.xml` | not a file but the `/ReAuth` transitions: the recent sign-in check and the re-authentication of sensitive actions (`js/WebrootReAuth.js`, [Recent sign-in](../../../../../../docs/security/Recent-Auth.md)) |
 
 ## Vendored browser libraries (`libs/`)

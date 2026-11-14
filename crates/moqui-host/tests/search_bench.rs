@@ -221,7 +221,7 @@ fn run(backend: &dyn SearchBackend, corpus: &Corpus, driver: Option<&dyn DbDrive
             ..HybridOptions::default()
         };
         let started = Instant::now();
-        hybrid::search(backend, &mappings, &SearchRequest::new(Query::MatchAll), &options, None).unwrap();
+        hybrid::search(backend, &mappings, &SearchRequest::new(Query::MatchAll), &options, None, &options.text).unwrap();
         times.push(started.elapsed());
     }
     report("hybrid (a common and a rare word)", &mut times);

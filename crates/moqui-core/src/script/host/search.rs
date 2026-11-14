@@ -31,6 +31,9 @@
 //! ec.search.indexExists({indexName | documentType}) -> boolean
 //! ec.search.isAvailable(), ec.search.backendName()
 //! ec.search.embedPending({indexName | documentType, batch, maxChars}) -> embeddings stored
+//! ec.search.hasEmbedder() -> whether an embedding model is installed (rankTexts needs one)
+//! ec.search.rankTexts({query, texts, limit}) -> [{index, score, meaning, words}], best first (search::rank); an
+//!     empty query embeds the texts for later calls and ranks none
 //! ec.search.capabilities() -> names: proximity, fuzzy, autocomplete, weightedRank, accent, semantic, hybrid
 //! ec.search.flatten(map) -> map with dotted keys
 //! ec.search.processFeedPending(ids?, stuckMinutes?) -> {documentsIndexed, documentsDeleted, rowsDone, rowsLeft, rowsHeld,
@@ -68,6 +71,8 @@ pub(super) static SEARCH: HostClass = HostClass {
         method!("ec.search", "backendName", [], backend_name),
         method!("ec.search", "capabilities", [], capabilities),
         method!("ec.search", "embedPending", [Value], None, embed_pending),
+        method!("ec.search", "rankTexts", [Value], None, rank_texts),
+        method!("ec.search", "hasEmbedder", [], has_embedder),
         method!("ec.search", "flatten", [Value], flatten),
         method!(
             "ec.search",
@@ -278,6 +283,37 @@ fn embed_pending(call: &mut Call<'_>) -> Result<Ret, HostError> {
         .embed_pending(&target, batch, max_chars)
         .map_err(HostError::Lib)?;
     Ok(count(stored))
+}
+
+fn has_embedder(_: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(facade()?.embedder().is_some().into())
+}
+
+fn rank_texts(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let map = options_arg(call)?;
+    let query = map.get("query").map(to_plain_string).unwrap_or_default();
+    // Every text keeps its place, empty ones too: a result's index is its position in the caller's list.
+    let texts: Vec<String> = match map.get("texts") {
+        Some(Value::List(items)) => items.iter().map(to_plain_string).collect(),
+        None | Some(Value::Null) => Vec::new(),
+        Some(_) => return Err(HostError::message("rankTexts texts is a list of texts")),
+    };
+    let limit = number(map.get("limit"), 10);
+    let ranked = facade()?
+        .rank_texts(&query, &texts, limit)
+        .map_err(HostError::Lib)?;
+    let list = ranked
+        .into_iter()
+        .map(|text| {
+            let mut entry = indexmap::IndexMap::default();
+            entry.insert("index".to_string(), Value::I64(i64::try_from(text.index).unwrap_or(i64::MAX)));
+            entry.insert("score".to_string(), Value::F64(f64::from(text.score)));
+            entry.insert("meaning".to_string(), Value::F64(f64::from(text.meaning)));
+            entry.insert("words".to_string(), Value::F64(f64::from(text.words)));
+            Value::Map(entry)
+        })
+        .collect();
+    Ok(Ret::Value(Value::List(list)))
 }
 
 fn capabilities(_: &mut Call<'_>) -> Result<Ret, HostError> {
