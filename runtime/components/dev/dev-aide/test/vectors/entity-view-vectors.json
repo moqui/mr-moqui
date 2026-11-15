@@ -1003,7 +1003,7 @@
           "builder": "removeRelationship"
         }
       ],
-      "expected": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- the app's entities -->\n<entities>\n    <!-- an example: what the gallery shows -->\n    <entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"exampleId\" type=\"id\" is-pk=\"true\"/>\n        <!-- its name -->\n        <field name=\"exampleName\" type=\"text-medium\"/>\n        <field name=\"statusId\" type=\"id\"/>\n        <relationship type=\"one\" title=\"Priority\" related=\"moqui.basic.Enumeration\"><key-map field-name=\"priorityEnumId\" related=\"enumId\"/></relationship>\n    </entity>\n</entities>\n",
+      "expected": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- the app's entities -->\n<entities>\n    <!-- an example: what the gallery shows -->\n    <entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"exampleId\" type=\"id\" is-pk=\"true\"/>\n        <!-- its name -->\n        <field name=\"exampleName\" type=\"text-medium\"/>\n        <field name=\"statusId\" type=\"id\"/>\n        <relationship type=\"one\" title=\"Priority\" related=\"moqui.basic.Enumeration\">\n            <key-map field-name=\"priorityEnumId\" related=\"enumId\"/>\n        </relationship>\n    </entity>\n</entities>\n",
       "input": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- the app's entities -->\n<entities>\n    <!-- an example: what the gallery shows -->\n    <entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"exampleId\" type=\"id\" is-pk=\"true\"/>\n        <!-- its name -->\n        <field name=\"exampleName\" type=\"text-medium\"/>\n        <field name=\"statusId\" type=\"id\"/>\n        <relationship type=\"one\" related=\"moqui.basic.StatusItem\"/>\n    </entity>\n</entities>\n",
       "name": "a relationship after the last, and one removed",
       "ops": [
@@ -1176,7 +1176,7 @@
           "builder": "insertRelationship"
         }
       ],
-      "expected": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities>\n    <!-- the site's additions -->\n    <extend-entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"dueDate\" type=\"date\"/>\n        <field name=\"priorityEnumId\" type=\"id\"/>\n        <relationship type=\"one\" title=\"Priority\" related=\"moqui.basic.Enumeration\"><key-map field-name=\"priorityEnumId\" related=\"enumId\"/></relationship>\n    </extend-entity>\n</entities>\n",
+      "expected": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities>\n    <!-- the site's additions -->\n    <extend-entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"dueDate\" type=\"date\"/>\n        <field name=\"priorityEnumId\" type=\"id\"/>\n        <relationship type=\"one\" title=\"Priority\" related=\"moqui.basic.Enumeration\">\n            <key-map field-name=\"priorityEnumId\" related=\"enumId\"/>\n        </relationship>\n    </extend-entity>\n</entities>\n",
       "input": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities>\n    <!-- the site's additions -->\n    <extend-entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"dueDate\" type=\"date\"/>\n    </extend-entity>\n</entities>\n",
       "name": "a picklist's field and relationship in an extend-entity, in one list of operations",
       "ops": [
@@ -1539,7 +1539,7 @@
           "builder": "addRelationship"
         }
       ],
-      "expected": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities>\n    <!-- the site's additions -->\n    <extend-entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"dueDate\" type=\"date\"/>\n        <field name=\"ownerPartyId\" type=\"id\"/>\n        <relationship type=\"one\" related=\"mantle.party.Party\"><key-map field-name=\"ownerPartyId\"/></relationship>\n    </extend-entity>\n</entities>\n",
+      "expected": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities>\n    <!-- the site's additions -->\n    <extend-entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"dueDate\" type=\"date\"/>\n        <field name=\"ownerPartyId\" type=\"id\"/>\n        <relationship type=\"one\" related=\"mantle.party.Party\">\n            <key-map field-name=\"ownerPartyId\"/>\n        </relationship>\n    </extend-entity>\n</entities>\n",
       "input": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities>\n    <!-- the site's additions -->\n    <extend-entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"dueDate\" type=\"date\"/>\n    </extend-entity>\n</entities>\n",
       "name": "a reference field and its relationship where there is none yet",
       "ops": [

@@ -222,11 +222,9 @@ feature("an upstream screen in extension mode stages its edits in the site's scr
         buffer.files[0].text.includes(
             '<widgets-extend name="GalleryNote" where="after"><label text="New label" type="p"/></widgets-extend>'
         )
-        buffer.files[0].text.includes('<form-single name="GalleryNote"><field name="noteTitle" after="noteText">')
+        /<form-single name="GalleryNote">\n\s*<field name="noteTitle" after="noteText">/.test(buffer.files[0].text)
         // the first label has no name: the link goes before the nearest anchor, the form
-        buffer.files[0].text.includes(
-            '<widgets-extend name="GalleryNote" where="before"><link url="." text="New link" btn-type="default"/></widgets-extend>'
-        )
+        /<widgets-extend name="GalleryNote" where="before">\n\s*<link url="." text="New link" btn-type="default"\/>\n\s*<\/widgets-extend>/.test(buffer.files[0].text)
         // the screen-extend's own elements: a property set, a move among its siblings and a Remove
         property.status == 302
         moved.status == 302
@@ -234,7 +232,7 @@ feature("an upstream screen in extension mode stages its edits in the site's scr
         removed.status == 302
         own.includes('<label text="Labelled in the extend" type="p"/>')
         !own.includes("New link")
-        own.includes('<form-single name="GalleryNote"><field name="noteTitle" after="noteText">')
+        /<form-single name="GalleryNote">\n\s*<field name="noteTitle" after="noteText">/.test(own)
         baseProperty.errorMessages.some(text => text.includes("for a screen edited in place"))
         ownInsert.errorMessages.some(text => text.includes("take Properties, Remove and Move"))
         !own.includes("New label")

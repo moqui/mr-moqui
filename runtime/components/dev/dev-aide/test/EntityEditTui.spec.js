@@ -101,9 +101,8 @@ feature("edits are staged, not written, and the twin in the terminal shows them 
         // the field and its relationship in the entity's file, the type and values in the seed file, as the browser makes them
         files[0].staged
         files[0].text.includes('<field name="priorityEnumId" type="id"/>')
-        files[0].text.includes(
-            '<relationship type="one" title="Priority" related="moqui.basic.Enumeration"><key-map field-name="priorityEnumId" related="enumId"/></relationship>'
-        )
+        // laid out a line an element, as the file is
+        /<relationship type="one" title="Priority" related="moqui.basic.Enumeration">\n\s*<key-map field-name="priorityEnumId" related="enumId"\/>\n\s*<\/relationship>/.test(files[0].text)
         files[0].text.includes("<description>What the example is called</description>")
         files[1].staged
         files[1].text.includes('<moqui.basic.EnumerationType enumTypeId="ExamplePriority"')

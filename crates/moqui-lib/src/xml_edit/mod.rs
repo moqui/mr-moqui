@@ -433,6 +433,84 @@ fn indent_of(doc: &Doc<'_>, style: &Style, element: usize) -> String {
     }
 }
 
+/// The widest an element stays on one line in [`spread`], its indentation left out.
+const LINE_WIDTH: usize = 100;
+
+/// A fragment written on one line (as the guided editors build them) laid out one element a line, indented by
+/// `style`'s unit, as the file's own elements are: an element breaks when it holds two or more elements, or one that
+/// leaves it wider than [`LINE_WIDTH`]; an element holding text keeps its line, and a fragment with a line break
+/// already, or that does not parse, is left as it is.
+fn spread(fragment: &str, style: &Style) -> String {
+    let fragment = fragment.trim();
+    if fragment.contains('\n') || !fragment.starts_with('<') {
+        return fragment.to_string();
+    }
+    // the fragment may be several elements: under a wrapper, each laid out at the top
+    let wrapped = format!("<_>{fragment}</_>");
+    let Ok(doc) = Doc::parse(&wrapped) else {
+        return fragment.to_string();
+    };
+    let Some(wrapper) = doc.root() else {
+        return fragment.to_string();
+    };
+    let parts: Vec<usize> = doc.nodes[wrapper].children.clone();
+    if !breakable(&doc, &parts) {
+        return fragment.to_string();
+    }
+    let mut out = String::new();
+    for (index, child) in parts.iter().filter(|child| !blank(&doc, **child)).enumerate() {
+        if index > 0 {
+            out.push_str(style.eol);
+        }
+        lay_out(&doc, style, *child, "", &mut out);
+    }
+    out
+}
+
+/// Whether `node` is whitespace text.
+fn blank(doc: &Doc<'_>, node: usize) -> bool {
+    doc.nodes[node].kind == Kind::Text && doc.slice(&doc.nodes[node].span).trim().is_empty()
+}
+
+/// Whether children may go a line each: only elements and comments among them, no text.
+fn breakable(doc: &Doc<'_>, children: &[usize]) -> bool {
+    children
+        .iter()
+        .all(|child| matches!(doc.nodes[*child].kind, Kind::Element | Kind::Comment) || blank(doc, *child))
+}
+
+/// Element (or comment) `node` into `out` at `indent`, its children a line each when it breaks.
+fn lay_out(doc: &Doc<'_>, style: &Style, node: usize, indent: &str, out: &mut String) {
+    let item = &doc.nodes[node];
+    let whole = doc.slice(&item.span);
+    let children: Vec<usize> = item
+        .children
+        .iter()
+        .copied()
+        .filter(|child| !blank(doc, *child))
+        .collect();
+    let elements = doc.elements(node).count();
+    let breaks = item.kind == Kind::Element
+        && !item.self_closing
+        && !children.is_empty()
+        && breakable(doc, &item.children)
+        && (elements >= 2 || indent.len() + whole.len() > LINE_WIDTH);
+    if !breaks {
+        out.push_str(whole);
+        return;
+    }
+    let inner = format!("{indent}{}", style.unit);
+    out.push_str(doc.slice(&item.start_tag));
+    for child in children {
+        out.push_str(style.eol);
+        out.push_str(&inner);
+        lay_out(doc, style, child, &inner, out);
+    }
+    out.push_str(style.eol);
+    out.push_str(indent);
+    out.push_str(doc.slice(&item.end_tag));
+}
+
 /// `fragment` with its line endings the file's and each line after the first indented by `indent` more.
 fn reindent(fragment: &str, indent: &str, style: &Style) -> String {
     let lines: Vec<&str> = fragment
@@ -524,7 +602,7 @@ fn insert(doc: &Doc<'_>, style: &Style, element: usize, position: Position, xml:
                 return Err(Error::new("nothing goes before or after the root element"));
             }
             let indent = indent_of(doc, style, element);
-            let fragment = reindent(xml, &indent, style);
+            let fragment = reindent(&spread(xml, style), &indent, style);
             let start = node.span.start;
             let alone = doc.text[line_start(doc.text, start)..start].trim().is_empty();
             Ok(vec![if position == Position::Before {
@@ -561,7 +639,7 @@ fn insert(doc: &Doc<'_>, style: &Style, element: usize, position: Position, xml:
             }
             let indent = indent_of(doc, style, element);
             let inner = format!("{indent}{}", style.unit);
-            let fragment = reindent(xml, &inner, style);
+            let fragment = reindent(&spread(xml, style), &inner, style);
             if node.self_closing {
                 // `<a x="1"/>` becomes `<a x="1">` + the children + `</a>`
                 let close = node.start_tag.end - 2;
@@ -667,6 +745,48 @@ fn unwrap(doc: &Doc<'_>, style: &Style, element: usize) -> Result<Edits, Error> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A guided insert built on one line goes in one element a line at the file's indent; a short chain of single
+    /// elements, and an element holding text, keep their line.
+    #[test]
+    fn a_one_line_insert_is_laid_out_one_element_a_line() {
+        let text = "<screen-extend>\n    <widgets-extend name=\"Main\"/>\n</screen-extend>\n";
+        let form = "<form-single name=\"Extra\"><field name=\"code\"><default-field title=\"Code\"><text-line size=\"20\"/></default-field></field><field name=\"note\"><default-field><text-area/></default-field></field></form-single>";
+        let applied = apply(
+            text,
+            &[Op::Insert {
+                at: Locator::Path(vec![0]),
+                position: Position::After,
+                xml: form.into(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            applied.text,
+            "<screen-extend>\n    <widgets-extend name=\"Main\"/>\n    <form-single name=\"Extra\">\n        <field name=\"code\"><default-field title=\"Code\"><text-line size=\"20\"/></default-field></field>\n        <field name=\"note\"><default-field><text-area/></default-field></field>\n    </form-single>\n</screen-extend>\n"
+        );
+        // into an empty element, two siblings, with tabs; text and a fragment already laid out stay as they are
+        let tabbed = "<entities>\n\t<entity entity-name=\"A\">\n\t\t<field name=\"x\"/>\n\t</entity>\n\t<extend-entity entity-name=\"B\"/>\n</entities>\n";
+        let applied = apply(
+            tabbed,
+            &[Op::Insert {
+                at: Locator::Path(vec![1]),
+                position: Position::Last,
+                xml: "<field name=\"y\"><description>Why, and how</description></field><field name=\"z\"/>".into(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            applied.text,
+            "<entities>\n\t<entity entity-name=\"A\">\n\t\t<field name=\"x\"/>\n\t</entity>\n\t<extend-entity entity-name=\"B\">\n\t\t<field name=\"y\"><description>Why, and how</description></field>\n\t\t<field name=\"z\"/>\n\t</extend-entity>\n</entities>\n"
+        );
+        let style = Style::of(text);
+        assert_eq!(spread("<a>\n<b/><c/></a>", &style), "<a>\n<b/><c/></a>");
+        assert_eq!(
+            spread("<p>one <b>two</b> three</p>", &style),
+            "<p>one <b>two</b> three</p>"
+        );
+    }
 
     #[derive(Deserialize)]
     struct Vector {
