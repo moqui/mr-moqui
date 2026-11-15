@@ -302,6 +302,112 @@ function entityEdit(entity, build) {
     }
     return {ops: first.concat(build(element || {path, children: [], attrs: []}))}
 }
+// The seed file's tables in the terminal (tui nodes): each a list of its records, with Edit (a field per column, posted
+// as seed_<name>, and one more attribute by name) and Remove on each when `canEdit`, and Add row after it. `tables` are
+// GuidedOps recordTables (a record is keyed by its outline path joined); `url(transition, parameters)` makes a link.
+function seedListNodes(artifact, tables, canEdit, url) {
+    const keyOf = row => row.path.join(".")
+    const cellsOf = (table, row) => table.columns.map(name => (row.values[name] == null ? "" : String(row.values[name])))
+    const form = (id, transition, hidden, values, columns, button) => ({
+        t: "form",
+        id,
+        name: id,
+        kind: "single",
+        method: "post",
+        writes: true,
+        transitionUrl: url(transition),
+        hidden: Object.entries(hidden).map(([name, value]) => ({name, value: String(value)})),
+        c: columns
+            .map(name => ({
+                t: "field",
+                id: id + ".seed_" + name,
+                name: "seed_" + name,
+                title: name,
+                w: {kind: "textLine", value: values[name] == null ? "" : String(values[name])}
+            }))
+            .concat([
+                {
+                    t: "field",
+                    id: id + ".seedAttrName",
+                    name: "seedAttrName",
+                    title: "Another attribute",
+                    w: {kind: "textLine", value: ""}
+                },
+                {
+                    t: "field",
+                    id: id + ".seedAttrValue",
+                    name: "seedAttrValue",
+                    title: "Its value",
+                    w: {kind: "textLine", value: ""}
+                },
+                {t: "field", id: id + ".submitButton", name: "submitButton", title: "", w: {kind: "submit", text: button}}
+            ])
+    })
+    const actions = (table, at, row) => [
+        {
+            t: "dialog",
+            id: "SeedEdit" + at + "_" + keyOf(row),
+            title: "Edit the " + table.entity + " record",
+            button: "Edit",
+            c: [
+                form(
+                    "SeedEditForm" + at + "_" + keyOf(row),
+                    "setSeedValue",
+                    {artifact, seedPath: keyOf(row), seedEntity: table.entity},
+                    row.values,
+                    table.columns,
+                    "Stage"
+                )
+            ]
+        },
+        {
+            t: "link",
+            id: "SeedRemove" + at + "_" + keyOf(row),
+            text: "Remove",
+            method: "post",
+            writes: true,
+            confirm: "Remove this " + table.entity + " record?",
+            url: url("removeSeedRecord", {artifact, seedPath: keyOf(row), seedEntity: table.entity})
+        }
+    ]
+    return tables.flatMap((table, at) =>
+        [
+            {t: "text", id: "SeedTitle" + at, style: "h6", text: table.entity},
+            {
+                t: "formList",
+                id: "SeedRecords" + at,
+                name: "SeedRecords" + at,
+                columns: table.columns.concat(canEdit ? [""] : []).map(name => ({title: name})),
+                rows: table.rows.map(row => ({
+                    id: keyOf(row),
+                    cells: cellsOf(table, row).concat(canEdit ? [actions(table, at, row)] : [])
+                })),
+                paging: {index: 0, size: table.rows.length, count: table.rows.length}
+            }
+        ].concat(
+            canEdit
+                ? [
+                      {
+                          t: "dialog",
+                          id: "SeedAdd" + at,
+                          title: "Add a " + table.entity + " record",
+                          button: "Add row",
+                          c: [
+                              form(
+                                  "SeedAddForm" + at,
+                                  "addSeedRecord",
+                                  {artifact, seedEntity: table.entity},
+                                  {},
+                                  table.columns,
+                                  "Add"
+                              )
+                          ]
+                      }
+                  ]
+                : []
+        )
+    )
+}
 
 // ---- the screen builder ----
 
@@ -526,6 +632,7 @@ function screenIntent(screen, key, intent, values) {
     serviceShortName,
     entityContext,
     entityEdit,
+    seedListNodes,
     screenContext,
     nodePath,
     screenIntent

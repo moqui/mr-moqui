@@ -38,7 +38,8 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   Save (Ctrl+S) writes them in kind order (entities, services, ECA rules, screens, data), with the diff and "Save mine
   over it" or "Take the disk's" when a file changed on disk since, and Discard drops them. The screen builder's twin
   has the outline as a tree, the selected element's properties and intents, and a Preview: the designed screen's own
-  terminal form rendered from the buffer (`moquiPreview=buffer:<id>`).
+  terminal form rendered from the buffer (`moquiPreview=buffer:<id>`). The entity modeler's twin edits the site seed
+  file's records (Edit with a field per column, Remove, Add row per entity), which load after Save.
 - **Docs** (Artifacts › Docs) is the Markdown doc of any artifact, package or tree, made from its template as the server
   has it now, with Mermaid diagrams (a click opens one in a zoom dialog) and a button that copies it; the entity modeler and service writer have a Doc tab,
   the screen builder a Doc panel. **Export docs** writes a tree of them into a repository (`autodoc/` by default), as

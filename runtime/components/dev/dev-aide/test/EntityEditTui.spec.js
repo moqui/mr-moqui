@@ -129,6 +129,107 @@ feature("edits are staged, not written, and the twin in the terminal shows them 
     }
 })
 
+feature("a seed record's Edit, Add row and Remove are staged in the site's seed file, with the tab's list and dialogs", {
+    when() {
+        const f = fixture()
+        f.discard(EXAMPLE)
+        const view = ec.service
+            .sync()
+            .name("org.moqui.devaide.EntityServices.get#EntityView")
+            .parameters({entityName: "moqui.example.Example"})
+            .call().view
+        const seed = {rootId: view.seedFile.rootId, path: view.seedFile.path}
+        f.stage(EXAMPLE, seed.rootId, seed.path, SEED, f.staged(EXAMPLE, [seed]).files[0].baseHash)
+        const twin = dev()
+        // the type is record 0, the enumeration record 1
+        const edited = twin.render(
+            "Entities/EditTui/setSeedValue",
+            {
+                artifact: EXAMPLE,
+                seedPath: "1",
+                seedEntity: "moqui.basic.Enumeration",
+                seed_description: "Uno",
+                seedAttrName: "sequenceNum",
+                seedAttrValue: "5"
+            },
+            "post"
+        )
+        const stale = twin.render(
+            "Entities/EditTui/setSeedValue",
+            {artifact: EXAMPLE, seedPath: "1", seedEntity: "moqui.basic.EnumerationType", seed_description: "Wrong"},
+            "post"
+        )
+        const added = twin.render(
+            "Entities/EditTui/addSeedRecord",
+            {
+                artifact: EXAMPLE,
+                seedEntity: "moqui.basic.Enumeration",
+                seed_enumId: "SpecGuidedTwo",
+                seed_enumTypeId: "SpecGuidedType",
+                seed_description: "Two"
+            },
+            "post"
+        )
+        const afterAdd = f.staged(EXAMPLE, [seed]).files[0].text
+        const removed = twin.render(
+            "Entities/EditTui/removeSeedRecord",
+            {artifact: EXAMPLE, seedPath: "0", seedEntity: "moqui.basic.EnumerationType"},
+            "post"
+        )
+        const afterRemove = f.staged(EXAMPLE, [seed]).files[0].text
+        // the Seed data tab's nodes for the terminal, from the records as staged
+        const guided = ec.resource.script("component://dev-aide/service/org/moqui/devaide/GuidedEdit.js")
+        const entity = guided.entityContext(EXAMPLE)
+        const nodes = guided.seedListNodes(
+            EXAMPLE,
+            entity.ops.entity.recordTables(entity.seedFile.outline),
+            true,
+            (name, parameters) =>
+                name +
+                (parameters
+                    ? "?" +
+                      Object.keys(parameters)
+                          .map(key => key + "=" + parameters[key])
+                          .join("&")
+                    : "")
+        )
+        f.discard(EXAMPLE)
+        return {edited, stale, added, afterAdd, removed, afterRemove, nodes, pending: stagedFiles()}
+    },
+    then({edited, stale, added, afterAdd, removed, afterRemove, nodes, pending}) {
+        edited.status == 302
+        afterAdd.includes(
+            '<moqui.basic.Enumeration enumId="SpecGuidedOne" enumTypeId="SpecGuidedType" description="Uno" sequenceNum="5"/>'
+        )
+        // a record that is not the one the page showed is refused
+        stale.errorMessages.some(text => text.includes("not in the seed file as staged"))
+        !afterAdd.includes("Wrong")
+        // Add row goes after the entity's last record, its columns in the table's order
+        added.status == 302
+        afterAdd.includes('<moqui.basic.Enumeration enumId="SpecGuidedTwo" enumTypeId="SpecGuidedType" description="Two"/>')
+        afterAdd.indexOf('sequenceNum="5"') < afterAdd.indexOf('enumId="SpecGuidedTwo"')
+        removed.status == 302
+        !afterRemove.includes("<moqui.basic.EnumerationType")
+        afterRemove.includes('enumId="SpecGuidedTwo"')
+        // the list of each entity: its columns, Edit's dialog with a field per column, Remove with its question, Add row
+        nodes.length == 3
+        nodes[0].text == "moqui.basic.Enumeration"
+        nodes[1].t == "formList"
+        nodes[1].columns.map(column => column.title).join(",") == "enumId,enumTypeId,description,sequenceNum,"
+        nodes[1].rows[0].id == "0"
+        nodes[1].rows[0].cells[2] == "Uno"
+        nodes[1].rows[0].cells[4][0].t == "dialog"
+        nodes[1].rows[0].cells[4][0].c[0].transitionUrl == "setSeedValue"
+        nodes[1].rows[0].cells[4][0].c[0].c.map(field => field.name).join(",") ==
+            "seed_enumId,seed_enumTypeId,seed_description,seed_sequenceNum,seedAttrName,seedAttrValue,submitButton"
+        nodes[1].rows[0].cells[4][0].c[0].c[2].w.value == "Uno"
+        nodes[1].rows[0].cells[4][1].confirm == "Remove this moqui.basic.Enumeration record?"
+        nodes[1].rows[0].cells[4][1].url.includes("seedPath=0")
+        nodes[2].button == "Add row"
+        pending.count == 0
+    }
+})
+
 feature("Save writes a throw-away root's seed file and loads its records after it", {
     when() {
         const f = fixture()

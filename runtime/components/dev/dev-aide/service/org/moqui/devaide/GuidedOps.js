@@ -377,6 +377,24 @@ function addRecord(outline, table, values) {
         ? [{op: "insert", at: rows[rows.length - 1].path, position: "after", xml}]
         : [{op: "insert", at: (outline && outline.path) || [], position: "last", xml}]
 }
+// The terminal's Edit of a record (its dialog posts every column): each value that differs from the record's, set, or
+// removed when empty; a value not given stays.
+function setRecordValues(row, values) {
+    let list = []
+    for (const [name, value] of Object.entries(values || {})) {
+        if (value == null || String(value) === (row.values[name] == null ? "" : String(row.values[name]))) continue
+        list = list.concat(setRecordValue(row, name, value))
+    }
+    return list
+}
+// A record of a data file's tables by its outline key ("3"), with its table; null when no record is there.
+function recordAt(tables, key) {
+    for (const table of tables || []) {
+        const row = table.rows.find(item => item.path.join(".") === String(key == null ? "" : key))
+        if (row) return {table, row}
+    }
+    return null
+}
 function flagAttr(node, name) {
     const value = attrOf(node, name)
     return value === undefined ? undefined : value === "true"
@@ -1156,6 +1174,8 @@ function outlineRows(outline, openUrl) {
         insertRecords,
         recordTables,
         setRecordValue,
+        setRecordValues,
+        recordAt,
         addRecord,
         fieldOf,
         mergeFields,

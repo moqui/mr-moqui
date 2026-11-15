@@ -166,9 +166,9 @@ feature("an entity's element, Add field's naming and kinds, and a data file's ta
                 }
             ]
         }
-        return {ops, outline, tables, shown, inEntity, server}
+        return {ops, outline, data, tables, shown, inEntity, server}
     },
-    then({ops, outline, tables, shown, inEntity, server}) {
+    then({ops, outline, data, tables, shown, inEntity, server}) {
         ops.findEntityElement(outline, "moqui.example.Example").node.path[0] == 0
         ops.findEntityElement(outline, "mantle.party.Party", ["extend-entity"]).kind == "extend-entity"
         ops.findEntityElement(outline, "moqui.example.Example", ["extend-entity"]) == null
@@ -194,6 +194,18 @@ feature("an entity's element, Add field's naming and kinds, and a data file's ta
         same(tables[0].columns, ["enumId", "enumTypeId", "description"])
         same(ops.setRecordValue(tables[0].rows[0], "description", ""), [])
         same(ops.setRecordValue(tables[0].rows[1], "description", ""), [{op: "remove-attribute", at: [1], name: "description"}])
+        // the terminal's Edit of a record: only what changed, an empty value removed, one not posted kept
+        same(ops.setRecordValues(tables[0].rows[1], {enumId: "B", enumTypeId: "T", description: ""}), [
+            {op: "set-attribute", at: [1], name: "enumTypeId", value: "T"},
+            {op: "remove-attribute", at: [1], name: "description"}
+        ])
+        same(ops.setRecordValues(tables[0].rows[0], {enumId: "A", description: null}), [])
+        ops.recordAt(tables, "2").table.entity == "moqui.basic.EnumerationType"
+        ops.recordAt(tables, "1").row.values.description == "Bee"
+        ops.recordAt(tables, "3") == null
+        same(ops.addRecord(data, tables[1], {enumTypeId: "U"}), [
+            {op: "insert", at: [2], position: "after", xml: '<moqui.basic.EnumerationType enumTypeId="U"/>'}
+        ])
         same(
             shown.map(field => field.name),
             ["widgetId", "widgetName", "dueDate"]
