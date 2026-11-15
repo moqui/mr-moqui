@@ -652,16 +652,13 @@ fn run_entity_ddl(
     Ok(out)
 }
 
-/// `load#SeedFile`: load one data file of a site component into the database, as the modeler does after saving the
-/// seed rows of a Picklist or Status field. Extend tier, site files only (or any file with the upstream toggle on).
-fn load_seed_file(
-    ec: &ExecutionContext,
-    _service: &ServiceInfo<'_>,
-    parameters: &Parameters,
-) -> Result<Parameters, LibError> {
-    let context = Context::of(ec, Tier::Extend)?;
-    let root = context.root(&text(parameters, "rootId"))?;
-    let resolved = context.resolve(root, &text(parameters, "path"))?;
+/// Load one data file the user may write into the database, audited: `load#SeedFile`, and a guided editor's seed
+/// file after its Save (`crate::buffers`). Answers the records loaded.
+pub(crate) fn load_data_file(
+    context: &Context,
+    root: &roots::Root,
+    resolved: &crate::confine::Resolved,
+) -> Result<i64, LibError> {
     context.may_write(root, &resolved.relative)?;
     if !resolved.relative.ends_with(".xml") {
         return Err(LibError::new("a seed data file is an XML file"));
@@ -683,12 +680,22 @@ fn load_seed_file(
             ..Write::default()
         },
     );
-    let loaded = loaded?;
+    Ok(i64::try_from(loaded?.records).unwrap_or(i64::MAX))
+}
+
+/// `load#SeedFile`: load one data file of a site component into the database, as the modeler does after saving the
+/// seed rows of a Picklist or Status field. Extend tier, site files only (or any file with the upstream toggle on).
+fn load_seed_file(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of(ec, Tier::Extend)?;
+    let root = context.root(&text(parameters, "rootId"))?;
+    let resolved = context.resolve(root, &text(parameters, "path"))?;
+    let records = load_data_file(&context, root, &resolved)?;
     let mut out = Parameters::new();
-    out.insert(
-        "records".into(),
-        Value::I64(i64::try_from(loaded.records).unwrap_or(i64::MAX)),
-    );
+    out.insert("records".into(), Value::I64(records));
     out.insert(
         "file".into(),
         Value::string(

@@ -250,4 +250,88 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The Settings row of a root; a discovered root stays with its defaults.</description>
         <in-parameters><parameter name="location" required="true"/></in-parameters>
     </service>
+
+    <!-- The edit buffers of the terminal's guided editors (plans/design-dev-aide.md D14): edits staged per user and
+        artifact, nothing written until Save. -->
+    <service verb="get" noun="EditBuffer" type="rust" location="dev_aide::buffers::get_edit_buffer" allow-remote="false" read-only="true">
+        <description>A guided editor's buffer: what it holds and when it expires, whether it expired with edits in it,
+            and for each file asked its text as staged, else the disk's, else the initial text of a file made on its
+            first save, with its base hash, and with outline and diff when asked.</description>
+        <in-parameters>
+            <parameter name="bufferId"/>
+            <parameter name="target"><description>The artifact edited (service:name, entity:name, screen:location),
+                whose guided buffer id is used when bufferId is not given.</description></parameter>
+            <parameter name="files" type="Object" allow-html="any"><description>A list of {rootId, path, initialText}, or its JSON text.</description></parameter>
+            <parameter name="outline" type="Boolean"/>
+            <parameter name="diff" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="bufferId"/>
+            <parameter name="files" type="List"/>
+            <parameter name="pending" type="Map"/>
+            <parameter name="expired" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="put" noun="EditBuffer" type="rust" location="dev_aide::buffers::put_edit_buffer" allow-remote="false">
+        <description>Stage texts in a guided editor's buffer, each with the hash of the disk text its edits started from;
+            refused for a file the user may not write. Nothing is written.</description>
+        <in-parameters>
+            <parameter name="bufferId"/>
+            <parameter name="target"/>
+            <parameter name="files" type="Object" required="true" allow-html="any"><description>A list of {rootId, path, text, baseHash, load}, or its JSON text.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="bufferId"/>
+            <parameter name="pending" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="apply" noun="EditBufferOps" type="rust" location="dev_aide::buffers::apply_edit_buffer_ops" allow-remote="false">
+        <description>The operations of the lossless XML layer on one file of a guided editor's buffer (its staged text,
+            else the disk's, else initialText), the result staged. Nothing is written.</description>
+        <in-parameters>
+            <parameter name="bufferId"/>
+            <parameter name="target"/>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="initialText" allow-html="any"/>
+            <parameter name="ops" type="Object" required="true" allow-html="any"/>
+            <parameter name="load" type="Boolean"><description>A data file whose records load after Save.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="bufferId"/>
+            <parameter name="pending" type="Map"/>
+            <parameter name="text"/>
+            <parameter name="outline" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="save" noun="EditBuffer" type="rust" location="dev_aide::buffers::save_edit_buffer" allow-remote="false">
+        <description>Write a guided editor's staged files through the save pipeline in kind order (entities, services,
+            ECA rules, screens, data), each at its base hash; a file changed on disk since stops the save and is answered
+            as the conflict with its diff. Then the data files marked to load are loaded, and the buffer is dropped.</description>
+        <in-parameters>
+            <parameter name="bufferId"/>
+            <parameter name="target"/>
+            <parameter name="overwrite" type="Object"><description>[{rootId, path}] saved over the disk's text (Save mine over it).</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="saved" type="List"/>
+            <parameter name="conflict" type="Map"/>
+            <parameter name="loaded" type="List"/>
+            <parameter name="restart" type="Boolean"/>
+            <parameter name="problems" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="clear" noun="EditBuffer" type="rust" location="dev_aide::buffers::clear_edit_buffer" allow-remote="false">
+        <description>Discard a guided editor's buffer, or one file of it (take the disk's).</description>
+        <in-parameters>
+            <parameter name="bufferId"/>
+            <parameter name="target"/>
+            <parameter name="rootId"/>
+            <parameter name="path"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="bufferId"/>
+            <parameter name="pending" type="Map"/>
+        </out-parameters>
+    </service>
 </services>
