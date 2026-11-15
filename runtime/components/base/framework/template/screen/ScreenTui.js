@@ -917,7 +917,7 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
         const focus = attr(node, "focus-field") || "";
         const body = layoutCode(node);
         const transitionCode = transition
-            ? `const $made = sri.makeUrlByType(${jsString(transition)}, "transition", ${S.nodeLit(node, false)}, "true");\n$transitionUrl = $made ? ($made.url || "") : "";\n$formWrites = !!$made && (!$made.isScreenUrl() || $made.isTransition()) && !$made.isReadOnly();\n`
+            ? `const $made = sri.makeUrlByType(${jsString(transition)}, "transition", ${S.nodeLit(node, false)}, "true");\n$transitionUrl = $made ? ($made.url || "") : "";\n$formWrites = !!$made && (!$made.isScreenUrl() || $made.isTransition()) && !$made.isReadOnly();\nif ($made && $made.isScreenUrl() && !$made.isTransition()) $formMethod = "get";\n`
             : "";
         const focusCode = focus
             ? `const $focusName = ec.resource.expand(${jsString(focus)}, "");\nif ($focusName && $focusName !== "null") sri.setFocusField(${jsString(name)} + "." + $focusName);\n`
@@ -954,6 +954,8 @@ try {
     }
     let $transitionUrl = "";
     let $formWrites = false;
+    // a form that goes to a screen, not a transition, opens that screen with its fields as parameters
+    let $formMethod = ${jsString(transition ? "post" : "")};
     ${transitionCode}${transition ? `{
         // the transition's service in-parameters that are parameters of the current screen (EditBudget's budgetId for
         // update#Budget) go with the post, unless the form has a field of that name; another context value that only
@@ -968,7 +970,7 @@ try {
             $hidden.push({name:String($key),value:String($value)});
         }
     }
-    ` : ""}${focusCode}$openChildren({t:"form",id:$uid(${jsString(id)}),name:${jsString(name)},kind:"single",excludeEmptyFields:${attr(node, "exclude-empty-fields") === "true"},${multipart ? "multipart:true," : ""}transitionUrl:$transitionUrl,domId:${domIdExpr(node)},writes:$formWrites,method:${jsString(transition ? "post" : "")},hidden:$hidden,submitMessage:${attr(node, "submit-message") ? S.expandExpr(attr(node, "submit-message")) : '""'},backgroundReloadId:${exprOf(attr(node, "background-reload-id") || "")},backgroundHideId:${exprOf(attr(node, "background-hide-id") || "")}});
+    ` : ""}${focusCode}$openChildren({t:"form",id:$uid(${jsString(id)}),name:${jsString(name)},kind:"single",excludeEmptyFields:${attr(node, "exclude-empty-fields") === "true"},${multipart ? "multipart:true," : ""}transitionUrl:$transitionUrl,domId:${domIdExpr(node)},writes:$formWrites,method:$formMethod,hidden:$hidden,submitMessage:${attr(node, "submit-message") ? S.expandExpr(attr(node, "submit-message")) : '""'},backgroundReloadId:${exprOf(attr(node, "background-reload-id") || "")},backgroundHideId:${exprOf(attr(node, "background-hide-id") || "")}});
     ${body}$closeChildren();
 } finally {
     sri.popContext();

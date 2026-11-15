@@ -108,6 +108,19 @@ impl Session {
             self.reload_with(parameters);
             return;
         }
+        if form.method.eq_ignore_ascii_case("get") {
+            // A form that goes to a screen, not a transition: that screen, with the form's fields as its parameters.
+            let mut location = Location::of_url(&form.transition_url);
+            for (name, value) in fields {
+                if value.is_empty() {
+                    location.parameters.remove(&name);
+                } else {
+                    location.parameters.insert(name, value);
+                }
+            }
+            self.request_level(&location.path, location.parameters, Intent::Navigate { history: true });
+            return;
+        }
         let keys = form
             .fields
             .iter()

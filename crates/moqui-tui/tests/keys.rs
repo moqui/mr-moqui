@@ -535,6 +535,32 @@ fn a_find_form_asks_for_the_screen_with_its_fields_from_the_first_page() {
     assert!(transitions(&link).is_empty());
 }
 
+const GO_JSON: &str = r#"{
+  "v": 1,
+  "screen": { "path": "/here", "title": "Here" },
+  "c": [{
+    "t": "form", "id": "Go", "name": "Go", "transitionUrl": "/there?tab=code&path=old", "method": "get",
+    "hidden": [{ "name": "line", "value": "" }],
+    "c": [{ "t": "field", "id": "Go.rootId", "name": "rootId", "title": "Root", "w": { "kind": "textLine", "value": "" } }]
+  }]
+}"#;
+
+#[test]
+fn a_form_that_goes_to_a_screen_opens_it_with_its_fields() {
+    let link = FakeLink::from_json(&[GO_JSON]).unwrap();
+    let mut session = Session::new(ScreenModel::from_json(GO_JSON).unwrap());
+    session.set_buffer("Go.rootId", "site".to_string());
+    press(&mut session, &link, Key::Enter);
+    let (path, params) = levels(&link).pop().expect("level");
+    assert_eq!(path, "/there");
+    assert_eq!(params.get("rootId").map(String::as_str), Some("site"));
+    assert_eq!(params.get("tab").map(String::as_str), Some("code"));
+    assert_eq!(params.get("path").map(String::as_str), Some("old"));
+    // an empty field leaves the parameter out
+    assert!(!params.contains_key("line"), "{params:?}");
+    assert!(transitions(&link).is_empty());
+}
+
 const FIND_JSON: &str = r#"{
   "v": 1,
   "screen": { "path": "/orders", "title": "Orders" },
