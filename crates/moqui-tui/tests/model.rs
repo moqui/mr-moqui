@@ -197,3 +197,18 @@ fn a_number_card_reads_its_sparkline_and_writes_none_when_it_has_none() {
     let written = serde_json::to_string(&model.c[1]).unwrap();
     assert!(!written.contains("spark"), "{written}");
 }
+
+/// A dynamic container's ids take its prefix, and so does the list a row action's form names, which its submit finds the
+/// selected rows of (the Workspace's Stage selected, in its terminal twin, found none).
+#[test]
+fn a_prefixed_render_prefixes_the_list_a_row_action_form_names() {
+    let mut nodes = vec![moqui_tui::node_of(serde_json::json!(
+        {"t":"form","id":"Stage","name":"Stage","transitionUrl":"/stage","list":"Changes","c":[]}
+    ))
+    .unwrap()];
+    moqui_tui::prefix_ids(&mut nodes, "Twin/");
+    let moqui_tui::Node::Form { id, list, .. } = &nodes[0] else {
+        panic!("{nodes:?}");
+    };
+    assert_eq!((id.as_str(), list.as_str()), ("Twin/Stage", "Twin/Changes"));
+}

@@ -1419,7 +1419,7 @@ fn cell_nodes_mut(cell: &mut Cell, visit: &mut impl FnMut(&mut Node)) {
     }
 }
 
-/// Put `prefix` before every id in `nodes`, and before the list a row action names: the body of a dynamic dialog or
+/// Put `prefix` before every id in `nodes`, and before the list a row action (a dialog, or a form with none) names: the body of a dynamic dialog or
 /// container is its own render, so its ids may be the screen's too.
 pub fn prefix_ids(nodes: &mut [Node], prefix: &str) {
     walk_mut(nodes, &mut |node| {
@@ -1427,7 +1427,7 @@ pub fn prefix_ids(nodes: &mut [Node], prefix: &str) {
         if !id.is_empty() {
             *id = format!("{prefix}{id}");
         }
-        if let Node::Dialog { list, .. } = node {
+        if let Node::Dialog { list, .. } | Node::Form { list, .. } = node {
             if !list.is_empty() {
                 *list = format!("{prefix}{list}");
             }
