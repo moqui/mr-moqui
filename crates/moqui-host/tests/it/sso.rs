@@ -515,6 +515,13 @@ fn an_app_signs_in_in_the_browser_and_takes_its_code_for_a_device_key() {
         .and_then(|rest| rest.split('"').next())
         .expect("the session token in the form")
         .to_string();
+    // the form names the sign-in it was shown for, which the confirmation must carry back
+    let pending = page
+        .split("name=\"pendingId\" value=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .expect("the pending sign-in's id in the form")
+        .to_string();
     // a post without the session's token is refused
     let (status, _, _) = exchange(
         server,
@@ -525,7 +532,7 @@ fn an_app_signs_in_in_the_browser_and_takes_its_code_for_a_device_key() {
                 ("Cookie", &cookie),
                 ("Content-Type", "application/x-www-form-urlencoded"),
             ],
-            "allow=true",
+            &format!("allow=true&pendingId={pending}"),
         ),
     );
     assert_ne!(status, 302, "no code without the session's token");
@@ -538,7 +545,7 @@ fn an_app_signs_in_in_the_browser_and_takes_its_code_for_a_device_key() {
                 ("Cookie", &cookie),
                 ("Content-Type", "application/x-www-form-urlencoded"),
             ],
-            &format!("allow=true&moquiSessionToken={token}"),
+            &format!("allow=true&pendingId={pending}&moquiSessionToken={token}"),
         ),
     );
     assert_eq!(status, 302, "{text}");
