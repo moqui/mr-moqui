@@ -404,6 +404,10 @@ pub struct RenderState {
     pub resolved_paths: RefCell<FastMap<String, super::url::ScreenPath>>,
     /// `makeUrlByType`'s url-type texts with no `${`, localized once a render.
     pub url_types: RefCell<FastMap<String, String>>,
+    /// The first error with a status of its own (a NotFound) that the `<actions>` of a screen in the path raised while
+    /// the response could still take that status: written in place as any render error, then the render's answer, as
+    /// one from `<pre-actions>` is ([`note_actions_failure`]).
+    pub actions_failure: RefCell<Option<Error>>,
 }
 
 impl RenderState {
@@ -460,7 +464,22 @@ impl RenderState {
             link_permitted: RefCell::default(),
             resolved_paths: RefCell::default(),
             url_types: RefCell::default(),
+            actions_failure: RefCell::new(None),
         }
+    }
+}
+
+/// Keep `err`, raised by the `<actions>` of a screen in the path being rendered, as the render's answer when it has a
+/// status of its own (not a general error, which is written in place as Java does; a security error propagates anyway)
+/// and the response has not gone to the client: the shell above the screen has written its header by the time the
+/// screen's actions run, but while it is held the error page and status can still replace it.
+pub(super) fn note_actions_failure(state: &RenderState, err: &Error) {
+    let status = !matches!(
+        err.kind(),
+        ErrorKind::General | ErrorKind::RollbackOnly | ErrorKind::Unavailable
+    );
+    if status && !crate::web::stream::committed() && state.actions_failure.borrow().is_none() {
+        *state.actions_failure.borrow_mut() = Some(Error::of_kind(err.kind(), err.message()));
     }
 }
 
@@ -1126,7 +1145,13 @@ fn render_screens(state: &RenderState, facade: &ScreenFacade) -> Result<(), Erro
         inherited.hit_detail(Some(&state.content_type), true);
     }
     state.screen_path_index.set(info.render_path_difference);
-    render_body(state)
+    render_body(state)?;
+    // a status from a path screen's <actions> answers as from its <pre-actions>, when the response is still held
+    let failure = state.actions_failure.borrow_mut().take();
+    match failure {
+        Some(err) if web::discard_output() => Err(err),
+        _ => Ok(()),
+    }
 }
 
 /// Refuse a path whose screens before `count` include a subscreens item limited to a user group the user is not in
