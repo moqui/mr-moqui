@@ -14,9 +14,12 @@ try {
     }
     let $transitionUrl = "";
     let $formWrites = false;
+    // a form that goes to a screen, not a transition, opens that screen with its fields as parameters
+    let $formMethod = "post";
     const $made = sri.makeUrlByType("create", "transition", {"name":"form-single","attrs":{"name":"NewForm","transition":"create","focus-field":"name","background-hide-id":"New","submit-message":"Saved"},"parent":{"name":"container-dialog","attrs":{"id":"New","button-text":"New ${kind}","title":"Create"},"parent":{"name":"widgets","attrs":{}}}}, "true");
 $transitionUrl = $made ? ($made.url || "") : "";
 $formWrites = !!$made && (!$made.isScreenUrl() || $made.isTransition()) && !$made.isReadOnly();
+if ($made && $made.isScreenUrl() && !$made.isTransition()) $formMethod = "get";
 {
         // the transition's service in-parameters that are parameters of the current screen (EditBudget's budgetId for
         // update#Budget) go with the post, unless the form has a field of that name; another context value that only
@@ -33,7 +36,7 @@ $formWrites = !!$made && (!$made.isScreenUrl() || $made.isTransition()) && !$mad
     }
     const $focusName = ec.resource.expand("name", "");
 if ($focusName && $focusName !== "null") sri.setFocusField("NewForm" + "." + $focusName);
-$openChildren({t:"form",id:$uid("NewForm"),name:"NewForm",kind:"single",excludeEmptyFields:false,transitionUrl:$transitionUrl,domId:(String("NewForm" ?? "") + $sec()),writes:$formWrites,method:"post",hidden:$hidden,submitMessage:ec.resource.expand("Saved"),backgroundReloadId:"",backgroundHideId:"New"});
+$openChildren({t:"form",id:$uid("NewForm"),name:"NewForm",kind:"single",excludeEmptyFields:false,transitionUrl:$transitionUrl,domId:(String("NewForm" ?? "") + $sec()),writes:$formWrites,method:$formMethod,hidden:$hidden,submitMessage:ec.resource.expand("Saved"),backgroundReloadId:"",backgroundHideId:"New"});
     $emit((() => {
             let $required = false;
             const $max = 0;

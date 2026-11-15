@@ -954,9 +954,9 @@ try {
     }
     let $transitionUrl = "";
     let $formWrites = false;
-    // a form that goes to a screen, not a transition, opens that screen with its fields as parameters
-    let $formMethod = ${jsString(transition ? "post" : "")};
-    ${transitionCode}${transition ? `{
+    ${transition ? `// a form that goes to a screen, not a transition, opens that screen with its fields as parameters
+    let $formMethod = "post";
+    ` : ""}${transitionCode}${transition ? `{
         // the transition's service in-parameters that are parameters of the current screen (EditBudget's budgetId for
         // update#Budget) go with the post, unless the form has a field of that name; another context value that only
         // shares a parameter's name (a statusId the form leaves out) is not posted over the record
@@ -970,7 +970,7 @@ try {
             $hidden.push({name:String($key),value:String($value)});
         }
     }
-    ` : ""}${focusCode}$openChildren({t:"form",id:$uid(${jsString(id)}),name:${jsString(name)},kind:"single",excludeEmptyFields:${attr(node, "exclude-empty-fields") === "true"},${multipart ? "multipart:true," : ""}transitionUrl:$transitionUrl,domId:${domIdExpr(node)},writes:$formWrites,method:$formMethod,hidden:$hidden,submitMessage:${attr(node, "submit-message") ? S.expandExpr(attr(node, "submit-message")) : '""'},backgroundReloadId:${exprOf(attr(node, "background-reload-id") || "")},backgroundHideId:${exprOf(attr(node, "background-hide-id") || "")}});
+    ` : ""}${focusCode}$openChildren({t:"form",id:$uid(${jsString(id)}),name:${jsString(name)},kind:"single",excludeEmptyFields:${attr(node, "exclude-empty-fields") === "true"},${multipart ? "multipart:true," : ""}transitionUrl:$transitionUrl,domId:${domIdExpr(node)},writes:$formWrites,method:${transition ? "$formMethod" : '""'},hidden:$hidden,submitMessage:${attr(node, "submit-message") ? S.expandExpr(attr(node, "submit-message")) : '""'},backgroundReloadId:${exprOf(attr(node, "background-reload-id") || "")},backgroundHideId:${exprOf(attr(node, "background-hide-id") || "")}});
     ${body}$closeChildren();
 } finally {
     sri.popContext();
