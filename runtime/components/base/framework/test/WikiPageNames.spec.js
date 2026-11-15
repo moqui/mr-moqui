@@ -190,3 +190,20 @@ feature("combining marks: Devanagari and Thai names are saved, a decomposed (NFD
         r.leadingPost.includes("letters")
     }
 })
+
+feature("a page stored under a decomposed name (a file written elsewhere) is saved where it is, beside its composed twin", {
+    when() {
+        const nfd = "Việt", nfc = nfd.normalize("NFC")
+        const twin = invoke("update#WikiPage", {wikiSpaceId: "SPWKNDB", pageName: nfc, pageText: "composed"})
+        ec.service.sync().name("create#moqui.resource.wiki.WikiPage").parameters({wikiSpaceId: "SPWKNDB", pagePath: nfd}).call()
+        ec.resource.getLocationReference("dbresource://WikiSpace/SPWKNDB/" + nfd + ".md").putText("stored")
+        const saved = invoke("update#WikiPage", {wikiSpaceId: "SPWKNDB", pagePath: nfd, pageName: nfd, pageText: "edited"})
+        return {twin, saved, nfd, text: textAt("dbresource://WikiSpace/SPWKNDB/" + nfd + ".md"),
+            twinText: textAt("dbresource://WikiSpace/SPWKNDB/" + nfc + ".md")}
+    },
+    then(r) {
+        r.twin.error == "" && r.saved.error == ""
+        r.saved.pagePath == r.nfd && r.saved.wikiPageId != r.twin.wikiPageId
+        r.text == "edited" && r.twinText == "composed"
+    }
+})

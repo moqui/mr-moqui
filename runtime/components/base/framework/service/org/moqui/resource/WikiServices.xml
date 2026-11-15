@@ -743,6 +743,10 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- move the page if applicable: move#WikiPage keeps its history and leaves an alias at the old path -->
             <set field="origParentPath" from="pagePath.includes('/') ? pagePath.substring(0, pagePath.lastIndexOf('/')) : ''"/>
             <set field="origPageName" from="pagePath.includes('/') ? pagePath.substring(pagePath.lastIndexOf('/')+1) : pagePath"/>
+            <!-- a page already there keeps a name stored decomposed (a file written elsewhere) when the name given is the
+                same in NFC, as move#WikiPage keeps it: a save is not a rename, and it would collide with a composed twin -->
+            <if condition="!createdRecord &amp;&amp; pageName &amp;&amp; origPageName != pageName &amp;&amp; origPageName.normalize('NFC') === pageName">
+                <set field="pageName" from="origPageName"/></if>
             <!-- TODO: support change of wikiType too -->
             <if condition="pageName &amp;&amp; (origParentPath != (parentPath || '') || origPageName != pageName)">
                 <log message="update#WikiPage move ${wikiSpaceId}/${pagePath} to parentPath ${parentPath || ''} pageName ${pageName}"/>
