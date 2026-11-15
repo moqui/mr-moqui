@@ -339,8 +339,14 @@ impl WebappScripts {
             }
         }
 
+        // Parsed quietly: an enabled servlet's bad pattern is logged once below, and a disabled one's is not used.
         for node in webapp.children_named("servlet") {
-            for pattern in patterns(&node, "a servlet") {
+            let declared: Vec<Pattern> = node
+                .children_named("url-pattern")
+                .into_iter()
+                .filter_map(|pattern| Pattern::parse(&pattern.text().unwrap_or_default()))
+                .collect();
+            for pattern in declared {
                 let segment = match &pattern {
                     Pattern::Exact(path) | Pattern::Prefix(path) => path.trim_start_matches('/').split('/').next(),
                     Pattern::Extension(_) | Pattern::Default => None,

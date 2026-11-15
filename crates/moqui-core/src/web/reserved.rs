@@ -32,7 +32,7 @@
 //! route). A request path, a site page's route, is the framework's when [`is_reserved_path`] says so: its first segment
 //! is wholly reserved, or it is under one of those sub-paths. A name that owns everything under it (a repository group,
 //! a mount, a handle) must stay off the whole segment, since `/ci/runner` would shadow its `ci/runner`: those check
-//! [`is_reserved_name`] and read [`reserved_paths`] (`ec.web.reservedPaths`), which lists both kinds whole.
+//! [`is_reserved_name`] and read [`reserved_paths_of`] (`ec.web.reservedPaths`), which lists both kinds whole.
 
 /// What a reserved segment is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -191,8 +191,9 @@ pub fn is_static(first: &str) -> bool {
         .any(|reserved| reserved.kind == Kind::Static && reserved.segment == first)
 }
 
-/// The reserved first segments, whole and partly reserved alike, in the lists' order: what `ec.web.reservedPaths`
-/// gives, the names no repository group, mount or handle may take ([`is_reserved_name`]).
+/// The reserved first segments, whole and partly reserved alike, in the lists' order: the names no repository group,
+/// mount or handle may take ([`is_reserved_name`]); `ec.web.reservedPaths` adds the conf's servlets
+/// ([`reserved_paths_of`]).
 pub fn reserved_paths() -> Vec<&'static str> {
     RESERVED
         .iter()
