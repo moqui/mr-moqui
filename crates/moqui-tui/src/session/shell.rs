@@ -276,12 +276,6 @@ impl Session {
                 rows.push(row("Recent", &location.path, &url, MenuAct::Url(url.clone())));
             }
         }
-        // The client's own choice: the other key scheme.
-        let other = self.key_scheme().other();
-        let keys = format!("Keys: switch to {}", other.title());
-        if hit(&keys) || hit("key bindings") {
-            rows.push(row("Actions", &keys, "Key bindings", MenuAct::KeyScheme(other)));
-        }
         for action in self.shell.actions.iter().chain(&self.shell.quick_create) {
             if hit(&action.label) {
                 rows.push(row(
@@ -294,6 +288,12 @@ impl Session {
                     },
                 ));
             }
+        }
+        // The client's own action, after the apps': the other key scheme.
+        let other = self.key_scheme().other();
+        let keys = format!("Keys: switch to {}", other.title());
+        if hit(&keys) || hit("key bindings") {
+            rows.push(row("Actions", &keys, "Key bindings", MenuAct::KeyScheme(other)));
         }
         if self.palette_found.0 == palette.text {
             rows.extend(self.palette_found.1.iter().cloned());
