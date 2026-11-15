@@ -122,3 +122,20 @@ feature("a slash, . or .., a control or direction character and a name over 240 
         longest.error == ""
     }
 })
+
+feature("a blog post's title names its page by the same rule (create#WikiBlog and update#WikiBlog)", {
+    when() {
+        const post = invoke("create#WikiBlog", {wikiSpaceId: "SPWKNDB", title: "博客 Ελληνικά", blogText: "<p>x</p>"})
+        return {
+            post,
+            postText: textAt("dbresource://WikiSpace/SPWKNDB/博客 Ελληνικά.html"),
+            slash: invoke("create#WikiBlog", {wikiSpaceId: "SPWKNDB", title: "博客/x", blogText: "<p>x</p>"}).error,
+            renamed: invoke("update#WikiBlog", {wikiBlogId: post.wikiBlogId, title: "博客二"}).error,
+            long: invoke("update#WikiBlog", {wikiBlogId: post.wikiBlogId, title: "说".repeat(81)}).error
+        }
+    },
+    then({post, postText, slash, renamed, long}) {
+        post.error == "" && post.wikiBlogId && postText == "<p>x</p>"
+        slash.includes("letters") && renamed == "" && long.includes("too long")
+    }
+})

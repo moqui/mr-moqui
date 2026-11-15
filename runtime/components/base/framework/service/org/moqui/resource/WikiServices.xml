@@ -3122,8 +3122,8 @@ along with this software (see the LICENSE.md file). If not, see
             <auto-parameters entity-name="moqui.resource.wiki.WikiBlog" include="nonpk">
                 <exclude field-name="smallImageLocation"/></auto-parameters>
             <parameter name="wikiSpaceId" required="true"/>
-            <parameter name="title" required="true">
-                <matches regexp="[\w\.\-,':()!\? ]*" message="Invalid title (letters, digits, [.,'-_:()!? ] only)"/></parameter>
+            <parameter name="title" required="true"><description>The name of the post's page: a name as update#WikiPage
+                takes one</description></parameter>
             <parameter name="summary" allow-html="safe"/>
             <parameter name="publishDate" type="Timestamp" default="ec.user.nowTimestamp"/>
             <parameter name="smallImage" type="FileItem"/>
@@ -3133,6 +3133,11 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="wikiBlogId"/>
         </out-parameters>
         <actions>
+            <!-- the title names the post's page: the rule of update#WikiPage, also when only the post's row changes -->
+            <if condition="title &amp;&amp; (title === '.' || title === '..' || !StringUtilities.isAlphaNumeric(title, &quot;.,'-_:()!? &quot;))">
+                <return error="true" message="Invalid title (letters, digits, [.,'-_:()!? ] only)"/></if>
+            <if condition="title &amp;&amp; encodeURIComponent(title).replace(/%[0-9A-F]{2}/g, '_').length &gt; 240">
+                <return error="true" message="A page name is too long"/></if>
             <if condition="!blogText &amp;&amp; !wikiPageId">
                 <return error="true" message="Blog text or Wiki Page required to create a blog article"/></if>
             <if condition="blogText">
@@ -3155,13 +3160,17 @@ along with this software (see the LICENSE.md file). If not, see
             <auto-parameters entity-name="moqui.resource.wiki.WikiBlog" include="nonpk">
                 <exclude field-name="smallImageLocation"/></auto-parameters>
             <parameter name="wikiBlogId" required="true"/>
-            <parameter name="title">
-                <matches regexp="[\w\.\-,':()!\? ]*" message="Invalid title (letters, digits, [.,'-_:()!? ] only)"/></parameter>
+            <parameter name="title"><description>The name of the post's page: a name as update#WikiPage takes one</description></parameter>
             <parameter name="summary" allow-html="safe"/>
             <parameter name="smallImage" type="FileItem"/>
             <parameter name="blogText" allow-html="any"/>
         </in-parameters>
         <actions>
+            <!-- the title names the post's page: the rule of update#WikiPage, also when only the post's row changes -->
+            <if condition="title &amp;&amp; (title === '.' || title === '..' || !StringUtilities.isAlphaNumeric(title, &quot;.,'-_:()!? &quot;))">
+                <return error="true" message="Invalid title (letters, digits, [.,'-_:()!? ] only)"/></if>
+            <if condition="title &amp;&amp; encodeURIComponent(title).replace(/%[0-9A-F]{2}/g, '_').length &gt; 240">
+                <return error="true" message="A page name is too long"/></if>
             <if condition="blogText">
                 <service-call name="org.moqui.resource.WikiServices.update#WikiPage" out-map="context"
                         in-map="{wikiSpaceId:wikiSpaceId, wikiPageId:wikiPageId, pageName:title, parentPath:wikiSpaceId, wikiType:'html', pageText:blogText}"/>
