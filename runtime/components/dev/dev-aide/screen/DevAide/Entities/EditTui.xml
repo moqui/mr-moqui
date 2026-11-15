@@ -1,0 +1,637 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Entities › Edit's terminal twin (plans/design-dev-aide.md 8, D14): one entity from get#EntityView, its header with
+    where the edits go (the defining file in place, or the site's extend-entity of an upstream entity) and the pending
+    line of the user's edit buffer, and tabs: Fields (Edit, Add by kind with the name made from words as the browser
+    makes it, Remove with what uses the field, Move up and down), Relationships, Indexes, Incoming, EECA rules, the Table
+    (its columns against the fields, its first rows, and for the full tier the changes the table check never makes,
+    behind the table's name typed back), Seed data (Load), Doc and Text (the edit target as staged, read only, and its
+    diff against the disk). Every edit is staged in the buffer (GuidedEdit.js, GuidedOps.js, apply#EditBufferOps); a
+    Picklist's or Status's records go to the site's seed file, which loads after Save. Save writes in kind order. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Edit in the terminal" default-menu-include="false">
+    <parameter name="artifact"/>
+    <parameter name="tab"/>
+    <parameter name="confirmRemove"/>
+
+    <transition name="saveBuffer">
+        <actions><script>ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js').save('entity:' + String(artifact || '').replace(/^(entity|view-entity):/, ''))</script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab"/></error-response>
+    </transition>
+    <transition name="saveMine">
+        <actions><script>ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js').save('entity:' + String(artifact || '').replace(/^(entity|view-entity):/, ''), [{rootId, path}])</script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab"/></error-response>
+    </transition>
+    <transition name="takeDisk">
+        <actions><script><![CDATA[
+            ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js').discard('entity:' + String(artifact || '').replace(/^(entity|view-entity):/, ''), {rootId, path})
+            ec.message.addMessage(ec.l10n.localize("The disk's text is back; the other staged files stay"), 'info')
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab"/></error-response>
+    </transition>
+    <transition name="discardBuffer">
+        <actions><script><![CDATA[
+            ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js').discard('entity:' + String(artifact || '').replace(/^(entity|view-entity):/, ''))
+            ec.message.addMessage(ec.l10n.localize('The unsaved changes are discarded'), 'info')
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab"/></error-response>
+    </transition>
+    <!-- the related entity of a Reference or a relationship: the index's entities by name -->
+    <transition name="entityChoices" read-only="true">
+        <actions><script><![CDATA[
+            const found = ec.service.sync().name('org.moqui.devaide.ArtifactServices.search#Artifacts')
+                .parameters({text: String(term || ''), kinds: 'entity,view-entity', limit: 20}).call() || {}
+            const options = (found.artifacts || []).map((row) => ({value: row.name, label: row.name}))
+            const asked = String(term || '')
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(asked && !options.some((option) => option.value === asked) && asked.indexOf('.') > 0
+                ? [{value: asked, label: asked}].concat(options) : options)
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <!-- the edits: each builds its operations (GuidedOps.js) for the element the edits go to, made first when missing -->
+    <transition name="updateField">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            const entity = guided.entityContext(artifact)
+            const ops = entity.ops.entity
+            const merged = entity.entity ? ops.mergeFields(entity.entity.fields || [], entity.element, entity.edit && entity.edit.inPlace)
+                .find((field) => field.name === fieldName) : null
+            if (!merged) ec.message.addError('No field ' + fieldName)
+            else {
+                // only what changed, so an upstream field gets an override of just that
+                const built = guided.entityEdit(entity, (element) => {
+                    let list = []
+                    const change = (attribute, now, was) => { if (String(now || '') !== String(was || '')) list = list.concat(ops.setFieldAttribute(element, fieldName, attribute, now)) }
+                    change('type', fieldType, merged.type)
+                    change('is-pk', isPk === 'true' ? 'true' : '', merged.isPk ? 'true' : '')
+                    change('not-null', notNull === 'true' ? 'true' : '', merged.notNull ? 'true' : '')
+                    change('default', defaultValue, merged.defaultStr)
+                    const node = element ? ops.childNamed(element, 'field', 'name', fieldName) : null
+                    const was = node ? ((entity.ops.pure.children(node, ['description'])[0] || {}).text || '') : ''
+                    if (String(description || '') !== was) list = list.concat(ops.setFieldDescription(element, fieldName, description || ''))
+                    return list
+                })
+                if (built.refused) ec.message.addError(built.refused)
+                else guided.apply(entity.target, entity.edit, built.ops)
+            }
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="fields"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="fields"/></error-response>
+    </transition>
+    <transition name="addField">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            const entity = guided.entityContext(artifact)
+            const ops = entity.ops.entity
+            const kind = ops.KINDS.includes(fieldKind) ? fieldKind : 'Text'
+            let added = null
+            const built = guided.entityEdit(entity, (element) => {
+                added = ops.addFieldSpec(element, entity.entityName, {kind, words: fieldWords, name: fieldName, type: fieldType, after: afterField,
+                    related: relatedEntity, values: fieldValues, title: fieldTitle, description, isPk: isPk === 'true', notNull: notNull === 'true'})
+                return added.name ? added.ops : []
+            })
+            if (built.refused) ec.message.addError(built.refused)
+            else if (!added || !added.name) ec.message.addError(ec.l10n.localize('A field needs a name: say what it holds'))
+            else if (!/^[a-z][A-Za-z0-9]*$/.test(added.name)) ec.message.addError('A field name is a letter then letters and digits: ' + added.name)
+            else if (added.seed.length && !entity.seed) ec.message.addError(ec.l10n.localize('No site component to write the seed data in: create one on Home'))
+            else {
+                guided.apply(entity.target, entity.edit, built.ops)
+                // a Picklist's or Status's records, in the site's seed data file, loaded after Save
+                if (added.seed.length && !ec.message.hasError()) guided.apply(entity.target, entity.seed, ops.insertRecords((entity.seedFile || {}).outline, added.seed), true)
+            }
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="fields"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="fields"/></error-response>
+    </transition>
+    <transition name="removeField">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            const entity = guided.entityContext(artifact)
+            const built = guided.entityEdit(entity, (element) => entity.ops.entity.removeField(element, fieldName))
+            if (built.refused) ec.message.addError(built.refused)
+            else if (!built.ops.length) ec.message.addError('The field ' + fieldName + ' is not written in ' + (entity.edit ? entity.edit.path : 'the edit target') + ': an upstream field is removed upstream')
+            else guided.apply(entity.target, entity.edit, built.ops)
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="fields"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="fields"/></error-response>
+    </transition>
+    <transition name="moveField">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            const entity = guided.entityContext(artifact)
+            const built = guided.entityEdit(entity, (element) => entity.ops.entity.stepField(element, fieldName, step === 'up' ? -1 : 1))
+            if (built.refused) ec.message.addError(built.refused)
+            else guided.apply(entity.target, entity.edit, built.ops)
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="fields"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="fields"/></error-response>
+    </transition>
+    <transition name="addRelationship">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            const entity = guided.entityContext(artifact)
+            if (!relatedEntity) ec.message.addError(ec.l10n.localize('Name the related entity'))
+            else {
+                const built = guided.entityEdit(entity, (element) => entity.ops.entity.addRelationship(element, {type: relationshipType || 'one', related: relatedEntity,
+                    title: relationshipTitle, keyMaps: keyField ? [{fieldName: keyField, related: relatedField}] : []}))
+                if (built.refused) ec.message.addError(built.refused)
+                else guided.apply(entity.target, entity.edit, built.ops)
+            }
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="relationships"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="relationships"/></error-response>
+    </transition>
+    <transition name="removeRelationship">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            const entity = guided.entityContext(artifact)
+            const built = guided.entityEdit(entity, (element) => entity.ops.entity.removeRelationship(element, relatedEntity, relationshipTitle))
+            if (built.refused) ec.message.addError(built.refused)
+            else if (!built.ops.length) ec.message.addError(ec.l10n.localize('The relationship is not written in the edit target: an upstream one is removed upstream'))
+            else guided.apply(entity.target, entity.edit, built.ops)
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="relationships"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="relationships"/></error-response>
+    </transition>
+    <transition name="addIndex">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            const entity = guided.entityContext(artifact)
+            const fields = String(indexFields || '').split(/[\s,]+/).filter((name) => name)
+            if (!indexName || !fields.length) ec.message.addError(ec.l10n.localize('An index needs a name and its fields'))
+            else {
+                const built = guided.entityEdit(entity, (element) => entity.ops.entity.addIndex(element, {name: indexName, unique: unique === 'true', fields}))
+                if (built.refused) ec.message.addError(built.refused)
+                else guided.apply(entity.target, entity.edit, built.ops)
+            }
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="indexes"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="indexes"/></error-response>
+    </transition>
+    <transition name="removeIndex">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            const entity = guided.entityContext(artifact)
+            const built = guided.entityEdit(entity, (element) => entity.ops.entity.removeIndex(element, indexName))
+            if (built.refused) ec.message.addError(built.refused)
+            else if (!built.ops.length) ec.message.addError(ec.l10n.localize('The index is not written in the edit target: an upstream one is removed upstream'))
+            else guided.apply(entity.target, entity.edit, built.ops)
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="indexes"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="indexes"/></error-response>
+    </transition>
+
+    <!-- the table: what the table check never does, for the full tier, planned then run with the table's name typed back -->
+    <transition name="planDdl">
+        <actions><script><![CDATA[
+            const entityName = String(artifact || '').replace(/^(entity|view-entity):/, '')
+            const out = ec.service.sync().name('org.moqui.devaide.EntityServices.plan#EntityDdl')
+                .parameters({entityName, action: ddlAction, fieldName: fieldName || '', columnName: columnName || ''}).call() || {}
+            if (!ec.message.hasError()) ec.web.sessionAttributes['DevAideGuided.ddl.' + entityName] = JSON.stringify({action: ddlAction,
+                fieldName: fieldName || '', columnName: columnName || '', statements: out.statements || [], table: out.tableName})
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="table"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="table"/></error-response>
+    </transition>
+    <transition name="runDdl">
+        <actions><script><![CDATA[
+            const entityName = String(artifact || '').replace(/^(entity|view-entity):/, '')
+            const out = ec.service.sync().name('org.moqui.devaide.EntityServices.run#EntityDdl').parameters({entityName, action: ddlAction,
+                fieldName: fieldName || '', columnName: columnName || '', confirmTable: confirmTable || ''}).call() || {}
+            if (!ec.message.hasError()) {
+                ec.web.sessionAttributes.remove('DevAideGuided.ddl.' + entityName)
+                ec.message.addMessage('Ran ' + (out.ran || []).length + ' statements', 'success')
+            }
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="table"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="table"/></error-response>
+    </transition>
+    <transition name="cancelDdl">
+        <actions><script>ec.web.sessionAttributes.remove('DevAideGuided.ddl.' + String(artifact || '').replace(/^(entity|view-entity):/, ''))</script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="table"/></default-response>
+    </transition>
+    <transition name="loadSeed">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.devaide.EntityServices.load#SeedFile').parameters({rootId, path}).call() || {}
+            if (!ec.message.hasError()) ec.message.addMessage('Loaded ' + out.records + ' records from ' + out.file, 'success')
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="seed"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="seed"/></error-response>
+    </transition>
+
+    <actions>
+        <script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            const entity = guided.entityContext(artifact)
+            const ops = entity.ops.entity
+            entityName = entity.entityName
+            view = entity.view
+            readError = entity.refused || ''
+            tab = ['fields', 'relationships', 'indexes', 'incoming', 'eeca', 'table', 'seed', 'doc', 'text'].includes(tab) ? tab : 'fields'
+            definition = entity.entity || {}
+            const inPlace = !!(entity.edit && entity.edit.inPlace)
+            editFile = entity.editFile || {}
+            canEdit = !!(view && view.tier !== 'view' && entity.editFile && !entity.editFile.readOnly)
+            full = !!(view && view.tier === 'full')
+            editsGo = !view ? '' : !entity.edit ? 'This entity is upstream and there is no site component to extend it in: create one on Home'
+                : inPlace ? 'Edits go to ' + entity.edit.path : 'Extending in site ' + (entity.edit.component || '') + ': ' + entity.edit.path
+            readOnlyReason = view && entity.editFile && entity.editFile.readOnly ? entity.editFile.readOnlyReason || '' : ''
+            pendingText = guided.pendingText(entity.buffer)
+            bufferExpired = !!entity.buffer.expired
+            const left = guided.taken(entity.target)
+            conflict = left.conflict || null
+            problemRows = (left.problems || []).map((problem) => ({file: problem.file || '', line: problem.line || 0, severity: problem.severity || '', message: problem.message || ''}))
+            headerText = view ? [definition.isViewEntity ? 'view entity' : 'entity', view.artifact ? view.artifact.component + (view.upstream ? ' (upstream)' : ' (site)') : '',
+                'used by ' + (view.usedByCount || 0), (view.extensions || []).length ? (view.extensions || []).length + ' extensions' : ''].filter((part) => part).join(' · ') : ''
+            workspaceUrl = (view && view.artifact && view.artifact.url) || ''
+            refsUrl = '/qapps/dev/Artifacts/Refs?artifactId=' + encodeURIComponent('entity:' + entityName)
+            gridUrl = '/qapps/tools/Data/Grid?entityName=' + encodeURIComponent(entityName)
+            const tabUrl = (name) => sri.buildUrl('.').addParameters({artifact: 'entity:' + entityName, tab: name}).getUrlWithParams()
+            const relationships = (definition.relationships || []).filter((rel) => !rel.isAutoReverse)
+            tabItems = [['fields', 'Fields ' + (definition.fields || []).length], ['relationships', 'Relationships ' + relationships.length],
+                ['indexes', 'Indexes'], ['incoming', 'Incoming'], ['eeca', 'EECA rules ' + ((view && view.eecas) || []).length], ['table', 'Table'],
+                ['seed', 'Seed data'], ['doc', 'Doc'], ['text', 'Text' + (entity.buffer.pending.count ? ' ' + entity.buffer.pending.count : '')]]
+                .map(([name, title]) => ({title, url: tabUrl(name), active: name === tab}))
+
+            // Fields: the server's with the buffer's element over them, each with where it is defined
+            const element = entity.element
+            const origins = {}
+            for (const field of (view && view.fields) || []) origins[field.name] = field
+            const own = (name) => !!(element && ops.childNamed(element, 'field', 'name', name))
+            const ownNames = element ? entity.ops.pure.children(element, ['field']).map((node) => entity.ops.pure.attrOf(node, 'name')) : []
+            fieldRows = (view ? ops.mergeFields(definition.fields || [], element, inPlace) : []).map((field) => {
+                const origin = origins[field.name] || {}
+                const node = element ? ops.childNamed(element, 'field', 'name', field.name) : null
+                const describedBy = node ? entity.ops.pure.children(node, ['description'])[0] : null
+                return {name: field.name, type: field.type || '', kind: ops.kindOf(field, definition.relationships), pk: field.isPk ? 'PK' : '',
+                    notNull: field.notNull ? 'yes' : '', defaultStr: field.defaultStr || '', description: describedBy ? describedBy.text || '' : '',
+                    origin: field.unsaved ? 'staged' : (origin.component || '') + (origin.fromExtension ? ' (extension)' : ''),
+                    pkFlag: field.isPk ? 'true' : '', notNullFlag: field.notNull ? 'true' : '', own: own(field.name),
+                    first: ownNames[0] === field.name, last: ownNames[ownNames.length - 1] === field.name}
+            })
+            fieldTypeOptions = ((view && view.fieldTypes) || []).map((type) => ({type: type.type, label: type.type + (type.sqlType ? ' (' + type.sqlType + ')' : '')}))
+            kindOptions = ops.KINDS.map((kind) => ({kind}))
+            afterOptions = fieldRows.map((field) => ({name: field.name}))
+            // Remove: what uses the field, asked for the one to confirm
+            removeConfirm = null
+            if (confirmRemove && fieldRows.some((field) => field.name === confirmRemove)) {
+                const used = guided.probe('org.moqui.devaide.ArtifactServices.get#Refs', {artifactId: 'field:' + entityName + '.' + confirmRemove, direction: 'in'})
+                const counts = {}
+                for (const ref of used.refs || []) { const kind = ref.other ? ref.other.kind : ref.toKind; counts[kind] = (counts[kind] || 0) + 1 }
+                const words = Object.keys(counts).map((kind) => counts[kind] + ' ' + kind + (counts[kind] === 1 ? '' : 's'))
+                removeConfirm = {name: confirmRemove, text: 'Remove ' + confirmRemove + '? ' + (words.length ? 'It is used in ' + words.join(', ') + '.' : 'Nothing the index knows uses it.')}
+            }
+
+            // Relationships and indexes as the server has them, with the staged element's own after them
+            const relKey = (rel) => (rel.related || rel.relatedEntityName || '') + '#' + (rel.title || '')
+            const ownRels = element ? entity.ops.pure.children(element, ['relationship']).map((node) => ({related: entity.ops.pure.attrOf(node, 'related'),
+                title: entity.ops.pure.attrOf(node, 'title') || '', type: entity.ops.pure.attrOf(node, 'type') || 'one',
+                keys: entity.ops.pure.children(node, ['key-map']).map((key) => entity.ops.pure.attrOf(key, 'field-name') + (entity.ops.pure.attrOf(key, 'related') ? '=' + entity.ops.pure.attrOf(key, 'related') : '')).join(', ')})) : []
+            const ownRelKeys = new Set(ownRels.map(relKey))
+            const serverRelKeys = new Set(relationships.map(relKey))
+            relationshipRows = relationships.map((rel) => ({type: rel.type, related: rel.relatedEntityName, title: rel.title || '',
+                keys: Object.entries(rel.keyMap || {}).map(([from, to]) => from + '=' + to).join(', '), own: ownRelKeys.has(relKey(rel)), state: ''}))
+                .concat(ownRels.filter((rel) => !serverRelKeys.has(relKey(rel))).map((rel) => Object.assign(rel, {own: true, state: 'staged'})))
+            const ownIndexes = element ? entity.ops.pure.children(element, ['index']).map((node) => ({name: entity.ops.pure.attrOf(node, 'name'),
+                unique: entity.ops.pure.attrOf(node, 'unique') === 'true' ? 'yes' : '',
+                fields: entity.ops.pure.children(node, ['index-field']).map((field) => entity.ops.pure.attrOf(field, 'name')).join(', ')})) : []
+            const ownIndexNames = new Set(ownIndexes.map((index) => index.name))
+            const serverIndexNames = new Set((definition.indexes || []).map((index) => index.name))
+            indexRows = (definition.indexes || []).map((index) => ({name: index.name, unique: index.unique ? 'yes' : '', fields: (index.fields || []).join(', '),
+                own: ownIndexNames.has(index.name), state: ''}))
+                .concat(ownIndexes.filter((index) => !serverIndexNames.has(index.name)).map((index) => Object.assign(index, {own: true, state: 'staged'})))
+            incomingRows = (definition.relationships || []).filter((rel) => rel.isAutoReverse).map((rel) => ({related: rel.relatedEntityName, type: rel.type,
+                title: rel.title || '', keys: Object.entries(rel.keyMap || {}).map(([from, to]) => from + '=' + to).join(', ')}))
+            eecaRows = ((view && view.eecas) || []).map((rule) => ({name: rule.name || rule.id || '', refType: rule.refType || '',
+                place: String(rule.path || '').split('/').slice(-2).join('/') + ':' + (rule.line || 0), url: rule.url ? rule.url + '&view=eca' : ''}))
+
+            // the table and its first rows
+            const table = (view && view.table) || {}
+            tableNote = definition.isViewEntity ? 'A view entity has no table of its own.' : table.error ? table.error : !table.exists ? 'No table yet: Save makes it.'
+                : !(table.missingColumns || []).length && !(table.extraColumns || []).length ? 'The table matches the fields.' : ''
+            missingColumns = (table.missingColumns || []).join(', ')
+            extraColumns = (table.extraColumns || []).map((column) => ({column}))
+            dataRows = ((view && view.data && view.data.rows) || [])
+            dataColumns = dataRows.length ? Object.keys(dataRows[0]).filter((name) => name !== 'lastUpdatedStamp').slice(0, 8) : []
+            dataCount = (view && view.data && view.data.count) || 0
+            ddlFieldOptions = (definition.fields || []).map((field) => ({name: field.name, label: field.name + ' → ' + ((definition.sqlTypes || {})[field.name] || '')}))
+            let ddl = null
+            try { ddl = JSON.parse(ec.web.sessionAttributes['DevAideGuided.ddl.' + entityName] || 'null') } catch (err) { ddl = null }
+            ddlPlan = ddl
+            ddlStatements = ddl ? (ddl.statements || []).join(';\n') + ';' : ''
+
+            // Seed data: the site's seed file as staged, its records by entity
+            seedFile = entity.seedFile || null
+            seedTables = seedFile && seedFile.outline ? ops.recordTables(seedFile.outline).map((table) => ({entity: table.entity, columns: table.columns,
+                rows: table.rows.map((row) => table.columns.map((name) => row.values[name] == null ? '' : String(row.values[name])))})) : []
+
+            // Doc and Text: the artifact's doc, and the edit target as staged with its diff against the disk
+            docMarkdown = ''
+            if (tab === 'doc' && view) {
+                const doc = guided.probe('org.moqui.devaide.DocServices.get#ArtifactDoc', {artifactId: 'entity:' + entityName})
+                docMarkdown = doc.markdown || doc.refused || ''
+            }
+            targetText = editFile.text || ''
+            targetDiff = editFile.staged ? editFile.diff || '' : ''
+            targetPath = entity.edit ? entity.edit.path : ''
+            seedDiff = seedFile && seedFile.staged ? seedFile.diff || '' : ''
+        ]]></script>
+    </actions>
+    <widgets>
+        <section name="NotAvailable" condition="!view"><widgets>
+            <label text="Not available: ${readError || 'no entity named'}" type="p" style="text-negative"/>
+            <link url="../List" text="Back to the entities" link-type="anchor"/>
+        </widgets><fail-widgets>
+            <container name="EntityHeader">
+                <label text="${definition.entityName || entityName}" type="h5"/>
+                <label text="${entityName}" type="p" style="m-muted"/>
+                <label text="${headerText}" type="p"/>
+                <label text="${editsGo}" type="p" style="${view.target ? '' : 'text-warning'}"/>
+                <container-row><row-col lg="12">
+                    <link url="${workspaceUrl}" url-type="plain" text="Open in Workspace" link-type="anchor" condition="workspaceUrl"/>
+                    <link url="${refsUrl}" url-type="plain" text="References" link-type="anchor"/>
+                    <link url="${gridUrl}" url-type="plain" text="Open in Data Grid" link-type="anchor" condition="!definition.isViewEntity"/>
+                </row-col></container-row>
+                <label text="Read only: ${readOnlyReason}" type="p" style="text-warning" condition="readOnlyReason"/>
+                <label text="The unsaved changes of this entity were kept two hours and are gone: make them again." type="p" style="text-warning" condition="bufferExpired"/>
+                <section name="Pending" condition="pendingText"><widgets>
+                    <form-single name="PendingSave" transition="saveBuffer">
+                        <field name="artifact" from="'entity:' + entityName"><default-field><hidden/></default-field></field>
+                        <field name="tab"><default-field><hidden/></default-field></field>
+                        <field name="pending"><default-field title=""><display text="${pendingText}"/></default-field></field>
+                        <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                        <field-layout><field-row-big><field-ref name="pending"/><field-ref name="submitButton"/></field-row-big></field-layout>
+                    </form-single>
+                    <link url="discardBuffer" text="Discard" parameter-map="{artifact: 'entity:' + entityName, tab: tab}" btn-type="danger"
+                            confirmation="Discard the unsaved changes of ${entityName}?"/>
+                </widgets></section>
+                <section name="Conflict" condition="conflict"><widgets>
+                    <container-box type="warning"><box-header title="${conflict.path} changed on disk since the edits started"/><box-body>
+                        <label text="The disk's text against yours:" type="p"/>
+                        <label text="${conflict.diff}" type="pre" encode="true"/>
+                        <link url="saveMine" text="Save mine over it" btn-type="danger" confirmation="Write your text over the disk's ${conflict.path}?"
+                                parameter-map="{artifact: 'entity:' + entityName, tab: tab, rootId: conflict.rootId, path: conflict.path}"/>
+                        <link url="takeDisk" text="Take the disk's" parameter-map="{artifact: 'entity:' + entityName, tab: tab, rootId: conflict.rootId, path: conflict.path}"/>
+                    </box-body></container-box>
+                </widgets></section>
+                <section name="SaveProblems" condition="problemRows.length"><widgets>
+                    <form-list name="EntitySaveProblems" list="problemRows" skip-form="true" paginate="false">
+                        <field name="file"><default-field title="File"><display/></default-field></field>
+                        <field name="line"><default-field title="Line"><display/></default-field></field>
+                        <field name="severity"><default-field title="Severity"><display/></default-field></field>
+                        <field name="message"><default-field title="Problem"><display/></default-field></field>
+                    </form-list>
+                </widgets></section>
+            </container>
+
+            <render-mode>
+                <text type="tui"><![CDATA[${JSON.stringify({t: 'subscreens', id: 'EntityEditTabs', kind: 'tab', items: tabItems, c: []})}]]></text>
+                <text type="html,qvt"><![CDATA[<p class="m-dev-tabs">${tabItems.map((item) => item.active ? '<b>' + html(item.title) + '</b>' : '<a href="' + html(item.url) + '">' + html(item.title) + '</a>').join(' · ')}</p>]]></text>
+            </render-mode>
+
+            <section name="FieldsTab" condition="tab == 'fields'"><widgets>
+                <section name="RemoveConfirm" condition="removeConfirm"><widgets>
+                    <container-box type="warning"><box-header title="${removeConfirm.text}"/><box-body>
+                        <link url="removeField" text="Remove ${removeConfirm.name}" btn-type="danger" parameter-map="{artifact: 'entity:' + entityName, fieldName: removeConfirm.name}"/>
+                        <link url="." text="Keep it" parameter-map="{artifact: 'entity:' + entityName, tab: 'fields', confirmRemove: ''}"/>
+                    </box-body></container-box>
+                </widgets></section>
+                <container-dialog id="AddField" button-text="Add field" type="primary" condition="canEdit">
+                    <form-single name="AddFieldForm" transition="addField">
+                        <field name="artifact" from="'entity:' + entityName"><default-field><hidden/></default-field></field>
+                        <field name="fieldKind" from="'Text'"><default-field title="Kind"><drop-down allow-empty="false">
+                            <list-options list="kindOptions" key="${kind}" text="${kind}"/></drop-down></default-field></field>
+                        <field name="fieldWords"><default-field title="What it holds" tooltip="In words, such as Due date: the name is made from them (dueDate)"><text-line size="40"/></default-field></field>
+                        <field name="fieldName"><default-field title="Name" tooltip="Leave empty to make it from the words"><text-line size="30"/></default-field></field>
+                        <field name="fieldType"><default-field title="Type" tooltip="Leave empty for the kind's type"><drop-down allow-empty="true">
+                            <list-options list="fieldTypeOptions" key="${type}" text="${label}"/></drop-down></default-field></field>
+                        <field name="afterField"><default-field title="After"><drop-down allow-empty="true">
+                            <list-options list="afterOptions" key="${name}" text="${name}"/></drop-down></default-field></field>
+                        <field name="relatedEntity"><default-field title="Related entity" tooltip="A Reference's entity">
+                            <drop-down allow-empty="true"><dynamic-options transition="entityChoices" server-search="true" min-length="2"/></drop-down></default-field></field>
+                        <field name="fieldValues"><default-field title="Values" tooltip="A Picklist's values or a Status's statuses, one a line"><text-area rows="4" cols="40"/></default-field></field>
+                        <field name="fieldTitle"><default-field title="Title" tooltip="A Picklist's relationship title"><text-line size="30"/></default-field></field>
+                        <field name="description"><default-field title="Description"><text-line size="60"/></default-field></field>
+                        <field name="isPk"><default-field title="Primary key"><check><option key="true" text=" "/></check></default-field></field>
+                        <field name="notNull"><default-field title="Not null"><check><option key="true" text=" "/></check></default-field></field>
+                        <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                    </form-single>
+                </container-dialog>
+                <form-list name="EntityFields" list="fieldRows" skip-form="true" paginate="false">
+                    <field name="name"><default-field title="Name"><display/></default-field></field>
+                    <field name="type"><default-field title="Type"><display/></default-field></field>
+                    <field name="kind"><default-field title="Kind"><display/></default-field></field>
+                    <field name="pk"><default-field title="PK"><display/></default-field></field>
+                    <field name="notNull"><default-field title="Not null"><display/></default-field></field>
+                    <field name="defaultStr"><default-field title="Default"><display/></default-field></field>
+                    <field name="description"><default-field title="Description"><display/></default-field></field>
+                    <field name="origin"><default-field title="Origin"><display/></default-field></field>
+                    <field name="actions"><default-field title="">
+                        <container-dialog id="EditField_${name}" button-text="Edit" condition="canEdit">
+                            <form-single name="EditFieldForm" transition="updateField" map="{fieldType: type, isPk: pkFlag, notNull: notNullFlag, defaultValue: defaultStr, description: description}">
+                                <field name="artifact" from="'entity:' + entityName"><default-field><hidden/></default-field></field>
+                                <field name="fieldName" from="name"><default-field><hidden/></default-field></field>
+                                <field name="fieldType"><default-field title="Type"><drop-down allow-empty="false">
+                                    <list-options list="fieldTypeOptions" key="${type}" text="${label}"/></drop-down></default-field></field>
+                                <field name="isPk"><default-field title="Primary key"><check><option key="true" text=" "/></check></default-field></field>
+                                <field name="notNull"><default-field title="Not null"><check><option key="true" text=" "/></check></default-field></field>
+                                <field name="defaultValue"><default-field title="Default"><text-line size="30"/></default-field></field>
+                                <field name="description"><default-field title="Description"><text-line size="60"/></default-field></field>
+                                <field name="submitButton"><default-field title="Stage"><submit/></default-field></field>
+                            </form-single>
+                        </container-dialog>
+                        <link url="." text="Remove" condition="canEdit &amp;&amp; own" parameter-map="{artifact: 'entity:' + entityName, tab: 'fields', confirmRemove: name}"/>
+                        <link url="moveField" text="Up" condition="canEdit &amp;&amp; own &amp;&amp; !first" parameter-map="{artifact: 'entity:' + entityName, fieldName: name, step: 'up'}"/>
+                        <link url="moveField" text="Down" condition="canEdit &amp;&amp; own &amp;&amp; !last" parameter-map="{artifact: 'entity:' + entityName, fieldName: name, step: 'down'}"/>
+                    </default-field></field>
+                </form-list>
+            </widgets></section>
+
+            <section name="RelationshipsTab" condition="tab == 'relationships'"><widgets>
+                <container-dialog id="AddRelationship" button-text="Add relationship" condition="canEdit">
+                    <form-single name="AddRelationshipForm" transition="addRelationship">
+                        <field name="artifact" from="'entity:' + entityName"><default-field><hidden/></default-field></field>
+                        <field name="relationshipType" from="'one'"><default-field title="Type"><drop-down allow-empty="false">
+                            <option key="one"/><option key="one-nofk"/><option key="many"/></drop-down></default-field></field>
+                        <field name="relatedEntity"><default-field title="Related entity">
+                            <drop-down allow-empty="false"><dynamic-options transition="entityChoices" server-search="true" min-length="2"/></drop-down></default-field></field>
+                        <field name="relationshipTitle"><default-field title="Title"><text-line size="30"/></default-field></field>
+                        <field name="keyField"><default-field title="Key field" tooltip="This entity's field; empty when the names match"><text-line size="30"/></default-field></field>
+                        <field name="relatedField"><default-field title="Related field"><text-line size="30"/></default-field></field>
+                        <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                    </form-single>
+                </container-dialog>
+                <form-list name="EntityRelationships" list="relationshipRows" skip-form="true" paginate="false">
+                    <field name="type"><default-field title="Type"><display/></default-field></field>
+                    <field name="related"><default-field title="Related"><display/></default-field></field>
+                    <field name="title"><default-field title="Title"><display/></default-field></field>
+                    <field name="keys"><default-field title="Keys"><display/></default-field></field>
+                    <field name="state"><default-field title=""><display/></default-field></field>
+                    <field name="remove"><default-field title="">
+                        <link url="removeRelationship" text="Remove" condition="canEdit &amp;&amp; own" confirmation="Remove the relationship to ${related}${title ? ' (' + title + ')' : ''}?"
+                                parameter-map="{artifact: 'entity:' + entityName, relatedEntity: related, relationshipTitle: title}"/>
+                    </default-field></field>
+                </form-list>
+            </widgets></section>
+
+            <section name="IndexesTab" condition="tab == 'indexes'"><widgets>
+                <container-dialog id="AddIndex" button-text="Add index" condition="canEdit">
+                    <form-single name="AddIndexForm" transition="addIndex">
+                        <field name="artifact" from="'entity:' + entityName"><default-field><hidden/></default-field></field>
+                        <field name="indexName"><default-field title="Name"><text-line size="30"/></default-field></field>
+                        <field name="unique"><default-field title="Unique"><check><option key="true" text=" "/></check></default-field></field>
+                        <field name="indexFields"><default-field title="Fields" tooltip="Field names, comma separated"><text-line size="60"/></default-field></field>
+                        <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                    </form-single>
+                </container-dialog>
+                <form-list name="EntityIndexes" list="indexRows" skip-form="true" paginate="false">
+                    <field name="name"><default-field title="Name"><display/></default-field></field>
+                    <field name="unique"><default-field title="Unique"><display/></default-field></field>
+                    <field name="fields"><default-field title="Fields"><display/></default-field></field>
+                    <field name="state"><default-field title=""><display/></default-field></field>
+                    <field name="remove"><default-field title="">
+                        <link url="removeIndex" text="Remove" condition="canEdit &amp;&amp; own" confirmation="Remove the index ${name}?"
+                                parameter-map="{artifact: 'entity:' + entityName, indexName: name}"/>
+                    </default-field></field>
+                </form-list>
+            </widgets></section>
+
+            <section name="IncomingTab" condition="tab == 'incoming'"><widgets>
+                <label text="The relationships of other entities to this one, as the server reversed them." type="p" style="m-muted"/>
+                <form-list name="EntityIncoming" list="incomingRows" skip-form="true" paginate="false">
+                    <field name="related"><default-field title="From"><display/></default-field></field>
+                    <field name="type"><default-field title="Type"><display/></default-field></field>
+                    <field name="title"><default-field title="Title"><display/></default-field></field>
+                    <field name="keys"><default-field title="Keys"><display/></default-field></field>
+                </form-list>
+            </widgets></section>
+
+            <section name="EecaTab" condition="tab == 'eeca'"><widgets>
+                <label text="No EECA rule acts on this entity." type="p" style="m-muted" condition="!eecaRows.length"/>
+                <form-list name="EntityEecas" list="eecaRows" skip-form="true" paginate="false">
+                    <field name="name"><default-field title="Rule"><display/></default-field></field>
+                    <field name="refType"><default-field title="On"><display/></default-field></field>
+                    <field name="place"><default-field title="File">
+                        <link url="${url}" url-type="plain" text="${place}" link-type="anchor" condition="url"/></default-field></field>
+                </form-list>
+            </widgets></section>
+
+            <section name="TableTab" condition="tab == 'table'"><widgets>
+                <label text="${tableNote}" type="p" condition="tableNote"/>
+                <label text="Missing columns, which Save adds: ${missingColumns}" type="p" style="text-warning" condition="missingColumns"/>
+                <section name="ExtraColumns" condition="extraColumns.length"><widgets>
+                    <label text="Columns no field has, which the table check never drops:" type="p"/>
+                    <form-list name="TableExtraColumns" list="extraColumns" skip-form="true" paginate="false">
+                        <field name="column"><default-field title="Column"><display/></default-field></field>
+                        <field name="actions"><default-field title="">
+                            <link url="planDdl" text="Drop it" condition="full" parameter-map="{artifact: 'entity:' + entityName, ddlAction: 'drop-column', columnName: column}"/>
+                            <container-dialog id="CopyColumn_${column}" button-text="Copy into a field" condition="full">
+                                <form-single name="CopyColumnForm" transition="planDdl">
+                                    <field name="artifact" from="'entity:' + entityName"><default-field><hidden/></default-field></field>
+                                    <field name="ddlAction" from="'copy-column'"><default-field><hidden/></default-field></field>
+                                    <field name="columnName" from="column"><default-field><hidden/></default-field></field>
+                                    <field name="fieldName"><default-field title="Field"><drop-down allow-empty="false">
+                                        <list-options list="ddlFieldOptions" key="${name}" text="${name}"/></drop-down></default-field></field>
+                                    <field name="submitButton"><default-field title="Plan it"><submit/></default-field></field>
+                                </form-single>
+                            </container-dialog>
+                        </default-field></field>
+                    </form-list>
+                </widgets></section>
+                <section name="TableChanges" condition="full &amp;&amp; !definition.isViewEntity"><widgets>
+                    <container-dialog id="ChangeType" button-text="Change a column's type">
+                        <form-single name="ChangeTypeForm" transition="planDdl">
+                            <field name="artifact" from="'entity:' + entityName"><default-field><hidden/></default-field></field>
+                            <field name="ddlAction" from="'change-type'"><default-field><hidden/></default-field></field>
+                            <field name="fieldName"><default-field title="Field"><drop-down allow-empty="false">
+                                <list-options list="ddlFieldOptions" key="${name}" text="${label}"/></drop-down></default-field></field>
+                            <field name="submitButton"><default-field title="Plan it"><submit/></default-field></field>
+                        </form-single>
+                    </container-dialog>
+                    <link url="planDdl" text="Drop and create the table" btn-type="danger" parameter-map="{artifact: 'entity:' + entityName, ddlAction: 'recreate-table'}"/>
+                </widgets></section>
+                <section name="DdlConfirm" condition="ddlPlan"><widgets>
+                    <container-box type="danger"><box-header title="Run on ${ddlPlan.table}?"/><box-body>
+                        <label text="${ddlStatements}" type="pre" encode="true"/>
+                        <form-single name="RunDdlForm" transition="runDdl">
+                            <field name="artifact" from="'entity:' + entityName"><default-field><hidden/></default-field></field>
+                            <field name="ddlAction" from="ddlPlan.action"><default-field><hidden/></default-field></field>
+                            <field name="fieldName" from="ddlPlan.fieldName"><default-field><hidden/></default-field></field>
+                            <field name="columnName" from="ddlPlan.columnName"><default-field><hidden/></default-field></field>
+                            <field name="confirmTable" from="''"><default-field title="Type the table name (${ddlPlan.table}) to run it"><text-line size="30"/></default-field></field>
+                            <field name="submitButton"><default-field title="Run"><submit type="danger"/></default-field></field>
+                        </form-single>
+                        <link url="cancelDdl" text="Cancel" parameter-map="{artifact: 'entity:' + entityName}"/>
+                    </box-body></container-box>
+                </widgets></section>
+                <label text="${dataCount} rows; the first ${dataRows.length}:" type="p" condition="dataRows.length"/>
+                <render-mode>
+                    <text type="tui"><![CDATA[${JSON.stringify(dataRows.length ? [{t: 'formList', id: 'TableRows', name: 'TableRows',
+                        columns: dataColumns.map((name) => ({title: name})),
+                        rows: dataRows.map((row, at) => ({id: String(at), cells: dataColumns.map((name) => row[name] == null ? '' : String(row[name]))})),
+                        paging: {index: 0, size: dataRows.length, count: dataRows.length}}] : [])}]]></text>
+                    <text type="html,qvt"><![CDATA[${dataRows.length ? '<table class="m-dev-grid"><tr>' + dataColumns.map((name) => '<th>' + html(name) + '</th>').join('') + '</tr>' +
+                        dataRows.map((row) => '<tr>' + dataColumns.map((name) => '<td>' + html(row[name] == null ? '' : String(row[name])) + '</td>').join('') + '</tr>').join('') + '</table>' : ''}]]></text>
+                </render-mode>
+            </widgets></section>
+
+            <section name="SeedTab" condition="tab == 'seed'"><widgets>
+                <label text="No site seed data file: create a site component on Home." type="p" style="m-muted" condition="!seedFile"/>
+                <section name="SeedFile" condition="seedFile"><widgets>
+                    <label text="${seedFile.path}${seedFile.missing ? ' (made on its first save)' : ''}${seedFile.staged ? ' · staged, loads after Save' : ''}" type="p"/>
+                    <link url="loadSeed" text="Load this file" condition="!seedFile.missing &amp;&amp; canEdit" confirmation="Load the records of ${seedFile.path} into the database?"
+                            parameter-map="{artifact: 'entity:' + entityName, rootId: seedFile.rootId, path: seedFile.path}"/>
+                    <label text="No records yet." type="p" style="m-muted" condition="!seedTables.length"/>
+                    <render-mode>
+                        <text type="tui"><![CDATA[${JSON.stringify(seedTables.flatMap((table, at) => [{t: 'text', id: 'SeedTitle' + at, style: 'h6', text: table.entity},
+                            {t: 'formList', id: 'SeedRecords' + at, name: 'SeedRecords' + at, columns: table.columns.map((name) => ({title: name})),
+                                rows: table.rows.map((cells, row) => ({id: String(row), cells})), paging: {index: 0, size: table.rows.length, count: table.rows.length}}]))}]]></text>
+                        <text type="html,qvt"><![CDATA[${seedTables.map((table) => '<h6>' + html(table.entity) + '</h6><table class="m-dev-grid"><tr>' + table.columns.map((name) => '<th>' + html(name) + '</th>').join('') + '</tr>' +
+                            table.rows.map((cells) => '<tr>' + cells.map((cell) => '<td>' + html(cell) + '</td>').join('') + '</tr>').join('') + '</table>').join('')}]]></text>
+                    </render-mode>
+                </widgets></section>
+            </widgets></section>
+
+            <section name="DocTab" condition="tab == 'doc'"><widgets>
+                <render-mode>
+                    <text type="tui"><![CDATA[${JSON.stringify({t: 'markdown', id: 'EntityDoc', text: docMarkdown})}]]></text>
+                    <text type="html,qvt"><![CDATA[${ec.resource.markdownHtml(docMarkdown)}]]></text>
+                </render-mode>
+            </widgets></section>
+
+            <section name="TextTab" condition="tab == 'text'"><widgets>
+                <label text="${targetPath ? targetPath + (editFile.staged ? ' as staged' : ' as on disk') + ', read only here: edit it in the Workspace' : 'No file to show'}" type="p" style="m-muted"/>
+                <render-mode>
+                    <text type="tui"><![CDATA[${JSON.stringify(targetPath ? {t: 'component', id: 'EntityTargetText', name: 'code', props: {text: targetText, language: 'xml', readOnly: true, rows: 24}} : [])}]]></text>
+                    <text type="html,qvt"><![CDATA[<pre class="m-dev-mono">${html(targetText)}</pre>]]></text>
+                </render-mode>
+                <section name="TargetDiff" condition="targetDiff"><widgets>
+                    <label text="Staged against the disk" type="h6"/>
+                    <label text="${targetDiff}" type="pre" encode="true"/>
+                </widgets></section>
+                <section name="SeedDiff" condition="seedDiff"><widgets>
+                    <label text="The seed data file, staged against the disk" type="h6"/>
+                    <label text="${seedDiff}" type="pre" encode="true"/>
+                </widgets></section>
+            </widgets></section>
+        </fail-widgets></section>
+    </widgets>
+</screen>
