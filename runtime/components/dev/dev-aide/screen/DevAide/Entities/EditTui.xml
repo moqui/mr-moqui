@@ -17,9 +17,9 @@ along with this software (see the LICENSE.md file). If not, see
     line of the user's edit buffer, and tabs: Fields (Edit, Add by kind with the name made from words as the browser
     makes it, Remove with what uses the field, Move up and down), Relationships, Indexes, Incoming, EECA rules, the Table
     (its columns against the fields, its first rows, and for the full tier the changes the table check never makes,
-    behind the table's name typed back), Seed data (Load), Doc and Text (the edit target as staged, read only, and its
+    behind the table's name typed back), Seed data (each record with Edit and Remove, Add row per entity, Load), Doc and Text (the edit target as staged, read only, and its
     diff against the disk). Every edit is staged in the buffer (GuidedEdit.js, GuidedOps.js, apply#EditBufferOps); a
-    Picklist's or Status's records go to the site's seed file, which loads after Save. Save writes in kind order. -->
+    Picklist's or Status's records, and the seed records' edits, go to the site's seed file, which loads after Save. Save writes in kind order. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Edit in the terminal" default-menu-include="false">
     <parameter name="artifact"/>
@@ -236,6 +236,61 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."><parameter name="artifact"/><parameter name="tab" value="seed"/></default-response>
         <error-response url="."><parameter name="artifact"/><parameter name="tab" value="seed"/></error-response>
     </transition>
+    <!-- the seed file's records: a record by its outline key (seedPath) and entity, its columns posted as seed_<name>
+        and one more attribute by name; staged with the load flag, so the file loads after Save -->
+    <transition name="setSeedValue">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            const entity = guided.entityContext(artifact)
+            const ops = entity.ops.entity
+            const found = ops.recordAt(ops.recordTables((entity.seedFile || {}).outline), seedPath)
+            const extra = String(seedAttrName || '').trim()
+            if (!found || found.table.entity !== seedEntity) ec.message.addError(ec.l10n.localize('That record is not in the seed file as staged: open Seed data again'))
+            else if (extra && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(extra)) ec.message.addError('An attribute name is letters, digits and _: ' + extra)
+            else {
+                const values = {}
+                for (const name of found.table.columns) { const value = ec.context.get('seed_' + name); if (value != null) values[name] = String(value) }
+                if (extra) values[extra] = String(seedAttrValue || '')
+                guided.apply(entity.target, entity.seed, ops.setRecordValues(found.row, values), true)
+            }
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="seed"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="seed"/></error-response>
+    </transition>
+    <transition name="addSeedRecord">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            const entity = guided.entityContext(artifact)
+            const ops = entity.ops.entity
+            const outline = (entity.seedFile || {}).outline
+            const table = ops.recordTables(outline).find((item) => item.entity === seedEntity)
+            const extra = String(seedAttrName || '').trim()
+            if (!table) ec.message.addError(ec.l10n.localize('The seed file has no records of that entity as staged: open Seed data again'))
+            else if (extra && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(extra)) ec.message.addError('An attribute name is letters, digits and _: ' + extra)
+            else {
+                const values = {}
+                for (const name of table.columns) { const value = ec.context.get('seed_' + name); if (value != null && String(value) !== '') values[name] = String(value) }
+                if (extra && seedAttrValue) values[extra] = String(seedAttrValue)
+                const columns = extra && !table.columns.includes(extra) ? table.columns.concat([extra]) : table.columns
+                if (!Object.keys(values).length) ec.message.addError(ec.l10n.localize('Give the record a value'))
+                else guided.apply(entity.target, entity.seed, ops.addRecord(outline, Object.assign({}, table, {columns}), values), true)
+            }
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="seed"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="seed"/></error-response>
+    </transition>
+    <transition name="removeSeedRecord">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            const entity = guided.entityContext(artifact)
+            const ops = entity.ops.entity
+            const found = ops.recordAt(ops.recordTables((entity.seedFile || {}).outline), seedPath)
+            if (!found || found.table.entity !== seedEntity) ec.message.addError(ec.l10n.localize('That record is not in the seed file as staged: open Seed data again'))
+            else guided.apply(entity.target, entity.seed, [{op: 'remove', at: found.row.path}], true)
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="seed"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="seed"/></error-response>
+    </transition>
 
     <actions>
         <script><![CDATA[
@@ -340,8 +395,10 @@ along with this software (see the LICENSE.md file). If not, see
 
             // Seed data: the site's seed file as staged, its records by entity
             seedFile = entity.seedFile || null
-            seedTables = seedFile && seedFile.outline ? ops.recordTables(seedFile.outline).map((table) => ({entity: table.entity, columns: table.columns,
-                rows: table.rows.map((row) => table.columns.map((name) => row.values[name] == null ? '' : String(row.values[name])))})) : []
+            seedTables = seedFile && seedFile.outline ? ops.recordTables(seedFile.outline) : []
+            // in the terminal each table is a list with Edit and Remove on each record, and Add row after it
+            seedNodes = tab === 'seed' ? guided.seedListNodes('entity:' + entityName, seedTables, canEdit,
+                (transition, parameters) => sri.buildUrl(transition).addParameters(parameters || {}).getUrlWithParams()) : []
 
             // Doc and Text: the artifact's doc, and the edit target as staged with its diff against the disk
             docMarkdown = ''
@@ -601,11 +658,9 @@ along with this software (see the LICENSE.md file). If not, see
                             parameter-map="{artifact: 'entity:' + entityName, rootId: seedFile.rootId, path: seedFile.path}"/>
                     <label text="No records yet." type="p" style="m-muted" condition="!seedTables.length"/>
                     <render-mode>
-                        <text type="tui"><![CDATA[${JSON.stringify(seedTables.flatMap((table, at) => [{t: 'text', id: 'SeedTitle' + at, style: 'h6', text: table.entity},
-                            {t: 'formList', id: 'SeedRecords' + at, name: 'SeedRecords' + at, columns: table.columns.map((name) => ({title: name})),
-                                rows: table.rows.map((cells, row) => ({id: String(row), cells})), paging: {index: 0, size: table.rows.length, count: table.rows.length}}]))}]]></text>
+                        <text type="tui"><![CDATA[${JSON.stringify(seedNodes)}]]></text>
                         <text type="html,qvt"><![CDATA[${seedTables.map((table) => '<h6>' + html(table.entity) + '</h6><table class="m-dev-grid"><tr>' + table.columns.map((name) => '<th>' + html(name) + '</th>').join('') + '</tr>' +
-                            table.rows.map((cells) => '<tr>' + cells.map((cell) => '<td>' + html(cell) + '</td>').join('') + '</tr>').join('') + '</table>').join('')}]]></text>
+                            table.rows.map((row) => '<tr>' + table.columns.map((name) => '<td>' + html(row.values[name] == null ? '' : String(row.values[name])) + '</td>').join('') + '</tr>').join('') + '</table>').join('')}]]></text>
                     </render-mode>
                 </widgets></section>
             </widgets></section>

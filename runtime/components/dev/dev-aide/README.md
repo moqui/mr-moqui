@@ -24,9 +24,10 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
 - **Services** is the service writer: a service's settings and parameters, its actions in the logic composer (blocks as
   sentences, chips that edit an attribute, the palette, the generated JavaScript), its SECA rules, and Try in sim with the
   rows it would write, Save as spec and Run spec (in the sim). In the terminal it is `Services/EditTui`: Try, the
-  settings, the parameters, the actions read only and the SECA rules, its edits staged in the user's edit buffer until
-  Save (below). **ECA Rules** lists the active rules of each kind with their
-  files; a rules file opens in the ECA view.
+  settings, the parameters (nested ones too, which the browser's view does not edit yet: Add child in a Map or a List,
+  Edit and Remove on each), the actions read only and the SECA rules (the service a new rule calls is searched by name,
+  as is the one a new button of the screen builder's twin calls), its edits staged in the user's edit buffer until
+  Save (below). **ECA Rules** lists the active rules of each kind with their files; a rules file opens in the ECA view.
 - **Browser** (Artifacts › Browser) is an artifact in the center with what uses it and what it uses, by kind: a
   pan-and-zoom canvas in the browser, and in the terminal Miller columns (`BrowseTui.xml`, the `artifact-browser`
   component) where Enter re-centers on a row, Backspace and `]` walk the trail, `k`, `h` and `x` filter, and the
@@ -38,7 +39,10 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   Save (Ctrl+S) writes them in kind order (entities, services, ECA rules, screens, data), with the diff and "Save mine
   over it" or "Take the disk's" when a file changed on disk since, and Discard drops them. The screen builder's twin
   has the outline as a tree, the selected element's properties and intents, and a Preview: the designed screen's own
-  terminal form rendered from the buffer (`moquiPreview=buffer:<id>`).
+  terminal form rendered from the buffer (`moquiPreview=buffer:<id>`). The entity modeler's twin edits the site seed
+  file's records (Edit with a field per column, Remove, Add row per entity), which load after Save. In extension mode
+  the screen builder's twin shows the site's screen-extend as a tree of its own: its elements take their properties
+  (from the schema of `screen-extend`), Remove and Move, while the screen's own take the inserts, Replace and Override.
 - **Docs** (Artifacts › Docs) is the Markdown doc of any artifact, package or tree, made from its template as the server
   has it now, with Mermaid diagrams (a click opens one in a zoom dialog) and a button that copies it; the entity modeler and service writer have a Doc tab,
   the screen builder a Doc panel. **Export docs** writes a tree of them into a repository (`autodoc/` by default), as

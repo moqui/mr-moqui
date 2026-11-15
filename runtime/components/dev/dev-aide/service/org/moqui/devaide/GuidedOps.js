@@ -377,6 +377,24 @@ function addRecord(outline, table, values) {
         ? [{op: "insert", at: rows[rows.length - 1].path, position: "after", xml}]
         : [{op: "insert", at: (outline && outline.path) || [], position: "last", xml}]
 }
+// The terminal's Edit of a record (its dialog posts every column): each value that differs from the record's, set, or
+// removed when empty; a value not given stays.
+function setRecordValues(row, values) {
+    let list = []
+    for (const [name, value] of Object.entries(values || {})) {
+        if (value == null || String(value) === (row.values[name] == null ? "" : String(row.values[name]))) continue
+        list = list.concat(setRecordValue(row, name, value))
+    }
+    return list
+}
+// A record of a data file's tables by its outline key ("3"), with its table; null when no record is there.
+function recordAt(tables, key) {
+    for (const table of tables || []) {
+        const row = table.rows.find(item => item.path.join(".") === String(key == null ? "" : key))
+        if (row) return {table, row}
+    }
+    return null
+}
 function flagAttr(node, name) {
     const value = attrOf(node, name)
     return value === undefined ? undefined : value === "true"
@@ -571,9 +589,22 @@ function parameterXml(parameter) {
         parameter.description ? "<description>" + escape(parameter.description) + "</description>" : ""
     )
 }
-function addParameter(service, which, parameter) {
+// A parameter added last in in-parameters or out-parameters (made when missing), or with `parent` (a name path, as
+// parameterNode takes it) last inside that parameter, a Map's or a List's: after its parameters, before its
+// validations, as the schema orders them. None when the parent is not there.
+function addParameter(service, which, parameter, parent) {
     const holder = children(service, [which])[0]
     const text = parameterXml(parameter)
+    if (parent && (!Array.isArray(parent) || parent.length)) {
+        const node = parameterNode(service, which, parent)
+        if (!node) return []
+        const nested = children(node, ["parameter", "auto-parameters"])
+        if (nested.length) return [{op: "insert", at: last(nested).path, position: "after", xml: text}]
+        const validation = children(node).find(child => child.name !== "description")
+        return validation
+            ? [{op: "insert", at: validation.path, position: "before", xml: text}]
+            : [{op: "insert", at: node.path, position: "last", xml: text}]
+    }
     if (holder) return [{op: "insert", at: holder.path, position: "last", xml: text}]
     const before = children(service, which === "in-parameters" ? ["out-parameters", "actions"] : ["actions"])[0]
     const made = plainXml(which, [], text)
@@ -581,10 +612,14 @@ function addParameter(service, which, parameter) {
         ? [{op: "insert", at: before.path, position: "before", xml: made}]
         : [{op: "insert", at: service.path, position: "last", xml: made}]
 }
-// A parameter of in-parameters or out-parameters by its name, at the top level.
+// A parameter of in-parameters or out-parameters by its name, or by its path of names (["order", "items"] or
+// "order.items"), each a parameter of the one before.
 function parameterNode(service, which, name) {
-    const holder = children(service, [which])[0]
-    return holder ? children(holder, ["parameter"]).find(child => attrOf(child, "name") === name) || null : null
+    const names = (Array.isArray(name) ? name : String(name == null ? "" : name).split(".")).filter(part => part !== "")
+    let node = names.length ? children(service, [which])[0] || null : null
+    for (const part of names)
+        node = node ? children(node, ["parameter"]).find(child => attrOf(child, "name") === part) || null : null
+    return node
 }
 function removeParameter(service, which, name) {
     const node = parameterNode(service, which, name)
@@ -608,7 +643,8 @@ function editParameter(service, which, name, parameter) {
         list.push({
             op: "insert",
             at: node.path,
-            position: "last",
+            // first, before a Map's or List's parameters, as the schema orders them
+            position: children(node).length ? "first" : "last",
             xml: "<description>" + escape(parameter.description) + "</description>"
         })
     return list
@@ -1156,6 +1192,8 @@ function outlineRows(outline, openUrl) {
         insertRecords,
         recordTables,
         setRecordValue,
+        setRecordValues,
+        recordAt,
         addRecord,
         fieldOf,
         mergeFields,

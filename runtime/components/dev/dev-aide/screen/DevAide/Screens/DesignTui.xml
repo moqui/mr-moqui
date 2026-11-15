@@ -16,7 +16,8 @@ along with this software (see the LICENSE.md file). If not, see
     (rootId, path) or an app page (page), with the pending line of the user's edit buffer, and tabs: Design (the screen's
     outline as a tree, each element opening its properties from the schema digest and the intents its kind offers: Add
     field or column, filter, row action, section or button, Insert before, after or inside, Remove, Move up and down,
-    and in extension mode Replace a section, Override a transition and Actions before or after), Preview (the screen's own
+    and in extension mode Replace a section, Override a transition and Actions before or after, with the site's
+    screen-extend as a tree of its own whose elements (node e:<path>) take their properties, Remove and Move), Preview (the screen's own
     terminal form rendered from the staged buffer, moquiPreview=buffer:<id>), Text (the edit target as staged, read only,
     and its diff) and Extension points. An upstream screen opens in extension mode: every edit goes to the site's
     screen-extend of it, made on its first save. Edits are staged (GuidedEdit.js screenIntent, apply#EditBufferOps);
@@ -63,6 +64,20 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response url="."/>
         <error-response url="."/>
+    </transition>
+    <!-- the service a button calls: the index's services by name, and the name typed when the index has none of it -->
+    <transition name="serviceChoices" read-only="true">
+        <actions><script><![CDATA[
+            const found = ec.service.sync().name('org.moqui.devaide.ArtifactServices.search#Artifacts')
+                .parameters({text: String(term || ''), kinds: 'service', limit: 20}).call() || {}
+            const options = (found.artifacts || []).map((row) => row.name || String(row.id || '').replace(/^service:/, ''))
+                .map((name) => ({value: name, label: name}))
+            const asked = String(term || '')
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(asked && !options.some((option) => option.value === asked) && asked.indexOf('#') > 0
+                ? [{value: asked, label: asked}].concat(options) : options)
+        ]]></script></actions>
+        <default-response type="none"/>
     </transition>
     <!-- every intent: its operations for the selected element (GuidedEdit.js screenIntent), staged in the edit file -->
     <transition name="designEdit">
@@ -116,29 +131,39 @@ along with this software (see the LICENSE.md file). If not, see
 
             // the outline as the tree component's rows, each opening its element
             treeRows = base ? ops.outlineRows(base, (key) => urlOf({tab: 'design', node: key})) : []
-            const selectedPath = guided.nodePath(node)
-            selected = base ? pure.outlineAt(base, selectedPath) : null
+            // in extension mode the site's screen-extend has its own outline, its elements keyed e:<path>
+            const extOutline = extension ? editFile.outline || null : null
+            extensionTreeRows = extOutline ? ops.outlineRows(extOutline, (key) => urlOf({tab: 'design', node: 'e:' + key})) : []
+            ownNode = false
+            selected = null
+            if (extOutline && guided.isExtendKey(node)) {
+                selected = pure.outlineAt(extOutline, guided.nodePath(String(node).slice(2)))
+                ownNode = !!selected
+            }
+            if (!selected) selected = base ? pure.outlineAt(base, guided.nodePath(node)) : null
             if (!selected && base) selected = base
-            const selectedKey = selected ? selected.path.join('.') : ''
-            selectedText = selected ? selected.name + (ops.anchorName(selected) ? ' ' + ops.anchorName(selected) : '') + ' · line ' + selected.line : ''
-            selectedUrl = workspaceBase && selected ? workspaceBase + '&line=' + selected.line : ''
+            const selectedKey = selected ? (ownNode ? 'e:' : '') + selected.path.join('.') : ''
+            selectedText = selected ? (ownNode ? 'The site\'s ' : '') + selected.name + (ops.anchorName(selected) ? ' ' + ops.anchorName(selected) : '') + ' · line ' + selected.line : ''
+            const workspaceEdit = editFile.rootId && !editFile.missing ? '/qapps/dev/Workspace?rootId=' + encodeURIComponent(editFile.rootId) + '&path=' + encodeURIComponent(editFile.path) : ''
+            selectedUrl = selected ? (ownNode ? workspaceEdit : workspaceBase) : ''
+            if (selectedUrl) selectedUrl += '&line=' + selected.line
             nodeValue = selectedKey
-            const form = selected && base ? ops.formOf(base, selected.path) : null
+            const form = selected && base && !ownNode ? ops.formOf(base, selected.path) : null
             formKind = form ? form.name : ''
             formName = form ? pure.attrOf(form, 'name') || '' : ''
             formFieldOptions = form ? pure.children(form, ['field']).map((field) => ({name: pure.attrOf(field, 'name')})).filter((field) => field.name) : []
-            isTransition = !!(selected && selected.name === 'transition')
-            isReplaceable = !!(selected && ['section', 'section-iterate', 'form-single', 'form-list'].includes(selected.name) && ops.anchorName(selected))
-            const nearest = selected && selected.path.length && !ops.anchorName(selected) ? ops.nearestAnchor(base, selected.path) : null
-            anchorNote = extension && selected && selected.path.length ? (ops.anchorName(selected) && ops.ANCHORABLE.includes(selected.name)
+            isTransition = !!(selected && !ownNode && selected.name === 'transition')
+            isReplaceable = !!(selected && !ownNode && ['section', 'section-iterate', 'form-single', 'form-list'].includes(selected.name) && ops.anchorName(selected))
+            const nearest = selected && !ownNode && selected.path.length && !ops.anchorName(selected) ? ops.nearestAnchor(base, selected.path) : null
+            anchorNote = extension && !ownNode && selected && selected.path.length ? (ops.anchorName(selected) && ops.ANCHORABLE.includes(selected.name)
                 ? 'Inserts anchor at ' + ops.anchorName(selected) : nearest ? 'This element has no name: inserts go ' + nearest.where + ' ' + nearest.name + ', the nearest anchor'
                 : 'Nothing near this element has a name to anchor at') : ''
             snippetOptions = ops.SNIPPETS.map((item) => ({key: item.key, label: item.label}))
 
             // the properties of the selected element, from the schema digest: one row per attribute, its values when listed
             propertyRows = []
-            if (tab === 'design' && selected && !extension) {
-                const digest = guided.probe('org.moqui.dev.DevToolsServices.get#SchemaDigest', {rootElement: base.name}).digest
+            if (tab === 'design' && selected && (!extension || ownNode)) {
+                const digest = guided.probe('org.moqui.dev.DevToolsServices.get#SchemaDigest', {rootElement: ownNode ? 'screen-extend' : base.name}).digest
                 const spec = digest ? (digest.elements || []).find((element) => element.name === selected.name) : null
                 const have = Object.fromEntries(selected.attrs || [])
                 const listed = spec ? spec.attributes || [] : []
@@ -151,9 +176,6 @@ along with this software (see the LICENSE.md file). If not, see
                         valueOptions: [], choose: false, about: 'Not in the schema', node: selectedKey})))
             }
 
-            // the extension file as staged: its elements
-            extensionRows = extension && editFile.outline ? pure.children(editFile.outline).map((child) => ({name: child.name,
-                label: ops.labelOf(child).chips.map((chip) => chip.text).join(' '), line: child.line})) : []
             extensionPath = extension && screen.edit ? screen.edit.path : ''
 
             // Preview: the screen's own terminal form, rendered from the staged buffer
@@ -242,7 +264,7 @@ along with this software (see the LICENSE.md file). If not, see
                                 <field name="submitButton"><default-field title=""><submit text="Stage"/></default-field></field>
                             </form-list>
                         </widgets></section>
-                        <label text="Properties change in place only: this screen is extended, so use the intents below." type="p" style="m-muted" condition="extension &amp;&amp; canEdit"/>
+                        <label text="This screen is extended: its own elements take the intents below, and the site's elements in the screen-extend (under them) their properties, Remove and Move." type="p" style="m-muted" condition="extension &amp;&amp; canEdit &amp;&amp; !ownNode"/>
 
                         <section name="Intents" condition="canEdit"><widgets>
                             <container-row><row-col lg="12">
@@ -281,7 +303,7 @@ along with this software (see the LICENSE.md file). If not, see
                                         <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
                                     </form-single>
                                 </container-dialog>
-                                <container-dialog id="InsertWidget" button-text="Insert">
+                                <container-dialog id="InsertWidget" button-text="Insert" condition="!ownNode">
                                     <form-single name="InsertWidgetForm" transition="designEdit" body-parameters="rawXml">
                                         <field name="intent" from="'insert'"><default-field><hidden/></default-field></field>
                                         <field name="node" from="nodeValue"><default-field><hidden/></default-field></field>
@@ -293,7 +315,7 @@ along with this software (see the LICENSE.md file). If not, see
                                         <field name="submitButton"><default-field title="Insert"><submit/></default-field></field>
                                     </form-single>
                                 </container-dialog>
-                                <container-dialog id="AddSection" button-text="Add section">
+                                <container-dialog id="AddSection" button-text="Add section" condition="!ownNode">
                                     <form-single name="AddSectionForm" transition="designEdit">
                                         <field name="intent" from="'addSection'"><default-field><hidden/></default-field></field>
                                         <field name="node" from="nodeValue"><default-field><hidden/></default-field></field>
@@ -306,34 +328,35 @@ along with this software (see the LICENSE.md file). If not, see
                                         <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
                                     </form-single>
                                 </container-dialog>
-                                <container-dialog id="AddButton" button-text="Add button" condition="selected.path.length">
+                                <container-dialog id="AddButton" button-text="Add button" condition="!ownNode &amp;&amp; selected.path.length">
                                     <form-single name="AddButtonForm" transition="designEdit">
                                         <field name="intent" from="'addButton'"><default-field><hidden/></default-field></field>
                                         <field name="node" from="nodeValue"><default-field><hidden/></default-field></field>
                                         <field name="transitionName"><default-field title="Transition"><text-line size="30"/></default-field></field>
-                                        <field name="serviceName"><default-field title="Service it calls"><text-line size="50"/></default-field></field>
+                                        <field name="serviceName"><default-field title="Service it calls">
+                                            <drop-down allow-empty="false"><dynamic-options transition="serviceChoices" server-search="true" min-length="2"/></drop-down></default-field></field>
                                         <field name="linkText"><default-field title="Text"><text-line size="30"/></default-field></field>
                                         <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
                                     </form-single>
                                 </container-dialog>
-                                <link url="designEdit" text="Up" condition="!extension &amp;&amp; selected.path.length" parameter-map="{intent: 'moveUp', node: nodeValue}"/>
-                                <link url="designEdit" text="Down" condition="!extension &amp;&amp; selected.path.length" parameter-map="{intent: 'moveDown', node: nodeValue}"/>
-                                <link url="designEdit" text="Remove" btn-type="danger" condition="!extension &amp;&amp; selected.path.length"
+                                <link url="designEdit" text="Up" condition="(!extension || ownNode) &amp;&amp; selected.path.length" parameter-map="{intent: 'moveUp', node: nodeValue}"/>
+                                <link url="designEdit" text="Down" condition="(!extension || ownNode) &amp;&amp; selected.path.length" parameter-map="{intent: 'moveDown', node: nodeValue}"/>
+                                <link url="designEdit" text="Remove" btn-type="danger" condition="(!extension || ownNode) &amp;&amp; selected.path.length"
                                         confirmation="Remove the ${selected.name}${formName &amp;&amp; selected.name.startsWith('form-') ? ' ' + formName : ''} and what is in it?" parameter-map="{intent: 'remove', node: nodeValue}"/>
                                 <link url="designEdit" text="Replace it in the site" condition="extension &amp;&amp; isReplaceable" parameter-map="{intent: 'replaceSection', node: nodeValue}"/>
                                 <link url="designEdit" text="Override it in the site" condition="extension &amp;&amp; isTransition" parameter-map="{intent: 'overrideTransition', node: nodeValue}"/>
-                                <link url="designEdit" text="Actions before the screen's" condition="extension" parameter-map="{intent: 'actionsBefore', node: nodeValue}"/>
-                                <link url="designEdit" text="Actions after the screen's" condition="extension" parameter-map="{intent: 'actionsAfter', node: nodeValue}"/>
+                                <link url="designEdit" text="Actions before the screen's" condition="extension &amp;&amp; !ownNode" parameter-map="{intent: 'actionsBefore', node: nodeValue}"/>
+                                <link url="designEdit" text="Actions after the screen's" condition="extension &amp;&amp; !ownNode" parameter-map="{intent: 'actionsAfter', node: nodeValue}"/>
                             </row-col></container-row>
                         </widgets></section>
 
                         <section name="ExtensionFile" condition="extension &amp;&amp; extensionPath"><widgets>
                             <label text="The site's ${extensionPath}${editFile.missing ? ' (made on its first save)' : ''}${editFile.staged ? ', staged' : ''}" type="h6"/>
-                            <form-list name="ExtensionElements" list="extensionRows" skip-form="true" paginate="false">
-                                <field name="name"><default-field title="Element"><display/></default-field></field>
-                                <field name="label"><default-field title="Names"><display/></default-field></field>
-                                <field name="line"><default-field title="Line"><display/></default-field></field>
-                            </form-list>
+                            <label text="Nothing in it yet: the intents on the screen's elements add to it." type="p" style="m-muted" condition="!extensionTreeRows.length"/>
+                            <render-mode>
+                                <text type="tui"><![CDATA[${JSON.stringify(extensionTreeRows.length ? {t: 'component', id: 'ExtensionOutline', name: 'tree', props: {rows: extensionTreeRows, columns: ['The site\'s screen-extend']}} : [])}]]></text>
+                                <text type="html,qvt"><![CDATA[<div class="m-dev-mono">${extensionTreeRows.map((row) => '<div style="padding-left: ' + (row.key.split('.').length - 1) + 'em"><a href="' + html(row._open) + '">' + html(row.label) + '</a></div>').join('')}</div>]]></text>
+                            </render-mode>
                         </widgets></section>
                     </row-col>
                 </container-row>
