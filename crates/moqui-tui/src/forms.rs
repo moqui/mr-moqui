@@ -312,6 +312,7 @@ impl Index {
                     background_hide_id,
                     dom_id,
                     writes,
+                    list,
                     c,
                     ..
                 } => {
@@ -341,7 +342,11 @@ impl Index {
                             background_reload_id: background_reload_id.clone(),
                             background_hide_id: background_hide_id.clone(),
                             fields,
-                            selection: at.selection.clone(),
+                            selection: if list.is_empty() {
+                                at.selection.clone()
+                            } else {
+                                Some(list.clone())
+                            },
                             multipart: *multipart,
                             dom_id: dom_id.clone(),
                             writes: *writes,

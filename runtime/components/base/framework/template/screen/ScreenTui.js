@@ -1140,12 +1140,21 @@ try {
             ${fail("exports")}
         }
         ` : "";
-        // The row-selection actions with a dialog: each a dialog of its form, after the list it acts on.
+        // The row-selection actions, after the list they act on: each with a dialog a dialog of its form, and one with none
+        // its form as it is, which names the list (`list`) so its submit posts the selected rows as a dialog's does.
         const selection = child(node, "row-selection");
         const actionDialogs = selection ? childrenNamed(selection, "action").map((action, index) => {
             const dialog = child(action, "dialog");
             const form = child(action, "form-single");
-            if (!dialog || !form) return "";
+            if (!form) return "";
+            if (!dialog) {
+                const open = '$openChildren({t:"form",';
+                const source = form.source || "";
+                if (!source.includes(open)) return source;
+                const rendered = source.replace(open, () => open + "list:$list.id,");
+                const condition = attr(action, "condition");
+                return condition ? `if (${S.heldCode(condition, `action of form-list ${formName}`)}) {\n${rendered}}\n` : rendered;
+            }
             const button = attr(dialog, "button-text");
             const dialogId = attr(dialog, "id") || id + ".action" + index;
             const rendered = `$openChildren({t:"dialog",id:$uid(${jsString(dialogId)}),title:String(${titleOf(attr(dialog, "title") || button)} || ""),button:String(${titleOf(button)} || ""),list:$list.id});

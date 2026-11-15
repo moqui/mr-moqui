@@ -281,7 +281,7 @@ picker the arrows move a day or a week, PgUp and PgDn a month, Home is today and
 
 A list row with fields (a list with a `transition`) opens in the row editor with Enter or `e`: its fields under their
 column titles; Enter or Ctrl+S saves the row, or every row of a `multi` list. A row action (`row-selection` `action`)
-is on F10, and its form posts the rows selected with Space. F10 also offers the current row's dialogs and write links,
+with a `dialog` is on F10; one without is its form after the list. Either form posts the rows selected with Space. F10 also offers the current row's dialogs and write links,
 including those inside a cell container; each keeps its own row's values and confirmation. Ordinary navigation links
 remain on Enter, Right and numbered links. Labels and links in a cell's containers show in the order the screen
 lists them, each under its own name. In the Columns dialog Space shows or hides a field, Alt+Up and Alt+Down move it,

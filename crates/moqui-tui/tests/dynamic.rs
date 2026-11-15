@@ -94,7 +94,10 @@ const LISTS_JSON: &str = r#"{
     { "t": "dialog", "id": "Approve", "title": "Approve", "button": "Approve", "list": "Sel",
       "c": [ { "t": "form", "id": "ApproveForm", "name": "ApproveForm", "transitionUrl": "/lists/approve",
         "c": [ { "t": "field", "id": "ApproveForm.note", "name": "note", "title": "Note", "w": { "kind": "textLine", "value": "" } },
-               { "t": "field", "id": "ApproveForm.go", "name": "go", "title": "Approve", "w": { "kind": "submit", "text": "Approve" } } ] } ] }
+               { "t": "field", "id": "ApproveForm.go", "name": "go", "title": "Approve", "w": { "kind": "submit", "text": "Approve" } } ] } ] },
+    { "t": "form", "id": "TagForm", "name": "TagForm", "transitionUrl": "/lists/tag", "list": "Sel",
+      "c": [ { "t": "field", "id": "TagForm.tag", "name": "tag", "title": "Tag", "w": { "kind": "textLine", "value": "reviewed" } },
+             { "t": "field", "id": "TagForm.go", "name": "go", "title": "Tag selected", "w": { "kind": "submit", "text": "Tag selected" } } ] }
   ]
 }"#;
 
@@ -427,6 +430,31 @@ fn a_row_action_posts_the_selected_rows_and_waits_for_a_selection() {
             "/lists/approve".to_string(),
             // the pressed button's field name goes with the post as name and value, as a browser's submit does
             map(&[("go", "go"), ("itemIds", "S1,S2"), ("note", "ok")])
+        ))
+    );
+    assert!(session.selected("Sel").is_none_or(|set| set.is_empty()));
+}
+
+/// A row-selection action with no dialog is its form after the list (`list` names it): its submit posts the selected
+/// rows as a dialog's does, and waits for a selection.
+#[test]
+fn a_row_action_without_a_dialog_posts_the_selected_rows() {
+    let (mut session, link) = started("/lists", &[LISTS_JSON]);
+    link.answer_transition("/lists/tag", TransitionOutcome::saved("Tagged"));
+    focus(&mut session, &link, "TagForm.go");
+    press(&mut session, &link, Key::Enter);
+    assert!(transitions(&link).is_empty());
+    assert!(session.message().contains("Select the rows first"));
+    focus(&mut session, &link, "Sel");
+    press(&mut session, &link, Key::Down);
+    press(&mut session, &link, Key::Char(' '));
+    focus(&mut session, &link, "TagForm.go");
+    press(&mut session, &link, Key::Enter);
+    assert_eq!(
+        transitions(&link).last(),
+        Some(&(
+            "/lists/tag".to_string(),
+            map(&[("go", "go"), ("itemIds", "S2"), ("tag", "reviewed")])
         ))
     );
     assert!(session.selected("Sel").is_none_or(|set| set.is_empty()));

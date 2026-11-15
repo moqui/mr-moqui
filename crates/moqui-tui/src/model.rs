@@ -447,6 +447,9 @@ pub enum Node {
         /// Its transition is not read-only: a submit by an agent waits for the user's approval.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         writes: bool,
+        /// The list whose selected rows it posts: a row-selection action's form with no dialog, drawn after its list.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        list: String,
         #[serde(default)]
         c: Vec<Node>,
     },

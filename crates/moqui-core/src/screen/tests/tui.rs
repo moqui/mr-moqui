@@ -1225,7 +1225,8 @@ fn a_container_dialog_in_a_list_cell_is_a_dialog_of_its_row() {
     );
 }
 
-/// A row-selection action with a dialog is a dialog after the list, naming the list, with the action's form.
+/// A row-selection action with a dialog is a dialog after the list, naming the list, with the action's form; one with no
+/// dialog is its form after the list, naming the list (it was left out, so the terminal had no way to it).
 #[test]
 fn a_row_selection_action_is_a_dialog_of_its_list() {
     let output = render(
@@ -1249,6 +1250,11 @@ fn a_row_selection_action_is_a_dialog_of_its_list() {
                     <action condition="noSuchAction.call()"><dialog button-text="Broken"/>
                         <form-single name="BrokenForm" transition="broken"><field name="go"><default-field><submit/></default-field></field></form-single>
                     </action>
+                    <action><form-single name="TagForm" transition="tag">
+                        <field name="tag"><default-field><text-line default-value="reviewed"/></default-field></field>
+                        <field name="go"><default-field title="Tag selected"><submit/></default-field></field>
+                    </form-single></action>
+                    <action condition="false"><form-single name="UntagForm" transition="untag"><field name="go"><default-field><submit/></default-field></field></form-single></action>
                 </row-selection>
                 <field name="name"><default-field><display/></default-field></field>
             </form-list>
@@ -1274,6 +1280,14 @@ fn a_row_selection_action_is_a_dialog_of_its_list() {
     assert_eq!(dialogs[0]["c"][0]["name"], json!("BulkForm"));
     assert_eq!(dialogs[0]["c"][0]["c"][0]["name"], json!("status"));
     assert_eq!(dialogs[1]["title"], json!("Close"));
+    let forms: Vec<_> = nodes(&doc)
+        .into_iter()
+        .filter(|node| node.get("t").and_then(Json::as_str) == Some("form") && node.get("list").is_some())
+        .collect();
+    assert_eq!(forms.len(), 1, "{doc}");
+    assert_eq!(forms[0]["name"], json!("TagForm"));
+    assert_eq!(forms[0]["list"], list["id"]);
+    assert!(!body.contains("UntagForm"), "{body}");
     let model = client_model(&body);
     assert!(model.c.iter().any(|node| matches!(
         node,
