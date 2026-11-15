@@ -872,7 +872,8 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:attribute>
         <xs:attribute name="after" type="xs:string">
             <xs:annotation><xs:documentation>For a field a form extension adds (a screen-extend's form-single or
-                form-list, or a form that extends another): the name of the field it goes after. In a form with a
+                form-list, or a form that extends another): the name of the field it goes after, among the form's
+                fields (the order a form with no layout or columns shows). In a form with a
                 field-layout its field-ref goes after that field's, in the same row or group; in a form-list with
                 form-list-column elements it gets a column of its own after the column that holds that field. With
                 no after, or a name the form does not have, it goes last.</xs:documentation></xs:annotation>
