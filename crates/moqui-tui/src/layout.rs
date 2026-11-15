@@ -544,6 +544,32 @@ pub struct LaidTabs {
     pub items: Vec<(String, bool)>,
     /// Each tab's url, for a click; empty for a disabled tab, which is drawn dimmed and is not a link.
     pub urls: Vec<String>,
+    /// The index of the first tab on each line: tabs that do not fit the width go on to the next line.
+    pub line_starts: Vec<usize>,
+}
+
+impl LaidTabs {
+    /// The tab's text as drawn: its number, for Alt+n, and its title.
+    #[must_use]
+    pub fn text(at: usize, title: &str) -> String {
+        format!("{}:{title}", at + 1)
+    }
+
+    /// The first tab of each line when the tabs, two columns apart, are laid in `width`.
+    fn lines_in(items: &[(String, bool)], width: usize) -> Vec<usize> {
+        let mut starts = vec![0];
+        let mut used = 0;
+        for (at, (title, _)) in items.iter().enumerate() {
+            let wide = display_width(&Self::text(at, title));
+            if at > 0 && used + 2 + wide > width {
+                starts.push(at);
+                used = wide;
+            } else {
+                used += if at == 0 { wide } else { 2 + wide };
+            }
+        }
+        starts
+    }
 }
 
 impl Piece {
@@ -563,7 +589,8 @@ impl Piece {
             Self::List(list) => list.height(),
             Self::Tree(tree) => tree.rows.len().max(1),
             Self::Lines(lines) => lines.lines.len().max(1),
-            Self::Inline(_) | Self::Tabs(_) | Self::Status(_) | Self::Placeholder { .. } | Self::Error { .. } => 1,
+            Self::Tabs(tabs) => tabs.line_starts.len().max(1),
+            Self::Inline(_) | Self::Status(_) | Self::Placeholder { .. } | Self::Error { .. } => 1,
         }
     }
 }
@@ -990,9 +1017,11 @@ fn place_subscreens(
         }
         _ => {
             if kind != "popup" && items.len() > 1 {
+                let titles: Vec<(String, bool)> = items.iter().map(|item| (item.title.clone(), item.active)).collect();
                 pieces.push(Piece::Tabs(LaidTabs {
                     id: id.to_string(),
-                    items: items.iter().map(|item| (item.title.clone(), item.active)).collect(),
+                    line_starts: LaidTabs::lines_in(&titles, usize::from(width)),
+                    items: titles,
                     urls: items
                         .iter()
                         .map(|item| if item.disabled { String::new() } else { item.url.clone() })
