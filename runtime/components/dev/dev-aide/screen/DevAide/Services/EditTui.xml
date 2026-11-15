@@ -152,7 +152,11 @@ along with this software (see the LICENSE.md file). If not, see
             const parameters = ops.service.tryParameters(values, inParameters)
             const out = ec.service.sync().name('org.moqui.devaide.ServiceWriterServices.try#Service')
                 .parameters({serviceName, parameters: JSON.stringify(parameters), real, confirm: real}).call() || {}
-            if (!ec.message.hasError()) ec.web.sessionAttributes['DevAideTry.result.' + serviceName] = JSON.stringify(Object.assign({parameters}, out.result || {}))
+            if (!ec.message.hasError()) {
+                ec.web.sessionAttributes['DevAideTry.result.' + serviceName] = JSON.stringify(Object.assign({parameters}, out.result || {}))
+                // the run's own word, not the "Saved" a form's post says by default
+                ec.message.addMessage(ec.l10n.localize(real ? 'Ran for real' : 'Ran in the sim: nothing kept'), (out.result || {}).failed ? 'warning' : 'info')
+            }
         ]]></script></actions>
         <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="try"/></default-response>
         <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="try"/></error-response>
@@ -199,6 +203,7 @@ along with this software (see the LICENSE.md file). If not, see
             const out = ec.service.sync().name('org.moqui.devaide.ServiceWriterServices.try#Snippet')
                 .parameters({language, body, parameters: JSON.stringify(values)}).call() || {}
             ec.web.sessionAttributes['DevAideTry.snippet.' + serviceName] = JSON.stringify({language, body, result: out.result || null})
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Ran the snippet in the sim: nothing kept'), 'info')
         ]]></script></actions>
         <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="try"/></default-response>
         <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="try"/></error-response>
