@@ -28,7 +28,8 @@ along with this software (see the LICENSE.md file). If not, see
                 maxCallsPerUserPerDay:maxCallsPerUserPerDay, maxCallsPerDay:maxCallsPerDay, authFailureLimit:authFailureLimit,
                 authFailureWindowSeconds:authFailureWindowSeconds, authBlockSeconds:authBlockSeconds, homeCountryCode:homeCountryCode,
                 emergencyNumbers:emergencyNumbers, premiumPrefixes:premiumPrefixes, smsMaxPerDay:smsMaxPerDay,
-                smsMaxPerUserPerDay:smsMaxPerUserPerDay, smsSystemMaxPerDay:smsSystemMaxPerDay, smsSystemNumber:smsSystemNumber}"/>
+                smsMaxPerUserPerDay:smsMaxPerUserPerDay, smsSystemMaxPerDay:smsSystemMaxPerDay, smsSystemNumber:smsSystemNumber,
+                smsMaxPromotionalPerNumber:smsMaxPromotionalPerNumber}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Limits saved</message></if></actions>
         <default-response url="."/>
     </transition>
@@ -88,6 +89,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="smsSystemMaxPerDay"><default-field title="System texts in a day" tooltip="Sign-in codes and other texts of the system: a budget of their own, which people's texts do not use"><text-line size="6"/></default-field></field>
                 <field name="smsSystemNumber"><default-field title="System texts from" tooltip="Sign-in codes and other texts of the system go from this number">
                     <drop-down allow-empty="true"><list-options list="textNumberOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                <field name="smsMaxPromotionalPerNumber"><default-field title="Promotional texts in a day per number" tooltip="A campaign's texts from one of our numbers: counted for the number, apart from the system's texts"><text-line size="6"/></default-field></field>
                 <field name="submitButton"><default-field title="Save limits"><submit/></default-field></field>
                 <field-layout>
                     <field-row><field-ref name="internationalEnabled"/><field-ref name="premiumEnabled"/></field-row>
@@ -98,6 +100,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <field-row><field-ref name="emergencyNumbers"/><field-ref name="premiumPrefixes"/></field-row>
                     <field-row><field-ref name="smsMaxPerDay"/><field-ref name="smsMaxPerUserPerDay"/></field-row>
                     <field-row><field-ref name="smsSystemMaxPerDay"/><field-ref name="smsSystemNumber"/></field-row>
+                    <field-ref name="smsMaxPromotionalPerNumber"/>
                     <field-ref name="submitButton"/>
                 </field-layout>
             </form-single>

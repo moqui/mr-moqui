@@ -15,8 +15,9 @@
 //! SMS and MMS (plans/archive/Comms-Framework.md §7.1 C4-SMS) against a fake Telnyx on loopback: a provider and a number with no
 //! SIP engine; webhooks signed, badly signed, replayed and out of their window; duplicate callbacks; delivery receipts;
 //! MMS in and out within the limits; an uncertain send that is not sent again; refusals before the provider (an opt-out, a
-//! promotional text with no consent, an international number, a number not granted, the day's limit); the number pair's
-//! room shared by a text and a call; and a sign-in code through the real sender, kept in no room.
+//! promotional text with no consent, an international number, a number not granted, the day's limit); a campaign's
+//! promotional text asked of a conf's sms-consent provider and counted for its number, apart from the system's own;
+//! the number pair's room shared by a text and a call; and a sign-in code through the real sender, kept in no room.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::{Read, Write};
@@ -248,10 +249,15 @@ fn login(user_id: &str) {
 /// A number (ours) routed to alice, granted to alice and bob, its texts through bridge SMS1 on a fake Telnyx; the system
 /// texts from it.
 fn bed() -> Bed {
+    bed_with("")
+}
+
+/// [`bed`] on the conf `conf_text`.
+fn bed_with(conf_text: &str) -> Bed {
     moqui_lib::env::set_property("channels_public_url", "https://moqui.example.test");
     moqui_lib::env::set_property("channels_media_key", "a-test-media-key");
     let ctx = ExecutionContextFactory::test_context_in(
-        "",
+        conf_text,
         moqui_core::service::ServicePools::inline(),
         moqui_core::context::framework_dir(),
     );
@@ -1063,6 +1069,136 @@ fn refusals_come_before_the_provider() {
     set_policy("smsSystemMaxPerDay", 2);
     assert_eq!(system(THEIRS, false), ("false".to_string(), "dailyLimit".to_string()));
     assert_eq!(bed.fake.sends().len(), 3);
+}
+
+/// The sms-consent provider a component's conf registers (as Mantle does): yes for THEIRS, no for NO_CONSENT, nothing
+/// for another number (read from ec.context: toNumber is also the scripts' global number helper). Its service needs a user, so it answers for the system only because it runs with authorization
+/// disabled.
+const CONSENT_SERVICES: &str = r#"<services>
+    <service verb="check" noun="SmsConsent">
+        <in-parameters><parameter name="fromNumber" required="true"/><parameter name="toNumber" required="true"/></in-parameters>
+        <out-parameters><parameter name="consent" type="Boolean"/></out-parameters>
+        <actions><script>const to = String(ec.context.toNumber); consent = to === '+15557778888' || to === '+15556667777' ? true : to === '+15552223333' ? false : null</script></actions>
+    </service>
+    <service verb="check" noun="SmsConsentDown">
+        <in-parameters><parameter name="fromNumber" required="true"/><parameter name="toNumber" required="true"/></in-parameters>
+        <out-parameters><parameter name="consent" type="Boolean"/></out-parameters>
+        <actions><script>if (String(ec.context.toNumber) === '+15556667777') throw new Error('the consent records are down'); consent = null</script></actions>
+    </service>
+</services>"#;
+const NO_CONSENT: &str = "+15552223333";
+/// A number the first conf provider says yes to and the second fails on.
+const PROVIDER_DOWN: &str = "+15556667777";
+
+#[test]
+fn a_campaign_text_is_asked_of_the_conf_provider_and_counts_for_its_number() {
+    let dir = std::env::temp_dir().join(format!("moqui-sms-consent-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("service/test")).unwrap();
+    let services = dir.join("service/test/Consent.xml");
+    std::fs::write(&services, CONSENT_SERVICES).unwrap();
+    let bed = bed_with(
+        r#"<moqui-conf><screen-facade><shell-providers>
+            <sms-consent name="test.consent" service="test.Consent.check#SmsConsent"/>
+            <sms-consent name="test.down" service="test.Consent.check#SmsConsentDown" sequence="5"/>
+            <inbox-source name="test.inbox" service="test.Consent.check#SmsConsent"/>
+        </shell-providers></screen-facade></moqui-conf>"#,
+    );
+    let _entered = bed.ctx.enter();
+    let failures = moqui_core::service::lint(std::slice::from_ref(&services)).unwrap();
+    assert!(failures.is_empty(), "{failures:?}");
+    // a campaign's text: the system's, with no user signed in
+    let promotion = |to: &str| {
+        let out = call(
+            "org.moqui.SmsServices.send#SmsMessage",
+            &[
+                ("contactNumber", text(to)),
+                ("message", text("Sale today")),
+                ("isPromotional", Value::Bool(true)),
+            ],
+        );
+        errors();
+        (
+            out_text(&out, "successful"),
+            out_text(&out, "reasonCode"),
+            out_text(&out, "deliveryOutcome"),
+        )
+    };
+    let no = |reason: &str, outcome: &str| ("false".to_string(), reason.to_string(), outcome.to_string());
+    assert_eq!(promotion(THEIRS), ("true".to_string(), String::new(), String::new()));
+    // a no from the provider, and a number it says nothing of, are refused before the provider
+    assert_eq!(promotion(NO_CONSENT), no("consentRequired", "permanent"));
+    assert_eq!(promotion("+15554445555"), no("consentRequired", "permanent"));
+    // a provider that fails may have said no: a yes from another does not let the text go
+    assert_eq!(promotion(PROVIDER_DOWN), no("consentRequired", "permanent"));
+    assert_eq!(bed.fake.sends().len(), 1);
+    // for a ledger of the caller's (Mantle's): an answer lost after the request went is uncertain, never to be sent again
+    // on its own, and counts; the provider away (503) is retryable, and its place in the day's count goes back
+    bed.fake.script(&[Reply::Drop]);
+    assert_eq!(promotion(THEIRS).2, "uncertain");
+    bed.fake.script(&[Reply::Status(
+        503,
+        r#"{"errors":[{"code":"10007","title":"Unavailable"}]}"#.to_string(),
+    )]);
+    assert_eq!(promotion(THEIRS).2, "retryable");
+    let sends_before = bed.fake.sends().len();
+    // only sms-consent is answerable from the conf: its inbox-source is left out (internal work, as Sms.js asks)
+    let authz = bed.ctx.disable_authz();
+    let inbox = ok(
+        "org.moqui.ui.ShellServices.call#Providers",
+        &[
+            ("hook", text("inbox-source")),
+            ("parameters", Value::Map(Default::default())),
+        ],
+    );
+    assert_eq!(out_text(&inbox, "unavailable"), "true", "{inbox:?}");
+    let listed = ok(
+        "org.moqui.ui.ShellServices.get#Providers",
+        &[("hook", text("sms-consent"))],
+    );
+    assert!(
+        to_plain_string(&listed["providerList"]).contains("test.consent"),
+        "{listed:?}"
+    );
+    drop(authz);
+
+    // the number's day of promotional texts: the campaign's count there, not against the system's own budget
+    {
+        let _authz = bed.ctx.disable_authz();
+        let mut policy = bed
+            .facade
+            .find("moqui.call.VoicePolicy")
+            .unwrap()
+            .eq("voicePolicyId", text("DEFAULT"))
+            .one()
+            .unwrap()
+            .unwrap();
+        policy.set("smsMaxPromotionalPerNumber", Value::I64(3));
+        policy.set("smsSystemMaxPerDay", Value::I64(1));
+        policy.update(&bed.facade).unwrap();
+    }
+    assert_eq!(promotion(THEIRS).0, "true");
+    // a ledger tries it again later (send#SmsMessage's deliveryOutcome)
+    assert_eq!(promotion(THEIRS), no("dailyLimit", "retryable"));
+    let day = jiff::Timestamp::now().strftime("%Y-%m-%d").to_string();
+    assert_eq!(
+        bed.one(
+            "moqui.call.SmsSendCount",
+            &[("counterKey", text(&format!("promo:{OURS}"))), ("dayDate", text(&day))]
+        )["sentCount"],
+        "3",
+        "the taken, the uncertain and the last taken; not the retried or the refused"
+    );
+    // a sign-in code still goes: the system's budget (1) was not spent by the campaign
+    let code = call(
+        "org.moqui.SmsServices.send#SmsMessage",
+        &[
+            ("contactNumber", text(THEIRS)),
+            ("message", text("Your code is 123456")),
+        ],
+    );
+    assert_eq!(out_text(&code, "successful"), "true", "{}", errors());
+    assert_eq!(bed.fake.sends().len(), sends_before + 2);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

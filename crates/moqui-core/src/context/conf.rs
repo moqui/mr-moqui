@@ -473,6 +473,23 @@ fn merge_screen_facade(base: &MNode, over: &MNode) {
     base.merge_child_with_child_key(over, "screen-facade", "screen", &["location"], Some(&mut merge_screen));
     if let (Some(base_node), Some(over_node)) = (base.first_named("screen-facade"), over.first_named("screen-facade")) {
         base_node.merge_single_child(&over_node, "pdf");
+        // a component's providers of the conf-answerable hooks, merged by hook and name
+        for over_providers in over_node.children_named("shell-providers") {
+            let base_providers = base_node.first_named("shell-providers").unwrap_or_else(|| {
+                let created = MNode::new("shell-providers");
+                base_node.append_node(created.clone());
+                created
+            });
+            for hook in crate::screen::shell::CONF_PROVIDER_HOOKS {
+                base_providers.merge_children_by_keys(&over_providers, hook, &["name"], None);
+            }
+            for child in over_providers.children() {
+                let name = child.name();
+                if !crate::screen::shell::CONF_PROVIDER_HOOKS.contains(&name.as_str()) {
+                    tracing::error!("screen-facade shell-providers: {name} is not a hook a conf may answer; left out");
+                }
+            }
+        }
     }
 }
 

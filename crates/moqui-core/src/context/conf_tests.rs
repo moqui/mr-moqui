@@ -178,6 +178,45 @@ fn a_runtime_conf_overrides_one_attribute_of_a_settings_element() {
     assert_eq!(ssh.attribute("sftp-root").as_deref(), Some("dbresource://sftp"));
 }
 
+/// A component's `shell-providers` in its conf (Mantle's `sms-consent` answer) merge into the framework's by hook and
+/// name: a second component's provider is added and one of the same name replaces the earlier one; the parse keeps only
+/// the hooks a conf may answer.
+#[test]
+fn a_components_conf_providers_merge_by_hook_and_name() {
+    let base = MNode::parse_text("moqui-conf", r#"<moqui-conf><screen-facade/></moqui-conf>"#).unwrap();
+    let first = MNode::parse_text(
+        "moqui-conf",
+        r#"<moqui-conf><screen-facade><shell-providers>
+            <sms-consent name="mantle.consent" service="mantle.A.check#One"/>
+        </shell-providers></screen-facade></moqui-conf>"#,
+    )
+    .unwrap();
+    let second = MNode::parse_text(
+        "moqui-conf",
+        r#"<moqui-conf><screen-facade><shell-providers>
+            <sms-consent name="other.consent" service="other.B.check#Two" sequence="-1"/>
+            <sms-consent name="mantle.consent" service="mantle.A.check#Again"/>
+            <inbox-source name="other.inbox" service="other.B.get#Inbox"/>
+        </shell-providers></screen-facade></moqui-conf>"#,
+    )
+    .unwrap();
+    super::merge_conf(&base, &first);
+    super::merge_conf(&base, &second);
+    let parsed = crate::screen::ScreenConf::parse(&base.write_string());
+    let found: Vec<(String, String)> = parsed
+        .providers
+        .iter()
+        .map(|provider| (provider.name.clone(), provider.service.clone()))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("other.consent".to_string(), "other.B.check#Two".to_string()),
+            ("mantle.consent".to_string(), "mantle.A.check#Again".to_string())
+        ]
+    );
+}
+
 /// A component's `<git-ci>` (Mantle names its run check and run URL services) merges over the framework's, attribute
 /// by attribute; and every top-level element of the framework's default conf has a merge rule, so none is dropped.
 #[test]
