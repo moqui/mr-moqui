@@ -117,6 +117,12 @@ fn a_wide_form_keeps_a_long_label_and_a_searched_drop_down_has_a_text_lines_widt
     let wide = outline(&form, 200);
     assert!(wide.contains("field Extends (components, comma separated) beside label=37"), "{wide}");
     assert!(wide.contains("field Service beside label=37 value=34"), "{wide}");
+    // a value among none of its options (a file it was opened with) shows whole
+    let picked = screen(
+        r#"{"t":"form","id":"G","name":"G","c":[
+            {"t":"field","id":"G.path","name":"path","title":"Go to file","w":{"kind":"dropDown","value":"service/tuitest/TuitestServices.xml","options":[{"value":"a.xml","label":"a.xml"}]}}]}"#,
+    );
+    assert!(outline(&picked, 200).contains("value=39"), "{}", outline(&picked, 200));
     let narrow = outline(&form, 100);
     assert!(narrow.contains("beside label=18"), "{narrow}");
 }

@@ -1540,10 +1540,16 @@ fn lay_field(id: &str, title: &str, widget: &Widget, mode: LabelMode, label_widt
         // options the server sends as the list opens (a search, a dependent list) are not known here: as wide as a
         // text line, and at least its value
         Widget::DropDown { options, value, .. } if options.is_empty() => display_width(value).max(VALUE_DEFAULT) + 4,
-        Widget::DropDown { options, .. } => {
+        // its options, and the value it shows (a value among none of them shows as itself)
+        Widget::DropDown { options, value, .. } => {
+            let shown = options
+                .iter()
+                .find(|choice| &choice.value == value)
+                .map_or(value.as_str(), |choice| choice.label.as_str());
             options
                 .iter()
                 .map(|choice| display_width(&choice.label))
+                .chain(std::iter::once(display_width(shown)))
                 .max()
                 .unwrap_or(10)
                 .clamp(10, 40)
