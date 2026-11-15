@@ -1414,6 +1414,11 @@ fn resource_digests_archives_and_line_windows() {
             && ec.resource.digestText("\u00e9") === "4a99557e4033c3539de2eb65472017cad5f9557f7a0625a09f1c3f6e2ba69c4c""#,
     );
     holds(
+        r#"ec.resource.hmac("Jefe", "what do ya want for nothing?") === "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+            && ec.resource.hmac("Jefe", "what do ya want for nothing?", "base64url") === "W9zBRr9gdU5qBCQmCJV1x1oAPwidJzmDnexYuWTsOEM"
+            && (function () { try { ec.resource.hmac("", "x"); return false } catch (e) { return true } })()"#,
+    );
+    holds(
         r#"(function () {
             const out = ec.resource.extractArchive(dir + "/archive.tar.gz", dir + "/out", {});
             return out.entries.length === 1 && out.entries[0].path === "dump/rows.sql" && out.skipped.length === 2
