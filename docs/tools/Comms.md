@@ -264,8 +264,8 @@ with no app root, in its `MoquiConf.xml` (only `sms-consent` today; another elem
 ```
 
 `call#Providers` asks such a provider after the apps' ones, for every caller, with authorization disabled (the conf
-that names it is trusted, so its service reads only what the hook asks); an app's provider of the same name is asked
-in its place, and `get#Providers` lists it with no app.
+that names it is trusted, so its service reads only what the hook asks), even when an app's provider has the same
+name, and `get#Providers` lists it with no app. For `sms-consent` a provider that fails refuses the text, as a no does.
 
 **Declared actions and panels.** `<ext-action>` and `<ext-panel>` in a screen-extend add items to a slot of a screen
 ([Qvt-Client](../ui/Qvt-Client.md#declared-actions-and-panels)). Chat's slot is `chat-message-actions`, whose item is

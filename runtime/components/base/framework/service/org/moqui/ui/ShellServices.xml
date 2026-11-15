@@ -76,7 +76,7 @@ along with this software (see the LICENSE.md file). If not, see
             when no app the user may open declares the hook and no conf registers it, which is not the same as providers
             that answer nothing. A provider a component's conf registers (screen-facade shell-providers, sms-consent only)
             is asked after the apps' for every caller, the system with no user included, with authorization disabled, as
-            the conf that names it is trusted; an app's provider of the same name is asked in its place.</description>
+            the conf that names it is trusted; it is asked even when an app's provider has the same name.</description>
         <in-parameters>
             <parameter name="hook" required="true"/>
             <parameter name="parameters" type="Map"/>

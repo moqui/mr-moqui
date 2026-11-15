@@ -1078,10 +1078,17 @@ const CONSENT_SERVICES: &str = r#"<services>
     <service verb="check" noun="SmsConsent">
         <in-parameters><parameter name="fromNumber" required="true"/><parameter name="toNumber" required="true"/></in-parameters>
         <out-parameters><parameter name="consent" type="Boolean"/></out-parameters>
-        <actions><script>const to = String(ec.context.toNumber); consent = to === '+15557778888' ? true : to === '+15552223333' ? false : null</script></actions>
+        <actions><script>const to = String(ec.context.toNumber); consent = to === '+15557778888' || to === '+15556667777' ? true : to === '+15552223333' ? false : null</script></actions>
+    </service>
+    <service verb="check" noun="SmsConsentDown">
+        <in-parameters><parameter name="fromNumber" required="true"/><parameter name="toNumber" required="true"/></in-parameters>
+        <out-parameters><parameter name="consent" type="Boolean"/></out-parameters>
+        <actions><script>if (String(ec.context.toNumber) === '+15556667777') throw new Error('the consent records are down'); consent = null</script></actions>
     </service>
 </services>"#;
 const NO_CONSENT: &str = "+15552223333";
+/// A number the first conf provider says yes to and the second fails on.
+const PROVIDER_DOWN: &str = "+15556667777";
 
 #[test]
 fn a_campaign_text_is_asked_of_the_conf_provider_and_counts_for_its_number() {
@@ -1092,6 +1099,7 @@ fn a_campaign_text_is_asked_of_the_conf_provider_and_counts_for_its_number() {
     let bed = bed_with(
         r#"<moqui-conf><screen-facade><shell-providers>
             <sms-consent name="test.consent" service="test.Consent.check#SmsConsent"/>
+            <sms-consent name="test.down" service="test.Consent.check#SmsConsentDown" sequence="5"/>
             <inbox-source name="test.inbox" service="test.Consent.check#SmsConsent"/>
         </shell-providers></screen-facade></moqui-conf>"#,
     );
@@ -1120,6 +1128,8 @@ fn a_campaign_text_is_asked_of_the_conf_provider_and_counts_for_its_number() {
     // a no from the provider, and a number it says nothing of, are refused before the provider
     assert_eq!(promotion(NO_CONSENT), no("consentRequired", "permanent"));
     assert_eq!(promotion("+15554445555"), no("consentRequired", "permanent"));
+    // a provider that fails may have said no: a yes from another does not let the text go
+    assert_eq!(promotion(PROVIDER_DOWN), no("consentRequired", "permanent"));
     assert_eq!(bed.fake.sends().len(), 1);
     // for a ledger of the caller's (Mantle's): an answer lost after the request went is uncertain, never to be sent again
     // on its own, and counts; the provider away (503) is retryable, and its place in the day's count goes back

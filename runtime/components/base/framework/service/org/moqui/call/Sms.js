@@ -278,15 +278,16 @@ function sentToday(counterKey, day) {
   return row ? Number(row.sentCount || 0) : 0
 }
 
-/** Whether a promotional text may go: an sms-consent provider says yes, and none says no. */
+/** Whether a promotional text may go: an sms-consent provider says yes, none says no and none failed. */
 function consented(fromNumber, toNumber) {
   ec.message.pushErrors()
   try {
     const out = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers').parameters({ hook: 'sms-consent',
       parameters: { fromNumber, toNumber } }).disableAuthz().call() || {}
     const answers = Array.from(out.results || [])
-    return out.unavailable !== true && answers.some((answer) => answer && answer.consent === true)
-      && !answers.some((answer) => answer && answer.consent === false)
+    // a provider that failed may have said no: the text is refused, as for a no
+    return out.unavailable !== true && Array.from(out.failedParts || []).length === 0
+      && answers.some((answer) => answer && answer.consent === true) && !answers.some((answer) => answer && answer.consent === false)
   } catch (err) {
     ec.logger.warn(`The sms-consent providers failed for ${toNumber}: ${err && err.message ? err.message : err}`)
     return false

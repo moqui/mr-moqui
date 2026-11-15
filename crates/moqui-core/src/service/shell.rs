@@ -137,23 +137,10 @@ fn get_providers(
         })
         .collect();
     // a conf's providers have no app
-    for provider in conf_only(&factory, &hook, &declared) {
+    for provider in crate::screen::shell::conf_providers(&factory, &hook) {
         list.push(entry(&provider.name, Value::Null, &provider.service));
     }
     Ok(BTreeMap::from([("providerList".to_string(), Value::List(list))]))
-}
-
-/// The providers of `hook` the conf registers whose names no app's provider in `declared` has: an app's provider of the
-/// same name is the one asked, as between two apps.
-fn conf_only(
-    factory: &ExecutionContextFactory,
-    hook: &str,
-    declared: &[crate::screen::shell::DeclaredProvider],
-) -> Vec<crate::screen::shell::ProviderDecl> {
-    crate::screen::shell::conf_providers(factory, hook)
-        .into_iter()
-        .filter(|provider| !declared.iter().any(|known| known.provider.name == provider.name))
-        .collect()
 }
 
 /// `call#Providers`: call each provider of `hook` (or only `sourceId`) with `parameters`, as the app that declares it,
@@ -161,7 +148,8 @@ fn conf_only(
 ///
 /// - A provider a component registers in its conf ([`crate::screen::shell::CONF_PROVIDER_HOOKS`]) is asked after the
 ///   apps' for every caller, the system with no user included: it has no app, so it runs with authorization disabled,
-///   as the trusted conf that names it is (Mantle's `sms-consent` answer, read only).
+///   as the trusted conf that names it is (Mantle's `sms-consent` answer, read only). It is asked even when an app's
+///   provider has the same name, so no app stands in for its answer.
 ///
 /// - A read (the default) runs each provider in a transaction of its own; one that fails is logged by name and listed
 ///   in `failedParts`, and the others still answer. Each answer is in `results` with its `sourceId`, in order; the
@@ -190,7 +178,8 @@ fn call_providers(
         .into_iter()
         .filter(|declared| only.as_deref().is_none_or(|only| declared.provider.name == only))
         .collect();
-    let from_conf: Vec<_> = conf_only(&factory, &hook, &declared)
+    // a conf's provider is asked whatever an app's provider is named: an app never stands in for its answer (one no refuses)
+    let from_conf: Vec<_> = crate::screen::shell::conf_providers(&factory, &hook)
         .into_iter()
         .filter(|provider| only.as_deref().is_none_or(|only| provider.name == only))
         .collect();
