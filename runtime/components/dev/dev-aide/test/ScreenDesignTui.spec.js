@@ -146,7 +146,22 @@ feature("an upstream screen in extension mode stages its edits in the site's scr
             })
             const nearest = edit(twin, {node: "3.0", intent: "insert", where: "after", snippet: "link"})
             const refused = edit(twin, {node: "3.0", intent: "remove"})
-            const buffer = staged([{rootId: view.extension.rootId, path: view.extension.path}])
+            const extendFile = [{rootId: view.extension.rootId, path: view.extension.path}]
+            const buffer = staged(extendFile)
+            // the screen-extend's own elements (e:<path>): its label's property, the link's widgets-extend moved up
+            // before the form merge, then removed; a base element's property and an insert at an own one are refused
+            const property = edit(twin, {
+                node: "e:0.0",
+                intent: "setProperty",
+                attrName: "text",
+                attrValue: "Labelled in the extend"
+            })
+            const moved = edit(twin, {node: "e:2", intent: "moveUp"})
+            const afterMove = staged(extendFile).files[0].text
+            const removed = edit(twin, {node: "e:1", intent: "remove"})
+            const baseProperty = edit(twin, {node: "3.0", intent: "setProperty", attrName: "text", attrValue: "Not here"})
+            const ownInsert = edit(twin, {node: "e:0", intent: "insert", where: "after", snippet: "label"})
+            const own = staged(extendFile).files[0].text
             const preview = ec.screen
                 .makeTest()
                 .rootScreen("component://example/screen/Gallery.xml")
@@ -155,14 +170,48 @@ feature("an upstream screen in extension mode stages its edits in the site's scr
             const onDisk = ec.resource
                 .getLocationReference("component://dev-aide/" + view.extension.path.split("/dev-aide/").pop())
                 .getExists()
-            return {view, anchored, merged, nearest, refused, buffer, preview, out: String(preview.output), onDisk}
+            return {
+                view,
+                anchored,
+                merged,
+                nearest,
+                refused,
+                buffer,
+                property,
+                moved,
+                afterMove,
+                removed,
+                baseProperty,
+                ownInsert,
+                own,
+                preview,
+                out: String(preview.output),
+                onDisk
+            }
         } finally {
             fixture().discard(NOTE)
             setting("")
             ec.user.setPreference("DEV_AIDE_UPSTREAM_EDITS", "true")
         }
     },
-    then({view, anchored, merged, nearest, refused, buffer, preview, out, onDisk}) {
+    then({
+        view,
+        anchored,
+        merged,
+        nearest,
+        refused,
+        buffer,
+        property,
+        moved,
+        afterMove,
+        removed,
+        baseProperty,
+        ownInsert,
+        own,
+        preview,
+        out,
+        onDisk
+    }) {
         !view.inPlace
         view.extension.path.endsWith("screen-extend/example/screen/Gallery/QuickNote.xml")
         anchored.status == 302
@@ -178,10 +227,21 @@ feature("an upstream screen in extension mode stages its edits in the site's scr
         buffer.files[0].text.includes(
             '<widgets-extend name="GalleryNote" where="before"><link url="." text="New link" btn-type="default"/></widgets-extend>'
         )
+        // the screen-extend's own elements: a property set, a move among its siblings and a Remove
+        property.status == 302
+        moved.status == 302
+        afterMove.indexOf('where="before"><link') < afterMove.indexOf('<form-single name="GalleryNote">')
+        removed.status == 302
+        own.includes('<label text="Labelled in the extend" type="p"/>')
+        !own.includes("New link")
+        own.includes('<form-single name="GalleryNote"><field name="noteTitle" after="noteText">')
+        baseProperty.errorMessages.some(text => text.includes("for a screen edited in place"))
+        ownInsert.errorMessages.some(text => text.includes("take Properties, Remove and Move"))
+        !own.includes("New label")
         // the overlay applies to the terminal render, the screen-extend that is not on disk yet included
         preview.status == 200
-        out.includes("New label")
-        out.includes("New link")
+        out.includes("Labelled in the extend")
+        !out.includes("New link")
         out.includes("noteTitle")
         !onDisk
     }

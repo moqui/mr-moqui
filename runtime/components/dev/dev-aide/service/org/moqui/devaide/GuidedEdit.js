@@ -449,6 +449,56 @@ function nodePath(key) {
         .map(Number)
 }
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
+// An element of the site's screen-extend in extension mode, by its outline key with "e:" before it ("e:0.1").
+function isExtendKey(key) {
+    return String(key || "").startsWith("e:")
+}
+// The intents on an element of the site's own screen-extend, as the browser's outline of it has them: its properties
+// (the schema digest of screen-extend), Remove, and Move among its siblings. The base screen's elements stay with the
+// inserts, Replace and Override, since a screen-extend cannot alter them. Answers {ops, node} or {refused}.
+function extendIntent(screen, key, intent, values) {
+    const pure = screen.ops.pure
+    const ops = screen.ops.screen
+    if (!screen.extension) return {refused: "This screen is edited in place: choose its element in the outline"}
+    const outline = screen.editFile && screen.editFile.outline
+    if (!outline)
+        return {
+            refused:
+                "The site's screen-extend does not read as XML: " +
+                ((screen.editFile && screen.editFile.outlineError) || "not read")
+        }
+    const path = nodePath(String(key).slice(2))
+    const node = pure.outlineAt(outline, path)
+    if (!node) return {refused: "That element is not in the site's screen-extend as staged: choose it again"}
+    const keyOf = at => (at.length ? "e:" + at.join(".") : "")
+    const step = (delta, last) => {
+        if (!path.length) return {refused: "The screen-extend itself does not move"}
+        const at = Math.min(last, Math.max(0, path[path.length - 1] + delta))
+        return {ops: ops.stepOp(outline, path, delta), node: keyOf(path.slice(0, -1).concat([at]))}
+    }
+    const table = {
+        setProperty() {
+            return !values.attrName
+                ? {refused: "Name the attribute"}
+                : {ops: pure.setAttributeOps(node, values.attrName, values.attrValue)}
+        },
+        remove() {
+            return !path.length
+                ? {refused: "The screen-extend itself is not removed here"}
+                : {ops: [{op: "remove", at: path}], node: keyOf(path.slice(0, -1))}
+        },
+        moveUp() {
+            return step(-1, Infinity)
+        },
+        moveDown() {
+            const parent = pure.outlineAt(outline, path.slice(0, -1))
+            return step(1, ((parent && parent.children) || []).length - 1)
+        }
+    }
+    return table[intent]
+        ? table[intent]()
+        : {refused: "The site's own elements take Properties, Remove and Move: choose an element of the screen for the others"}
+}
 // The operations of an intent of the screen builder (11.2) on the selected node of the base screen: in place on the
 // screen's file, or in extension mode into the site's screen-extend of it. Answers {ops, node} (the key selected
 // after it) or {refused}.
@@ -463,6 +513,7 @@ function screenIntent(screen, key, intent, values) {
         }
     if (!screen.edit)
         return {refused: "This screen is upstream and there is no site component to extend it in: create one on Home"}
+    if (isExtendKey(key)) return extendIntent(screen, key, intent, values || {})
     const path = nodePath(key)
     const node = pure.outlineAt(base, path)
     if (!node) return {refused: "That element is not in the screen as staged: choose it again in the outline"}
@@ -473,7 +524,13 @@ function screenIntent(screen, key, intent, values) {
     const form = ops.formOf(base, path)
     const formName = form ? pure.attrOf(form, "name") : ""
     const inPlace = what =>
-        extension ? {refused: what + " is for a screen edited in place; this one is extended in the site's screen-extend"} : null
+        extension
+            ? {
+                  refused:
+                      what +
+                      " is for a screen edited in place; this one is extended in the site's screen-extend, whose own elements take it"
+              }
+            : null
     const onlyExtension = what => (extension ? null : {refused: what + " is for an upstream screen in extension mode"})
     const named = (value, what) => (NAME.test(String(value || "")) ? null : {refused: what + " is letters, digits and _"})
     const keyOf = at => at.join(".")
@@ -635,5 +692,6 @@ function screenIntent(screen, key, intent, values) {
     seedListNodes,
     screenContext,
     nodePath,
+    isExtendKey,
     screenIntent
 })
