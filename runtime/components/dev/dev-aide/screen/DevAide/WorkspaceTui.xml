@@ -349,6 +349,20 @@ along with this software (see the LICENSE.md file). If not, see
         fileLine = (root ? root.label : '') + ' › ' + (path || '') + (file && file.status ? ' · ' + file.status : '')
             + (file && file.readOnly ? ' · ' + ec.l10n.localize('read only') + (file.readOnlyReason ? ': ' + file.readOnlyReason : '') : '')
         fileValues = {rootId: rootId, path: path, baseHash: file ? file.hash : '', fileText: hasText ? file.text : ''}
+        // the artifacts the file defines, for the File menu's References: an index that cannot answer leaves none
+        fileArtifacts = []
+        if (file) {
+            const inFile = ec.service.sync().name('org.moqui.devaide.ArtifactServices.get#ArtifactsInFile')
+                .parameters({rootId: rootId, path: path}).requireNewTransaction(true).call()
+            if (ec.message.hasError()) {
+                ec.logger.warn('The artifacts of ' + path + ': ' + ec.message.errorsString)
+                ec.message.clearErrors()
+            } else {
+                fileArtifacts = Array.from((inFile && inFile.artifacts) || []).map((artifact) => ({artifactId: artifact.id,
+                    artifactLabel: artifact.shortName || artifact.name || artifact.id, artifactKind: artifact.kind || ''}))
+            }
+        }
+        oneArtifactId = fileArtifacts.length === 1 ? fileArtifacts[0].artifactId : ''
         // the problems of the last save or Check of this file, while the file is as it was then
         const keptProblems = kept('DevAideTui.problems')
         const problemList = file && keptProblems && keptProblems.rootId === rootId && keptProblems.path === path && keptProblems.hash === file.hash
@@ -545,6 +559,20 @@ along with this software (see the LICENSE.md file). If not, see
                                         confirmation="Delete ${path}?" parameter-map="{rootId:rootId, path:path}"/>
                                 <link url="../Workspace" text="${diff == 'Y' ? 'Hide the diff' : 'Diff'}" condition="isGit" parameter-map="{diff:(diff == 'Y' ? '' : 'Y')}"/>
                                 <link url="checkFile" link-type="hidden-form" text="Check" parameter-map="{rootId:rootId, path:path}"/>
+                                <!-- what uses the artifact the file defines, or for several each one's -->
+                                <link url="../Artifacts/Refs" text="References" condition="oneArtifactId" parameter-map="{artifactId:oneArtifactId}"/>
+                                <link url="../Artifacts/Browse" text="Browse" condition="oneArtifactId" parameter-map="{artifactId:oneArtifactId}"/>
+                                <container-dialog id="WorkspaceFileRefs" button-text="References…" condition="fileArtifacts.length &gt; 1">
+                                    <form-list name="WorkspaceFileArtifacts" list="fileArtifacts" skip-form="true" paginate="false">
+                                        <field name="artifactLabel"><default-field title="References of">
+                                            <link url="../Artifacts/Refs" text="${artifactLabel}" link-type="anchor" parameter-map="{artifactId:artifactId}"/>
+                                        </default-field></field>
+                                        <field name="artifactKind"><default-field title="Kind"><display/></default-field></field>
+                                        <field name="browse"><default-field title="">
+                                            <link url="../Artifacts/Browse" text="Browse" link-type="anchor" parameter-map="{artifactId:artifactId}"/>
+                                        </default-field></field>
+                                    </form-list>
+                                </container-dialog>
                                 <link url="stageFiles" link-type="hidden-form" text="Stage" condition="isGit &amp;&amp; canWrite &amp;&amp; file.status"
                                         parameter-map="{rootId:rootId, path:path}"/>
                                 <link url="discardFiles" link-type="hidden-form" text="Discard changes" btn-type="danger"
