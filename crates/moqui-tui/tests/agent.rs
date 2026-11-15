@@ -164,6 +164,10 @@ fn set_types_a_field_and_chooses_a_drop_down_the_way_a_person_does() {
     assert!(agent.run("set City Ottawa East").ok);
     assert!(agent.run("set City \"\"").ok);
     assert_eq!(agent.session().buffer("city"), "");
+    // \s types a space the trimmed command line would lose at its ends
+    assert!(agent.run("focus City").ok);
+    assert!(agent.run("type \\sA\\s").ok);
+    assert_eq!(agent.session().buffer("city"), " A ");
     assert!(agent.run("set City Ottawa East").ok);
     // By label; the dependent state's options are asked for and settled before the answer.
     let country = agent.run("set Country Canada");

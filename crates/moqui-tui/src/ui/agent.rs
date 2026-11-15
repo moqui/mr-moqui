@@ -1639,6 +1639,8 @@ fn unescape(text: &str) -> String {
             Some('r') => out.push('\r'),
             Some('n') => out.push('\n'),
             Some('t') => out.push('\t'),
+            // a space the trimmed command line would lose at either end
+            Some('s') => out.push(' '),
             Some(other) => out.push(other),
             None => out.push('\\'),
         }
