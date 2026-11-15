@@ -437,6 +437,47 @@ fn modern_arrows_move_the_focus_and_home_and_end_go_to_a_lists_ends() {
     assert_eq!(session.path(), GALLERY_LIST_PATH);
 }
 
+#[test]
+fn a_field_selects_copies_pastes_and_undoes_and_esc_drops_the_selection_first() {
+    let (mut session, link) = edit_session();
+    assert!(session.focus_key("Edit.note"));
+    let ctrl = |session: &mut Session, ch| session.press(&KeyPress::with_ctrl(Key::Char(ch)), &link);
+    ctrl(&mut session, 'a');
+    typed(&mut session, &link, "Alice");
+    ctrl(&mut session, 'a');
+    assert_eq!(session.selection("Edit.note"), Some((0, 5)));
+    assert!(!ctrl(&mut session, 'c'), "Ctrl+C copies and does not quit");
+    assert_eq!(session.take_copy().as_deref(), Some("Alice"));
+    // Esc drops the selection, and only then is the screen's: in Modern, the palette.
+    press(&mut session, &link, Key::Escape);
+    assert_eq!(session.selection("Edit.note"), None);
+    assert!(session.top_overlay().is_none());
+    press(&mut session, &link, Key::End);
+    ctrl(&mut session, 'v');
+    assert_eq!(session.buffer("Edit.note"), "AliceAlice");
+    ctrl(&mut session, 'z');
+    assert_eq!(session.buffer("Edit.note"), "Alice");
+    // A paste from the terminal takes the place of the selection.
+    session.press(
+        &KeyPress {
+            shift: true,
+            ..KeyPress::plain(Key::Home)
+        },
+        &link,
+    );
+    session.paste("Bob");
+    assert_eq!(session.buffer("Edit.note"), "Bob");
+    ctrl(&mut session, 'z');
+    assert_eq!(session.buffer("Edit.note"), "Alice");
+    // the undo brings the selection back as it was
+    assert_eq!(session.selection("Edit.note"), Some((0, 5)));
+    // Classic leaves Ctrl+A alone.
+    session.set_key_scheme_override(Some(KeyScheme::Classic));
+    press(&mut session, &link, Key::End);
+    ctrl(&mut session, 'a');
+    assert_eq!(session.selection("Edit.note"), None);
+}
+
 const PARTY_FIND_JSON: &str = r#"{
   "v": 1,
   "screen": { "path": "/apps/app/Find", "pathList": ["apps", "app", "Find"], "title": "Find" },

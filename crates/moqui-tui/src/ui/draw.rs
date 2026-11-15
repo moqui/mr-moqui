@@ -1037,6 +1037,21 @@ fn draw_value(paint: &mut Painter, session: &Session, field: &LaidField, widget:
                         paint.text(x + 1, y, &truncate_width(line, room), look, room);
                     }
                 }
+                if focused {
+                    if let Some((from, to)) = session.selection(id) {
+                        let mut cx = x + 1;
+                        for (at, ch) in line.chars().enumerate() {
+                            let width = crate::layout::char_width(ch);
+                            if usize::from(cx - x - 1) + width > room {
+                                break;
+                            }
+                            if (from..to).contains(&(line_start + at)) {
+                                paint.text(cx, y, &ch.to_string(), Look::role(Role::Selection).underline(), width);
+                            }
+                            cx += u16::try_from(width).unwrap_or(1);
+                        }
+                    }
+                }
                 line_start += line.chars().count() + 1;
                 if focused && row == cursor_row {
                     let ch = line.chars().nth(cursor_col).unwrap_or(' ').to_string();
@@ -1223,6 +1238,20 @@ fn input(
     paint.text(x + 1, y, &body, look, inner);
     paint.text(x + 1 + u16::try_from(inner).unwrap_or(0), y, "]", look, 1);
     if focused {
+        // The selection: in the selection color, underlined and not reversed, inside the reversed field.
+        if let Some((from, to)) = session.selection(key) {
+            let mut cx = x + 1;
+            for (at, ch) in chars.iter().enumerate().skip(start) {
+                let width = crate::layout::char_width(*ch);
+                if usize::from(cx - x) + width > inner {
+                    break;
+                }
+                if (from..to).contains(&at) {
+                    paint.text(cx, y, &ch.to_string(), Look::role(Role::Selection).underline(), width);
+                }
+                cx += u16::try_from(width).unwrap_or(1);
+            }
+        }
         // The cursor cell: the focus color, not reversed, inside the reversed field.
         let before: String = chars[start..cursor].iter().collect();
         let cx = x + 1 + u16::try_from(display_width(&before)).unwrap_or(0);

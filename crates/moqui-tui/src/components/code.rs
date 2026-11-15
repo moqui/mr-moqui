@@ -42,7 +42,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{prop, Act, Component, ComponentState, Line, Span};
-use crate::edit::{self, Edited, Limits};
+use crate::edit::{self, Edited, History, Limits, Op};
 use crate::keys::{Key, KeyPress};
 use crate::layout::truncate_width;
 use crate::theme::Role;
@@ -58,7 +58,6 @@ const CHROME_ROWS: u16 = 10;
 const MIN_ROWS: usize = 5;
 /// The lines shown before the terminal is sized.
 const DEFAULT_ROWS: usize = 20;
-const UNDO_DEPTH: usize = 200;
 const POPUP_ROWS: usize = 8;
 
 /// A problem of the text, as the props and a check give it.
@@ -103,20 +102,6 @@ fn problems_of(value: &Value) -> Vec<Problem> {
     problems
 }
 
-/// One edit, for undo: `removed` at `at` became `inserted`, with the cursor and selection before and the cursor after.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-struct Op {
-    at: usize,
-    removed: String,
-    inserted: String,
-    before: usize,
-    anchor: Option<usize>,
-    after: usize,
-    /// Typed characters, which the next typed one joins.
-    typed: bool,
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 enum Ask {
     #[default]
@@ -155,8 +140,8 @@ struct Editor {
     anchor: Option<usize>,
     /// The first line shown.
     top: usize,
-    undo: Vec<Op>,
-    redo: Vec<Op>,
+    /// The undo log and its redo (`edit::History`, a text field's too).
+    history: History,
     /// What Ctrl+C and Ctrl+X took, for Ctrl+V.
     clip: String,
     /// Esc gave the focus back: Tab and Shift+Tab move on.
@@ -185,10 +170,6 @@ fn byte_of(text: &str, index: usize) -> usize {
 
 fn chars_in(text: &str) -> usize {
     text.chars().count()
-}
-
-fn is_word(ch: char) -> bool {
-    ch.is_alphanumeric() || ch == '_'
 }
 
 /// The lines shown: the `rows` prop, else what fits the terminal.
@@ -311,41 +292,13 @@ impl Editor {
         }
     }
 
-    /// The start of the word before the cursor, or of the line's start when it is at a word's start.
+    /// The start of the word before the cursor, or of the run of marks before it.
     fn word_left(&self) -> usize {
-        let chars: Vec<char> = self.text.chars().take(self.cursor).collect();
-        let mut at = chars.len();
-        while at > 0 && chars[at - 1].is_whitespace() {
-            at -= 1;
-        }
-        if at > 0 && is_word(chars[at - 1]) {
-            while at > 0 && is_word(chars[at - 1]) {
-                at -= 1;
-            }
-        } else {
-            while at > 0 && !is_word(chars[at - 1]) && !chars[at - 1].is_whitespace() {
-                at -= 1;
-            }
-        }
-        at
+        edit::word_left(&self.text, self.cursor)
     }
 
     fn word_right(&self) -> usize {
-        let chars: Vec<char> = self.text.chars().skip(self.cursor).collect();
-        let mut at = 0;
-        while at < chars.len() && chars[at].is_whitespace() {
-            at += 1;
-        }
-        if at < chars.len() && is_word(chars[at]) {
-            while at < chars.len() && is_word(chars[at]) {
-                at += 1;
-            }
-        } else {
-            while at < chars.len() && !is_word(chars[at]) && !chars[at].is_whitespace() {
-                at += 1;
-            }
-        }
-        self.cursor + at
+        edit::word_right(&self.text, self.cursor)
     }
 
     /// Replace the chars `start..end` with `inserted`, for undo; the cursor goes after it and the selection is dropped.
@@ -354,34 +307,15 @@ impl Editor {
         let removed = self.text[from..to].to_string();
         self.text.replace_range(from..to, inserted);
         let after = start + chars_in(inserted);
-        self.redo.clear();
-        let joins = typed
-            && removed.is_empty()
-            && !inserted.contains('\n')
-            && self
-                .undo
-                .last()
-                .is_some_and(|last| last.typed && last.at + chars_in(&last.inserted) == start);
-        match self.undo.last_mut() {
-            Some(last) if joins => {
-                last.inserted.push_str(inserted);
-                last.after = after;
-            }
-            _ => {
-                self.undo.push(Op {
-                    at: start,
-                    removed,
-                    inserted: inserted.to_string(),
-                    before: self.cursor,
-                    anchor: self.anchor,
-                    after,
-                    typed,
-                });
-                if self.undo.len() > UNDO_DEPTH {
-                    self.undo.remove(0);
-                }
-            }
-        }
+        self.history.record(Op {
+            at: start,
+            removed,
+            inserted: inserted.to_string(),
+            before: self.cursor,
+            anchor: self.anchor,
+            after,
+            typed,
+        });
         self.cursor = after;
         self.anchor = None;
         self.changed = true;
@@ -394,35 +328,25 @@ impl Editor {
     }
 
     fn undo(&mut self) {
-        let Some(op) = self.undo.pop() else {
-            self.message = "Nothing to undo".to_string();
-            return;
-        };
-        let (from, to) = (
-            byte_of(&self.text, op.at),
-            byte_of(&self.text, op.at + chars_in(&op.inserted)),
-        );
-        self.text.replace_range(from..to, &op.removed);
-        self.cursor = op.before;
-        self.anchor = op.anchor;
-        self.changed = true;
-        self.redo.push(op);
+        match self.history.undo(&mut self.text) {
+            Some((before, anchor)) => {
+                self.cursor = before;
+                self.anchor = anchor;
+                self.changed = true;
+            }
+            None => self.message = "Nothing to undo".to_string(),
+        }
     }
 
     fn redo(&mut self) {
-        let Some(op) = self.redo.pop() else {
-            self.message = "Nothing to redo".to_string();
-            return;
-        };
-        let (from, to) = (
-            byte_of(&self.text, op.at),
-            byte_of(&self.text, op.at + chars_in(&op.removed)),
-        );
-        self.text.replace_range(from..to, &op.inserted);
-        self.cursor = op.after;
-        self.anchor = None;
-        self.changed = true;
-        self.undo.push(op);
+        match self.history.redo(&mut self.text) {
+            Some(after) => {
+                self.cursor = after;
+                self.anchor = None;
+                self.changed = true;
+            }
+            None => self.message = "Nothing to redo".to_string(),
+        }
     }
 
     /// The text of the selection, else of the cursor's line with its newline, and its range.

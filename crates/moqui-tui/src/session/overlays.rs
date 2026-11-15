@@ -78,6 +78,7 @@ impl Session {
             (ConfirmKind::Leave, "Discard") => {
                 self.edits.reset();
                 self.cursors.clear();
+                self.field_edits.clear();
                 self.run_then(confirm.then.clone());
             }
             (ConfirmKind::Leave, "Save") => {

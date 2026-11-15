@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::components::ComponentState;
-use crate::edit::{self, Edited, Limits};
+use crate::edit::{self, Edited, FieldEdit, FieldKeys, Limits};
 use crate::forms::{self, Extra, FocusItem, FocusKind, Index, Scope};
 use crate::keys::{scheme_keys, Action, Key, KeyMap, KeyPress, KeyScheme, MergeSkip};
 use crate::layout::PAGE_ROWS;
@@ -225,6 +225,8 @@ pub struct Session {
     index: Index,
     edits: Edits,
     cursors: BTreeMap<String, usize>,
+    /// A text field's selection and undo log, by field key.
+    field_edits: BTreeMap<String, FieldEdit>,
     focus: Vec<FocusItem>,
     focus_at: usize,
     /// The focus key kept over a rebuild that had nothing to focus (a screen whose content comes in a later level),
@@ -326,6 +328,7 @@ impl Session {
             index: Index::default(),
             edits: Edits::default(),
             cursors: BTreeMap::new(),
+            field_edits: BTreeMap::new(),
             focus: Vec::new(),
             focus_at: 0,
             focus_kept: String::new(),
@@ -609,6 +612,11 @@ impl Session {
         self.edits.get(key)
     }
 
+    /// A text field's selection (Shift with the arrows, Ctrl+A): its start and end, for drawing.
+    pub fn selection(&self, key: &str) -> Option<(usize, usize)> {
+        self.field_edits.get(key)?.selection(self.cursor(key))
+    }
+
     pub fn cursor(&self, key: &str) -> usize {
         self.cursors
             .get(key)
@@ -621,6 +629,9 @@ impl Session {
         let count = value.chars().count();
         self.edits.set(key, value);
         self.cursors.insert(key.to_string(), count);
+        if let Some(state) = self.field_edits.get_mut(key) {
+            state.anchor = None;
+        }
         self.after_edit(key);
     }
 
@@ -1216,18 +1227,26 @@ impl Session {
             return;
         };
         let limits = self.limits(&item.key);
-        let mut value = self.buffer(&item.key).to_string();
+        let old = self.buffer(&item.key).to_string();
+        let mut value = old.clone();
         let mut cursor = self.cursor(&item.key);
-        for ch in text.chars().filter(|ch| *ch != '\r') {
-            let press = if ch == '\n' && limits.multiline {
-                KeyPress::plain(Key::Enter)
-            } else if ch == '\n' || ch == '\t' {
-                KeyPress::plain(Key::Char(' '))
-            } else {
-                KeyPress::plain(Key::Char(ch))
-            };
-            edit::apply(&mut value, &mut cursor, &press, &limits);
+        let mut state = self.field_edits.remove(&item.key).unwrap_or_default();
+        let before = (cursor, state.anchor);
+        // A paste takes the place of the selection, and is one step to undo.
+        if let Some((start, end)) = state.selection(cursor) {
+            value = format!(
+                "{}{}",
+                edit::slice(&old, 0, start),
+                edit::slice(&old, end, edit::chars_in(&old))
+            );
+            cursor = start;
         }
+        state.anchor = None;
+        edit::put_text(&mut value, &mut cursor, text, &limits);
+        if let Some(op) = edit::diff_op(&old, &value, before.0, before.1, cursor, false) {
+            state.history.record(op);
+        }
+        self.field_edits.insert(item.key.clone(), state);
         self.edits.set(&item.key, value);
         self.cursors.insert(item.key.clone(), cursor);
         self.after_edit(&item.key);
@@ -1377,14 +1396,28 @@ impl Session {
                 let limits = self.limits(&item.key);
                 let mut text = self.buffer(&item.key).to_string();
                 let mut cursor = self.cursor(&item.key);
-                match edit::apply(&mut text, &mut cursor, press, &limits) {
-                    Edited::No => false,
-                    Edited::Moved => {
+                let mut state = self.field_edits.remove(&item.key).unwrap_or_default();
+                let clip = self.clip.clone();
+                let keys = FieldKeys {
+                    clip: &clip,
+                    select_all: self.scheme == KeyScheme::Modern,
+                };
+                let outcome = edit::apply_field(&mut text, &mut cursor, &mut state, press, &limits, keys);
+                self.field_edits.insert(item.key.clone(), state);
+                if let Some(copied) = outcome.copy.clone() {
+                    self.copy_text(copied);
+                }
+                if let Some(message) = outcome.message {
+                    self.set_message(message.to_string(), false);
+                }
+                match outcome.edited {
+                    None | Some(Edited::No) => false,
+                    Some(Edited::Moved) => {
                         self.cursors.insert(item.key.clone(), cursor);
                         self.follow_area_cursor(&item.key);
                         true
                     }
-                    Edited::Changed => {
+                    Some(Edited::Changed) => {
                         self.edits.set(&item.key, text);
                         self.cursors.insert(item.key.clone(), cursor);
                         self.after_edit(&item.key);
@@ -1943,6 +1976,7 @@ impl Session {
             self.selected.clear();
             self.hscroll.clear();
             self.cursors.clear();
+            self.field_edits.clear();
             self.extras.clear();
             self.fragments.clear();
             self.trees.clear();
