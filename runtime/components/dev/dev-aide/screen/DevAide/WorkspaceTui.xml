@@ -651,17 +651,15 @@ along with this software (see the LICENSE.md file). If not, see
                 <form-list name="WorkspaceChangeList" list="changeRows" skip-form="true" paginate="false" condition="changeRows.length">
                     <row-selection id-field="path" parameter="paths" list-mode="true" condition="canWrite">
                         <action>
-                            <dialog button-text="Stage" title="Stage the selected files"/>
                             <form-single name="WorkspaceStageSelected" transition="stageFiles">
                                 <field name="rootId"><default-field><hidden/></default-field></field>
-                                <field name="submitButton"><default-field title="Stage"><submit/></default-field></field>
+                                <field name="submitButton"><default-field title="Stage selected"><submit/></default-field></field>
                             </form-single>
                         </action>
                         <action>
-                            <dialog button-text="Unstage" title="Unstage the selected files"/>
                             <form-single name="WorkspaceUnstageSelected" transition="unstageFiles">
                                 <field name="rootId"><default-field><hidden/></default-field></field>
-                                <field name="submitButton"><default-field title="Unstage"><submit/></default-field></field>
+                                <field name="submitButton"><default-field title="Unstage selected"><submit/></default-field></field>
                             </form-single>
                         </action>
                         <action>
@@ -728,9 +726,9 @@ along with this software (see the LICENSE.md file). If not, see
             <label text="${root.label} is not a git repository." type="p" style="m-muted" condition="!isGit"/>
             <section name="WorkspaceCommitDetail" condition="commit"><widgets>
                 <container-box><box-header title="${commitTitle}"/><box-toolbar>
-                    <link url="replayCommit" link-type="hidden-form" text="Cherry-pick" condition="canWrite"
+                    <link url="replayCommit" link-type="hidden-form" text="Cherry-pick" condition="canWrite &amp;&amp; tier == 'full'"
                             confirmation="Apply ${commitTitle} on the current branch?" parameter-map="{rootId:rootId, commitId:commitId, replay:'cherryPick'}"/>
-                    <link url="replayCommit" link-type="hidden-form" text="Revert" btn-type="danger" condition="canWrite"
+                    <link url="replayCommit" link-type="hidden-form" text="Revert" btn-type="danger" condition="canWrite &amp;&amp; tier == 'full'"
                             confirmation="Make a commit that undoes ${commitTitle}?" parameter-map="{rootId:rootId, commitId:commitId, replay:'revert'}"/>
                     <link url="../Workspace" text="Close" link-type="anchor" parameter-map="{commitId:'', commitPath:''}"/>
                 </box-toolbar><box-body>

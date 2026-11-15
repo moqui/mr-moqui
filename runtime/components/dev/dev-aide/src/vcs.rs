@@ -804,7 +804,15 @@ pub(crate) fn fetch_remote(
     let out = network(
         ec,
         parameters,
-        &|_, _| Ok(vec!["fetch".into(), "--prune".into()]),
+        &|context, root| {
+            // git fetches nothing and says nothing in a repository with no remote, which read as a fetch done
+            if git::parse_remotes(&context.git().read(&root.path, &["remote", "-v"]).unwrap_or_default()).is_empty() {
+                return Err(LibError::new(
+                    "the repository has no remote to fetch from (Settings: add one)",
+                ));
+            }
+            Ok(vec!["fetch".into(), "--prune".into()])
+        },
         "fetch",
     )?;
     // the hosted repository asked again (plans/design-dev-aide.md 21.3), as the rights or the rules may have changed
