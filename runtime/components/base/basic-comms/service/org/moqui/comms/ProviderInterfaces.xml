@@ -174,9 +174,12 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="sms" noun="Consent" type="interface">
-        <description>sms-consent (C4-SMS): whether a promotional text may go from our number fromNumber to toNumber, as the
-            caller's user (org.moqui.call.SmsServices check#SmsSend). consent true allows it, false refuses it whatever another
-            provider says; with no provider saying true, a promotional text is refused (consentRequired).</description>
+        <description>sms-consent (C4-SMS): whether a promotional text may go from our number fromNumber to toNumber
+            (org.moqui.call.SmsServices check#SmsSend). An app root's provider is asked as the caller's user, of the apps
+            they may open; one a component registers in its conf (screen-facade shell-providers) is asked for every
+            sender, the system with no user included (a campaign's dispatch), with authorization disabled. consent true
+            allows it, false refuses it whatever another provider says; with no provider saying true, a promotional text
+            is refused (consentRequired).</description>
         <in-parameters>
             <parameter name="fromNumber" required="true"/>
             <parameter name="toNumber" required="true"/>

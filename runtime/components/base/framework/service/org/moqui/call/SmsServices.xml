@@ -69,7 +69,10 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal (the adapter before each send, and send#SmsMessage): whether a text from fromNumber to toNumber
             may go now, from userId (empty: the system). allowed, else reasonCode and message: noMessaging, badNumber,
             emergency, numberNotGranted, internationalNotEnabled, premiumNotEnabled, optedOut, consentRequired (isPromotional
-            with no sms-consent provider saying yes), dailyLimit. Out also the numbers in E.164 and the bridge.</description>
+            with no sms-consent provider saying yes: an app's, or one a component's conf registers, asked for the system
+            too), dailyLimit (the user's and all users' texts, or the system's own; a promotional text also its number's
+            smsMaxPromotionalPerNumber, and one with no user that alone, not the system's). Out also the numbers in E.164
+            and the bridge.</description>
         <in-parameters>
             <parameter name="fromNumber" required="true"/>
             <parameter name="toNumber" required="true"/>
@@ -95,7 +98,11 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="note" noun="SmsSent" allow-remote="false">
         <description>Internal: a text went to the provider (taken, or not known): it counts for the day of userId (empty: the
             system's) and of the deployment (SmsSendCount).</description>
-        <in-parameters><parameter name="userId"/></in-parameters>
+        <in-parameters>
+            <parameter name="userId"/>
+            <parameter name="fromNumber"><description>With isPromotional, the number whose promotional count it is</description></parameter>
+            <parameter name="isPromotional" type="Boolean" default="false"/>
+        </in-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Sms.js').execute('noteSent', context))</script></actions>
     </service>
 
@@ -105,6 +112,8 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="userId"/>
             <parameter name="counterDay"/>
+            <parameter name="fromNumber"><description>With isPromotional, the number whose promotional count it was</description></parameter>
+            <parameter name="isPromotional" type="Boolean" default="false"/>
         </in-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Sms.js').execute('releaseSend', context))</script></actions>
     </service>

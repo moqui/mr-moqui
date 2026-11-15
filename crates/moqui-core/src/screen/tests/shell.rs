@@ -159,6 +159,17 @@ const SERVICES: &str = r#"<services>
         <out-parameters><parameter name="offer" type="Boolean"/></out-parameters>
         <actions><script>throw new Error('the condition is down')</script></actions>
     </service>
+    <service verb="consent" noun="Yes" authenticate="false">
+        <in-parameters><parameter name="text"/></in-parameters>
+        <out-parameters><parameter name="consent" type="Boolean"/></out-parameters>
+        <actions><script>consent = true</script></actions>
+    </service>
+    <service verb="consent" noun="No">
+        <description>a conf's sms-consent provider: needs a user, so it answers only because it runs with authorization disabled</description>
+        <in-parameters><parameter name="text"/></in-parameters>
+        <out-parameters><parameter name="consent" type="Boolean"/></out-parameters>
+        <actions><script>consent = false</script></actions>
+    </service>
     <service verb="search" noun="Secret" authenticate="false">
         <in-parameters><parameter name="text"/></in-parameters>
         <out-parameters><parameter name="rows" type="List"/></out-parameters>
@@ -232,6 +243,7 @@ fn tree(name: &str) -> PathBuf {
                 <inbox-source name="open.one" service="test.Shell.get#InboxOne" sequence="20"/>
                 <inbox-source name="open.down" service="test.Shell.get#InboxDown" sequence="10"/>
                 <inbox-source name="open.nameless" service=""/>
+                <sms-consent name="shared.consent" service="test.Shell.consent#Yes"/>
                 <frobnicate/>
             </shell-providers>
             <widgets><subscreens-active/></widgets>
@@ -1951,6 +1963,31 @@ fn providers_of_the_apps_the_user_may_open_answer_and_a_failing_one_is_left_out(
         bad["errors"].as_str().unwrap_or("").contains("not a provider hook"),
         "{bad}"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A provider a component's conf registers (Mantle's `sms-consent` answer) is asked beside the apps' even when an app's
+/// provider has its name: no app stands in for its answer, so its no is there to refuse (Sms.js `consented`).
+#[test]
+fn a_conf_provider_is_asked_beside_an_apps_provider_of_the_same_name() {
+    let dir = tree("conf-hooks");
+    let world = world_with(
+        &dir,
+        "<moqui-conf><artifact-execution-facade><artifact-execution type=\"AT_XML_SCREEN\" authz-enabled=\"true\"/>\
+         </artifact-execution-facade><screen-facade><shell-providers>\
+         <sms-consent name=\"shared.consent\" service=\"test.Shell.consent#No\"/>\
+         </shell-providers></screen-facade></moqui-conf>",
+    );
+    let root = root_of(&dir);
+    let (status, out) = get(&world, &root, Some("plain"), "/providers", &[("hook", "sms-consent")]);
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(
+        names(&out["results"], "sourceId"),
+        ["shared.consent", "shared.consent"],
+        "{out}"
+    );
+    assert_eq!(out["results"][0]["consent"], true, "{out}");
+    assert_eq!(out["results"][1]["consent"], false, "the conf's own answer: {out}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

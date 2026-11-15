@@ -21,7 +21,9 @@ along with this software (see the LICENSE.md file). If not, see
             messaging bridge) straight to its provider, kept in no room, so a sign-in code is seen by nobody else. userId: who
             it is from (their caller-ID grants and limits); empty, the system's limits. The checks before the provider are
             SmsServices.check#SmsSend's: the destination's class (international and premium off until enabled), the person's
-            opt-out (STOP), the day's limits, and for isPromotional a yes from an sms-consent provider. A refusal is an error,
+            opt-out (STOP), the day's limits, and for isPromotional a yes from an sms-consent provider (an app's, or a
+            component's conf's, asked for the system too); a promotional text counts for its number's day
+            (smsMaxPromotionalPerNumber), and with no userId not against the system's own. A refusal is an error,
             with reasonCode. Not callable from outside the server.</description>
         <in-parameters>
             <parameter name="countryCode" default-value="1"/>
@@ -38,6 +40,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="messageId"/>
             <parameter name="errorMessage"/>
             <parameter name="reasonCode"/>
+            <parameter name="deliveryOutcome"><description>When not successful, as send#EmailTemplate's: retryable (the
+                day's limit, or the provider asked to try later), permanent (refused before the provider or by it) or
+                uncertain (the provider's answer was lost; never send it again on its own)</description></parameter>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Sms.js').execute('sendMessage', context))</script></actions>
     </service>
