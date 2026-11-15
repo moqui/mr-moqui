@@ -1426,7 +1426,7 @@ level at the path itself (no walk down the default subscreens), which is how the
   client draws a `t` it does not know as a placeholder.
 - **Actions.** `link`: `text`, `url` with its parameters, `kind` (the `link-type`), `method`, `confirm`, `btnType`, `icon` (a Material Symbols
   name), `badge`, `tooltip`, `disabled`. A hidden-form link posts.
-- **Forms.** `form`: `name`, `kind`, `transitionUrl` (empty for a find form, which asks for the screen again with its fields), `method`, `hidden`
+- **Forms.** `form`: `name`, `kind`, `transitionUrl` (empty for a find form, which asks for the screen again with its fields), `method` (`post` to a transition; `get` when the form goes to a screen, which the client opens with the fields as parameters), `hidden`
   `[{name, value}]` (credential names left out), `submitMessage`, `backgroundReloadId`, `backgroundHideId`, its fields and layout rows in `c`.
   A form with a file field has `multipart`.
   `formList`: `columns` `[{title, orderBy, printWidth, printWidthType, align}]`, `rows` `[{id, selectId, cells, hidden}]` (a cell is text, one
