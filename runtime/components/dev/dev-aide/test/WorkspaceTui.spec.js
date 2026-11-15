@@ -3,7 +3,8 @@
 // transition (a directory's entries with their git letters, the open path's directories with theirs), Save, a save over a
 // file changed on disk (the conflict kept for the compare) and Save mine over it; one tui render of the Workspace (its
 // dynamic container at a palette link's file and line) and one of the twin, with its header, tabs, tree, editor and that
-// conflict's diff. The directory goes with the scratch runtime.
+// conflict's diff (and no References for a file that defines no artifact), with the artifacts of a file the index has,
+// which the File menu's References takes. The directory goes with the scratch runtime.
 // Run: ./moq test dev-aide --spec WorkspaceTui
 const WS = "org.moqui.devaide.WorkspaceServices."
 const ws = (name, params) =>
@@ -107,9 +108,28 @@ feature(
                 Array.from(nodes || [])
                     .map(node => (node.t == "dynamicContainer" ? node : find(node.c)))
                     .find(node => node)
-            return {rootId, container: find(workspace.jsonObject.c) || {}, page, out: String(page.output)}
+            // the artifacts of a file the index has, which a File menu's References takes: this component's services
+            const base = Array.from(ws("get#Roots").roots || []).find(one =>
+                Array.from(one.components || []).some(component => component.name == "dev-aide")
+            )
+            const component = base.components.find(one => one.name == "dev-aide")
+            const inFile = ec.service
+                .sync()
+                .name("org.moqui.devaide.ArtifactServices.get#ArtifactsInFile")
+                .parameters({
+                    rootId: base.id,
+                    path: (component.path ? component.path + "/" : "") + "service/org/moqui/devaide/ArtifactServices.xml"
+                })
+                .call()
+            return {
+                rootId,
+                container: find(workspace.jsonObject.c) || {},
+                page,
+                out: String(page.output),
+                inFile: Array.from(inFile.artifacts || [])
+            }
         },
-        then({rootId, container, page, out}) {
+        then({rootId, container, page, out, inFile}) {
             container.t == "dynamicContainer"
             container.url.includes("/WorkspaceTui?")
             container.url.includes("rootId=" + rootId)
@@ -130,6 +150,15 @@ feature(
             out.includes("+mine")
             out.includes("Save mine over it")
             out.includes("Take the disk's")
+            // a.txt defines no artifact: the File menu has no References or Browse
+            !out.includes("References")
+            !out.includes('"text":"Browse"')
+            inFile.some(
+                artifact =>
+                    artifact.id == "service:org.moqui.devaide.ArtifactServices.get#ArtifactsInFile" &&
+                    artifact.shortName == "get#ArtifactsInFile" &&
+                    artifact.relativePath.endsWith("/ArtifactServices.xml")
+            )
         }
     }
 )

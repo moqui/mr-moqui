@@ -9,7 +9,7 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   git status, files in the CodeMirror editor with schema completion and checks, Save that reloads what the file defines,
   Changes (stage, unstage, discard, commit with the task trailer), Commits, Fetch, Pull, Push and Publish. In the
   terminal (`moqui tui`) it is a simpler form, `WorkspaceTui.xml`: the tree, Go to file and Search, one file in the
-  `code` editor with Save and its problems, Changes with the commit form, Commits with Cherry-pick and Revert, and a Git
+  `code` editor with Save and its problems (and References and Browse for the artifacts it defines), Changes with the commit form, Commits with Cherry-pick and Revert, and a Git
   menu; branches, tags, stashes, merge requests, review and blame open in the browser.
 - **Entities** is the entity modeler: an entity as the server merged it, with each field's origin, its edits going to the
   site's `extend-entity` when it is upstream; Add field by kind (Picklist and Status write their seed records too), the

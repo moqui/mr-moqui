@@ -26,7 +26,7 @@ use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 use serde_json::{json, Value as Json};
 
-use crate::roots;
+use crate::roots::{self, Root};
 use crate::tier::Tier;
 use crate::workspace::{json_value, text, Context};
 
@@ -35,6 +35,10 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     registry.service_function(moqui_core::service_location!(get_artifact_detail), get_artifact_detail)?;
     registry.service_function(moqui_core::service_location!(get_refs), get_refs)?;
     registry.service_function(moqui_core::service_location!(get_definition), get_definition)?;
+    registry.service_function(
+        moqui_core::service_location!(get_artifacts_in_file),
+        get_artifacts_in_file,
+    )?;
     registry.service_function(moqui_core::service_location!(get_customizations), get_customizations)?;
     registry.service_function(moqui_core::service_location!(search_palette), search_palette)
 }
@@ -81,8 +85,13 @@ pub(crate) fn workspace_url(root: &str, path: &str, line: u32) -> String {
 /// An artifact as the dev-aide shows it: with the root and path that open it, whether it is the site's, and the
 /// Workspace link.
 pub(crate) fn shown(context: &Context, artifact: &ArtifactRow) -> Json {
+    shown_in(&context.roots, artifact)
+}
+
+/// [`shown`] against `roots`.
+fn shown_in(roots: &[Root], artifact: &ArtifactRow) -> Json {
     let mut out = serde_json::to_value(artifact).unwrap_or(Json::Null);
-    if let Some((root, relative)) = roots::locate(&context.roots, Path::new(&artifact.path)) {
+    if let Some((root, relative)) = roots::locate(roots, Path::new(&artifact.path)) {
         let site = root.is_site_path(&relative);
         out["rootId"] = json!(root.id);
         out["relativePath"] = json!(relative);
@@ -220,6 +229,33 @@ fn get_definition(
     Ok(out)
 }
 
+/// `get#ArtifactsInFile`: the artifacts a file of a root defines at its top (a screen, an entity file's entities, a
+/// service file's services), in file order, each as [`shown`]; none for a file the index does not have.
+fn get_artifacts_in_file(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of(ec, Tier::View)?;
+    let root = context.root(&text(parameters, "rootId"))?;
+    let resolved = context.resolve(root, &text(parameters, "path"))?;
+    // a file the index never reads (not in a loaded component, or of no kind it reads) asks nothing of the index, which
+    // would otherwise be built at its first use
+    let found = if index::locate(&context.factory, &resolved.path).is_some() {
+        index::in_file(&context.factory, &resolved.path.display().to_string())?
+    } else {
+        Vec::new()
+    };
+    let mut out = Parameters::new();
+    out.insert("artifacts".into(), json_value(&in_file_shown(&context.roots, &found)));
+    Ok(out)
+}
+
+/// The artifacts of a file as [`get_artifacts_in_file`] answers them.
+fn in_file_shown(roots: &[Root], found: &[ArtifactRow]) -> Vec<Json> {
+    found.iter().map(|artifact| shown_in(roots, artifact)).collect()
+}
+
 /// The site components' extensions with their state, broken first.
 pub(crate) fn customizations(context: &Context) -> Result<(Vec<Json>, usize), LibError> {
     let sites = context.settings.site_components.clone();
@@ -332,5 +368,115 @@ fn icon_of(kind: &str) -> &'static str {
         "seca" | "eeca" | "emeca" | "giteca" => "sym_o_bolt",
         "rest" => "sym_o_api",
         _ => "sym_o_code",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::roots::{RootComponent, RootKind};
+
+    fn root() -> Root {
+        Root {
+            id: "base".into(),
+            label: "mr-moqui".into(),
+            path: PathBuf::from("/w/base"),
+            kind: RootKind::Git,
+            components: vec![
+                RootComponent {
+                    name: "shop".into(),
+                    path: "runtime/components/addon/shop".into(),
+                    site: false,
+                },
+                RootComponent {
+                    name: "my-site".into(),
+                    path: "runtime/components/addon/my-site".into(),
+                    site: true,
+                },
+            ],
+            upstream: false,
+            read_only: false,
+            publish_branch: None,
+            publish_branch_required: false,
+            hosted: None,
+            worktree_of: None,
+            conversation_id: None,
+            worktree_user_id: None,
+        }
+    }
+
+    fn artifact(id: &str, kind: &str, short: &str, path: &str, line: u32) -> ArtifactRow {
+        ArtifactRow {
+            id: id.into(),
+            kind: kind.into(),
+            name: id.split_once(':').map_or(id, |(_, name)| name).into(),
+            short_name: short.into(),
+            component: "shop".into(),
+            path: path.into(),
+            line,
+            column: 5,
+            summary: String::new(),
+            parent: None,
+            origin: String::new(),
+            marks: String::new(),
+        }
+    }
+
+    /// The artifacts of a file, as the Workspace's References links take them: in the index's order, each with its id
+    /// and short name, the root and path that open it at its line, and whether it is the site's.
+    #[test]
+    fn a_files_artifacts_carry_where_they_open_and_whose_they_are() {
+        let services = "/w/base/runtime/components/addon/shop/service/shop/OrderServices.xml";
+        let found = [
+            artifact(
+                "service:shop.OrderServices.place#Order",
+                "service",
+                "place#Order",
+                services,
+                18,
+            ),
+            artifact(
+                "service:shop.OrderServices.cancel#Order",
+                "service",
+                "cancel#Order",
+                services,
+                40,
+            ),
+        ];
+        let shown = in_file_shown(&[root()], &found);
+        assert_eq!(shown.len(), 2);
+        assert_eq!(shown[0]["id"], "service:shop.OrderServices.place#Order");
+        assert_eq!(shown[0]["shortName"], "place#Order");
+        assert_eq!(shown[1]["shortName"], "cancel#Order");
+        assert_eq!(shown[0]["rootId"], "base");
+        assert_eq!(
+            shown[0]["relativePath"],
+            "runtime/components/addon/shop/service/shop/OrderServices.xml"
+        );
+        assert_eq!(shown[0]["upstream"], true);
+        assert_eq!(
+            shown[1]["url"],
+            "/qapps/dev/Workspace?rootId=base&path=runtime/components/addon/shop/service/shop/OrderServices.xml&line=40"
+        );
+        // a site component's screen is the site's
+        let screen = artifact(
+            "screen:component://my-site/screen/MySite.xml",
+            "screen",
+            "MySite",
+            "/w/base/runtime/components/addon/my-site/screen/MySite.xml",
+            1,
+        );
+        let site = in_file_shown(&[root()], std::slice::from_ref(&screen));
+        assert_eq!(site[0]["site"], true);
+        assert_eq!(site[0]["upstream"], false);
+        // a file in no root still names its artifacts, upstream and without a Workspace link
+        let elsewhere = artifact("entity:x.Y", "entity", "Y", "/elsewhere/YEntities.xml", 3);
+        let outside = in_file_shown(&[root()], &[elsewhere]);
+        assert_eq!(outside[0]["id"], "entity:x.Y");
+        assert_eq!(outside[0]["upstream"], true);
+        assert!(outside[0].get("url").is_none());
+        assert!(in_file_shown(&[root()], &[]).is_empty());
     }
 }
