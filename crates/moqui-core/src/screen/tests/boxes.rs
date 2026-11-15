@@ -111,3 +111,40 @@ fn a_box_condition_is_a_v_if_over_the_box_in_a_static_template() {
     assert!(!html[shown..shown + close].contains("PlainBox"), "{html}");
     assert_eq!(html.matches("<template v-if").count(), 1, "{html}");
 }
+
+/// The data modes (csv, xml) and html-print write a box's body only when its condition holds, and xlsx guards it the same
+/// way (its workbook is checked by its source, not unzipped).
+#[test]
+fn a_box_condition_hides_its_list_in_the_data_and_print_modes() {
+    let xml = r#"<screen require-authentication="false"><actions>
+        <set field="shownRows" from="[{v: 'shownRow'}]"/><set field="hiddenRows" from="[{v: 'hiddenRow'}]"/></actions><widgets>
+        <container-box id="ShownBox" condition="shownRows.length"><box-header title="Shown"/><box-body>
+            <form-list name="ShownList" list="shownRows" skip-form="true"><field name="v"><default-field><display/></default-field></field></form-list>
+        </box-body></container-box>
+        <container-box id="HiddenBox" condition="!hiddenRows.length"><box-header title="Hidden"/><box-body>
+            <form-list name="HiddenList" list="hiddenRows" skip-form="true"><field name="v"><default-field><display/></default-field></field></form-list>
+        </box-body></container-box>
+    </widgets></screen>"#;
+    let path = screen_file("data", xml);
+    let context = ExecutionContextFactory::test_context();
+    for mode in ["csv", "xml", "html-print"] {
+        let output = make_render(context.factory())
+            .root_screen(path.to_string_lossy().into_owned())
+            .render_mode(mode)
+            .render()
+            .unwrap_or_else(|err| panic!("{mode}: {err}"));
+        let body = output.body_text();
+        assert!(body.contains("shownRow"), "{mode}: {body}");
+        assert!(!body.contains("hiddenRow"), "{mode}: {body}");
+    }
+    let _ = std::fs::remove_file(&path);
+    let source = crate::screen::generate::generate_unit_source(
+        "xlsx",
+        r#"<widgets><container-box condition="rows.length"><box-body><form-list name="A" list="rows" skip-form="true">
+                <field name="v"><default-field><display/></default-field></field></form-list></box-body></container-box>
+            <container-box><box-body><form-list name="B" list="rows" skip-form="true">
+                <field name="v"><default-field><display/></default-field></field></form-list></box-body></container-box></widgets>"#,
+    )
+    .unwrap();
+    assert_eq!(source.matches("sri.checkCondition(").count(), 1, "{source}");
+}
