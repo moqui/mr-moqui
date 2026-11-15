@@ -638,6 +638,29 @@ fn utility_classes_have_javas_statics() {
     clear_context_stack();
 }
 
+/// `ec.web.reservedPaths` adds the first segment of each servlet the conf declares, enabled or not (a component's web
+/// script answers on every host): a repository group, mount or page route keeps off `/trk` as off `/git`.
+#[test]
+fn the_reserved_paths_add_each_declared_servlet() {
+    clear_context_stack();
+    let context = ExecutionContextFactory::test_context_with_conf(
+        r#"<moqui-conf><webapp-list><webapp name="webroot">
+            <servlet name="Screens" class="org.moqui.impl.webapp.MoquiServlet"><url-pattern>/*</url-pattern></servlet>
+            <servlet name="Track" location="component://x/Track.js"><url-pattern>/trk/*</url-pattern></servlet>
+            <servlet name="Off" location="component://x/Off.js" enabled="false"><url-pattern>/dashboard/*</url-pattern></servlet>
+        </webapp></webapp-list></moqui-conf>"#,
+    );
+    let _entered = context.enter();
+    holds(
+        r#"(() => {
+            const paths = ec.web.reservedPaths;
+            return ["git", "apps", "trk", "dashboard"].every(p => paths.includes(p)) && !paths.includes("")
+                && paths.filter(p => p === "trk").length === 1;
+        })()"#,
+    );
+    clear_context_stack();
+}
+
 /// `ec.web.reservedPaths` (and its method form) is the framework's one list of reserved first path segments, there
 /// with no request too, the host's routes and the screens' alike (crate::web::reserved).
 #[test]

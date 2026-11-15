@@ -19,6 +19,11 @@
 //! test of `moqui-host` fails for a route whose first segment is not here), and scripts read it as
 //! `ec.web.reservedPaths` (docs/dev/JS-Core-API.md), so an application keeps its mounts, pages and names off them.
 //!
+//! Beside that fixed list, the first segment of every servlet the conf's `webroot` webapp declares (the default conf's
+//! `/search` and `/dashboard` proxies, a component's web script such as PASS's tracking redirect at `/trk/*`) is
+//! reserved too, since a servlet answers on every host ahead of the screens: [`reserved_paths_of`], which
+//! `ec.web.reservedPaths` gives. A request is not checked against those here: the servlet takes it first.
+//!
 //! A segment is matched as written, case and all (`Login`); an application that compares names without case lowers
 //! both.
 //!
@@ -194,6 +199,19 @@ pub fn reserved_paths() -> Vec<&'static str> {
         .map(|reserved| reserved.segment)
         .chain(PARTLY_RESERVED.iter().map(|partly| partly.segment))
         .collect()
+}
+
+/// The reserved first segments with the conf's: [`reserved_paths`], then the first segment of each servlet pattern the
+/// conf's `webroot` webapp declares, enabled or not, that is not in it already ([`super::servlet::WebappScripts`]), in
+/// the conf's order. What `ec.web.reservedPaths` gives.
+pub fn reserved_paths_of(factory: &crate::context::ExecutionContextFactory) -> Vec<String> {
+    let mut paths: Vec<String> = reserved_paths().into_iter().map(str::to_string).collect();
+    for segment in factory.webapp_scripts().declared_segments() {
+        if !paths.iter().any(|path| path == segment) {
+            paths.push(segment.clone());
+        }
+    }
+    paths
 }
 
 /// The host routes a host whose root screen refuses the framework's routes (`framework-routes="refuse"`, a site of

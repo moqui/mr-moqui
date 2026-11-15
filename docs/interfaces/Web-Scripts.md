@@ -68,6 +68,11 @@ Servlets map as the Servlet spec (12.2) maps them. For a request path, the first
 No match is a 404. Filters run on every pattern that covers the path, in `priority` order (default 5, lower first),
 then in the order declared.
 
+A pattern answers on every host, ahead of a public site's pages and an app's mounts, groups and handles, so the first
+segment of each declared servlet's path patterns, enabled or not, is reserved with the framework's own
+(`ec.web.reservedPaths`, `moqui_core::web::reserved::reserved_paths_of`): `/search/*` reserves `search`, PASS's tracking
+redirect at `/trk/*` reserves `trk`. A site's page, a mount, a repository group or a handle cannot take one.
+
 ## The handler object
 
 The file's value is its last expression: an object literal in parentheses, as a script file returns its last

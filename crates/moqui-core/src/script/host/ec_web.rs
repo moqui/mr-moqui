@@ -452,9 +452,11 @@ fn decline_session(_call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 /// The first path segments the framework reserves on every host ([`crate::web::reserved`]), as written, whole and
-/// partly reserved alike (the names a repository group, mount or handle may not take): there with no request too.
+/// partly reserved alike, with the first segment of each servlet the conf declares (the names a repository group,
+/// mount or handle may not take): there with no request too.
 fn reserved_paths(_call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let paths = crate::web::reserved::reserved_paths()
+    let factory = super::factory()?;
+    let paths = crate::web::reserved::reserved_paths_of(&factory)
         .into_iter()
         .map(Value::string)
         .collect();

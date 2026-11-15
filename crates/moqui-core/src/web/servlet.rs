@@ -163,6 +163,8 @@ pub struct WebappScripts {
     /// Each lifecycle element's actions XML and the name its generated script has.
     actions: BTreeMap<&'static str, (String, SourceLocation)>,
     request_log: bool,
+    /// The first segment of each `servlet` element's path patterns, enabled or not, once each in the conf's order.
+    declared_segments: Vec<String>,
 }
 
 fn data_of(name: &str, location: &str, init_params: &BTreeMap<String, String>) -> Value {
@@ -337,6 +339,20 @@ impl WebappScripts {
             }
         }
 
+        for node in webapp.children_named("servlet") {
+            for pattern in patterns(&node, "a servlet") {
+                let segment = match &pattern {
+                    Pattern::Exact(path) | Pattern::Prefix(path) => path.trim_start_matches('/').split('/').next(),
+                    Pattern::Extension(_) | Pattern::Default => None,
+                };
+                let Some(segment) = segment.filter(|segment| !segment.is_empty()) else {
+                    continue;
+                };
+                if !self.declared_segments.iter().any(|seen| seen == segment) {
+                    self.declared_segments.push(segment.to_string());
+                }
+            }
+        }
         for node in webapp.children_named("servlet").into_iter().filter(enabled) {
             let name = node.attribute("name").unwrap_or_default();
             let label = format!("servlet {name}");
@@ -461,6 +477,13 @@ impl WebappScripts {
             .filter(|filter| filter.patterns.iter().any(|pattern| pattern.covers(path)))
             .cloned()
             .collect()
+    }
+
+    /// The first path segment of each servlet the webapp declares, enabled or not (`search`, `trk`), as written: a
+    /// servlet answers on every host, so these are reserved beside the framework's own list
+    /// ([`super::reserved::reserved_paths_of`]). Not the root (`/*`), an extension or the default pattern.
+    pub fn declared_segments(&self) -> &[String] {
+        &self.declared_segments
     }
 
     pub fn has_listeners(&self) -> bool {
@@ -687,6 +710,22 @@ mod tests {
         let other = scripts_of_extensions();
         assert_eq!(other.match_servlet("/a/b.csv").unwrap().servlet.name, "Csv");
         assert_eq!(other.match_servlet("/a/b.txt").unwrap().servlet.name, "Default");
+    }
+
+    /// Every declared servlet's first segment is reserved, enabled or not (a servlet answers on every host), once each;
+    /// the root, an extension and the default pattern reserve nothing.
+    #[test]
+    fn each_declared_servlet_reserves_its_first_segment() {
+        let scripts = scripts(
+            r#"<servlet name="Screens" class="org.moqui.impl.webapp.MoquiServlet"><url-pattern>/*</url-pattern></servlet>
+            <servlet name="Search" location="component://webroot/script/ProxyServlet.js"><url-pattern>/search/*</url-pattern></servlet>
+            <servlet name="Deep" location="component://x/Deep.js"><url-pattern>/search/deep/*</url-pattern></servlet>
+            <servlet name="Off" location="component://x/Off.js" enabled="false"><url-pattern>/dashboard/*</url-pattern></servlet>
+            <servlet name="Track" location="component://x/Track.js"><url-pattern>/trk/*</url-pattern><url-pattern>/trk-o</url-pattern></servlet>
+            <servlet name="Csv" location="component://x/Csv.js"><url-pattern>*.csv</url-pattern><url-pattern>/</url-pattern></servlet>"#,
+        );
+        assert_eq!(scripts.declared_segments(), ["search", "dashboard", "trk", "trk-o"]);
+        assert!(scripts_of_extensions().declared_segments().is_empty());
     }
 
     fn scripts_of_extensions() -> WebappScripts {
