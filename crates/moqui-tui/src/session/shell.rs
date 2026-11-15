@@ -962,7 +962,7 @@ impl Session {
     }
 
     /// The next (or previous) item of the focus order whose text holds the search: a link, a field's title or value,
-    /// a list row. A list's matching row becomes its current row.
+    /// a list row, a tree row, a button menu by its items. A list's or tree's matching row becomes its current row.
     pub(super) fn find_next(&mut self, forward: bool) {
         if self.search.is_empty() {
             self.overlays.push(Overlay::Search(String::new()));
@@ -985,6 +985,14 @@ impl Session {
                         }
                     }
                 }
+                FocusKind::Tree => {
+                    let rows = self.trees.get(&item.key).map(super::structure::TreeState::rows).unwrap_or_default();
+                    for (row, tree_row) in rows.iter().enumerate() {
+                        if tree_row.text.to_lowercase().contains(&needle) {
+                            stops.push((at, Some(row)));
+                        }
+                    }
+                }
                 _ => {
                     if self.item_text(item).to_lowercase().contains(&needle) {
                         stops.push((at, None));
@@ -994,9 +1002,11 @@ impl Session {
         }
         let here = (
             self.focus_at,
-            self.focus()
-                .filter(|item| item.kind == FocusKind::List)
-                .map(|item| self.row_at(&item.key)),
+            self.focus().and_then(|item| match item.kind {
+                FocusKind::List => Some(self.row_at(&item.key)),
+                FocusKind::Tree => self.trees.get(&item.key).map(|state| state.at),
+                _ => None,
+            }),
         );
         let found = if forward {
             stops
@@ -1015,7 +1025,13 @@ impl Session {
             Some((at, row)) => {
                 self.focus_at = at;
                 if let (Some(row), Some(item)) = (row, self.focus.get(at).cloned()) {
-                    self.rows.insert(item.key, row);
+                    if item.kind == FocusKind::Tree {
+                        if let Some(state) = self.trees.get_mut(&item.key) {
+                            state.at = row;
+                        }
+                    } else {
+                        self.rows.insert(item.key, row);
+                    }
                 }
                 self.set_message(format!("Found \"{}\"", self.search), false);
             }
@@ -1034,7 +1050,19 @@ impl Session {
             return title.clone();
         }
         if let Some(menu) = self.index.menus.get(&item.key) {
-            return menu.text.clone();
+            // a button menu is found by its items too, which show only while it is open
+            let mut text = menu.text.clone();
+            for link in &menu.links {
+                if let Some(info) = self.index.links.get(link) {
+                    text.push(' ');
+                    text.push_str(&info.text);
+                }
+            }
+            for (_, label) in &menu.dialogs {
+                text.push(' ');
+                text.push_str(label);
+            }
+            return text;
         }
         item.key.clone()
     }

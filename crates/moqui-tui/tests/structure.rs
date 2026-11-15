@@ -143,6 +143,32 @@ fn a_tree_loads_its_roots_opens_a_node_by_its_children_and_follows_a_leaf() {
         .any(|call| matches!(call, LinkCall::Level { path, parameters } if path == "/gl" && parameters.get("id").map(String::as_str) == Some("2000"))));
 }
 
+/// Home and End go to a tree's first and last rows; a search finds a tree's row (made its current row) and a button
+/// menu by one of its items.
+#[test]
+fn a_tree_has_home_and_end_and_a_search_finds_its_rows_and_a_menus_items() {
+    let (mut session, link) = tree_session();
+    focus(&mut session, &link, "Accounts");
+    press(&mut session, &link, Key::Right);
+    press(&mut session, &link, Key::End);
+    assert_eq!(session.tree("Accounts").unwrap().at, 2);
+    press(&mut session, &link, Key::Home);
+    assert_eq!(session.tree("Accounts").unwrap().at, 0);
+    let search = |session: &mut Session, text: &str| {
+        session.open_text_search();
+        for ch in text.chars() {
+            press(session, &link, Key::Char(ch));
+        }
+        press(session, &link, Key::Enter);
+    };
+    focus(&mut session, &link, "More");
+    search(&mut session, "cash");
+    assert_eq!(session.focus_id(), "Accounts", "{}", session.message());
+    assert_eq!(session.tree("Accounts").unwrap().at, 1);
+    search(&mut session, "print");
+    assert_eq!(session.focus_id(), "Actions", "{}", session.message());
+}
+
 #[test]
 fn a_closed_box_keeps_its_fields_out_of_the_focus_until_enter_opens_it() {
     let (mut session, link) = tree_session();

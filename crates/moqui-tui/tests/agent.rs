@@ -158,6 +158,13 @@ fn set_types_a_field_and_chooses_a_drop_down_the_way_a_person_does() {
     let city = agent.run("set City Ottawa East");
     assert!(city.ok, "{}", city.text);
     assert_eq!(agent.session().buffer("city"), "Ottawa East");
+    // no value, or "", empties it
+    assert!(agent.run("set City").ok);
+    assert_eq!(agent.session().buffer("city"), "");
+    assert!(agent.run("set City Ottawa East").ok);
+    assert!(agent.run("set City \"\"").ok);
+    assert_eq!(agent.session().buffer("city"), "");
+    assert!(agent.run("set City Ottawa East").ok);
     // By label; the dependent state's options are asked for and settled before the answer.
     let country = agent.run("set Country Canada");
     assert!(country.ok, "{}", country.text);

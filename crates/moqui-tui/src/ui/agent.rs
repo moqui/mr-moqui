@@ -381,10 +381,25 @@ impl<L: ScreenLink> Agent<L> {
     /// `set <element> <value>`: the element is the longest leading run of words that names one, so a label with spaces
     /// works without quotes. When no run names one, the error is about the first word or words that name an element
     /// out of reach (a closed dialog's field, a list's find field), else about the whole line.
+    ///
+    /// `set <element>` with no value, or with `""` (or `''`) as its value, empties the element.
     fn set(&mut self, rest: &str) -> Result<(), String> {
-        let words: Vec<&str> = rest.split_whitespace().collect();
-        if words.len() < 2 {
+        let mut words: Vec<&str> = rest.split_whitespace().collect();
+        let emptied = matches!(words.last(), Some(&("\"\"" | "''")));
+        if emptied {
+            words.pop();
+        }
+        if words.is_empty() {
             return Err("set takes an element and a value".to_string());
+        }
+        if emptied || words.len() == 1 {
+            let name = words.join(" ");
+            return match self.resolve(&name) {
+                Some(key) => self.set_key(&key, String::new()),
+                None => Err(self
+                    .hidden_place(&name)
+                    .unwrap_or_else(|| self.not_named(&name))),
+            };
         }
         let found = (1..words.len()).rev().find_map(|split| {
             let key = self.resolve(&words[..split].join(" "))?;

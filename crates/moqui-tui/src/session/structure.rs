@@ -27,6 +27,9 @@ use crate::keys::{Key, KeyPress};
 use crate::layout::{Shown, TreeMark, TreeRow};
 use crate::link::{LinkCall, LinkError, RawBody};
 use crate::model::Widget;
+
+/// The rows PgUp and PgDn move in a tree.
+const TREE_PAGE: usize = 10;
 use crate::nav::Location;
 use crate::state::{Purpose, Then};
 
@@ -345,8 +348,9 @@ impl Session {
         }
     }
 
-    /// Up and Down move through a tree's rows; Right opens a node (asking for its children the first time), Left
-    /// closes it or goes to its parent. Past the first or last row the keys move the focus on.
+    /// Up and Down move through a tree's rows, Home and End to its first and last, PgUp and PgDn a page; Right opens a
+    /// node (asking for its children the first time), Left closes it or goes to its parent. Past the first or last row
+    /// the keys move the focus on.
     pub(super) fn tree_key(&mut self, press: &KeyPress) -> bool {
         let Some(id) = self
             .focus()
@@ -369,6 +373,10 @@ impl Session {
         match press.key {
             Key::Up if at > 0 => self.set_tree_at(&id, at - 1),
             Key::Down if at + 1 < rows.len() => self.set_tree_at(&id, at + 1),
+            Key::Home => self.set_tree_at(&id, 0),
+            Key::End => self.set_tree_at(&id, rows.len() - 1),
+            Key::PageUp => self.set_tree_at(&id, at.saturating_sub(TREE_PAGE)),
+            Key::PageDown => self.set_tree_at(&id, (at + TREE_PAGE).min(rows.len() - 1)),
             Key::Right => match row.mark {
                 TreeMark::Closed => self.open_tree_node(&id, &row.key),
                 TreeMark::Open | TreeMark::Loading => {

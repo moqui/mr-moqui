@@ -175,6 +175,10 @@ impl Component for Tree {
         match press.key {
             Key::Down if state.at + 1 < visible.len() => state.at += 1,
             Key::Up if state.at > 0 => state.at -= 1,
+            Key::Home => state.at = 0,
+            Key::End => state.at = visible.len() - 1,
+            Key::PageUp => state.at = state.at.saturating_sub(10),
+            Key::PageDown => state.at = (state.at + 10).min(visible.len() - 1),
             Key::Right | Key::Char('+') => {
                 if entry.parent && state.closed.contains(&key) {
                     state.closed.remove(&key);
@@ -204,6 +208,8 @@ impl Component for Tree {
     fn help(&self) -> &'static [(&'static str, &'static str)] {
         &[
             ("Up/Down", "Previous / next row"),
+            ("Home/End", "First / last row"),
+            ("PgUp/PgDn", "Ten rows up / down"),
             ("Right/+", "Open the row, or to its first child"),
             ("Left/-", "Close the row, or to its parent"),
             ("Enter", "Open the row's record"),

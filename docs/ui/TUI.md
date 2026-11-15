@@ -153,10 +153,10 @@ session is found only by its own user. It ends on `close`, or after 10 minutes w
 | `type <text>` | characters as typed; `\r` is Enter, `\t` is Tab; the text is trimmed, so begin it with `\ ` for a leading space |
 | `go <path[?query]>` | go to a screen |
 | `focus <element>` | move the focus |
-| `set <element> <value>` | replace a field's value; a drop-down takes a choice's value or label and chooses it as a person does, so its dependent fields follow |
+| `set <element> <value>` | replace a field's value; a drop-down takes a choice's value or label and chooses it as a person does, so its dependent fields follow. `set <element>` alone, or with `""` as its value, empties it (over ssh, quote it from the local shell: `'""'`) |
 | `do <element>` | focus and press Enter: a button, link, dialog button, menu (a submit button by its text); with a confirm open, `do Yes` answers it |
 | `do Find [list]` | open a list's find fields (as `f` on the list), and with the find open, find: the list again with the fields set, each with its own operator, and none of an empty field's flags |
-| `find <text>` | move to the text on the screen, a list row's included; then `key Right` follows the row's link |
+| `find <text>` | move to the text on the screen, a list or tree row's included (it becomes the current row), and a button menu by its items; then `key Right` follows the row's link |
 | `elements` | the focusable elements: number, kind, id, label, value, and required, changed or error marks |
 | `size <cols>x<rows>` | the drawing size; a tall one shows a long list whole (the page size follows the rows) |
 | `format text\|json` | the answers' form; `--json` on one command for that one |
@@ -242,6 +242,7 @@ tmux, screen, job control and ssh escapes are left alone. F1 lists the keys in u
 | Tab, Down / Shift+Tab, Up | Next / previous field, link, button or list |
 | Enter | In a field: submit its form (a find form finds). On a link: follow it. On a button: press it. On a list: edit the row when it has fields, else open its first link. On a menu button: its items. On a box title: open or close it. In a text area: a new line |
 | Right / Left | Not in a field: follow / back (on a list row, its first link). In a field: move the cursor. On a tree: open / close a node |
+| Home, End, PgUp, PgDn | On a tree: its first and last rows, ten rows up and down |
 | Alt+Enter, Ctrl+S | Submit the focused form from anywhere, a text area included |
 | Esc, F12 | Close the top dialog or list; else clear the message; else leave the edits, after asking |
 | F1, `?` | The keys, the focused component's keys, and the screen's documents: a document's number opens it |
