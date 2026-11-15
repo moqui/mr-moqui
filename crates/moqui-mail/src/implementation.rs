@@ -144,15 +144,17 @@ pub(super) fn send_template(
     }
     let host = field_text(&server, "smtpHost");
     if host.is_empty() {
-        tracing::warn!(
-            server = %server_id,
-            message = %email_message_id,
-            template = %template_id,
-            "SMTP Host is empty, not sending email"
-        );
-        return Ok(ids(&email_message_id, ""));
-    }
-    if let Err(text) = require_host(&host) {
+        // a captured send is captured whatever the server (the SYSTEM server has no host): deliver keeps it
+        if !capturing() {
+            tracing::warn!(
+                server = %server_id,
+                message = %email_message_id,
+                template = %template_id,
+                "SMTP Host is empty, not sending email"
+            );
+            return Ok(ids(&email_message_id, ""));
+        }
+    } else if let Err(text) = require_host(&host) {
         return fail_with(text, &email_message_id);
     }
     let message_id = match new_message_id(&headers.from_address) {
@@ -302,13 +304,17 @@ pub(super) fn send_message(
     };
     let host = field_text(&server, "smtpHost");
     if host.is_empty() {
-        tracing::warn!(server = %server_id, message = %email_message_id, "SMTP Host is empty, not sending email");
+        // a client message names its own server, so one with no host is the user's to fix; any other send is captured
+        // whatever the server (the SYSTEM server has no host): deliver keeps it
         if client {
+            tracing::warn!(server = %server_id, message = %email_message_id, "SMTP Host is empty, not sending email");
             return refuse(format!("Email server {server_id} has no SMTP host"));
         }
-        return Ok(ids(&email_message_id, ""));
-    }
-    if let Err(text) = require_host(&host) {
+        if !capturing() {
+            tracing::warn!(server = %server_id, message = %email_message_id, "SMTP Host is empty, not sending email");
+            return Ok(ids(&email_message_id, ""));
+        }
+    } else if let Err(text) = require_host(&host) {
         return refuse(text.to_string());
     }
     let template_id = field_text(&message, "emailTemplateId");
@@ -1569,6 +1575,12 @@ pub(super) fn send_built(
         Some(Duration::from_secs(30)),
         Payload::Raw(envelope, raw.to_vec()),
     )
+}
+
+/// Whether `mail_capture_sends` keeps a send now ([`captured`]), so a server with no SMTP host does not skip it. A Rust
+/// test's sink stands for the SMTP server instead: a send it would not reach is still skipped.
+fn capturing() -> bool {
+    moqui_core::service::mail_capture::enabled()
 }
 
 /// Whether a test sink or `mail_capture_sends` kept `letter` instead of sending it.
