@@ -934,6 +934,27 @@ pub(crate) fn start_output(content_type: &str) -> bool {
     })
 }
 
+/// Take back a body [`start_output`] opened that has not gone to the client: what was written and its `Content-Type`
+/// are dropped, so an error page can answer instead. False when the response committed, and nothing changes.
+pub(crate) fn discard_output() -> bool {
+    WEB.with(|slot| {
+        let mut web = slot.borrow_mut();
+        let Some(web) = web.as_mut() else {
+            return false;
+        };
+        if web.streaming.as_ref().is_some_and(stream::Streaming::is_committed) {
+            return false;
+        }
+        if web.sent {
+            web.sent = false;
+            web.body.clear();
+            web.headers
+                .retain(|(name, _)| !name.eq_ignore_ascii_case("content-type"));
+        }
+        true
+    })
+}
+
 /// Append text to the open body, or send it when the response committed ([`stream`]). Nothing happens before
 /// [`start_output`]. False when a committed response could not be sent (its client went away): the text was dropped.
 pub(crate) fn write_output(text: &str) -> bool {

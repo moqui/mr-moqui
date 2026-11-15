@@ -312,6 +312,14 @@ An `OPTIONS` preflight is 204 with an empty body, before the servlet chain (`cra
 On an edge node (`node_role=front_edge`) and an all-in-one node (`node_role=all-in-one`) a header with an empty trusted-proxy list is ignored, with an error at startup: the edge node faces the internet and passes the client address to its local nodes ([Edge node](../Run-Deploy.md#a-local-server-with-an-edge-node)).
 
 `/health` and `/metrics` use the TCP peer, not this header. `/status` uses `ec.user.getClientIp()`, which can differ.
+Both take any address in 127.0.0.0/8 as loopback.
+
+A server of `moqui test --serve` (and only that: the command sets it in code before its server starts; no property or
+conf turns it on) takes a request's `X-Moqui-Test-Peer` header as its TCP peer and client address, when the peer and
+the client address (a believed proxy's header included) are both loopback and the header names an IPv4 address in
+127.0.0.0/8, so `moqui test-client` gives each client spec its own requester
+([JS-Test-Client](../dev/JS-Test-Client.md#--serve)). The header is removed before any request is served, on every
+server. A client can name only a loopback address, from loopback, on a test server; `./moq run` never reads it.
 
 ### Field encryption
 

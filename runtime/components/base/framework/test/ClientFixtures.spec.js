@@ -163,7 +163,7 @@ spec({
             const ipV4 = ensureUser({ username: "sec.ip.v4", password: "SecIpV41!!", group: "SEC_NONE_GROUP" })
             const ipLoop = ensureUser({ username: "sec.ip.loop", password: "SecIpLoop1!!", group: "SEC_NONE_GROUP" })
             updateAccount({ userId: ipV4, ipAllowed: "10.99.99.99" })
-            updateAccount({ userId: ipLoop, ipAllowed: "127.0.0.1,::1" })
+            updateAccount({ userId: ipLoop, ipAllowed: "127.*.*.*,::1" })
             ensureLoginKey(one("moqui.security.UserAccount", { username: "sec.key.http" }).userId)
             const mfaId = ensureUser({ username: "sec.mfa.totp", password: "SecMfaTotp1!!", group: "SEC_NONE_GROUP" })
             ensureMfa(mfaId)
@@ -219,7 +219,7 @@ feature("#username is in #group and logs in with its password", {
 feature("#username allows only #ipAllowed and is not logged in here", {
     where: [
         { username: "sec.ip.v4", ipAllowed: "10.99.99.99" },
-        { username: "sec.ip.loop", ipAllowed: "127.0.0.1,::1" },
+        { username: "sec.ip.loop", ipAllowed: "127.*.*.*,::1" },
     ],
     when({ username }) {
         ec.artifactExecution.disableAuthz()

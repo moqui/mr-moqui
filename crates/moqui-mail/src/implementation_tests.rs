@@ -372,6 +372,65 @@ fn sink_receives_a_template_send_and_expands_the_subject() {
     assert!(out.contains_key("emailMessageId"));
 }
 
+/// With the mail capture on, a send through a server with no SMTP host (the SYSTEM server) is captured, and the
+/// message is Sent; with it off, the send is skipped as before: nothing kept, and the message stays Ready.
+#[test]
+fn a_captured_send_is_captured_whatever_the_host() {
+    let _lock = lock_tests();
+    let (facade, context) = entered();
+    let _entered = context.enter();
+    moqui_core::service::load_definitions().unwrap();
+    seed(
+        &facade,
+        &context,
+        "moqui.basic.email.EmailServer",
+        &[("emailServerId", "NO_HOST")],
+    );
+    seed(
+        &facade,
+        &context,
+        "moqui.basic.email.EmailTemplate",
+        &[
+            ("emailTemplateId", "NO_HOST"),
+            ("emailServerId", "NO_HOST"),
+            ("fromAddress", "from@example.com"),
+            ("subject", "Hello"),
+        ],
+    );
+    let send = || {
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("emailTemplateId".into(), Value::string("NO_HOST"));
+        params.insert("toAddresses".into(), Value::string("to@example.com"));
+        params.insert("body".into(), Value::string("Hi"));
+        let out = moqui_core::service::sync("org.moqui.mail.EmailServices.send#EmailTemplate", &params).expect("send");
+        let errors = context.message().errors().join("\n");
+        assert!(errors.is_empty(), "{errors}");
+        let id = out
+            .get("emailMessageId")
+            .map(moqui_lib::object::to_plain_string)
+            .unwrap_or_default();
+        let _authz = context.disable_authz();
+        let message = super::find_one(&facade, MESSAGE, "emailMessageId", &id)
+            .unwrap()
+            .unwrap();
+        field_text(&message, "statusId")
+    };
+    let capture = moqui_core::service::mail_capture::MailCapture::of(context.factory());
+
+    capture.set_enabled(Some(true));
+    capture.clear();
+    assert_eq!(send(), "ES_SENT");
+    let mails = capture.messages();
+    assert_eq!(mails.len(), 1);
+    assert_eq!(mails[0].to, ["to@example.com"]);
+
+    capture.set_enabled(Some(false));
+    capture.clear();
+    assert_eq!(send(), "ES_READY");
+    assert!(capture.messages().is_empty());
+    capture.set_enabled(None);
+}
+
 /// A list email's extra headers go out and stay on the message for a send again; one the letter writes itself, or a
 /// value with a line break (an injected header), is left out.
 #[test]

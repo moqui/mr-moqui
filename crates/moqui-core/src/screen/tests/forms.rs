@@ -556,6 +556,33 @@ fn the_shell_wraps_a_page_and_the_real_error_pages_show_the_error_context() {
     );
 }
 
+/// A subscreen's NotFound answers 404 with the Not Found page whether its `<actions>` or its `<pre-actions>` throw it,
+/// though the shell above it has written its header by the time the actions run.
+#[test]
+fn a_subscreen_not_found_in_its_actions_answers_404() {
+    let site = shell_root("actions-not-found");
+    let throws = r#"<script>throw Object.assign(new Error('No such page here'),{moquiErrorKind:'NotFound'})</script>"#;
+    for (name, phase) in [("InActions", "actions"), ("InPreActions", "pre-actions")] {
+        std::fs::write(
+            site.dir.join(format!("Shell/{name}.xml")),
+            format!(
+                r#"<screen require-authentication="false"><{phase}>{throws}</{phase}><widgets><label text="the {name} page"/></widgets></screen>"#
+            ),
+        )
+        .unwrap();
+    }
+    let world = World::open("");
+    for name in ["InActions", "InPreActions"] {
+        let mut get = request("GET", &format!("/{name}"));
+        get.set_header("accept", "text/html");
+        let page = serve_at(&world.factory, get, &site.root);
+        let html = page.body_text();
+        assert_eq!(page.status, 404, "{name}: {html}");
+        assert!(html.contains("Page Not Found (404)"), "{name}: {html}");
+        assert!(!html.contains(&format!("the {name} page")), "{name}: {html}");
+    }
+}
+
 /// `auto-fields-service` builds a field for each in-parameter, `auto-widget-service` the widget of one field, and the form's
 /// transition that calls one service puts `validate-service` on the fields that are its parameters.
 #[test]
