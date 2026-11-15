@@ -1599,6 +1599,8 @@ interface MoquiScreenRenderer {
     sendRedirectAndStopRender(url: string): void;
     renderSection(name: string): string;
     renderSectionInclude(nameOrLocation: string): string;
+    /** Whether a widget's `condition` attribute holds (a `container-box`), evaluated as a section's; a failed one is logged and its error written in the widget's place, and in a JSON (tui) render is returned as its text. */
+    checkCondition(element: object): boolean | string;
     renderSubscreen(): string;
     renderIncludeScreen(location: string, shareScope?: string | boolean | null): string;
     renderText(location: string, template?: string | boolean | null): string;

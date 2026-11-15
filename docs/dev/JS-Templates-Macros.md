@@ -237,6 +237,7 @@ Screens, sections and text:
 | `renderSection(name)` | Runs a section: its condition and actions, then its widgets or fail-widgets |
 | `renderSectionValue(name)` | A section as its JSON array, returned, for a `tui` list cell |
 | `renderSectionInclude(element)` | Renders the section a `section-include` names |
+| `checkCondition(element)` | Whether a widget's `condition` attribute (a `container-box`'s) holds, evaluated as a section's condition is; one that fails is logged and its error written in the widget's place, as a section's, and in a `tui` render returned as its text for an `error` node |
 | `getSectionIncludedNode(element)` | The `section` element a `section-include` stands for: its `name`, else the name after `#` in its `location` |
 | `renderIncludeScreen(location, shareScope)` | Renders another screen in place; `"true"` shares the context |
 | `renderText(location, template)` | Renders a text file with the renderer of its extension (else of `template` as an extension) and writes it; `template` `"false"` returns the file's text |

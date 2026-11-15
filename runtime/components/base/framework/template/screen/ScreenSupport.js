@@ -226,6 +226,14 @@
 
     const write = (expression) => `sri.write(${expression});\n`;
 
+    // The code of a widget with a condition attribute (a container-box), run only when the condition holds. The host
+    // evaluates it as a section's condition (sri.checkCondition): in the same context, and one that fails is logged and its
+    // error written where the widget would have been. A JSON render (tui) gets the error text back to emit as a node.
+    const conditionGuard = (node, code) => {
+        if (!attr(node, "condition") || !code) return code;
+        return `if (sri.checkCondition(${bareLit(node)}) === true) {\n${code}}\n`;
+    };
+
     const indent = (text, spaces) => {
         const pad = " ".repeat(spaces == null ? 4 : spaces);
         return text.split("\n").map((line) => line === "" ? line : pad + line).join("\n");
@@ -637,7 +645,7 @@
     const noops = (names) => T.noops(names);
 
     return {
-        beginLits, endLits, hoist, allElements, opaqueElements, unknownElementCode, expandExpr, expandNoL10nExpr, reportPropsExpr, reportRenderExpr, htmlViewTextFn, htmlViewTextExpr, markdownTextExpr, statusTextExpr, nodeLit, bareLit, write, indent, widgetsSource,
+        beginLits, endLits, hoist, allElements, opaqueElements, unknownElementCode, expandExpr, expandNoL10nExpr, reportPropsExpr, reportRenderExpr, htmlViewTextFn, htmlViewTextExpr, markdownTextExpr, statusTextExpr, nodeLit, bareLit, conditionGuard, write, indent, widgetsSource,
         setCode, widgetless, fieldChain, hideGuard, titleText, localizedTitle, fieldLit, renderTextCode, renderModeHelpers, renderModeTypeMatches, chooseRenderModeText, anyMacros,
         displayValueExpr, linkTextExpr, labelTextExpr, dateTimeFormat, listFieldHiddenWidget, bufferedListRows, cellNeedsContext, formListColumns, headerSub, heldCode, parseOrder, exprEnd, noops
     };

@@ -375,13 +375,13 @@ a { color: blue; }
             const header = child(node, "box-header");
             const body = child(node, "box-body");
             const nopad = child(node, "box-body-nopad");
-            return js`
+            return S.conditionGuard(node, js`
                 sri.write('<div class="box-header">');
                 ${header ? header.source : ""}
                 sri.write("</div>\\n");
                 ${body ? body.source : ""}
                 ${nopad ? nopad.source : ""}
-            `;
+            `);
         }),
         "box-header": stmt((node, children) => children),
         "box-body": stmt((node, children) => children),

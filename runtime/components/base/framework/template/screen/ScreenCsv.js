@@ -139,8 +139,8 @@ const $sep = () => { if ($hasPrev) sri.write(","); else $hasPrev = true; };
         "fail-widgets": stmt((node, children) => children),
         "dynamic-form": stmt((node, children) => children),
         "container": stmt((node, children) => children),
-        "container-box": stmt((node) => ["box-body", "box-body-nopad"]
-            .map((name) => { const kid = child(node, name); return kid ? kid.source : ""; }).join("")),
+        "container-box": stmt((node) => S.conditionGuard(node, ["box-body", "box-body-nopad"]
+            .map((name) => { const kid = child(node, name); return kid ? kid.source : ""; }).join(""))),
         "box-body": stmt((node, children) => children),
         "box-body-nopad": stmt((node, children) => children),
         "container-panel": stmt((node) => ["panel-header", "panel-left", "panel-center", "panel-right", "panel-footer"]

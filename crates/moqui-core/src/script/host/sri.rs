@@ -118,7 +118,7 @@ const SRI_JS: &str = r#"(function (global, hidden) {
         }
     };
     for (const name of ["sendRedirectAndStopRender", "baseLinkUrl", "getBaseLinkUrl", "setFocusField", "uniqueId",
-        "htmlText", "write", "stamp", "renderSection", "renderSectionValue", "renderSectionInclude", "renderSubscreen", "renderIncludeScreen",
+        "htmlText", "write", "stamp", "renderSection", "renderSectionValue", "renderSectionInclude", "checkCondition", "renderSubscreen", "renderIncludeScreen",
         "renderDynamicForm", "renderUserColumnsForm", "renderText", "renderTextValue", "renderInlineText",
         "writeInlineText", "takeTemplateWrite",
         "doBoundaryComments", "getRenderMode", "isAgentRender", "encodeHtml", "getActiveScreenDef", "getScreenUrlInfo", "pushContext",
@@ -175,6 +175,7 @@ static SRI: &[Method] = &[
     method!("sri", "renderSection", [Text], Release, render_section),
     method!("sri", "renderSectionValue", [Text], Release, render_section_value),
     method!("sri", "renderSectionInclude", [Node], Release, render_section_include),
+    method!("sri", "checkCondition", [Node], Release, check_condition),
     method!("sri", "renderSubscreen", [], Release, render_subscreen),
     method!(
         "sri",
@@ -507,6 +508,17 @@ fn render_section_include(call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(done())
 }
 
+/// `sri.checkCondition(element)`: true when the element's `condition` holds, false when not; in a JSON render a
+/// condition that failed is its error text (`screen::sri::check_widget_condition`).
+fn check_condition(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let node = node(call, 0)?;
+    in_render(|state| logic::check_widget_condition(state, &node)).map(|held| match held {
+        logic::Held::Yes => Ret::from(true),
+        logic::Held::No => Ret::from(false),
+        logic::Held::Failed(text) => Ret::from(text),
+    })
+}
+
 fn render_subscreen(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let runner = call.ops.screen_runner()?;
     in_render(|state| logic::render_subscreen(state, runner))?;
@@ -799,7 +811,7 @@ fn list_id(call: &Call<'_>) -> Result<usize, HostError> {
         None => {
             return Err(HostError::Type(
                 "Error converting from js 'undefined' into type 'i32'".to_string(),
-            ))
+            ));
         }
     };
     usize::try_from(id).map_err(|_| HostError::message("bad form-list handle"))
