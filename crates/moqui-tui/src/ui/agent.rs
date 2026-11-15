@@ -396,9 +396,7 @@ impl<L: ScreenLink> Agent<L> {
             let name = words.join(" ");
             return match self.resolve(&name) {
                 Some(key) => self.set_key(&key, String::new()),
-                None => Err(self
-                    .hidden_place(&name)
-                    .unwrap_or_else(|| self.not_named(&name))),
+                None => Err(self.hidden_place(&name).unwrap_or_else(|| self.not_named(&name))),
             };
         }
         let found = (1..words.len()).rev().find_map(|split| {

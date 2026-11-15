@@ -994,7 +994,11 @@ impl Session {
                     }
                 }
                 FocusKind::Tree => {
-                    let rows = self.trees.get(&item.key).map(super::structure::TreeState::rows).unwrap_or_default();
+                    let rows = self
+                        .trees
+                        .get(&item.key)
+                        .map(super::structure::TreeState::rows)
+                        .unwrap_or_default();
                     for (row, tree_row) in rows.iter().enumerate() {
                         if tree_row.text.to_lowercase().contains(&needle) {
                             stops.push((at, Some(row)));

@@ -224,8 +224,13 @@ impl Editor {
     /// The editor of the state, or a new one from the props.
     fn of(props: &Value, state: &ComponentState) -> Self {
         let base = prop(props, "text", "");
-        if let Ok(editor) = Self::deserialize(&state.local) {
+        if let Ok(mut editor) = Self::deserialize(&state.local) {
             if editor.loaded && editor.base == base {
+                return editor;
+            }
+            // its own text came back (it was saved): the same place, the text no longer changed
+            if editor.loaded && editor.text == base.replace("\r\n", "\n") {
+                editor.base = base.to_string();
                 return editor;
             }
         }

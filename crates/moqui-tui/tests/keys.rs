@@ -313,6 +313,29 @@ fn a_record_header_level_loads_once_and_stays_for_its_tabs() {
     assert_eq!(session.path(), "/apps/app/Party/EditParty");
 }
 
+const LINKS_HEADER_JSON: &str = r#"{
+  "v": 1,
+  "screen": { "path": "/apps/app/Party", "pathList": ["apps", "app", "Party"], "title": "Party" },
+  "c": [ { "t": "link", "id": "first", "text": "First", "url": "/apps/app/Party/EditParty?partyId=P1" },
+         { "t": "link", "id": "second", "text": "Second", "url": "/apps/app/Party/EditParty?partyId=P2" } ]
+}"#;
+
+/// A navigate to the same page with other parameters asks for its parent level again, and the page alone has nothing to
+/// focus until it comes: the focus comes back to where it was (the Workspace's tree went to its first field when a
+/// file opened).
+#[test]
+fn the_focus_stays_when_a_page_comes_before_the_level_that_holds_it() {
+    let link = FakeLink::from_json(&[PARTY_FIND_JSON, LINKS_HEADER_JSON, PARTY_EDIT_JSON]).unwrap();
+    let mut session = Session::new(ScreenModel::from_json(PARTY_FIND_JSON).unwrap());
+    press(&mut session, &link, Key::Enter);
+    assert_eq!(session.paths(), ["/apps/app/Party", "/apps/app/Party/EditParty"]);
+    assert!(session.focus_key("second"), "{:?}", session.focus_order());
+    session.navigate("/apps/app/Party/EditParty?partyId=P2", true);
+    session.run_now(&link);
+    assert_eq!(session.parameters().get("partyId").map(String::as_str), Some("P2"));
+    assert_eq!(session.focus_id(), "second");
+}
+
 #[test]
 fn gallery_list_to_detail_replaces_the_only_level() {
     let (mut session, link) = list_session();

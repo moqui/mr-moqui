@@ -227,6 +227,9 @@ pub struct Session {
     cursors: BTreeMap<String, usize>,
     focus: Vec<FocusItem>,
     focus_at: usize,
+    /// The focus key kept over a rebuild that had nothing to focus (a screen whose content comes in a later level),
+    /// so the next rebuild comes back to it.
+    focus_kept: String,
     overlays: Vec<Overlay>,
     rows: BTreeMap<String, usize>,
     selected: BTreeMap<String, BTreeSet<String>>,
@@ -319,6 +322,7 @@ impl Session {
             cursors: BTreeMap::new(),
             focus: Vec::new(),
             focus_at: 0,
+            focus_kept: String::new(),
             overlays: Vec::new(),
             rows: BTreeMap::new(),
             selected: BTreeMap::new(),
@@ -1756,6 +1760,17 @@ impl Session {
         }
         let app_changed = app_root(&model.screen.path) != app_root(self.path());
         let path_changed = model.screen.path != self.path();
+        // a code editor of the same screen keeps its cursor, scroll and undo; it starts over when its text is not its own
+        // (another file), as Editor::of decides
+        let kept_editors: Vec<(String, crate::components::ComponentState)> = if navigate && !path_changed {
+            self.components
+                .iter()
+                .filter(|(id, _)| self.index.components.get(*id).is_some_and(|info| info.name == "code"))
+                .map(|(id, state)| (id.clone(), state.clone()))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let missing = self.nav.set_leaf(model, parameters.clone());
         // each parent names the page it is loaded for, so one the user may not open alone answers as the page's frame
         let page = self.path().to_string();
@@ -1794,6 +1809,11 @@ impl Session {
         }
         self.reindex(!navigate);
         self.after_screen(navigate, path_changed);
+        for (id, state) in kept_editors {
+            if self.index.components.get(&id).is_some_and(|info| info.name == "code") {
+                self.components.insert(id, state);
+            }
+        }
         let keep_message = !self.message.text.is_empty() && !self.message_expired() && !navigate;
         if !keep_message {
             self.clear_message();
@@ -1866,7 +1886,10 @@ impl Session {
     /// The focus order of the current scope: what a dialog or the find dialog holds while it is open, else the
     /// screen, without fields their `visible-when` hides.
     fn rebuild_focus(&mut self) {
-        let previous = self.focus_id().to_string();
+        let mut previous = self.focus_id().to_string();
+        if previous.is_empty() {
+            previous = std::mem::take(&mut self.focus_kept);
+        }
         let scope = self.scope();
         let values = |key: &str| self.edits.get(key).to_string();
         self.focus = self
@@ -1891,6 +1914,8 @@ impl Session {
                     .position(|item| item.key == model_focus && !model_focus.is_empty())
             })
             .unwrap_or(0);
+        // nothing to focus yet: the next rebuild comes back to the key
+        self.focus_kept = if self.focus.is_empty() { previous } else { String::new() };
     }
 
     /// The model changed: index it, take the values it sends, and rebuild the focus. With `keep`, edits that are still

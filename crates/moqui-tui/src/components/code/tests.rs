@@ -498,3 +498,21 @@ fn new_props_load_the_text_again_and_cursor_line_places_the_cursor() {
     assert_eq!(editor(&props, &state).row_col(), (1, 0));
     assert!(!editor(&props, &state).modified());
 }
+
+/// Saved, its own text comes back as the screen's: the editor keeps its place and is no longer changed; another text
+/// starts it over at `cursorLine`.
+#[test]
+fn a_saved_text_coming_back_keeps_the_place() {
+    let old = props("<a>\n    <b/>\n</a>\n");
+    let mut state = ComponentState::default();
+    plain(&old, &mut state, Key::Down);
+    typed(&old, &mut state, "x");
+    let before = editor(&old, &state);
+    assert!(before.modified());
+    let saved = props(&before.text);
+    let after = editor(&saved, &state);
+    assert_eq!(after.cursor, before.cursor);
+    assert!(!after.modified());
+    let other = editor(&props("<c/>\n"), &state);
+    assert_eq!(other.cursor, 0);
+}
