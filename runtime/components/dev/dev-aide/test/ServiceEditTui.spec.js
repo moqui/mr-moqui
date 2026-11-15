@@ -99,6 +99,61 @@ feature("an edit is staged in the buffer and not written, and Discard drops it",
     }
 })
 
+feature("nested parameters: Add child in a Map or a List, Edit and Remove by the parameter's path, each row with its parent's", {
+    when() {
+        const twin = dev()
+        const post = (name, parameters) =>
+            twin.render("Services/EditTui/" + name, Object.assign({artifact: GREET, which: "in-parameters"}, parameters), "post")
+        const order = post("addParameter", {parameterName: "specOrder", parameterType: "Map"})
+        const items = post("addParameter", {parentPath: "specOrder", parameterName: "specItems", parameterType: "List"})
+        const sku = post("addParameter", {parentPath: "specOrder.specItems", parameterName: "specSku"})
+        const edited = post("editParameter", {
+            parentPath: "specOrder.specItems",
+            parameterName: "specSku",
+            parameterType: "Long",
+            description: "The SKU"
+        })
+        const missing = post("addParameter", {parentPath: "specNothing", parameterName: "specLost"})
+        const guided = ec.resource.script("component://dev-aide/service/org/moqui/devaide/GuidedEdit.js")
+        const service = guided.serviceContext(GREET)
+        const rows = guided.parameterRows(service, "in-parameters")
+        const text = service.serviceFile.text
+        const removed = post("removeParameter", {parentPath: "specOrder", parameterName: "specItems"})
+        const after = guided.serviceContext(GREET).serviceFile.text
+        fixture().discard(GREET)
+        return {order, items, sku, edited, missing, rows, text, removed, after}
+    },
+    then({order, items, sku, edited, missing, rows, text, removed, after}) {
+        order.status == 302
+        items.status == 302
+        sku.status == 302
+        edited.status == 302
+        missing.errorMessages.some(message => message.includes("No parameter specNothing"))
+        !text.includes("specLost")
+        // each inside the one before, the description inside the last
+        const nest =
+            /<parameter name="specOrder" type="Map">\s*<parameter name="specItems" type="List">\s*<parameter name="specSku" type="Long">\s*<description>The SKU<\/description>\s*<\/parameter>\s*<\/parameter>\s*<\/parameter>/
+        nest.test(text)
+        // each row with its parent's path, a key for its dialogs, and Add child on a Map's or a List's
+        const row = name => rows.find(item => item.name == name)
+        row("specOrder").parentPath == ""
+        row("specOrder").holder
+        row("specItems").parentPath == "specOrder"
+        row("specItems").holder
+        row("specSku").parentPath == "specOrder.specItems"
+        row("specSku").key == "in-specOrder-specItems-specSku"
+        row("specSku").editable
+        !row("specSku").holder
+        row("specSku").type == "Long"
+        row("specSku").shown.includes("└ specSku")
+        // Remove of a child takes what is in it, and only it
+        removed.status == 302
+        after.includes('name="specOrder"')
+        !after.includes("specItems")
+        !after.includes("specSku")
+    }
+})
+
 feature("Add SECA's service to call is searched in the index by name, and a name the index has not seen is offered too", {
     when() {
         const choices = term =>

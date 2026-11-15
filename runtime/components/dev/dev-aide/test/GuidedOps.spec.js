@@ -273,9 +273,55 @@ feature("a parameter, a SECA rule and a Try's parameters as the service writer w
                 )
             ]
         )
-        return {ops, service, withIn}
+        // nested: order (a Map with a description and a validation) holding items (a List holding nothing yet), and an
+        // empty Map
+        const nested = el(
+            "service",
+            [0],
+            [],
+            [
+                el(
+                    "in-parameters",
+                    [0, 0],
+                    [],
+                    [
+                        el(
+                            "parameter",
+                            [0, 0, 0],
+                            [
+                                ["name", "order"],
+                                ["type", "Map"]
+                            ],
+                            [
+                                el("description", [0, 0, 0, 0], [], [], 0, "The order"),
+                                el(
+                                    "parameter",
+                                    [0, 0, 0, 1],
+                                    [
+                                        ["name", "items"],
+                                        ["type", "List"]
+                                    ]
+                                ),
+                                el("matches", [0, 0, 0, 2], [["regexp", "x"]])
+                            ]
+                        ),
+                        el(
+                            "parameter",
+                            [0, 0, 1],
+                            [
+                                ["name", "extra"],
+                                ["type", "Map"]
+                            ],
+                            [el("description", [0, 0, 1, 0], [], [], 0, "More")]
+                        ),
+                        el("parameter", [0, 0, 2], [["name", "plain"]], [el("matches", [0, 0, 2, 0], [["regexp", "y"]])])
+                    ]
+                )
+            ]
+        )
+        return {ops, service, withIn, nested}
     },
-    then({ops, service, withIn}) {
+    then({ops, service, withIn, nested}) {
         same(ops.addParameter(service, "in-parameters", {name: "thingId", required: true}), [
             {
                 op: "insert",
@@ -306,6 +352,41 @@ feature("a parameter, a SECA rule and a Try's parameters as the service writer w
             {op: "remove-attribute", at: [0, 0, 0], name: "required"},
             {op: "insert", at: [0, 0, 0], position: "last", xml: "<description>The thing</description>"}
         ])
+        // nested parameters (the terminal's own): found by their path of names, added inside a parent after its
+        // parameters and before its validations, removed and edited by path
+        ops.parameterNode(nested, "in-parameters", "order.items").path.join(".") == "0.0.0.1"
+        ops.parameterNode(nested, "in-parameters", ["order", "items"]).path.join(".") == "0.0.0.1"
+        ops.parameterNode(nested, "in-parameters", "items") == null
+        ops.parameterNode(nested, "in-parameters", "") == null
+        same(ops.addParameter(nested, "in-parameters", {name: "quantity", type: "BigDecimal"}, "order"), [
+            {op: "insert", at: [0, 0, 0, 1], position: "after", xml: '<parameter name="quantity" type="BigDecimal"/>'}
+        ])
+        same(ops.addParameter(nested, "in-parameters", {name: "sku"}, "order.items"), [
+            {op: "insert", at: [0, 0, 0, 1], position: "last", xml: '<parameter name="sku"/>'}
+        ])
+        same(ops.addParameter(nested, "in-parameters", {name: "note"}, "extra"), [
+            {op: "insert", at: [0, 0, 1], position: "last", xml: '<parameter name="note"/>'}
+        ])
+        same(ops.addParameter(nested, "in-parameters", {name: "inner"}, "plain"), [
+            {op: "insert", at: [0, 0, 2, 0], position: "before", xml: '<parameter name="inner"/>'}
+        ])
+        same(ops.addParameter(nested, "in-parameters", {name: "x"}, "order.nothing"), [])
+        same(ops.removeParameter(nested, "in-parameters", "order.items"), [{op: "remove", at: [0, 0, 0, 1]}])
+        same(
+            ops.editParameter(nested, "in-parameters", "order.items", {type: "List", required: true, description: "Its lines"}),
+            [
+                {op: "set-attribute", at: [0, 0, 0, 1], name: "type", value: "List"},
+                {op: "set-attribute", at: [0, 0, 0, 1], name: "required", value: "true"},
+                {op: "insert", at: [0, 0, 0, 1], position: "last", xml: "<description>Its lines</description>"}
+            ]
+        )
+        // a description goes first in a parameter that holds others
+        same(ops.editParameter(nested, "in-parameters", "plain", {description: "Plain"}).pop(), {
+            op: "insert",
+            at: [0, 0, 2],
+            position: "first",
+            xml: "<description>Plain</description>"
+        })
         ops.secaXml("create#Thing", "post-service", "thingId != null", "my.Svc.note#Thing") ==
             '<seca service="create#Thing" when="post-service"><condition><expression>thingId != null</expression></condition><actions><service-call name="my.Svc.note#Thing" in-map="context"/></actions></seca>'
     }

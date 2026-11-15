@@ -192,53 +192,67 @@ function serviceContext(artifact) {
         shortName
     }
 }
+// The parameter types that hold parameters of their own (Nested parameters are for List, Map, Node, etc.).
+const HOLDER_TYPES = ["Map", "List", "Set", "Collection", "Node"]
 // A service's parameters as rows: the staged element's own (children flattened and indented) when the file is
-// staged, else the definition's; the implied ones (auto) from the definition after them.
+// staged, else the definition's; the implied ones (auto) from the definition after them. Each row has its parent's
+// path of names (parentPath, dotted, empty at the top), its own (path), a key for ids made from them (key), and
+// whether it holds parameters (holder).
 function parameterRows(service, which) {
     const {ops, view, node, serviceFile} = service
     const defined = (view && view.service && view.service[which === "in-parameters" ? "inParameters" : "outParameters"]) || []
     const rows = []
-    const push = (parameter, depth, implied) => {
+    const push = (parameter, parents, implied) => {
+        const depth = parents.length
+        const type = parameter.type || "String"
+        const path = parents.concat([parameter.name]).join(".")
         rows.push({
             which,
             name: parameter.name,
+            parentPath: parents.join("."),
+            path,
+            key: (which === "out-parameters" ? "out-" : "in-") + path.replace(/\./g, "-"),
             shown: (depth ? "  ".repeat(depth - 1) + "  └ " : "") + parameter.name + (implied ? " (auto)" : ""),
-            type: parameter.type || "String",
+            type,
             required: parameter.required === "true" || parameter.required === true ? "yes" : "",
             defaultValue: parameter.defaultValue || parameter.default || "",
             description: parameter.description || "",
             top: !depth && !implied,
+            editable: !implied,
+            holder: !implied && HOLDER_TYPES.includes(type.split(".").pop()),
             requiredFlag: parameter.required === "true" || parameter.required === true ? "true" : ""
         })
     }
     if (serviceFile && serviceFile.staged && node) {
         const holder = ops.pure.children(node, [which])[0]
-        const walk = (parent, depth) => {
+        const walk = (parent, parents) => {
             for (const child of ops.pure.children(parent, ["parameter"])) {
                 const description = ops.pure.children(child, ["description"])[0]
+                const name = ops.pure.attrOf(child, "name")
                 push(
                     {
-                        name: ops.pure.attrOf(child, "name"),
+                        name,
                         type: ops.pure.attrOf(child, "type"),
                         required: ops.pure.attrOf(child, "required"),
                         defaultValue: ops.pure.attrOf(child, "default-value"),
                         description: description ? description.text : ""
                     },
-                    depth,
+                    parents,
                     false
                 )
-                walk(child, depth + 1)
+                walk(child, parents.concat([name]))
             }
         }
-        if (holder) walk(holder, 0)
-        const own = new Set(rows.map(row => row.name))
-        for (const parameter of defined) if (parameter.implied && !own.has(parameter.name)) push(parameter, 0, true)
+        if (holder) walk(holder, [])
+        const own = new Set(rows.filter(row => !row.parentPath).map(row => row.name))
+        for (const parameter of defined) if (parameter.implied && !own.has(parameter.name)) push(parameter, [], true)
         return rows
     }
-    for (const parameter of defined) {
-        push(parameter, 0, !!parameter.implied)
-        for (const child of parameter.children || []) push(child, 1, false)
+    const walk = (parameter, parents, implied) => {
+        push(parameter, parents, implied)
+        for (const child of parameter.children || []) walk(child, parents.concat([parameter.name]), false)
     }
+    for (const parameter of defined) walk(parameter, [], !!parameter.implied)
     return rows
 }
 

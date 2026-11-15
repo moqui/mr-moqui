@@ -15,7 +15,8 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Services › Edit's terminal twin (plans/design-dev-aide.md 9, D14): one service from get#ServiceView, its header
     with the pending line of the user's edit buffer (N unsaved changes, Save with Ctrl+S, Discard), and tabs: Try (a
     field per in-parameter, Run in sim or for real, the out, messages, the rows it would write and the log; Save as spec,
-    Run spec; a snippet), Overview (the service's settings), Parameters (in and out, with Add, Edit and Remove), the
+    Run spec; a snippet), Overview (the service's settings), Parameters (in and out, nested ones too: Add, Add child in a Map's
+    or a List's, Edit and Remove on each, by its path of names), the
     Implementation (read only: the actions and their generated JavaScript, or the script's file), SECA rules (Add one in
     the site's secas file, the service it calls searched by name) and the staged Changes. Every edit is staged in the buffer (GuidedEdit.js, GuidedOps.js,
     apply#EditBufferOps); Save writes the files in kind order (save#EditBuffer). -->
@@ -87,8 +88,14 @@ along with this software (see the LICENSE.md file). If not, see
             const service = guided.serviceContext(artifact)
             if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(String(parameterName || ''))) ec.message.addError(ec.l10n.localize('A parameter name is letters, digits and _'))
             else if (!service.node) ec.message.addError(ec.l10n.localize('The service is not defined in a file of its own here'))
-            else guided.apply(service.target, service.file, service.ops.service.addParameter(service.node, which === 'out-parameters' ? 'out-parameters' : 'in-parameters',
-                {name: parameterName, type: parameterType, required: required === 'true', defaultValue, description}))
+            else {
+                // with parentPath (its names, dotted), inside that parameter: a Map's or a List's
+                const holder = which === 'out-parameters' ? 'out-parameters' : 'in-parameters'
+                const parent = String(parentPath || '')
+                if (parent && !service.ops.service.parameterNode(service.node, holder, parent)) ec.message.addError('No parameter ' + parent + ' to add it in')
+                else guided.apply(service.target, service.file, service.ops.service.addParameter(service.node, holder,
+                    {name: parameterName, type: parameterType, required: required === 'true', defaultValue, description}, parent))
+            }
         ]]></script></actions>
         <default-response url="."><parameter name="artifact"/><parameter name="tab" value="parameters"/></default-response>
         <error-response url="."><parameter name="artifact"/><parameter name="tab" value="parameters"/></error-response>
@@ -99,7 +106,7 @@ along with this software (see the LICENSE.md file). If not, see
             const service = guided.serviceContext(artifact)
             if (!service.node) ec.message.addError(ec.l10n.localize('The service is not defined in a file of its own here'))
             else guided.apply(service.target, service.file, service.ops.service.editParameter(service.node, which === 'out-parameters' ? 'out-parameters' : 'in-parameters',
-                parameterName, {type: parameterType, required: required === 'true', defaultValue, description}))
+                [parentPath, parameterName].filter((part) => part).join('.'), {type: parameterType, required: required === 'true', defaultValue, description}))
         ]]></script></actions>
         <default-response url="."><parameter name="artifact"/><parameter name="tab" value="parameters"/></default-response>
         <error-response url="."><parameter name="artifact"/><parameter name="tab" value="parameters"/></error-response>
@@ -109,7 +116,8 @@ along with this software (see the LICENSE.md file). If not, see
             const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
             const service = guided.serviceContext(artifact)
             if (!service.node) ec.message.addError(ec.l10n.localize('The service is not defined in a file of its own here'))
-            else guided.apply(service.target, service.file, service.ops.service.removeParameter(service.node, which === 'out-parameters' ? 'out-parameters' : 'in-parameters', parameterName))
+            else guided.apply(service.target, service.file, service.ops.service.removeParameter(service.node, which === 'out-parameters' ? 'out-parameters' : 'in-parameters',
+                [parentPath, parameterName].filter((part) => part).join('.')))
         ]]></script></actions>
         <default-response url="."><parameter name="artifact"/><parameter name="tab" value="parameters"/></default-response>
         <error-response url="."><parameter name="artifact"/><parameter name="tab" value="parameters"/></error-response>
@@ -418,10 +426,11 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="defaultValue"><default-field title="Default"><display/></default-field></field>
                     <field name="description"><default-field title="Description"><display/></default-field></field>
                     <field name="actions"><default-field title="">
-                        <container-dialog id="EditInParameter_${name}" button-text="Edit" condition="top &amp;&amp; canEdit">
+                        <container-dialog id="EditInParameter_${key}" button-text="Edit" condition="editable &amp;&amp; canEdit">
                             <form-single name="EditInParameterForm" transition="editParameter" map="{parameterType: type, required: requiredFlag, defaultValue: defaultValue, description: description}">
                                 <field name="artifact" from="'service:' + serviceName"><default-field><hidden/></default-field></field>
                                 <field name="which"><default-field><hidden/></default-field></field>
+                                <field name="parentPath"><default-field><hidden/></default-field></field>
                                 <field name="parameterName" from="name"><default-field><hidden/></default-field></field>
                                 <field name="parameterType"><default-field title="Type"><text-line size="20"/></default-field></field>
                                 <field name="required"><default-field title="Required"><check><option key="true" text=" "/></check></default-field></field>
@@ -430,8 +439,22 @@ along with this software (see the LICENSE.md file). If not, see
                                 <field name="submitButton"><default-field title="Stage"><submit/></default-field></field>
                             </form-single>
                         </container-dialog>
-                        <link url="removeParameter" text="Remove" condition="top &amp;&amp; canEdit" confirmation="Remove the parameter ${name}?"
-                                parameter-map="{artifact: 'service:' + serviceName, which: which, parameterName: name}"/>
+                        <link url="removeParameter" text="Remove" condition="editable &amp;&amp; canEdit" confirmation="Remove the parameter ${path}${holder ? ' and the parameters in it' : ''}?"
+                                parameter-map="{artifact: 'service:' + serviceName, which: which, parentPath: parentPath, parameterName: name}"/>
+                        <container-dialog id="AddInChild_${key}" button-text="Add child" condition="holder &amp;&amp; canEdit">
+                            <label text="Inside ${path}" type="p"/>
+                            <form-single name="AddInChildForm" transition="addParameter">
+                                <field name="artifact" from="'service:' + serviceName"><default-field><hidden/></default-field></field>
+                                <field name="which"><default-field><hidden/></default-field></field>
+                                <field name="parentPath" from="path"><default-field><hidden/></default-field></field>
+                                <field name="parameterName" from="''"><default-field title="Name"><text-line size="30"/></default-field></field>
+                                <field name="parameterType" from="'String'"><default-field title="Type"><text-line size="20"/></default-field></field>
+                                <field name="required" from="''"><default-field title="Required"><check><option key="true" text=" "/></check></default-field></field>
+                                <field name="defaultValue" from="''"><default-field title="Default"><text-line size="20"/></default-field></field>
+                                <field name="description" from="''"><default-field title="Description"><text-line size="60"/></default-field></field>
+                                <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                            </form-single>
+                        </container-dialog>
                     </default-field></field>
                 </form-list>
                 <label text="Out" type="h6"/>
@@ -454,10 +477,11 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="defaultValue"><default-field title="Default"><display/></default-field></field>
                     <field name="description"><default-field title="Description"><display/></default-field></field>
                     <field name="actions"><default-field title="">
-                        <container-dialog id="EditOutParameter_${name}" button-text="Edit" condition="top &amp;&amp; canEdit">
+                        <container-dialog id="EditOutParameter_${key}" button-text="Edit" condition="editable &amp;&amp; canEdit">
                             <form-single name="EditOutParameterForm" transition="editParameter" map="{parameterType: type, required: requiredFlag, defaultValue: defaultValue, description: description}">
                                 <field name="artifact" from="'service:' + serviceName"><default-field><hidden/></default-field></field>
                                 <field name="which"><default-field><hidden/></default-field></field>
+                                <field name="parentPath"><default-field><hidden/></default-field></field>
                                 <field name="parameterName" from="name"><default-field><hidden/></default-field></field>
                                 <field name="parameterType"><default-field title="Type"><text-line size="20"/></default-field></field>
                                 <field name="required"><default-field title="Required"><check><option key="true" text=" "/></check></default-field></field>
@@ -466,8 +490,22 @@ along with this software (see the LICENSE.md file). If not, see
                                 <field name="submitButton"><default-field title="Stage"><submit/></default-field></field>
                             </form-single>
                         </container-dialog>
-                        <link url="removeParameter" text="Remove" condition="top &amp;&amp; canEdit" confirmation="Remove the parameter ${name}?"
-                                parameter-map="{artifact: 'service:' + serviceName, which: which, parameterName: name}"/>
+                        <link url="removeParameter" text="Remove" condition="editable &amp;&amp; canEdit" confirmation="Remove the parameter ${path}${holder ? ' and the parameters in it' : ''}?"
+                                parameter-map="{artifact: 'service:' + serviceName, which: which, parentPath: parentPath, parameterName: name}"/>
+                        <container-dialog id="AddOutChild_${key}" button-text="Add child" condition="holder &amp;&amp; canEdit">
+                            <label text="Inside ${path}" type="p"/>
+                            <form-single name="AddOutChildForm" transition="addParameter">
+                                <field name="artifact" from="'service:' + serviceName"><default-field><hidden/></default-field></field>
+                                <field name="which"><default-field><hidden/></default-field></field>
+                                <field name="parentPath" from="path"><default-field><hidden/></default-field></field>
+                                <field name="parameterName" from="''"><default-field title="Name"><text-line size="30"/></default-field></field>
+                                <field name="parameterType" from="'String'"><default-field title="Type"><text-line size="20"/></default-field></field>
+                                <field name="required" from="''"><default-field title="Required"><check><option key="true" text=" "/></check></default-field></field>
+                                <field name="defaultValue" from="''"><default-field title="Default"><text-line size="20"/></default-field></field>
+                                <field name="description" from="''"><default-field title="Description"><text-line size="60"/></default-field></field>
+                                <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                            </form-single>
+                        </container-dialog>
                     </default-field></field>
                 </form-list>
             </widgets></section>
