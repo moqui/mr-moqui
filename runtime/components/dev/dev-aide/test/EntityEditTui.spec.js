@@ -92,6 +92,7 @@ feature("Save writes a throw-away root's seed file and loads its records after i
         const disk = f.staged(EXAMPLE, [{rootId: ROOT, path: "data/GuidedSeed.xml"}]).files[0]
         ec.service.sync().name("org.moqui.devaide.WorkspaceServices.put#EditBuffer").parameters({target: EXAMPLE,
             files: JSON.stringify([{rootId: ROOT, path: "data/GuidedSeed.xml", text: SEED, baseHash: disk.baseHash, load: true}])}).call()
+        f.guard(EXAMPLE, ROOT)
         const saved = dev().render("Entities/EditTui/saveBuffer", {artifact: EXAMPLE}, "post")
         const loaded = ec.entity.find("moqui.basic.Enumeration").condition("enumId", "SpecGuidedOne").disableAuthz().one()
         return {saved, text: f.read(ROOT, "data/GuidedSeed.xml"), loaded, pending: stagedFiles()}

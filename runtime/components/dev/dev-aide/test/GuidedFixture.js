@@ -58,5 +58,12 @@ function stage(target, rootId, path, text, baseHash) {
 function discard(target) {
     return call(BUFFER + "clear#EditBuffer", {target})
 }
+// Before a Save: the buffer holds the fixture root's files only, so a spec that failed half way never saves a real
+// file it staged.
+function guard(target, rootId) {
+    const files = staged(target).pending.files || []
+    const outside = files.filter((file) => file.rootId !== rootId)
+    if (outside.length) throw new Error("Not saving: the buffer holds " + outside.map((file) => file.path).join(", ") + ", outside the fixture")
+}
 
-;({setup, cleanup, read, write, hash, staged, stage, discard, location})
+;({setup, cleanup, read, write, hash, staged, stage, discard, guard, location})

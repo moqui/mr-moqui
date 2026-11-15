@@ -622,6 +622,33 @@ function stepOp(outline, path, step) {
     const other = siblings[at + (step < 0 ? -1 : 1)]
     return other ? [{op: "move", at: path, to: other.path, position: step < 0 ? "before" : "after"}] : []
 }
+// A field's XML into a form: in the site's screen-extend, the form merge of that name (made when missing); in place,
+// after the form's last field (the terminal's Add row action).
+function formFieldOps(extension, outline, form, xml) {
+    if (extension) {
+        const merge = children(outline, [form.name]).find((node) => attrOf(node, "name") === attrOf(form, "name"))
+        return merge ? [{op: "insert", at: merge.path, position: "last", xml}]
+            : [{op: "insert", at: outline.path || [], position: "last", xml: plainXml(form.name, [["name", attrOf(form, "name")]], xml)}]
+    }
+    const fields = children(form, ["field"])
+    return fields.length ? [{op: "insert", at: fields[fields.length - 1].path, position: "after", xml}] : [{op: "insert", at: form.path, position: "first", xml}]
+}
+// Widgets placed before, after or inside an element: in place at the element (last in the widgets with none); in the
+// site's screen-extend at the element's own anchor, else the nearest one (question 14: anchors are never generated).
+function placeOps(extension, base, extOutline, node, where, xml) {
+    if (!extension) {
+        if (!node || !node.path.length) {
+            const widgets = widgetsOf(base)
+            return [{op: "insert", at: widgets ? widgets.path : [], position: "last", xml}]
+        }
+        return [{op: "insert", at: node.path, position: where === "inside" ? "last" : where === "before" ? "before" : "after", xml}]
+    }
+    const own = node && ANCHORABLE.indexOf(node.name) >= 0 ? anchorName(node) : ""
+    if (own) return extendWidgets(extOutline, own, where === "inside" ? "append" : where === "before" ? "before" : "after", xml)
+    const nearest = node && node.path.length ? nearestAnchor(base, node.path) : null
+    return nearest ? extendWidgets(extOutline, nearest.name, nearest.where, xml) : []
+}
+
 // The outline's elements as rows of the tree component: key the path joined, the parent's key, a label of its name
 // and naming attributes, extension points marked.
 function outlineRows(outline, openUrl) {
@@ -648,5 +675,5 @@ function outlineRows(outline, openUrl) {
     screen: {xml: plainXml, ANCHORABLE, CONTAINERS: SCREEN_CONTAINERS, anchorName, widgetsOf, nearestAnchor, extensionPoints, nodeAtLine,
         formOf, fieldOf: screenFieldOf, EXTEND_TEXT, fieldWidget, fieldXml: formFieldXml, extendFormField, extendWidgets, insertFormField, copyInto,
         actionsExtend, listFindOf, hasSearchInputs, filterXml, filterOps, sectionXml, transitionXml, linkXml, transitionOp, buttonOps,
-        rowActionXml, textAttribute, SNIPPETS, labelOf, stepOp, outlineRows}
+        rowActionXml, textAttribute, SNIPPETS, labelOf, stepOp, formFieldOps, placeOps, outlineRows}
 })

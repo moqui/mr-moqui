@@ -72,18 +72,22 @@ feature("Save writes the staged files, and a file changed on disk since is a con
         const f = fixture()
         const twin = dev()
         const things = "service/fixture/Things.xml"
+        f.discard(CREATE)
         const disk = f.staged(CREATE, [{rootId: ROOT, path: things}]).files[0]
         f.stage(CREATE, ROOT, things, disk.text.replace("noun=\"Thing\"/>", "noun=\"Thing\"><actions/></service>"), disk.baseHash)
         f.stage(CREATE, ROOT, "entity/FixtureEntities.xml", "<entities/>\n", "")
+        f.guard(CREATE, ROOT)
         const saved = twin.render("Services/EditTui/saveBuffer", {artifact: CREATE}, "post")
         const written = {things: f.read(ROOT, things), entities: f.read(ROOT, "entity/FixtureEntities.xml"), pending: f.staged(CREATE).pending.count}
         // staged at the text just written, then changed on disk by someone else
         const base = f.staged(CREATE, [{rootId: ROOT, path: things}]).files[0].baseHash
         f.stage(CREATE, ROOT, things, "<services><mine/></services>\n", base)
         f.write(ROOT, things, "<services><theirs/></services>\n")
+        f.guard(CREATE, ROOT)
         twin.render("Services/EditTui/saveBuffer", {artifact: CREATE}, "post")
         const left = JSON.parse(ec.web.sessionAttributes["DevAideGuided." + CREATE] || "{}")
         const unchanged = f.read(ROOT, things)
+        f.guard(CREATE, ROOT)
         twin.render("Services/EditTui/saveMine", {artifact: CREATE, rootId: ROOT, path: things}, "post")
         const mine = f.read(ROOT, things)
         // and taking the disk's: staged again, then the disk's kept

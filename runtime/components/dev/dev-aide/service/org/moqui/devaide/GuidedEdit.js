@@ -213,5 +213,94 @@ function screenContext(rootId, path, page) {
         editFile: edit ? buffer.byKey[fileKey(edit)] || null : null, extension: !!(view && !view.inPlace)}
 }
 
+// A node of the base screen by its outline key ("1.0.2"), the root for none.
+function nodePath(key) {
+    return String(key || "").split(".").filter((part) => part !== "").map(Number)
+}
+const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
+// The operations of an intent of the screen builder (11.2) on the selected node of the base screen: in place on the
+// screen's file, or in extension mode into the site's screen-extend of it. Answers {ops, node} (the key selected
+// after it) or {refused}.
+function screenIntent(screen, key, intent, values) {
+    const ops = screen.ops.screen
+    const pure = screen.ops.pure
+    const base = screen.baseFile && screen.baseFile.outline
+    if (!base) return {refused: "The screen's file does not read as XML: " + ((screen.baseFile && screen.baseFile.outlineError) || "not read")}
+    if (!screen.edit) return {refused: "This screen is upstream and there is no site component to extend it in: create one on Home"}
+    const path = nodePath(key)
+    const node = pure.outlineAt(base, path)
+    if (!node) return {refused: "That element is not in the screen as staged: choose it again in the outline"}
+    const extension = screen.extension
+    const extOutline = extension ? (screen.editFile && screen.editFile.outline) || {name: "screen-extend", path: [], attrs: [], children: []} : base
+    const form = ops.formOf(base, path)
+    const formName = form ? pure.attrOf(form, "name") : ""
+    const inPlace = (what) => extension ? {refused: what + " is for a screen edited in place; this one is extended in the site's screen-extend"} : null
+    const onlyExtension = (what) => extension ? null : {refused: what + " is for an upstream screen in extension mode"}
+    const named = (value, what) => NAME.test(String(value || "")) ? null : {refused: what + " is letters, digits and _"}
+    const keyOf = (at) => at.join(".")
+    const table = {
+        setProperty() {
+            return inPlace("A property") || (!values.attrName ? {refused: "Name the attribute"} : {ops: pure.setAttributeOps(node, values.attrName, values.attrValue)})
+        },
+        addField() {
+            if (!form) return {refused: "Select a form, or an element in one, first"}
+            const field = {name: values.fieldName, title: values.fieldTitle, widget: values.widget || "display", after: values.after}
+            return named(field.name, "A field name") || {ops: extension ? ops.extendFormField(extOutline, form.name, formName, field) : ops.insertFormField(form, field, values.after)}
+        },
+        addFilter() {
+            if (!form || form.name !== "form-list") return {refused: "Select a list (form-list) first"}
+            return named(values.fieldName, "A field name") || {ops: ops.filterOps(!extension, extOutline, form, values.fieldName)}
+        },
+        addRowAction() {
+            if (!form || form.name !== "form-list") return {refused: "Select a list (form-list) first"}
+            return named(values.fieldName, "A field name") || named(values.transitionName, "A transition name") ||
+                {ops: ops.formFieldOps(extension, extOutline, form, ops.rowActionXml({name: values.fieldName, transition: values.transitionName,
+                    text: values.linkText || values.transitionName, keyField: values.keyField}))}
+        },
+        insert() {
+            const snippet = ops.SNIPPETS.find((item) => item.key === values.snippet)
+            const xml = snippet ? snippet.xml : String(values.rawXml || "").trim()
+            if (!xml) return {refused: "Choose a widget, or write its XML"}
+            const list = ops.placeOps(extension, base, extOutline, node, values.where || "after", xml)
+            return list.length ? {ops: list} : {refused: "Nothing near this element has a name to anchor an extension at: choose a named element"}
+        },
+        addSection() {
+            const spec = {kind: values.sectionKind === "related" ? "related" : "box", name: values.sectionName, title: values.sectionTitle,
+                entity: values.entityName, keyField: values.keyField}
+            if (spec.kind === "related" && !spec.entity) return {refused: "Name the entity whose records the section lists"}
+            return named(spec.name, "A section name") || {ops: ops.placeOps(extension, base, extOutline, node, "after", ops.sectionXml(spec))}
+        },
+        addButton() {
+            if (!path.length) return {refused: "Select the element the button goes after"}
+            const spec = {transition: values.transitionName, service: values.serviceName, text: values.linkText || values.transitionName}
+            return named(spec.transition, "A transition name") || (!spec.service ? {refused: "Name the service the button calls"}
+                : {ops: ops.buttonOps(extension, extOutline, spec, (xml) => ops.placeOps(extension, base, extOutline, node, "after", xml), node)})
+        },
+        remove() {
+            return inPlace("Remove") || (!path.length ? {refused: "The screen itself is not removed here"} : {ops: [{op: "remove", at: path}], node: keyOf(path.slice(0, -1))})
+        },
+        moveUp() {
+            return inPlace("A move") || {ops: ops.stepOp(base, path, -1), node: keyOf(path.slice(0, -1).concat([Math.max(0, path[path.length - 1] - 1)]))}
+        },
+        moveDown() {
+            const parent = pure.outlineAt(base, path.slice(0, -1))
+            const last = ((parent && parent.children) || []).length - 1
+            return inPlace("A move") || {ops: ops.stepOp(base, path, 1), node: keyOf(path.slice(0, -1).concat([Math.min(last, path[path.length - 1] + 1)]))}
+        },
+        replaceSection() {
+            if (!["section", "section-iterate", "form-single", "form-list"].includes(node.name) || !ops.anchorName(node)) return {refused: "Select a named section or form to replace"}
+            return onlyExtension("Replace") || {ops: ops.copyInto(extOutline, screen.baseFile.text, node)}
+        },
+        overrideTransition() {
+            if (node.name !== "transition") return {refused: "Select a transition to override"}
+            return onlyExtension("Override") || {ops: ops.copyInto(extOutline, screen.baseFile.text, node)}
+        },
+        actionsBefore() { return onlyExtension("Actions before") || {ops: ops.actionsExtend(extOutline, "before")} },
+        actionsAfter() { return onlyExtension("Actions after") || {ops: ops.actionsExtend(extOutline, "after")} }
+    }
+    if (!table[intent]) throw new Error("Unknown screen intent " + intent)
+    return table[intent]()
+}
+
 ;({open, apply, save, discard, stash, taken, pendingText, probe, fileKey, serviceContext, parameterRows, serviceShortName, entityContext, entityEdit,
-    screenContext})
+    screenContext, nodePath, screenIntent})

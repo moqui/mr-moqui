@@ -29,7 +29,9 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   kept two hours since the last edit: each edit's operations are built as the browser's are
   (`service/org/moqui/devaide/GuidedOps.js`) and applied to the buffered text. The header says how many changes wait;
   Save (Ctrl+S) writes them in kind order (entities, services, ECA rules, screens, data), with the diff and "Save mine
-  over it" or "Take the disk's" when a file changed on disk since, and Discard drops them.
+  over it" or "Take the disk's" when a file changed on disk since, and Discard drops them. The screen builder's twin
+  has the outline as a tree, the selected element's properties and intents, and a Preview: the designed screen's own
+  terminal form rendered from the buffer (`moquiPreview=buffer:<id>`).
 - **Docs** (Artifacts › Docs) is the Markdown doc of any artifact, package or tree, made from its template as the server
   has it now, with Mermaid diagrams (a click opens one in a zoom dialog) and a button that copies it; the entity modeler and service writer have a Doc tab,
   the screen builder a Doc panel. **Export docs** writes a tree of them into a repository (`autodoc/` by default), as
