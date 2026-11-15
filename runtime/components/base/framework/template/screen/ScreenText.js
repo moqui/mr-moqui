@@ -243,14 +243,14 @@ const $formList = (name, cols) => {
             const header = child(node, "box-header");
             const body = child(node, "box-body");
             const nopad = child(node, "box-body-nopad");
-            return js`
+            return S.conditionGuard(node, js`
                 $cellWidth = $lineChars;
                 ${header ? header.source : ""}
                 $cellWidth = 0;
                 sri.write("\\n");
                 ${body ? body.source : ""}
                 ${nopad ? nopad.source : ""}
-            `;
+            `);
         }),
         "box-header": stmt((node, children) => children),
         "box-body": stmt((node, children) => children),

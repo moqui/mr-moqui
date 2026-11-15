@@ -165,6 +165,10 @@ for each section, and that function evaluates the attributes when it runs (`scre
 ```
 
 - An expression sees the context as it is when the widget renders, the row or entry frame included.
+- A `container-box` `condition` is evaluated as a section's is (`sri.checkCondition`): when it is false nothing of
+  the box renders (header, toolbar, body), in every render mode; one that fails is logged and its error shown in place
+  of the box, as for a section; in qvt-static it is a `v-if` over the box. Unlike a section, a box has no actions and
+  no fail-widgets.
 - A decimal in a `${}` prints its digits. Format with `ec.l10n.format(amount, '#,##0.00')` or
   `ec.l10n.formatCurrency(amount, uomId)`.
 - A `tui` text is JSON: build it with `${JSON.stringify(...)}`, never by pasting `${}` values into JSON.

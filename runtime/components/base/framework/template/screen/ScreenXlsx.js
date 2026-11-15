@@ -131,7 +131,8 @@
         "fail-widgets": children,
         "dynamic-form": children,
         "container": children,
-        "container-box": named("box-body", "box-body-nopad"),
+        "container-box": stmt((node) => S.conditionGuard(node, ["box-body", "box-body-nopad"]
+            .map((name) => childrenNamed(node, name).map((kid) => kid.source || "").join("")).join(""))),
         "box-body": children,
         "box-body-nopad": children,
         "container-row": children,

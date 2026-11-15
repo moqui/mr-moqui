@@ -48,28 +48,81 @@ pub(super) fn guarded(state: &RenderState, label: &str, body: impl FnOnce() -> R
     let written = capture.then(|| web::output_body_len().unwrap_or(0));
     match body() {
         Err(err) if !is_security(&err) => {
-            let detail = format!("Error rendering {label}: {err}");
-            let text = if web::is_production() {
-                format!(
-                    "Error rendering {label}: internal error, id {}",
-                    web::log_error_id(&detail)
-                )
-            } else {
-                log_render_failure(&detail);
-                format!("Error rendering {label}: {}", err.message())
-            };
+            let text = failure_text(label, &err);
             if let Some(len) = written {
                 web::truncate_output(len);
             }
-            let body = match state.output_kind {
-                OutputKind::Vue => encode_html(&text).replace('{', "&#123;"),
-                OutputKind::Json => json_error_array(&text),
-                OutputKind::Text | OutputKind::Html => encode_html(&text),
-            };
-            write(state, &body);
+            write_failure(state, &text);
             Ok(())
         }
         other => other,
+    }
+}
+
+/// The text written in place of a failed render, logged here; in production it names only an error id.
+fn failure_text(label: &str, err: &Error) -> String {
+    let detail = format!("Error rendering {label}: {err}");
+    if web::is_production() {
+        format!(
+            "Error rendering {label}: internal error, id {}",
+            web::log_error_id(&detail)
+        )
+    } else {
+        log_render_failure(&detail);
+        format!("Error rendering {label}: {}", err.message())
+    }
+}
+
+/// Write the text of a failed render as the output kind needs it (see [`guarded`]).
+fn write_failure(state: &RenderState, text: &str) {
+    let body = match state.output_kind {
+        OutputKind::Vue => encode_html(text).replace('{', "&#123;"),
+        OutputKind::Json => json_error_array(text),
+        OutputKind::Text | OutputKind::Html => encode_html(text),
+    };
+    write(state, &body);
+}
+
+/// Whether an element's `condition` holds, for `sri.checkCondition(element)`.
+pub enum Held {
+    Yes,
+    No,
+    /// The condition failed, in a JSON render: the text for the template to write as an `error` node where the element
+    /// would have been, since only the template knows its place in the document.
+    Failed(String),
+}
+
+/// `sri.checkCondition(element)`: whether the `condition` attribute of a widget such as a `container-box` holds, so the
+/// element renders. It is evaluated as a section's is ([`check_condition`]) in the context the section's would see, and
+/// a condition that fails is handled as a failing section is ([`guarded`]): logged, and its error text written where
+/// the element would have been. No condition, or an empty one, holds.
+///
+/// # Errors
+///
+/// Returns a security error, which stops the render as it does for a section.
+pub fn check_widget_condition(state: &RenderState, element: &NodeLit) -> Result<Held, Error> {
+    let expression = element.attr("condition");
+    if expression.trim().is_empty() {
+        return Ok(Held::Yes);
+    }
+    match script::eval_condition(expression) {
+        Ok(true) => Ok(Held::Yes),
+        Ok(false) => Ok(Held::No),
+        Err(err) if is_security(&err) => Err(err),
+        Err(err) => {
+            let def = active_def(state);
+            let id = [element.attr("id"), element.attr("name")]
+                .into_iter()
+                .find(|text| !text.is_empty())
+                .unwrap_or_default();
+            let label = format!("{} [{id}] in screen [{}]", element.name, def.location);
+            let text = failure_text(&label, &err);
+            if state.output_kind == OutputKind::Json {
+                return Ok(Held::Failed(text));
+            }
+            write_failure(state, &text);
+            Ok(Held::No)
+        }
     }
 }
 

@@ -2425,11 +2425,13 @@
         const body = child(node, "box-body");
         const nopad = child(node, "box-body-nopad");
         const toolbar = child(node, "box-toolbar");
-        return `$s.boxOpen(${wlit(node, false)}, ${header ? wlit(header, false) : "null"});\n` +
+        // a condition is a v-if over the box, as a section's (sectionMacro)
+        const condition = attr(node, "condition");
+        return (condition ? `sri.write($s.vIf(${wlit(node, false)}, ${lit(condition)}));\n` : "") + `$s.boxOpen(${wlit(node, false)}, ${header ? wlit(header, false) : "null"});\n` +
             (header ? `sri.write("<template v-slot:header>");\n${header.source || ""}sri.write("</template>");\n` : "") +
             (toolbar ? `sri.write("<template v-slot:toolbar>");\n${toolbar.source || ""}sri.write("</template>");\n` : "") +
             (body ? `sri.write(${lit(`<m-box-body${attr(body, "height") ? ` height="${attr(body, "height")}"` : ""}>`)});\n${body.source || ""}sri.write("</m-box-body>");\n` : "") +
-            (nopad ? nopad.source || "" : "") + `sri.write("</m-container-box>\\n");\n`;
+            (nopad ? nopad.source || "" : "") + `sri.write("</m-container-box>\\n");\n` + (condition ? `sri.write("</template>");\n` : "");
     });
 
     // A dashboard's children each in a cell of the grid; a cell whose child is not shown is hidden by the style sheet.

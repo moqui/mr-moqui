@@ -1563,9 +1563,12 @@ $closeRender();
             const header = child(node, "box-header");
             const title = header ? attr(header, "title") : "";
             const body = node.children.filter((kid) => kid.name !== "box-toolbar").map((kid) => kid.source || "").join("");
-            return `$openChildren({t:"box",id:$uid(${jsString(idOf(node))}),title:${titleOf(title)},type:${jsString(attr(node, "type"))},initial:${jsString(attr(node, "initial"))}});
+            const code = `$openChildren({t:"box",id:$uid(${jsString(idOf(node))}),title:${titleOf(title)},type:${jsString(attr(node, "type"))},initial:${jsString(attr(node, "initial"))}});
 ${regionCode(node, child(node, "box-toolbar"), "toolbar")}${body}$closeChildren();
 `;
+            // a condition is the host's, as a section's (sri.checkCondition); one that failed is an error node in the box's place
+            if (!attr(node, "condition")) return code;
+            return `{\nconst $held = sri.checkCondition(${S.bareLit(node)});\nif (typeof $held === "string") $emit({t:"error",text:$held});\nelse if ($held) {\n${code}}\n}\n`;
         }),
         "container-row": group("row"),
         "row-col": group("col", (node) =>

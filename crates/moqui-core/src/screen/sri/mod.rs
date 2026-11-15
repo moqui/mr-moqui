@@ -59,8 +59,9 @@ pub use menu_items::menu_items;
 pub(super) use menu_items::screen_permitted;
 pub use options::{field_transition_value, get_field_options};
 pub use sections::{
-    append_to_after_screen_writer, append_to_script_writer, render_active_screen, render_include_screen,
-    render_section, render_section_include, render_section_value, render_subscreen, render_text, render_text_value,
+    append_to_after_screen_writer, append_to_script_writer, check_widget_condition, render_active_screen,
+    render_include_screen, render_section, render_section_include, render_section_value, render_subscreen, render_text,
+    render_text_value, Held,
 };
 pub(super) use sections::{is_security, iteration_entries, paginate_items};
 #[cfg(test)]

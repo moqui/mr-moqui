@@ -1091,6 +1091,12 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:enumeration value="open"/><xs:enumeration value="closed"/>
             <!-- for future, save state in UserPreference: <xs:enumeration value="user"/> -->
         </xs:restriction></xs:simpleType></xs:attribute>
+        <xs:attribute name="condition" type="xs:string">
+            <xs:annotation><xs:documentation>A condition expression, evaluated as a section's condition attribute is (in
+                the same context, by JavaScript truth). When it is false the box renders nothing: no header, toolbar or
+                body. A condition that fails to evaluate is logged and its error shown in place of the box, as for a
+                section. In the qvt-static mode it is a v-if over the box, as a section's.</xs:documentation></xs:annotation>
+        </xs:attribute>
     </xs:complexType></xs:element>
 
     <xs:element name="container-row" substitutionGroup="AllWidgets"><xs:annotation>

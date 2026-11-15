@@ -2868,7 +2868,7 @@
         const nopad = child(node, "box-body-nopad");
         const toolbar = child(node, "box-toolbar");
         const title = header ? attr(header, "title") : "";
-        return js`
+        return S.conditionGuard(node, js`
             {
                 const $type = ${noL10n(attr(node, "type") || "default")} || "default";
                 sri.write("<m-container-box" + $v.A({id: ${nodeIdCode(node)}, type: $type, title: ${title ? `ec.resource.expand(${lit(title)}, "")` : "null"},
@@ -2879,7 +2879,7 @@
             ${body ? `sri.write(${lit(`<m-box-body${attr(body, "height") ? ` height="${attr(body, "height")}"` : ""}>`)});\n${body.source}sri.write("</m-box-body>");` : ""}
             ${nopad ? nopad.source : ""}
             sri.write("</m-container-box>\\n");
-        `;
+        `);
     });
 
     // A container-row writes its children in order: each row-col its column, and a section or section-iterate the row-col
