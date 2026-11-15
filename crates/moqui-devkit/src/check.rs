@@ -563,7 +563,19 @@ fn parse_error_position(message: &str) -> (u32, u32) {
             .parse()
             .ok()
     };
-    (number_after("line").unwrap_or(0), number_after("column").unwrap_or(0))
+    if let Some(line) = number_after("line") {
+        return (line, number_after("column").unwrap_or(0));
+    }
+    // "… (path:line:column)", as MNode::parse_text names the place
+    message
+        .rsplit_once('(')
+        .and_then(|(_, place)| {
+            let mut parts = place.trim_end().trim_end_matches(')').rsplitn(3, ':');
+            let column = parts.next()?.parse().ok()?;
+            let line = parts.next()?.parse().ok()?;
+            Some((line, column))
+        })
+        .unwrap_or((0, 0))
 }
 
 /// The lines of the text, to place a problem on the attribute it is about.
@@ -752,6 +764,17 @@ mod tests {
         assert!(field.message.contains("noSuchField"), "{}", field.message);
         let broken = check_text(ctx.factory(), Path::new("/tmp/x.xml"), "<services>\n  <service>");
         assert_eq!(broken[0].rule, "xml.parse");
+        let mismatched = check_text(
+            ctx.factory(),
+            Path::new("/tmp/x.xml"),
+            "<services>\n<service/>\n</servicesx>",
+        );
+        assert_eq!(
+            (mismatched[0].line, mismatched[0].column > 0),
+            (3, true),
+            "{:?}",
+            mismatched[0]
+        );
     }
 
     #[test]
