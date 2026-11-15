@@ -585,8 +585,9 @@ along with this software (see the LICENSE.md file). If not, see
                 in the same space</description></parameter>
             <parameter name="pageName" required="true">
                 <description>This is required for better usability. If pageName == wikiSpaceId is treated as the root page.
-                    Letters and digits of any script, spaces and . , ' - _ : ( ) ! ? only; never . or .., and at most 240
-                    bytes in UTF-8 (a file name on disk is 255 at most, with the extension).</description>
+                    Letters, digits and combining marks (never first) of any script, spaces and . , ' - _ : ( ) ! ? only;
+                    never . or .., and at most 240 bytes in UTF-8 (a file name on disk is 255 at most, with the extension).
+                    Saved in NFC.</description>
             </parameter>
             <parameter name="wikiType" default-value="md"/>
             <parameter name="pageText" allow-html="any"><description>If WikiSpace.allowAnyHtml = Y will be stored as-is, otherwise filtered like parameter.allow-html=safe.</description></parameter>
@@ -606,8 +607,10 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <!-- <log level="warn" message="update#WikiPage wikiSpaceId=${wikiSpaceId} pageName=${pageName} parentPath=[${parentPath}]"/> -->
             <!-- the name is one segment of the page's file location: no / or control character, never . or .. (as
-                move#WikiPage and clone#WikiPage check it); its length in UTF-8 bytes is its URI encoding with each %XX one -->
-            <if condition="pageName === '.' || pageName === '..' || !StringUtilities.isAlphaNumeric(pageName, &quot;.,'-_:()!? &quot;)">
+                move#WikiPage and clone#WikiPage check it); its length in UTF-8 bytes is its URI encoding with each %XX one.
+                It is saved in NFC, so a name typed decomposed (NFD) is the page of its composed twin, never a second page -->
+            <set field="pageName" from="pageName == null ? null : String(pageName).normalize('NFC')"/>
+            <if condition="pageName === '.' || pageName === '..' || !StringUtilities.isAlphaNumeric(pageName, &quot;.,'-_:()!? &quot;, true)">
                 <return error="true" message="A page name has letters, digits, spaces and . , ' - _ : ( ) ! ? only"/></if>
             <if condition="encodeURIComponent(pageName).replace(/%[0-9A-F]{2}/g, '_').length &gt; 240"><return error="true" message="A page name is too long"/></if>
             <if condition="pageName == wikiSpaceId"><set field="pageName" from="null"/></if>
@@ -740,6 +743,10 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- move the page if applicable: move#WikiPage keeps its history and leaves an alias at the old path -->
             <set field="origParentPath" from="pagePath.includes('/') ? pagePath.substring(0, pagePath.lastIndexOf('/')) : ''"/>
             <set field="origPageName" from="pagePath.includes('/') ? pagePath.substring(pagePath.lastIndexOf('/')+1) : pagePath"/>
+            <!-- a page already there keeps a name stored decomposed (a file written elsewhere) when the name given is the
+                same in NFC, as move#WikiPage keeps it: a save is not a rename, and it would collide with a composed twin -->
+            <if condition="!createdRecord &amp;&amp; pageName &amp;&amp; origPageName != pageName &amp;&amp; origPageName.normalize('NFC') === pageName">
+                <set field="pageName" from="origPageName"/></if>
             <!-- TODO: support change of wikiType too -->
             <if condition="pageName &amp;&amp; (origParentPath != (parentPath || '') || origPageName != pageName)">
                 <log message="update#WikiPage move ${wikiSpaceId}/${pagePath} to parentPath ${parentPath || ''} pageName ${pageName}"/>
@@ -1175,7 +1182,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <!-- the copy's name: the one asked for (a name as update#WikiPage takes one: with copyHistory its file is
                     written here), or the source page's -->
                 <if condition="pageName"><then>
-                    <if condition="pageName === '.' || pageName === '..' || !StringUtilities.isAlphaNumeric(pageName, &quot;.,'-_:()!? &quot;)">
+                    <set field="pageName" from="String(pageName).normalize('NFC')"/>
+                    <if condition="pageName === '.' || pageName === '..' || !StringUtilities.isAlphaNumeric(pageName, &quot;.,'-_:()!? &quot;, true)">
                         <return error="true" message="A page name has letters, digits, spaces and . , ' - _ : ( ) ! ? only"/></if>
                     <if condition="encodeURIComponent(pageName).replace(/%[0-9A-F]{2}/g, '_').length &gt; 240"><return error="true" message="A page name is too long"/></if>
                 </then><else>
@@ -1920,9 +1928,11 @@ along with this software (see the LICENSE.md file). If not, see
                 // a . or .. segment would reach out of the space's tree
                 if (toParentPath.split('/').some((part) => part === '.' || part === '..')) return fail('A page path has no . or .. in it')
                 if (toParentPath === toWikiSpaceId) toParentPath = ''
-                if (!toPageName) toPageName = fromPath.slice(fromPath.lastIndexOf('/') + 1)
-                // one segment of the file location: letters and digits of any script, no / or control character
-                if (!StringUtilities.isAlphaNumeric(toPageName, ".,'-_:()!? ") || toPageName === '.' || toPageName === '..')
+                // a name given is saved in NFC (update#WikiPage); a page keeping its name keeps it as it is
+                if (toPageName) toPageName = String(toPageName).normalize('NFC')
+                else toPageName = fromPath.slice(fromPath.lastIndexOf('/') + 1)
+                // one segment of the file location: letters, digits and combining marks of any script, no / or control character
+                if (!StringUtilities.isAlphaNumeric(toPageName, ".,'-_:()!? ", true) || toPageName === '.' || toPageName === '..')
                     return fail("A page name has letters, digits, spaces and . , ' - _ : ( ) ! ? only")
                 if (encodeURIComponent(toPageName).replace(/%[0-9A-F]{2}/g, '_').length > 240) return fail('A page name is too long')
                 const toPath = (toParentPath ? toParentPath + '/' : '') + toPageName
@@ -3133,8 +3143,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="wikiBlogId"/>
         </out-parameters>
         <actions>
-            <!-- the title names the post's page: the rule of update#WikiPage, also when only the post's row changes -->
-            <if condition="title &amp;&amp; (title === '.' || title === '..' || !StringUtilities.isAlphaNumeric(title, &quot;.,'-_:()!? &quot;))">
+            <!-- the title names the post's page: the rule of update#WikiPage (in NFC), also when only the post's row changes -->
+            <if condition="title"><set field="title" from="String(title).normalize('NFC')"/></if>
+            <if condition="title &amp;&amp; (title === '.' || title === '..' || !StringUtilities.isAlphaNumeric(title, &quot;.,'-_:()!? &quot;, true))">
                 <return error="true" message="Invalid title (letters, digits, [.,'-_:()!? ] only)"/></if>
             <if condition="title &amp;&amp; encodeURIComponent(title).replace(/%[0-9A-F]{2}/g, '_').length &gt; 240">
                 <return error="true" message="A page name is too long"/></if>
@@ -3166,8 +3177,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="blogText" allow-html="any"/>
         </in-parameters>
         <actions>
-            <!-- the title names the post's page: the rule of update#WikiPage, also when only the post's row changes -->
-            <if condition="title &amp;&amp; (title === '.' || title === '..' || !StringUtilities.isAlphaNumeric(title, &quot;.,'-_:()!? &quot;))">
+            <!-- the title names the post's page: the rule of update#WikiPage (in NFC), also when only the post's row changes -->
+            <if condition="title"><set field="title" from="String(title).normalize('NFC')"/></if>
+            <if condition="title &amp;&amp; (title === '.' || title === '..' || !StringUtilities.isAlphaNumeric(title, &quot;.,'-_:()!? &quot;, true))">
                 <return error="true" message="Invalid title (letters, digits, [.,'-_:()!? ] only)"/></if>
             <if condition="title &amp;&amp; encodeURIComponent(title).replace(/%[0-9A-F]{2}/g, '_').length &gt; 240">
                 <return error="true" message="A page name is too long"/></if>

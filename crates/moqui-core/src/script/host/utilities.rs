@@ -51,9 +51,17 @@ macro_rules! utilities_js {
     su.removeNonAlphaNumeric = (original) => original == null ? null : String(original).replace(/[^\p{L}\p{Nd}]/gu, "");
     su.replaceNonAlphaNumeric = (original, replacement) => original == null ? null
         : String(original).replace(/[^\p{L}\p{Nd}]/gu, text(replacement));
-    su.isAlphaNumeric = (value, also) => {
+    // isAlphaNumeric(text, also, marks): with marks a combining mark (\p{M}: a Devanagari or Thai vowel sign, an Arabic
+    // vowel, an accent in NFD) is admitted too, only after a letter, a digit or another mark, so never first
+    su.isAlphaNumeric = (value, also, marks) => {
         const others = text(also);
-        for (const ch of text(value)) if (!/[\p{L}\p{Nd}]/u.test(ch) && !others.includes(ch)) return false;
+        let base = false;
+        for (const ch of text(value)) {
+            if (/[\p{L}\p{Nd}]/u.test(ch)) base = true;
+            else if (marks === true && base && /\p{M}/u.test(ch)) continue;
+            else if (others.includes(ch)) base = false;
+            else return false;
+        }
         return true;
     };
     su.findFirstNumber = (original) => {

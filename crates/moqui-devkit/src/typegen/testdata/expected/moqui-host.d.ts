@@ -1729,7 +1729,8 @@ interface MoquiStringUtilities {
     paddedString(input: string | null, desiredLength: number, padCharOrRightPad?: string | boolean, rightPad?: boolean): string;
     removeNonAlphaNumeric(text: string | null): string | null;
     replaceNonAlphaNumeric(text: string | null, replacement: string): string | null;
-    isAlphaNumeric(text: string, also?: string | null): boolean;
+    /** Every character is a letter, a digit or one of `also`; with `marks` also a combining mark after a letter, digit or mark. */
+    isAlphaNumeric(text: string, also?: string | null, marks?: boolean): boolean;
     findFirstNumber(text: string | null): string | null;
     getRandomString(length: number): string;
     pathStringToList(path: string, skipSegments?: number): string[];

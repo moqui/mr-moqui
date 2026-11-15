@@ -572,6 +572,8 @@ fn utility_classes_have_javas_statics() {
             && StringUtilities.paddedString("ab", 4, "*", false) === "**ab" && StringUtilities.paddedString("abcdef", 3, true) === "abc"
             && StringUtilities.removeNonAlphaNumeric("a-b_c 1!") === "abc1" && StringUtilities.replaceNonAlphaNumeric("a-b", "_") === "a_b"
             && StringUtilities.isAlphaNumeric("ab_1", "_") && !StringUtilities.isAlphaNumeric("ab-1", "_")
+            && !StringUtilities.isAlphaNumeric("\u0915\u093F", "") && StringUtilities.isAlphaNumeric("\u0915\u093F", "", true)
+            && !StringUtilities.isAlphaNumeric("\u093F\u0915", "", true) && !StringUtilities.isAlphaNumeric("a \u0301", " ", true)
             && StringUtilities.findFirstNumber("order 123 of 9") === "123" && StringUtilities.getRandomString(12).length === 12
             && StringUtilities.pathStringToList("/a/b/c", 1).join() === "b,c"
             && StringUtilities.decodeFromXml("a &lt;b&gt; &amp; c") === "a <b> & c"

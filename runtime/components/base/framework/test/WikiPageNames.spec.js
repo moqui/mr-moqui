@@ -1,5 +1,6 @@
-// A wiki page's name (org.moqui.resource.WikiServices update#WikiPage, move#WikiPage and clone#WikiPage): letters and
-// digits of any script, spaces and . , ' - _ : ( ) ! ? only, as Knowledge's (mr-boss 628669dc). The name is one segment of
+// A wiki page's name (org.moqui.resource.WikiServices update#WikiPage, move#WikiPage and clone#WikiPage): letters,
+// digits and combining marks (never first) of any script, spaces and . , ' - _ : ( ) ! ? only, as Knowledge's (mr-boss
+// 628669dc), saved in NFC so a decomposed name is its composed twin's page. The name is one segment of
 // the page's file location, in the database and in a git repository, so a slash, . or .., a control or direction
 // character and a name over 240 bytes are refused; the other rules of the wiki are tested in moqui-git's wiki_tests.rs.
 // Run: ./moq test framework --spec WikiPageNames
@@ -137,5 +138,72 @@ feature("a blog post's title names its page by the same rule (create#WikiBlog an
     then({post, postText, slash, renamed, long}) {
         post.error == "" && post.wikiBlogId && postText == "<p>x</p>"
         slash.includes("letters") && renamed == "" && long.includes("too long")
+    }
+})
+
+feature("combining marks: Devanagari and Thai names are saved, a decomposed (NFD) name is its NFC twin's page, a leading mark is refused", {
+    when() {
+        const save = (pageName, pageText = "x") => invoke("update#WikiPage", {wikiSpaceId: "SPWKNDB", pageName, pageText})
+        const pages = path => ec.entity.find("moqui.resource.wiki.WikiPage").condition("wikiSpaceId", "SPWKNDB")
+            .condition("pagePath", path).disableAuthz().count()
+        const devanagari = save("हिन्दी पृष्ठ")
+        const thai = save("หน้าภาษาไทย")
+        const composed = save("Café crème", "composed")
+        const decomposed = save("Cafe\u0301 cre\u0300me", "decomposed")
+        // Hangul jamo are letters: the decomposed syllables are saved as the syllables
+        const jamo = save("\u1112\u1161\u11AB\u1100\u1173\u11AF")
+        const syllables = save("한글")
+        const renamed = invoke("move#WikiPage", {wikiPageId: thai.wikiPageId, toPageName: "Pha\u0302\u0300 Thai"})
+        const page = save("Marks", "x")
+        const leading = "\u0301abc", afterSpace = "a \u0301b"
+        return {
+            devanagari,
+            thai,
+            composed,
+            decomposed,
+            jamo,
+            syllables,
+            renamed,
+            cafes: pages("Café crème"),
+            cafeText: textAt("dbresource://WikiSpace/SPWKNDB/Café crème.md"),
+            saves: [leading, afterSpace].map(name => save(name).error),
+            renames: [leading, afterSpace].map(toPageName => invoke("move#WikiPage", {wikiPageId: page.wikiPageId, toPageName}).error),
+            copies: [leading, afterSpace].map(pageName => invoke("clone#WikiPage", {
+                baseWikiSpaceId: "SPWKNDB", pagePath: "Marks", wikiSpaceId: "SPWKNGT", pageName}).error),
+            post: invoke("create#WikiBlog", {wikiSpaceId: "SPWKNDB", title: "Blog cafe\u0301", blogText: "<p>x</p>"}),
+            leadingPost: invoke("create#WikiBlog", {wikiSpaceId: "SPWKNDB", title: leading, blogText: "<p>x</p>"}).error
+        }
+    },
+    then(r) {
+        r.devanagari.error == "" && r.devanagari.pagePath == "हिन्दी पृष्ठ"
+        r.thai.error == "" && r.thai.pagePath == "หน้าภาษาไทย"
+        r.composed.error == "" && r.decomposed.error == ""
+        r.decomposed.wikiPageId == r.composed.wikiPageId && r.decomposed.pagePath == "Café crème"
+        r.cafes == 1 && r.cafeText == "decomposed"
+        r.jamo.error == "" && r.jamo.pagePath == "한글" && r.syllables.wikiPageId == r.jamo.wikiPageId
+        r.renamed.error == "" && r.renamed.pagePath == "Phầ Thai"
+        r.saves.every(error => error.includes("letters"))
+        r.renames.every(error => error.includes("letters"))
+        r.copies.every(error => error.includes("letters"))
+        r.post.error == "" && ec.entity.find("moqui.resource.wiki.WikiBlog").condition("wikiBlogId", r.post.wikiBlogId)
+            .disableAuthz().one().title == "Blog café"
+        r.leadingPost.includes("letters")
+    }
+})
+
+feature("a page stored under a decomposed name (a file written elsewhere) is saved where it is, beside its composed twin", {
+    when() {
+        const nfd = "Việt", nfc = nfd.normalize("NFC")
+        const twin = invoke("update#WikiPage", {wikiSpaceId: "SPWKNDB", pageName: nfc, pageText: "composed"})
+        ec.service.sync().name("create#moqui.resource.wiki.WikiPage").parameters({wikiSpaceId: "SPWKNDB", pagePath: nfd}).call()
+        ec.resource.getLocationReference("dbresource://WikiSpace/SPWKNDB/" + nfd + ".md").putText("stored")
+        const saved = invoke("update#WikiPage", {wikiSpaceId: "SPWKNDB", pagePath: nfd, pageName: nfd, pageText: "edited"})
+        return {twin, saved, nfd, text: textAt("dbresource://WikiSpace/SPWKNDB/" + nfd + ".md"),
+            twinText: textAt("dbresource://WikiSpace/SPWKNDB/" + nfc + ".md")}
+    },
+    then(r) {
+        r.twin.error == "" && r.saved.error == ""
+        r.saved.pagePath == r.nfd && r.saved.wikiPageId != r.twin.wikiPageId
+        r.text == "edited" && r.twinText == "composed"
     }
 })
