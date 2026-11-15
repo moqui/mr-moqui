@@ -1,0 +1,40 @@
+ ≡ dev ▸ Artifacts ▸ Browser                                                                                  Tue 14:32
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Trail 1/1 · Kind: all · Framework: hidden · Observed: shown
+ Used by (3)                           │ ▣ entity                               │ Uses (3)
+ ── screen (2) ──                      │ Example                                │ ── entity (1) ──
+ ▸ ExampleDetail                       │ entity:moqui.example.Example           │ ▸ Enumeration
+   FindExample                       4 │ example · ExampleEntities.xml:12       │ ── field (2) ──
+ ── service (1) ──                     │ An example entity                      │   exampleId
+   update#Example                    ◌ │ [t] Text  [d] Data  [r] Refs  [D] Doc  │   exampleName
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ F1=Help  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

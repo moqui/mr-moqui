@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The terminal twin of the Artifact Browser (Browse.xml, plans/design-dev-aide.md 7.3, D14): the artifact-browser
+    component's Miller columns (what uses the artifact, the artifact, what it uses), which read the browse transition
+    (get#ArtifactBrowse: the references grouped and filtered on the server) and ask it again on each new center; below
+    it a find over the index whose results open in the browser. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Browser" default-menu-include="false">
+    <parameter name="artifactId"/>
+    <parameter name="text"/>
+
+    <!-- the component's source: {center, usedBy, uses, kinds, filter} for artifactId with kinds, hideFramework, observed -->
+    <transition name="browse" read-only="true"><service-call name="org.moqui.devaide.ArtifactServices.get#ArtifactBrowse"
+            in-map="true" web-send-json-response="true"/><default-response type="none"/></transition>
+
+    <actions>
+        <set field="artifacts" from="[]"/>
+        <if condition="text">
+            <service-call name="org.moqui.devaide.ArtifactServices.search#Artifacts" out-map="found" in-map="{text: text, limit: 20}"/>
+            <set field="artifacts" from="found.artifacts || []"/>
+        </if>
+    </actions>
+    <widgets>
+        <section name="BrowseCenter" condition="artifactId"><widgets>
+            <render-mode><text type="tui"><![CDATA[{"t": "component", "id": "DevArtifactBrowser", "name": "artifact-browser",
+                "props": {"source": "browse", "artifactId": ${JSON.stringify(artifactId)}}}]]></text></render-mode>
+        </widgets></section>
+        <section name="BrowsePrompt" condition="!artifactId &amp;&amp; !text"><widgets>
+            <label type="p" text="Find an artifact to browse: what uses it, and what it uses. Try OrdHdr or place#Order."/>
+        </widgets></section>
+        <form-single name="BrowseFind" transition="../Browse">
+            <field name="text"><default-field title="Find an artifact"><text-line size="40"/></default-field></field>
+            <field name="submitButton"><default-field title="Find"><submit/></default-field></field>
+            <field-layout><field-row><field-ref name="text"/><field-ref name="submitButton"/></field-row></field-layout>
+        </form-single>
+        <section name="BrowseNoMatch" condition="text &amp;&amp; !artifacts.length"><widgets>
+            <label type="p" text="No artifacts match '${text}'"/>
+        </widgets></section>
+        <section name="BrowseMatches" condition="artifacts.length"><widgets>
+            <form-list name="BrowseResults" list="artifacts" skip-form="true">
+                <field name="kind"><default-field title="Kind"><display/></default-field></field>
+                <field name="shortName"><default-field title="Name">
+                    <link url="../Browse" text="${shortName}" parameter-map="{artifactId: id}" link-type="anchor"/></default-field></field>
+                <field name="component"><default-field title="Component"><display text="${component}${upstream ? '' : ' · site'}"/></default-field></field>
+                <field name="summary"><default-field title="Summary"><display/></default-field></field>
+            </form-list>
+        </widgets></section>
+    </widgets>
+</screen>

@@ -40,7 +40,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
 }
 
 /// A list parameter given as a list or a comma separated text.
-fn list(parameters: &Parameters, key: &str) -> Vec<String> {
+pub(crate) fn list(parameters: &Parameters, key: &str) -> Vec<String> {
     match parameters.get(key) {
         Some(Value::List(items)) => items
             .iter()
@@ -57,7 +57,7 @@ fn list(parameters: &Parameters, key: &str) -> Vec<String> {
 }
 
 /// `text` percent-encoded for a URL's query: every byte but the unreserved ones.
-fn encode(text: &str) -> String {
+pub(crate) fn encode(text: &str) -> String {
     text.bytes()
         .map(|byte| {
             if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~' | b'/') {
@@ -95,7 +95,7 @@ pub(crate) fn shown(context: &Context, artifact: &ArtifactRow) -> Json {
     out
 }
 
-fn shown_ref(context: &Context, entry: &RefEntry) -> Json {
+pub(crate) fn shown_ref(context: &Context, entry: &RefEntry) -> Json {
     let mut out = serde_json::to_value(entry).unwrap_or(Json::Null);
     if let Some(other) = &entry.other {
         out["other"] = shown(context, other);
