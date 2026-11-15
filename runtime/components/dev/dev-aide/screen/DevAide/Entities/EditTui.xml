@@ -81,7 +81,8 @@ along with this software (see the LICENSE.md file). If not, see
                     let list = []
                     const change = (attribute, now, was) => { if (String(now || '') !== String(was || '')) list = list.concat(ops.setFieldAttribute(element, fieldName, attribute, now)) }
                     change('type', fieldType, merged.type)
-                    change('is-pk', isPk === 'true' ? 'true' : '', merged.isPk ? 'true' : '')
+                    // the key is the defining file's: an extension (which shows no Primary key) leaves it as it is
+                    if (entity.edit && entity.edit.inPlace) change('is-pk', isPk === 'true' ? 'true' : '', merged.isPk ? 'true' : '')
                     change('not-null', notNull === 'true' ? 'true' : '', merged.notNull ? 'true' : '')
                     change('default', defaultValue, merged.defaultStr)
                     const node = element ? ops.childNamed(element, 'field', 'name', fieldName) : null
@@ -105,10 +106,12 @@ along with this software (see the LICENSE.md file). If not, see
             let added = null
             const built = guided.entityEdit(entity, (element) => {
                 added = ops.addFieldSpec(element, entity.entityName, {kind, words: fieldWords, name: fieldName, type: fieldType, after: afterField,
-                    related: relatedEntity, values: fieldValues, title: fieldTitle, description, isPk: isPk === 'true', notNull: notNull === 'true'})
+                    related: relatedEntity, values: fieldValues, title: fieldTitle, description, isPk: isPk === 'true', notNull: notNull === 'true',
+                    extension: !(entity.edit && entity.edit.inPlace)})
                 return added.name ? added.ops : []
             })
             if (built.refused) ec.message.addError(built.refused)
+            else if (added && added.refused) ec.message.addError(added.refused)
             else if (!added || !added.name) ec.message.addError(ec.l10n.localize('A field needs a name: say what it holds'))
             else if (!/^[a-z][A-Za-z0-9]*$/.test(added.name)) ec.message.addError('A field name is a letter then letters and digits: ' + added.name)
             else if (added.seed.length && !entity.seed) ec.message.addError(ec.l10n.localize('No site component to write the seed data in: create one on Home'))
@@ -309,6 +312,8 @@ along with this software (see the LICENSE.md file). If not, see
             tab = ['fields', 'relationships', 'indexes', 'incoming', 'eeca', 'table', 'seed', 'doc', 'text'].includes(tab) ? tab : 'fields'
             definition = entity.entity || {}
             const inPlace = !!(entity.edit && entity.edit.inPlace)
+            // a primary key only where the site defines the entity: on an upstream entity's extension it would change its table's key
+            editInPlace = inPlace
             editFile = entity.editFile || {}
             canEdit = !!(view && view.tier !== 'view' && entity.editFile && !entity.editFile.readOnly)
             full = !!(view && view.tier === 'full')
@@ -492,12 +497,12 @@ along with this software (see the LICENSE.md file). If not, see
                             <list-options list="fieldTypeOptions" key="${type}" text="${label}"/></drop-down></default-field></field>
                         <field name="afterField"><default-field title="After"><drop-down allow-empty="true">
                             <list-options list="afterOptions" key="${name}" text="${name}"/></drop-down></default-field></field>
-                        <field name="relatedEntity"><default-field title="Related entity" tooltip="A Reference's entity">
+                        <field name="relatedEntity"><default-field title="Related entity (Reference)" tooltip="A Reference's entity">
                             <drop-down allow-empty="true"><dynamic-options transition="entityChoices" server-search="true" min-length="2"/></drop-down></default-field></field>
-                        <field name="fieldValues"><default-field title="Values" tooltip="A Picklist's values or a Status's statuses, one a line"><text-area rows="4" cols="40"/></default-field></field>
-                        <field name="fieldTitle"><default-field title="Title" tooltip="A Picklist's relationship title"><text-line size="30"/></default-field></field>
+                        <field name="fieldValues"><default-field title="Values (Picklist, Status)" tooltip="A Picklist's values or a Status's statuses, one a line"><text-area rows="4" cols="40"/></default-field></field>
+                        <field name="fieldTitle"><default-field title="Title (Picklist)" tooltip="A Picklist's relationship title"><text-line size="30"/></default-field></field>
                         <field name="description"><default-field title="Description"><text-line size="60"/></default-field></field>
-                        <field name="isPk"><default-field title="Primary key"><check><option key="true" text=" "/></check></default-field></field>
+                        <field name="isPk"><conditional-field condition="editInPlace" title="Primary key"><check><option key="true" text=" "/></check></conditional-field></field>
                         <field name="notNull"><default-field title="Not null"><check><option key="true" text=" "/></check></default-field></field>
                         <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
                     </form-single>
@@ -518,7 +523,7 @@ along with this software (see the LICENSE.md file). If not, see
                                 <field name="fieldName" from="name"><default-field><hidden/></default-field></field>
                                 <field name="fieldType"><default-field title="Type"><drop-down allow-empty="false">
                                     <list-options list="fieldTypeOptions" key="${type}" text="${label}"/></drop-down></default-field></field>
-                                <field name="isPk"><default-field title="Primary key"><check><option key="true" text=" "/></check></default-field></field>
+                                <field name="isPk"><conditional-field condition="editInPlace" title="Primary key"><check><option key="true" text=" "/></check></conditional-field></field>
                                 <field name="notNull"><default-field title="Not null"><check><option key="true" text=" "/></check></default-field></field>
                                 <field name="defaultValue"><default-field title="Default"><text-line size="30"/></default-field></field>
                                 <field name="description"><default-field title="Description"><text-line size="60"/></default-field></field>

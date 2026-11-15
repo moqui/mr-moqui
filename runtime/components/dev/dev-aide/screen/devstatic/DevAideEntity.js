@@ -287,6 +287,13 @@
 
     // A field's title as a form shows it with none given: its name in words (dueDate -> Due Date).
     ops.titleOf = (name) => String(name || "").replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/^./, (ch) => ch.toUpperCase());
+    // A Picklist's or Status's type description: its words as a sentence (contact channel: Contact channel), or its
+    // id's words less the entity's name when it has none.
+    ops.typeDescriptionOf = (words, typeId, entityName) => {
+        const said = String(words || "").trim().replace(/\s+/g, " ");
+        if (said) return said.charAt(0).toUpperCase() + said.slice(1);
+        return ops.titleOf(String(typeId || "").replace(ops.shortName(entityName), "") || typeId);
+    };
     // A label in another language: a LocalizedMessage record of the title (the component's L10n messages).
     ops.localizedXml = (original, locale, localized) => ops.xml("moqui.basic.LocalizedMessage", [["original", original], ["locale", locale], ["localized", localized]]);
     // A view entity's condition: an econdition into its entity-condition, made when it has none.
@@ -330,6 +337,8 @@
             };
         },
         computed: {
+            // the edits go to the file that defines the entity, not to an extension of it
+            inPlace() { return !!(this.target && this.target.inPlace); },
             memberCards() { return pure.memberCards(this.entity && this.entity.members); },
             memberPlaces() { return pure.browserLayout(this.memberCards, this.memberSizes, { columnWidth: 200, gap: 70, space: 14 }); },
             memberLines() {
@@ -499,7 +508,8 @@
             addField() {
                 const add = this.adding;
                 if (!add.name) { this.ctx.note("A field needs a name", "warning"); return; }
-                const field = { name: add.name, type: add.type, isPk: add.isPk, notNull: add.notNull, description: add.description };
+                // a primary key only where the site defines the entity: on an upstream entity's extension it would change its table's key
+                const field = { name: add.name, type: add.type, isPk: add.isPk && this.inPlace, notNull: add.notNull, description: add.description };
                 const label = add.locale && add.localized ? ops.localizedXml(add.title || ops.titleOf(add.name), add.locale, add.localized) : "";
                 const done = () => {
                     this.adding = null; this.offerForm(field.name);
@@ -510,8 +520,10 @@
                 if (add.kind === "Picklist" || add.kind === "Status") {
                     const spec = add.kind === "Picklist"
                         ? ops.picklist({ fieldName: add.name, enumTypeId: add.enumTypeId, title: add.title || add.enumTypeId.replace(ops.shortName(this.entityName), "") || add.enumTypeId,
+                            typeDescription: ops.typeDescriptionOf(add.words, add.enumTypeId, this.entityName),
                             description: add.description, values: this.values(add.values, add.enumTypeId.replace(/Type$/, "")) })
                         : ops.status({ fieldName: add.name, statusTypeId: add.statusTypeId, description: add.description,
+                            typeDescription: ops.typeDescriptionOf(add.words, add.statusTypeId, this.entityName),
                             items: this.values(add.items, add.statusTypeId) });
                     // one Save writes the three: the field and its relationship (one undo step), and the seed records
                     return this.seedBuffer().then((seed) => this.edit((element) => ops.addField(element, field, add.after)
@@ -792,7 +804,7 @@
               <td><select class="m-dev-cell" :value="field.type" :disabled="!canEdit || isView" @change="setAttr(field, 'type', $event.target.value)">
                 <option v-for="type in view.fieldTypes" :key="type.type" :value="type.type" :title="type.sqlType">{{type.type}}</option></select>
                 <q-tooltip>{{(entity.sqlTypes || {})[field.name] || ''}}</q-tooltip></td>
-              <td><input type="checkbox" :checked="field.isPk" :disabled="!canEdit || isView" @change="setAttr(field, 'is-pk', $event.target.checked)"></td>
+              <td><input type="checkbox" :checked="field.isPk" :disabled="!canEdit || isView || !inPlace" @change="setAttr(field, 'is-pk', $event.target.checked)"></td>
               <td><input type="checkbox" :checked="field.notNull" :disabled="!canEdit || isView" @change="setAttr(field, 'not-null', $event.target.checked)"></td>
               <td><input class="m-dev-cell" :value="field.defaultStr || ''" :readonly="!canEdit || isView" @change="setAttr(field, 'default', $event.target.value)" style="width: 6rem"></td>
               <td><input type="checkbox" :checked="field.encrypt" :disabled="!canEdit || isView" @change="setAttr(field, 'encrypt', $event.target.checked)"></td>
@@ -959,7 +971,7 @@
           <q-input class="col-3" dense outlined v-model="adding.locale" label="Locale" placeholder="es"></q-input>
           <q-input class="col" dense outlined v-model="adding.localized" :label="'Its label in that language (' + (adding.title || titleOf(adding.name)) + ')'"></q-input>
         </div>
-        <div class="row q-gutter-x-md"><q-checkbox dense v-model="adding.isPk" label="Primary key"></q-checkbox><q-checkbox dense v-model="adding.notNull" label="Not null"></q-checkbox></div>
+        <div class="row q-gutter-x-md"><q-checkbox v-if="inPlace" dense v-model="adding.isPk" label="Primary key"></q-checkbox><q-checkbox dense v-model="adding.notNull" label="Not null"></q-checkbox></div>
       </q-card-section>
       <q-card-actions align="right"><q-btn flat no-caps label="Cancel" @click="adding = null"></q-btn>
         <q-btn unelevated no-caps color="primary" label="Add" @click="addField" id="DevFieldAdd"></q-btn></q-card-actions>

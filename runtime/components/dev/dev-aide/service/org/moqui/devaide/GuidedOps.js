@@ -492,6 +492,13 @@ function titleOf(name) {
         .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
         .replace(/^./, ch => ch.toUpperCase())
 }
+// A Picklist's or Status's type description: its words as a sentence (contact channel: Contact channel), or its id's
+// words less the entity's name when it has none.
+function typeDescriptionOf(words, typeId, entityName) {
+    const said = String(words || "").trim().replace(/\s+/g, " ")
+    if (said) return said.charAt(0).toUpperCase() + said.slice(1)
+    return titleOf(String(typeId || "").replace(shortName(entityName), "") || typeId)
+}
 function localizedXml(original, locale, localized) {
     return entityXml("moqui.basic.LocalizedMessage", [
         ["original", original],
@@ -528,8 +535,16 @@ function valuesOf(text, prefix) {
         }))
 }
 // Add field as the browser's addField does it, for the element edits go to: the field (and a Reference's
-// relationship, or a Picklist's or Status's relationship), and the seed records a Picklist or Status writes.
+// relationship, or a Picklist's or Status's relationship), and the seed records a Picklist or Status writes. On an
+// `extension` (an upstream entity's extend-entity) a primary key is refused: it would change the upstream table's key;
+// so is a related entity or values given for a kind that takes none. A refusal answers `refused`.
 function addFieldSpec(element, entityName, add) {
+    const refused = (why) => ({name: "", ops: [], seed: [], refused: why})
+    if (add.isPk && add.extension)
+        return refused("A primary key cannot be added to an upstream entity's extension: it would change the upstream table's key")
+    if (add.related && add.kind !== "Reference") return refused("A related entity is for a Reference field: choose the Reference kind or leave it empty")
+    if (String(add.values || "").trim() && add.kind !== "Picklist" && add.kind !== "Status")
+        return refused("Values are for a Picklist or Status field: choose that kind or leave them empty")
     const naming = fieldNaming(entityName, add.kind, add.words)
     const name = add.name || naming.name
     const field = {
@@ -548,10 +563,17 @@ function addFieldSpec(element, entityName, add) {
                       fieldName: name,
                       enumTypeId,
                       title: add.title || enumTypeId.replace(shortName(entityName), "") || enumTypeId,
+                      typeDescription: typeDescriptionOf(add.words, enumTypeId, entityName),
                       description: add.description,
                       values: valuesOf(add.values, enumTypeId.replace(/Type$/, ""))
                   })
-                : status({fieldName: name, statusTypeId, description: add.description, items: valuesOf(add.values, statusTypeId)})
+                : status({
+                      fieldName: name,
+                      statusTypeId,
+                      typeDescription: typeDescriptionOf(add.words, statusTypeId, entityName),
+                      description: add.description,
+                      items: valuesOf(add.values, statusTypeId)
+                  })
         return {
             name,
             ops: addField(element, field, add.after).concat(insertRelationship(element, spec.relationship)),

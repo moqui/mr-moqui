@@ -236,6 +236,17 @@ feature("an entity's element, Add field's naming and kinds, and a data file's ta
             {id: "ExamplePriorityHigh", description: "High"},
             {id: "ExamplePriorityLow", description: "Low"}
         ])
+        // a Picklist's type is described by its words; a Status's with none by its id's words
+        const extension = {path: [0], children: [], attrs: []}
+        ops.addFieldSpec(extension, "moqui.example.Example", {kind: "Picklist", words: "contact channel", values: "Mail", extension: true})
+            .seed.some(xml => xml.includes('enumTypeId="ExampleContactChannel"') && xml.includes('description="Contact channel"'))
+        ops.addFieldSpec(extension, "moqui.example.Example", {kind: "Status", words: "", name: "reviewStatusId", statusTypeId: "ExampleReviewStatus", values: "Open, Done"})
+            .seed[0].includes('description="Review Status"')
+        // an upstream entity's extension takes no primary key; a related entity or values only where the kind takes them
+        ops.addFieldSpec(extension, "moqui.example.Example", {kind: "Text", words: "code", isPk: true, extension: true}).refused.includes("primary key")
+        !ops.addFieldSpec(extension, "moqui.example.Example", {kind: "Text", words: "code", isPk: true, extension: false}).refused
+        ops.addFieldSpec(extension, "moqui.example.Example", {kind: "Text", words: "code", related: "moqui.example.ExampleItem"}).refused.includes("Reference")
+        ops.addFieldSpec(extension, "moqui.example.Example", {kind: "Number", words: "size", values: "1, 2"}).refused.includes("Picklist")
     }
 })
 
