@@ -29,6 +29,8 @@ const COL_CAP: usize = 40;
 const BOX_MIN: u16 = 40;
 const LABEL_CAP: usize = 24;
 const LABEL_CAP_SM: usize = 18;
+/// The widest a beside-label column grows to on a wide form: a third of it, up to this.
+const LABEL_CAP_WIDE: usize = 40;
 /// A `field-row` keeps its cells side by side while each gets its label plus this many columns.
 const CELL_VALUE_MIN: usize = 24;
 /// The width of a text field with no size or maxlength.
@@ -181,13 +183,19 @@ pub fn width_class(canvas: u16) -> WidthClass {
 
 /// Beside-label column. `xs` is 0 because the label sits above the value. `sm` caps at 18, other classes at 24.
 pub fn label_column_width(titles: &[&str], class: WidthClass) -> usize {
+    label_column_in(titles, class, 0)
+}
+
+/// [`label_column_width`] for a form `width` wide: past `sm`, a long label may take up to a third of it (at most
+/// 40), so a wide dialog does not cut a label it has room for.
+fn label_column_in(titles: &[&str], class: WidthClass, width: u16) -> usize {
     if class == WidthClass::Xs {
         return 0;
     }
     let cap = if class == WidthClass::Sm {
         LABEL_CAP_SM
     } else {
-        LABEL_CAP
+        LABEL_CAP.max((usize::from(width) / 3).min(LABEL_CAP_WIDE))
     };
     // Room for the required mark before the title.
     titles
@@ -1430,7 +1438,7 @@ fn form_lines(nodes: &[Node], ctx: &Ctx<'_>, width: u16) -> Vec<FormLine> {
         }
     });
     let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
-    let label_width = label_column_width(&refs, ctx.class);
+    let label_width = label_column_in(&refs, ctx.class, width);
     let mut lines = Vec::new();
     let mut buttons = Vec::new();
     collect_form(nodes, ctx, width, label_width, &mut lines, &mut buttons);
@@ -1529,6 +1537,9 @@ fn lay_field(id: &str, title: &str, widget: &Widget, mode: LabelMode, label_widt
             .map(|choice| display_width(&choice.label) + 6)
             .sum::<usize>()
             .max(4),
+        // options the server sends as the list opens (a search, a dependent list) are not known here: as wide as a
+        // text line, and at least its value
+        Widget::DropDown { options, value, .. } if options.is_empty() => display_width(value).max(VALUE_DEFAULT) + 4,
         Widget::DropDown { options, .. } => {
             options
                 .iter()
@@ -1610,6 +1621,8 @@ pub(crate) fn radio_layout(options: &[Choice], width: usize) -> RadioLayout {
 
 fn lay_list(list: &FormList, canvas: u16) -> LaidList {
     let mut columns = Vec::new();
+    // each column's width with no cap, for the room the canvas has left
+    let mut wanted = Vec::new();
     let mut total = 0usize;
     let selection = list.row_selection.is_some();
     let gutter = 2 + if selection { 4 } else { 0 };
@@ -1624,15 +1637,16 @@ fn lay_list(list: &FormList, canvas: u16) -> LaidList {
             (Some(percent), "percent") => (usize::from(canvas) * percent / 100).max(display_width(&column.title)),
             (Some(chars), _) => chars,
             (None, _) => {
-                let mut width = display_width(&column.title).min(COL_CAP);
+                let mut widest = display_width(&column.title);
                 for row in &list.rows {
                     if let Some(cell) = row.cells.get(index) {
                         for part in cell.parts() {
-                            width = width.max(cell_width(part).min(COL_CAP));
+                            widest = widest.max(cell_width(part));
                         }
                     }
                 }
-                width
+                wanted.push((index, widest));
+                widest.min(COL_CAP)
             }
         };
         if index > 0 {
@@ -1644,6 +1658,18 @@ fn lay_list(list: &FormList, canvas: u16) -> LaidList {
             width,
             right: column.align == "right",
         });
+    }
+    // the room left goes to the columns the cap cut, in order, up to their widest cell
+    let mut spare = usize::from(canvas).saturating_sub(total + gutter);
+    for (index, widest) in wanted {
+        if spare == 0 {
+            break;
+        }
+        let column = &mut columns[index];
+        let more = widest.saturating_sub(column.width).min(spare);
+        column.width += more;
+        total += more;
+        spare -= more;
     }
     LaidList {
         id: list.id.clone(),

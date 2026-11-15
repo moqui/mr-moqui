@@ -44,6 +44,8 @@ pub struct Menu {
     pub title: String,
     pub items: Vec<MenuEntry>,
     pub at: usize,
+    /// The button it opened from, which it is drawn under; empty for one of the whole screen (F10's actions).
+    pub anchor: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -408,6 +410,11 @@ impl Session {
     // ---- menus ----
 
     pub(super) fn open_menu(&mut self, title: &str, items: Vec<MenuEntry>) {
+        self.open_menu_at(title, items, "");
+    }
+
+    /// A menu drawn under the button `anchor` (the key it is drawn at).
+    pub(super) fn open_menu_at(&mut self, title: &str, items: Vec<MenuEntry>, anchor: &str) {
         if items.is_empty() {
             self.set_message(format!("{title}: nothing to choose."), false);
             return;
@@ -416,6 +423,7 @@ impl Session {
             title: title.to_string(),
             items,
             at: 0,
+            anchor: anchor.to_string(),
         }));
     }
 
@@ -521,7 +529,7 @@ impl Session {
                 act: MenuAct::Dialog(id.clone()),
             }))
             .collect();
-        self.open_menu(if menu.text.is_empty() { "More" } else { &menu.text }, items);
+        self.open_menu_at(if menu.text.is_empty() { "More" } else { &menu.text }, items, id);
     }
 
     /// F10: the screen's button menus, then the focused list's row actions and tools.

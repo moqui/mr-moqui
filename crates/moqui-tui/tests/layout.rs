@@ -43,7 +43,7 @@ form EnumFind
   buttons find
 list EnumList scroll=false rows=20
   col Identifier w=10
-  col Description w=40
+  col Description w=45
   col Code w=15
   col Note w=11
 inline openDetail
@@ -103,6 +103,22 @@ fn labels_pad_with_spaced_dot_leaders_and_sit_above_on_xs() {
     assert_eq!(dotted_label("Type", 11), "Type . . . ");
     assert_eq!(dotted_label("Order ID", 11), "Order ID . ");
     assert_eq!(dotted_label("Type", 0), "Type");
+}
+
+/// A wide form gives a long label up to a third of its width (it was cut at 24); a drop-down whose options come from
+/// the server as it opens is as wide as a text line (it was 14).
+#[test]
+fn a_wide_form_keeps_a_long_label_and_a_searched_drop_down_has_a_text_lines_width() {
+    let form = screen(
+        r#"{"t":"form","id":"F","name":"F","c":[
+            {"t":"field","id":"F.extends","name":"extends","title":"Extends (components, comma separated)","w":{"kind":"textLine","value":""}},
+            {"t":"field","id":"F.service","name":"service","title":"Service","w":{"kind":"dropDown","value":"","optionsUrl":"/t/services","serverSearch":true}}]}"#,
+    );
+    let wide = outline(&form, 200);
+    assert!(wide.contains("field Extends (components, comma separated) beside label=37"), "{wide}");
+    assert!(wide.contains("field Service beside label=37 value=34"), "{wide}");
+    let narrow = outline(&form, 100);
+    assert!(narrow.contains("beside label=18"), "{narrow}");
 }
 
 #[test]

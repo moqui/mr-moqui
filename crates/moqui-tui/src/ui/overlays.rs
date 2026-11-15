@@ -528,7 +528,8 @@ fn help(paint: &mut Painter, session: &Session, canvas: Rect) {
     small_box(paint, canvas, "Keys", &lines);
 }
 
-/// A menu over the canvas: its title, its entries, the highlighted one reversed.
+/// A menu over the canvas: its title, its entries, the highlighted one reversed. A button's menu opens under its
+/// button (above it when there is no room below), as a drop-down's list does; any other in the middle.
 fn menu_box(paint: &mut Painter, menu: &Menu, canvas: Rect) {
     let widest = menu
         .items
@@ -544,12 +545,25 @@ fn menu_box(paint: &mut Painter, menu: &Menu, canvas: Rect) {
         .len()
         .clamp(1, usize::from(canvas.height.saturating_sub(3)).max(1));
     let height = u16::try_from(visible + 2).unwrap_or(12).min(canvas.height);
-    let rect = Rect::new(
-        canvas.x + (canvas.width - width) / 2,
-        canvas.y + (canvas.height - height) / 2,
-        width,
-        height,
-    );
+    let anchored = Some(menu.anchor.as_str())
+        .filter(|key| !key.is_empty())
+        .and_then(|key| paint_spot(paint, key));
+    let (x, y) = match anchored {
+        Some((sx, sy)) => {
+            let below = sy + 1;
+            let y = if below + height <= canvas.y + canvas.height {
+                below
+            } else {
+                sy.saturating_sub(height).max(canvas.y)
+            };
+            (sx.max(canvas.x).min((canvas.x + canvas.width).saturating_sub(width)), y)
+        }
+        None => (
+            canvas.x + (canvas.width - width) / 2,
+            canvas.y + (canvas.height - height) / 2,
+        ),
+    };
+    let rect = Rect::new(x, y, width, height);
     paint.clear(rect);
     paint.fixed_frame(rect, &format!(" {} ", menu.title));
     let start = menu.at.saturating_sub(visible - 1);

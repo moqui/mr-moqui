@@ -113,12 +113,13 @@ fn gallery_snapshots() {
 }
 
 #[test]
-fn a_painted_list_keeps_unicode_pages_and_caps_a_long_description() {
+fn a_painted_list_keeps_unicode_pages_and_gives_a_long_description_the_room_left() {
     let mut view = list_view();
     let wide = view.screen_text(180, 50);
     assert!(wide.contains("東京"), "{wide}");
     assert!(wide.contains("🎉"), "{wide}");
-    assert!(wide.contains("Description text that should be capped …"), "{wide}");
+    // past the column cap while the screen has room
+    assert!(wide.contains("Description text that should be capped 012345"), "{wide}");
     assert!(wide.contains("Rows 1–10 of 20 · Page 1/2"), "{wide}");
     // Labels with spaced leaders, as in the mockups.
     assert!(wide.contains("Type . . . . : ["), "{wide}");
@@ -694,4 +695,27 @@ fn tabs_that_do_not_fit_wrap_onto_another_line() {
         .collect();
     assert_eq!(tabs.len(), 2, "{text}");
     assert!(text.contains("Body"), "{text}");
+}
+
+/// A button menu opens under its button, not in the middle of the screen.
+#[test]
+fn a_button_menu_opens_under_its_button() {
+    let json = r#"{"v":1,"screen":{"path":"/m","title":"M"},"c":[
+        {"t":"buttonMenu","id":"FileMenu","text":"File","c":[
+            {"t":"link","id":"m1","text":"Rename the file","url":"/m/rename"},
+            {"t":"link","id":"m2","text":"Delete the file","url":"/m/delete"}]}]}"#;
+    let link = FakeLink::from_json(&[json]).unwrap();
+    let mut view = view_of(ScreenModel::from_json(json).unwrap(), link);
+    for _ in 0..5 {
+        if view.session().focus_id() == "FileMenu" {
+            break;
+        }
+        press(&mut view, Key::Tab);
+    }
+    press(&mut view, Key::Enter);
+    let text = view.screen_text(160, 50);
+    let lines: Vec<&str> = text.lines().collect();
+    let button = lines.iter().position(|line| line.contains("File ▾")).expect(&text);
+    let title = lines.iter().position(|line| line.contains(" File ") && line.contains('┌')).expect(&text);
+    assert_eq!(title, button + 1, "{text}");
 }
