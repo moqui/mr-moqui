@@ -374,6 +374,19 @@ fn the_pdf_renderer_uses_the_installed_engine_or_reports_that_it_is_not_availabl
     )
     .unwrap();
     assert!(refused);
+    // a guard of an engine no longer installed (a server's first boot, dropped after the second installed its own)
+    // leaves the installed one, as does a guard of a reason; the installed engine's own removes it
+    let stale: std::sync::Arc<dyn crate::screen::PdfEngine> = std::sync::Arc::new(FakePdf);
+    let installed: std::sync::Arc<dyn crate::screen::PdfEngine> = std::sync::Arc::new(FakePdf);
+    crate::screen::install_pdf_engine(installed.clone());
+    crate::screen::remove_pdf_engine(Some(&stale));
+    crate::screen::remove_pdf_engine(None);
+    assert!(PdfRenderer::available());
+    crate::screen::remove_pdf_engine(Some(&installed));
+    assert!(!PdfRenderer::available());
+    crate::screen::install_pdf_unavailable("no Chromium found");
+    crate::screen::remove_pdf_engine(None);
+    assert_eq!(PDF_UNAVAILABLE, PdfRenderer::render("x").unwrap_err().message());
     crate::screen::clear_pdf_engine();
 }
 

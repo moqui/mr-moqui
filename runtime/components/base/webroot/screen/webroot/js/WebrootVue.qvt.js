@@ -840,11 +840,17 @@
             return query ? path + (path.indexOf("?") >= 0 ? "&" : "?") + query : path;
         },
         // The url a ${} expression of a link gave, as the server render resolves one: a relative path against the screen's own path
-        // (base, a directory: "Detail" under it, ".." its parent), with its query; an absolute path, an anchor and an external
-        // URL as they are.
+        // (base, a directory: "Detail" under it, ".." its parent), with its query; a "//App/..." path (a screen path searched from
+        // the root, as an app's sharedLinks give them) under the shell's link base, as the server finds an app's screens there; an
+        // absolute path, an anchor and an external URL as they are.
         link: (text, base) => {
             const value = text === null || text === undefined ? "" : String(text).trim();
             if (!value) return base || "";
+            // a first name with no dot or port is a screen, not a host (//cdn.example.com/x stays external)
+            if (/^\/\/[A-Za-z][A-Za-z0-9_-]*(?:[/?#]|$)/.test(value)) {
+                const vm = rootVm();
+                return ((vm && vm.linkBasePath) || "/qapps") + value.slice(1);
+            }
             if (value.charAt(0) === "/" || value.charAt(0) === "#" || moqui.isExternalLink(value)) return value;
             const cut = value.search(/[?#]/);
             const path = cut < 0 ? value : value.slice(0, cut);

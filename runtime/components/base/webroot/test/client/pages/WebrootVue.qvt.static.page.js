@@ -598,6 +598,13 @@ test("the helpers a template calls", () => {
     assert.equal(mq.link("https://example.com/late", "/apps/x"), "https://example.com/late");
     assert.equal(mq.link("", "/apps/x"), "/apps/x");
     assert.equal(mq.link("Orders?statusId=Held", "/"), "/Orders?statusId=Held");
+    // a path searched from the root (an app's sharedLinks, ACC-UI-021) goes under the shell's link base, not to a host named
+    // for the app; a protocol-relative URL of a host stays as it is
+    const shellVm = moqui.webrootVue;
+    moqui.webrootVue = { linkBasePath: "/qapps" };
+    assert.equal(mq.link("//Accounting/GeneralLedger/JournalEntryDetail?recordId=1", "/apps/x"), "/qapps/Accounting/GeneralLedger/JournalEntryDetail?recordId=1");
+    assert.equal(mq.link("//cdn.example.com/a.js", "/apps/x"), "//cdn.example.com/a.js");
+    moqui.webrootVue = shellVm;
     // a link's target parameters sit under its parameter-map and its own parameters
     assert.equal(mq.url("/a", { id: "own" }, mq.merge({ id: "target", page: "2", none: null }, { page: "3" })), "/a?id=own&page=3");
     assert.deepEqual(mq.given({ a: "1", b: null, c: "", d: undefined, e: 0 }), { a: "1", e: 0 });

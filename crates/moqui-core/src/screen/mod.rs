@@ -87,8 +87,8 @@ pub use gate::{
 #[doc(hidden)]
 pub use pdf::pdf_test_lock;
 pub use pdf::{
-    clear_pdf_engine, install_pdf_engine, install_pdf_unavailable, pdf_engine_installed, PdfEngine, PdfLibrary,
-    PdfPreview, PdfPreviewRequest, PdfRenderer, PDFJS_LOCATION, PDFJS_WORKER_LOCATION, PDF_UNAVAILABLE,
+    clear_pdf_engine, install_pdf_engine, install_pdf_unavailable, pdf_engine_installed, remove_pdf_engine, PdfEngine,
+    PdfLibrary, PdfPreview, PdfPreviewRequest, PdfRenderer, PDFJS_LOCATION, PDFJS_WORKER_LOCATION, PDF_UNAVAILABLE,
     PREVIEW_UNSUPPORTED,
 };
 pub(crate) use render::active_depth;

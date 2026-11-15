@@ -1766,6 +1766,10 @@ fn boot_server_factory(
         factory.flush_sessions().map_err(moqui_lib::error::Error::from)?;
 
         factory.shutdown();
+        // the fresh factory installs its own engine; this one is stopped first, so its guard cannot remove that one
+        {
+            let _pdf = pdf;
+        }
         drop(factory);
         drop(search);
         drop(facade);

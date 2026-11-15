@@ -1744,12 +1744,35 @@ ${items}$closeChildren();
         "second-row", "last-row", "parameter", "dialog", "tree-node", "tree-sub-node", "view-board", "view-calendar", "view-tree",
         "context"
     ];
-    // Drawn as a placeholder with the browser link until a later phase gives them a terminal view.
-    const later = ["chatter", "record-files"];
+    // chatter and record-files (IronStone R5), as the qvt client loads them: the subscreen the theme names
+    // (STRT_CHATTER_SCREEN, STRT_RECORD_FILES_SCREEN) under the current app root, with the record, in a dynamic container,
+    // whose own tui text gives the terminal view. The app root is the shortest start of this screen's path that mounts
+    // the subscreen. The panels are the shell's, named by the /qapps theme: a terminal render under /apps has the internal
+    // theme, so with no value there the shell's default theme names them. With no theme value, no record or no such
+    // subscreen the user may open, a placeholder.
+    const recordPanel = (themeType) => (node) => guarded(node, `{
+    const $name = String(sri.getThemeValues(${jsString(themeType)})[0] || sri.getThemeValues(${jsString(themeType)}, "DEFAULT_QUASAR")[0] || "").trim();
+    const $value = (text) => (text && text !== "null" ? String(text) : "");
+    const $entity = $value(${S.expandNoL10nExpr(attr(node, "record-entity") || "")});
+    const $record = $value(${S.expandNoL10nExpr(attr(node, "record-id") || "")});
+    const $names = Array.from((sri.getScreenUrlInfo() || {}).fullPathNameList || []).map(String);
+    let $panel = null;
+    for (let $at = 0; $name && $entity && $record && !$panel && $at < $names.length; $at++) {
+        try {
+            const $url = sri.buildUrl("/" + $names.slice(0, $at).concat([$name]).join("/"));
+            if (!$url.getDisableLink()) $panel = { url: $url, appRoot: $names[$at - 1] || "" };
+        } catch (err) { /* not mounted at this depth */ }
+    }
+    if ($panel) {
+        $panel.url.addParameter("recordEntity", $entity).addParameter("recordId", $record).addParameter("_dynamic_container_id", ${idLit(node)});
+        if ($panel.appRoot) $panel.url.addParameter("appRoot", $panel.appRoot);
+        $emit({t:"dynamicContainer",id:$uid(${idLit(node)}),url:$panel.url.getUrlWithParams() || ""});
+    } else ${placeholderEmit(idOf(node), node.name, screenUrlExpr).trim()}
+}
+`);
     const macros = Object.assign({}, T.noops(formInternals), overrides);
-    later.forEach((name) => {
-        macros[name] = stmt((node) => placeholderEmit(idOf(node), node.name, screenUrlExpr));
-    });
+    macros.chatter = stmt(recordPanel("STRT_CHATTER_SCREEN"));
+    macros["record-files"] = stmt(recordPanel("STRT_RECORD_FILES_SCREEN"));
     const unnamed = S.allElements.filter((name) => !macros[name]);
     if (unnamed.length) throw new Error("ScreenTui.js names no macro for " + unnamed.join(", "));
 

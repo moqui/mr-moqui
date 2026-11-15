@@ -139,6 +139,23 @@ pub fn clear_pdf_engine() {
     *write(slot()) = None;
 }
 
+/// Remove `engine` if it is still the installed one, or with `None` a reason if one is installed. A host's guard
+/// removes only what it installed: a server that boots again in the same process (after loading an empty database)
+/// installs its own engine before the first boot's guard drops.
+pub fn remove_pdf_engine(engine: Option<&Arc<dyn PdfEngine>>) {
+    let mut slot = write(slot());
+    let installed = match (&*slot, engine) {
+        (Some(Installed::Engine(current)), Some(engine)) => {
+            std::ptr::addr_eq(Arc::as_ptr(current), Arc::as_ptr(engine))
+        }
+        (Some(Installed::Unavailable(_)), None) => true,
+        _ => false,
+    };
+    if installed {
+        *slot = None;
+    }
+}
+
 /// The PDF renderer: the installed engine.
 pub struct PdfRenderer;
 
