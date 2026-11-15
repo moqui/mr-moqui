@@ -1376,6 +1376,13 @@ fn create_site_component(
             ..Write::default()
         },
     );
+    // no reload sees a new component: the report tells Home a restart is needed
+    moqui_devkit::note_restart(
+        &context.factory,
+        &target.join("component.xml"),
+        Some(&name),
+        "new site component: it loads after a restart",
+    );
     let mut out = Parameters::new();
     out.insert("location".into(), Value::string(target.display().to_string()));
     out.insert("restart".into(), Value::Bool(true));
@@ -1435,6 +1442,13 @@ fn create_component(
             detail: Some(serde_json::json!({ "template": "template", "part": part.name() })),
             ..Write::default()
         },
+    );
+    // no reload sees a new component: the report tells Home a restart is needed
+    moqui_devkit::note_restart(
+        &context.factory,
+        &target.join("component.xml"),
+        Some(&name),
+        "new component: it loads after a restart",
     );
     let mut out = Parameters::new();
     out.insert("location".into(), Value::string(target.display().to_string()));
