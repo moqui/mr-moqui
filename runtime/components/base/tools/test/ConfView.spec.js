@@ -10,7 +10,13 @@ const systemRoot = "component://tools/screen/System.xml"
 const adminId = "SPEC_CONF_ADMIN"
 
 function call(name, parameters) {
-    const out = ec.service.sync().name("org.moqui.dev.ComponentServices." + name).parameters(parameters || {}).disableAuthz().call() || {}
+    const out =
+        ec.service
+            .sync()
+            .name("org.moqui.dev.ComponentServices." + name)
+            .parameters(parameters || {})
+            .disableAuthz()
+            .call() || {}
     const errors = ec.message.getErrorsString()
     ec.message.clearErrors()
     return {out, errors}
@@ -97,14 +103,24 @@ feature("a check of an edited conf file previews each change with its class and 
         const file = editableFile(view)
         const read = call("get#ConfFile", {fileIndex: file.index})
         const text = String(read.out.text || "")
-        const added = '    <webapp-list><webapp name="webroot" http-port="18080"><session-config timeout="61"/></webapp></webapp-list>\n'
+        const added =
+            '    <webapp-list><webapp name="webroot" http-port="18080"><session-config timeout="61"/></webapp></webapp-list>\n'
         const edited = text.replace("</moqui-conf>", added + "</moqui-conf>")
         const addedLine = edited.slice(0, edited.indexOf("<webapp-list>")).split("\n").length
         const {out, errors} = call("check#ConfFile", {fileIndex: file.index, text: edited})
-        const changes = (out.report?.changes || []).map(change => `${change.unit}@${change.attribute} ${change.class} ${change.outcome}`)
+        const changes = (out.report?.changes || []).map(
+            change => `${change.unit}@${change.attribute} ${change.class} ${change.outcome}`
+        )
         const line = (out.lines || []).find(info => info.line == addedLine && info.path == "webapp-list/webapp[webroot]")
-        return {readErrors: read.errors, hadWebappList: text.includes("<webapp-list"), errors, savable: out.savable, changes,
-            lineClass: line?.class, lineAttrs: JSON.stringify(line?.attrs || [])}
+        return {
+            readErrors: read.errors,
+            hadWebappList: text.includes("<webapp-list"),
+            errors,
+            savable: out.savable,
+            changes,
+            lineClass: line?.class,
+            lineAttrs: JSON.stringify(line?.attrs || [])
+        }
     },
     then(found) {
         found.readErrors == ""
@@ -126,11 +142,21 @@ feature("the conf file services need CONF_EDIT, which john.doe has through ADMIN
         ec.user.internalLoginUser("spec.conf.admin")
         const view = call("get#ConfView")
         const read = call("get#ConfFile", {fileIndex: file.index})
-        const save = call("save#ConfFile", {fileIndex: file.index, text: String(allowed.out.text || ""), expectedHash: allowed.out.textHash})
+        const save = call("save#ConfFile", {
+            fileIndex: file.index,
+            text: String(allowed.out.text || ""),
+            expectedHash: allowed.out.textHash
+        })
         logout()
         login("john.doe")
-        return {allowed: allowed.errors, allowedText: String(allowed.out.text || "").includes("<moqui-conf"), viewErrors: view.errors,
-            canEdit: view.out.canEdit, read: read.errors, save: save.errors}
+        return {
+            allowed: allowed.errors,
+            allowedText: String(allowed.out.text || "").includes("<moqui-conf"),
+            viewErrors: view.errors,
+            canEdit: view.out.canEdit,
+            read: read.errors,
+            save: save.errors
+        }
     },
     then(found) {
         found.allowed == ""
@@ -161,14 +187,40 @@ feature("a save is refused for the default conf and for a file changed since it 
 
 feature("the Settings and Edit tabs render in their modes", {
     when() {
+        const editTui = render("Conf/EditTui", "tui")
+        // the first node of the tree that matches, at any depth
+        const find = (node, match) => {
+            if (!node || typeof node != "object") return null
+            if (!Array.isArray(node) && match(node)) return node
+            for (const value of Object.values(node)) {
+                const found = find(value, match)
+                if (found) return found
+            }
+            return null
+        }
+        const tree = JSON.parse(editTui.output || "null")
+        const editor = find(tree, node => node.t == "component" && node.id == "ConfSourceText") || {}
+        // the editor's check as the typing stops: a text that does not parse has an error
+        const checked = ec.screen
+            .makeTest()
+            .rootScreen(systemRoot)
+            .render(
+                "Conf/EditTui/checkText",
+                {fileIndex: editor.props?.parameters?.fileIndex, text: "<moqui-conf><webapp-list>", language: "xml"},
+                "post"
+            )
+        ec.message.clearErrors()
         return {
             view: render("Conf/View", "qvue"),
             viewTui: render("Conf/View", "tui"),
             edit: render("Conf/Edit", "qvue"),
-            editTui: render("Conf/EditTui", "tui")
+            editTui,
+            editor,
+            textField: find(tree, node => node.t == "field" && node.name == "fileText") || {},
+            checkProblems: Array.from(JSON.parse(String(checked.output || "{}")).problems || [])
         }
     },
-    then({view, viewTui, edit, editTui}) {
+    then({view, viewTui, edit, editTui, editor, textField, checkProblems}) {
         view.errors == ""
         view.output.includes("Merged in this order")
         viewTui.errors == ""
@@ -178,5 +230,14 @@ feature("the Settings and Edit tabs render in their modes", {
         edit.output.includes("Review and save")
         editTui.errors == ""
         editTui.output.includes("Save and reload")
+        // the text is the code component, bound to the save form's hidden field and checked by checkText
+        editor.name == "code"
+        editor.props.language == "xml"
+        editor.props.form == "ConfSource"
+        editor.props.field == "fileText"
+        editor.props.check == "checkText"
+        editor.props.text.includes("moqui-conf")
+        textField.w.kind == "hidden"
+        checkProblems.some(problem => problem.severity == "error" && problem.line > 0)
     }
 })

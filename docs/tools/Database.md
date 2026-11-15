@@ -270,8 +270,9 @@ mount), `crates/moqui-core/src/user/filter_tests.rs` (a profile frame gives its 
 
 ## SQL
 
-Tools › SQL (`Sql.xml`, `Sql.qvue`, with `SqlTui.xml` for the terminal) needs `SQL_RUNNER_WEB` and authorization for
-all actions on the Tools app. The services check both whatever calls them.
+Tools › SQL (`Sql.xml`, `Sql.qvue`, with `SqlTui.xml` for the terminal, where the statements are the `code` component
+and Ctrl+S runs them) needs `SQL_RUNNER_WEB` and authorization for all actions on the Tools app. The services check
+both whatever calls them.
 
 - **The editor:**
   - CodeMirror with the Postgres, MySQL or MariaDB dialect. Completion of tables, columns and entity names comes from

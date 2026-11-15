@@ -15,7 +15,9 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Conf › Edit's terminal twin, and the browser's form view of it: the conf file to work on (fileIndex, the runtime conf
     when none is named), its text in the framework's text editor with Save (save#ConfFile: written, then the conf
     reloaded), and its problems. The message after a save names the changes that wait for a restart. The default conf is
-    shown read only. CONF_EDIT, checked by the services. -->
+    shown read only. CONF_EDIT, checked by the services. In the terminal the text is the `code` component (docs/ui/TUI.md,
+    Components) over the form's hidden fileText: the problems in its gutter, checked again once the typing stops
+    (checkText, check#ConfFile), and Ctrl+S submits the form. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Edit as a form" default-menu-include="false">
     <parameter name="fileIndex"/>
@@ -32,6 +34,18 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
         <default-response url="."><parameter name="fileIndex"/></default-response>
         <error-response url="."/>
+    </transition>
+    <!-- the code component's check, 800 ms after the typing stops: the problems of the text as this conf file -->
+    <transition name="checkText" method="post">
+        <actions>
+            <service-call name="org.moqui.dev.ComponentServices.check#ConfFile" in-map="{fileIndex:fileIndex, text:text}" out-map="checkOut"/>
+            <script><![CDATA[
+                const errors = ec.message.hasError() ? ec.message.errorsString : null
+                ec.message.clearErrors()
+                ec.web.sendJsonResponse(errors ? {errors} : {problems: checkOut?.problems || []})
+            ]]></script>
+        </actions>
+        <default-response type="none"/>
     </transition>
 
     <actions>
@@ -50,6 +64,13 @@ along with this software (see the LICENSE.md file). If not, see
                 fileText: confFile?.text || ''}"/>
         <set field="problemRows" from="(confFile?.problems || []).map(problem =&gt; ({line: problem.line, severity: problem.severity,
                 message: problem.message}))"/>
+        <!-- the terminal's editor: an editable file's text goes back to ConfSource's fileText -->
+        <set field="editable" from="!!confFile?.file?.editable"/>
+        <set field="sourceEditor" from="fileFound ? [{t: 'text', id: 'ConfSourcePath', style: 'h6', text: confFile.file.path},
+                {t: 'component', id: 'ConfSourceText', name: 'code', props: {text: confFile.text || '', language: 'xml', readOnly: !editable, rows: 24,
+                    form: editable ? 'ConfSource' : '', field: editable ? 'fileText' : '', check: editable ? 'checkText' : '',
+                    parameters: {fileIndex: String(confFile.file.index)}, problems: (confFile.problems || []).filter(problem =&gt; problem.line &gt; 0)
+                        .map(problem =&gt; ({line: problem.line, column: problem.column || 0, severity: problem.severity, message: problem.message}))}}] : []"/>
     </actions>
     <widgets>
         <label text="Editing the conf files needs the CONF_EDIT permission." type="p" style="text-negative" condition="!canEditConf"/>
@@ -65,17 +86,23 @@ along with this software (see the LICENSE.md file). If not, see
                 <field-layout><field-row-big><field-ref name="fileIndex"/><field-ref name="submitButton"/></field-row-big></field-layout>
             </form-single>
             <section name="EditableSource" condition="confFile.file.editable"><widgets>
+                <render-mode><text type="tui"><![CDATA[${JSON.stringify(sourceEditor)}]]></text></render-mode>
                 <form-single name="ConfSource" transition="saveFile" map="sourceValues">
                     <field name="fileIndex"><default-field><hidden/></default-field></field>
                     <field name="expectedHash"><default-field><hidden/></default-field></field>
-                    <field name="fileText"><default-field title="${confFile.file.path}"><text-area rows="24" cols="100" editor-type="code" language="xml"/></default-field></field>
+                    <field name="fileText"><conditional-field condition="sri.getRenderMode() !== 'tui'" title="${confFile.file.path}">
+                            <text-area rows="24" cols="100" editor-type="code" language="xml"/></conditional-field>
+                        <default-field><hidden/></default-field></field>
                     <field name="submitButton"><default-field title="Save and reload"><submit confirmation="Save ${confFile.file.label} and reload the conf?"/></default-field></field>
                 </form-single>
             </widgets><fail-widgets>
                 <label type="p" text="${confFile.file.role == 'default' ? 'The default conf is read only here: a framework update replaces it. Override a setting in the runtime conf.' : 'The server cannot write this file.'}"/>
-                <form-single name="ConfSourceReadOnly" map="sourceValues">
-                    <field name="fileText"><default-field title="${confFile.file.path}"><text-area rows="24" cols="100" editor-type="code" language="xml" read-only="true"/></default-field></field>
-                </form-single>
+                <render-mode><text type="tui"><![CDATA[${JSON.stringify(sourceEditor)}]]></text></render-mode>
+                <section name="ReadOnlySourceForm" condition="sri.getRenderMode() !== 'tui'"><widgets>
+                    <form-single name="ConfSourceReadOnly" map="sourceValues">
+                        <field name="fileText"><default-field title="${confFile.file.path}"><text-area rows="24" cols="100" editor-type="code" language="xml" read-only="true"/></default-field></field>
+                    </form-single>
+                </widgets></section>
             </fail-widgets></section>
             <section name="Problems" condition="problemRows.length"><widgets>
                 <form-list name="ConfProblems" list="problemRows" skip-form="true" paginate="false">
