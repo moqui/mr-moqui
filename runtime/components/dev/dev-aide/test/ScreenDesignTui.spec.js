@@ -113,6 +113,8 @@ feature(
             out.includes('"transition"')
             out.includes("Add field")
             out.includes("Insert")
+            // Add button's service, a search of the index's services by name
+            out.includes("/Screens/DesignTui/serviceChoices")
             // Remove stages its removal; Discard drops it all; the file was never written
             removed.status == 302
             !afterRemove.includes("New label")

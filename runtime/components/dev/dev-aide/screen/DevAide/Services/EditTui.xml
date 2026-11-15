@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     field per in-parameter, Run in sim or for real, the out, messages, the rows it would write and the log; Save as spec,
     Run spec; a snippet), Overview (the service's settings), Parameters (in and out, with Add, Edit and Remove), the
     Implementation (read only: the actions and their generated JavaScript, or the script's file), SECA rules (Add one in
-    the site's secas file) and the staged Changes. Every edit is staged in the buffer (GuidedEdit.js, GuidedOps.js,
+    the site's secas file, the service it calls searched by name) and the staged Changes. Every edit is staged in the buffer (GuidedEdit.js, GuidedOps.js,
     apply#EditBufferOps); Save writes the files in kind order (save#EditBuffer). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Edit in the terminal" default-menu-include="false">
@@ -49,6 +49,21 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response url="."><parameter name="artifact"/><parameter name="tab"/></default-response>
         <error-response url="."><parameter name="artifact"/><parameter name="tab"/></error-response>
+    </transition>
+
+    <!-- the service a SECA rule calls: the index's services by name, and the name typed when the index has none of it -->
+    <transition name="serviceChoices" read-only="true">
+        <actions><script><![CDATA[
+            const found = ec.service.sync().name('org.moqui.devaide.ArtifactServices.search#Artifacts')
+                .parameters({text: String(term || ''), kinds: 'service', limit: 20}).call() || {}
+            const options = (found.artifacts || []).map((row) => row.name || String(row.id || '').replace(/^service:/, ''))
+                .map((name) => ({value: name, label: name}))
+            const asked = String(term || '')
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(asked && !options.some((option) => option.value === asked) && asked.indexOf('#') > 0
+                ? [{value: asked, label: asked}].concat(options) : options)
+        ]]></script></actions>
+        <default-response type="none"/>
     </transition>
 
     <!-- the edits: each builds its operations (GuidedOps.js) and stages them on the service's file -->
@@ -481,7 +496,8 @@ along with this software (see the LICENSE.md file). If not, see
                             <option key="pre-auth"/><option key="pre-validate"/><option key="pre-service"/><option key="post-service"/>
                             <option key="post-commit"/><option key="tx-commit"/><option key="tx-rollback"/></drop-down></default-field></field>
                         <field name="condition"><default-field title="Condition" tooltip="An expression; empty runs it always"><text-line size="60"/></default-field></field>
-                        <field name="callService"><default-field title="Service to call" tooltip="Called with the context; empty leaves the actions empty"><text-line size="60"/></default-field></field>
+                        <field name="callService"><default-field title="Service to call" tooltip="Called with the context; empty leaves the actions empty">
+                            <drop-down allow-empty="true"><dynamic-options transition="serviceChoices" server-search="true" min-length="2"/></drop-down></default-field></field>
                         <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
                     </form-single>
                 </container-dialog>

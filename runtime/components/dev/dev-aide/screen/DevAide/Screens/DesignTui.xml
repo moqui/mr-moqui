@@ -64,6 +64,20 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
         <error-response url="."/>
     </transition>
+    <!-- the service a button calls: the index's services by name, and the name typed when the index has none of it -->
+    <transition name="serviceChoices" read-only="true">
+        <actions><script><![CDATA[
+            const found = ec.service.sync().name('org.moqui.devaide.ArtifactServices.search#Artifacts')
+                .parameters({text: String(term || ''), kinds: 'service', limit: 20}).call() || {}
+            const options = (found.artifacts || []).map((row) => row.name || String(row.id || '').replace(/^service:/, ''))
+                .map((name) => ({value: name, label: name}))
+            const asked = String(term || '')
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(asked && !options.some((option) => option.value === asked) && asked.indexOf('#') > 0
+                ? [{value: asked, label: asked}].concat(options) : options)
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- every intent: its operations for the selected element (GuidedEdit.js screenIntent), staged in the edit file -->
     <transition name="designEdit">
         <actions><script><![CDATA[
@@ -311,7 +325,8 @@ along with this software (see the LICENSE.md file). If not, see
                                         <field name="intent" from="'addButton'"><default-field><hidden/></default-field></field>
                                         <field name="node" from="nodeValue"><default-field><hidden/></default-field></field>
                                         <field name="transitionName"><default-field title="Transition"><text-line size="30"/></default-field></field>
-                                        <field name="serviceName"><default-field title="Service it calls"><text-line size="50"/></default-field></field>
+                                        <field name="serviceName"><default-field title="Service it calls">
+                                            <drop-down allow-empty="false"><dynamic-options transition="serviceChoices" server-search="true" min-length="2"/></drop-down></default-field></field>
                                         <field name="linkText"><default-field title="Text"><text-line size="30"/></default-field></field>
                                         <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
                                     </form-single>

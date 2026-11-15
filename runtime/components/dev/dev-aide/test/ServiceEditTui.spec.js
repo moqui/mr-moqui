@@ -99,6 +99,19 @@ feature("an edit is staged in the buffer and not written, and Discard drops it",
     }
 })
 
+feature("Add SECA's service to call is searched in the index by name, and a name the index has not seen is offered too", {
+    when() {
+        const choices = term =>
+            JSON.parse(String(dev().render("Services/EditTui/serviceChoices", {artifact: GREET, term}, null).output || "[]"))
+        return {found: choices("greet#WithTool"), typed: choices("spec.Things.make#Thing")}
+    },
+    then({found, typed}) {
+        found.some(option => option.value == "example.ExampleServices.greet#WithTool" && option.label == option.value)
+        !found.some(option => option.value.startsWith("service:"))
+        typed[0].value == "spec.Things.make#Thing"
+    }
+})
+
 feature("Save writes the staged files, and a file changed on disk since is a conflict to save over or take", {
     when() {
         const f = fixture()
