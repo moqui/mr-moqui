@@ -737,6 +737,10 @@ interface MoquiResourceFacade {
     extractText(location: string, cacheKey: string, maxChars?: number | null, cacheOnly?: boolean | null): string | null;
     /** A zip of the files at the entries' locations, each under its path; an entry that cannot be read is in failures. */
     writeZip(target: string, entries: { path: string; location: string }[]): { count: number; size: number; failures: { path: string; error: string }[] };
+    /** The digest of text's UTF-8 bytes, lower-case hex (sha256 by default). */
+    digestText(text: string | null, algorithm?: "sha256" | "sha1" | null): string;
+    /** HMAC-SHA256 of message with key (both UTF-8), lower-case hex or unpadded base64url; throws without a key. */
+    hmac(key: string, message: string | null, encoding?: "hex" | "base64url" | null): string;
     /** A signed grant for subject, valid ttlSeconds (3600); checkGrant verifies it with the same key. */
     makeGrant(key: string, subject: string, ttlSeconds?: number | null): string;
     checkGrant(key: string, subject: string, token: string | null): boolean;

@@ -328,7 +328,8 @@ Change sets, version notes and change logs are described in
 | `textDiff(oldText, newText, fromName, toName)` | The line diff of two texts, as `getVersionDiff` gives it |
 | `readLines(location, offset, maxLines, maxBytes)` | A window of a text file's lines, from line `offset`, at most `maxLines` (1000) and `maxBytes` (16 MB) |
 | `digest(location, algorithm)` | The digest of a file's bytes, read as a stream (`sha256` by default) |
-| `digestText(text, algorithm)` | The digest of text |
+| `digestText(text, algorithm)` | The digest of text's UTF-8 bytes, lower-case hex (`sha256` by default, or `sha1`) |
+| `hmac(key, message, encoding)` | HMAC-SHA256 of the message with a secret key (both as UTF-8), lower-case hex, or unpadded URL-safe base64 with `base64url`: the same for the same key and message (a keyed derivation; `makeGrant` for a token that expires); refused without a key |
 | `gunzip(source, target, maxBytes)` | Unpacks a gzip file to a location, refusing output over `maxBytes` (4 GB) |
 | `extractArchive(source, target, limits)` | Unpacks an archive under a location, within the limits |
 | `writeZip(target, entries)` | A zip of the files at the entries' locations (`[{path, location}]`): `{count, size, failures: [{path, error}]}` |
@@ -1316,7 +1317,7 @@ Members Moqui Java does not have.
 | `ec.context` | Property reads and writes, `in`, `delete`, `Object.keys` |
 | `ec.user` | `machineTimeZone`, `passwordRules`, `loginRules`, `endVisit`, `hashPassword`, `passwordsMatch`, `singleUseCodeHash`, `randomCode`, `randomString`, `totpSecret`, `totpCodeValid`, `totpUri`, `timestampMillis` |
 | `ec.l10n` | `getAvailableTimeZones`, `getAvailableLocales`, the time zone argument of `format` |
-| `ec.resource` | `makeChangeSet`, `putContent`, `getLastChange`, `getChildChanges`, `getChangeLog`, `getTreeSize`, `restoreVersion`, `getVersionBytes`, `textDiff`, `readLines`, `digest`, `digestText`, `gunzip`, `extractArchive`, `writeZip`, `writeTarGz`, `extractText`, `readSheetPreview`, `makeThumbnail`, `makePdfPreview`, `imageAvailable`, `makeGrant`, `checkGrant`, `runTokenCommand`, `markdownHtml`, `code128Svg`, `barcodeSvg`, `parseGs1`, `isValidGs1CheckDigit`, `theme`; version notes on a reference's `putText`, `putBytes` and `putStream`, and `getVersionDiff` |
+| `ec.resource` | `makeChangeSet`, `putContent`, `getLastChange`, `getChildChanges`, `getChangeLog`, `getTreeSize`, `restoreVersion`, `getVersionBytes`, `textDiff`, `readLines`, `digest`, `digestText`, `hmac`, `gunzip`, `extractArchive`, `writeZip`, `writeTarGz`, `extractText`, `readSheetPreview`, `makeThumbnail`, `makePdfPreview`, `imageAvailable`, `makeGrant`, `checkGrant`, `runTokenCommand`, `markdownHtml`, `code128Svg`, `barcodeSvg`, `parseGs1`, `isValidGs1CheckDigit`, `theme`; version notes on a reference's `putText`, `putBytes` and `putStream`, and `getVersionDiff` |
 | `ec.artifactExecution` | `runAsSystem`, `runAsUser`, `isPermitted`, `isPermittedOwn` |
 | `ec.entity` | `checkTables`, `runSqlStatement`, `testConfConnection`, `runSqlCountConf`, `runSqlUpdateConf`; EntityFind `forNoKeyUpdate`, `purge`; the `forNoKeyUpdate` argument of `findRelated` and `findRelatedOne`; EntityValue `getEntityNamePretty`, and fields and relationships as properties; EntityList as an array with the Array methods |
 | `ec.service` | `throwOnError`, `nextCronExecution`, `restApi.resolveService`, `passAuthority`, `ssoAvailable`; RestClient `bodyBytes`, `multipart`, `streamFrom`, `followRedirects`, `denyInternal`, `send`; response `bytes` |

@@ -706,6 +706,8 @@ macro_rules! tools_js {
     // digests and archives read as streams (archive_host.rs): checksums of exports, operator-supplied import archives
     ec.resource.digest = (location, algorithm) => host.resourceDigest(String(location), String(algorithm || "sha256"));
     ec.resource.digestText = (text, algorithm) => host.textDigest(String(text ?? ""), String(algorithm || "sha256"));
+    // HMAC-SHA256 of a message with a secret key, lower-case hex (or "base64url"): a keyed digest that is the same each time
+    ec.resource.hmac = (key, message, encoding) => host.textHmac(String(key ?? ""), String(message ?? ""), String(encoding || "hex"));
     ec.resource.gunzip = (source, target, maxBytes) => host.resourceGunzip(String(source), String(target),
         maxBytes == null ? 4 * 1024 * 1024 * 1024 : Number(maxBytes));
     ec.resource.extractArchive = (source, target, limits) => host.resourceExtractArchive(String(source), String(target), limits || {});
