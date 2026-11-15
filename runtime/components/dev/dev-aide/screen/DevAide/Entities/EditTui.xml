@@ -28,29 +28,29 @@ along with this software (see the LICENSE.md file). If not, see
 
     <transition name="saveBuffer">
         <actions><script>ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js').save('entity:' + String(artifact || '').replace(/^(entity|view-entity):/, ''))</script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab"/></error-response>
     </transition>
     <transition name="saveMine">
         <actions><script>ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js').save('entity:' + String(artifact || '').replace(/^(entity|view-entity):/, ''), [{rootId, path}])</script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab"/></error-response>
     </transition>
     <transition name="takeDisk">
         <actions><script><![CDATA[
             ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js').discard('entity:' + String(artifact || '').replace(/^(entity|view-entity):/, ''), {rootId, path})
             ec.message.addMessage(ec.l10n.localize("The disk's text is back; the other staged files stay"), 'info')
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab"/></error-response>
     </transition>
     <transition name="discardBuffer">
         <actions><script><![CDATA[
             ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js').discard('entity:' + String(artifact || '').replace(/^(entity|view-entity):/, ''))
             ec.message.addMessage(ec.l10n.localize('The unsaved changes are discarded'), 'info')
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab"/></error-response>
     </transition>
     <!-- the related entity of a Reference or a relationship: the index's entities by name -->
     <transition name="entityChoices" read-only="true">
@@ -93,8 +93,8 @@ along with this software (see the LICENSE.md file). If not, see
                 else guided.apply(entity.target, entity.edit, built.ops)
             }
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="fields"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="fields"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="fields"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="fields"/></error-response>
     </transition>
     <transition name="addField">
         <actions><script><![CDATA[
@@ -118,8 +118,8 @@ along with this software (see the LICENSE.md file). If not, see
                 if (added.seed.length && !ec.message.hasError()) guided.apply(entity.target, entity.seed, ops.insertRecords((entity.seedFile || {}).outline, added.seed), true)
             }
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="fields"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="fields"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="fields"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="fields"/></error-response>
     </transition>
     <transition name="removeField">
         <actions><script><![CDATA[
@@ -130,8 +130,8 @@ along with this software (see the LICENSE.md file). If not, see
             else if (!built.ops.length) ec.message.addError('The field ' + fieldName + ' is not written in ' + (entity.edit ? entity.edit.path : 'the edit target') + ': an upstream field is removed upstream')
             else guided.apply(entity.target, entity.edit, built.ops)
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="fields"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="fields"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="fields"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="fields"/></error-response>
     </transition>
     <transition name="moveField">
         <actions><script><![CDATA[
@@ -141,8 +141,8 @@ along with this software (see the LICENSE.md file). If not, see
             if (built.refused) ec.message.addError(built.refused)
             else guided.apply(entity.target, entity.edit, built.ops)
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="fields"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="fields"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="fields"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="fields"/></error-response>
     </transition>
     <transition name="addRelationship">
         <actions><script><![CDATA[
@@ -156,8 +156,8 @@ along with this software (see the LICENSE.md file). If not, see
                 else guided.apply(entity.target, entity.edit, built.ops)
             }
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="relationships"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="relationships"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="relationships"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="relationships"/></error-response>
     </transition>
     <transition name="removeRelationship">
         <actions><script><![CDATA[
@@ -168,8 +168,8 @@ along with this software (see the LICENSE.md file). If not, see
             else if (!built.ops.length) ec.message.addError(ec.l10n.localize('The relationship is not written in the edit target: an upstream one is removed upstream'))
             else guided.apply(entity.target, entity.edit, built.ops)
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="relationships"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="relationships"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="relationships"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="relationships"/></error-response>
     </transition>
     <transition name="addIndex">
         <actions><script><![CDATA[
@@ -183,8 +183,8 @@ along with this software (see the LICENSE.md file). If not, see
                 else guided.apply(entity.target, entity.edit, built.ops)
             }
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="indexes"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="indexes"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="indexes"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="indexes"/></error-response>
     </transition>
     <transition name="removeIndex">
         <actions><script><![CDATA[
@@ -195,8 +195,8 @@ along with this software (see the LICENSE.md file). If not, see
             else if (!built.ops.length) ec.message.addError(ec.l10n.localize('The index is not written in the edit target: an upstream one is removed upstream'))
             else guided.apply(entity.target, entity.edit, built.ops)
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="indexes"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="indexes"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="indexes"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="indexes"/></error-response>
     </transition>
 
     <!-- the table: what the table check never does, for the full tier, planned then run with the table's name typed back -->
@@ -208,8 +208,8 @@ along with this software (see the LICENSE.md file). If not, see
             if (!ec.message.hasError()) ec.web.sessionAttributes['DevAideGuided.ddl.' + entityName] = JSON.stringify({action: ddlAction,
                 fieldName: fieldName || '', columnName: columnName || '', statements: out.statements || [], table: out.tableName})
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="table"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="table"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="table"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="table"/></error-response>
     </transition>
     <transition name="runDdl">
         <actions><script><![CDATA[
@@ -221,20 +221,20 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.message.addMessage('Ran ' + (out.ran || []).length + ' statements', 'success')
             }
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="table"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="table"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="table"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="table"/></error-response>
     </transition>
     <transition name="cancelDdl">
         <actions><script>ec.web.sessionAttributes.remove('DevAideGuided.ddl.' + String(artifact || '').replace(/^(entity|view-entity):/, ''))</script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="table"/></default-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="table"/></default-response>
     </transition>
     <transition name="loadSeed">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.devaide.EntityServices.load#SeedFile').parameters({rootId, path}).call() || {}
             if (!ec.message.hasError()) ec.message.addMessage('Loaded ' + out.records + ' records from ' + out.file, 'success')
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="seed"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="seed"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="seed"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="seed"/></error-response>
     </transition>
     <!-- the seed file's records: a record by its outline key (seedPath) and entity, its columns posted as seed_<name>
         and one more attribute by name; staged with the load flag, so the file loads after Save -->
@@ -254,8 +254,8 @@ along with this software (see the LICENSE.md file). If not, see
                 guided.apply(entity.target, entity.seed, ops.setRecordValues(found.row, values), true)
             }
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="seed"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="seed"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="seed"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="seed"/></error-response>
     </transition>
     <transition name="addSeedRecord">
         <actions><script><![CDATA[
@@ -276,8 +276,8 @@ along with this software (see the LICENSE.md file). If not, see
                 else guided.apply(entity.target, entity.seed, ops.addRecord(outline, Object.assign({}, table, {columns}), values), true)
             }
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="seed"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="seed"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="seed"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="seed"/></error-response>
     </transition>
     <transition name="removeSeedRecord">
         <actions><script><![CDATA[
@@ -288,8 +288,8 @@ along with this software (see the LICENSE.md file). If not, see
             if (!found || found.table.entity !== seedEntity) ec.message.addError(ec.l10n.localize('That record is not in the seed file as staged: open Seed data again'))
             else guided.apply(entity.target, entity.seed, [{op: 'remove', at: found.row.path}], true)
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="seed"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="seed"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="seed"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="seed"/></error-response>
     </transition>
 
     <actions>
@@ -319,7 +319,7 @@ along with this software (see the LICENSE.md file). If not, see
             workspaceUrl = (view && view.artifact && view.artifact.url) || ''
             refsUrl = '/qapps/dev/Artifacts/Refs?artifactId=' + encodeURIComponent('entity:' + entityName)
             gridUrl = '/qapps/tools/Data/Grid?entityName=' + encodeURIComponent(entityName)
-            const tabUrl = (name) => sri.buildUrl('.').addParameters({artifact: 'entity:' + entityName, tab: name}).getUrlWithParams()
+            const tabUrl = (name) => sri.buildUrl('../Edit').addParameters({artifact: 'entity:' + entityName, tab: name}).getUrlWithParams()
             const relationships = (definition.relationships || []).filter((rel) => !rel.isAutoReverse)
             tabItems = [['fields', 'Fields ' + (definition.fields || []).length], ['relationships', 'Relationships ' + relationships.length],
                 ['indexes', 'Indexes'], ['incoming', 'Incoming'], ['eeca', 'EECA rules ' + ((view && view.eecas) || []).length], ['table', 'Table'],
@@ -468,7 +468,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <section name="RemoveConfirm" condition="removeConfirm"><widgets>
                     <container-box type="warning"><box-header title="${removeConfirm.text}"/><box-body>
                         <link url="removeField" text="Remove ${removeConfirm.name}" btn-type="danger" parameter-map="{artifact: 'entity:' + entityName, fieldName: removeConfirm.name}"/>
-                        <link url="." text="Keep it" parameter-map="{artifact: 'entity:' + entityName, tab: 'fields', confirmRemove: ''}"/>
+                        <link url="../Edit" text="Keep it" parameter-map="{artifact: 'entity:' + entityName, tab: 'fields', confirmRemove: ''}"/>
                     </box-body></container-box>
                 </widgets></section>
                 <container-dialog id="AddField" button-text="Add field" type="primary" condition="canEdit">
@@ -515,7 +515,7 @@ along with this software (see the LICENSE.md file). If not, see
                                 <field name="submitButton"><default-field title="Stage"><submit/></default-field></field>
                             </form-single>
                         </container-dialog>
-                        <link url="." text="Remove" condition="canEdit &amp;&amp; own" parameter-map="{artifact: 'entity:' + entityName, tab: 'fields', confirmRemove: name}"/>
+                        <link url="../Edit" text="Remove" condition="canEdit &amp;&amp; own" parameter-map="{artifact: 'entity:' + entityName, tab: 'fields', confirmRemove: name}"/>
                         <link url="moveField" text="Up" condition="canEdit &amp;&amp; own &amp;&amp; !first" parameter-map="{artifact: 'entity:' + entityName, fieldName: name, step: 'up'}"/>
                         <link url="moveField" text="Down" condition="canEdit &amp;&amp; own &amp;&amp; !last" parameter-map="{artifact: 'entity:' + entityName, fieldName: name, step: 'down'}"/>
                     </default-field></field>

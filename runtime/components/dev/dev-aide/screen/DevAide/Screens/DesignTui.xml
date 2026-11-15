@@ -36,16 +36,16 @@ along with this software (see the LICENSE.md file). If not, see
             const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
             guided.save(guided.screenContext(rootId, path, page).target)
         ]]></script></actions>
-        <default-response url="."/>
-        <error-response url="."/>
+        <default-response url="../Design"/>
+        <error-response url="../Design"/>
     </transition>
     <transition name="saveMine">
         <actions><script><![CDATA[
             const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
             guided.save(guided.screenContext(rootId, path, page).target, [{rootId: fileRootId, path: filePath}])
         ]]></script></actions>
-        <default-response url="."/>
-        <error-response url="."/>
+        <default-response url="../Design"/>
+        <error-response url="../Design"/>
     </transition>
     <transition name="takeDisk">
         <actions><script><![CDATA[
@@ -53,8 +53,8 @@ along with this software (see the LICENSE.md file). If not, see
             guided.discard(guided.screenContext(rootId, path, page).target, {rootId: fileRootId, path: filePath})
             ec.message.addMessage(ec.l10n.localize("The disk's text is back; the other staged files stay"), 'info')
         ]]></script></actions>
-        <default-response url="."/>
-        <error-response url="."/>
+        <default-response url="../Design"/>
+        <error-response url="../Design"/>
     </transition>
     <transition name="discardBuffer">
         <actions><script><![CDATA[
@@ -62,8 +62,8 @@ along with this software (see the LICENSE.md file). If not, see
             guided.discard(guided.screenContext(rootId, path, page).target)
             ec.message.addMessage(ec.l10n.localize('The unsaved changes are discarded'), 'info')
         ]]></script></actions>
-        <default-response url="."/>
-        <error-response url="."/>
+        <default-response url="../Design"/>
+        <error-response url="../Design"/>
     </transition>
     <!-- the service a button calls: the index's services by name, and the name typed when the index has none of it -->
     <transition name="serviceChoices" read-only="true">
@@ -94,8 +94,8 @@ along with this software (see the LICENSE.md file). If not, see
                 if (built.node !== undefined && !ec.message.hasError()) node = built.node
             }
         ]]></script></actions>
-        <default-response url="."><parameter name="tab" value="design"/></default-response>
-        <error-response url="."><parameter name="tab" value="design"/></error-response>
+        <default-response url="../Design"><parameter name="tab" value="design"/></default-response>
+        <error-response url="../Design"><parameter name="tab" value="design"/></error-response>
     </transition>
 
     <actions>
@@ -124,7 +124,7 @@ along with this software (see the LICENSE.md file). If not, see
             conflict = left.conflict || null
             problemRows = (left.problems || []).map((problem) => ({file: problem.file || '', line: problem.line || 0, severity: problem.severity || '', message: problem.message || ''}))
             const here = {rootId: rootId || null, path: path || null, page: page || null}
-            const urlOf = (extra) => sri.buildUrl('.').addParameters(Object.assign({}, here, extra)).getUrlWithParams()
+            const urlOf = (extra) => sri.buildUrl('../Design').addParameters(Object.assign({}, here, extra)).getUrlWithParams()
             tabItems = [['design', 'Design'], ['preview', 'Preview'], ['text', 'Text' + (screen.buffer.pending.count ? ' ' + screen.buffer.pending.count : '')],
                 ['points', 'Extension points']].map(([name, title]) => ({title, url: urlOf({tab: name, node: node || null}), active: name === tab}))
             workspaceBase = baseFile.rootId ? '/qapps/dev/Workspace?rootId=' + encodeURIComponent(baseFile.rootId) + '&path=' + encodeURIComponent(baseFile.path) : ''
@@ -363,7 +363,7 @@ along with this software (see the LICENSE.md file). If not, see
             </widgets></section>
 
             <section name="PreviewTab" condition="tab == 'preview'"><widgets>
-                <form-single name="PreviewParameters" transition=".">
+                <form-single name="PreviewParameters" transition="../Design">
                     <field name="tab" from="'preview'"><default-field><hidden/></default-field></field>
                     <field name="previewQuery"><default-field title="Parameters" tooltip="The page's query, such as exampleId=100; F5 renders it again"><text-line size="60"/></default-field></field>
                     <field name="submitButton"><default-field title="Render"><submit/></default-field></field>

@@ -27,29 +27,29 @@ along with this software (see the LICENSE.md file). If not, see
 
     <transition name="saveBuffer">
         <actions><script>ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js').save('service:' + String(artifact || '').replace(/^service:/, ''))</script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab"/></error-response>
     </transition>
     <transition name="saveMine">
         <actions><script>ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js').save('service:' + String(artifact || '').replace(/^service:/, ''), [{rootId, path}])</script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab"/></error-response>
     </transition>
     <transition name="takeDisk">
         <actions><script><![CDATA[
             ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js').discard('service:' + String(artifact || '').replace(/^service:/, ''), {rootId, path})
             ec.message.addMessage(ec.l10n.localize("The disk's text is back; the other staged files stay"), 'info')
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab"/></error-response>
     </transition>
     <transition name="discardBuffer">
         <actions><script><![CDATA[
             ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js').discard('service:' + String(artifact || '').replace(/^service:/, ''))
             ec.message.addMessage(ec.l10n.localize('The unsaved changes are discarded'), 'info')
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab"/></error-response>
     </transition>
 
     <!-- the service a SECA rule calls: the index's services by name, and the name typed when the index has none of it -->
@@ -79,8 +79,8 @@ along with this software (see the LICENSE.md file). If not, see
             if (!service.node) ec.message.addError(ec.l10n.localize('The service is not defined in a file of its own here'))
             else guided.apply(service.target, service.file, ops)
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="overview"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="overview"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="overview"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="overview"/></error-response>
     </transition>
     <transition name="addParameter">
         <actions><script><![CDATA[
@@ -97,8 +97,8 @@ along with this software (see the LICENSE.md file). If not, see
                     {name: parameterName, type: parameterType, required: required === 'true', defaultValue, description}, parent))
             }
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="parameters"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="parameters"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="parameters"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="parameters"/></error-response>
     </transition>
     <transition name="editParameter">
         <actions><script><![CDATA[
@@ -108,8 +108,8 @@ along with this software (see the LICENSE.md file). If not, see
             else guided.apply(service.target, service.file, service.ops.service.editParameter(service.node, which === 'out-parameters' ? 'out-parameters' : 'in-parameters',
                 [parentPath, parameterName].filter((part) => part).join('.'), {type: parameterType, required: required === 'true', defaultValue, description}))
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="parameters"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="parameters"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="parameters"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="parameters"/></error-response>
     </transition>
     <transition name="removeParameter">
         <actions><script><![CDATA[
@@ -119,8 +119,8 @@ along with this software (see the LICENSE.md file). If not, see
             else guided.apply(service.target, service.file, service.ops.service.removeParameter(service.node, which === 'out-parameters' ? 'out-parameters' : 'in-parameters',
                 [parentPath, parameterName].filter((part) => part).join('.')))
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="parameters"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="parameters"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="parameters"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="parameters"/></error-response>
     </transition>
     <transition name="addSeca">
         <actions><script><![CDATA[
@@ -130,8 +130,8 @@ along with this software (see the LICENSE.md file). If not, see
             else guided.apply(service.target, service.secas, service.ops.service.addRule((service.secasFile || {}).outline,
                 service.ops.service.secaXml(service.serviceName, when || 'post-service', condition, callService)))
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="rules"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="rules"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="rules"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="rules"/></error-response>
     </transition>
 
     <!-- Try (9.4): the in-parameters typed, run in the sim or for real; the result kept in the session for this page -->
@@ -154,8 +154,8 @@ along with this software (see the LICENSE.md file). If not, see
                 .parameters({serviceName, parameters: JSON.stringify(parameters), real, confirm: real}).call() || {}
             if (!ec.message.hasError()) ec.web.sessionAttributes['DevAideTry.result.' + serviceName] = JSON.stringify(Object.assign({parameters}, out.result || {}))
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="try"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="try"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="try"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="try"/></error-response>
     </transition>
     <transition name="saveSpec">
         <actions><script><![CDATA[
@@ -172,8 +172,8 @@ along with this software (see the LICENSE.md file). If not, see
                 }
             }
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="try"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="try"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="try"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="try"/></error-response>
     </transition>
     <transition name="runSpec">
         <actions><script><![CDATA[
@@ -186,8 +186,8 @@ along with this software (see the LICENSE.md file). If not, see
                 if (!ec.message.hasError()) ec.web.sessionAttributes['DevAideTry.specRun.' + serviceName] = JSON.stringify(out)
             }
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="try"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="try"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="try"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="try"/></error-response>
     </transition>
     <transition name="runSnippet">
         <actions><script><![CDATA[
@@ -200,8 +200,8 @@ along with this software (see the LICENSE.md file). If not, see
                 .parameters({language, body, parameters: JSON.stringify(values)}).call() || {}
             ec.web.sessionAttributes['DevAideTry.snippet.' + serviceName] = JSON.stringify({language, body, result: out.result || null})
         ]]></script></actions>
-        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="try"/></default-response>
-        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="try"/></error-response>
+        <default-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="try"/></default-response>
+        <error-response url="../Edit"><parameter name="artifact"/><parameter name="tab" value="try"/></error-response>
     </transition>
 
     <actions>
@@ -228,7 +228,7 @@ along with this software (see the LICENSE.md file). If not, see
                 'used by ' + (view.usedByCount || 0), view.calls != null ? view.calls + ' calls in the last spec run' : ''].filter((part) => part).join(' · ') : ''
             workspaceUrl = (view && view.artifact && view.artifact.url) || ''
             refsUrl = '/qapps/dev/Artifacts/Refs?artifactId=' + encodeURIComponent('service:' + serviceName)
-            const tabUrl = (name) => sri.buildUrl('.').addParameters({artifact: 'service:' + serviceName, tab: name}).getUrlWithParams()
+            const tabUrl = (name) => sri.buildUrl('../Edit').addParameters({artifact: 'service:' + serviceName, tab: name}).getUrlWithParams()
             tabItems = [['try', 'Try'], ['overview', 'Overview'], ['parameters', 'Parameters ' + ((definition.inParameters || []).length) + ' in, ' + ((definition.outParameters || []).length) + ' out'],
                 ['implementation', 'Implementation'], ['rules', 'SECA rules ' + ((view && view.secas) || []).length],
                 ['changes', 'Changes' + (service.buffer.pending.count ? ' ' + service.buffer.pending.count : '')]]

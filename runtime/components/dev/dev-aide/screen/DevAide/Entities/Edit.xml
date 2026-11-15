@@ -17,11 +17,13 @@ along with this software (see the LICENSE.md file). If not, see
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Edit" default-menu-include="false" render-modes="qvue,tui">
     <parameter name="artifact"/>
+    <parameter name="tab"/>
+    <parameter name="confirmRemove"/>
     <widgets>
         <render-mode>
             <text type="qvue" location="component://dev-aide/screen/DevAide/GuidedEdit.qvue" template="false"/>
             <text type="tui"><![CDATA[${JSON.stringify([{t: 'dynamicContainer', id: 'EntityEditTui', url: sri.buildUrl('../EditTui')
-                .addParameters({artifact: artifact || null}).getUrlWithParams()}])}]]></text>
+                .addParameters({artifact: artifact || null, tab: tab || null, confirmRemove: confirmRemove || null}).getUrlWithParams()}])}]]></text>
         </render-mode>
     </widgets>
 </screen>
