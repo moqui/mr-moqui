@@ -144,15 +144,12 @@ pub fn check_text(factory: &Arc<ExecutionContextFactory>, path: &Path, text: &st
     let root = match MNode::parse_text(&display, text) {
         Ok(root) => root,
         Err(err) => {
-            let (line, column) = parse_error_position(&err.to_string());
-            return vec![problem(
-                &display,
-                line,
-                column,
-                Severity::Error,
-                "xml.parse",
-                &err.to_string(),
-            )];
+            let message = err.to_string();
+            let (line, column) = parse_error_position(&message);
+            // the place is the problem's own line and column: the file's path in the text only crowds an editor's line
+            let place = format!(" ({display}:{line}:{column})");
+            let detail = if line > 0 { message.replace(&place, "") } else { message };
+            return vec![problem(&display, line, column, Severity::Error, "xml.parse", &detail)];
         }
     };
     let mut problems = Vec::new();
@@ -774,6 +771,11 @@ mod tests {
             (3, true),
             "{:?}",
             mismatched[0]
+        );
+        assert!(
+            !mismatched[0].message.contains("/tmp/x.xml"),
+            "{}",
+            mismatched[0].message
         );
     }
 
