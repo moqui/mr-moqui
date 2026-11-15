@@ -719,3 +719,28 @@ fn a_button_menu_opens_under_its_button() {
     let title = lines.iter().position(|line| line.contains(" File ") && line.contains('┌')).expect(&text);
     assert_eq!(title, button + 1, "{text}");
 }
+
+/// A long display value in a row of fields wraps in its own cell: it ran to the screen's edge, over the next field's
+/// label (ACC-UI-007, Accounting setup's Chart beside its Base currency).
+#[test]
+fn a_long_display_value_in_a_field_row_wraps_in_its_cell() {
+    let json = r#"{"v":1,"screen":{"path":"/b","title":"B"},"c":[
+        {"t":"form","id":"F","name":"F","c":[{"t":"row","id":"F.r","c":[
+            {"t":"field","id":"F.chart","name":"chart","title":"Chart","w":{"kind":"display","text":"The standard chart of accounts with every account a small company needs and the accounts its reports read"}},
+            {"t":"field","id":"F.currency","name":"currency","title":"Base currency","w":{"kind":"display","text":"USD"}}]}]}]}"#;
+    let model = ScreenModel::from_json(json).unwrap();
+    let link = FakeLink::from_json(&[json]).unwrap();
+    let text = render_text(&model, &link, 120, 16);
+    let label = text
+        .lines()
+        .find(|line| line.contains("Base currency"))
+        .unwrap_or_default();
+    // the label is whole and nothing of the chart's text runs past the start of its cell
+    let at = label.find("Base currency").unwrap();
+    assert!(
+        !label[at..].contains("accounts") && !label[at..].contains("company"),
+        "{text}"
+    );
+    assert!(text.contains("USD"), "{text}");
+    assert!(text.contains("reports read"), "{text}");
+}

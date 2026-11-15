@@ -296,6 +296,26 @@ fn the_tray_shows_its_tabs_and_left_and_right_go_between_them() {
 }
 
 #[test]
+fn the_tray_opens_on_an_empty_quick_add_and_right_still_goes_to_the_next_tab() {
+    // Today's first item is its quick-add text field; Right in it, while empty, goes to Chat; with text it stays
+    let today = r#"{ "v": 1, "screen": { "path": "/apps/hub/Today" }, "c": [ { "t": "form", "id": "Add", "name": "Add",
+        "transitionUrl": "/apps/hub/Today/add", "c": [ { "t": "field", "id": "Add.text", "name": "text", "title": "Add",
+        "w": { "kind": "textLine", "value": "" } } ] } ] }"#;
+    let link = FakeLink::from_json(&[MAIN_JSON, QUICK_JSON, today, CHAT_JSON]).unwrap();
+    link.answer_shell(shell());
+    let mut session = Session::start("/apps/app/Main");
+    session.run_now(&link);
+    session.press(&KeyPress::with_alt(Key::Char('t')), &link);
+    assert!(session.focused_is_text(), "Today opens on its quick add");
+    typed(&mut session, &link, "x");
+    press(&mut session, &link, Key::Right);
+    assert_eq!(session.tray_tab(), 0, "Right in a field with text moves its cursor");
+    press(&mut session, &link, Key::Backspace);
+    press(&mut session, &link, Key::Right);
+    assert_eq!(session.tray_tab(), 1);
+}
+
+#[test]
 fn the_help_lists_the_screen_documents_and_opens_one() {
     let (mut session, link) = started();
     assert_eq!(session.docs(), [("How to".to_string(), "1".to_string())]);
