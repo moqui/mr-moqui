@@ -18,8 +18,8 @@
 use std::collections::BTreeMap;
 
 use moqui_tui::{
-    gallery_link, merge_keys, Action, Choice, FakeLink, Key, KeyMap, KeyPress, LinkCall, Messages, Overlay, Reply,
-    ScreenLink, ScreenModel, Sendable, Session, ShellInfo, TransitionOutcome, ValidationError, Widget,
+    gallery_link, merge_keys, Action, AdminSetup, Choice, FakeLink, Key, KeyMap, KeyPress, LinkCall, Login, Messages,
+    Overlay, Reply, ScreenLink, ScreenModel, Sendable, Session, ShellInfo, TransitionOutcome, ValidationError, Widget,
     GALLERY_DETAIL_PATH, GALLERY_LIST_JSON, GALLERY_LIST_PATH,
 };
 
@@ -965,6 +965,176 @@ fn a_login_that_wants_a_code_keeps_the_password_and_asks_for_the_code() {
     press(&mut session, &link, Key::Enter);
     assert!(session.top_overlay().is_none(), "logged in");
     assert_eq!(session.path(), GALLERY_LIST_PATH);
+}
+
+fn rules() -> AdminSetup {
+    AdminSetup {
+        min_length: 12,
+        min_digits: 1,
+        min_others: 1,
+    }
+}
+
+/// A server with no accounts: the login dialog asks as it opens, and turns to setup with the SSH name kept.
+fn setup_session() -> (Session, FakeLink) {
+    let link = gallery_link();
+    link.require_login("old-pw");
+    link.need_initial_admin(rules());
+    let mut session = Session::start(GALLERY_LIST_PATH);
+    session.set_login_name(Some("admin".to_string()));
+    session.run_now(&link);
+    (session, link)
+}
+
+fn setup_login(session: &Session) -> &Login {
+    match session.top_overlay() {
+        Some(Overlay::Login(login)) => login,
+        other => panic!("the login dialog is on top: {other:?}"),
+    }
+}
+
+/// Type each of the setup's fields from the password on, Tab between them.
+fn fill_setup(session: &mut Session, link: &FakeLink, values: [&str; 4]) {
+    for value in values {
+        typed(session, link, value);
+        press(session, link, Key::Tab);
+    }
+}
+
+fn creations(link: &FakeLink) -> usize {
+    link.calls()
+        .iter()
+        .filter(|call| matches!(call, LinkCall::CreateInitialAdmin(_)))
+        .count()
+}
+
+#[test]
+fn a_needed_answer_turns_the_login_dialog_to_setup_and_its_fields_cycle() {
+    let (mut session, link) = setup_session();
+    assert!(link.calls().iter().any(|call| matches!(call, LinkCall::InitialAdmin)));
+    let login = setup_login(&session);
+    assert_eq!(login.setup, Some(rules()));
+    assert_eq!(
+        (login.username.as_str(), login.at),
+        ("admin", 1),
+        "the username kept, the password next"
+    );
+    assert_eq!(login.labels().len(), 5);
+    for at in [2, 3, 4, 0, 1] {
+        press(&mut session, &link, Key::Tab);
+        assert_eq!(setup_login(&session).at, at);
+    }
+    press(&mut session, &link, Key::BackTab);
+    press(&mut session, &link, Key::Up);
+    assert_eq!(setup_login(&session).at, 4, "Shift+Tab and Up go back, around the end");
+    press(&mut session, &link, Key::Down);
+    assert_eq!(setup_login(&session).at, 0);
+    // Enter before the last field is the next field: nothing is sent
+    press(&mut session, &link, Key::Enter);
+    assert_eq!(setup_login(&session).at, 1);
+    assert_eq!(creations(&link), 0);
+    press(&mut session, &link, Key::Escape);
+    assert!(session.top_overlay().is_none(), "Esc closes the dialog");
+}
+
+#[test]
+fn setup_checks_its_fields_and_passwords_before_it_sends() {
+    let (mut session, link) = setup_session();
+    fill_setup(
+        &mut session,
+        &link,
+        ["Secret-pass-1", "Secret-pass-2", "Ada Admin", "ada@example.com"],
+    );
+    session.press(&KeyPress::with_ctrl(Key::Char('s')), &link);
+    let login = setup_login(&session);
+    assert_eq!(login.error, "The passwords do not match");
+    assert!(
+        login.password.is_empty() && login.verify.is_empty(),
+        "both passwords are typed again"
+    );
+    assert_eq!(login.at, 1);
+    session.set_login_field(4, "");
+    session.set_login_field(1, "Secret-pass-1");
+    session.set_login_field(2, "Secret-pass-1");
+    session.press(&KeyPress::with_ctrl(Key::Char('s')), &link);
+    let login = setup_login(&session);
+    assert_eq!((login.error.as_str(), login.at), ("Email is required", 4));
+    assert_eq!(creations(&link), 0, "nothing is sent until the fields are right");
+}
+
+#[test]
+fn setup_creates_the_administrator_then_logs_in_with_it() {
+    let (mut session, link) = setup_session();
+    fill_setup(
+        &mut session,
+        &link,
+        ["Secret-pass-1", "Secret-pass-1", "Ada Admin", "ada@example.com"],
+    );
+    // Tab after the email went around to the username; Enter in the last field sends
+    session.set_login_field(4, "ada@example.com");
+    press(&mut session, &link, Key::Enter);
+    assert!(session.top_overlay().is_none(), "logged in");
+    assert_eq!(session.path(), GALLERY_LIST_PATH);
+    let calls = link.calls();
+    let created = calls
+        .iter()
+        .position(|call| {
+            matches!(call, LinkCall::CreateInitialAdmin(account)
+                if account.username == "admin" && account.full_name == "Ada Admin"
+                    && account.email == "ada@example.com")
+        })
+        .expect("the account is sent");
+    let logged = calls
+        .iter()
+        .position(|call| matches!(call, LinkCall::Login { username, .. } if username == "admin"))
+        .expect("then the login");
+    assert!(created < logged, "{calls:?}");
+}
+
+#[test]
+fn a_refused_setup_shows_why_and_clears_the_passwords() {
+    let (mut session, link) = setup_session();
+    link.refuse_initial_admin("Password must have at least 12 characters", false);
+    fill_setup(
+        &mut session,
+        &link,
+        ["short-1", "short-1", "Ada Admin", "ada@example.com"],
+    );
+    session.press(&KeyPress::with_alt(Key::Enter), &link);
+    let login = setup_login(&session);
+    assert_eq!(login.error, "Password must have at least 12 characters");
+    assert!(login.password.is_empty() && login.verify.is_empty());
+    assert!(login.setup.is_some(), "still setup: no account was made");
+    assert_eq!((login.full_name.as_str(), login.at), ("Ada Admin", 1));
+    // someone else made the first account meanwhile: the dialog is the login again, its username and message kept
+    link.refuse_initial_admin(
+        "Can only create initial admin account if there are no UserAccount records",
+        true,
+    );
+    session.set_login_field(1, "Secret-pass-1");
+    session.set_login_field(2, "Secret-pass-1");
+    session.press(&KeyPress::with_ctrl(Key::Char('s')), &link);
+    let login = setup_login(&session);
+    assert!(login.setup.is_none(), "back to the login");
+    assert_eq!(login.username, "admin");
+    assert!(login.error.contains("no UserAccount records"), "{}", login.error);
+    assert!(login.password.is_empty());
+    assert_eq!(creations(&link), 2);
+}
+
+#[test]
+fn a_server_with_accounts_keeps_the_ordinary_login_dialog() {
+    let link = gallery_link();
+    link.require_login("pw");
+    let mut session = Session::start(GALLERY_LIST_PATH);
+    session.run_now(&link);
+    assert!(link.calls().iter().any(|call| matches!(call, LinkCall::InitialAdmin)));
+    let login = setup_login(&session);
+    assert!(login.setup.is_none());
+    assert_eq!(login.labels(), ["Username", "Password", "Code"]);
+    // Ctrl+S is no send in the login: only Enter logs in
+    session.press(&KeyPress::with_ctrl(Key::Char('s')), &link);
+    assert_eq!(creations(&link), 0);
 }
 
 #[test]

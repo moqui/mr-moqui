@@ -461,6 +461,29 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
 
+    <service verb="get" noun="InitialAdminNeeded" authenticate="anonymous-view">
+        <description>Whether the system has no user accounts yet, so the first administrator is to be created: the Login
+            screen's create form, its initialAdminNeeded transition and the terminal's login dialog ask this, and
+            create#InitialAdminAccount refuses unless it holds. Seed data has accounts nobody logs in as, which do not
+            count: _NA_, the edge node's delegate _EDGE_ (EdgeSetupData.xml) and the chat users of agents
+            (AgentTypeData.xml). The password rules are answered only while needed is true.</description>
+        <out-parameters>
+            <parameter name="needed" type="Boolean" required="true"/>
+            <parameter name="minLength" type="Integer"/>
+            <parameter name="minDigits" type="Integer"/>
+            <parameter name="minOthers" type="Integer"/>
+        </out-parameters>
+        <actions>
+            <set field="needed" from="ec.entity.find('moqui.security.UserAccount').condition('userId', 'not-in',
+                ['_NA_', '_EDGE_'].concat(Array.from(ec.entity.find('moqui.agent.AgentDefinition').selectField('chatUserId').disableAuthz().list())
+                    .map((agent) => agent.chatUserId).filter(Boolean))).disableAuthz().count() == 0"/>
+            <if condition="needed">
+                <set field="minLength" from="ec.user.passwordRules.minLength"/>
+                <set field="minDigits" from="ec.user.passwordRules.minDigits"/>
+                <set field="minOthers" from="ec.user.passwordRules.minOthers"/>
+            </if>
+        </actions>
+    </service>
     <service verb="create" noun="InitialAdminAccount" authenticate="anonymous-all">
         <in-parameters>
             <parameter name="username" required="true"/>
@@ -471,11 +494,9 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="userId" required="true"/></out-parameters>
         <actions>
-            <!-- only allow this if there are no user accounts, other than those in seed data that nobody logs in as: _NA_,
-                the edge node's delegate _EDGE_ (EdgeSetupData.xml) and the chat users of agents (AgentTypeData.xml) -->
-            <if condition="ec.entity.find('moqui.security.UserAccount').condition('userId', 'not-in',
-                    ['_NA_', '_EDGE_'].concat(Array.from(ec.entity.find('moqui.agent.AgentDefinition').selectField('chatUserId').disableAuthz().list())
-                        .map((agent) => agent.chatUserId).filter(Boolean))).disableAuthz().count() > 0">
+            <!-- only allow this if there are no user accounts but the seed ones (get#InitialAdminNeeded) -->
+            <service-call name="org.moqui.impl.UserServices.get#InitialAdminNeeded" out-map="adminNeeded"/>
+            <if condition="!adminNeeded.needed">
                 <return error="true" message="Can only create initial admin account if there are no UserAccount records"/></if>
             <service-call name="org.moqui.impl.UserServices.create#UserAccount" in-map="context" out-map="context"/>
             <service-call name="create#moqui.security.UserGroupMember" in-map="{userId: userId, userGroupId: 'ADMIN'}"

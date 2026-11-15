@@ -233,3 +233,105 @@ fn a_parent_level_names_its_page_and_leaves_the_base_at_the_leaf() {
         "/apps/x/Leave%20Requests%2B%C3%A9"
     );
 }
+
+/// One request a [`Transport`] got: its path, method, parameters and whether it asked for JSON.
+type Asked = (String, String, BTreeMap<String, String>, bool);
+
+/// Over HTTP the setup asks `initialAdminNeeded` for its rules and token, and posts the account for JSON with that
+/// token; a server with accounts hands out none, and nothing is posted. The service's refusal is the error.
+#[test]
+fn the_first_administrator_is_posted_with_the_token_initial_admin_needed_hands_out() {
+    struct Setup {
+        needed: bool,
+        asked: Arc<Mutex<Vec<Asked>>>,
+    }
+    impl Transport for Setup {
+        fn send(&self, ask: Ask) -> Result<RenderOutput, LinkError> {
+            let body = if ask.path == "/Login/initialAdminNeeded" {
+                if self.needed {
+                    serde_json::json!({
+                        "needed": true, "minLength": 12, "minDigits": 1, "minOthers": 1, "sessionToken": "tok"
+                    })
+                } else {
+                    serde_json::json!({"needed": false})
+                }
+            } else if ask
+                .parameters
+                .get("newPassword")
+                .is_some_and(|password| password == "short")
+            {
+                serde_json::json!({"errors": "Password must have at least 12 characters"})
+            } else {
+                serde_json::json!({"screenUrl": "/Login"})
+            };
+            lock(&self.asked).push((ask.path, ask.method, ask.parameters, ask.json));
+            Ok(RenderOutput {
+                status: 200,
+                headers: vec![("Content-Type".into(), "application/json".into())],
+                body: body.to_string().into_bytes(),
+            })
+        }
+
+        fn login(&self, _username: &str, _password: &str, _code: &str) -> Result<(), LinkError> {
+            Ok(())
+        }
+
+        fn user(&self) -> Option<String> {
+            None
+        }
+    }
+
+    let account = |password: &str| AdminAccount {
+        username: "admin".into(),
+        password: password.into(),
+        verify: password.into(),
+        full_name: "Ada Admin".into(),
+        email: "ada@example.com".into(),
+    };
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let link = Link::over(Setup {
+        needed: true,
+        asked: Arc::clone(&asked),
+    });
+    assert_eq!(
+        link.initial_admin(),
+        Ok(Some(AdminSetup {
+            min_length: 12,
+            min_digits: 1,
+            min_others: 1
+        }))
+    );
+    assert_eq!(link.create_initial_admin(&account("Secret-pass-1")), Ok(()));
+    let posted = lock(&asked).last().cloned().expect("the account is posted");
+    assert_eq!(
+        (posted.0.as_str(), posted.1.as_str(), posted.3),
+        ("/Login/createInitialAdminAccount", "POST", true)
+    );
+    assert_eq!(posted.2.get("moquiSessionToken").map(String::as_str), Some("tok"));
+    assert_eq!(
+        posted.2.get("newPasswordVerify").map(String::as_str),
+        Some("Secret-pass-1")
+    );
+    assert_eq!(posted.2.get("userFullName").map(String::as_str), Some("Ada Admin"));
+    assert_eq!(
+        link.create_initial_admin(&account("short")),
+        Err(LinkError::Remote("Password must have at least 12 characters".into()))
+    );
+
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let link = Link::over(Setup {
+        needed: false,
+        asked: Arc::clone(&asked),
+    });
+    assert_eq!(link.initial_admin(), Ok(None));
+    assert!(matches!(
+        link.create_initial_admin(&account("Secret-pass-1")),
+        Err(LinkError::Remote(_))
+    ));
+    assert!(
+        lock(&asked)
+            .iter()
+            .all(|(path, ..)| path == "/Login/initialAdminNeeded"),
+        "nothing is posted"
+    );
+}

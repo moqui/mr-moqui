@@ -56,6 +56,50 @@ impl std::fmt::Display for LinkError {
     }
 }
 
+/// The server has no user accounts yet, so the login dialog creates the first administrator: the password rules it
+/// asks of the account (Login.xml `initialAdminNeeded`, `UserServices.get#InitialAdminNeeded`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AdminSetup {
+    pub min_length: u32,
+    pub min_digits: u32,
+    pub min_others: u32,
+}
+
+impl AdminSetup {
+    /// The rules as the dialog says them: "at least 12 characters, 1 digit, 1 other".
+    pub fn hint(&self) -> String {
+        let mut parts = vec![format!("at least {} characters", self.min_length)];
+        if self.min_digits > 0 {
+            parts.push(format!("{} digit", self.min_digits));
+        }
+        if self.min_others > 0 {
+            parts.push(format!("{} other", self.min_others));
+        }
+        parts.join(", ")
+    }
+}
+
+/// The first administrator's account, as the login dialog's setup sends it to `create#InitialAdminAccount`.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AdminAccount {
+    pub username: String,
+    pub password: String,
+    pub verify: String,
+    pub full_name: String,
+    pub email: String,
+}
+
+/// The passwords are never in a log line.
+impl std::fmt::Debug for AdminAccount {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdminAccount")
+            .field("username", &self.username)
+            .field("full_name", &self.full_name)
+            .field("email", &self.email)
+            .finish_non_exhaustive()
+    }
+}
+
 /// What a transition posted. `screen_url` is empty when the client stays on this screen.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TransitionOutcome {
@@ -196,6 +240,11 @@ pub enum LinkCall {
         password: String,
         factor: String,
     },
+    /// Whether the server has no accounts yet, asked as the login dialog opens: then the dialog creates the first
+    /// administrator.
+    InitialAdmin,
+    /// Create the first administrator, sent once and dropped as a login is.
+    CreateInitialAdmin(AdminAccount),
     /// A transition that answers JSON: the palette's search, the counters, an autocomplete, a display's value, a
     /// tree's children, a status bar, a preference.
     Json {
@@ -234,6 +283,9 @@ pub enum Reply {
     Login(Result<(), LinkError>),
     /// The factor the code went to.
     SendCode(Result<String, LinkError>),
+    /// The password rules while the first administrator is to be created, else None.
+    InitialAdmin(Result<Option<AdminSetup>, LinkError>),
+    CreateInitialAdmin(Result<(), LinkError>),
     Json(Result<serde_json::Value, LinkError>),
     Fragment(Result<ScreenModel, LinkError>),
     Raw(Result<RawBody, LinkError>),
@@ -248,6 +300,8 @@ impl Reply {
             | Self::Shell(Err(err))
             | Self::Login(Err(err))
             | Self::SendCode(Err(err))
+            | Self::InitialAdmin(Err(err))
+            | Self::CreateInitialAdmin(Err(err))
             | Self::Json(Err(err))
             | Self::Fragment(Err(err))
             | Self::Raw(Err(err)) => Some(err),
@@ -318,6 +372,20 @@ pub trait ScreenLink: Send + Sync {
         Err(LinkError::Remote("this connection does not send codes".to_string()))
     }
 
+    /// The password rules when the server has no user accounts yet and the login dialog is to create the first
+    /// administrator; None once any account exists, and from a link that does not log in.
+    fn initial_admin(&self) -> Result<Option<AdminSetup>, LinkError> {
+        Ok(None)
+    }
+
+    /// Create the first administrator (`create#InitialAdminAccount`, which refuses once any account exists); the
+    /// dialog then logs in with it.
+    fn create_initial_admin(&self, _account: &AdminAccount) -> Result<(), LinkError> {
+        Err(LinkError::Remote(
+            "this connection does not create accounts".to_string(),
+        ))
+    }
+
     /// A transition's JSON answer.
     fn json(
         &self,
@@ -362,6 +430,8 @@ pub trait ScreenLink: Send + Sync {
                 password,
                 factor,
             } => Reply::SendCode(self.send_code(username, password, factor)),
+            LinkCall::InitialAdmin => Reply::InitialAdmin(self.initial_admin()),
+            LinkCall::CreateInitialAdmin(account) => Reply::CreateInitialAdmin(self.create_initial_admin(account)),
             LinkCall::Json {
                 url,
                 method,
@@ -415,6 +485,14 @@ impl<L: ScreenLink + ?Sized> ScreenLink for Arc<L> {
         (**self).send_code(username, password, factor)
     }
 
+    fn initial_admin(&self) -> Result<Option<AdminSetup>, LinkError> {
+        (**self).initial_admin()
+    }
+
+    fn create_initial_admin(&self, account: &AdminAccount) -> Result<(), LinkError> {
+        (**self).create_initial_admin(account)
+    }
+
     fn json(
         &self,
         url: &str,
@@ -460,6 +538,10 @@ struct Answers {
     password: Option<String>,
     /// With the password, the code a login needs, and the factors a code can be sent to.
     code: Option<(String, Vec<Sendable>)>,
+    /// The server has no accounts yet: these rules, until an administrator is created.
+    admin: Option<AdminSetup>,
+    /// The refusal of the next creation of the administrator.
+    admin_refusal: Option<String>,
 }
 
 /// Fixture files keyed by `screen.path`. Clones share the answers and the log.
@@ -530,9 +612,31 @@ impl FakeLink {
         self.answers().code = Some((code.to_string(), sendable));
     }
 
+    /// The server has no accounts yet: [`ScreenLink::initial_admin`] answers `setup` until an administrator is created,
+    /// whose password a login then takes.
+    pub fn need_initial_admin(&self, setup: AdminSetup) {
+        self.answers().admin = Some(setup);
+    }
+
+    /// The next [`ScreenLink::create_initial_admin`] is refused with `text`. With `accounts`, someone else created the
+    /// first one: setup is no longer needed.
+    pub fn refuse_initial_admin(&self, text: &str, accounts: bool) {
+        let mut answers = self.answers();
+        answers.admin_refusal = Some(text.to_string());
+        if accounts {
+            answers.admin = None;
+        }
+    }
+
     fn record(&self, call: LinkCall) -> Result<(), LinkError> {
         let mut answers = self.answers();
-        let login = matches!(call, LinkCall::Login { .. } | LinkCall::SendCode { .. });
+        let login = matches!(
+            call,
+            LinkCall::Login { .. }
+                | LinkCall::SendCode { .. }
+                | LinkCall::InitialAdmin
+                | LinkCall::CreateInitialAdmin(_)
+        );
         answers.log.push(call);
         if !login && answers.password.is_some() {
             return Err(LinkError::Auth("Authentication required".to_string()));
@@ -735,6 +839,34 @@ impl ScreenLink for FakeLink {
             .find(|each| each.id == factor)
             .map(|each| each.label.clone())
             .ok_or_else(|| LinkError::Remote(format!("no factor {factor}")))
+    }
+
+    fn initial_admin(&self) -> Result<Option<AdminSetup>, LinkError> {
+        self.record(LinkCall::InitialAdmin)?;
+        Ok(self.answers().admin.clone())
+    }
+
+    /// Recorded without the passwords. A creation while setup is needed and none is refused makes the account: a login
+    /// then takes its password.
+    fn create_initial_admin(&self, account: &AdminAccount) -> Result<(), LinkError> {
+        self.record(LinkCall::CreateInitialAdmin(AdminAccount {
+            password: String::new(),
+            verify: String::new(),
+            ..account.clone()
+        }))?;
+        let mut answers = self.answers();
+        if let Some(text) = answers.admin_refusal.take() {
+            return Err(LinkError::Remote(text));
+        }
+        if answers.admin.take().is_none() {
+            return Err(LinkError::Remote(
+                "Can only create initial admin account if there are no UserAccount records".to_string(),
+            ));
+        }
+        if answers.password.is_some() {
+            answers.password = Some(account.password.clone());
+        }
+        Ok(())
     }
 }
 

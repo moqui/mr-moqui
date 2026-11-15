@@ -44,6 +44,25 @@ const LOGIN_ELEMENTS: [(&str, &str); 4] = [
     ("login.submit", "Log in"),
 ];
 
+/// The setup's elements, while the dialog creates the first administrator: its five fields and its button.
+const SETUP_ELEMENTS: [(&str, &str); 6] = [
+    ("login.username", "Username"),
+    ("login.password", "Password"),
+    ("login.verify", "Password again"),
+    ("login.fullName", "Full name"),
+    ("login.email", "Email"),
+    ("login.submit", "Create and log in"),
+];
+
+/// The elements of the login dialog as it is now.
+fn login_elements(login: &crate::session::Login) -> &'static [(&'static str, &'static str)] {
+    if login.setup.is_some() {
+        &SETUP_ELEMENTS
+    } else {
+        &LOGIN_ELEMENTS
+    }
+}
+
 /// The commands, for `help` and for an unknown command's answer.
 pub const AGENT_HELP: &str = "Commands (an element is its id, its number from `elements`, as #3, or whole words of its label):
   look                     the screen again
@@ -930,23 +949,26 @@ impl<L: ScreenLink> Agent<L> {
 
     fn elements(&self) -> Vec<Value> {
         if let Some(login) = self.login() {
-            return LOGIN_ELEMENTS
+            let elements = login_elements(login);
+            let fields = elements.len() - 1;
+            return elements
                 .iter()
                 .enumerate()
                 .map(|(at, (id, label))| {
                     let mut element = json!({
                         "n": at + 1,
-                        "kind": if at < 3 { "text" } else { "button" },
+                        "kind": if at < fields { "text" } else { "button" },
                         "id": id,
                         "label": label,
                         "focused": login.at == at,
                     });
-                    match at {
-                        0 => element["value"] = json!(login.username),
-                        // The password is never in an answer: its length, as the dialog draws it.
-                        1 => element["value"] = json!("•".repeat(login.password.chars().count())),
-                        2 => element["value"] = json!(login.code),
-                        _ => {}
+                    if at < fields {
+                        // A password is never in an answer: its length, as the dialog draws it.
+                        element["value"] = if login.masked(at) {
+                            json!("•".repeat(login.field(at).chars().count()))
+                        } else {
+                            json!(login.field(at))
+                        };
                     }
                     element
                 })
@@ -1005,30 +1027,55 @@ impl<L: ScreenLink> Agent<L> {
         }
     }
 
-    /// One of [`LOGIN_ELEMENTS`] by `#n`, its id or its label (the same label, then one that holds the text).
-    fn login_element(text: &str) -> Option<usize> {
+    /// One of the dialog's elements ([`login_elements`]) by `#n`, its id or its label (the same label, then one that
+    /// holds the text), with the number of its fields: the element past them is the button.
+    fn login_element(&self, text: &str) -> Option<(usize, usize)> {
+        let elements = login_elements(self.login()?);
+        let fields = elements.len() - 1;
         if let Some(n) = text.strip_prefix('#').and_then(|n| n.parse::<usize>().ok()) {
-            return n.checked_sub(1).filter(|at| *at < LOGIN_ELEMENTS.len());
+            return n
+                .checked_sub(1)
+                .filter(|at| *at < elements.len())
+                .map(|at| (at, fields));
         }
         let lower = text.trim().to_lowercase();
-        LOGIN_ELEMENTS
+        elements
             .iter()
-            .position(|(id, label)| *id == lower || label.to_lowercase() == lower)
+            .position(|(id, label)| id.to_lowercase() == lower || label.to_lowercase() == lower)
             .or_else(|| {
-                LOGIN_ELEMENTS
+                elements
                     .iter()
                     .position(|(_, label)| !lower.is_empty() && label.to_lowercase().contains(&lower))
             })
+            .map(|at| (at, fields))
     }
 
-    /// `set` in the login dialog: `set Password secret`.
+    /// `set` in the login dialog: `set Password secret`. A label of more than one word is quoted, or named by its id
+    /// or number: `set login.fullName Jane Doe`.
     fn set_login(&mut self, rest: &str) -> Result<(), String> {
-        let (name, value) = rest
-            .trim()
-            .split_once(char::is_whitespace)
-            .ok_or_else(|| "set takes an element and a value".to_string())?;
-        match Self::login_element(name) {
-            Some(at) if at < 3 => {
+        let rest = rest.trim();
+        // the longest label the words start with, so `set Password again secret` names the second password field
+        let named = self.login().map(login_elements).and_then(|elements| {
+            elements
+                .iter()
+                .map(|(_, label)| *label)
+                .filter_map(|label| {
+                    let head = rest.get(..label.len())?;
+                    let value = rest.get(label.len()..)?;
+                    (head.eq_ignore_ascii_case(label) && value.starts_with(char::is_whitespace))
+                        .then(|| (label.to_string(), value.to_string()))
+                })
+                .max_by_key(|(label, _)| label.len())
+        });
+        let (name, value) = match named {
+            Some(pair) => pair,
+            None => rest
+                .split_once(char::is_whitespace)
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .ok_or_else(|| "set takes an element and a value".to_string())?,
+        };
+        match self.login_element(name.trim_matches('"')) {
+            Some((at, fields)) if at < fields => {
                 self.view.session_mut().set_login_field(at, value.trim());
                 Ok(())
             }
@@ -1036,23 +1083,29 @@ impl<L: ScreenLink> Agent<L> {
         }
     }
 
-    /// `do Log in` sends the dialog; `do` on a field moves to it.
+    /// `do Log in` (in setup `do Create and log in`) sends the dialog; `do` on a field moves to it.
     fn do_login(&mut self, rest: &str) -> Result<(), String> {
-        let at = Self::login_element(rest).ok_or_else(|| format!("no login element named {rest:?}; see elements"))?;
-        if at == 3 {
-            self.press(KeyPress::plain(Key::Enter));
+        let (at, fields) = self
+            .login_element(rest)
+            .ok_or_else(|| format!("no login element named {rest:?}; see elements"))?;
+        if at == fields {
+            let setup = self.login().is_some_and(|login| login.setup.is_some());
+            // setup sends from any field, as Ctrl+S does; the login on Enter
+            self.press(if setup {
+                KeyPress::with_ctrl(Key::Char('s'))
+            } else {
+                KeyPress::plain(Key::Enter)
+            });
             self.settle();
             return match self.login() {
                 Some(login) if !login.error.is_empty() => Err(login.error.clone()),
                 _ => Ok(()),
             };
         }
-        let value = match (self.login(), at) {
-            (Some(login), 0) => login.username.clone(),
-            (Some(login), 1) => login.password.clone(),
-            (Some(login), _) => login.code.clone(),
-            (None, _) => String::new(),
-        };
+        let value = self
+            .login()
+            .map(|login| login.field(at).to_string())
+            .unwrap_or_default();
         self.view.session_mut().set_login_field(at, &value);
         Ok(())
     }
@@ -1369,6 +1422,7 @@ impl<L: ScreenLink> Agent<L> {
             ),
             Overlay::Help => "help".to_string(),
             Overlay::Info => "info".to_string(),
+            Overlay::Login(login) if login.setup.is_some() => "initial admin".to_string(),
             Overlay::Login(_) => "login".to_string(),
             Overlay::Drawer(_) => "drawer".to_string(),
             Overlay::Menu(menu) => format!(

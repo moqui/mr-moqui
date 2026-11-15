@@ -78,19 +78,71 @@ pub struct Picker {
     pub date: jiff::civil::Date,
 }
 
-/// The login dialog after a 401 (section 1.7).
+/// The login dialog after a 401 (section 1.7). While the server has no accounts yet it is in setup, and creates the
+/// first administrator before it logs in (docs/ui/TUI.md, "The login dialog").
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Login {
     pub username: String,
     pub password: String,
     pub code: String,
-    /// 0 username, 1 password, 2 code.
+    /// The field: 0 username, 1 password, 2 code; in setup 0 username, 1 password, 2 password again, 3 full name,
+    /// 4 email.
     pub at: usize,
     pub error: String,
     /// The password was right and a code is wanted: the password is kept for the next try, and these factors take a
     /// sent code (Alt+S sends to the first).
     pub code_wanted: bool,
     pub sendable: Vec<crate::link::Sendable>,
+    /// The server has no accounts: the dialog creates the first administrator, under these password rules.
+    pub setup: Option<crate::link::AdminSetup>,
+    /// The setup's other fields: the password again, the full name and the email.
+    pub verify: String,
+    pub full_name: String,
+    pub email: String,
+}
+
+/// The setup's field labels, by field.
+pub const SETUP_FIELDS: [&str; 5] = ["Username", "Password", "Password again", "Full name", "Email"];
+/// The login's field labels, by field.
+pub const LOGIN_FIELDS: [&str; 3] = ["Username", "Password", "Code"];
+
+impl Login {
+    /// The labels of the fields the dialog has now.
+    pub fn labels(&self) -> &'static [&'static str] {
+        if self.setup.is_some() {
+            &SETUP_FIELDS
+        } else {
+            &LOGIN_FIELDS
+        }
+    }
+
+    /// Whether field `at` is masked.
+    pub fn masked(&self, at: usize) -> bool {
+        at == 1 || (self.setup.is_some() && at == 2)
+    }
+
+    /// The text of field `at` (the last field past the end).
+    pub fn field(&self, at: usize) -> &str {
+        match (self.setup.is_some(), at) {
+            (_, 0) => &self.username,
+            (_, 1) => &self.password,
+            (false, _) => &self.code,
+            (true, 2) => &self.verify,
+            (true, 3) => &self.full_name,
+            (true, _) => &self.email,
+        }
+    }
+
+    pub fn field_mut(&mut self, at: usize) -> &mut String {
+        match (self.setup.is_some(), at) {
+            (_, 0) => &mut self.username,
+            (_, 1) => &mut self.password,
+            (false, _) => &mut self.code,
+            (true, 2) => &mut self.verify,
+            (true, 3) => &mut self.full_name,
+            (true, _) => &mut self.email,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -355,7 +407,7 @@ impl Session {
         };
         if let Some(LinkError::Auth(_)) = reply.error() {
             self.intents.remove(&id);
-            if purpose != Purpose::Login {
+            if !matches!(purpose, Purpose::Login | Purpose::AdminSetup) {
                 self.ask_login();
             }
             return;
@@ -397,6 +449,8 @@ impl Session {
             },
             (Purpose::Login, Reply::Login(result)) => self.login_reply(result),
             (Purpose::Login, Reply::SendCode(result)) => self.code_sent(result),
+            (Purpose::Login, Reply::CreateInitialAdmin(result)) => self.admin_created(result),
+            (Purpose::AdminSetup, Reply::InitialAdmin(result)) => self.admin_setup_reply(result),
             (Purpose::Fragment(id), Reply::Fragment(result)) => self.fragment_reply(&id, result),
             (Purpose::ValueUrl(field), Reply::Json(result)) => self.value_reply(&field, result),
             (Purpose::Palette, Reply::Json(result)) => self.palette_reply(result),
@@ -692,19 +746,15 @@ impl Session {
         self.overlays.last()
     }
 
-    /// Write field `at` of the login dialog on top (0 username, 1 password, 2 code) and move to it, as typing there
-    /// does; false with no login dialog on top.
+    /// Write field `at` of the login dialog on top ([`Login::labels`]) and move to it, as typing there does; false with
+    /// no login dialog on top.
     pub fn set_login_field(&mut self, at: usize, value: &str) -> bool {
         let Some(Overlay::Login(login)) = self.overlays.last_mut() else {
             return false;
         };
-        let text = match at {
-            0 => &mut login.username,
-            1 => &mut login.password,
-            _ => &mut login.code,
-        };
-        *text = value.to_string();
-        login.at = at.min(2);
+        let at = at.min(login.labels().len() - 1);
+        *login.field_mut(at) = value.to_string();
+        login.at = at;
         true
     }
 
