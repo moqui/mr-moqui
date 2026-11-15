@@ -172,6 +172,8 @@ pub struct ShellInfo {
     pub drawer_open: Option<bool>,
     /// The user's choice of the mouse (`TUI_MOUSE`), None when not made: then it is on.
     pub mouse: Option<bool>,
+    /// The key scheme: the user's `TUI_KEYS`, else the theme's `STRT_TUI_KEY_SCHEME`; None for neither, then Modern.
+    pub key_scheme: Option<crate::keys::KeyScheme>,
 }
 
 /// A quick create item or a palette action: what it is called, and the screen or form it opens.

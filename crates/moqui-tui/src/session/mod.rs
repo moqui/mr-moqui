@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 use crate::components::ComponentState;
 use crate::edit::{self, Edited, Limits};
 use crate::forms::{self, Extra, FocusItem, FocusKind, Index, Scope};
-use crate::keys::{merge_keys, Action, Key, KeyMap, KeyPress, MergeSkip};
+use crate::keys::{scheme_keys, Action, Key, KeyMap, KeyPress, KeyScheme, MergeSkip};
 use crate::layout::PAGE_ROWS;
 use crate::link::{row_link, row_link_target, LinkCall, LinkError, MenuItem, RawBody, Reply, ScreenLink, ShellInfo};
 use crate::model::{Choice, FormList, Node, ScreenModel, Widget};
@@ -242,6 +242,9 @@ pub struct Session {
     after_level: Option<String>,
     keys: KeyMap,
     key_skips: Vec<MergeSkip>,
+    /// The key scheme in use, and the one `--keys` (or an agent) asked for, which wins over the shell's.
+    scheme: KeyScheme,
+    scheme_override: Option<KeyScheme>,
     shell: ShellInfo,
     numbering: bool,
     /// The link pushes notifications, so the counters are read on a push rather than each minute.
@@ -260,6 +263,9 @@ pub struct Session {
     /// the fallback hint the first one gives.
     copy: Option<String>,
     copied_before: bool,
+    /// What Ctrl+C or Ctrl+X took last, in a field, a list or the code editor, for Ctrl+V in a text field. The
+    /// terminal's own paste (bracketed) brings the system clipboard in.
+    clip: String,
     /// The screen asked for last, asked for again after a login.
     last_location: Option<Location>,
     quit: bool,
@@ -332,8 +338,10 @@ impl Session {
             intents: BTreeMap::new(),
             submitted: None,
             after_level: None,
-            keys: KeyMap::baseline(),
+            keys: KeyMap::for_scheme(KeyScheme::default()),
             key_skips: Vec::new(),
+            scheme: KeyScheme::default(),
+            scheme_override: None,
             shell: ShellInfo::default(),
             numbering: false,
             pushed: false,
@@ -345,6 +353,7 @@ impl Session {
             mouse_told: None,
             copy: None,
             copied_before: false,
+            clip: String::new(),
             last_location: None,
             quit: false,
             open: None,
@@ -867,6 +876,54 @@ impl Session {
         &self.keys
     }
 
+    /// The key scheme in use.
+    pub fn key_scheme(&self) -> KeyScheme {
+        self.scheme
+    }
+
+    /// Use `scheme` whatever the user's `TUI_KEYS` says (`--keys`, an agent's Classic); None goes back to the
+    /// user's. Nothing is saved.
+    pub fn set_key_scheme_override(&mut self, scheme: Option<KeyScheme>) {
+        self.scheme_override = scheme;
+        self.rebuild_keys();
+    }
+
+    /// Modern's `j` and `k` are Down and Up in a list's or a tree's rows, as in vi; past the ends the keymap moves the
+    /// focus on, as for the arrows.
+    pub(super) fn vi_rows(&self, press: &KeyPress) -> KeyPress {
+        match press.key {
+            Key::Char('j') if press.is_plain() && self.scheme == KeyScheme::Modern => KeyPress::plain(Key::Down),
+            Key::Char('k') if press.is_plain() && self.scheme == KeyScheme::Modern => KeyPress::plain(Key::Up),
+            _ => press.clone(),
+        }
+    }
+
+    /// The keymap of the scheme in effect, `--keys`'s, else the user's, else Modern, with the theme's rows over it.
+    fn rebuild_keys(&mut self) {
+        self.scheme = self.scheme_override.or(self.shell.key_scheme).unwrap_or_default();
+        let overrides: Vec<(&str, &str)> = self.shell.keys.iter().map(|(a, c)| (a.as_str(), c.as_str())).collect();
+        let (keys, skips) = scheme_keys(self.scheme, &overrides);
+        self.keys = keys;
+        self.key_skips = skips;
+    }
+
+    /// The palette's Keys row: use `scheme` from now on, and keep it as the user's `TUI_KEYS`.
+    pub(super) fn choose_key_scheme(&mut self, scheme: KeyScheme) {
+        self.shell.key_scheme = Some(scheme);
+        self.scheme_override = None;
+        self.rebuild_keys();
+        self.keep_preference("TUI_KEYS", scheme.name());
+        let palette = self
+            .keys
+            .chords(Action::Palette)
+            .first()
+            .map_or_else(|| "Ctrl+K".to_string(), |press| press.label());
+        self.set_message(
+            format!("Keys: {}. {palette}, then Keys, to change.", scheme.title()),
+            false,
+        );
+    }
+
     /// Theme key rows that were not applied, for the log.
     pub fn key_skips(&self) -> &[MergeSkip] {
         &self.key_skips
@@ -1004,8 +1061,55 @@ impl Session {
             );
             self.copied_before = true;
         }
+        self.clip.clone_from(&kept);
         self.copy = Some(kept);
         self.set_message(message, false);
+    }
+
+    /// Ctrl+C outside a text field: the focused field's value, the current row's cells (tab between them), a link's
+    /// text. It never quits; with nothing to copy it says what does.
+    fn copy_focused(&mut self) {
+        let text = self.focus().cloned().map_or_else(String::new, |item| match item.kind {
+            FocusKind::List => {
+                let at = self.row_at(&item.key);
+                self.list_page(&item.key)
+                    .get(at)
+                    .map(|row| {
+                        row.cells
+                            .iter()
+                            .map(|cell| cell.text().trim())
+                            .collect::<Vec<_>>()
+                            .join("\t")
+                    })
+                    .unwrap_or_default()
+            }
+            FocusKind::Link => self
+                .index
+                .links
+                .get(&item.key)
+                .map(|link| {
+                    if link.text.is_empty() {
+                        link.url.clone()
+                    } else {
+                        link.text.clone()
+                    }
+                })
+                .unwrap_or_default(),
+            FocusKind::Text | FocusKind::Check | FocusKind::Radio | FocusKind::DropDown => {
+                self.buffer(&item.key).to_string()
+            }
+            _ => String::new(),
+        });
+        if text.trim().is_empty() {
+            let quit = self
+                .keys
+                .chords(Action::Quit)
+                .first()
+                .map_or_else(|| "Ctrl+Q".to_string(), |press| press.label());
+            self.set_message(format!("Nothing to copy here. {quit} quits."), false);
+        } else {
+            self.copy_text(text);
+        }
     }
 
     /// A Markdown text area shows its preview rather than its source.
@@ -1407,7 +1511,7 @@ impl Session {
             Action::Mouse => {
                 let on = !self.mouse_on();
                 self.mouse = Some(on);
-                self.keep_preference("TUI_MOUSE", on);
+                self.keep_preference("TUI_MOUSE", if on { "true" } else { "false" });
                 let text = if on {
                     "Mouse on: click, scroll, drag to copy. Alt+P gives the terminal its own selection."
                 } else {
@@ -1434,6 +1538,40 @@ impl Session {
                     self.follow_url(&url);
                 }
             }
+            Action::TabNext | Action::TabPrev => self.step_tab(action == Action::TabNext),
+            Action::First | Action::Last => self.focus_end(action == Action::Last),
+            Action::Copy => self.copy_focused(),
+        }
+    }
+
+    /// Ctrl+PgDn and Ctrl+PgUp: the subscreen tab after or before the current one, round the end.
+    fn step_tab(&mut self, forward: bool) {
+        let tabs = &self.index.tabs;
+        if tabs.is_empty() {
+            return;
+        }
+        let count = tabs.len();
+        let at = tabs.iter().position(|tab| tab.active).unwrap_or(0);
+        let next = if forward {
+            (at + 1) % count
+        } else {
+            (at + count - 1) % count
+        };
+        let url = tabs[next].url.clone();
+        self.follow_url(&url);
+    }
+
+    /// Home and End: a list's first and last row of the page, else the first and last thing to focus.
+    fn focus_end(&mut self, last: bool) {
+        if let Some(item) = self.focus().cloned().filter(|item| item.kind == FocusKind::List) {
+            let rows = self.list(&item.key).map_or(0, |list| list.rows.len());
+            if rows > 0 {
+                self.rows.insert(item.key, if last { rows - 1 } else { 0 });
+                return;
+            }
+        }
+        if !self.focus.is_empty() {
+            self.focus_at = if last { self.focus.len() - 1 } else { 0 };
         }
     }
 
@@ -1445,9 +1583,17 @@ impl Session {
             FocusKind::DropDown => self.open_dropdown(&item.key),
             FocusKind::Link => self.follow_link(&item.key),
             FocusKind::List => {
-                // A row that has fields to edit opens its editor; else its first link.
                 let at = self.row_at(&item.key);
-                if self.index.rows.contains_key(&(item.key.clone(), at)) {
+                let editable = self.index.rows.contains_key(&(item.key.clone(), at));
+                // Modern: Enter follows the row's first link, else edits the row (`e` always edits). Classic: a row
+                // that has fields to edit opens its editor, else its first link (Right follows).
+                if self.scheme == KeyScheme::Modern {
+                    if !self.follow_row_link(&item.key, at) && editable {
+                        self.edit_row();
+                    }
+                    return;
+                }
+                if editable {
                     self.edit_row();
                     return;
                 }
@@ -1498,6 +1644,8 @@ impl Session {
         self.request_level(&location.path, location.parameters, Intent::Navigate { history: false });
     }
 
+    /// Esc: close the top dialog, find or row editor. Then, in Modern, open the palette; in Classic, clear the message,
+    /// else leave the edits after asking.
     fn cancel(&mut self) {
         if let Some(top) = self.overlays.last() {
             if matches!(top, Overlay::Dialog(_) | Overlay::Find(_) | Overlay::Row(..)) {
@@ -1505,6 +1653,11 @@ impl Session {
                 self.drop_closed_extras();
                 self.rebuild_focus();
             }
+            return;
+        }
+        if self.scheme == KeyScheme::Modern {
+            self.clear_message();
+            self.open_palette(false);
             return;
         }
         if !self.message().is_empty() {
@@ -1839,10 +1992,9 @@ impl Session {
     }
 
     fn apply_shell(&mut self, shell: ShellInfo) {
-        let overrides: Vec<(&str, &str)> = shell.keys.iter().map(|(a, c)| (a.as_str(), c.as_str())).collect();
-        let (keys, skips) = merge_keys(&KeyMap::baseline(), &overrides);
-        self.keys = keys;
-        self.key_skips = skips;
+        self.shell.keys.clone_from(&shell.keys);
+        self.shell.key_scheme = shell.key_scheme;
+        self.rebuild_keys();
         if self.mouse.is_none() {
             self.mouse = shell.mouse;
         }

@@ -1346,6 +1346,11 @@ fn shell_values(data: &serde_json::Value, shell: &mut ShellInfo) {
         .get("tui")
         .and_then(|tui| tui.get("mouse"))
         .and_then(serde_json::Value::as_bool);
+    shell.key_scheme = data
+        .get("tui")
+        .and_then(|tui| tui.get("keyScheme"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(moqui_tui::KeyScheme::parse);
 }
 
 /// The path and query of a redirect's location: a full url keeps what follows its host.

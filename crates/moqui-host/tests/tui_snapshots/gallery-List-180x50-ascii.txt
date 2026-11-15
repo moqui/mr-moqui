@@ -40,9 +40,9 @@
                          |   [ ] EMT_UPD_INFO_CONFIRM         Update Personal Info Confirmation Email Type Plain                 <stamp> Open
                          |                                                                                                                        Clone
                          |   Rows 1-12 of 12 - Page 1/1   Find: Type = EmailType
+                         | Tag  : [reviewed_______]
+                         | < Tag selected >
                          | Back to the Landing
-                         |
-                         |
                          |
                          |
 -------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------

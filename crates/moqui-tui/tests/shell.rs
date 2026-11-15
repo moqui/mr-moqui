@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use moqui_tui::{
-    FakeLink, Key, KeyPress, LinkCall, MenuItem, Overlay, RawBody, Session, ShellAction, ShellInfo, Timer,
+    FakeLink, Key, KeyPress, KeyScheme, LinkCall, MenuItem, Overlay, RawBody, Session, ShellAction, ShellInfo, Timer,
 };
 
 const MAIN_JSON: &str = r#"{
@@ -210,7 +210,7 @@ fn the_palette_finds_apps_then_asks_the_server_once_the_typing_stops() {
     assert!(calls(&link).iter().any(|call| matches!(call,
         LinkCall::Level { path, parameters } if path == "/apps/sales" && parameters.get("note").map(String::as_str) == Some("A B")
     )));
-    press(&mut session, &link, Key::F(3));
+    session.press(&KeyPress::with_alt(Key::Left), &link);
     assert_eq!(session.path(), "/apps/app/Main");
     session.press(&KeyPress::with_ctrl(Key::Char('k')), &link);
     typed(&mut session, &link, "sa");
@@ -246,7 +246,7 @@ fn go_to_takes_a_path_or_a_menu_title() {
 #[test]
 fn quick_create_opens_its_form_in_a_dialog() {
     let (mut session, link) = started();
-    press(&mut session, &link, Key::F(6));
+    press(&mut session, &link, Key::Char('+'));
     let Some(Overlay::Menu(menu)) = session.top_overlay() else {
         panic!("{:?}", session.overlays());
     };
@@ -444,6 +444,8 @@ fn a_menu_group_is_a_heading_above_its_run_of_items() {
 #[test]
 fn enter_on_a_disabled_drawer_row_keeps_the_drawer_open() {
     let (mut session, link) = started();
+    // Classic, where Right follows a drawer row as Enter does.
+    session.set_key_scheme_override(Some(KeyScheme::Classic));
     session.set_menu(vec![MenuItem {
         title: "App".to_string(),
         url: "/apps/app".to_string(),
@@ -729,7 +731,7 @@ fn app_links_use_the_terminal_mount_but_explicit_browser_opening_keeps_the_mater
         .calls()
         .iter()
         .any(|call| matches!(call, LinkCall::Level {path, ..} if path.starts_with("/qapps/"))));
-    press(&mut session, &link, Key::F(3));
+    session.press(&KeyPress::with_alt(Key::Left), &link);
     press(&mut session, &link, Key::Tab);
     assert_eq!(session.focus_id(), "outside");
     press(&mut session, &link, Key::Enter);
@@ -753,7 +755,7 @@ fn app_links_use_the_terminal_mount_but_explicit_browser_opening_keeps_the_mater
     );
     assert!(session.focus_key("Files"));
     let before_inline = link.calls().len();
-    press(&mut session, &link, Key::Right);
+    press(&mut session, &link, Key::Enter);
     assert_eq!(
         session.take_open().as_deref(),
         Some("/apps/app/estimateFile?id=E1&note=A%20B")

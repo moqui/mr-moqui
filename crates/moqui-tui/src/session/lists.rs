@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::Session;
 use crate::forms::FocusKind;
-use crate::keys::{Key, KeyPress};
+use crate::keys::{Key, KeyPress, KeyScheme};
 use crate::layout::PAGE_ROWS;
 use crate::link::LinkCall;
 use crate::model::{FormList, Node};
@@ -30,6 +30,7 @@ impl Session {
         let Some(item) = self.focus().cloned().filter(|item| item.kind == FocusKind::List) else {
             return false;
         };
+        let press = &self.vi_rows(press);
         let rows = self.list(&item.key).map_or(0, |list| list.rows.len());
         let at = self.row_at(&item.key);
         match (&press.key, press.shift) {
@@ -41,8 +42,11 @@ impl Session {
                 self.rows.insert(item.key, at + 1);
                 true
             }
-            // Right follows the row's link as Lynx does; Enter edits a row that has fields.
-            (Key::Right, false) if press.is_plain() => self.follow_row_link(&item.key, at),
+            // Classic: Right follows the row's link as Lynx does; Enter edits a row that has fields. Modern leaves Left
+            // and Right to the keymap, which moves the focus.
+            (Key::Right, false) if press.is_plain() && self.scheme == KeyScheme::Classic => {
+                self.follow_row_link(&item.key, at)
+            }
             (Key::Right, true) => {
                 *self.hscroll.entry(item.key).or_default() += 1;
                 true

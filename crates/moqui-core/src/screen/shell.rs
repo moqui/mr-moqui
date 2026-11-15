@@ -1254,7 +1254,37 @@ fn tui_values(theme: &str) -> Value {
     out.insert("keys".to_string(), map("STRT_TUI_KEYS"));
     out.insert("drawerOpen".to_string(), flag_preference("TUI_DRAWER_OPEN"));
     out.insert("mouse".to_string(), flag_preference("TUI_MOUSE"));
+    out.insert("keyScheme".to_string(), key_scheme(theme, &rows("STRT_TUI_KEY_SCHEME")));
     Value::Map(out)
+}
+
+/// The key schemes of the terminal client (`moqui_tui::KeyScheme`'s names).
+const TUI_KEY_SCHEMES: [&str; 2] = ["modern", "classic"];
+
+/// The terminal client's key scheme: the user's `TUI_KEYS` preference, else the theme's `STRT_TUI_KEY_SCHEME`; null for
+/// neither, and the client uses Modern. A value that is not a scheme is logged and passed over.
+fn key_scheme(theme: &str, theme_rows: &[String]) -> Value {
+    let known = |text: &str| {
+        let name = text.trim().to_ascii_lowercase();
+        TUI_KEY_SCHEMES.contains(&name.as_str()).then_some(name)
+    };
+    match user::get_preference("TUI_KEYS") {
+        Ok(Some(text)) if !text.trim().is_empty() => match known(&text) {
+            Some(name) => return Value::string(name),
+            None => tracing::warn!("Preference TUI_KEYS [{text}] is not modern or classic; it is left unset"),
+        },
+        Ok(_) => {}
+        Err(err) => tracing::error!("Could not read preference TUI_KEYS for the shell: {err}"),
+    }
+    for row in theme_rows {
+        match known(row) {
+            Some(name) => return Value::string(name),
+            None => {
+                tracing::warn!("Theme {theme} STRT_TUI_KEY_SCHEME [{row}] is not modern or classic; it is left out")
+            }
+        }
+    }
+    Value::Null
 }
 
 /// A true or false preference of the user's terminal client: `TUI_DRAWER_OPEN` (F9's choice) and `TUI_MOUSE` (Alt+P's);

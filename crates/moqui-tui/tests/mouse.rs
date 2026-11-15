@@ -110,9 +110,9 @@ fn the_hit_map_names_what_is_under_each_cell() {
         })
     );
     assert_eq!(view.target_at(5, 0), Some(Target::Title));
-    // The key line's F3 is Back.
+    // The key line's Backspace is Back.
     let keys = lines.len() - 1;
-    let back = lines[keys].find("F3=Back").unwrap();
+    let back = lines[keys].find("Backspace=Back").unwrap();
     assert_eq!(
         view.target_at(u16::try_from(back + 1).unwrap(), u16::try_from(keys).unwrap()),
         Some(Target::KeyLine(Action::Back))

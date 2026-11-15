@@ -472,6 +472,15 @@ fn date_picker(paint: &mut Painter, picker: &crate::session::Picker, canvas: Rec
 fn help(paint: &mut Painter, session: &Session, canvas: Rect) {
     let keys = session.keys();
     let mut lines = Vec::new();
+    let palette = keys
+        .chords(Action::Palette)
+        .first()
+        .map_or_else(|| "Ctrl+K".to_string(), |press| press.label());
+    lines.push(format!(
+        "Keys: {}. To change: {palette}, then Keys.",
+        session.key_scheme().title()
+    ));
+    lines.push(String::new());
     if !session.docs().is_empty() {
         lines.push("Documents (press the number):".to_string());
         for (at, (title, _)) in session.docs().iter().enumerate().take(9) {

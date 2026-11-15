@@ -26,7 +26,7 @@ use super::{
 };
 use crate::edit::{self, Limits};
 use crate::forms::{Extra, FocusItem, FocusKind};
-use crate::keys::{Action, Key, KeyPress};
+use crate::keys::{Action, Key, KeyPress, KeyScheme};
 use crate::link::{LinkCall, LinkError, MenuItem, RawBody};
 use crate::model::Node;
 use crate::nav::Location;
@@ -86,6 +86,8 @@ pub enum MenuAct {
     Act(Action),
     /// An Assist pane's choice.
     Assist(crate::assist::Act),
+    /// Use this key scheme, and keep it as the user's `TUI_KEYS`.
+    KeyScheme(KeyScheme),
 }
 
 /// The palette: what is typed, the highlighted row, and whether it is `g`'s go to.
@@ -274,6 +276,12 @@ impl Session {
                 rows.push(row("Recent", &location.path, &url, MenuAct::Url(url.clone())));
             }
         }
+        // The client's own choice: the other key scheme.
+        let other = self.key_scheme().other();
+        let keys = format!("Keys: switch to {}", other.title());
+        if hit(&keys) || hit("key bindings") {
+            rows.push(row("Actions", &keys, "Key bindings", MenuAct::KeyScheme(other)));
+        }
         for action in self.shell.actions.iter().chain(&self.shell.quick_create) {
             if hit(&action.label) {
                 rows.push(row(
@@ -316,6 +324,9 @@ impl Session {
             Key::Escape | Key::F(12) => return,
             Key::Up => palette.at = palette.at.saturating_sub(1),
             Key::Down | Key::Tab => palette.at = (palette.at + 1).min(last),
+            // emacs and fzf: Ctrl+P and Ctrl+N up and down
+            Key::Char('p') if press.ctrl => palette.at = palette.at.saturating_sub(1),
+            Key::Char('n') if press.ctrl => palette.at = (palette.at + 1).min(last),
             Key::Enter => {
                 if let Some(row) = rows.get(palette.at) {
                     let act = row.act.clone();
@@ -434,6 +445,11 @@ impl Session {
             Key::Escape | Key::F(12) | Key::F(10) => return,
             Key::Up => menu.at = menu.at.saturating_sub(1),
             Key::Down | Key::Tab => menu.at = (menu.at + 1).min(last),
+            // Modern: Left and Right move as Up and Down do (Enter alone picks); Ctrl+P and Ctrl+N as in emacs.
+            Key::Left if self.scheme == KeyScheme::Modern => menu.at = menu.at.saturating_sub(1),
+            Key::Right if self.scheme == KeyScheme::Modern => menu.at = (menu.at + 1).min(last),
+            Key::Char('p') if press.ctrl => menu.at = menu.at.saturating_sub(1),
+            Key::Char('n') if press.ctrl => menu.at = (menu.at + 1).min(last),
             Key::Home => menu.at = 0,
             Key::End => menu.at = last,
             Key::Enter | Key::Right => {
@@ -486,6 +502,7 @@ impl Session {
             }
             MenuAct::EditRow => self.edit_row(),
             MenuAct::Act(action) => self.act(action),
+            MenuAct::KeyScheme(scheme) => self.choose_key_scheme(scheme),
             MenuAct::Assist(act) => self.run_assist_act(act),
         }
     }
@@ -782,11 +799,11 @@ impl Session {
 
     /// The drawer's choice is kept as the user's preference, as qvt keeps `QUASAR_LEFT_OPEN`.
     pub(super) fn keep_drawer(&mut self, open: bool) {
-        self.keep_preference("TUI_DRAWER_OPEN", open);
+        self.keep_preference("TUI_DRAWER_OPEN", if open { "true" } else { "false" });
     }
 
-    /// A choice of the user's kept on the server: the drawer, the mouse.
-    pub(super) fn keep_preference(&mut self, key: &str, value: bool) {
+    /// A choice of the user's kept on the server: the drawer, the mouse, the key scheme.
+    pub(super) fn keep_preference(&mut self, key: &str, value: &str) {
         self.lanes.push(
             Purpose::Preference,
             LinkCall::Json {

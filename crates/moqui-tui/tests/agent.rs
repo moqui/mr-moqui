@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 
 use moqui_tui::{
-    gallery_link, AdminSetup, Agent, Choice, FakeLink, LinkCall, MenuItem, ShellInfo, GALLERY_DETAIL_PATH,
+    gallery_link, AdminSetup, Agent, Choice, FakeLink, KeyScheme, LinkCall, MenuItem, ShellInfo, GALLERY_DETAIL_PATH,
     GALLERY_LIST_PATH,
 };
 
@@ -51,6 +51,24 @@ fn an_answer_names_the_place_and_focus_and_ends_with_its_outcome() {
     assert_eq!(text.last(), Some(&"--- ok"));
     // The focused element is drawn in reverse video, so it is between [[ and ]].
     assert!(answer.text.contains("[["), "{}", answer.text);
+}
+
+/// An agent's keys are Classic whatever the user chose, so `key Right` follows a row; `--keys modern` changes that.
+#[test]
+fn an_agent_uses_classic_keys_unless_told() {
+    let link = gallery_link();
+    link.answer_shell(ShellInfo {
+        key_scheme: Some(KeyScheme::Modern),
+        ..ShellInfo::default()
+    });
+    let mut agent = Agent::open(link, GALLERY_LIST_PATH, 100, 40);
+    assert_eq!(agent.session().key_scheme(), KeyScheme::Classic);
+    assert!(agent.run("focus EnumList").ok);
+    let answer = agent.run("key Right");
+    assert!(answer.ok, "{}", answer.text);
+    assert_eq!(agent.session().path(), GALLERY_DETAIL_PATH);
+    agent.set_key_scheme(KeyScheme::Modern);
+    assert_eq!(agent.session().key_scheme(), KeyScheme::Modern);
 }
 
 #[test]
