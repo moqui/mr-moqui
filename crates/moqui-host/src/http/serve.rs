@@ -551,7 +551,19 @@ where
     B: hyper::body::Body<Data = axum::body::Bytes> + Send + 'static,
     B::Error: Into<axum::BoxError>,
 {
-    let (remote, client) = (peer.remote, peer.client);
+    let (mut remote, mut client) = (peer.remote, peer.client);
+    // a client spec's own requester address, on a server of `moqui test --serve` only (test_peer.rs)
+    let named = request
+        .headers()
+        .get(super::test_peer::HEADER)
+        .map(|value| value.to_str().ok());
+    if let Some(value) = named {
+        if let Some(address) = super::test_peer::named(remote.ip(), value) {
+            remote = SocketAddr::new(address, remote.port());
+            client = address;
+        }
+        request.headers_mut().remove(super::test_peer::HEADER);
+    }
     #[cfg(feature = "xmpp")]
     if let Some(exporter) = &peer.exporter {
         request

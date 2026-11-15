@@ -697,7 +697,8 @@ The specs of `runtime/components/addon/mr-mantle/test` are the largest set, port
 
 Tests from outside the server, over HTTP, WebSocket and headless Chromium, with a load runner, are the specs of a
 component's `test/client/`, which `moqui test-client` runs against a running server:
-[JS-Test-Client](dev/JS-Test-Client.md). Load scripts are a component's `test/load/*.load.js`, which `moqui
+[JS-Test-Client](dev/JS-Test-Client.md). Each client spec's sessions reach a test server from an address of their own
+in 127.0.0.0/8, so a limit keyed by the requester counts per spec ([`--serve`](dev/JS-Test-Client.md#--serve)). Load scripts are a component's `test/load/*.load.js`, which `moqui
 test-load` and Tools › Load run: [JS-Test-Load](dev/JS-Test-Load.md) for writing one,
 [Load-Runner](tools/Load-Runner.md) for running it and reading its result.
 

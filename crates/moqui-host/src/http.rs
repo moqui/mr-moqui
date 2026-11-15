@@ -40,6 +40,7 @@ use crate::notws;
 pub(crate) mod admission;
 mod serve;
 mod stream;
+pub(crate) mod test_peer;
 #[cfg(feature = "edge")]
 pub(crate) use serve::h2_request_form;
 pub(crate) use serve::{http1_builder, run_connection, Activity, Http, Serving};
@@ -1687,7 +1688,11 @@ fn status_allowed(configured: &str, ip: &str) -> bool {
             allowed.push(extra.to_string());
         }
     }
+    // any address in 127.0.0.0/8 is loopback (a client spec's own address on a test server, test_peer.rs)
     allowed.iter().any(|item| item == ip)
+        || ip
+            .parse::<IpAddr>()
+            .is_ok_and(|address| address.to_canonical().is_loopback())
 }
 
 fn from_web(factory: &Arc<moqui_core::context::ExecutionContextFactory>, mut response: WebResponse) -> Response {
