@@ -31,6 +31,21 @@ authenticator app, a single-use code, or one sent by email or SMS). A right pass
 which factors the account has, and keeps the password for the next try only; Alt+S sends a code to the first factor
 that takes one, when there is one. Esc closes the dialog and forgets what was typed.
 
+On a system with no user accounts yet (after a production data load; the seed accounts nobody logs in as do not count),
+the dialog creates the first administrator, as the browser's `/Login` page does. As it opens it asks the server
+(`UserServices.get#InitialAdminNeeded`, over HTTP the Login screen's `initialAdminNeeded`), and shows the login until
+the answer comes. On a system with no accounts the dialog becomes "Welcome to your new system: create the first
+administrator", with Username, Password, Password again, Full name and Email, and the password rules ("at least 12
+characters, 1 digit, 1 other"). Tab, Down, Up and Shift+Tab move between the fields; Enter goes to the next field and
+sends from the last, and Ctrl+S or Alt+Enter sends from any. The client checks that every field is filled and the two
+passwords match before it sends. The account is made by `create#InitialAdminAccount`, in the `ADMIN` group, and the
+dialog then logs in with it, as a login does (with `--server` the login key is kept). A refusal (the password rules,
+an email that is not one) shows in the dialog and clears both passwords. If an account exists by then, someone else
+made the first one: the dialog is the login again, with the username kept. Over SSH a refused creation counts as a
+refused login, and the session still closes without a login within 2 minutes ("Over SSH"). In `--agent` the overlay is
+`initial admin`, its fields are the elements (`set Full name Ada Admin`), and `do Create and log in` sends it.
+`GET /Login?renderMode=tui` (and `--snapshot /Login`) shows the same form while no account exists.
+
 ## A running server (`--server`)
 
 `moqui tui --server <url>` is the same client for a server that is already running, here or elsewhere. It boots no
@@ -433,11 +448,43 @@ The framework's components, with their props documented at the top of each file 
 
 | Name | Shows | Keys |
 | --- | --- | --- |
+| `artifact-browser` | A reference graph as Miller columns: what uses the center, the center (its lines and its links, each with its key), what it uses, each side in sections by kind; `source` answers `{center, usedBy, uses, kinds, filter}` and is asked again (`Act::Call`) for each new center or filter. A row on the trail is marked `↺`. Narrower than 100 columns the panes stack and one shows at a time. Dev AIDE's Browser twin (`Artifacts/BrowseTui`) | Up/Down, PgUp/PgDn, Home/End in a column; Left/Right the column (or pane); Enter makes the row the center; Backspace and `]` back and forward on the trail; `k` the next kind; `h` hide framework; `x` hide observed-only; each link's own key (`t` Text, `y` Try, `d` Data, `p` Preview, `r` Refs, `D` Doc) |
 | `board` | Cards in columns by group from lg, else grouped under headings; `source` answers `{groups, rows}`, or the props hold them (a list's board view) | Up/Down, Left/Right (wide), `m` moves a card through `move`, Enter opens `open` |
 | `calendar` | An agenda by day, with the month grid from lg; `source` answers `{month, events}`, or the props hold the events; an event's `_open` is its screen | Up/Down, PgUp/PgDn months, `t` today |
 | `calcgrid` | A CalcGrid workbook's sheet ([Database](../tools/Database.md#calc-mode)): the formula bar, the column letters, the cells that fit (frozen rows and columns kept, numbers right, a text running on into empty cells, bold and underline), the sheet tabs, and who else has it open and where; `room` is what `open#CalcDocument` answered when the screen drew, and the screen's `calc*` transitions answer the rest | Arrows, PgUp/PgDn, Home/End, Shift to select; Enter or `e` edits a cell, `=` or a digit starts one (Tab takes a completion); Delete; `u`/`U` undo and redo; `b` `i` `_`; `[` `]` sheets; `<` `>` width; `F` freeze; `d` fill down; `c` charts; `z` kiosk; `R` refresh; `m` the rest |
 | `chart` | A table of the datasets (`labels`, `series`) with a bar for the first series | `r` reads again |
+| `code` | An editor for one text: line numbers with problem marks (`!` an error, `·` a warning), light highlighting, long lines scrolled sideways, and a status line (Ln/Col, the language, `●` when changed, the problem at the cursor); below | Arrows, Home/End, PgUp/PgDn, Ctrl+Home/End; Ctrl+Left/Right by word; Shift to select; Ctrl+C/X/V; Tab/Shift+Tab indent and outdent; Esc lets go; Ctrl+Z/Y; Ctrl+G; Ctrl+F, F3/Shift+F3; Ctrl+Space; F8/Shift+F8 |
 | `timeline` | Entries (`items`) in order, each its time, title and text | Up/Down, Enter |
+
+The `code` component's props:
+
+- `text`; `language` (`xml`, `js`, `json`, `sql`, `md`, else plain text); `readOnly`; `cursorLine` (1-based), where
+  the cursor starts; `rows`, the lines shown (else what fits the terminal).
+- `form` and `field` name a field of the form the component is in, usually a `hidden` one. Each edit sets that field as
+  typing in a field does, so the form's own submit posts the text: Ctrl+S or Alt+Enter with the editor focused submits
+  the form `form` names.
+- `problems`, `[{line, column, severity, message}]`, 1-based, severity `error`, `warning` or `info`.
+- `check`: a transition posted with `text` and `language` 800 ms after the typing stops. Its answer's `problems`
+  take the place of the props'.
+- `complete`: a transition for Ctrl+Space. For XML it answers a schema digest (`{digest}`, as `get#SchemaDigest` does
+  for the `rootElement` posted). The component keeps the digest and offers from it the elements the enclosing element
+  takes, the attributes the tag does not have yet, or an attribute's values. For another language it answers a list of
+  choices (`items`, `completions`, or the list itself; each a string or `{label, insert, detail}`), asked for with
+  `text`, `line`, `column`, `prefix` and `language`. The list opens under the cursor's line: typing narrows it, Up and
+  Down choose, Enter or Tab takes one, Esc closes it.
+- `parameters`: an object of parameters posted with `check` and `complete` as well, such as a root and a path. A
+  query string on either url is posted too.
+
+A focused component sees each key before the screen's keymap, so the editor keeps Tab, Shift+Tab, Esc, PgUp/PgDn, F3
+and F8. Esc lets go of the focus: then Tab and Shift+Tab move to the next field and a second Esc is the screen's (a
+dialog closes), and any other key takes the focus back. Ctrl+F opens a find line under the status line; F3 and
+Shift+F3 go to the next and previous match, and F3 opens the find line when nothing has been searched. Ctrl+G asks for a
+line number. Ctrl+C and Ctrl+X put the selection, or the cursor's line when nothing is selected, on the terminal's
+clipboard (OSC 52, as a drag does) and keep it for Ctrl+V. The terminal does not hand its clipboard to a program, so
+text copied elsewhere comes in with the terminal's own paste (Ctrl+Shift+V, or Cmd+V), which the editor takes as one
+edit. Undo keeps the last 200 edits; typed characters on one line undo together. A read-only text refuses edits with a
+message; it does not hold Tab, so Tab moves on from it. The keys the editor does not use go on to the screen's: F1, F5,
+Ctrl+K, Ctrl+S, the Alt keys. Ctrl+Z and Ctrl+Y act only in the editor; no screen key uses them.
 
 A name the client does not know draws a placeholder naming it, and `=` lists the components the client has: a remote
 client knows only those it was built with. An add-on crate registers its own behind a `tui` feature of its crate, which
@@ -455,7 +502,9 @@ A component implements `moqui_tui::Component`: where its data comes from (a tran
 lines at a width (spans in theme roles, so it needs no Revue), its keys (moves, and what it asks of the session: reload,
 post, follow, a message), and its help. Its state's `rows` is the terminal's rows, for a component that loads what
 fits on screen; `Act::Call` posts to a transition that answers JSON and gives the answer to `receive`, as a read's is
-(a sheet's edit); `paste` takes text pasted while it has the focus; and a `receive` that sets the state's
+(a sheet's edit); `Act::SetFormField` sets a field of a form; `Act::Copy` puts text on the terminal's clipboard;
+`paste` takes text pasted while it has the focus; `poll_millis` and `tick` run it on a timer (the editor's check after the
+typing stops); and a `receive` that sets the state's
 `reload_pending` asks for its source again at once (the next read of a component whose `source` changes with what it
 received).
 

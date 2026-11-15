@@ -539,3 +539,43 @@ fn a_sheet_component_reads_what_fits_posts_its_edits_and_takes_a_paste() {
     session.run_now(&link);
     assert!(posted(&link, r#""rows":[["a","b"]]"#), "{:?}", link.calls());
 }
+
+/// A form-bound code editor: its edits set the form's field, a check follows the typing, Ctrl+C copies, and Ctrl+S
+/// submits the form with the text while the editor has the focus.
+#[test]
+fn a_code_editor_sets_its_form_field_checks_after_typing_and_submits_with_ctrl_s() {
+    use moqui_tui::Timer;
+    let screen = r#"{"v":1,"screen":{"path":"/edit","title":"Edit"},"c":[{"t":"form","id":"EditFile","name":"EditFile","transitionUrl":"/edit/save","c":[
+        {"t":"field","id":"EditFile.body","name":"body","w":{"kind":"hidden","value":"<a/>"}},
+        {"t":"component","id":"Editor","name":"code","base":"/edit","props":{"text":"<a/>","language":"xml","form":"EditFile","field":"body",
+            "check":"check","parameters":{"path":"a.xml"}}}]}]}"#;
+    let link = FakeLink::from_json(&[screen]).unwrap();
+    link.answer_json(
+        "/edit/check",
+        map(&[("language", "xml"), ("path", "a.xml"), ("text", "<a/>b")]),
+        serde_json::json!({"problems": [{"line": 1, "column": 5, "severity": "error", "message": "text after the root"}]}),
+    );
+    let mut session = Session::start("/edit");
+    session.run_now(&link);
+    focus(&mut session, &link, "Editor");
+    press(&mut session, &link, Key::End);
+    press(&mut session, &link, Key::Char('b'));
+    assert_eq!(session.buffer("EditFile.body"), "<a/>b");
+    assert!(session.form_dirty("EditFile"));
+    let deadline = session
+        .timer(&Timer::Component("Editor".into()))
+        .expect("a check once the typing stops");
+    session.on_time(deadline);
+    session.run_now(&link);
+    let lines = session.component_state("Editor").unwrap().local["checked"].clone();
+    assert_eq!(lines[0]["message"], "text after the root", "{:?}", link.calls());
+    assert!(session.timer(&Timer::Component("Editor".into())).is_none());
+    session.press(&KeyPress::with_ctrl(Key::Char('c')), &link);
+    assert_eq!(session.take_copy().as_deref(), Some("<a/>b\n"));
+    session.press(&KeyPress::with_ctrl(Key::Char('s')), &link);
+    let saved = link.calls().into_iter().find_map(|call| match call {
+        LinkCall::Transition { url, fields, .. } if url == "/edit/save" => Some(fields),
+        _ => None,
+    });
+    assert_eq!(saved.expect("the form is submitted")["body"], "<a/>b");
+}

@@ -21,8 +21,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use moqui_tui::{
-    gallery_link, AppView, FakeLink, Key, KeyPress, MenuItem, Role, ScreenLink, ScreenModel, Session, ShellInfo,
-    Target, Theme, GALLERY_DETAIL_PATH, GALLERY_LIST_PATH,
+    gallery_link, AdminSetup, AppView, FakeLink, Key, KeyPress, MenuItem, Role, ScreenLink, ScreenModel, Session,
+    ShellInfo, Target, Theme, GALLERY_DETAIL_PATH, GALLERY_LIST_PATH,
 };
 use revue::layout::Rect;
 use revue::render::{Buffer, Modifier};
@@ -344,6 +344,33 @@ fn control_characters_in_a_value_never_reach_the_terminal() {
     assert!(!text.contains('\u{1b}') && !text.contains('\u{202e}'), "{text}");
 }
 
+/// The login dialog in setup, on a server with no accounts: its five fields (the passwords masked), the rule hint and
+/// the keys.
+#[test]
+fn the_setup_dialog_is_drawn_with_its_fields_and_rules() {
+    let link = gallery_link();
+    link.require_login("pw");
+    link.need_initial_admin(AdminSetup {
+        min_length: 12,
+        min_digits: 1,
+        min_others: 1,
+    });
+    let mut session = Session::start(GALLERY_LIST_PATH);
+    session.set_login_name(Some("admin".to_string()));
+    session.run_now(&link);
+    session.set_login_field(1, "Secret-pass-1");
+    session.set_login_field(2, "Secret-pass-1");
+    session.set_login_field(3, "Ada Admin");
+    session.set_login_field(4, "ada@example.com");
+    let mut view = AppView::with_session(session, link);
+    view.set_clock("Tue 14:32");
+    let text = view.screen_text(100, 40);
+    assert!(text.contains("Welcome to your new system"), "{text}");
+    assert!(text.contains("at least 12 characters, 1 digit, 1 other"), "{text}");
+    assert!(text.contains("Ada Admin") && !text.contains("Secret-pass-1"), "{text}");
+    golden("login-setup-100x40", &text);
+}
+
 fn golden(name: &str, actual: &str) {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/snapshots")
@@ -430,6 +457,26 @@ fn phase3_view() -> AppView {
     view.session_mut().resize(100, 40);
     view.run_requests();
     view
+}
+
+/// The `code` component: the gutter with its problem marks, the highlighted text (drawn as plain text here), the cursor
+/// and the status line with the problem under the cursor.
+#[test]
+fn code_editor_snapshot() {
+    let json = r#"{"v":1,"screen":{"path":"/code","title":"Code"},"c":[{"t":"component","id":"Editor","name":"code","base":"/code",
+        "props":{"language":"xml","cursorLine":3,"rows":8,
+        "text":"<screen require-authentication=\"false\">\n    <!-- the list -->\n    <widgets>\n        <label text=\"${name}\" typo=\"x\"/>\n    </widgets>\n</screen>",
+        "problems":[{"line":4,"column":40,"severity":"error","message":"typo is not an attribute of label"},
+            {"line":3,"column":5,"severity":"warning","message":"widgets is empty"}]}}]}"#;
+    let link = FakeLink::from_json(&[json]).unwrap();
+    let mut view = view_of(ScreenModel::from_json(json).unwrap(), link);
+    view.session_mut().resize(100, 40);
+    while view.session().focus_id() != "Editor" {
+        press(&mut view, Key::Tab);
+    }
+    press(&mut view, Key::Down);
+    press(&mut view, Key::End);
+    golden("code-100x40", &view.screen_text(100, 40));
 }
 
 #[test]

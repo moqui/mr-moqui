@@ -739,9 +739,21 @@ impl Session {
                 }
                 Act::Follow(url) => self.follow_url(&Self::component_url(&base, &url)),
                 Act::Message(text) => self.set_message(text, false),
+                Act::Copy(text) => self.copy_text(text),
             }
         }
         self.schedule_component(id);
+    }
+
+    /// The form a component's `form` prop names: what Ctrl+S submits while a form-bound component (a `code` editor) has
+    /// the focus.
+    pub(super) fn component_form(&self, id: &str) -> Option<String> {
+        let name = self.index.components.get(id)?.props["form"].as_str()?;
+        self.index
+            .forms
+            .values()
+            .find(|form| form.name == name)
+            .map(|form| form.id.clone())
     }
 
     fn component_form_field(&self, form: &str, field: &str) -> Option<String> {

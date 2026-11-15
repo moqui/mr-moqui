@@ -150,7 +150,8 @@ Accounts, passwords, second factors and the current user's keys.
 | `find#UserSshKeys` | `includeEnded` → `sshKeyList` of the current user: `sshKeyId`, `description`, `keyType`, `fingerprint`, `fromDate`, `thruDate` |
 | `get#UserDeviceKeys`, `revoke#UserDeviceKey`, `renew#UserDeviceKey` | The devices signed in by key (the desktop and mobile clients) |
 
-The rest are the login steps (`login#UserAccount`, `validate#ExternalUserAuthcCode`, `send#ExternalAuthcCode`, `send#AuthcCodeEmail`, `send#AuthcCodeSms`) and `create#InitialAdminAccount`.
+The rest are the login steps (`login#UserAccount`, `validate#ExternalUserAuthcCode`, `send#ExternalAuthcCode`, `send#AuthcCodeEmail`, `send#AuthcCodeSms`), `get#InitialAdminNeeded` (→ `needed`, and while it is true the password
+rules `minLength`, `minDigits`, `minOthers`) and `create#InitialAdminAccount`, which refuses unless it is needed.
 
 ### SystemMessageServices
 

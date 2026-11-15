@@ -12,13 +12,14 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The overlays' keys: the confirmation, the login, a drop-down, the date picker and the drawer; and opening them.
+//! The overlays' keys: the confirmation, the login (and its setup of the first administrator), a drop-down, the date
+//! picker and the drawer; and opening them.
 
-use super::{DropDown, Intent, Login, Overlay, Picker, Session};
+use super::{DropDown, Intent, Login, Overlay, Picker, Session, SETUP_FIELDS};
 use crate::edit::{self, Limits};
 use crate::forms::{self, FocusKind};
 use crate::keys::{Action, Key, KeyPress};
-use crate::link::{LinkCall, LinkError};
+use crate::link::{AdminAccount, AdminSetup, LinkCall, LinkError};
 use crate::model::{Choice, Widget};
 use crate::state::{Confirm, ConfirmKind, Purpose, Then};
 
@@ -107,10 +108,23 @@ impl Session {
     }
 
     pub(super) fn login_key(&mut self, mut login: Login, press: &KeyPress) {
-        let fields = 3;
+        let fields = login.labels().len();
+        // Setup sends on Enter in its last field, or Ctrl+S or Alt+Enter in any; Enter elsewhere is the next field.
+        let send_setup = login.setup.is_some()
+            && match &press.key {
+                Key::Enter => press.alt || login.at + 1 == fields,
+                Key::Char('s') => press.ctrl,
+                _ => false,
+            };
+        if send_setup {
+            self.overlays.pop();
+            self.send_setup(login);
+            return;
+        }
         match &press.key {
             Key::Tab | Key::Down => login.at = (login.at + 1) % fields,
             Key::BackTab | Key::Up => login.at = (login.at + fields - 1) % fields,
+            Key::Enter if login.setup.is_some() => login.at += 1,
             Key::Enter => {
                 self.overlays.pop();
                 // The password stays until the answer: a right one that wants a code is kept for the try with the
@@ -146,17 +160,96 @@ impl Session {
                 return;
             }
             _ => {
-                let text = match login.at {
-                    0 => &mut login.username,
-                    1 => &mut login.password,
-                    _ => &mut login.code,
-                };
+                let text = login.field_mut(login.at);
                 let mut cursor = text.chars().count();
                 edit::apply(text, &mut cursor, press, &Limits::default());
             }
         }
         self.overlays.pop();
         self.overlays.push(Overlay::Login(login));
+    }
+
+    /// Send the setup's account, once its fields are filled and its passwords match; else say what is missing in the
+    /// dialog and send nothing. The passwords stay until the answer: a created account logs in with them.
+    fn send_setup(&mut self, mut login: Login) {
+        let missing = (0..SETUP_FIELDS.len()).find(|at| login.field(*at).trim().is_empty());
+        if let Some(at) = missing {
+            login.error = format!("{} is required", SETUP_FIELDS[at]);
+            login.at = at;
+        } else if login.password != login.verify {
+            login.error = "The passwords do not match".to_string();
+            login.password.clear();
+            login.verify.clear();
+            login.at = 1;
+        } else {
+            let account = AdminAccount {
+                username: login.username.trim().to_string(),
+                password: login.password.clone(),
+                verify: login.verify.clone(),
+                full_name: login.full_name.trim().to_string(),
+                email: login.email.trim().to_string(),
+            };
+            if self
+                .lanes
+                .push(Purpose::Login, LinkCall::CreateInitialAdmin(account))
+                .is_some()
+            {
+                login.error = "Creating the account…".to_string();
+            }
+        }
+        self.overlays.push(Overlay::Login(login));
+    }
+
+    /// The answer to the setup: a created account logs in with its password, and the login's answer takes over; a
+    /// refusal shows in the dialog with the passwords cleared, and setup is asked for again, since an account someone
+    /// else made since ends it.
+    pub(super) fn admin_created(&mut self, result: Result<(), LinkError>) {
+        let Some(login) = self.login_mut() else {
+            return;
+        };
+        match result {
+            Ok(()) => {
+                let call = LinkCall::Login {
+                    username: login.username.trim().to_string(),
+                    password: login.password.clone(),
+                    code: String::new(),
+                };
+                login.setup = None;
+                login.verify.clear();
+                login.at = 1;
+                login.error = "The account is created; logging in…".to_string();
+                self.lanes.push(Purpose::Login, call);
+            }
+            Err(err) => {
+                login.error = err.to_string();
+                login.password.clear();
+                login.verify.clear();
+                login.at = 1;
+                self.lanes.push(Purpose::AdminSetup, LinkCall::InitialAdmin);
+            }
+        }
+    }
+
+    /// Whether the dialog creates the first administrator. Needed turns the open dialog to setup, keeping its username;
+    /// not needed turns it back to the login, keeping its message. An answer that failed leaves it as it is.
+    pub(super) fn admin_setup_reply(&mut self, result: Result<Option<AdminSetup>, LinkError>) {
+        let Ok(setup) = result else {
+            return;
+        };
+        let Some(login) = self.login_mut() else {
+            return;
+        };
+        if login.setup.is_some() == setup.is_some() {
+            login.setup = setup;
+            return;
+        }
+        login.setup = setup;
+        login.password.clear();
+        login.verify.clear();
+        login.code.clear();
+        login.code_wanted = false;
+        login.sendable.clear();
+        login.at = usize::from(!login.username.is_empty());
     }
 
     pub(super) fn dropdown_key(&mut self, mut drop: DropDown, press: &KeyPress) {
@@ -403,6 +496,8 @@ impl Session {
                 at,
                 ..Login::default()
             }));
+            // A server with no accounts yet turns the dialog to setup when it answers; until then it is the login.
+            self.lanes.push(Purpose::AdminSetup, LinkCall::InitialAdmin);
         }
     }
 

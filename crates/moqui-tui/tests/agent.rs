@@ -17,7 +17,8 @@
 use std::collections::BTreeMap;
 
 use moqui_tui::{
-    gallery_link, Agent, Choice, FakeLink, LinkCall, MenuItem, ShellInfo, GALLERY_DETAIL_PATH, GALLERY_LIST_PATH,
+    gallery_link, AdminSetup, Agent, Choice, FakeLink, LinkCall, MenuItem, ShellInfo, GALLERY_DETAIL_PATH,
+    GALLERY_LIST_PATH,
 };
 
 const GEO_JSON: &str = r#"{
@@ -312,6 +313,43 @@ fn the_login_dialog_is_filled_by_set_and_sent_by_do() {
         .calls()
         .iter()
         .any(|call| matches!(call, LinkCall::Login { username, code, .. } if username == "john" && code == "123456")));
+}
+
+/// On a server with no accounts the dialog is "initial admin": its five fields are the elements, `set` fills them by
+/// their labels (one of two words too), and `do Create and log in` creates the account and logs in.
+#[test]
+fn the_setup_dialog_is_driven_by_set_and_do() {
+    let link = gallery_link();
+    link.require_login("old-pw");
+    link.need_initial_admin(AdminSetup {
+        min_length: 12,
+        min_digits: 1,
+        min_others: 1,
+    });
+    let mut agent = Agent::open(link.clone(), GALLERY_LIST_PATH, 100, 40);
+    let look = agent.run("look");
+    assert!(look.text.contains("overlay initial admin"), "{}", look.text);
+    let listed = agent.run("elements");
+    assert!(listed.text.contains("login.fullName"), "{}", listed.text);
+    for command in [
+        "set Username ada",
+        "set Password Secret-pass-1",
+        "set Password again Secret-pass-1",
+        "set Full name Ada Admin",
+        "set Email ada@example.com",
+    ] {
+        let answer = agent.run(command);
+        assert!(answer.ok, "{command}: {}", answer.text);
+        assert!(!answer.text.contains("Secret-pass-1"), "{}", answer.text);
+    }
+    let done = agent.run("do Create and log in");
+    assert!(done.ok, "{}", done.text);
+    assert!(done.text.contains("overlay none"), "{}", done.text);
+    assert!(link
+        .calls()
+        .iter()
+        .any(|call| matches!(call, LinkCall::CreateInitialAdmin(account)
+        if account.username == "ada" && account.full_name == "Ada Admin")));
 }
 
 /// A form whose transition writes, in a section-iterate entry (its domId ends `_1`), a find field with a from and a

@@ -15,10 +15,26 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The Workspace (plans/design-dev-aide.md 4 and 5): the IDE of the roots' files, the editor, changes and commits. The
     page is Workspace.qvue, which loads the client (screen/devstatic/DevAide.js: m-dev-workspace); these transitions answer
     it with JSON, each the service of the same work (WorkspaceServices, VcsServices, the framework's DevToolsServices),
-    which checks the instance purpose and the user's tier. Reads are GETs; writes are POSTs with the session token. Browser
-    only (D14): an editor needs a browser. -->
+    which checks the instance purpose and the user's tier. Reads are GETs; writes are POSTs with the session token. The
+    terminal shows WorkspaceTui.xml in a dynamic container, with the parameters below: its Code, Changes and Commits tabs
+    call the same services. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Workspace" default-menu-index="2" render-modes="qvue">
+        default-menu-title="Workspace" default-menu-index="2" render-modes="qvue,tui">
+    <!-- the file to open (rootId, path, line, view), and the terminal form's own: its tab, a search, the change, commit
+        and page shown, and the diff of the open file -->
+    <parameter name="rootId"/>
+    <parameter name="path"/>
+    <parameter name="line"/>
+    <parameter name="view"/>
+    <parameter name="tab"/>
+    <parameter name="query"/>
+    <parameter name="regex"/>
+    <parameter name="changePath"/>
+    <parameter name="staged"/>
+    <parameter name="commitId"/>
+    <parameter name="commitPath"/>
+    <parameter name="pageIndex"/>
+    <parameter name="diff"/>
 
     <transition name="roots" read-only="true"><service-call name="org.moqui.devaide.WorkspaceServices.get#Roots" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
@@ -267,6 +283,11 @@ along with this software (see the LICENSE.md file). If not, see
     <widgets>
         <render-mode>
             <text type="qvue" location="component://dev-aide/screen/DevAide/Workspace.qvue" template="false"/>
+            <!-- the terminal form (WorkspaceTui.xml), with the parameters given -->
+            <text type="tui"><![CDATA[${JSON.stringify([{t: 'dynamicContainer', id: 'WorkspaceTui', url: sri.buildUrl('../WorkspaceTui')
+                .addParameters(Object.fromEntries(Object.entries({rootId, path, line, view, tab, query, regex, changePath, staged, commitId,
+                    commitPath, pageIndex, diff}).filter(([, value]) => value != null && value !== '')))
+                .getUrlWithParams()}])}]]></text>
         </render-mode>
     </widgets>
 </screen>

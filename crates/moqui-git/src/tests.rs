@@ -951,7 +951,11 @@ fn the_services_register_at_the_locations_the_service_files_name() {
     let registered: Vec<&str> = map.keys().copied().collect();
     let dir = moqui_core::context::framework_dir().join("service/org/moqui");
     let mut named = Vec::new();
-    for file in ["git/GitServices.xml", "git/GitReviewServices.xml"] {
+    for file in [
+        "git/GitServices.xml",
+        "git/GitReviewServices.xml",
+        "git/GitRestServices.xml",
+    ] {
         let text = std::fs::read_to_string(dir.join(file)).unwrap();
         named.extend(
             text.split("location=\"")

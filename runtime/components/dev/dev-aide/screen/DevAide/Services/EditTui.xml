@@ -1,0 +1,508 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Services › Edit's terminal twin (plans/design-dev-aide.md 9, D14): one service from get#ServiceView, its header
+    with the pending line of the user's edit buffer (N unsaved changes, Save with Ctrl+S, Discard), and tabs: Try (a
+    field per in-parameter, Run in sim or for real, the out, messages, the rows it would write and the log; Save as spec,
+    Run spec; a snippet), Overview (the service's settings), Parameters (in and out, with Add, Edit and Remove), the
+    Implementation (read only: the actions and their generated JavaScript, or the script's file), SECA rules (Add one in
+    the site's secas file) and the staged Changes. Every edit is staged in the buffer (GuidedEdit.js, GuidedOps.js,
+    apply#EditBufferOps); Save writes the files in kind order (save#EditBuffer). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Edit in the terminal" default-menu-include="false">
+    <parameter name="artifact"/>
+    <parameter name="tab"/>
+
+    <transition name="saveBuffer">
+        <actions><script>ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js').save('service:' + String(artifact || '').replace(/^service:/, ''))</script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab"/></error-response>
+    </transition>
+    <transition name="saveMine">
+        <actions><script>ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js').save('service:' + String(artifact || '').replace(/^service:/, ''), [{rootId, path}])</script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab"/></error-response>
+    </transition>
+    <transition name="takeDisk">
+        <actions><script><![CDATA[
+            ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js').discard('service:' + String(artifact || '').replace(/^service:/, ''), {rootId, path})
+            ec.message.addMessage(ec.l10n.localize("The disk's text is back; the other staged files stay"), 'info')
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab"/></error-response>
+    </transition>
+    <transition name="discardBuffer">
+        <actions><script><![CDATA[
+            ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js').discard('service:' + String(artifact || '').replace(/^service:/, ''))
+            ec.message.addMessage(ec.l10n.localize('The unsaved changes are discarded'), 'info')
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab"/></error-response>
+    </transition>
+
+    <!-- the edits: each builds its operations (GuidedOps.js) and stages them on the service's file -->
+    <transition name="updateSettings">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            const service = guided.serviceContext(artifact)
+            const set = service.ops.pure.setAttributeOps
+            const ops = service.node ? [].concat(set(service.node, 'authenticate', authenticate === 'true' ? '' : authenticate),
+                set(service.node, 'allow-remote', allowRemote === 'true' ? 'true' : ''), set(service.node, 'transaction', transactionType),
+                set(service.node, 'transaction-timeout', transactionTimeout)) : []
+            if (!service.node) ec.message.addError(ec.l10n.localize('The service is not defined in a file of its own here'))
+            else guided.apply(service.target, service.file, ops)
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="overview"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="overview"/></error-response>
+    </transition>
+    <transition name="addParameter">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            const service = guided.serviceContext(artifact)
+            if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(String(parameterName || ''))) ec.message.addError(ec.l10n.localize('A parameter name is letters, digits and _'))
+            else if (!service.node) ec.message.addError(ec.l10n.localize('The service is not defined in a file of its own here'))
+            else guided.apply(service.target, service.file, service.ops.service.addParameter(service.node, which === 'out-parameters' ? 'out-parameters' : 'in-parameters',
+                {name: parameterName, type: parameterType, required: required === 'true', defaultValue, description}))
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="parameters"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="parameters"/></error-response>
+    </transition>
+    <transition name="editParameter">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            const service = guided.serviceContext(artifact)
+            if (!service.node) ec.message.addError(ec.l10n.localize('The service is not defined in a file of its own here'))
+            else guided.apply(service.target, service.file, service.ops.service.editParameter(service.node, which === 'out-parameters' ? 'out-parameters' : 'in-parameters',
+                parameterName, {type: parameterType, required: required === 'true', defaultValue, description}))
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="parameters"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="parameters"/></error-response>
+    </transition>
+    <transition name="removeParameter">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            const service = guided.serviceContext(artifact)
+            if (!service.node) ec.message.addError(ec.l10n.localize('The service is not defined in a file of its own here'))
+            else guided.apply(service.target, service.file, service.ops.service.removeParameter(service.node, which === 'out-parameters' ? 'out-parameters' : 'in-parameters', parameterName))
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="parameters"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="parameters"/></error-response>
+    </transition>
+    <transition name="addSeca">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            const service = guided.serviceContext(artifact)
+            if (!service.secas) ec.message.addError(ec.l10n.localize('Create a site component on Home first: a SECA rule goes in its secas file'))
+            else guided.apply(service.target, service.secas, service.ops.service.addRule((service.secasFile || {}).outline,
+                service.ops.service.secaXml(service.serviceName, when || 'post-service', condition, callService)))
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="rules"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="rules"/></error-response>
+    </transition>
+
+    <!-- Try (9.4): the in-parameters typed, run in the sim or for real; the result kept in the session for this page -->
+    <transition name="runTry">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            const ops = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedOps.js')
+            const serviceName = String(artifact || '').replace(/^service:/, '')
+            const viewOut = guided.probe('org.moqui.devaide.ServiceWriterServices.get#ServiceView', {serviceName})
+            const inParameters = (viewOut.view && viewOut.view.service && viewOut.view.service.inParameters) || []
+            const values = {}
+            for (const parameter of inParameters) {
+                const value = ec.web.parameters[parameter.name]
+                if (value != null && String(value) !== '') values[parameter.name] = String(value)
+            }
+            ec.web.sessionAttributes['DevAideTry.values.' + serviceName] = JSON.stringify(values)
+            const real = !!runReal
+            const parameters = ops.service.tryParameters(values, inParameters)
+            const out = ec.service.sync().name('org.moqui.devaide.ServiceWriterServices.try#Service')
+                .parameters({serviceName, parameters: JSON.stringify(parameters), real, confirm: real}).call() || {}
+            if (!ec.message.hasError()) ec.web.sessionAttributes['DevAideTry.result.' + serviceName] = JSON.stringify(Object.assign({parameters}, out.result || {}))
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="try"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="try"/></error-response>
+    </transition>
+    <transition name="saveSpec">
+        <actions><script><![CDATA[
+            const serviceName = String(artifact || '').replace(/^service:/, '')
+            let result = null
+            try { result = JSON.parse(ec.web.sessionAttributes['DevAideTry.result.' + serviceName] || 'null') } catch (err) { result = null }
+            if (!result || !result.sim || result.failed) ec.message.addError(ec.l10n.localize('Run it in the sim first: a spec is made from a Try that passed'))
+            else {
+                const out = ec.service.sync().name('org.moqui.devaide.ServiceWriterServices.save#TrySpec').parameters({serviceName,
+                    parameters: JSON.stringify(result.parameters || {}), out: JSON.stringify(result.out || {}), rows: JSON.stringify(result.rows || [])}).call() || {}
+                if (!ec.message.hasError()) {
+                    ec.web.sessionAttributes['DevAideTry.spec.' + serviceName] = JSON.stringify({rootId: out.rootId, path: out.path, name: out.spec})
+                    ec.message.addMessage('Saved as a feature of ' + out.path, 'success')
+                }
+            }
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="try"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="try"/></error-response>
+    </transition>
+    <transition name="runSpec">
+        <actions><script><![CDATA[
+            const serviceName = String(artifact || '').replace(/^service:/, '')
+            let spec = null
+            try { spec = JSON.parse(ec.web.sessionAttributes['DevAideTry.spec.' + serviceName] || 'null') } catch (err) { spec = null }
+            if (!spec) ec.message.addError(ec.l10n.localize('Save a Try as a spec first'))
+            else {
+                const out = ec.service.sync().name('org.moqui.devaide.ServiceWriterServices.run#Spec').parameters({rootId: spec.rootId, path: spec.path}).call() || {}
+                if (!ec.message.hasError()) ec.web.sessionAttributes['DevAideTry.specRun.' + serviceName] = JSON.stringify(out)
+            }
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="try"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="try"/></error-response>
+    </transition>
+    <transition name="runSnippet">
+        <actions><script><![CDATA[
+            const serviceName = String(artifact || '').replace(/^service:/, '')
+            const body = String(ec.web.secureRequestParameters.snippetBody || snippetBody || '')
+            const language = snippetLanguage === 'javascript' ? 'javascript' : 'xml'
+            let values = {}
+            try { values = JSON.parse(ec.web.sessionAttributes['DevAideTry.values.' + serviceName] || '{}') } catch (err) { values = {} }
+            const out = ec.service.sync().name('org.moqui.devaide.ServiceWriterServices.try#Snippet')
+                .parameters({language, body, parameters: JSON.stringify(values)}).call() || {}
+            ec.web.sessionAttributes['DevAideTry.snippet.' + serviceName] = JSON.stringify({language, body, result: out.result || null})
+        ]]></script></actions>
+        <default-response url="."><parameter name="artifact"/><parameter name="tab" value="try"/></default-response>
+        <error-response url="."><parameter name="artifact"/><parameter name="tab" value="try"/></error-response>
+    </transition>
+
+    <actions>
+        <script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            const service = guided.serviceContext(artifact)
+            serviceName = service.serviceName
+            view = service.view
+            readError = service.refused || ''
+            target = service.target
+            tab = ['try', 'overview', 'parameters', 'implementation', 'rules', 'changes'].includes(tab) ? tab : 'try'
+            definition = (view && view.service) || {}
+            const node = service.node
+            const attr = (name) => node ? service.ops.pure.attrOf(node, name) : undefined
+            serviceFile = service.serviceFile || {}
+            canEdit = !!(view && view.tier !== 'view' && service.serviceFile && !service.serviceFile.readOnly && node)
+            readOnlyReason = view && !canEdit ? (service.serviceFile && service.serviceFile.readOnlyReason) || (node ? '' : 'Its definition is not a service element of a file here (' + (definition.kind || 'unknown') + ')') : ''
+            pendingText = guided.pendingText(service.buffer)
+            bufferExpired = !!service.buffer.expired
+            const left = guided.taken(target)
+            conflict = left.conflict || null
+            problemRows = (left.problems || []).map((problem) => ({file: problem.file || '', line: problem.line || 0, severity: problem.severity || '', message: problem.message || ''}))
+            headerText = view ? [definition.kind, view.artifact ? view.artifact.component + (view.artifact.upstream ? ' (upstream)' : ' (site)') : '',
+                'used by ' + (view.usedByCount || 0), view.calls != null ? view.calls + ' calls in the last spec run' : ''].filter((part) => part).join(' · ') : ''
+            workspaceUrl = (view && view.artifact && view.artifact.url) || ''
+            refsUrl = '/qapps/dev/Artifacts/Refs?artifactId=' + encodeURIComponent('service:' + serviceName)
+            const tabUrl = (name) => sri.buildUrl('.').addParameters({artifact: 'service:' + serviceName, tab: name}).getUrlWithParams()
+            tabItems = [['try', 'Try'], ['overview', 'Overview'], ['parameters', 'Parameters ' + ((definition.inParameters || []).length) + ' in, ' + ((definition.outParameters || []).length) + ' out'],
+                ['implementation', 'Implementation'], ['rules', 'SECA rules ' + ((view && view.secas) || []).length],
+                ['changes', 'Changes' + (service.buffer.pending.count ? ' ' + service.buffer.pending.count : '')]]
+                .map(([name, title]) => ({title, url: tabUrl(name), active: name === tab}))
+
+            // Try: the last values, result, spec and snippet of this service, kept in the session
+            const kept = (name, fallback) => { try { return JSON.parse(ec.web.sessionAttributes['DevAideTry.' + name + '.' + serviceName] || 'null') || fallback } catch (err) { return fallback } }
+            tryValues = kept('values', {})
+            tryResult = kept('result', null)
+            tryJson = tryResult && tryResult.out ? JSON.stringify(tryResult.out, null, 2) : ''
+            tryRows = ((tryResult && tryResult.rows) || []).map((row) => ({entity: row.entity, action: row.action, key: JSON.stringify(row.key || {}),
+                fields: (row.fields || []).map((f) => f.field + (f.before !== undefined ? ': ' + f.before + ' → ' : ': ') + f.after).join('; ')}))
+            tryLog = ((tryResult && tryResult.log) || []).join('\n')
+            tryNote = tryResult ? (tryResult.sim ? 'In sim, nothing kept' : 'For real') + (tryResult.millis != null ? ' · ' + tryResult.millis + ' ms' : '') : ''
+            trySpec = kept('spec', null)
+            specRun = kept('specRun', null)
+            specCases = ((specRun && specRun.cases) || []).map((item) => ({outcome: item.outcome, name: item.name, message: item.message || ''}))
+            snippet = kept('snippet', {language: 'xml', body: '<actions>\n    <set field="result" from="1 + 1"/>\n</actions>', result: null})
+            snippetValues = {snippetLanguage: snippet.language, snippetBody: snippet.body}
+            hasSim = !!(view && view.sim)
+            canTryReal = !!(view && view.tier !== 'view')
+
+            // Overview: the element's attributes as staged, else the definition's
+            settingsValues = {authenticate: attr('authenticate') || definition.authenticate || 'true', allowRemote: attr('allow-remote') === 'true' ? 'true' : '',
+                transactionType: attr('transaction') || '', transactionTimeout: attr('transaction-timeout') || ''}
+            implementsText = (definition.implements || []).join(', ')
+            inRows = view ? guided.parameterRows(service, 'in-parameters') : []
+            outRows = view ? guided.parameterRows(service, 'out-parameters') : []
+
+            // the Implementation, read only: the actions as staged and their JavaScript
+            const actions = node ? service.ops.pure.children(node, ['actions'])[0] : null
+            actionsXml = actions && serviceFile.text ? serviceFile.text.slice(actions.from16, actions.to16) : ''
+            generatedJs = ''
+            if (tab === 'implementation' && actionsXml) {
+                const generated = guided.probe('org.moqui.devaide.ServiceWriterServices.get#GeneratedJs', {xml: actionsXml})
+                generatedJs = generated.error ? '// ' + generated.error : generated.source || generated.refused || ''
+            }
+            scriptUrl = view && view.script && view.script.rootId ? '/qapps/dev/Workspace?rootId=' + encodeURIComponent(view.script.rootId) + '&path=' + encodeURIComponent(view.script.path) : ''
+
+            // SECA rules: the active ones, each opening its file at its line
+            secaRows = ((view && view.secas) || []).map((rule) => ({when: rule.when, priority: rule.priority, condition: rule.condition || '',
+                actions: (rule.actions || []).join(', '), place: (rule.file || '').split('/').slice(-2).join('/') + ':' + rule.line,
+                url: rule.open && rule.open.rootId ? '/qapps/dev/Workspace?rootId=' + encodeURIComponent(rule.open.rootId) + '&path=' + encodeURIComponent(rule.open.path) + '&line=' + rule.line : ''}))
+            secasPath = service.secas ? service.secas.path : ''
+            changeRows = service.buffer.files.filter((file) => file.staged).map((file) => ({path: file.path, diff: file.diff || '', changedOnDisk: !!file.changedOnDisk}))
+        ]]></script>
+    </actions>
+    <widgets>
+        <section name="NotAvailable" condition="!view"><widgets>
+            <label text="Not available: ${readError || 'no service named'}" type="p" style="text-negative"/>
+            <link url="../List" text="Back to the services" link-type="anchor"/>
+        </widgets><fail-widgets>
+            <container name="ServiceHeader">
+                <label text="${definition.verb || ''}#${definition.noun || ''}" type="h5"/>
+                <label text="${serviceName}" type="p" style="m-muted"/>
+                <label text="${headerText}" type="p"/>
+                <container-row><row-col lg="12">
+                    <link url="${workspaceUrl}" url-type="plain" text="Open in Workspace" link-type="anchor" condition="workspaceUrl"/>
+                    <link url="${refsUrl}" url-type="plain" text="References" link-type="anchor"/>
+                    <link url="/qapps/tools/Service/ServiceDetail?serviceName=${encodeURIComponent(serviceName)}" url-type="plain" text="Open in Tools" link-type="anchor"/>
+                </row-col></container-row>
+                <label text="Read only: ${readOnlyReason}" type="p" style="text-warning" condition="readOnlyReason"/>
+                <label text="The unsaved changes of this service were kept two hours and are gone: make them again." type="p" style="text-warning" condition="bufferExpired"/>
+                <section name="Pending" condition="pendingText"><widgets>
+                    <form-single name="PendingSave" transition="saveBuffer">
+                        <field name="artifact" from="'service:' + serviceName"><default-field><hidden/></default-field></field>
+                        <field name="tab"><default-field><hidden/></default-field></field>
+                        <field name="pending"><default-field title=""><display text="${pendingText}"/></default-field></field>
+                        <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                        <field-layout><field-row-big><field-ref name="pending"/><field-ref name="submitButton"/></field-row-big></field-layout>
+                    </form-single>
+                    <link url="discardBuffer" text="Discard" parameter-map="{artifact: 'service:' + serviceName, tab: tab}" btn-type="danger"
+                            confirmation="Discard the unsaved changes of ${serviceName}?"/>
+                </widgets></section>
+                <section name="Conflict" condition="conflict"><widgets>
+                    <container-box type="warning"><box-header title="${conflict.path} changed on disk since the edits started"/><box-body>
+                        <label text="The disk's text against yours:" type="p"/>
+                        <label text="${conflict.diff}" type="pre" encode="true"/>
+                        <link url="saveMine" text="Save mine over it" btn-type="danger" confirmation="Write your text over the disk's ${conflict.path}?"
+                                parameter-map="{artifact: 'service:' + serviceName, tab: tab, rootId: conflict.rootId, path: conflict.path}"/>
+                        <link url="takeDisk" text="Take the disk's" parameter-map="{artifact: 'service:' + serviceName, tab: tab, rootId: conflict.rootId, path: conflict.path}"/>
+                    </box-body></container-box>
+                </widgets></section>
+                <section name="SaveProblems" condition="problemRows.length"><widgets>
+                    <form-list name="ServiceSaveProblems" list="problemRows" skip-form="true" paginate="false">
+                        <field name="file"><default-field title="File"><display/></default-field></field>
+                        <field name="line"><default-field title="Line"><display/></default-field></field>
+                        <field name="severity"><default-field title="Severity"><display/></default-field></field>
+                        <field name="message"><default-field title="Problem"><display/></default-field></field>
+                    </form-list>
+                </widgets></section>
+            </container>
+
+            <render-mode>
+                <text type="tui"><![CDATA[${JSON.stringify({t: 'subscreens', id: 'ServiceEditTabs', kind: 'tab', items: tabItems, c: []})}]]></text>
+                <text type="html,qvt"><![CDATA[<p class="m-dev-tabs">${tabItems.map((item) => item.active ? '<b>' + html(item.title) + '</b>' : '<a href="' + html(item.url) + '">' + html(item.title) + '</a>').join(' · ')}</p>]]></text>
+            </render-mode>
+
+            <section name="TryTab" condition="tab == 'try'"><widgets>
+                <label text="This server has no sim (it needs embedded Postgres): only Run for real." type="p" style="text-warning" condition="!hasSim"/>
+                <form-single name="TryForm" transition="runTry" dynamic="true" map="tryValues">
+                    <field name="artifact" from="'service:' + serviceName"><default-field><hidden/></default-field></field>
+                    <auto-fields-service service-name="${serviceName}" field-type="edit"/>
+                    <field name="runSim"><conditional-field condition="hasSim" title="Run in sim"><submit/></conditional-field>
+                        <default-field><ignored/></default-field></field>
+                    <field name="runReal"><conditional-field condition="canTryReal" title="Run for real"><submit type="danger"
+                            confirmation="Run ${serviceName} for real? What it writes is kept."/></conditional-field>
+                        <default-field><ignored/></default-field></field>
+                </form-single>
+                <section name="TryResult" condition="tryResult"><widgets>
+                    <label text="${tryNote}" type="p" style="m-muted"/>
+                    <label text="${tryResult.failed}" type="p" style="text-negative" condition="tryResult.failed"/>
+                    <section-iterate name="TryMessages" list="tryResult.messages || []" entry="text"><widgets>
+                        <label text="${text}" type="p"/></widgets></section-iterate>
+                    <section-iterate name="TryErrors" list="tryResult.errors || []" entry="text"><widgets>
+                        <label text="${text}" type="p" style="text-negative"/></widgets></section-iterate>
+                    <label text="${tryJson}" type="pre" encode="true" condition="tryJson"/>
+                    <section name="TryRowsSection" condition="tryRows.length"><widgets>
+                        <label text="Rows it would write${tryResult.moreRows ? ' (the first ones)' : ''}" type="h6"/>
+                        <form-list name="TryRows" list="tryRows" skip-form="true" paginate="false">
+                            <field name="entity"><default-field title="Entity"><display/></default-field></field>
+                            <field name="action"><default-field title="Action"><display/></default-field></field>
+                            <field name="key"><default-field title="Key"><display/></default-field></field>
+                            <field name="fields"><default-field title="Fields"><display/></default-field></field>
+                        </form-list>
+                    </widgets></section>
+                    <section name="TryLogSection" condition="tryLog"><widgets>
+                        <container-box name="TryLog" initial="closed"><box-header title="Log ${(tryResult.log || []).length}${tryResult.moreLog ? ' (and ' + tryResult.moreLog + ' more)' : ''}"/><box-body>
+                            <label text="${tryLog}" type="pre" encode="true"/>
+                        </box-body></container-box>
+                    </widgets></section>
+                    <link url="saveSpec" text="Save as spec" parameter-map="{artifact: 'service:' + serviceName}" condition="tryResult.sim &amp;&amp; !tryResult.failed &amp;&amp; canTryReal"/>
+                </widgets></section>
+                <section name="TrySpec" condition="trySpec"><widgets>
+                    <link url="runSpec" text="Run spec ${trySpec.name}" parameter-map="{artifact: 'service:' + serviceName}"/>
+                    <label text="${specRun.passed ? 'The spec passed (run in sim)' : 'The spec failed'}" type="p" style="${specRun.passed ? 'text-positive' : 'text-negative'}" condition="specRun"/>
+                    <label text="${specRun.setupFailure}" type="p" style="text-negative" condition="specRun?.setupFailure"/>
+                    <form-list name="SpecCases" list="specCases" skip-form="true" paginate="false">
+                        <field name="outcome"><default-field title="Outcome"><display/></default-field></field>
+                        <field name="name"><default-field title="Case"><display/></default-field></field>
+                        <field name="message"><default-field title="Message"><display/></default-field></field>
+                    </form-list>
+                </widgets></section>
+                <container-box name="Snippet" initial="closed"><box-header title="Snippet"/><box-body>
+                    <form-single name="SnippetForm" transition="runSnippet" map="snippetValues" body-parameters="snippetBody">
+                        <field name="artifact" from="'service:' + serviceName"><default-field><hidden/></default-field></field>
+                        <field name="snippetLanguage"><default-field title="Language"><drop-down allow-empty="false">
+                            <option key="xml" text="XML Actions"/><option key="javascript" text="JavaScript"/></drop-down></default-field></field>
+                        <field name="snippetBody"><default-field title="Body" tooltip="Run in the sim with the Try's values set"><text-area rows="6" cols="100"/></default-field></field>
+                        <field name="submitButton"><conditional-field condition="hasSim &amp;&amp; canTryReal" title="Run in sim"><submit/></conditional-field>
+                            <default-field><ignored/></default-field></field>
+                    </form-single>
+                    <section name="SnippetResult" condition="snippet.result"><widgets>
+                        <label text="${snippet.result.failed}" type="p" style="text-negative" condition="snippet.result.failed"/>
+                        <section-iterate name="SnippetMessages" list="snippet.result.messages || []" entry="text"><widgets>
+                            <label text="${text}" type="p"/></widgets></section-iterate>
+                        <label text="${(snippet.result.rows || []).length} rows it would write" type="p" condition="(snippet.result.rows || []).length"/>
+                    </widgets></section>
+                </box-body></container-box>
+            </widgets></section>
+
+            <section name="OverviewTab" condition="tab == 'overview'"><widgets>
+                <form-single name="ServiceSettings" transition="updateSettings" map="settingsValues">
+                    <field name="artifact" from="'service:' + serviceName"><default-field><hidden/></default-field></field>
+                    <field name="authenticate"><default-field title="Authenticate"><drop-down allow-empty="false">
+                        <option key="true" text="true"/><option key="false" text="false"/><option key="anonymous-view"/><option key="anonymous-all"/></drop-down></default-field></field>
+                    <field name="allowRemote"><default-field title="Allow remote"><check><option key="true" text="Callable over REST and from a browser"/></check></default-field></field>
+                    <field name="transactionType"><default-field title="Transaction"><drop-down allow-empty="true">
+                        <option key="ignore"/><option key="force-new"/><option key="cache"/><option key="force-cache"/></drop-down></default-field></field>
+                    <field name="transactionTimeout"><default-field title="Timeout" tooltip="Seconds"><text-line size="6"/></default-field></field>
+                    <field name="submitButton"><conditional-field condition="canEdit" title="Stage the settings"><submit/></conditional-field>
+                        <default-field><ignored/></default-field></field>
+                </form-single>
+                <label text="Implements ${implementsText}" type="p" condition="implementsText"/>
+            </widgets></section>
+
+            <section name="ParametersTab" condition="tab == 'parameters'"><widgets>
+                <label text="In" type="h6"/>
+                <container-dialog id="AddInParameter" button-text="Add in-parameter" condition="canEdit">
+                    <form-single name="AddInParameterForm" transition="addParameter">
+                        <field name="artifact" from="'service:' + serviceName"><default-field><hidden/></default-field></field>
+                        <field name="which" from="'in-parameters'"><default-field><hidden/></default-field></field>
+                        <field name="parameterName"><default-field title="Name"><text-line size="30"/></default-field></field>
+                        <field name="parameterType" from="'String'"><default-field title="Type"><text-line size="20"/></default-field></field>
+                        <field name="required"><default-field title="Required"><check><option key="true" text=" "/></check></default-field></field>
+                        <field name="defaultValue"><default-field title="Default"><text-line size="20"/></default-field></field>
+                        <field name="description"><default-field title="Description"><text-line size="60"/></default-field></field>
+                        <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                    </form-single>
+                </container-dialog>
+                <form-list name="InParameters" list="inRows" skip-form="true" paginate="false">
+                    <field name="shown"><default-field title="Name"><display/></default-field></field>
+                    <field name="type"><default-field title="Type"><display/></default-field></field>
+                    <field name="required"><default-field title="Required"><display/></default-field></field>
+                    <field name="defaultValue"><default-field title="Default"><display/></default-field></field>
+                    <field name="description"><default-field title="Description"><display/></default-field></field>
+                    <field name="actions"><default-field title="">
+                        <container-dialog id="EditInParameter_${name}" button-text="Edit" condition="top &amp;&amp; canEdit">
+                            <form-single name="EditInParameterForm" transition="editParameter" map="{parameterType: type, required: requiredFlag, defaultValue: defaultValue, description: description}">
+                                <field name="artifact" from="'service:' + serviceName"><default-field><hidden/></default-field></field>
+                                <field name="which"><default-field><hidden/></default-field></field>
+                                <field name="parameterName" from="name"><default-field><hidden/></default-field></field>
+                                <field name="parameterType"><default-field title="Type"><text-line size="20"/></default-field></field>
+                                <field name="required"><default-field title="Required"><check><option key="true" text=" "/></check></default-field></field>
+                                <field name="defaultValue"><default-field title="Default"><text-line size="20"/></default-field></field>
+                                <field name="description"><default-field title="Description"><text-line size="60"/></default-field></field>
+                                <field name="submitButton"><default-field title="Stage"><submit/></default-field></field>
+                            </form-single>
+                        </container-dialog>
+                        <link url="removeParameter" text="Remove" condition="top &amp;&amp; canEdit" confirmation="Remove the parameter ${name}?"
+                                parameter-map="{artifact: 'service:' + serviceName, which: which, parameterName: name}"/>
+                    </default-field></field>
+                </form-list>
+                <label text="Out" type="h6"/>
+                <container-dialog id="AddOutParameter" button-text="Add out-parameter" condition="canEdit">
+                    <form-single name="AddOutParameterForm" transition="addParameter">
+                        <field name="artifact" from="'service:' + serviceName"><default-field><hidden/></default-field></field>
+                        <field name="which" from="'out-parameters'"><default-field><hidden/></default-field></field>
+                        <field name="parameterName"><default-field title="Name"><text-line size="30"/></default-field></field>
+                        <field name="parameterType" from="'String'"><default-field title="Type"><text-line size="20"/></default-field></field>
+                        <field name="required"><default-field title="Required"><check><option key="true" text=" "/></check></default-field></field>
+                        <field name="defaultValue"><default-field title="Default"><text-line size="20"/></default-field></field>
+                        <field name="description"><default-field title="Description"><text-line size="60"/></default-field></field>
+                        <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                    </form-single>
+                </container-dialog>
+                <form-list name="OutParameters" list="outRows" skip-form="true" paginate="false">
+                    <field name="shown"><default-field title="Name"><display/></default-field></field>
+                    <field name="type"><default-field title="Type"><display/></default-field></field>
+                    <field name="required"><default-field title="Required"><display/></default-field></field>
+                    <field name="defaultValue"><default-field title="Default"><display/></default-field></field>
+                    <field name="description"><default-field title="Description"><display/></default-field></field>
+                    <field name="actions"><default-field title="">
+                        <container-dialog id="EditOutParameter_${name}" button-text="Edit" condition="top &amp;&amp; canEdit">
+                            <form-single name="EditOutParameterForm" transition="editParameter" map="{parameterType: type, required: requiredFlag, defaultValue: defaultValue, description: description}">
+                                <field name="artifact" from="'service:' + serviceName"><default-field><hidden/></default-field></field>
+                                <field name="which"><default-field><hidden/></default-field></field>
+                                <field name="parameterName" from="name"><default-field><hidden/></default-field></field>
+                                <field name="parameterType"><default-field title="Type"><text-line size="20"/></default-field></field>
+                                <field name="required"><default-field title="Required"><check><option key="true" text=" "/></check></default-field></field>
+                                <field name="defaultValue"><default-field title="Default"><text-line size="20"/></default-field></field>
+                                <field name="description"><default-field title="Description"><text-line size="60"/></default-field></field>
+                                <field name="submitButton"><default-field title="Stage"><submit/></default-field></field>
+                            </form-single>
+                        </container-dialog>
+                        <link url="removeParameter" text="Remove" condition="top &amp;&amp; canEdit" confirmation="Remove the parameter ${name}?"
+                                parameter-map="{artifact: 'service:' + serviceName, which: which, parameterName: name}"/>
+                    </default-field></field>
+                </form-list>
+            </widgets></section>
+
+            <section name="ImplementationTab" condition="tab == 'implementation'"><widgets>
+                <label text="Read only here: edit the actions in the Workspace or the browser's logic composer." type="p" style="m-muted"/>
+                <link url="${workspaceUrl}" url-type="plain" text="Edit in Workspace" link-type="anchor" condition="workspaceUrl"/>
+                <section name="InlineActions" condition="definition.kind == 'inline'"><widgets>
+                    <label text="Actions" type="h6"/>
+                    <label text="${actionsXml || 'No actions.'}" type="pre" encode="true"/>
+                    <label text="Generated JavaScript" type="h6" condition="generatedJs"/>
+                    <label text="${generatedJs}" type="pre" encode="true" condition="generatedJs"/>
+                </widgets></section>
+                <link url="${scriptUrl}" url-type="plain" text="Open ${definition.location}" link-type="anchor" condition="definition.kind == 'script' &amp;&amp; scriptUrl"/>
+                <label text="Entity-auto: ${definition.verb} of ${definition.noun}." type="p" condition="definition.kind == 'entity-auto'"/>
+                <label text="${definition.kind} at ${definition.location || ''}${definition.method ? ' · ' + definition.method : ''}" type="p"
+                        condition="!['inline', 'script', 'entity-auto'].includes(definition.kind)"/>
+            </widgets></section>
+
+            <section name="RulesTab" condition="tab == 'rules'"><widgets>
+                <container-dialog id="AddSeca" button-text="Add a SECA rule in the site" condition="secasPath &amp;&amp; view.tier != 'view'">
+                    <label text="Into ${secasPath}, staged until Save." type="p"/>
+                    <form-single name="AddSecaForm" transition="addSeca">
+                        <field name="artifact" from="'service:' + serviceName"><default-field><hidden/></default-field></field>
+                        <field name="when" from="'post-service'"><default-field title="When"><drop-down allow-empty="false">
+                            <option key="pre-auth"/><option key="pre-validate"/><option key="pre-service"/><option key="post-service"/>
+                            <option key="post-commit"/><option key="tx-commit"/><option key="tx-rollback"/></drop-down></default-field></field>
+                        <field name="condition"><default-field title="Condition" tooltip="An expression; empty runs it always"><text-line size="60"/></default-field></field>
+                        <field name="callService"><default-field title="Service to call" tooltip="Called with the context; empty leaves the actions empty"><text-line size="60"/></default-field></field>
+                        <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                    </form-single>
+                </container-dialog>
+                <label text="Create a site component on Home to add SECA rules." type="p" style="m-muted" condition="!secasPath"/>
+                <form-list name="SecaRules" list="secaRows" skip-form="true" paginate="false">
+                    <field name="when"><default-field title="When"><display/></default-field></field>
+                    <field name="priority"><default-field title="Priority"><display/></default-field></field>
+                    <field name="condition"><default-field title="Condition"><display/></default-field></field>
+                    <field name="actions"><default-field title="Actions"><display/></default-field></field>
+                    <field name="place"><default-field title="File">
+                        <link url="${url}" url-type="plain" text="${place}" link-type="anchor" condition="url"/></default-field></field>
+                </form-list>
+            </widgets></section>
+
+            <section name="ChangesTab" condition="tab == 'changes'"><widgets>
+                <label text="Nothing is staged: the files are as on disk." type="p" style="m-muted" condition="!changeRows.length"/>
+                <section-iterate name="StagedChanges" list="changeRows" entry="change"><widgets>
+                    <label text="${change.path}${change.changedOnDisk ? ' (changed on disk since: Save will ask)' : ''}" type="h6"/>
+                    <label text="${change.diff}" type="pre" encode="true"/>
+                </widgets></section-iterate>
+            </widgets></section>
+        </fail-widgets></section>
+    </widgets>
+</screen>

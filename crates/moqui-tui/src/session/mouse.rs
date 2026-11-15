@@ -58,8 +58,12 @@ impl Session {
             }
             Target::LoginField(at) => {
                 if let Some(Overlay::Login(login)) = self.overlays.last_mut() {
-                    if *at < 3 {
+                    let fields = login.labels().len();
+                    if *at < fields {
                         login.at = *at;
+                    } else if login.setup.is_some() {
+                        // the key line is the button: setup sends from any field
+                        self.on_key(&KeyPress::with_ctrl(Key::Char('s')));
                     } else {
                         self.enter();
                     }

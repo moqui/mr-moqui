@@ -1898,6 +1898,8 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="container-workdir" type="xs:string" default="/workspace"><xs:annotation><xs:documentation>The working directory of a job's container.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="container-tmp-mb" type="non-neg-int-expandable" default="1024"><xs:annotation><xs:documentation>The size of the tmpfs at /tmp of a job's container and of its service containers.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="container-workspace-mb" type="non-neg-int-expandable" default="4096"><xs:annotation><xs:documentation>The size of the tmpfs of a job's working directory when its pool sets no diskMb; it counts toward the pool's memoryMb.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="deploy-timeout-seconds" type="non-neg-int-expandable" default="600"><xs:annotation><xs:documentation>How long a deployment's target is given to fetch and deploy a commit (docs/interfaces/Pipelines.md "Deployments").</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="deploy-private-network" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>true: a deployment may call a target at a loopback, private or link-local address (an internal staging host, the instance and itself); refused otherwise, as webhooks are.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
@@ -2452,8 +2454,6 @@ along with this software (see the LICENSE.md file). If not, see
 
             <xs:attribute name="username" type="xs:string"/>
             <xs:attribute name="password" type="xs:string"/>
-            <xs:attribute name="deploy-timeout-seconds" type="xs:string" default="600"><xs:annotation><xs:documentation>How long a deployment's target is given to fetch and deploy a commit (docs/interfaces/Pipelines.md "Deployments").</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="deploy-private-network" type="xs:string" default="false"><xs:annotation><xs:documentation>true: a deployment may call a target at a loopback, private or link-local address (an internal staging host, the instance and itself); refused otherwise, as webhooks are.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

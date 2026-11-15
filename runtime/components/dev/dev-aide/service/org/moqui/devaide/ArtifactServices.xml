@@ -48,6 +48,27 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="refs" type="List"/>
         </out-parameters>
     </service>
+    <service verb="get" noun="ArtifactBrowse" type="rust" location="dev_aide::browser::get_artifact_browse" allow-remote="false" read-only="true">
+        <description>The Artifact Browser's graph for the terminal (Artifacts/BrowseTui): the artifact with its lines and links,
+            what uses it and what it uses in sections by the other side's kind, the kinds there are, and the filter applied.
+            The framework's own artifacts are hidden unless the artifact is one of them or hideFramework says. An artifact
+            not in the index answers a null center and a message.</description>
+        <in-parameters>
+            <parameter name="artifactId" required="true"/>
+            <parameter name="kinds" type="Object"/>
+            <parameter name="hideFramework"/>
+            <parameter name="observed"/>
+            <parameter name="staticLinks"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="center" type="Map"/>
+            <parameter name="usedBy" type="List"/>
+            <parameter name="uses" type="List"/>
+            <parameter name="kinds" type="List"/>
+            <parameter name="filter" type="Map"/>
+            <parameter name="message"/>
+        </out-parameters>
+    </service>
     <service verb="get" noun="Definition" type="rust" location="dev_aide::artifacts::get_definition" allow-remote="false" read-only="true">
         <description>Go to definition: the artifact the reference at a line of a file names (the one naming word), with where it opens.</description>
         <in-parameters>

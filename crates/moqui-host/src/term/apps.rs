@@ -25,8 +25,8 @@ use std::time::Duration;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_lib::sync::lock;
 use moqui_tui::{
-    Choice, LinkError, PushSink, RawBody, Reply, ScreenLink, ScreenModel, SessionEvent, SessionOptions, ShellInfo,
-    Subscription, TransitionOutcome,
+    AdminAccount, AdminSetup, Choice, LinkError, PushSink, RawBody, Reply, ScreenLink, ScreenModel, SessionEvent,
+    SessionOptions, ShellInfo, Subscription, TransitionOutcome,
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc as tokio_mpsc, oneshot};
@@ -222,6 +222,37 @@ impl ScreenLink for GatedLink {
 
     fn send_code(&self, username: &str, password: &str, factor: &str) -> Result<String, LinkError> {
         self.link.send_code(username, password, factor)
+    }
+
+    /// Asked before a login, as the browser's Login page asks it.
+    fn initial_admin(&self) -> Result<Option<AdminSetup>, LinkError> {
+        self.link.initial_admin()
+    }
+
+    /// Before a login, as the browser's anonymous form posts it: no wider than that, since the service refuses once any
+    /// account exists. A refusal counts toward [`MAX_LOGIN_FAILURES`] as a refused login does, and the session still
+    /// closes without a login within [`LOGIN_WAIT`]; the dialog logs in with the account next.
+    fn create_initial_admin(&self, account: &AdminAccount) -> Result<(), LinkError> {
+        let gate = &self.gate;
+        match self.link.create_initial_admin(account) {
+            Ok(()) => {
+                tracing::info!("{}: created the first administrator {}", gate.label, account.username);
+                Ok(())
+            }
+            Err(err) => {
+                let failures = gate.failures.fetch_add(1, Ordering::AcqRel) + 1;
+                tracing::warn!(
+                    "{}: the first administrator {} refused ({failures}): {err}",
+                    gate.label,
+                    account.username
+                );
+                if failures >= MAX_LOGIN_FAILURES {
+                    *lock(&gate.note) = Some(format!("closed after {MAX_LOGIN_FAILURES} refused logins"));
+                    let _ = gate.events.send(SessionEvent::Close);
+                }
+                Err(err)
+            }
+        }
     }
 
     fn json(

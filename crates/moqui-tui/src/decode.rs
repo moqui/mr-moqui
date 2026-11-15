@@ -315,6 +315,12 @@ fn take_csi(buf: &[u8]) -> Take {
         b'H' => Key::Home,
         b'F' => Key::End,
         b'Z' => Key::BackTab,
+        // F1 to F4 with a modifier (xterm's Shift+F3 is `CSI 1;2R`); the client asks for no cursor report, which ends
+        // in `R` too.
+        b'P' => Key::F(1),
+        b'Q' => Key::F(2),
+        b'R' => Key::F(3),
+        b'S' => Key::F(4),
         _ => return Take::Skip(len),
     };
     Take::One(Decoded::Key(apply_mods(key, mods)), len)
@@ -370,6 +376,10 @@ fn take_tilde(body: &str, len: usize) -> Take {
         "3" => Key::Delete,
         "5" => Key::PageUp,
         "6" => Key::PageDown,
+        "11" => Key::F(1),
+        "12" => Key::F(2),
+        "13" => Key::F(3),
+        "14" => Key::F(4),
         "15" => Key::F(5),
         "17" => Key::F(6),
         "18" => Key::F(7),
@@ -535,6 +545,19 @@ mod tests {
         assert_eq!(keys(b"\x1b\r"), vec![alt(Key::Enter)]);
         assert_eq!(keys(b"\x1b[1~\x1b[4~"), vec![key(Key::Home), key(Key::End)]);
         assert_eq!(keys(b"\x1bOH"), vec![key(Key::Home)]);
+    }
+
+    #[test]
+    fn function_keys_one_to_four_take_their_modifiers() {
+        let shifted = |key: Key| KeyPress {
+            shift: true,
+            ..KeyPress::plain(key)
+        };
+        assert_eq!(keys(b"\x1b[1;2R"), vec![Decoded::Key(shifted(Key::F(3)))]);
+        assert_eq!(keys(b"\x1b[13;2~"), vec![Decoded::Key(shifted(Key::F(3)))]);
+        assert_eq!(keys(b"\x1b[19;2~"), vec![Decoded::Key(shifted(Key::F(8)))]);
+        assert_eq!(keys(b"\x1bOR"), vec![key(Key::F(3))]);
+        assert_eq!(keys(b"\x00"), vec![ctrl(Key::Char(' '))]);
     }
 
     #[test]

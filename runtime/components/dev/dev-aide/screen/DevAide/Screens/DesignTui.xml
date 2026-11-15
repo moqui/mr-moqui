@@ -1,0 +1,380 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Screens › Design's terminal twin (plans/design-dev-aide.md 11.2, D14): a screen from get#ScreenView, from its file
+    (rootId, path) or an app page (page), with the pending line of the user's edit buffer, and tabs: Design (the screen's
+    outline as a tree, each element opening its properties from the schema digest and the intents its kind offers: Add
+    field or column, filter, row action, section or button, Insert before, after or inside, Remove, Move up and down,
+    and in extension mode Replace a section, Override a transition and Actions before or after), Preview (the screen's own
+    terminal form rendered from the staged buffer, moquiPreview=buffer:<id>), Text (the edit target as staged, read only,
+    and its diff) and Extension points. An upstream screen opens in extension mode: every edit goes to the site's
+    screen-extend of it, made on its first save. Edits are staged (GuidedEdit.js screenIntent, apply#EditBufferOps);
+    Save writes them in kind order. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Design in the terminal" default-menu-include="false">
+    <parameter name="rootId"/>
+    <parameter name="path"/>
+    <parameter name="page"/>
+    <parameter name="node"/>
+    <parameter name="tab"/>
+    <parameter name="previewQuery"/>
+
+    <transition name="saveBuffer">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            guided.save(guided.screenContext(rootId, path, page).target)
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="saveMine">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            guided.save(guided.screenContext(rootId, path, page).target, [{rootId: fileRootId, path: filePath}])
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="takeDisk">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            guided.discard(guided.screenContext(rootId, path, page).target, {rootId: fileRootId, path: filePath})
+            ec.message.addMessage(ec.l10n.localize("The disk's text is back; the other staged files stay"), 'info')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="discardBuffer">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            guided.discard(guided.screenContext(rootId, path, page).target)
+            ec.message.addMessage(ec.l10n.localize('The unsaved changes are discarded'), 'info')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <!-- every intent: its operations for the selected element (GuidedEdit.js screenIntent), staged in the edit file -->
+    <transition name="designEdit">
+        <actions><script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            const screen = guided.screenContext(rootId, path, page)
+            const raw = ec.web.secureRequestParameters
+            const built = screen.view ? guided.screenIntent(screen, node, String(intent || ''), {attrName, attrValue, fieldName, fieldTitle, widget,
+                after, transitionName, serviceName, linkText, keyField, where, snippet, rawXml: raw.rawXml || rawXml, sectionKind, sectionName,
+                sectionTitle, entityName}) : {refused: screen.refused || 'No screen'}
+            if (built.refused) ec.message.addError(built.refused)
+            else {
+                guided.apply(screen.target, screen.edit, built.ops)
+                if (built.node !== undefined && !ec.message.hasError()) node = built.node
+            }
+        ]]></script></actions>
+        <default-response url="."><parameter name="tab" value="design"/></default-response>
+        <error-response url="."><parameter name="tab" value="design"/></error-response>
+    </transition>
+
+    <actions>
+        <script><![CDATA[
+            const guided = ec.resource.script('component://dev-aide/service/org/moqui/devaide/GuidedEdit.js')
+            const screen = guided.screenContext(rootId, path, page)
+            const ops = screen.ops.screen
+            const pure = screen.ops.pure
+            view = screen.view
+            readError = screen.refused || ''
+            tab = ['design', 'preview', 'text', 'points'].includes(tab) ? tab : 'design'
+            extension = screen.extension
+            baseFile = screen.baseFile || {}
+            editFile = screen.editFile || {}
+            const base = baseFile.outline || null
+            hasEditTarget = !!screen.edit
+            canEdit = !!(view && view.tier !== 'view' && screen.edit && !editFile.readOnly && base)
+            screenName = view ? view.location.split('/').pop().replace(/\.xml$/, '') : ''
+            headerText = view ? [view.location, view.urlPath || '', view.upstream ? 'upstream' : 'site'].filter((part) => part).join(' · ') : ''
+            editsGo = !view ? '' : !screen.edit ? 'This screen is upstream and there is no site component to extend it in: create one on Home'
+                : extension ? 'Extension mode: every edit goes to the site\'s ' + screen.edit.path : 'Edits go to ' + screen.edit.path
+            readOnlyReason = view && screen.edit && editFile.readOnly ? editFile.readOnlyReason || '' : ''
+            pendingText = guided.pendingText(screen.buffer)
+            bufferExpired = !!screen.buffer.expired
+            const left = guided.taken(screen.target)
+            conflict = left.conflict || null
+            problemRows = (left.problems || []).map((problem) => ({file: problem.file || '', line: problem.line || 0, severity: problem.severity || '', message: problem.message || ''}))
+            const here = {rootId: rootId || null, path: path || null, page: page || null}
+            const urlOf = (extra) => sri.buildUrl('.').addParameters(Object.assign({}, here, extra)).getUrlWithParams()
+            tabItems = [['design', 'Design'], ['preview', 'Preview'], ['text', 'Text' + (screen.buffer.pending.count ? ' ' + screen.buffer.pending.count : '')],
+                ['points', 'Extension points']].map(([name, title]) => ({title, url: urlOf({tab: name, node: node || null}), active: name === tab}))
+            workspaceBase = baseFile.rootId ? '/qapps/dev/Workspace?rootId=' + encodeURIComponent(baseFile.rootId) + '&path=' + encodeURIComponent(baseFile.path) : ''
+
+            // the outline as the tree component's rows, each opening its element
+            treeRows = base ? ops.outlineRows(base, (key) => urlOf({tab: 'design', node: key})) : []
+            const selectedPath = guided.nodePath(node)
+            selected = base ? pure.outlineAt(base, selectedPath) : null
+            if (!selected && base) selected = base
+            const selectedKey = selected ? selected.path.join('.') : ''
+            selectedText = selected ? selected.name + (ops.anchorName(selected) ? ' ' + ops.anchorName(selected) : '') + ' · line ' + selected.line : ''
+            selectedUrl = workspaceBase && selected ? workspaceBase + '&line=' + selected.line : ''
+            nodeValue = selectedKey
+            const form = selected && base ? ops.formOf(base, selected.path) : null
+            formKind = form ? form.name : ''
+            formName = form ? pure.attrOf(form, 'name') || '' : ''
+            formFieldOptions = form ? pure.children(form, ['field']).map((field) => ({name: pure.attrOf(field, 'name')})).filter((field) => field.name) : []
+            isTransition = !!(selected && selected.name === 'transition')
+            isReplaceable = !!(selected && ['section', 'section-iterate', 'form-single', 'form-list'].includes(selected.name) && ops.anchorName(selected))
+            const nearest = selected && selected.path.length && !ops.anchorName(selected) ? ops.nearestAnchor(base, selected.path) : null
+            anchorNote = extension && selected && selected.path.length ? (ops.anchorName(selected) && ops.ANCHORABLE.includes(selected.name)
+                ? 'Inserts anchor at ' + ops.anchorName(selected) : nearest ? 'This element has no name: inserts go ' + nearest.where + ' ' + nearest.name + ', the nearest anchor'
+                : 'Nothing near this element has a name to anchor at') : ''
+            snippetOptions = ops.SNIPPETS.map((item) => ({key: item.key, label: item.label}))
+
+            // the properties of the selected element, from the schema digest: one row per attribute, its values when listed
+            propertyRows = []
+            if (tab === 'design' && selected && !extension) {
+                const digest = guided.probe('org.moqui.dev.DevToolsServices.get#SchemaDigest', {rootElement: base.name}).digest
+                const spec = digest ? (digest.elements || []).find((element) => element.name === selected.name) : null
+                const have = Object.fromEntries(selected.attrs || [])
+                const listed = spec ? spec.attributes || [] : []
+                const names = listed.map((attr) => attr.name)
+                propertyRows = listed.map((attr) => ({attrName: attr.name, attrValue: have[attr.name] == null ? '' : have[attr.name],
+                    valueOptions: (attr.values || []).map((value) => ({value})), choose: !!(attr.values || []).length && !attr.openValues,
+                    about: String(attr.doc || '').replace(/\s+/g, ' ').slice(0, 90) + (String(attr.doc || '').length > 90 ? '…' : '') +
+                        (attr.default != null ? ' (default ' + attr.default + ')' : ''), node: selectedKey}))
+                    .concat(Object.keys(have).filter((name) => !names.includes(name)).map((name) => ({attrName: name, attrValue: have[name],
+                        valueOptions: [], choose: false, about: 'Not in the schema', node: selectedKey})))
+            }
+
+            // the extension file as staged: its elements
+            extensionRows = extension && editFile.outline ? pure.children(editFile.outline).map((child) => ({name: child.name,
+                label: ops.labelOf(child).chips.map((chip) => chip.text).join(' '), line: child.line})) : []
+            extensionPath = extension && screen.edit ? screen.edit.path : ''
+
+            // Preview: the screen's own terminal form, rendered from the staged buffer
+            previewQuery = previewQuery != null ? previewQuery : (view ? view.query || '' : '')
+            previewUrl = view && view.urlPath ? view.urlPath + '?' + (previewQuery ? previewQuery + '&' : '') + 'moquiPreview=' + encodeURIComponent('buffer:' + screen.buffer.bufferId) : ''
+            requiredParameters = view ? (view.parameters || []).filter((parameter) => parameter.required).map((parameter) => parameter.name).join(', ') : ''
+
+            // Text and the extension points
+            targetText = (extension ? editFile.text : baseFile.text) || ''
+            targetPath = screen.edit ? screen.edit.path : ''
+            diffRows = screen.buffer.files.filter((file) => file.staged).map((file) => ({path: file.path, diff: file.diff || ''}))
+            pointRows = base ? ops.extensionPoints(base).map((point) => ({kind: point.kind, name: point.name || '', line: point.line,
+                nearest: point.nearest ? point.nearest.where + ' ' + point.nearest.name : '', url: urlOf({tab: 'design', node: point.path.join('.')})})) : []
+        ]]></script>
+    </actions>
+    <widgets>
+        <section name="NotAvailable" condition="!view"><widgets>
+            <label text="Not available: ${readError || 'name a screen file or an app page'}" type="p" style="text-negative"/>
+            <link url="../Tree" text="Back to the screen tree" link-type="anchor"/>
+        </widgets><fail-widgets>
+            <container name="ScreenHeader">
+                <label text="${screenName}" type="h5"/>
+                <label text="${headerText}" type="p" style="m-muted"/>
+                <label text="${editsGo}" type="p" style="${hasEditTarget ? '' : 'text-warning'}"/>
+                <container-row><row-col lg="12">
+                    <link url="${workspaceBase}" url-type="plain" text="Open in Workspace" link-type="anchor" condition="workspaceBase"/>
+                    <link url="/qapps/dev/Artifacts/Refs?artifactId=${encodeURIComponent('screen:' + view.location)}" url-type="plain" text="References" link-type="anchor"/>
+                </row-col></container-row>
+                <label text="Read only: ${readOnlyReason}" type="p" style="text-warning" condition="readOnlyReason"/>
+                <label text="The unsaved changes of this screen were kept two hours and are gone: make them again." type="p" style="text-warning" condition="bufferExpired"/>
+                <section name="Pending" condition="pendingText"><widgets>
+                    <form-single name="PendingSave" transition="saveBuffer">
+                        <field name="pending"><default-field title=""><display text="${pendingText}"/></default-field></field>
+                        <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                        <field-layout><field-row-big><field-ref name="pending"/><field-ref name="submitButton"/></field-row-big></field-layout>
+                    </form-single>
+                    <link url="discardBuffer" text="Discard" btn-type="danger" confirmation="Discard the unsaved changes of ${screenName}?"/>
+                </widgets></section>
+                <section name="Conflict" condition="conflict"><widgets>
+                    <container-box type="warning"><box-header title="${conflict.path} changed on disk since the edits started"/><box-body>
+                        <label text="The disk's text against yours:" type="p"/>
+                        <label text="${conflict.diff}" type="pre" encode="true"/>
+                        <link url="saveMine" text="Save mine over it" btn-type="danger" confirmation="Write your text over the disk's ${conflict.path}?"
+                                parameter-map="{fileRootId: conflict.rootId, filePath: conflict.path}"/>
+                        <link url="takeDisk" text="Take the disk's" parameter-map="{fileRootId: conflict.rootId, filePath: conflict.path}"/>
+                    </box-body></container-box>
+                </widgets></section>
+                <section name="SaveProblems" condition="problemRows.length"><widgets>
+                    <form-list name="ScreenSaveProblems" list="problemRows" skip-form="true" paginate="false">
+                        <field name="file"><default-field title="File"><display/></default-field></field>
+                        <field name="line"><default-field title="Line"><display/></default-field></field>
+                        <field name="severity"><default-field title="Severity"><display/></default-field></field>
+                        <field name="message"><default-field title="Problem"><display/></default-field></field>
+                    </form-list>
+                </widgets></section>
+            </container>
+
+            <render-mode>
+                <text type="tui"><![CDATA[${JSON.stringify({t: 'subscreens', id: 'ScreenDesignTabs', kind: 'tab', items: tabItems, c: []})}]]></text>
+                <text type="html,qvt"><![CDATA[<p class="m-dev-tabs">${tabItems.map((item) => item.active ? '<b>' + html(item.title) + '</b>' : '<a href="' + html(item.url) + '">' + html(item.title) + '</a>').join(' · ')}</p>]]></text>
+            </render-mode>
+
+            <section name="DesignTab" condition="tab == 'design'"><widgets>
+                <container-row name="DesignColumns">
+                    <row-col md="4" name="OutlineColumn">
+                        <render-mode>
+                            <text type="tui"><![CDATA[${JSON.stringify({t: 'component', id: 'ScreenOutline', name: 'tree', props: {rows: treeRows, columns: ['Outline']}})}]]></text>
+                            <text type="html,qvt"><![CDATA[<h6>Outline</h6><div class="m-dev-mono">${treeRows.map((row) => '<div style="padding-left: ' + (row.key.split('.').length - 1) + 'em"><a href="' + html(row._open) + '">' + html(row.label) + '</a></div>').join('')}</div>]]></text>
+                        </render-mode>
+                    </row-col>
+                    <row-col md="8" name="NodeColumn">
+                        <label text="${selectedText}" type="h6"/>
+                        <link url="${selectedUrl}" url-type="plain" text="Open at its line in the Workspace" link-type="anchor" condition="selectedUrl"/>
+                        <label text="${anchorNote}" type="p" style="m-muted" condition="anchorNote"/>
+
+                        <section name="Properties" condition="propertyRows.length &amp;&amp; canEdit"><widgets>
+                            <label text="Properties: Enter on a row edits it, Ctrl+S stages it" type="p" style="m-muted"/>
+                            <form-list name="NodeProperties" list="propertyRows" transition="designEdit" paginate="false">
+                                <field name="intent" from="'setProperty'"><default-field><hidden/></default-field></field>
+                                <field name="node"><default-field><hidden/></default-field></field>
+                                <field name="attrName"><default-field title="Attribute"><display also-hidden="true"/></default-field></field>
+                                <field name="attrValue"><conditional-field condition="choose" title="Value"><drop-down allow-empty="true">
+                                        <list-options list="valueOptions" key="${value}" text="${value}"/></drop-down></conditional-field>
+                                    <default-field title="Value"><text-line size="30"/></default-field></field>
+                                <field name="about"><default-field title="About"><display/></default-field></field>
+                                <field name="submitButton"><default-field title=""><submit text="Stage"/></default-field></field>
+                            </form-list>
+                        </widgets></section>
+                        <label text="Properties change in place only: this screen is extended, so use the intents below." type="p" style="m-muted" condition="extension &amp;&amp; canEdit"/>
+
+                        <section name="Intents" condition="canEdit"><widgets>
+                            <container-row><row-col lg="12">
+                                <container-dialog id="AddFormField" button-text="${formKind == 'form-list' ? 'Add column' : 'Add field'}" condition="formKind">
+                                    <label text="Into ${formName}${extension ? ', through the site\'s form merge' : ''}" type="p"/>
+                                    <form-single name="AddFormFieldForm" transition="designEdit">
+                                        <field name="intent" from="'addField'"><default-field><hidden/></default-field></field>
+                                        <field name="node" from="nodeValue"><default-field><hidden/></default-field></field>
+                                        <field name="fieldName"><default-field title="Name"><text-line size="30"/></default-field></field>
+                                        <field name="fieldTitle"><default-field title="Title"><text-line size="30"/></default-field></field>
+                                        <field name="widget" from="'display'"><default-field title="Widget"><drop-down allow-empty="false">
+                                            <option key="display"/><option key="text-line"/><option key="text-area"/><option key="date-time"/>
+                                            <option key="check"/><option key="drop-down"/><option key="link"/></drop-down></default-field></field>
+                                        <field name="after"><default-field title="After"><drop-down allow-empty="true">
+                                            <list-options list="formFieldOptions" key="${name}" text="${name}"/></drop-down></default-field></field>
+                                        <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                                    </form-single>
+                                </container-dialog>
+                                <container-dialog id="AddFilter" button-text="Add filter" condition="formKind == 'form-list'">
+                                    <form-single name="AddFilterForm" transition="designEdit">
+                                        <field name="intent" from="'addFilter'"><default-field><hidden/></default-field></field>
+                                        <field name="node" from="nodeValue"><default-field><hidden/></default-field></field>
+                                        <field name="fieldName"><default-field title="Column"><drop-down allow-empty="false">
+                                            <list-options list="formFieldOptions" key="${name}" text="${name}"/></drop-down></default-field></field>
+                                        <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                                    </form-single>
+                                </container-dialog>
+                                <container-dialog id="AddRowAction" button-text="Add row action" condition="formKind == 'form-list'">
+                                    <form-single name="AddRowActionForm" transition="designEdit">
+                                        <field name="intent" from="'addRowAction'"><default-field><hidden/></default-field></field>
+                                        <field name="node" from="nodeValue"><default-field><hidden/></default-field></field>
+                                        <field name="fieldName" from="'rowAction'"><default-field title="Column name"><text-line size="30"/></default-field></field>
+                                        <field name="transitionName"><default-field title="Transition"><text-line size="30"/></default-field></field>
+                                        <field name="linkText"><default-field title="Text"><text-line size="30"/></default-field></field>
+                                        <field name="keyField"><default-field title="Row key field"><text-line size="30"/></default-field></field>
+                                        <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                                    </form-single>
+                                </container-dialog>
+                                <container-dialog id="InsertWidget" button-text="Insert">
+                                    <form-single name="InsertWidgetForm" transition="designEdit" body-parameters="rawXml">
+                                        <field name="intent" from="'insert'"><default-field><hidden/></default-field></field>
+                                        <field name="node" from="nodeValue"><default-field><hidden/></default-field></field>
+                                        <field name="where" from="'after'"><default-field title="Where"><drop-down allow-empty="false">
+                                            <option key="before" text="Before it"/><option key="after" text="After it"/><option key="inside" text="Inside it, last"/></drop-down></default-field></field>
+                                        <field name="snippet"><default-field title="Widget"><drop-down allow-empty="true">
+                                            <list-options list="snippetOptions" key="${key}" text="${label}"/></drop-down></default-field></field>
+                                        <field name="rawXml"><default-field title="Or its XML"><text-area rows="5" cols="80"/></default-field></field>
+                                        <field name="submitButton"><default-field title="Insert"><submit/></default-field></field>
+                                    </form-single>
+                                </container-dialog>
+                                <container-dialog id="AddSection" button-text="Add section">
+                                    <form-single name="AddSectionForm" transition="designEdit">
+                                        <field name="intent" from="'addSection'"><default-field><hidden/></default-field></field>
+                                        <field name="node" from="nodeValue"><default-field><hidden/></default-field></field>
+                                        <field name="sectionKind" from="'box'"><default-field title="Kind"><drop-down allow-empty="false">
+                                            <option key="box" text="A box"/><option key="related" text="A list of related records"/></drop-down></default-field></field>
+                                        <field name="sectionName"><default-field title="Name"><text-line size="30"/></default-field></field>
+                                        <field name="sectionTitle"><default-field title="Title"><text-line size="30"/></default-field></field>
+                                        <field name="entityName"><default-field title="Entity" tooltip="The related records' entity"><text-line size="40"/></default-field></field>
+                                        <field name="keyField"><default-field title="Key field" tooltip="The page's field the records are found by"><text-line size="30"/></default-field></field>
+                                        <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                                    </form-single>
+                                </container-dialog>
+                                <container-dialog id="AddButton" button-text="Add button" condition="selected.path.length">
+                                    <form-single name="AddButtonForm" transition="designEdit">
+                                        <field name="intent" from="'addButton'"><default-field><hidden/></default-field></field>
+                                        <field name="node" from="nodeValue"><default-field><hidden/></default-field></field>
+                                        <field name="transitionName"><default-field title="Transition"><text-line size="30"/></default-field></field>
+                                        <field name="serviceName"><default-field title="Service it calls"><text-line size="50"/></default-field></field>
+                                        <field name="linkText"><default-field title="Text"><text-line size="30"/></default-field></field>
+                                        <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                                    </form-single>
+                                </container-dialog>
+                                <link url="designEdit" text="Up" condition="!extension &amp;&amp; selected.path.length" parameter-map="{intent: 'moveUp', node: nodeValue}"/>
+                                <link url="designEdit" text="Down" condition="!extension &amp;&amp; selected.path.length" parameter-map="{intent: 'moveDown', node: nodeValue}"/>
+                                <link url="designEdit" text="Remove" btn-type="danger" condition="!extension &amp;&amp; selected.path.length"
+                                        confirmation="Remove the ${selected.name}${formName &amp;&amp; selected.name.startsWith('form-') ? ' ' + formName : ''} and what is in it?" parameter-map="{intent: 'remove', node: nodeValue}"/>
+                                <link url="designEdit" text="Replace it in the site" condition="extension &amp;&amp; isReplaceable" parameter-map="{intent: 'replaceSection', node: nodeValue}"/>
+                                <link url="designEdit" text="Override it in the site" condition="extension &amp;&amp; isTransition" parameter-map="{intent: 'overrideTransition', node: nodeValue}"/>
+                                <link url="designEdit" text="Actions before the screen's" condition="extension" parameter-map="{intent: 'actionsBefore', node: nodeValue}"/>
+                                <link url="designEdit" text="Actions after the screen's" condition="extension" parameter-map="{intent: 'actionsAfter', node: nodeValue}"/>
+                            </row-col></container-row>
+                        </widgets></section>
+
+                        <section name="ExtensionFile" condition="extension &amp;&amp; extensionPath"><widgets>
+                            <label text="The site's ${extensionPath}${editFile.missing ? ' (made on its first save)' : ''}${editFile.staged ? ', staged' : ''}" type="h6"/>
+                            <form-list name="ExtensionElements" list="extensionRows" skip-form="true" paginate="false">
+                                <field name="name"><default-field title="Element"><display/></default-field></field>
+                                <field name="label"><default-field title="Names"><display/></default-field></field>
+                                <field name="line"><default-field title="Line"><display/></default-field></field>
+                            </form-list>
+                        </widgets></section>
+                    </row-col>
+                </container-row>
+            </widgets></section>
+
+            <section name="PreviewTab" condition="tab == 'preview'"><widgets>
+                <form-single name="PreviewParameters" transition=".">
+                    <field name="tab" from="'preview'"><default-field><hidden/></default-field></field>
+                    <field name="previewQuery"><default-field title="Parameters" tooltip="The page's query, such as exampleId=100; F5 renders it again"><text-line size="60"/></default-field></field>
+                    <field name="submitButton"><default-field title="Render"><submit/></default-field></field>
+                </form-single>
+                <label text="It needs ${requiredParameters}." type="p" style="text-warning" condition="requiredParameters"/>
+                <label text="This screen renders at no path the app tree reaches, so it has no preview here." type="p" condition="!previewUrl"/>
+                <render-mode>
+                    <text type="tui"><![CDATA[${JSON.stringify(previewUrl ? {t: 'dynamicContainer', id: 'ScreenPreview', url: previewUrl} : [])}]]></text>
+                    <text type="html,qvt"><![CDATA[${previewUrl ? '<p><a target="_blank" href="' + html(previewUrl) + '">Open the preview</a> of the staged screen</p>' : ''}]]></text>
+                </render-mode>
+            </widgets></section>
+
+            <section name="TextTab" condition="tab == 'text'"><widgets>
+                <label text="${targetPath ? targetPath + (editFile.staged ? ' as staged' : editFile.missing ? ' (made on its first save)' : ' as on disk') + ', read only here: edit it in the Workspace' : 'No file to show'}" type="p" style="m-muted"/>
+                <render-mode>
+                    <text type="tui"><![CDATA[${JSON.stringify(targetPath ? {t: 'component', id: 'ScreenTargetText', name: 'code', props: {text: targetText, language: 'xml', readOnly: true, rows: 24}} : [])}]]></text>
+                    <text type="html,qvt"><![CDATA[<pre class="m-dev-mono">${html(targetText)}</pre>]]></text>
+                </render-mode>
+                <section-iterate name="StagedDiffs" list="diffRows" entry="change"><widgets>
+                    <label text="${change.path}, staged against the disk" type="h6"/>
+                    <label text="${change.diff}" type="pre" encode="true"/>
+                </widgets></section-iterate>
+            </widgets></section>
+
+            <section name="PointsTab" condition="tab == 'points'"><widgets>
+                <label text="What a screen-extend can name: the named containers, sections, forms and transitions, and for one with no name the nearest anchor." type="p" style="m-muted"/>
+                <form-list name="ExtensionPoints" list="pointRows" skip-form="true" paginate="false">
+                    <field name="kind"><default-field title="Element"><display/></default-field></field>
+                    <field name="name"><default-field title="Name">
+                        <link url="${url}" url-type="plain" text="${name || '(no name)'}" link-type="anchor"/></default-field></field>
+                    <field name="line"><default-field title="Line"><display/></default-field></field>
+                    <field name="nearest"><default-field title="Nearest anchor"><display/></default-field></field>
+                </form-list>
+            </widgets></section>
+        </fail-widgets></section>
+    </widgets>
+</screen>

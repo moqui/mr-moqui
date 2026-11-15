@@ -165,33 +165,60 @@ pub fn draw(paint: &mut Painter, session: &Session, breakpoints: &Breakpoints, c
             }
             Overlay::Login(login) => {
                 let mark = |at: usize| if login.at == at { ">" } else { " " };
-                let dots = "•".repeat(login.password.chars().count());
-                let mut lines = vec![
-                    format!("{} Username . : [{:<20}]", mark(0), login.username),
-                    format!("{} Password . : [{:<20}]", mark(1), dots),
-                    format!("{} Code . . . : [{:<20}]", mark(2), login.code),
-                    String::new(),
-                    if login.code_wanted && !login.sendable.is_empty() {
-                        "Enter=Log in  Alt+S=Send code  Tab=Next  Esc=Cancel".to_string()
-                    } else {
-                        "Enter=Log in  Tab=Next  Esc=Cancel".to_string()
-                    },
-                ];
+                let labels = login.labels();
+                // the labels dotted to one width, the dots lined up from the right: "Username . : ["
+                let width = labels.iter().map(|label| display_width(label)).max().unwrap_or(0) + 2;
+                let mut lines: Vec<String> = labels
+                    .iter()
+                    .enumerate()
+                    .map(|(at, label)| {
+                        let value = if login.masked(at) {
+                            "•".repeat(login.field(at).chars().count())
+                        } else {
+                            login.field(at).to_string()
+                        };
+                        let mut dotted = format!("{label} ");
+                        while display_width(&dotted) < width {
+                            dotted.push_str(if (width - display_width(&dotted)).is_multiple_of(2) {
+                                " "
+                            } else {
+                                "."
+                            });
+                        }
+                        format!("{} {dotted} : [{value:<20}]", mark(at))
+                    })
+                    .collect();
+                let fields = lines.len();
+                lines.push(String::new());
+                let title = match &login.setup {
+                    Some(setup) => {
+                        lines.insert(fields, format!("  The password: {}", setup.hint()));
+                        lines.push("Enter=Next  Ctrl+S=Create and log in  Tab=Next  Esc=Cancel".to_string());
+                        "Welcome to your new system: create the first administrator"
+                    }
+                    None => {
+                        lines.push(if login.code_wanted && !login.sendable.is_empty() {
+                            "Enter=Log in  Alt+S=Send code  Tab=Next  Esc=Cancel".to_string()
+                        } else {
+                            "Enter=Log in  Tab=Next  Esc=Cancel".to_string()
+                        });
+                        "Log in"
+                    }
+                };
                 let error = !login.error.is_empty();
                 if error {
                     lines.insert(0, format!("! {}", login.error));
                 }
-                let rect = small_box(paint, canvas, "Log in", &lines);
+                let rect = small_box(paint, canvas, title, &lines);
                 // The fields, and the key hint line as the button.
                 let first = rect.y + 1 + u16::from(error);
                 let inner = rect.width.saturating_sub(2);
-                for at in 0..3 {
-                    paint.area(
-                        Rect::new(rect.x + 1, first + at, inner, 1),
-                        Target::LoginField(usize::from(at)),
-                    );
+                for at in 0..fields {
+                    let row = first + u16::try_from(at).unwrap_or(0);
+                    paint.area(Rect::new(rect.x + 1, row, inner, 1), Target::LoginField(at));
                 }
-                paint.area(Rect::new(rect.x + 1, first + 4, inner, 1), Target::LoginField(3));
+                let button = first + u16::try_from(lines.len() - 1 - usize::from(error)).unwrap_or(0);
+                paint.area(Rect::new(rect.x + 1, button, inner, 1), Target::LoginField(fields));
             }
             Overlay::Drawer(_) => {}
         }

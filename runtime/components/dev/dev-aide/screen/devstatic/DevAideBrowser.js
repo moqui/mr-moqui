@@ -41,6 +41,18 @@
 
     // The references of an artifact as a card's sections: by the other side's kind, each with its rows (the other side's
     // id, short and full name, how it refers, its observed count, whether only observed), filtered as the browser is.
+    // A row's name told apart from others of its short name: the last two parts of its full name, or, when the index
+    // names it by its short name alone (a form or transition), of its id's location (form:…/Search.xml#ExampleList is
+    // Search.xml#ExampleList, a transition's :any left off); null when neither says more (dev-aide src/browser.rs).
+    const lastParts = (text) => String(text).split(/[.:/]/).slice(-2).join(".");
+    pure.ownerName = (name, id, short) => {
+        if (name && name !== short) return lastParts(name);
+        const at = String(id || "").indexOf(":");
+        const location = at >= 0 ? String(id).slice(at + 1) : "";
+        const hash = location.indexOf("#");
+        if (hash >= 0) return lastParts(location.slice(0, hash)) + "#" + location.slice(hash + 1).split(":")[0];
+        return location && location !== short ? lastParts(location) : null;
+    };
     pure.browserSections = (refs, filter) => {
         const f = Object.assign({ hideFramework: false, kinds: null, observed: true, staticLinks: true }, filter || {});
         const sections = {};
@@ -62,8 +74,10 @@
         for (const section of Object.values(sections)) {
             const counts = {};
             for (const row of section.rows) counts[row.shortName] = (counts[row.shortName] || 0) + 1;
-            for (const row of section.rows) if (counts[row.shortName] > 1 && row.name !== row.shortName)
-                row.shortName = row.name.split(/[.:/]/).slice(-2).join(".");
+            for (const row of section.rows) if (counts[row.shortName] > 1) {
+                const owner = pure.ownerName(row.name, row.id, row.shortName);
+                if (owner) row.shortName = owner;
+            }
         }
         return Object.keys(sections).sort().map((kind) => sections[kind]);
     };

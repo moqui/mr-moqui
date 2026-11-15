@@ -65,6 +65,15 @@ test("rows of one name in a section are told apart by their owner", () => {
     const rows = pure.browserSections([field("OrderHeader"), field("OrderItem"), field("OrderItem"),
         { refType: "entity-field", other: { id: "field:mantle.order.OrderHeader.statusId", kind: "field", shortName: "statusId", name: "mantle.order.OrderHeader.statusId" } }], {})[0].rows;
     assert.deepEqual(rows.map((row) => row.shortName), ["OrderHeader.orderId", "OrderItem.orderId", "statusId"]);
+    // the index names a form or transition by its own name only: its id's screen tells them apart
+    const form = (screen) => ({ refType: "form-entity", other: { id: "form:component://example/screen/" + screen + ".xml#ExampleList", kind: "form",
+        shortName: "ExampleList", name: "ExampleList", component: "example" } });
+    const transition = { refType: "transition-entity", other: { id: "transition:component://example/screen/Edit.xml#updateExample:any",
+        kind: "transition", shortName: "updateExample", name: "updateExample", component: "example" } };
+    const sections = pure.browserSections([form("Search"), form("Views"), transition,
+        { ...transition, other: { ...transition.other, id: "transition:component://example/screen/Views.xml#updateExample:any" } }], {});
+    assert.deepEqual(sections.map((section) => section.rows.map((row) => row.shortName)),
+        [["Search.xml#ExampleList", "Views.xml#ExampleList"], ["Edit.xml#updateExample", "Views.xml#updateExample"]]);
 });
 
 test("an artifact already on the path from the center is a cycle", () => {

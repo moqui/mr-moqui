@@ -24,10 +24,12 @@
 //! terminal. Its data comes from the screen's own transitions (the ones its `.qvue` twin calls), through the session's
 //! link; it holds its state in a [`ComponentState`] the session keeps by node id.
 
+mod artifact_browser;
 mod board;
 mod calc;
 mod calendar;
 mod chart;
+mod code;
 pub(crate) mod report;
 mod report_editor;
 mod timeline;
@@ -138,6 +140,8 @@ pub enum Act {
     Follow(String),
     /// A line for the message line.
     Message(String),
+    /// Put text on the terminal's clipboard (OSC 52), as a drag's selection is.
+    Copy(String),
 }
 
 /// A client component.
@@ -188,10 +192,12 @@ pub struct Registered(pub &'static dyn Component);
 
 inventory::collect!(Registered);
 
+inventory::submit! { Registered(&artifact_browser::ArtifactBrowser) }
 inventory::submit! { Registered(&board::Board) }
 inventory::submit! { Registered(&calc::CalcGrid) }
 inventory::submit! { Registered(&calendar::Calendar) }
 inventory::submit! { Registered(&chart::Chart) }
+inventory::submit! { Registered(&code::Code) }
 inventory::submit! { Registered(&report::ReportPanel) }
 inventory::submit! { Registered(&report::ReportDashboard) }
 inventory::submit! { Registered(&report::TraceWaterfall) }
@@ -295,10 +301,12 @@ mod tests {
         assert_eq!(
             names(),
             [
+                "artifact-browser",
                 "board",
                 "calcgrid",
                 "calendar",
                 "chart",
+                "code",
                 "log-tail",
                 "report-dashboard",
                 "report-definition-editor",
