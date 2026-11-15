@@ -651,9 +651,25 @@ fn insert(doc: &Doc<'_>, style: &Style, element: usize, position: Position, xml:
                 )]);
             }
             let content = doc.slice(&node.content);
+            // only comments (and the space between them): the fragment a line of its own at the children's indent
+            let comments_only = node
+                .children
+                .iter()
+                .all(|child| doc.nodes[*child].kind == Kind::Comment || blank(doc, *child));
             if content.trim().is_empty() {
                 Ok(vec![splice(
                     node.content.clone(),
+                    format!("{eol}{inner}{fragment}{eol}{indent}", eol = style.eol),
+                )])
+            } else if comments_only && position == Position::First {
+                Ok(vec![splice(
+                    node.content.start..node.content.start,
+                    format!("{eol}{inner}{fragment}", eol = style.eol),
+                )])
+            } else if comments_only {
+                let end = node.content.start + content.trim_end().len();
+                Ok(vec![splice(
+                    end..node.content.end,
                     format!("{eol}{inner}{fragment}{eol}{indent}", eol = style.eol),
                 )])
             } else if position == Position::First {
@@ -779,6 +795,21 @@ mod tests {
         assert_eq!(
             applied.text,
             "<entities>\n\t<entity entity-name=\"A\">\n\t\t<field name=\"x\"/>\n\t</entity>\n\t<extend-entity entity-name=\"B\">\n\t\t<field name=\"y\"><description>Why, and how</description></field>\n\t\t<field name=\"z\"/>\n\t</extend-entity>\n</entities>\n"
+        );
+        // a parent holding only a comment: the element a line of its own after it
+        let commented = "<entities>\n    <!-- the site's additions -->\n</entities>\n";
+        let applied = apply(
+            commented,
+            &[Op::Insert {
+                at: Locator::Path(Vec::new()),
+                position: Position::Last,
+                xml: "<extend-entity entity-name=\"A\"><field name=\"x\"/><field name=\"y\"/></extend-entity>".into(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            applied.text,
+            "<entities>\n    <!-- the site's additions -->\n    <extend-entity entity-name=\"A\">\n        <field name=\"x\"/>\n        <field name=\"y\"/>\n    </extend-entity>\n</entities>\n"
         );
         let style = Style::of(text);
         assert_eq!(spread("<a>\n<b/><c/></a>", &style), "<a>\n<b/><c/></a>");
