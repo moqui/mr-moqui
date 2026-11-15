@@ -81,7 +81,9 @@ A save is refused when:
 - the text does not parse, its root is not `moqui-conf`, or the files do not merge with it.
 
 The services name a file by its place in the merge (`fileIndex`), never by a path. In the terminal, and as a form in
-the browser, Edit is `EditTui`: a text editor with Save and reload.
+the browser, Edit is `EditTui`: a text editor with Save and reload. In the terminal the text is the `code` component
+([TUI](../ui/TUI.md#components)): the problems are marked in its gutter and checked again (`check#ConfFile`) once the
+typing stops, and Ctrl+S saves.
 
 ## What changes live
 

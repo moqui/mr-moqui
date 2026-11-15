@@ -128,10 +128,15 @@ along with this software (see the LICENSE.md file). If not, see
                 </form-single>
             </box-body></container-box>
         </widgets></section>
+        <!-- in the terminal the statements are the code component (docs/ui/TUI.md, Components) over the form's hidden sql,
+            and Ctrl+S runs them as Run SQL does -->
+        <render-mode><text type="tui"><![CDATA[${JSON.stringify([{t: 'text', id: 'SqlTextTitle', style: 'h6', text: ec.l10n.localize('SQL')},
+            {t: 'component', id: 'SqlText', name: 'code', props: {text: sql || '', language: 'sql', rows: 10, form: 'SqlOptions', field: 'sql'}}])}]]></text></render-mode>
         <form-single name="SqlOptions" transition="run" body-parameters="sql">
             <field name="db"><default-field><hidden/></default-field></field>
-            <field name="sql"><default-field title="SQL" tooltip="Statements separated by semicolons; each query's rows are shown below">
-                <text-area cols="120" rows="10"/></default-field></field>
+            <field name="sql"><conditional-field condition="sri.getRenderMode() !== 'tui'" title="SQL" tooltip="Statements separated by semicolons; each query's rows are shown below">
+                <text-area cols="120" rows="10"/></conditional-field>
+                <default-field><hidden/></default-field></field>
             <field name="allowChanges"><default-field title=""><check><option key="true" text="Allow changes: list the statements that may change data, then run them on confirmation"/></check></default-field></field>
             <field name="limit"><default-field><text-line size="5" default-value="500"/></default-field></field>
             <field name="submitButton"><default-field title="Run SQL"><submit/></default-field></field>
