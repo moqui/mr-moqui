@@ -1416,7 +1416,9 @@ fn resource_digests_archives_and_line_windows() {
     holds(
         r#"ec.resource.hmac("Jefe", "what do ya want for nothing?") === "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
             && ec.resource.hmac("Jefe", "what do ya want for nothing?", "base64url") === "W9zBRr9gdU5qBCQmCJV1x1oAPwidJzmDnexYuWTsOEM"
-            && (function () { try { ec.resource.hmac("", "x"); return false } catch (e) { return true } })()"#,
+            && ec.resource.hmac("é", "é") === "cfb9f5aecd21b357efb5291b1e33225a3561c75ba5e45f73b40e2e8d1ca992d6"
+            && (function () { try { ec.resource.hmac("", "x"); return false } catch (e) { return true } })()
+            && (function () { try { ec.resource.hmac("k", "x", "base64"); return false } catch (e) { return true } })()"#,
     );
     holds(
         r#"(function () {
