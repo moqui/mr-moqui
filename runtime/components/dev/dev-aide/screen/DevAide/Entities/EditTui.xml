@@ -387,6 +387,10 @@ along with this software (see the LICENSE.md file). If not, see
             dataRows = ((view && view.data && view.data.rows) || [])
             dataColumns = dataRows.length ? Object.keys(dataRows[0]).filter((name) => name !== 'lastUpdatedStamp').slice(0, 8) : []
             dataCount = (view && view.data && view.data.count) || 0
+            // a date-time comes in the rows as the text of its epoch milliseconds: shown in the user's zone, as the Data Grid does
+            const typeOf = Object.fromEntries((definition.fields || []).map((field) => [field.name, field.type || '']))
+            dataRows = dataRows.map((row) => Object.fromEntries(Object.entries(row).map(([name, value]) => [name, value == null ? ''
+                : typeOf[name] === 'date-time' && /^-?\d+$/.test(String(value)) ? String(ec.l10n.format(String(value), 'yyyy-MM-dd HH:mm:ss')) : String(value)])))
             ddlFieldOptions = (definition.fields || []).map((field) => ({name: field.name, label: field.name + ' → ' + ((definition.sqlTypes || {})[field.name] || '')}))
             let ddl = null
             try { ddl = JSON.parse(ec.web.sessionAttributes['DevAideGuided.ddl.' + entityName] || 'null') } catch (err) { ddl = null }
@@ -643,10 +647,10 @@ along with this software (see the LICENSE.md file). If not, see
                 <render-mode>
                     <text type="tui"><![CDATA[${JSON.stringify(dataRows.length ? [{t: 'formList', id: 'TableRows', name: 'TableRows',
                         columns: dataColumns.map((name) => ({title: name})),
-                        rows: dataRows.map((row, at) => ({id: String(at), cells: dataColumns.map((name) => row[name] == null ? '' : String(row[name]))})),
+                        rows: dataRows.map((row, at) => ({id: String(at), cells: dataColumns.map((name) => row[name])})),
                         paging: {index: 0, size: dataRows.length, count: dataRows.length}}] : [])}]]></text>
                     <text type="html,qvt"><![CDATA[${dataRows.length ? '<table class="m-dev-grid"><tr>' + dataColumns.map((name) => '<th>' + html(name) + '</th>').join('') + '</tr>' +
-                        dataRows.map((row) => '<tr>' + dataColumns.map((name) => '<td>' + html(row[name] == null ? '' : String(row[name])) + '</td>').join('') + '</tr>').join('') + '</table>' : ''}]]></text>
+                        dataRows.map((row) => '<tr>' + dataColumns.map((name) => '<td>' + html(row[name]) + '</td>').join('') + '</tr>').join('') + '</table>' : ''}]]></text>
                 </render-mode>
             </widgets></section>
 
