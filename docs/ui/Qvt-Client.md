@@ -1411,8 +1411,8 @@ level at the path itself (no walk down the default subscreens), which is how the
 - **Nodes** carry `t` and an `id`. Ids are stable across renders and unique in the document: an element's own id or name, else its element
   path, with `~2`, `~3` for a repeat (an iterated section, a section included twice). Structure: `section`, `container`, `box` (`title`, `type`,
   `initial` open or closed for a collapsible box; a `region` named `toolbar` first in `c`), `row` and `col` (`xs` to `lg` spans), `panel`
-  (`region`s `header`, `left`, `center`, `right`, `footer`, a side's `size` in px), `split` (`sideWidth`, `selectParameter`, `region`s `side`
-  and `main`), `dialog` (`title`, `button`, its body in `c`; `list` when it is a row action of that list), `dynamicDialog` (`url`, `button`,
+  (`region`s `header`, `left`, `center`, `right`, `footer`, a side's `size` in px), `split` (`sideWidth`, `selectParameter`, `selected` while that
+  parameter has a value, which puts `main` first when the panes stack, `region`s `side` and `main`), `dialog` (`title`, `button`, its body in `c`; `list` when it is a row action of that list), `dynamicDialog` (`url`, `button`,
   `title`) and `dynamicContainer` (`url`): the client renders the url in `tui` (a transition's redirect followed) and puts the body in `c`, its
   ids prefixed with the node's id and `/`; `dashboard`, `subscreens` (`kind` tab, popup, wizard or stack; `items` of `{title, url, active}`;
   a wizard's `finishText`; the active level in `c`), `active`. Content: `text` (`style` h1 to h6, pre...), `image` (`alt`, `url`, opened in

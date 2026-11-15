@@ -832,7 +832,12 @@ fn place_one(node: &Node, ctx: &Ctx<'_>, width: u16) -> Vec<Piece> {
             c,
         } => place_subscreens(id, kind, items, finish_text, c, ctx, width),
         Node::Panel { c, .. } => place_panel(c, ctx, width),
-        Node::Split { side_width, c, .. } => place_split(c, *side_width, ctx, width),
+        Node::Split {
+            side_width,
+            selected,
+            c,
+            ..
+        } => place_split(c, *side_width, *selected, ctx, width),
         Node::Dashboard { c, .. } => place_dashboard(c, ctx, width),
         Node::Box { .. } => place_boxes(std::slice::from_ref(node), ctx, width),
         Node::Form { id, name, c, .. } => vec![Piece::Form(LaidForm {
@@ -1364,12 +1369,14 @@ fn place_panel(children: &[Node], ctx: &Ctx<'_>, width: u16) -> Vec<Piece> {
 }
 
 /// A split: side and main together from md, the side `side-width` pixels ÷ 8 wide; below md the side list, then main.
-fn place_split(children: &[Node], side_width: u32, ctx: &Ctx<'_>, width: u16) -> Vec<Piece> {
+fn place_split(children: &[Node], side_width: u32, selected: bool, ctx: &Ctx<'_>, width: u16) -> Vec<Piece> {
     let side = region(children, "side").map(|(nodes, _)| nodes).unwrap_or(&[]);
     let main = region(children, "main").map(|(nodes, _)| nodes).unwrap_or(&[]);
     if ctx.class.stacks_boxes() {
-        let mut pieces = place_nodes(side, ctx, width);
-        pieces.extend(place_nodes(main, ctx, width));
+        // with a record selected its pane comes first, the list to pick another after it
+        let (first, second) = if selected { (main, side) } else { (side, main) };
+        let mut pieces = place_nodes(first, ctx, width);
+        pieces.extend(place_nodes(second, ctx, width));
         return pieces;
     }
     let sw = u16::try_from(if side_width == 0 { 280 } else { side_width } / 8)

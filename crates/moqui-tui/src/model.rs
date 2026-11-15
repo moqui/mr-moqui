@@ -511,6 +511,9 @@ pub enum Node {
         /// The parameter that holds the selected record's id.
         #[serde(default, skip_serializing_if = "String::is_empty")]
         select_parameter: String,
+        /// The select parameter has a value: stacked, the main pane goes first.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        selected: bool,
         #[serde(default)]
         c: Vec<Node>,
     },

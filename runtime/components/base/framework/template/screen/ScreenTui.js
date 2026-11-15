@@ -1587,7 +1587,12 @@ ${regionCode(node, child(node, "box-toolbar"), "toolbar")}${body}$closeChildren(
         "container-split": stmt((node) => {
             const width = /^\d+$/.test(attr(node, "side-width")) ? `,sideWidth:${attr(node, "side-width")}` : "";
             const regions = regionCode(node, child(node, "split-side"), "side") + regionCode(node, child(node, "split-main"), "main");
-            return `$openChildren({t:"split",id:$uid(${jsString(idOf(node))})${width}${attr(node, "select-parameter") ? `,selectParameter:${jsString(attr(node, "select-parameter"))}` : ""}});\n${regions}$closeChildren();\n`;
+            // selected while the select parameter has a value: a terminal too narrow for both panes shows the main one first
+            const select = attr(node, "select-parameter");
+            const selectCode = select
+                ? `,selectParameter:${jsString(select)},selected:(($v) => $v != null && $v !== "")(ec.context.get(${jsString(select)}))`
+                : "";
+            return `$openChildren({t:"split",id:$uid(${jsString(idOf(node))})${width}${selectCode}});\n${regions}$closeChildren();\n`;
         }),
         "report-panel": stmt((node) => guarded(node, `$emit({t:"component",id:$uid(${jsString(idOf(node))}),name:"report-panel",props:${S.reportPropsExpr(node)}});\n`)),
         "report-dashboard": stmt((node) => guarded(node, `$emit({t:"component",id:$uid(${jsString(idOf(node))}),name:"report-dashboard",props:${S.reportPropsExpr(node)}});\n`)),
