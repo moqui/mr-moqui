@@ -29,7 +29,11 @@ pub enum Purpose {
     /// The options of a drop-down, by field id.
     Options(String),
     Shell,
+    /// A login, a code sent, and the first administrator created.
     Login,
+    /// Whether the login dialog creates the first administrator, asked as it opens: a lane of its own, so a login typed
+    /// while it is asked is not refused.
+    AdminSetup,
     /// The body of a dynamic dialog or container, by node id.
     Fragment(String),
     /// A display's value from its value url, by field id.

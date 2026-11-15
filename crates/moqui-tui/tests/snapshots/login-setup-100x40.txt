@@ -1,0 +1,40 @@
+ ≡                                                                                        Tue 14:32
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+
+
+
+
+
+
+
+
+
+
+                 ┌─ Welcome to your new system: create the first administrator ───┐
+                 │   Username . . . . : [admin               ]                    │
+                 │   Password . . . . : [•••••••••••••       ]                    │
+                 │   Password again . : [•••••••••••••       ]                    │
+                 │   Full name  . . . : [Ada Admin           ]                    │
+                 │ > Email  . . . . . : [ada@example.com     ]                    │
+                 │   The password: at least 12 characters, 1 digit, 1 other       │
+                 │                                                                │
+                 │ Enter=Next  Ctrl+S=Create and log in  Tab=Next  Esc=Cancel     │
+                 └────────────────────────────────────────────────────────────────┘
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ F1=Help  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to

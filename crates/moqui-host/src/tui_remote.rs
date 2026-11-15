@@ -17,7 +17,9 @@
 //! The login posts the password once to the REST `login` with `createLoginKey=true` and a `deviceName`, so the key is in
 //! the user's device list where it can be revoked (`moqui_lib::remote_login`, shared with the desktop client), and
 //! keeps only the key, in `~/.config/moqui/tui/<host>.toml` (mode 0600); a 401 later, an expired key above all, opens
-//! the login dialog again.
+//! the login dialog again. On a server with no accounts yet the dialog creates the first administrator: the JSON of
+//! `/Login/initialAdminNeeded`, then `createInitialAdminAccount` posted in that cookie session with the token it handed
+//! out, both with no key, and then the login.
 //! Plain `http://` is refused except to this machine.
 
 use std::path::PathBuf;
@@ -31,7 +33,7 @@ use moqui_lib::error::Error;
 use moqui_lib::reconnect::Backoff;
 use moqui_lib::remote_login::{form_body, SignIn};
 use moqui_lib::sync::lock;
-use moqui_tui::{LinkError, PushSink, Subscription};
+use moqui_tui::{AdminAccount, AdminSetup, LinkError, PushSink, Subscription};
 
 use crate::tui::{Ask, Link, Transport};
 
@@ -93,6 +95,16 @@ impl Http {
 
     fn stored(&self) -> Option<Stored> {
         lock(&self.login).clone()
+    }
+
+    /// The same client and cookie session with no login key, for the requests of the first administrator's setup.
+    fn anonymous(&self) -> Self {
+        Http {
+            base: self.base.clone(),
+            client: self.client.clone(),
+            login: Arc::new(Mutex::new(None)),
+            store: None,
+        }
     }
 }
 
@@ -271,6 +283,17 @@ impl Transport for Http {
         moqui_lib::remote_login::send_code(&self.client, &self.base, username, password, factor)
             .map_err(|err| LinkError::Remote(err.message().to_string()))?;
         Ok(factor.to_string())
+    }
+
+    /// Asked with no login key: a key kept from before the database was emptied would only be refused.
+    fn initial_admin(&self) -> Result<Option<AdminSetup>, LinkError> {
+        crate::tui::initial_admin_over(&self.anonymous())
+    }
+
+    /// The token is asked again and posted in the client's cookie session, with no login key: a request with its own
+    /// credentials skips the session-token check, and this one has none.
+    fn create_initial_admin(&self, account: &AdminAccount) -> Result<(), LinkError> {
+        crate::tui::create_initial_admin_over(&self.anonymous(), account)
     }
 
     fn user(&self) -> Option<String> {

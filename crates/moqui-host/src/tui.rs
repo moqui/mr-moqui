@@ -15,20 +15,22 @@
 //! The in-process [`ScreenLink`](moqui_tui::ScreenLink) (plans/archive/Screen-TUI-Impl.md 2.7, 4.1). Each call runs on the
 //! factory's request pool in a fresh execution context, logged in as the link's user, as the SSH shell's commands are;
 //! the client holds no permission logic. Until a user is logged in, every call answers [`LinkError::Auth`], so the client
-//! shows its login dialog. The link holds the factory weakly, as the SSH tasks do: a session over SSH never keeps a
-//! stopped server alive, and its calls then answer that the server is stopping.
+//! shows its login dialog; only the dialog's own calls run with no user (the login, a code sent, and on a system with
+//! no accounts the first administrator's setup). The link holds the factory weakly, as the SSH tasks do: a session over
+//! SSH never keeps a stopped server alive, and its calls then answer that the server is stopping.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, Weak};
 
-use moqui_core::context::{Error, ErrorKind, ExecutionContextFactory};
+use moqui_core::context::{Error, ErrorKind, ExecutionContext, ExecutionContextFactory};
 use moqui_core::screen::{RenderOptions, RenderOrigin, RenderOutput, PAGE_PATH_HEADER};
 use moqui_core::user::CodeLogin;
 use moqui_lib::object::Value;
 use moqui_lib::sync::lock;
 use moqui_tui::{
-    counts_of, query_parameters, Choice, CodeAsk, LinkError, MenuItem, Messages, Push, PushSink, RawBody, Reply,
-    ScreenLink, ScreenModel, Sendable, ShellAction, ShellInfo, Subscription, TransitionOutcome, ValidationError,
+    counts_of, query_parameters, AdminAccount, AdminSetup, Choice, CodeAsk, LinkError, MenuItem, Messages, Push,
+    PushSink, RawBody, Reply, ScreenLink, ScreenModel, Sendable, ShellAction, ShellInfo, Subscription,
+    TransitionOutcome, ValidationError,
 };
 
 /// Redirects a level or a fragment follows before it gives up: a transition answers its screen with one.
@@ -74,6 +76,27 @@ pub trait Transport: Send + Sync {
         Err(LinkError::Remote("this connection does not send codes".into()))
     }
 
+    /// The password rules while the server has no accounts and the login dialog creates the first administrator: by
+    /// default the Login screen's `initialAdminNeeded` JSON, as a client over HTTP asks it.
+    ///
+    /// # Errors
+    ///
+    /// [`LinkError::Remote`] when the request fails or the answer is not that JSON.
+    fn initial_admin(&self) -> Result<Option<AdminSetup>, LinkError> {
+        initial_admin_over(self)
+    }
+
+    /// Create the first administrator: by default `createInitialAdminAccount` posted for JSON with the session token
+    /// `initialAdminNeeded` handed out, in that session (the client keeps its cookie). Once any account exists no token
+    /// is handed out, and the service refuses in any case.
+    ///
+    /// # Errors
+    ///
+    /// [`LinkError::Remote`] with the server's refusal.
+    fn create_initial_admin(&self, account: &AdminAccount) -> Result<(), LinkError> {
+        create_initial_admin_over(self, account)
+    }
+
     /// The logged-in user's name, for the title line.
     fn user(&self) -> Option<String>;
 
@@ -81,6 +104,103 @@ pub trait Transport: Send + Sync {
     fn subscribe(&self, _sink: PushSink) -> Option<Subscription> {
         None
     }
+}
+
+/// The service's refusal once any account exists, which a client that finds no setup needed answers too.
+const ACCOUNTS_EXIST: &str = "Can only create initial admin account if there are no UserAccount records";
+const INITIAL_ADMIN_NEEDED: &str = "org.moqui.impl.UserServices.get#InitialAdminNeeded";
+const CREATE_INITIAL_ADMIN: &str = "org.moqui.impl.UserServices.create#InitialAdminAccount";
+
+/// [`Transport::initial_admin`] by HTTP requests through `transport`.
+pub(crate) fn initial_admin_over<T: Transport + ?Sized>(transport: &T) -> Result<Option<AdminSetup>, LinkError> {
+    Ok(admin_needed(transport)?.map(|(setup, _)| setup))
+}
+
+/// [`Transport::create_initial_admin`] by HTTP requests through `transport`.
+pub(crate) fn create_initial_admin_over<T: Transport + ?Sized>(
+    transport: &T,
+    account: &AdminAccount,
+) -> Result<(), LinkError> {
+    let Some((_, token)) = admin_needed(transport)? else {
+        return Err(LinkError::Remote(ACCOUNTS_EXIST.into()));
+    };
+    let parameters = BTreeMap::from([
+        ("moquiSessionToken".to_string(), token),
+        ("username".to_string(), account.username.clone()),
+        ("newPassword".to_string(), account.password.clone()),
+        ("newPasswordVerify".to_string(), account.verify.clone()),
+        ("userFullName".to_string(), account.full_name.clone()),
+        ("emailAddress".to_string(), account.email.clone()),
+    ]);
+    let output = transport.send(Ask {
+        path: "/Login/createInitialAdminAccount".to_string(),
+        method: "POST".to_string(),
+        parameters,
+        json: true,
+        tui: false,
+        remember: false,
+        page: String::new(),
+    })?;
+    // the transition's redirect to the Login screen is its success
+    if (300..400).contains(&output.status) {
+        return Ok(());
+    }
+    let outcome = outcome_from(&output)?;
+    let mut errors = outcome.messages.errors;
+    errors.extend(
+        outcome
+            .messages
+            .validation_errors
+            .into_iter()
+            .map(|error| error.message),
+    );
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(LinkError::Remote(errors.join("; ")))
+    }
+}
+
+/// `initialAdminNeeded`: while no account exists, the password rules and the session token to post the account with.
+fn admin_needed<T: Transport + ?Sized>(transport: &T) -> Result<Option<(AdminSetup, String)>, LinkError> {
+    let output = transport.send(Ask {
+        json: true,
+        ..Ask::get("/Login/initialAdminNeeded".to_string())
+    })?;
+    check_status(&output)?;
+    let text = output.body_text();
+    let value = serde_json::from_str::<serde_json::Value>(&text)
+        .map_err(|err| LinkError::Remote(format!("initialAdminNeeded: {err}: {}", snippet(&text))))?;
+    if json_field(&value, "needed") != "true" {
+        return Ok(None);
+    }
+    let token = json_field(&value, "sessionToken");
+    Ok(Some((admin_setup_of(|name| json_field(&value, name)), token)))
+}
+
+/// The password rules of `get#InitialAdminNeeded`'s answer, each by its name.
+fn admin_setup_of(field: impl Fn(&str) -> String) -> AdminSetup {
+    let number = |name: &str| field(name).trim().parse::<u32>().unwrap_or(0);
+    AdminSetup {
+        min_length: number("minLength"),
+        min_digits: number("minDigits"),
+        min_others: number("minOthers"),
+    }
+}
+
+/// Run a service with no user, its errors (validation errors too) the error and cleared, as a login's services run.
+fn anonymous_service(name: &str, parameters: &BTreeMap<String, Value>) -> Result<BTreeMap<String, Value>, Error> {
+    let result = moqui_core::service::sync(name, parameters);
+    let errors = ExecutionContext::with_current(|ec| {
+        let text = ec.message().errors_text();
+        ec.message().clear_errors();
+        text
+    })
+    .unwrap_or_default();
+    if !errors.is_empty() {
+        return Err(Error::new(errors.join("\n")));
+    }
+    result
 }
 
 /// The client's [`ScreenLink`] over a [`Transport`].
@@ -471,6 +591,34 @@ impl Transport for InProcess {
         Ok(factor.to_string())
     }
 
+    /// `get#InitialAdminNeeded` with no user, as the Login screen asks it.
+    fn initial_admin(&self) -> Result<Option<AdminSetup>, LinkError> {
+        let out = self.on_pool_anonymous(|| anonymous_service(INITIAL_ADMIN_NEEDED, &BTreeMap::new()))?;
+        let text = |name: &str| {
+            out.get(name)
+                .map(moqui_lib::object::to_plain_string)
+                .unwrap_or_default()
+        };
+        Ok((text("needed") == "true").then(|| admin_setup_of(text)))
+    }
+
+    /// `create#InitialAdminAccount` with no user, as the Login screen's form posts it; it refuses once any account
+    /// exists.
+    fn create_initial_admin(&self, account: &AdminAccount) -> Result<(), LinkError> {
+        let parameters: BTreeMap<String, Value> = [
+            ("username", &account.username),
+            ("newPassword", &account.password),
+            ("newPasswordVerify", &account.verify),
+            ("userFullName", &account.full_name),
+            ("emailAddress", &account.email),
+        ]
+        .into_iter()
+        .map(|(name, value)| (name.to_string(), Value::string(value)))
+        .collect();
+        self.on_pool_anonymous(move || anonymous_service(CREATE_INITIAL_ADMIN, &parameters))?;
+        Ok(())
+    }
+
     fn user(&self) -> Option<String> {
         lock(&self.user).clone()
     }
@@ -654,6 +802,14 @@ impl<T: Transport> ScreenLink for Link<T> {
 
     fn send_code(&self, username: &str, password: &str, factor: &str) -> Result<String, LinkError> {
         self.transport.send_code(username, password, factor)
+    }
+
+    fn initial_admin(&self) -> Result<Option<AdminSetup>, LinkError> {
+        self.transport.initial_admin()
+    }
+
+    fn create_initial_admin(&self, account: &AdminAccount) -> Result<(), LinkError> {
+        self.transport.create_initial_admin(account)
     }
 
     fn subscribe(&self, sink: PushSink) -> Option<Subscription> {

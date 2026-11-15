@@ -118,6 +118,24 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="../Login"/>
         <error-response url="."/>
     </transition>
+    <!-- For a client with no page (the terminal's login dialog over moqui tui server): whether the first administrator
+        is to be created, with the password rules and the session token to post createInitialAdminAccount with. Once any
+        account exists it answers needed false and nothing else, and sends no session. -->
+    <transition name="initialAdminNeeded" read-only="true" require-session-token="false">
+        <actions>
+            <service-call name="org.moqui.impl.UserServices.get#InitialAdminNeeded" out-map="adminNeeded"/>
+            <script>
+                if (adminNeeded.needed) {
+                    ec.web.sendJsonResponse({needed: true, minLength: adminNeeded.minLength, minDigits: adminNeeded.minDigits,
+                        minOthers: adminNeeded.minOthers, sessionToken: ec.web.sessionToken})
+                } else {
+                    ec.web.declineSession()
+                    ec.web.sendJsonResponse({needed: false})
+                }
+            </script>
+        </actions>
+        <default-response type="none"/>
+    </transition>
     <transition name="sendOtp">
         <service-call name="org.moqui.impl.UserServices.send#ExternalAuthcCode" in-map="{factorId:factorId}"/>
         <default-response url="."/>
@@ -165,12 +183,10 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="minDigits" from="ec.user.passwordRules.minDigits"/>
         <set field="minOthers" from="ec.user.passwordRules.minOthers"/>
 
-        <!-- the account checks the sections show by, read here so the widgets read flags; seed data has accounts nobody
-            logs in as, _NA_, the edge node's delegate _EDGE_ (EdgeSetupData.xml) and the chat users of agents
-            (AgentTypeData.xml), as create#InitialAdminAccount counts -->
-        <set field="hasUserAccounts" from="ec.entity.find('moqui.security.UserAccount').condition('userId', 'not-in',
-            ['_NA_', '_EDGE_'].concat(Array.from(ec.entity.find('moqui.agent.AgentDefinition').selectField('chatUserId').disableAuthz().list())
-                .map((agent) => agent.chatUserId).filter(Boolean))).disableAuthz().count() > 0"/>
+        <!-- the account checks the sections show by, read here so the widgets read flags; the seed accounts nobody logs
+            in as do not count, as create#InitialAdminAccount counts (get#InitialAdminNeeded) -->
+        <service-call name="org.moqui.impl.UserServices.get#InitialAdminNeeded" out-map="adminNeeded"/>
+        <set field="hasUserAccounts" from="!adminNeeded.needed"/>
         <!-- the test user's password is still 'moqui': verified, not compared to its seed SHA hash, since a login re-hashes it -->
         <set field="testUserAccount" from="ec.entity.find('moqui.security.UserAccount').condition('userId', 'EX_JOHN_DOE').disableAuthz().one()"/>
         <set field="hasTestLogin" from="testUserAccount != null &amp;&amp; ec.user.passwordsMatch('moqui', testUserAccount.get('currentPassword'),
@@ -179,7 +195,9 @@ along with this software (see the LICENSE.md file). If not, see
     <widgets>
         <!-- NOTE: this screen is not under the apps screen, but uses similar header/footer/etc -->
         <container id="content" style="Login"><container style="inner">
-            <render-mode><text type="html" location="component://webroot/screen/includes/Messages.html.fancy"/></render-mode>
+            <!-- the terminal shows the messages on its own message line -->
+            <render-mode><text type="html" location="component://webroot/screen/includes/Messages.html.fancy"/>
+                <text type="tui" template="false">[]</text></render-mode>
 
             <section name="NeedsSetupSection" condition="hasUserAccounts"><widgets>
                 <!-- primary scenario, main login screen -->
@@ -200,7 +218,31 @@ along with this software (see the LICENSE.md file). If not, see
             <button data-btn="primary" data-size="lg" type="submit">Create Initial Admin Account</button>
         </form>
     </div>
-                ]]></text></render-mode>
+                ]]></text>
+                <!-- the same form in the terminal (GET /Login?renderMode=tui, a snapshot, an agent); the terminal's own
+                    sign-in is its login dialog, which has this setup too (docs/ui/TUI.md, "The login dialog") -->
+                <text type="tui"><![CDATA[[
+    {"t":"text","id":"InitialAdminTitle","style":"h3","text":"Welcome to your new system"},
+    {"t":"text","id":"InitialAdminIntro","text":"There are no user accounts, get started by creating an initial administrator account"},
+    {"t":"form","id":"InitialAdminForm","name":"InitialAdminForm","kind":"single","method":"post","writes":true,
+        "transitionUrl":${JSON.stringify(sri.buildUrl("createInitialAdminAccount").url)},
+        "hidden":[{"name":"moquiSessionToken","value":${JSON.stringify(ec.web.sessionToken || "")}}],"c":[
+        {"t":"field","id":"InitialAdminForm.username","name":"username","title":"Username","required":true,
+            "w":{"kind":"textLine","value":${JSON.stringify(ec.web.errorParameters?.username || "")}}},
+        {"t":"field","id":"InitialAdminForm.newPassword","name":"newPassword","title":"New Password","required":true,
+            "w":{"kind":"password"}},
+        {"t":"field","id":"InitialAdminForm.newPasswordVerify","name":"newPasswordVerify","title":"New Password Verify",
+            "required":true,"w":{"kind":"password"}},
+        {"t":"field","id":"InitialAdminForm.userFullName","name":"userFullName","title":"User Full Name","required":true,
+            "w":{"kind":"textLine","value":${JSON.stringify(ec.web.errorParameters?.userFullName || "")}}},
+        {"t":"field","id":"InitialAdminForm.emailAddress","name":"emailAddress","title":"Email Address","required":true,
+            "w":{"kind":"textLine","value":${JSON.stringify(ec.web.errorParameters?.emailAddress || "")}}},
+        {"t":"field","id":"InitialAdminForm.submitButton","name":"submitButton","title":"Create Initial Admin Account",
+            "w":{"kind":"submit","text":"Create Initial Admin Account"}}
+    ]},
+    {"t":"text","id":"InitialAdminRules","style":"quote","text":${JSON.stringify("The password: at least " + minLength
+        + " characters, " + minDigits + (minDigits == 1 ? " digit, " : " digits, ") + minOthers + (minOthers == 1 ? " other" : " others"))}}
+]]]></text></render-mode>
             </fail-widgets></section>
 
             <!-- TODO: very convenient for dev/testing and generally safe but adds some overhead in production, consider removing for large instances -->
@@ -212,7 +254,9 @@ along with this software (see the LICENSE.md file). If not, see
                     <input type="hidden" name="password" value="moqui">
                     <button data-btn="primary" type="submit" id="TestLoginLink_button" autofocus>Test Login (John Doe)</button>
                 </form>
-                ]]></text></render-mode></widgets>
+                ]]></text>
+                <!-- the terminal signs in through its login dialog -->
+                <text type="tui" template="false">[]</text></render-mode></widgets>
             </section>
         </container></container>
     </widgets>
