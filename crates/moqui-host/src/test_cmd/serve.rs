@@ -171,6 +171,8 @@ fn serve_on(
             moqui_lib::env::set_property(name, "0");
         }
     }
+    // a client spec's requests name their own loopback address (test_client: one per spec)
+    crate::http::test_peer::allow();
     let server = crate::start_server(runtime, framework, runtime.join("db/embedded"), address)?;
     // the server stops on a signal now, and the scratch runtime goes after it
     super::interrupt::server_started();

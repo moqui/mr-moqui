@@ -153,6 +153,16 @@ moqui test mr-mantle mr-marble --spec SimpleScreensRender,ClientAccess --serve 1
 moqui test-client mr-marble --server http://127.0.0.1:18081
 ```
 
+Each spec has a requester address of its own. Against a server on this machine (`--serve`, or `--server` on
+loopback) every session a spec opens sends `X-Moqui-Test-Peer: 127.1.x.y`, one address in 127.0.0.0/8 per spec in run
+order, never 127.0.0.1, and a server of `moqui test --serve` takes it as the request's peer and client address (its
+`remoteAddr`, the address web protection and the framework's sign-in limits see). A limit a server keys by the
+requester, such as Mantle's 100 access-token lookups per requester in ten minutes, then counts per spec, not for the
+whole suite from 127.0.0.1. Only that process reads the header, only from a loopback peer and only for a loopback
+address; a server of `./moq run` ignores it ([Attack-Surface](../security/Attack-Surface.md#client-ip)). A session's
+own `X-Moqui-Test-Peer` in `headers` wins. The browser and raw requests do not send it: their requests come from
+127.0.0.1, shared by the run. A loopback check in the server takes the whole of 127.0.0.0/8 (`/health`, `/status`).
+
 A component's `test/MoquiConf.xml` merges after its `MoquiConf.xml` in `moqui test` runs only: the in-process specs
 and the server of `--serve`. It is where a test-only mount or setting goes; `./moq run` never reads it. mr-marble
 mounts `apps/SimpleScreens` there.

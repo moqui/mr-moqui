@@ -320,6 +320,7 @@ fn new_host(args: &ClientArgs, server: Server, client: reqwest::blocking::Client
         video: args.video,
         recording: Arc::new(Mutex::new(None)),
         in_server: None,
+        peer: Mutex::new(None),
     })
 }
 
@@ -352,11 +353,13 @@ fn run_against(
         host: Some(host_dyn),
     };
     let mut results = Vec::new();
-    for (c, s) in run_order(components, args.acceptance, true)? {
+    let local = http::is_loopback(&host.server.host);
+    for (index, (c, s)) in run_order(components, args.acceptance, true)?.into_iter().enumerate() {
         let component = &components[c];
         let spec = &component.specs[s];
         *lock(&host.component_dir) = component.dir.clone();
         *lock(&host.current) = (component.name.clone(), spec.name.clone());
+        *lock(&host.peer) = local.then(|| spec_peer(index));
         *lock(&host.offline) = spec_offline(&spec.source);
         if args.video {
             *lock(&host.recording) = Some(video::Recorder::new(&spec.name, out_dir, encode_video));
@@ -771,6 +774,18 @@ pub(crate) struct ClientHost {
     recording: video::Shared,
     /// A load run in a server: none for `moqui test-client`.
     in_server: Option<Arc<dyn InServer>>,
+    /// The spec's own requester address, sent as `X-Moqui-Test-Peer` by its sessions to a server on this machine,
+    /// which a server of `moqui test --serve` takes as the requests' peer ([`spec_peer`]).
+    peer: Mutex<Option<String>>,
+}
+
+/// The header a spec's sessions carry to a test server (moqui-host's `http::test_peer`).
+const PEER_HEADER: &str = "X-Moqui-Test-Peer";
+
+/// The requester address of the `index`th spec of a run (from 0): 127.1.0.1, 127.1.0.2, ... in 127.0.0.0/8 and never
+/// 127.0.0.1, so a limit a server keys by the requester counts per spec, not for the whole run.
+fn spec_peer(index: usize) -> String {
+    format!("127.1.{}.{}", (index / 254) % 256, index % 254 + 1)
 }
 
 /// The calls a load run in a server refuses: a browser, nested loads and `parallel` threads have no place there.
@@ -1029,6 +1044,7 @@ impl ClientHost {
             video: false,
             recording: Arc::new(Mutex::new(None)),
             in_server: Some(in_server),
+            peer: Mutex::new(None),
         }))
     }
 
@@ -1564,8 +1580,14 @@ impl ClientHost {
             },
             "session.new" => {
                 let id = self.id();
+                let mut headers = pairs(field(args, "headers"));
+                if let Some(peer) = lock(&self.peer).clone() {
+                    if !headers.iter().any(|(name, _)| name.eq_ignore_ascii_case(PEER_HEADER)) {
+                        headers.push((PEER_HEADER.to_string(), peer));
+                    }
+                }
                 let session = Session {
-                    headers: pairs(field(args, "headers")),
+                    headers,
                     ..Session::default()
                 };
                 lock(&self.sessions).insert(id, Arc::new(Mutex::new(session)));
@@ -1751,6 +1773,19 @@ impl SpecHost for ClientHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_spec_has_its_own_loopback_requester_address() {
+        assert_eq!(spec_peer(0), "127.1.0.1");
+        assert_eq!(spec_peer(253), "127.1.0.254");
+        assert_eq!(spec_peer(254), "127.1.1.1");
+        let peers: std::collections::HashSet<String> = (0..2000).map(spec_peer).collect();
+        assert_eq!(peers.len(), 2000);
+        assert!(peers
+            .iter()
+            .all(|peer| peer.parse::<std::net::Ipv4Addr>().is_ok_and(|ip| ip.is_loopback())));
+        assert!(!peers.contains("127.0.0.1"));
+    }
 
     #[test]
     fn an_ssh_target_is_a_host_and_port_or_a_port_on_the_servers_host() {

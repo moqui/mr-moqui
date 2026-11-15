@@ -773,6 +773,9 @@ fn status_routes_allow_loopback_only() {
     let mapped: std::net::IpAddr = "::ffff:127.0.0.1".parse().unwrap();
     assert!(status_allowed("", &mapped.to_canonical().to_string()));
     assert!(!status_allowed("127.0.0.1", "203.0.113.5"));
+    // all of 127.0.0.0/8 is loopback (a client spec's own address on a test server)
+    assert!(status_allowed("", "127.1.0.7"));
+    assert!(!status_allowed("", "128.0.0.1"));
     assert!(status_allowed("10.0.0.9, 203.0.113.5", "203.0.113.5"));
 }
 
@@ -807,6 +810,41 @@ async fn a_websocket_over_extended_connect_is_checked_as_a_get() {
     websocket.extensions_mut().insert(super::ExtendedConnect);
     let taken = super::serve_request(&web, websocket, &peer).await.unwrap();
     assert_eq!(taken.status(), 200);
+}
+
+/// A server that `moqui test --serve` did not start takes no `X-Moqui-Test-Peer`: the request keeps its own peer and
+/// client address, and the header is gone before it is served (http/test_peer.rs).
+#[tokio::test]
+async fn a_test_peer_header_is_dropped_and_not_honoured_off_a_test_server() {
+    let guard = crate::guard::tests::guard(r#"<web-protection enabled="true"/>"#, "");
+    let app = Router::new().fallback(
+        |axum::extract::ConnectInfo(remote): axum::extract::ConnectInfo<std::net::SocketAddr>,
+         axum::Extension(super::ClientAddr(client)): axum::Extension<super::ClientAddr>,
+         headers: axum::http::HeaderMap| async move {
+            format!(
+                "{} {client} {}",
+                remote.ip(),
+                headers.contains_key(super::test_peer::HEADER)
+            )
+        },
+    );
+    let web = WebApp::new(app, ListenLimits::defaults(), guard);
+    let peer = super::Peer {
+        remote: "127.0.0.1:4000".parse().unwrap(),
+        client: "127.0.0.1".parse().unwrap(),
+        secure: false,
+        https: false,
+        exporter: None,
+        via: moqui_core::web::RequestVia::Direct,
+    };
+    let request = axum::http::Request::builder()
+        .uri("/")
+        .header("X-Moqui-Test-Peer", "127.1.0.7")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = super::serve_request(&web, request, &peer).await.unwrap();
+    let body = axum::body::to_bytes(response.into_body(), 4096).await.unwrap();
+    assert_eq!(String::from_utf8_lossy(&body), "127.0.0.1 127.0.0.1 false");
 }
 
 // ---- connection limits after the response head (HL-027) -----------------------------------

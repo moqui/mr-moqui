@@ -519,7 +519,20 @@ fn render_single(
     let fail = !holds;
     if holds {
         if let Some(actions) = &section.actions {
-            actions.run()?;
+            if let Err(err) = actions.run() {
+                // a path screen's own <actions> (its root section's), not an included screen's or a section's
+                let own = std::ptr::eq(section, &def.root)
+                    && state.override_def.borrow().is_none()
+                    && state
+                        .url_info
+                        .path_defs
+                        .iter()
+                        .any(|path_def| Arc::ptr_eq(path_def, def));
+                if own {
+                    crate::screen::render::note_actions_failure(state, &err);
+                }
+                return Err(err);
+            }
         }
         if state.dont_do_render.get() {
             return Ok(());
