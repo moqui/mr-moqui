@@ -14,18 +14,40 @@ const exampleFile = "component://example/service/example/ExampleServices.xml"
 spec({
     setupSpec() {
         login("john.doe")
-        fixture().setup(ROOT, {"service/fixture/Things.xml": "<services>\n    <service verb=\"get\" noun=\"Thing\"/>\n</services>\n"})
+        fixture().setup(ROOT, {"service/fixture/Things.xml": '<services>\n    <service verb="get" noun="Thing"/>\n</services>\n'})
         // the Try runs as the user: let ADMIN create examples
         ec.artifactExecution.disableAuthz()
         try {
-            const make = (entity, fields) => { const row = ec.entity.makeValue(entity); row.setFields(fields, true, null, null); row.createOrUpdate() }
-            make("moqui.security.ArtifactGroup", {artifactGroupId: "SPEC_DEV_GUIDED", description: "Examples to try in the terminal"})
-            make("moqui.security.ArtifactGroupMember", {artifactGroupId: "SPEC_DEV_GUIDED", artifactName: "moqui.example.Example", artifactTypeEnumId: "AT_ENTITY",
-                nameIsPattern: "N", inheritAuthz: "Y"})
-            make("moqui.security.ArtifactGroupMember", {artifactGroupId: "SPEC_DEV_GUIDED", artifactName: "create#moqui.example.Example", artifactTypeEnumId: "AT_SERVICE",
-                nameIsPattern: "N", inheritAuthz: "Y"})
-            make("moqui.security.ArtifactAuthz", {artifactAuthzId: "SPEC_DEV_GUIDED", userGroupId: "ADMIN", artifactGroupId: "SPEC_DEV_GUIDED",
-                authzTypeEnumId: "AUTHZT_ALWAYS", authzActionEnumId: "AUTHZA_ALL"})
+            const make = (entity, fields) => {
+                const row = ec.entity.makeValue(entity)
+                row.setFields(fields, true, null, null)
+                row.createOrUpdate()
+            }
+            make("moqui.security.ArtifactGroup", {
+                artifactGroupId: "SPEC_DEV_GUIDED",
+                description: "Examples to try in the terminal"
+            })
+            make("moqui.security.ArtifactGroupMember", {
+                artifactGroupId: "SPEC_DEV_GUIDED",
+                artifactName: "moqui.example.Example",
+                artifactTypeEnumId: "AT_ENTITY",
+                nameIsPattern: "N",
+                inheritAuthz: "Y"
+            })
+            make("moqui.security.ArtifactGroupMember", {
+                artifactGroupId: "SPEC_DEV_GUIDED",
+                artifactName: "create#moqui.example.Example",
+                artifactTypeEnumId: "AT_SERVICE",
+                nameIsPattern: "N",
+                inheritAuthz: "Y"
+            })
+            make("moqui.security.ArtifactAuthz", {
+                artifactAuthzId: "SPEC_DEV_GUIDED",
+                userGroupId: "ADMIN",
+                artifactGroupId: "SPEC_DEV_GUIDED",
+                authzTypeEnumId: "AUTHZT_ALWAYS",
+                authzActionEnumId: "AUTHZA_ALL"
+            })
         } finally {
             ec.artifactExecution.enableAuthz()
         }
@@ -34,18 +56,28 @@ spec({
         fixture().discard(GREET)
         fixture().discard(CREATE)
         fixture().cleanup(ROOT, ["service/fixture/Things.xml", "entity/FixtureEntities.xml"])
-    },
+    }
 })
 
 feature("an edit is staged in the buffer and not written, and Discard drops it", {
     when() {
         const before = ec.resource.getLocationText(exampleFile, false)
         const twin = dev()
-        const added = twin.render("Services/EditTui/addParameter", {artifact: GREET, which: "in-parameters", parameterName: "specNote",
-            parameterType: "String", description: "A note"}, "post")
-        const settings = twin.render("Services/EditTui/updateSettings", {artifact: GREET, authenticate: "anonymous-view", allowRemote: "", transactionType: "",
-            transactionTimeout: ""}, "post")
-        const view = ec.service.sync().name("org.moqui.devaide.ServiceWriterServices.get#ServiceView").parameters({serviceName: GREET.slice(8)}).call().view
+        const added = twin.render(
+            "Services/EditTui/addParameter",
+            {artifact: GREET, which: "in-parameters", parameterName: "specNote", parameterType: "String", description: "A note"},
+            "post"
+        )
+        const settings = twin.render(
+            "Services/EditTui/updateSettings",
+            {artifact: GREET, authenticate: "anonymous-view", allowRemote: "", transactionType: "", transactionTimeout: ""},
+            "post"
+        )
+        const view = ec.service
+            .sync()
+            .name("org.moqui.devaide.ServiceWriterServices.get#ServiceView")
+            .parameters({serviceName: GREET.slice(8)})
+            .call().view
         const file = {rootId: view.artifact.rootId, path: view.artifact.relativePath}
         const staged = fixture().staged(GREET, [file])
         const between = ec.resource.getLocationText(exampleFile, false)
@@ -58,8 +90,8 @@ feature("an edit is staged in the buffer and not written, and Discard drops it",
         settings.status == 302
         staged.pending.count == 1
         staged.files[0].staged
-        staged.files[0].text.includes("<parameter name=\"specNote\"><description>A note</description></parameter>")
-        staged.files[0].text.includes("authenticate=\"anonymous-view\"")
+        staged.files[0].text.includes('<parameter name="specNote"><description>A note</description></parameter>')
+        staged.files[0].text.includes('authenticate="anonymous-view"')
         between == before
         after.pending.count == 0
         !after.files[0].staged
@@ -74,11 +106,15 @@ feature("Save writes the staged files, and a file changed on disk since is a con
         const things = "service/fixture/Things.xml"
         f.discard(CREATE)
         const disk = f.staged(CREATE, [{rootId: ROOT, path: things}]).files[0]
-        f.stage(CREATE, ROOT, things, disk.text.replace("noun=\"Thing\"/>", "noun=\"Thing\"><actions/></service>"), disk.baseHash)
+        f.stage(CREATE, ROOT, things, disk.text.replace('noun="Thing"/>', 'noun="Thing"><actions/></service>'), disk.baseHash)
         f.stage(CREATE, ROOT, "entity/FixtureEntities.xml", "<entities/>\n", "")
         f.guard(CREATE, ROOT)
         const saved = twin.render("Services/EditTui/saveBuffer", {artifact: CREATE}, "post")
-        const written = {things: f.read(ROOT, things), entities: f.read(ROOT, "entity/FixtureEntities.xml"), pending: f.staged(CREATE).pending.count}
+        const written = {
+            things: f.read(ROOT, things),
+            entities: f.read(ROOT, "entity/FixtureEntities.xml"),
+            pending: f.staged(CREATE).pending.count
+        }
         // staged at the text just written, then changed on disk by someone else
         const base = f.staged(CREATE, [{rootId: ROOT, path: things}]).files[0].baseHash
         f.stage(CREATE, ROOT, things, "<services><mine/></services>\n", base)
@@ -114,12 +150,24 @@ feature("Save writes the staged files, and a file changed on disk since is a con
 feature("the twin in the terminal: its header with the pending line, its tabs, Try's fields and a Try's result in sim", {
     when() {
         const twin = dev()
-        const tried = twin.render("Services/EditTui/runTry", {artifact: CREATE, exampleName: "Tried in the terminal", exampleTypeEnumId: "EXT_MADE_UP",
-            runSim: "runSim"}, "post")
-        fixture().stage(CREATE, ROOT, "service/fixture/Things.xml", "<services><staged/></services>\n",
-            fixture().staged(CREATE, [{rootId: ROOT, path: "service/fixture/Things.xml"}]).files[0].baseHash)
+        const tried = twin.render(
+            "Services/EditTui/runTry",
+            {artifact: CREATE, exampleName: "Tried in the terminal", exampleTypeEnumId: "EXT_MADE_UP", runSim: "runSim"},
+            "post"
+        )
+        fixture().stage(
+            CREATE,
+            ROOT,
+            "service/fixture/Things.xml",
+            "<services><staged/></services>\n",
+            fixture().staged(CREATE, [{rootId: ROOT, path: "service/fixture/Things.xml"}]).files[0].baseHash
+        )
         const r = twin.renderMode("tui").render("Services/EditTui", {artifact: CREATE}, null)
-        const kept = ec.entity.find("moqui.example.Example").condition("exampleName", "Tried in the terminal").disableAuthz().count()
+        const kept = ec.entity
+            .find("moqui.example.Example")
+            .condition("exampleName", "Tried in the terminal")
+            .disableAuthz()
+            .count()
         fixture().discard(CREATE)
         return {tried, r, out: String(r.output), kept}
     },
@@ -128,22 +176,22 @@ feature("the twin in the terminal: its header with the pending line, its tabs, T
         r.status == 200
         r.errorMessages.length == 0
         !out.includes("Error rendering")
-        !out.includes("\"t\":\"error\"")
+        !out.includes('"t":"error"')
         // the header: the service and its pending line, with Save and Discard
-        out.includes("\"text\":\"create#moqui.example.Example\"")
+        out.includes('"text":"create#moqui.example.Example"')
         out.includes("1 unsaved change in Things.xml")
-        out.includes("\"PendingSave\"")
+        out.includes('"PendingSave"')
         out.includes("/Services/EditTui/discardBuffer")
         // the tabs, Try active
-        out.includes("\"t\":\"subscreens\"")
-        out.includes("\"title\":\"Try\"")
+        out.includes('"t":"subscreens"')
+        out.includes('"title":"Try"')
         // Try: a field per in-parameter, Run in sim and Run for real (with its confirmation)
-        out.includes("\"TryForm.exampleName\"")
-        out.includes("\"TryForm.runSim\"")
+        out.includes('"TryForm.exampleName"')
+        out.includes('"TryForm.runSim"')
         out.includes("for real? What it writes is kept.")
         // the result of the Try: in sim, the row it would write, nothing kept
         out.includes("In sim, nothing kept")
-        out.includes("\"TryRows\"")
+        out.includes('"TryRows"')
         out.includes("moqui.example.Example")
         kept == 0
     }

@@ -8,11 +8,21 @@
 const BUFFER = "org.moqui.devaide.WorkspaceServices."
 
 function call(name, parameters) {
-    return ec.service.sync().name(name).parameters(parameters || {}).call() || {}
+    return (
+        ec.service
+            .sync()
+            .name(name)
+            .parameters(parameters || {})
+            .call() || {}
+    )
 }
 function asSystem(body) {
     const already = ec.artifactExecution.disableAuthz()
-    try { return body() } finally { if (!already) ec.artifactExecution.enableAuthz() }
+    try {
+        return body()
+    } finally {
+        if (!already) ec.artifactExecution.enableAuthz()
+    }
 }
 function location(name, path) {
     return "runtime://dev-aide-fixtures/" + name + (path ? "/" + path : "")
@@ -35,7 +45,11 @@ function setup(name, files) {
 }
 function cleanup(name, paths) {
     for (const path of paths || []) {
-        try { ec.resource.getLocationReference(location(name, path)).delete() } catch (err) { ec.logger.info("Fixture " + path + " not removed: " + err) }
+        try {
+            ec.resource.getLocationReference(location(name, path)).delete()
+        } catch (err) {
+            ec.logger.info("Fixture " + path + " not removed: " + err)
+        }
     }
     asSystem(() => ec.entity.find("moqui.dev.DevAideRoot").condition("rootId", name).deleteAll())
     ec.user.setPreference("DEV_AIDE_UPSTREAM_EDITS", "")
@@ -62,8 +76,9 @@ function discard(target) {
 // file it staged.
 function guard(target, rootId) {
     const files = staged(target).pending.files || []
-    const outside = files.filter((file) => file.rootId !== rootId)
-    if (outside.length) throw new Error("Not saving: the buffer holds " + outside.map((file) => file.path).join(", ") + ", outside the fixture")
+    const outside = files.filter(file => file.rootId !== rootId)
+    if (outside.length)
+        throw new Error("Not saving: the buffer holds " + outside.map(file => file.path).join(", ") + ", outside the fixture")
 }
 
 ;({setup, cleanup, read, write, hash, staged, stage, discard, guard, location})
