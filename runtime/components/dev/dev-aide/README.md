@@ -23,12 +23,22 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   Properties from the schema digest. "Open in screen builder" on any app page opens it on that page.
 - **Services** is the service writer: a service's settings and parameters, its actions in the logic composer (blocks as
   sentences, chips that edit an attribute, the palette, the generated JavaScript), its SECA rules, and Try in sim with the
-  rows it would write, Save as spec and Run spec (in the sim). **ECA Rules** lists the active rules of each kind with their
+  rows it would write, Save as spec and Run spec (in the sim). In the terminal it is `Services/EditTui`: Try, the
+  settings, the parameters, the actions read only and the SECA rules, its edits staged in the user's edit buffer until
+  Save (below). **ECA Rules** lists the active rules of each kind with their
   files; a rules file opens in the ECA view.
 - **Browser** (Artifacts › Browser) is an artifact in the center with what uses it and what it uses, by kind: a
   pan-and-zoom canvas in the browser, and in the terminal Miller columns (`BrowseTui.xml`, the `artifact-browser`
   component) where Enter re-centers on a row, Backspace and `]` walk the trail, `k`, `h` and `x` filter, and the
   center's links have keys ([docs/ui/TUI.md](../../../../docs/ui/TUI.md#components)).
+- **In the terminal** the guided editors are XML twins (`Entities/EditTui`, `Services/EditTui`, `Screens/DesignTui`)
+  that the browser screens hold in a `tui` text. Their edits are staged in the user's edit buffer, one per artifact,
+  kept two hours since the last edit: each edit's operations are built as the browser's are
+  (`service/org/moqui/devaide/GuidedOps.js`) and applied to the buffered text. The header says how many changes wait;
+  Save (Ctrl+S) writes them in kind order (entities, services, ECA rules, screens, data), with the diff and "Save mine
+  over it" or "Take the disk's" when a file changed on disk since, and Discard drops them. The screen builder's twin
+  has the outline as a tree, the selected element's properties and intents, and a Preview: the designed screen's own
+  terminal form rendered from the buffer (`moquiPreview=buffer:<id>`).
 - **Docs** (Artifacts › Docs) is the Markdown doc of any artifact, package or tree, made from its template as the server
   has it now, with Mermaid diagrams (a click opens one in a zoom dialog) and a button that copies it; the entity modeler and service writer have a Doc tab,
   the screen builder a Doc panel. **Export docs** writes a tree of them into a repository (`autodoc/` by default), as
@@ -71,7 +81,7 @@ Its Rust crate is linked into the Dev and Debug packages (the `devtools` feature
 and the services say they are not built in.
 
 - **Tests** ([the two suites](../../../../docs/Build-Test.md#the-two-suites)): the regression suite is `./moq test
-  dev-aide` (the screens, the Workspace's terminal form on a scratch root, the docs), `cargo test -p dev-aide` (confinement, the git parsers, the Browser's sections),
+  dev-aide` (the screens, the Workspace's terminal form on a scratch root, the docs, the terminal's guided editors against a throw-away root), `cargo test -p dev-aide` (confinement, the git parsers, the Browser's sections, the edit buffers),
   `moqui test-client runtime/components/dev/dev-aide --offline` (the client), `cargo test -p moqui-host --test it devaide` (saves, the lock and tiers, git and Publish on scratch
   repositories, an entity save's relink, a docs export; `devaide_group`: the instance as its own group server, Connect
   through the app sign-in, merge requests, push to review, check out, review threads, statuses, the agreement and

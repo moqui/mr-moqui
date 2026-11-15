@@ -24,6 +24,7 @@ pub mod agent;
 mod artifacts;
 pub mod audit;
 mod browser;
+mod buffers;
 mod changeset;
 pub mod confine;
 mod docs;
@@ -56,6 +57,7 @@ submit_component! {
 
 fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     workspace::register(registry)?;
+    buffers::register(registry)?;
     artifacts::register(registry)?;
     browser::register(registry)?;
     changeset::register(registry)?;

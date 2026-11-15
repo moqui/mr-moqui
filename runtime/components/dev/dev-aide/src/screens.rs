@@ -19,14 +19,10 @@
 //! buffer and not the file; the stamps of a stamped render resolved to their files (F10); and a new subscreen from an
 //! archetype of the style guide's gallery.
 
-use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
 
 use moqui_core::context::{Error, ExecutionContext, ExecutionContextFactory};
 use moqui_core::native::{NativeRegistry, Parameters, ServiceInfo};
-use moqui_core::screen::overlay::Overlay;
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 use moqui_lib::sync::lock;
@@ -404,7 +400,7 @@ const APPS: &str = "component://webroot/screen/webroot/apps.xml";
 const APPS_PATH: &str = "/qapps";
 
 /// `component://<component>/<path>` of a file of a root.
-fn location_of(root: &Root, relative: &str) -> Option<String> {
+pub(crate) fn location_of(root: &Root, relative: &str) -> Option<String> {
     let component = root.component_of(relative)?;
     let rest = if component.path.is_empty() {
         relative.to_string()
@@ -583,22 +579,8 @@ fn get_screen_view(
     Ok(out)
 }
 
-/// The canvas buffers: by user and buffer id, the texts at their locations, for two hours since their last put.
-struct Buffer {
-    at: Instant,
-    texts: Vec<(String, String)>,
-}
-
-fn buffers() -> &'static Mutex<HashMap<(String, String), Buffer>> {
-    static BUFFERS: OnceLock<Mutex<HashMap<(String, String), Buffer>>> = OnceLock::new();
-    BUFFERS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-const BUFFER_LIFE: Duration = Duration::from_secs(2 * 60 * 60);
-const MAX_BUFFERS: usize = 200;
-
 /// `put#CanvasBuffer`: the unsaved texts a Design frame renders (`files`, a list of `{rootId, path, text}`, the
-/// user's own files to write), kept under `bufferId` for the frame's `buffer:<id>` token.
+/// user's own files to write), kept under `bufferId` for the frame's `buffer:<id>` token (`crate::buffers`).
 fn put_canvas_buffer(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -606,63 +588,21 @@ fn put_canvas_buffer(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
     let user = moqui_core::user::current_user_id()?.unwrap_or_default();
-    let id = text(parameters, "bufferId");
-    if id.is_empty() || id.len() > 64 || !id.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-') {
-        return Err(LibError::new("a buffer id is letters, digits and -"));
+    let id = crate::buffers::buffer_id(parameters)?;
+    let mut files = Vec::new();
+    for file in crate::buffers::json_list(parameters, "files").iter().take(20) {
+        files.push(crate::buffers::canvas_file(
+            &context,
+            file["rootId"].as_str().unwrap_or_default(),
+            file["path"].as_str().unwrap_or_default(),
+            file["text"].as_str().unwrap_or_default(),
+        )?);
     }
-    let files: Vec<Json> = match parameters.get("files") {
-        Some(Value::String(raw)) => serde_json::from_str(raw).unwrap_or_default(),
-        Some(value) => serde_json::from_value(moqui_lib::json::to_json(value)).unwrap_or_default(),
-        None => Vec::new(),
-    };
-    let mut texts = Vec::new();
-    for file in files.iter().take(20) {
-        let root = context.root(file["rootId"].as_str().unwrap_or_default())?;
-        let relative = file["path"].as_str().unwrap_or_default();
-        let resolved = context.resolve(root, relative)?;
-        let body = file["text"].as_str().unwrap_or_default();
-        if body.len() as u64 > context.settings.max_edit_bytes {
-            return Err(LibError::new(format!("{relative} is over the edit limit")));
-        }
-        let location = location_of(root, &resolved.relative).unwrap_or_else(|| resolved.path.display().to_string());
-        texts.push((location, body.to_string()));
-    }
-    let mut kept = lock(buffers());
-    kept.retain(|_, buffer| buffer.at.elapsed() < BUFFER_LIFE);
-    if kept.len() >= MAX_BUFFERS {
-        if let Some(oldest) = kept
-            .iter()
-            .min_by_key(|(_, buffer)| buffer.at)
-            .map(|(key, _)| key.clone())
-        {
-            kept.remove(&oldest);
-        }
-    }
-    let count = texts.len();
-    kept.insert(
-        (user, id),
-        Buffer {
-            at: Instant::now(),
-            texts,
-        },
-    );
+    let count = files.len();
+    lock(crate::buffers::store()).replace((user, id), files, std::time::Instant::now());
     let mut out = Parameters::new();
     out.insert("files".into(), Value::I64(i64::try_from(count).unwrap_or(0)));
     Ok(out)
-}
-
-/// The overlay of a `buffer:<id>` token: the current user's canvas buffer of that id (an empty one renders the files).
-pub(crate) fn buffer_overlay(factory: &ExecutionContextFactory, id: &str) -> Option<Overlay> {
-    let user = moqui_core::user::current_user_id().ok().flatten()?;
-    moqui_core::devtools::dev_aide_user(factory, &user).then_some(())?;
-    let kept = lock(buffers());
-    let mut overlay = Overlay::new();
-    if let Some(buffer) = kept.get(&(user, id.to_string())) {
-        for (location, text) in &buffer.texts {
-            overlay.insert_location(factory, location, text);
-        }
-    }
-    Some(overlay)
 }
 
 /// `resolve#Stamps`: the stamps of a stamped render (`file:line:column`, the file a `component://` location or a
