@@ -1674,22 +1674,10 @@ fn endpoint_enabled(factory: &ExecutionContextFactory, path: &str) -> bool {
     factory.webapp_child_setting("webroot", &format!("endpoint {path}"), "enabled") != "false"
 }
 
-/// True when `ip` is in `configured` (the webapp's `status-ips`, comma-separated) or is a loopback address.
+/// True when `ip` is in `configured` (the webapp's `status-ips`, comma-separated) or is a loopback address: any in
+/// 127.0.0.0/8 (a client spec's own address on a test server, test_peer.rs) or `::1`.
 fn status_allowed(configured: &str, ip: &str) -> bool {
-    let mut allowed = Vec::new();
-    for part in configured.split(',') {
-        let part = part.trim();
-        if !part.is_empty() {
-            allowed.push(part.to_string());
-        }
-    }
-    for extra in ["127.0.0.1", "::1", "0:0:0:0:0:0:0:1"] {
-        if !allowed.iter().any(|item| item == extra) {
-            allowed.push(extra.to_string());
-        }
-    }
-    // any address in 127.0.0.0/8 is loopback (a client spec's own address on a test server, test_peer.rs)
-    allowed.iter().any(|item| item == ip)
+    configured.split(',').map(str::trim).any(|item| !item.is_empty() && item == ip)
         || ip
             .parse::<IpAddr>()
             .is_ok_and(|address| address.to_canonical().is_loopback())

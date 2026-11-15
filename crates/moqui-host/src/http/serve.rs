@@ -558,7 +558,7 @@ where
         .get(super::test_peer::HEADER)
         .map(|value| value.to_str().ok());
     if let Some(value) = named {
-        if let Some(address) = super::test_peer::named(remote.ip(), value) {
+        if let Some(address) = super::test_peer::named(remote.ip(), client, value) {
             remote = SocketAddr::new(address, remote.port());
             client = address;
         }

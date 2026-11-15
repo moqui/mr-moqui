@@ -470,14 +470,16 @@ impl RenderState {
 }
 
 /// Keep `err`, raised by the `<actions>` of a screen in the path being rendered, as the render's answer when it has a
-/// status of its own (not a general error, which is written in place as Java does; a security error propagates anyway)
+/// status of its own (not a general error, which is written in place as Java does, nor a security error, which propagates)
 /// and the response has not gone to the client: the shell above the screen has written its header by the time the
 /// screen's actions run, but while it is held the error page and status can still replace it.
 pub(super) fn note_actions_failure(state: &RenderState, err: &Error) {
-    let status = !matches!(
-        err.kind(),
-        ErrorKind::General | ErrorKind::RollbackOnly | ErrorKind::Unavailable
-    );
+    // a security error stops the render on its own and is never this answer
+    let status = !super::sri::is_security(err)
+        && !matches!(
+            err.kind(),
+            ErrorKind::General | ErrorKind::RollbackOnly | ErrorKind::Unavailable
+        );
     if status && !crate::web::stream::committed() && state.actions_failure.borrow().is_none() {
         *state.actions_failure.borrow_mut() = Some(Error::of_kind(err.kind(), err.message()));
     }

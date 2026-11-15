@@ -315,10 +315,11 @@ On an edge node (`node_role=front_edge`) and an all-in-one node (`node_role=all-
 Both take any address in 127.0.0.0/8 as loopback.
 
 A server of `moqui test --serve` (and only that: the command sets it in code before its server starts; no property or
-conf turns it on) takes a request's `X-Moqui-Test-Peer` header as its TCP peer and client address, when the peer is
-loopback and the header names an IPv4 address in 127.0.0.0/8, so `moqui test-client` gives each client spec its own
-requester ([JS-Test-Client](../dev/JS-Test-Client.md#--serve)). The header is removed before the request is served. A
-client can name only a loopback address, from loopback, on a test server; `./moq run` never reads it.
+conf turns it on) takes a request's `X-Moqui-Test-Peer` header as its TCP peer and client address, when the peer and
+the client address (a believed proxy's header included) are both loopback and the header names an IPv4 address in
+127.0.0.0/8, so `moqui test-client` gives each client spec its own requester
+([JS-Test-Client](../dev/JS-Test-Client.md#--serve)). The header is removed before any request is served, on every
+server. A client can name only a loopback address, from loopback, on a test server; `./moq run` never reads it.
 
 ### Field encryption
 
