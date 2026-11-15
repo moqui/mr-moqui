@@ -531,7 +531,7 @@ feature("the screen builder's anchors and intents as the browser makes them", {
         // the terminal's own: a move as Alt+Up and Alt+Down make it, and the outline as tree rows with its anchors marked
         same(ops.stepOp(screen, [1, 1], -1), [{op: "move", at: [1, 1], to: [1, 0], position: "before"}])
         same(ops.stepOp(screen, [1, 3], 1), [])
-        ops.outlineRows(screen).find(row => row.key == "1.0").label == "⚓ container-box WidgetBox"
+        ops.outlineRows(screen).find(row => row.key == "1.0").label == "◆ container-box WidgetBox"
         ops.outlineRows(screen).find(row => row.key == "1.0.0.1").parent == "1.0.0"
     }
 })

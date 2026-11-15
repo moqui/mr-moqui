@@ -1117,7 +1117,7 @@ function outlineRows(outline, openUrl) {
             key,
             parent: node.path.slice(0, -1).join(".") || "",
             label:
-                (anchors.has(key) ? "⚓ " : "") +
+                (anchors.has(key) ? "◆ " : "") +
                 label.text +
                 (label.chips.length ? " " + label.chips.map(chip => chip.text).join(" ") : ""),
             _open: openUrl ? openUrl(key) : undefined

@@ -219,10 +219,9 @@ along with this software (see the LICENSE.md file). If not, see
             <section name="DesignTab" condition="tab == 'design'"><widgets>
                 <container-row name="DesignColumns">
                     <row-col md="4" name="OutlineColumn">
-                        <label text="Outline" type="h6"/>
                         <render-mode>
                             <text type="tui"><![CDATA[${JSON.stringify({t: 'component', id: 'ScreenOutline', name: 'tree', props: {rows: treeRows, columns: ['Outline']}})}]]></text>
-                            <text type="html,qvt"><![CDATA[<div class="m-dev-mono">${treeRows.map((row) => '<div style="padding-left: ' + (row.key.split('.').length - 1) + 'em"><a href="' + html(row._open) + '">' + html(row.label) + '</a></div>').join('')}</div>]]></text>
+                            <text type="html,qvt"><![CDATA[<h6>Outline</h6><div class="m-dev-mono">${treeRows.map((row) => '<div style="padding-left: ' + (row.key.split('.').length - 1) + 'em"><a href="' + html(row._open) + '">' + html(row.label) + '</a></div>').join('')}</div>]]></text>
                         </render-mode>
                     </row-col>
                     <row-col md="8" name="NodeColumn">
@@ -243,7 +242,7 @@ along with this software (see the LICENSE.md file). If not, see
                                 <field name="submitButton"><default-field title=""><submit text="Stage"/></default-field></field>
                             </form-list>
                         </widgets></section>
-                        <label text="Properties change in place only: this screen is extended, so use the intents below." type="p" style="m-muted" condition="extension"/>
+                        <label text="Properties change in place only: this screen is extended, so use the intents below." type="p" style="m-muted" condition="extension &amp;&amp; canEdit"/>
 
                         <section name="Intents" condition="canEdit"><widgets>
                             <container-row><row-col lg="12">
@@ -328,7 +327,7 @@ along with this software (see the LICENSE.md file). If not, see
                             </row-col></container-row>
                         </widgets></section>
 
-                        <section name="ExtensionFile" condition="extension"><widgets>
+                        <section name="ExtensionFile" condition="extension &amp;&amp; extensionPath"><widgets>
                             <label text="The site's ${extensionPath}${editFile.missing ? ' (made on its first save)' : ''}${editFile.staged ? ', staged' : ''}" type="h6"/>
                             <form-list name="ExtensionElements" list="extensionRows" skip-form="true" paginate="false">
                                 <field name="name"><default-field title="Element"><display/></default-field></field>
