@@ -173,6 +173,12 @@ pub trait Component: Sync {
         None
     }
 
+    /// Whether the scheduled tick waits for typing to stop (a check of the text) rather than polling: the agent mode
+    /// fires such a wait at once, as it does a server search's.
+    fn tick_is_wait(&self, _props: &Value, _state: &ComponentState) -> bool {
+        false
+    }
+
     /// Whether the component asks for the whole terminal, without the app's chrome: a dashboard's kiosk mode.
     fn kiosk(&self, _props: &Value, _state: &ComponentState) -> bool {
         false

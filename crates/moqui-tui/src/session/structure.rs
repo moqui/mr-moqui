@@ -474,6 +474,14 @@ impl Session {
             .is_some()
     }
 
+    /// Whether the component's scheduled tick is a wait for typing to stop ([`crate::components::Component::tick_is_wait`]).
+    pub(super) fn component_tick_is_wait(&self, id: &str) -> bool {
+        let (Some(info), Some(state)) = (self.index.components.get(id), self.components.get(id)) else {
+            return false;
+        };
+        crate::components::find(&info.name).is_some_and(|component| component.tick_is_wait(&info.props, state))
+    }
+
     fn schedule_component(&mut self, id: &str) {
         self.timers.remove(&Timer::Component(id.into()));
         if let (Some(info), Some(state)) = (self.index.components.get(id), self.components.get(id)) {

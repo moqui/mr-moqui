@@ -150,7 +150,7 @@ session is found only by its own user. It ends on `close`, or after 10 minutes w
 | --- | --- |
 | `look` | the screen again |
 | `key <chord>...` | keys, as `F10`, `Enter`, `Esc`, `Tab`, `Shift+Tab`, `Down`, `Ctrl+K`, `Alt+M`, `F4` |
-| `type <text>` | characters as typed; `\r` is Enter, `\t` is Tab |
+| `type <text>` | characters as typed; `\r` is Enter, `\t` is Tab; the text is trimmed, so begin it with `\ ` for a leading space |
 | `go <path[?query]>` | go to a screen |
 | `focus <element>` | move the focus |
 | `set <element> <value>` | replace a field's value; a drop-down takes a choice's value or label and chooses it as a person does, so its dependent fields follow |
