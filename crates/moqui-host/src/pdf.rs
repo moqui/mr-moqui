@@ -172,15 +172,19 @@ fn windows_process_live(pid: u32) -> bool {
     text.contains(&pid.to_string()) && !text.to_ascii_lowercase().contains("no tasks")
 }
 
-/// Removes the engine from core and stops its browser.
+/// Removes the engine from core, if it is still the installed one, and stops its browser.
 pub struct PdfGuard {
     engine: Option<Arc<ChromiumPdf>>,
 }
 
 impl Drop for PdfGuard {
     fn drop(&mut self) {
-        moqui_core::screen::clear_pdf_engine();
-        if let Some(engine) = self.engine.take() {
+        let engine = self.engine.take();
+        let installed = engine
+            .clone()
+            .map(|engine| engine as Arc<dyn moqui_core::screen::PdfEngine>);
+        moqui_core::screen::remove_pdf_engine(installed.as_ref());
+        if let Some(engine) = engine {
             engine.shutdown();
         }
     }
