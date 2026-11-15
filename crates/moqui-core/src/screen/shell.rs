@@ -187,6 +187,12 @@ pub const PROVIDER_HOOKS: [&str; 13] = [
     "call-target",
 ];
 
+/// The hooks a component may also answer from its `MoquiConf.xml`, apart from any app root
+/// (`screen-facade/shell-providers`, [`conf_providers`]): checks the framework makes for whoever acts, the system with
+/// no user included, so a component with no screen (Mantle's consent records) can answer them (docs/tools/Comms.md
+/// "Provider hooks"; mr-boss plan/impl-marketing.md P22, F72).
+pub const CONF_PROVIDER_HOOKS: [&str; 1] = ["sms-consent"];
+
 /// A provider of one of the [`PROVIDER_HOOKS`].
 #[derive(Clone, Debug, Default)]
 pub struct ProviderDecl {
@@ -380,6 +386,48 @@ impl ShellProviders {
         by_sequence(&mut out.providers, |provider| provider.sequence);
         Some(out)
     }
+}
+
+/// The providers a merged conf's `screen-facade` registers in its `shell-providers` (one element per hook, as an app
+/// root declares them), in `sequence` order. Only the [`CONF_PROVIDER_HOOKS`]: another hook there, and a provider with
+/// no name or service, is logged and left out, so a conf never adds a provider that reaches past a user's apps.
+pub(super) fn conf_providers_of(facade: &MNode) -> Vec<ProviderDecl> {
+    let mut out = Vec::new();
+    for element in facade.children_named("shell-providers") {
+        for child in element.children() {
+            let hook = child.name();
+            if !CONF_PROVIDER_HOOKS.contains(&hook.as_str()) {
+                tracing::error!("screen-facade shell-providers: {hook} is not a hook a conf may answer; left out");
+                continue;
+            }
+            let provider = ProviderDecl {
+                hook: hook.to_string(),
+                name: attr(&child, "name"),
+                service: attr(&child, "service"),
+                sequence: sequence_of(&child),
+            };
+            if provider.name.is_empty() || provider.service.is_empty() {
+                tracing::error!("screen-facade shell-providers: a {hook} needs a name and a service; left out");
+            } else {
+                out.push(provider);
+            }
+        }
+    }
+    by_sequence(&mut out, |provider| provider.sequence);
+    out
+}
+
+/// The providers of `hook` the merged conf registers ([`conf_providers_of`]): asked for every caller, with no app and
+/// whoever the user is (none for the system), beside those of the apps the user may open ([`declared_providers`]).
+#[must_use]
+pub fn conf_providers(factory: &crate::context::ExecutionContextFactory, hook: &str) -> Vec<ProviderDecl> {
+    super::ScreenFacade::of(factory)
+        .conf()
+        .providers
+        .iter()
+        .filter(|provider| provider.hook == hook)
+        .cloned()
+        .collect()
 }
 
 // ---- screen-extend ----

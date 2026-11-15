@@ -54,6 +54,8 @@ const DEFAULT_POLICY = {
   // C4-SMS: texts a user and the users in all send a day, the system's own texts (sign-in codes) a day, and the number
   // they go from
   smsMaxPerUserPerDay: 200, smsMaxPerDay: 2000, smsSystemMaxPerDay: 500, smsSystemNumber: null,
+  // the promotional texts one of our numbers sends a day (a campaign's, apart from the system's budget)
+  smsMaxPromotionalPerNumber: 1000,
 }
 const TRANSPORT_CODES = { VtrTls: 'tls', VtrTcp: 'tcp', VtrUdp: 'udp' }
 const MEDIA_CODES = { VmeSrtp: 'srtp', VmePlain: 'plain' }
@@ -112,7 +114,8 @@ function policy() {
   const out = Object.assign({}, DEFAULT_POLICY)
   if (row) for (const key of Object.keys(DEFAULT_POLICY)) if (!blank(row[key])) out[key] = row[key]
   for (const key of ['maxConcurrentCalls', 'maxConcurrentPerUser', 'maxCallsPerUserPerDay', 'maxCallsPerDay',
-    'authFailureLimit', 'authFailureWindowSeconds', 'authBlockSeconds', 'smsMaxPerUserPerDay', 'smsMaxPerDay', 'smsSystemMaxPerDay']) out[key] = Number(out[key])
+    'authFailureLimit', 'authFailureWindowSeconds', 'authBlockSeconds', 'smsMaxPerUserPerDay', 'smsMaxPerDay', 'smsSystemMaxPerDay',
+    'smsMaxPromotionalPerNumber']) out[key] = Number(out[key])
   out.homeCountryCode = String(out.homeCountryCode).replace(/\D/g, '') || '1'
   return out
 }
@@ -1297,7 +1300,8 @@ function deleteLocation(p) {
 
 const POLICY_FIELDS = ['internationalEnabled', 'premiumEnabled', 'maxConcurrentCalls', 'maxConcurrentPerUser', 'maxCallsPerUserPerDay',
   'maxCallsPerDay', 'authFailureLimit', 'authFailureWindowSeconds', 'authBlockSeconds', 'homeCountryCode', 'emergencyNumbers',
-  'premiumPrefixes', 'alertUserGroupId', 'smsMaxPerUserPerDay', 'smsMaxPerDay', 'smsSystemMaxPerDay', 'smsSystemNumber']
+  'premiumPrefixes', 'alertUserGroupId', 'smsMaxPerUserPerDay', 'smsMaxPerDay', 'smsSystemMaxPerDay', 'smsSystemNumber',
+  'smsMaxPromotionalPerNumber']
 
 function getPolicy() {
   const denied = notAdmin()

@@ -787,8 +787,9 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
     <entity entity-name="SmsSendCount" package="moqui.call" use="transactional" cache="never">
         <description>Texts sent a day, for the limits (VoicePolicy smsMaxPerUserPerDay, smsMaxPerDay, smsSystemMaxPerDay):
-            counterKey is user:(userId), all (the users' texts in all) or system (the sends with no user, counted apart, so
-            users' texts cannot use up the budget of sign-in codes); dayDate the day in UTC (yyyy-MM-dd).</description>
+            counterKey is user:(userId), all (the users' texts in all), system (the sends with no user, counted apart, so
+            users' texts cannot use up the budget of sign-in codes) or promo:(phoneNumber) (the promotional texts of one of
+            our numbers, smsMaxPromotionalPerNumber); dayDate the day in UTC (yyyy-MM-dd).</description>
         <field name="counterKey" type="id" is-pk="true"/>
         <field name="dayDate" type="text-short" is-pk="true"/>
         <field name="sentCount" type="number-integer"/>
@@ -801,6 +802,10 @@ along with this software (see the LICENSE.md file). If not, see
             budget of their own (500 when empty)</description></field>
         <field name="smsSystemNumber" type="id"><description>The number the system's own texts (a sign-in code) go from;
             it needs a messaging bridge</description></field>
+        <field name="smsMaxPromotionalPerNumber" type="number-integer"><description>Promotional texts one of our numbers
+            sends a day (1000 when empty), counted for the number (promo:(phoneNumber)): a campaign's texts, sent with no
+            user, count here and not against smsSystemMaxPerDay, so they never use up what sign-in codes need; a user's
+            promotional text counts here too, beside the user's limits</description></field>
     </extend-entity>
     <extend-entity entity-name="ChatBridgeDelivery" package="moqui.chat">
         <field name="receiptStatus" type="text-short"><description>What the network's delivery receipt last said: sent,

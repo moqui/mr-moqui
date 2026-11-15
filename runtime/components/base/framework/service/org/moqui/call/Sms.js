@@ -15,7 +15,9 @@
 // texts (a sign-in code, send#SmsMessage) go from VoicePolicy.smsSystemNumber straight to the provider (send#BridgeDirect)
 // with the same checks, and are kept in no room; they have a daily budget of their own (smsSystemMaxPerDay, counted apart
 // from the users' texts), so users cannot use up what sign-in codes need. A promotional text needs a yes from an
-// sms-consent provider (Mantle's consent records); with none it is refused.
+// sms-consent provider (an app's, or one a component registers in its conf, as Mantle does for its consent records,
+// asked for the system too); with none it is refused. It counts against its number's day of promotional texts
+// (smsMaxPromotionalPerNumber, promo:<number>), and a campaign's, sent with no user, not against the system's budget.
 
 const VOICE = 'component://framework/service/org/moqui/call/Voice.js'
 const NUMBER = 'moqui.call.PhoneNumber'
@@ -33,7 +35,7 @@ const BRIDGE = 'moqui.chat.ChatBridge'
 const STOP_WORDS = ['STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT', 'OPTOUT', 'REVOKE']
 const START_WORDS = ['START', 'UNSTOP', 'YES', 'OPTIN']
 const HELP_WORDS = ['HELP', 'INFO']
-const DEFAULT_LIMITS = { smsMaxPerUserPerDay: 200, smsMaxPerDay: 2000, smsSystemMaxPerDay: 500 }
+const DEFAULT_LIMITS = { smsMaxPerUserPerDay: 200, smsMaxPerDay: 2000, smsSystemMaxPerDay: 500, smsMaxPromotionalPerNumber: 1000 }
 
 const ms = (value) => {
   if (value == null || value === '') return null
@@ -45,6 +47,7 @@ const find = (entity) => ec.entity.find(entity).disableAuthz()
 const one = (entity, fields) => find(entity).condition(fields).one()
 const rows = (entity, fields) => Array.from(find(entity).condition(fields || {}).list())
 const blank = (value) => value == null || String(value).trim() === ''
+const isTrue = (value) => value === true || value === 'true' || value === 'Y'
 
 function voice(op, parameters) {
   return ec.resource.script(VOICE).execute(op, parameters || {}) || {}
@@ -280,7 +283,7 @@ function consented(fromNumber, toNumber) {
   ec.message.pushErrors()
   try {
     const out = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers').parameters({ hook: 'sms-consent',
-      parameters: { fromNumber, toNumber } }).call() || {}
+      parameters: { fromNumber, toNumber } }).disableAuthz().call() || {}
     const answers = Array.from(out.results || [])
     return out.unavailable !== true && answers.some((answer) => answer && answer.consent === true)
       && !answers.some((answer) => answer && answer.consent === false)
@@ -314,36 +317,49 @@ function checkSend(p) {
   if (classRefusal) return no(classRefusal.reasonCode, classRefusal.text)
   const optOut = one(OPT_OUT, { phoneNumber: from, otherNumber: dest.number })
   if (optOut && optOut.optedOut === 'Y') return no('optedOut', 'This person replied STOP; texts to them are not sent until they reply START')
-  if (p.isPromotional === true || p.isPromotional === 'true' || p.isPromotional === 'Y') {
+  const promotional = isTrue(p.isPromotional)
+  if (promotional) {
     if (!consented(from, dest.number)) return no('consentRequired', 'A promotional text needs the person\'s consent, and none is recorded')
   }
   const limits = smsPolicy()
   const reserve = p.reserve === true || p.reserve === 'true' || p.reserve === 'Y'
-  const userKey = userId ? 'user:' + userId : 'system'
-  // the users' texts count toward their own and all users' limits; the system's (sign-in codes) toward a budget of their
-  // own, which the users' texts do not touch
-  const lockKey = userId ? 'all' : 'system'
+  const counters = countersOf(userId, from, promotional)
   const day = today()
-  // reserve: the check and the count are one step, under the lock of the day's count of all users' texts or of the
-  // system's (made at 0 when there is none yet), so sends at once cannot pass a limit together; the caller lets the count
-  // go (release#SmsSend) when the text does not reach the provider
-  if (reserve && !find(COUNT).condition({ counterKey: lockKey, dayDate: day }).forUpdate(true).one()) {
-    const first = ec.entity.makeValue(COUNT)
-    first.setFields({ counterKey: lockKey, dayDate: day, sentCount: 0 }, true, null, null)
-    first.create()
+  // reserve: the check and the count are one step, under the lock of the day's count of all users' texts, of the
+  // system's, or of the number's promotional texts (made at 0 when there is none yet), so sends at once cannot pass a
+  // limit together; the caller lets the count go (release#SmsSend) when the text does not reach the provider
+  if (reserve) {
+    for (const lockKey of counters.locks) {
+      if (find(COUNT).condition({ counterKey: lockKey, dayDate: day }).forUpdate(true).one()) continue
+      const first = ec.entity.makeValue(COUNT)
+      first.setFields({ counterKey: lockKey, dayDate: day, sentCount: 0 }, true, null, null)
+      first.create()
+    }
   }
-  const over = userId
-    ? sentToday(userKey, day) >= limits.smsMaxPerUserPerDay || sentToday('all', day) >= limits.smsMaxPerDay
-    : sentToday('system', day) >= limits.smsSystemMaxPerDay
+  const limitOf = { all: limits.smsMaxPerDay, system: limits.smsSystemMaxPerDay }
+  const over = counters.keys.some((counterKey) => sentToday(counterKey, day) >= (counterKey.startsWith('user:')
+    ? limits.smsMaxPerUserPerDay : counterKey.startsWith('promo:') ? limits.smsMaxPromotionalPerNumber : limitOf[counterKey]))
   if (over) return no('dailyLimit', 'The limit of texts for a day is reached')
-  if (reserve) countSent(userKey, day, 1)
+  if (reserve) countSent(counters.keys, day, 1)
   return { allowed: true, ourNumber: from, theirNumber: dest.number, chatBridgeId: number.messagingBridgeId, destinationClass: dest.destinationClass,
     counterDay: reserve ? day : null }
 }
 
-/** Add delta to the day's counts of counterKey and, for a user's text, of all users (all), never below 0. */
-function countSent(userKey, day, delta) {
-  for (const counterKey of userKey === 'system' ? ['system'] : [userKey, 'all']) {
+/**
+ * The day's counts a text counts toward (keys) and the ones whose row lock a reserve takes (locks): a user's text, the
+ * user's and all users'; the system's, its own budget (sign-in codes); a promotional text also its number's
+ * (promo:<number>), and a promotional text with no user (a campaign's) that alone, so it never spends the system's budget.
+ */
+function countersOf(userId, fromNumber, promotional) {
+  const promo = promotional && fromNumber ? 'promo:' + fromNumber : null
+  if (userId) return { keys: promo ? ['user:' + userId, 'all', promo] : ['user:' + userId, 'all'], locks: promo ? ['all', promo] : ['all'] }
+  if (promo) return { keys: [promo], locks: [promo] }
+  return { keys: ['system'], locks: ['system'] }
+}
+
+/** Add delta to the day's counts of each of counterKeys, never below 0. */
+function countSent(counterKeys, day, delta) {
+  for (const counterKey of counterKeys) {
     const row = find(COUNT).condition({ counterKey, dayDate: day }).forUpdate(true).one()
     if (row) {
       row.setFields({ sentCount: Math.max(0, Number(row.sentCount || 0) + delta), lastSentDate: ec.user.nowTimestamp }, true, null, null)
@@ -356,15 +372,21 @@ function countSent(userKey, day, delta) {
   }
 }
 
-/** Internal: a text went to the provider (taken, or not known): it counts for the sender's day (a user's, and all users'; or the system's). */
+/** The number in E.164 of a counted text's fromNumber, for its promotional count; null when it is not promotional. */
+function promoNumber(p) {
+  return isTrue(p.isPromotional) && !blank(p.fromNumber) ? voice('toE164', { phoneNumber: p.fromNumber }).number || null : null
+}
+
+/** Internal: a text went to the provider (taken, or not known): it counts for the sender's day (a user's, and all users'; or the system's), and a promotional one for its number's. */
 function noteSent(p) {
-  countSent(blank(p.userId) ? 'system' : 'user:' + p.userId, today(), 1)
+  countSent(countersOf(blank(p.userId) ? null : p.userId, promoNumber(p), isTrue(p.isPromotional)).keys, today(), 1)
   return {}
 }
 
 /** Internal: a text check#SmsSend reserved (counted) on counterDay did not reach the provider: it no longer counts. */
 function releaseSend(p) {
-  countSent(blank(p.userId) ? 'system' : 'user:' + p.userId, blank(p.counterDay) ? today() : String(p.counterDay), -1)
+  countSent(countersOf(blank(p.userId) ? null : p.userId, promoNumber(p), isTrue(p.isPromotional)).keys,
+    blank(p.counterDay) ? today() : String(p.counterDay), -1)
   return {}
 }
 
@@ -460,30 +482,33 @@ function contactOf(p) {
  * org.moqui.SmsServices.send#SmsMessage: a text from fromNumber (the system's number, VoicePolicy.smsSystemNumber, when
  * empty) to the contact number, sent by userId when given (their grants and limits; else the system's), straight to the
  * provider and kept in no room. successful, messageId (the provider's), errorMessage and reasonCode; a refusal is also an
- * error.
+ * error. deliveryOutcome, as send#EmailTemplate's, for a caller that keeps its own ledger: retryable (the day's limit, or
+ * the provider asked to try later), permanent (refused before the provider, or by it), uncertain (the provider's answer
+ * was lost: it may have been sent, so it is never sent again on its own).
  */
 function sendMessage(p) {
-  const fail = (reasonCode, message) => {
+  const fail = (reasonCode, message, deliveryOutcome) => {
     ec.message.addError(message)
-    return { successful: false, messageId: null, errorMessage: message, reasonCode }
+    return { successful: false, messageId: null, errorMessage: message, reasonCode, deliveryOutcome: deliveryOutcome || 'permanent' }
   }
   const fromNumber = blank(p.fromNumber) ? smsPolicy().smsSystemNumber : p.fromNumber
   if (blank(fromNumber)) return fail('noMessaging', ec.l10n.localize('No number to send texts from: set the system number in Voice, Fraud'))
   // checked and counted in a transaction of its own (its lock is not held while the provider answers)
   const check = ec.service.sync().name('org.moqui.call.SmsServices.check#SmsSend').parameters({ fromNumber, toNumber: contactOf(p),
     userId: p.userId || null, isPromotional: p.isPromotional, reserve: true }).requireNewTransaction(true).disableAuthz().call() || {}
-  if (ec.message.hasError()) return fail('failed', ec.message.errorsString)
-  if (!check.allowed) return fail(check.reasonCode, check.message)
+  if (ec.message.hasError()) return fail('failed', ec.message.errorsString, 'retryable')
+  if (!check.allowed) return fail(check.reasonCode, check.message, check.reasonCode === 'dailyLimit' ? 'retryable' : 'permanent')
   const out = ec.service.sync().name('org.moqui.chat.ChatBridgeServices.send#BridgeDirect').parameters({ chatBridgeId: check.chatBridgeId,
     externalRoomId: pairKey(check.ourNumber, check.theirNumber), text: String(p.message || ''), senderUserId: p.userId || null }).disableAuthz().call() || {}
   if (out.outcome !== 'accepted' && out.outcome !== 'uncertain') {
-    ec.service.sync().name('org.moqui.call.SmsServices.release#SmsSend').parameters({ userId: p.userId || null, counterDay: check.counterDay })
-      .requireNewTransaction(true).disableAuthz().call()
+    ec.service.sync().name('org.moqui.call.SmsServices.release#SmsSend').parameters({ userId: p.userId || null, counterDay: check.counterDay,
+      fromNumber: check.ourNumber, isPromotional: p.isPromotional }).requireNewTransaction(true).disableAuthz().call()
   }
-  if (out.outcome === 'accepted') return { successful: true, messageId: out.remoteEventId || null, errorMessage: null, reasonCode: null }
+  if (out.outcome === 'accepted') return { successful: true, messageId: out.remoteEventId || null, errorMessage: null, reasonCode: null, deliveryOutcome: null }
   ec.logger.warn(`A text to ${check.theirNumber} was not sent: ${out.reasonCode || out.outcome} ${out.error || ''}`)
   return fail(out.reasonCode || out.outcome || 'failed', out.outcome === 'uncertain'
-    ? ec.l10n.localize('The text may not have been sent; the provider did not answer') : String(out.error || ec.l10n.localize('The text was not sent')))
+    ? ec.l10n.localize('The text may not have been sent; the provider did not answer') : String(out.error || ec.l10n.localize('The text was not sent')),
+  out.outcome === 'uncertain' ? 'uncertain' : out.outcome === 'retry' ? 'retryable' : 'permanent')
 }
 
 // ---------- the user's numbers ----------

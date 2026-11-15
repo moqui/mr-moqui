@@ -108,8 +108,8 @@ fn factory_now() -> Result<Arc<ExecutionContextFactory>, LibError> {
     ExecutionContext::with_current(|ec| Arc::clone(ec.factory())).ok_or_else(|| LibError::new("no execution context"))
 }
 
-/// `get#Providers`: the providers of `hook` that the apps the current user may open declare, in order: `sourceId`
-/// (the provider's name), `app` and `service`. A screen shows a feature that needs a provider only when there is one.
+/// `get#Providers`: the providers of `hook` that the apps the current user may open declare, in order, then those the
+/// conf registers: `sourceId` (the provider's name), `app` (null for a conf's) and `service`. A screen shows a feature that needs a provider only when there is one.
 fn get_providers(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
@@ -117,22 +117,51 @@ fn get_providers(
     let hook = hook_of(parameters)?;
     // the apps the user may open, even for a caller that disabled authorization
     let _authz = ExecutionContext::with_current(ExecutionContext::require_authz);
-    let declared = crate::screen::shell::declared_providers(&factory_now()?, &hook);
-    let list = declared
+    let factory = factory_now()?;
+    let declared = crate::screen::shell::declared_providers(&factory, &hook);
+    let entry = |name: &str, app: Value, service: &str| {
+        let mut row = IndexMap::default();
+        row.insert("sourceId".to_string(), Value::string(name));
+        row.insert("app".to_string(), app);
+        row.insert("service".to_string(), Value::string(service));
+        Value::Map(row)
+    };
+    let mut list: Vec<Value> = declared
         .iter()
         .map(|declared| {
-            let mut row = IndexMap::default();
-            row.insert("sourceId".to_string(), Value::string(&declared.provider.name));
-            row.insert("app".to_string(), Value::string(&declared.app));
-            row.insert("service".to_string(), Value::string(&declared.provider.service));
-            Value::Map(row)
+            entry(
+                &declared.provider.name,
+                Value::string(&declared.app),
+                &declared.provider.service,
+            )
         })
         .collect();
+    // a conf's providers have no app
+    for provider in conf_only(&factory, &hook, &declared) {
+        list.push(entry(&provider.name, Value::Null, &provider.service));
+    }
     Ok(BTreeMap::from([("providerList".to_string(), Value::List(list))]))
+}
+
+/// The providers of `hook` the conf registers whose names no app's provider in `declared` has: an app's provider of the
+/// same name is the one asked, as between two apps.
+fn conf_only(
+    factory: &ExecutionContextFactory,
+    hook: &str,
+    declared: &[crate::screen::shell::DeclaredProvider],
+) -> Vec<crate::screen::shell::ProviderDecl> {
+    crate::screen::shell::conf_providers(factory, hook)
+        .into_iter()
+        .filter(|provider| !declared.iter().any(|known| known.provider.name == provider.name))
+        .collect()
 }
 
 /// `call#Providers`: call each provider of `hook` (or only `sourceId`) with `parameters`, as the app that declares it,
 /// and combine the answers (plans/archive/Comms-Framework.md §3.3).
+///
+/// - A provider a component registers in its conf ([`crate::screen::shell::CONF_PROVIDER_HOOKS`]) is asked after the
+///   apps' for every caller, the system with no user included: it has no app, so it runs with authorization disabled,
+///   as the trusted conf that names it is (Mantle's `sms-consent` answer, read only).
 ///
 /// - A read (the default) runs each provider in a transaction of its own; one that fails is logged by name and listed
 ///   in `failedParts`, and the others still answer. Each answer is in `results` with its `sourceId`, in order; the
@@ -156,23 +185,38 @@ fn call_providers(
     // The apps the user may open, and each provider with that app's authorization and entity filters: checked even for a
     // caller that disabled authorization, so a provider never reaches past the user.
     let _authz = ExecutionContext::with_current(ExecutionContext::require_authz);
-    let declared: Vec<_> = crate::screen::shell::declared_providers(&factory_now()?, &hook)
+    let factory = factory_now()?;
+    let declared: Vec<_> = crate::screen::shell::declared_providers(&factory, &hook)
         .into_iter()
         .filter(|declared| only.as_deref().is_none_or(|only| declared.provider.name == only))
         .collect();
+    let from_conf: Vec<_> = conf_only(&factory, &hook, &declared)
+        .into_iter()
+        .filter(|provider| only.as_deref().is_none_or(|only| provider.name == only))
+        .collect();
     let mut results = Vec::new();
     let mut failed = Vec::new();
-    let unavailable = declared.is_empty();
+    let unavailable = declared.is_empty() && from_conf.is_empty();
     let options = super::call::CallOptions {
         require_new_transaction: Some(!mutation),
         ..Default::default()
     };
-    for declared in &declared {
-        let name = &declared.provider.name;
-        let answer =
-            crate::screen::shell::run_in_app(&declared.app_location, declared.app_requires_authentication, || {
-                call_tolerant_with(&declared.provider.service, &input, &options)
-            });
+    let in_apps = declared.iter().map(|declared| (&declared.provider, Some(declared)));
+    let in_conf = from_conf.iter().map(|provider| (provider, None));
+    let all: Vec<_> = in_apps.chain(in_conf).collect();
+    for (provider, declared) in all {
+        let name = &provider.name;
+        let answer = match declared {
+            Some(declared) => {
+                crate::screen::shell::run_in_app(&declared.app_location, declared.app_requires_authentication, || {
+                    call_tolerant_with(&provider.service, &input, &options)
+                })
+            }
+            None => {
+                let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+                call_tolerant_with(&provider.service, &input, &options)
+            }
+        };
         match answer {
             Ok(out) => {
                 let mut row: moqui_lib::object::ValueMap = out.into_iter().collect();
@@ -180,15 +224,12 @@ fn call_providers(
                 results.push(Value::Map(row));
             }
             Err(err) if mutation => {
-                tracing::error!("{hook} provider {name} ({}) failed: {err}", declared.provider.service);
+                tracing::error!("{hook} provider {name} ({}) failed: {err}", provider.service);
                 ExecutionContext::with_current(|ec| ec.message().add_error(err.to_string()));
                 break;
             }
             Err(err) => {
-                tracing::error!(
-                    "{hook} provider {name} ({}) failed; left out: {err}",
-                    declared.provider.service
-                );
+                tracing::error!("{hook} provider {name} ({}) failed; left out: {err}", provider.service);
                 let mut part = IndexMap::default();
                 part.insert("sourceId".to_string(), Value::string(name));
                 part.insert("error".to_string(), Value::string(err.to_string()));

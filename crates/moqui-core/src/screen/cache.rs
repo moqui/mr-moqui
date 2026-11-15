@@ -181,6 +181,8 @@ pub struct ScreenConf {
     /// `stream-threshold`: the bytes of an html or text render kept before its response is sent as it is written
     /// (docs/ui/Screen-Output.md); 0 keeps every response whole.
     pub stream_threshold: usize,
+    /// The providers of the conf-answerable hooks registered in `shell-providers` (super::shell::conf_providers_of).
+    pub providers: Vec<super::shell::ProviderDecl>,
 }
 
 /// The default `stream-threshold`, 64 KiB.
@@ -283,6 +285,7 @@ impl ScreenConf {
                 },
             );
         }
+        conf.providers = super::shell::conf_providers_of(&facade);
         for screen in facade.named_iter("screen") {
             let Some(location) = screen.attribute("location").filter(|text| !text.is_empty()) else {
                 continue;

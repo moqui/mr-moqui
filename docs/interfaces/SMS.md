@@ -49,7 +49,8 @@ with a messaging bridge and no trunk texts.
    group's number) send from it.
 5. **The server.** `channels_webhooks_enabled=true`; `channels_public_url` the https base the provider reaches this server
    at (an MMS that goes out is refused, `mediaUnreachable`, without it); System, Voice, Fraud: the SMS limits (people's
-   texts a day each and in all; the system's own texts a day) and the system's number (sign-in codes).
+   texts a day each and in all; the system's own texts a day; promotional texts a day per number) and the system's
+   number (sign-in codes).
 
 **Behind an edge node** ([Run-Deploy](../Run-Deploy.md#a-local-server-with-an-edge-node), [plan](../../plans/archive/Edge-Node.md)
 §5.4). A local server that providers cannot reach takes its texts through its edge node:
@@ -141,8 +142,8 @@ A user writes in the pair's room; the delivery layer sends it. Before the provid
 | `internationalNotEnabled`, `premiumNotEnabled` | The destination's class (Voice.js `classify`, as for a call) is not enabled for the deployment and the user (VoicePolicy, VoiceUserSetting) |
 | `emergency` | An emergency number: texts to them are not sent from here |
 | `optedOut` | The person sent STOP to our number and not START since |
-| `consentRequired` | A promotional text (`send#SmsMessage` `isPromotional`) with no `sms-consent` provider saying yes |
-| `dailyLimit` | The sender's (`smsMaxPerUserPerDay`, 200) or all people's (`smsMaxPerDay`, 2000) texts of the day, counted in `SmsSendCount`; the system's own texts (sign-in codes) have a budget of their own (`smsSystemMaxPerDay`, 500, counted apart), so people's texts cannot use up what sign-in codes need. The check and the count are one step (`reserve`) under the lock of the day's count (all people's, or the system's), so sends at once cannot pass a limit together; a text that does not reach the provider (refused, retried, unreachable) is taken off again (`release#SmsSend`), and one whose answer was lost still counts |
+| `consentRequired` | A promotional text (`send#SmsMessage` `isPromotional`) with no `sms-consent` provider saying yes, or one saying no: an app root's (asked as the sender, of the apps they may open) or one a component registers in its conf (asked for every sender, the system included; [Comms](../tools/Comms.md)) |
+| `dailyLimit` | The sender's (`smsMaxPerUserPerDay`, 200) or all people's (`smsMaxPerDay`, 2000) texts of the day, counted in `SmsSendCount`; the system's own texts (sign-in codes) have a budget of their own (`smsSystemMaxPerDay`, 500, counted apart), so people's texts cannot use up what sign-in codes need. The check and the count are one step (`reserve`) under the lock of the day's count (all people's, or the system's), so sends at once cannot pass a limit together; a text that does not reach the provider (refused, retried, unreachable) is taken off again (`release#SmsSend`), and one whose answer was lost still counts. A promotional text also counts for its number (`smsMaxPromotionalPerNumber`, 1000, counted as `promo:<number>`); one with no user (a campaign's) counts there alone, not against the system's budget, so a campaign never uses up what sign-in codes need |
 | `textTooLong`, `tooManyFiles`, `mediaTooLarge`, `mediaUnreachable` | The bridge's limits, or no `channels_public_url` for a file |
 
 The text goes to `POST /v2/messages` with the delivery's idempotency key in `Idempotency-Key`; Telnyx does not dedupe
@@ -178,9 +179,11 @@ messaging profile answers STOP and HELP itself (its opt-out management), and blo
 internal (`allow-remote="false"`). From `fromNumber`, else `VoicePolicy.smsSystemNumber`, it goes straight to the
 provider (`send#BridgeDirect`: no room, no delivery row, no retry), so a sign-in code (`UserServices.send#AuthcCodeSms`)
 is seen by nobody else. The checks are `check#SmsSend`'s, with the system's own day limit (`smsSystemMaxPerDay`) when
-`userId` is empty: the people's texts do not count toward it, nor it toward theirs. A refusal
-or a failure is an error with its `reasonCode`. Marketing's texts (Mantle) go through it with `isPromotional`, and Mantle
-answers the `sms-consent` hook from its consent records.
+`userId` is empty: the people's texts do not count toward it, nor it toward theirs. A promotional text with no user
+counts for its number's day of promotional texts instead (`smsMaxPromotionalPerNumber`). A refusal or a failure is an
+error with its `reasonCode`. Marketing's texts (Mantle) go through it with `isPromotional`, sent as the system from the
+sending profile's number, and Mantle answers the `sms-consent` hook from its consent records, registered in its
+`MoquiConf.xml` so the system's sends are asked too.
 
 ## Capabilities
 
@@ -204,7 +207,9 @@ answers the `sms-consent` hook from its consent records.
   (the signed address served to that bridge only, while it works), over the count and size limits; a lost answer
   uncertain and not sent again, a 503 tried again and taken, a STOP block from the provider, the provider unreachable; a
   STOP and START, international, a user with no number, a promotional text with no consent, the people's day's limit
-  reached with a sign-in code still sent, and the system's own day's limit, all before the provider; the pair room shared by a text and a call (`receive#PhoneCall`); a sign-in code through the real
+  reached with a sign-in code still sent, and the system's own day's limit, all before the provider; a campaign's
+  promotional text with no user asked of a conf's `sms-consent` provider (a yes sent, a no and no answer refused, a
+  conf's other hook left out) and counted for its number's day of promotional texts, a sign-in code still sent after it; the pair room shared by a text and a call (`receive#PhoneCall`); a sign-in code through the real
   sender, in no room.
 - `crates/moqui-core/src/service/chat_bridge_web.rs`: a file address signed for its bridge that runs out; a file from a
   network never kept as a page.

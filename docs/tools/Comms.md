@@ -248,11 +248,24 @@ records drive's folders by their records.
 | `external-conversation` | Filing the conversation of a new outside party on a record: the first text of a new number's pair room (`chatRoomId`, `chatBridgeId`, `chatActorId`, `eventSeq`, `idempotencyKey`; answers `filed`, `recordUrl`), as the room's first local member; tried again on the next text until one filed it (`ChatRoomBridge.filedDate`; IronStone: on the one party with that number) |
 | `meetings-source` | The user's meetings in a range, for the Calls screen's Meetings (IronStone: the calendar's) |
 | `recipient-source` | People with phone numbers for the Dialer's search (`kinds` phone; IronStone: the parties and contacts the user may see) |
-| `sms-consent` | Whether a promotional text may go to a number (`fromNumber`, `toNumber`; answers `consent`); without a yes it is refused ([SMS](../interfaces/SMS.md#texts-that-go-out); Mantle answers from its consent records) |
+| `sms-consent` | Whether a promotional text may go to a number (`fromNumber`, `toNumber`; answers `consent`); one no refuses it, and without a yes it is refused ([SMS](../interfaces/SMS.md#texts-that-go-out)). Also answerable from a component's conf (below): Mantle registers its consent records' answer there, so a campaign's text, sent with no user, is asked too |
 | `call-context` | Who a phone caller is, for the ring bar and the call (V5; `number`; IronStone: the party with that number the user may see, and its open requests; the example gallery has two, one failing on purpose) |
 | `call-target` | Which users the current user may not call, transfer a call to or add to one (`userIdList`; answers `refusedUserIdList`): a refused user is answered as one that does not exist, a desk phone's REFER to one gets 403; with no provider any enabled user may be reached, and one that fails refuses (IronStone: the users of the parties the user may see, under the organization filter of `recipient-source`; a user with no party is in no organization and may be reached; the example gallery refuses users named `*.offlimits`) |
 
 A provider runs with the app's authorization and entity filters; a read that fails is left out and named, and a mutation that fails is an error.
+
+A hook the framework asks for whoever acts, the system with no user included, may also be answered by a component
+with no app root, in its `MoquiConf.xml` (only `sms-consent` today; another element there is logged and left out):
+
+```xml
+<screen-facade><shell-providers>
+    <sms-consent name="mantle.consent" service="mantle.party.MessageSmsServices.check#SmsConsent"/>
+</shell-providers></screen-facade>
+```
+
+`call#Providers` asks such a provider after the apps' ones, for every caller, with authorization disabled (the conf
+that names it is trusted, so its service reads only what the hook asks); an app's provider of the same name is asked
+in its place, and `get#Providers` lists it with no app.
 
 **Declared actions and panels.** `<ext-action>` and `<ext-panel>` in a screen-extend add items to a slot of a screen
 ([Qvt-Client](../ui/Qvt-Client.md#declared-actions-and-panels)). Chat's slot is `chat-message-actions`, whose item is

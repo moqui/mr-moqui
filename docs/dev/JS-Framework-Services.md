@@ -253,7 +253,7 @@ The files directly under `org/moqui` hold the interfaces that have kept their Ja
 | `EmailServices.process#EmailEca` | Interface: what an Email ECA rule's service receives (`emailServerId`, `message`, `fields`, `bodyPartList`, `headers`, `flags`) |
 | `GitServices.process#GitEca` | Interface: what a gitECA rule's service receives (`repositoryId`, `source`, `userId`, `refName`, `oldId`, `newId`, and for the pre events `newCommits`, `newCommitIds`, `newCommitsTruncated`, `forReview`, `packBytes`, `isMerge`, `mergeRequestId`, `mergeMethodEnumId`, `mergeSourceCommitId`) |
 | `ImageServices.convert#Image` | Interface |
-| `SmsServices.send#SmsMessage` | `contactNumber*`, `message*`, `countryCode`, `areaCode`, `fromNumber`, `userId` → `successful`, `messageId`, `errorMessage`, `reasonCode`. Sends a text through the messaging bridge of the system's number |
+| `SmsServices.send#SmsMessage` | `contactNumber*`, `message*`, `countryCode`, `areaCode`, `fromNumber`, `userId`, `isPromotional` → `successful`, `messageId`, `errorMessage`, `reasonCode`. Sends a text through the messaging bridge of the system's number (or `fromNumber`); a promotional one needs an `sms-consent` yes and counts for its number's day (`smsMaxPromotionalPerNumber`), not the system's |
 
 ## Mail: `org.moqui.mail`
 
@@ -443,7 +443,7 @@ What the shell and shared widgets call. `NotificationServices` is inline actions
 | `NotificationServices.register#PushDevice`, `unregister#PushDevice` | `provider*`, `token*`, `appId`, `platform`: a native app's FCM token |
 | `NotificationServices.send#WebPush` | `userIdList*`, `title`, `link`, `topic`, `tag` → `sentCount`, `failedCount`. Internal; a persisted notification sends it |
 | `ShellServices.get#ShellCounts`, `publish#ShellCounts` | `userId` → `counts`; `userIdList*`: the badge counts of the shell |
-| `ShellServices.get#Providers`, `call#Providers` | `hook*`, `parameters`, `sourceId` → `providerList`; `results`, `failedParts`: the shell providers the apps declare |
+| `ShellServices.get#Providers`, `call#Providers` | `hook*`, `parameters`, `sourceId` → `providerList`; `results`, `failedParts`: the shell providers the apps declare, then those a component's conf registers (`screen-facade/shell-providers`, `sms-consent` only) |
 | `ShellServices.get#Appearance`, `set#UserScreenTheme` | `screenThemeId` → `appearance` ([Themes](../ui/Themes.md)) |
 | `StatusServices.get#StatusBar` | `statusId`, `statusTypeId`, `statusFlowId` → `current`, `stages`, `transitions`, `next` |
 | `StatusServices.get#StatusColors` | `statusIdList` → `colors` |
