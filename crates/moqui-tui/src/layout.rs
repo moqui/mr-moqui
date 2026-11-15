@@ -544,6 +544,32 @@ pub struct LaidTabs {
     pub items: Vec<(String, bool)>,
     /// Each tab's url, for a click; empty for a disabled tab, which is drawn dimmed and is not a link.
     pub urls: Vec<String>,
+    /// The index of the first tab on each line: tabs that do not fit the width go on to the next line.
+    pub line_starts: Vec<usize>,
+}
+
+impl LaidTabs {
+    /// The tab's text as drawn: its number, for Alt+n, and its title.
+    #[must_use]
+    pub fn text(at: usize, title: &str) -> String {
+        format!("{}:{title}", at + 1)
+    }
+
+    /// The first tab of each line when the tabs, two columns apart, are laid in `width`.
+    fn lines_in(items: &[(String, bool)], width: usize) -> Vec<usize> {
+        let mut starts = vec![0];
+        let mut used = 0;
+        for (at, (title, _)) in items.iter().enumerate() {
+            let wide = display_width(&Self::text(at, title));
+            if at > 0 && used + 2 + wide > width {
+                starts.push(at);
+                used = wide;
+            } else {
+                used += if at == 0 { wide } else { 2 + wide };
+            }
+        }
+        starts
+    }
 }
 
 impl Piece {
@@ -563,7 +589,8 @@ impl Piece {
             Self::List(list) => list.height(),
             Self::Tree(tree) => tree.rows.len().max(1),
             Self::Lines(lines) => lines.lines.len().max(1),
-            Self::Inline(_) | Self::Tabs(_) | Self::Status(_) | Self::Placeholder { .. } | Self::Error { .. } => 1,
+            Self::Tabs(tabs) => tabs.line_starts.len().max(1),
+            Self::Inline(_) | Self::Status(_) | Self::Placeholder { .. } | Self::Error { .. } => 1,
         }
     }
 }
@@ -805,7 +832,12 @@ fn place_one(node: &Node, ctx: &Ctx<'_>, width: u16) -> Vec<Piece> {
             c,
         } => place_subscreens(id, kind, items, finish_text, c, ctx, width),
         Node::Panel { c, .. } => place_panel(c, ctx, width),
-        Node::Split { side_width, c, .. } => place_split(c, *side_width, ctx, width),
+        Node::Split {
+            side_width,
+            selected,
+            c,
+            ..
+        } => place_split(c, *side_width, *selected, ctx, width),
         Node::Dashboard { c, .. } => place_dashboard(c, ctx, width),
         Node::Box { .. } => place_boxes(std::slice::from_ref(node), ctx, width),
         Node::Form { id, name, c, .. } => vec![Piece::Form(LaidForm {
@@ -990,9 +1022,11 @@ fn place_subscreens(
         }
         _ => {
             if kind != "popup" && items.len() > 1 {
+                let titles: Vec<(String, bool)> = items.iter().map(|item| (item.title.clone(), item.active)).collect();
                 pieces.push(Piece::Tabs(LaidTabs {
                     id: id.to_string(),
-                    items: items.iter().map(|item| (item.title.clone(), item.active)).collect(),
+                    line_starts: LaidTabs::lines_in(&titles, usize::from(width)),
+                    items: titles,
                     urls: items
                         .iter()
                         .map(|item| if item.disabled { String::new() } else { item.url.clone() })
@@ -1335,12 +1369,14 @@ fn place_panel(children: &[Node], ctx: &Ctx<'_>, width: u16) -> Vec<Piece> {
 }
 
 /// A split: side and main together from md, the side `side-width` pixels ÷ 8 wide; below md the side list, then main.
-fn place_split(children: &[Node], side_width: u32, ctx: &Ctx<'_>, width: u16) -> Vec<Piece> {
+fn place_split(children: &[Node], side_width: u32, selected: bool, ctx: &Ctx<'_>, width: u16) -> Vec<Piece> {
     let side = region(children, "side").map(|(nodes, _)| nodes).unwrap_or(&[]);
     let main = region(children, "main").map(|(nodes, _)| nodes).unwrap_or(&[]);
     if ctx.class.stacks_boxes() {
-        let mut pieces = place_nodes(side, ctx, width);
-        pieces.extend(place_nodes(main, ctx, width));
+        // with a record selected its pane comes first, the list to pick another after it
+        let (first, second) = if selected { (main, side) } else { (side, main) };
+        let mut pieces = place_nodes(first, ctx, width);
+        pieces.extend(place_nodes(second, ctx, width));
         return pieces;
     }
     let sw = u16::try_from(if side_width == 0 { 280 } else { side_width } / 8)

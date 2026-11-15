@@ -474,7 +474,12 @@ fn key_line(paint: &mut Painter, session: &Session, row: u16, width: u16) {
             }
             actions.extend([Action::PageNext, Action::Sort]);
             // `f` opens the list's find fields: offered only where there are some.
-            if session.index().lists.get(list).is_some_and(|list| !list.header_fields.is_empty()) {
+            if session
+                .index()
+                .lists
+                .get(list)
+                .is_some_and(|list| !list.header_fields.is_empty())
+            {
                 actions.push(Action::Find);
             }
             if session.list(list).is_some_and(|list| list.views.is_some()) {
@@ -670,8 +675,14 @@ pub fn draw_piece(paint: &mut Painter, session: &Session, piece: &Piece, x: u16,
         }
         Piece::Tabs(tabs) => {
             let mut col = x;
+            let mut line = 0;
             for (at, (title, active)) in tabs.items.iter().enumerate() {
-                let text = format!("{}:{title}", at + 1);
+                if at > 0 && tabs.line_starts.get(line + 1) == Some(&at) {
+                    line += 1;
+                    col = x;
+                }
+                let y = y + line;
+                let text = crate::layout::LaidTabs::text(at, title);
                 let url = tabs.urls.get(at).cloned().unwrap_or_default();
                 let look = if *active {
                     Look::role(Role::Primary).bold().reverse()

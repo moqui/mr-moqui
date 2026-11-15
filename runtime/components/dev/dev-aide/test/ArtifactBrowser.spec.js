@@ -5,6 +5,15 @@
 // (src/browser_tests.rs).
 // Run: ./moq test dev-aide --spec ArtifactBrowser
 const dev = () => ec.screen.makeTest().rootScreen("component://dev-aide/screen/DevAide.xml")
+const nodeById = (node, id) => {
+    if (!node || typeof node !== "object") return null
+    if (node.id === id) return node
+    for (const value of Object.values(node)) {
+        const found = nodeById(value, id)
+        if (found) return found
+    }
+    return null
+}
 const browse = (params) => JSON.parse(String(dev().render("Artifacts/BrowseTui/browse", params, null).output))
 
 spec({
@@ -24,6 +33,8 @@ feature("the terminal twin is the browser component on the artifact, with a find
         out.includes('"DevArtifactBrowser"')
         out.includes('"artifactId":"entity:moqui.example.Example"')
         out.includes('"BrowseFind"')
+        // the find goes to the screen, not a transition: the terminal opens it with the fields, no post
+        nodeById(JSON.parse(out), "BrowseFind").method == "get"
         out.includes('"BrowseResults"')
         out.includes("Browse?artifactId=entity%3Amoqui.example.Example")
     }

@@ -144,15 +144,12 @@ pub fn check_text(factory: &Arc<ExecutionContextFactory>, path: &Path, text: &st
     let root = match MNode::parse_text(&display, text) {
         Ok(root) => root,
         Err(err) => {
-            let (line, column) = parse_error_position(&err.to_string());
-            return vec![problem(
-                &display,
-                line,
-                column,
-                Severity::Error,
-                "xml.parse",
-                &err.to_string(),
-            )];
+            let message = err.to_string();
+            let (line, column) = parse_error_position(&message);
+            // the place is the problem's own line and column: the file's path in the text only crowds an editor's line
+            let place = format!(" ({display}:{line}:{column})");
+            let detail = if line > 0 { message.replace(&place, "") } else { message };
+            return vec![problem(&display, line, column, Severity::Error, "xml.parse", &detail)];
         }
     };
     let mut problems = Vec::new();
@@ -563,7 +560,19 @@ fn parse_error_position(message: &str) -> (u32, u32) {
             .parse()
             .ok()
     };
-    (number_after("line").unwrap_or(0), number_after("column").unwrap_or(0))
+    if let Some(line) = number_after("line") {
+        return (line, number_after("column").unwrap_or(0));
+    }
+    // "… (path:line:column)", as MNode::parse_text names the place
+    message
+        .rsplit_once('(')
+        .and_then(|(_, place)| {
+            let mut parts = place.trim_end().trim_end_matches(')').rsplitn(3, ':');
+            let column = parts.next()?.parse().ok()?;
+            let line = parts.next()?.parse().ok()?;
+            Some((line, column))
+        })
+        .unwrap_or((0, 0))
 }
 
 /// The lines of the text, to place a problem on the attribute it is about.
@@ -752,6 +761,22 @@ mod tests {
         assert!(field.message.contains("noSuchField"), "{}", field.message);
         let broken = check_text(ctx.factory(), Path::new("/tmp/x.xml"), "<services>\n  <service>");
         assert_eq!(broken[0].rule, "xml.parse");
+        let mismatched = check_text(
+            ctx.factory(),
+            Path::new("/tmp/x.xml"),
+            "<services>\n<service/>\n</servicesx>",
+        );
+        assert_eq!(
+            (mismatched[0].line, mismatched[0].column > 0),
+            (3, true),
+            "{:?}",
+            mismatched[0]
+        );
+        assert!(
+            !mismatched[0].message.contains("/tmp/x.xml"),
+            "{}",
+            mismatched[0].message
+        );
     }
 
     #[test]

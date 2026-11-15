@@ -19,6 +19,7 @@
 //! editor opens as Compare. An upstream file (a root no site component is in) is read only unless the user has the full
 //! tier and "Allow editing upstream components" on (D17).
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -216,7 +217,7 @@ fn crlf(text: &str) -> bool {
 }
 
 /// The git status letter of each path of `root` under `dir` (relative to the root), with each directory's rolled up.
-fn statuses(context: &Context, root: &Root, dir: &str) -> Vec<(String, char)> {
+fn statuses(git: &Git, root: &Root, dir: &str) -> Vec<(String, char)> {
     if root.kind != RootKind::Git {
         return Vec::new();
     }
@@ -224,7 +225,7 @@ fn statuses(context: &Context, root: &Root, dir: &str) -> Vec<(String, char)> {
     if !dir.is_empty() {
         args.extend(["--", dir]);
     }
-    match context.git().read(&root.path, &args) {
+    match git.read(&root.path, &args) {
         Ok(out) => git::parse_status(&out)
             .entries
             .into_iter()
@@ -235,6 +236,41 @@ fn statuses(context: &Context, root: &Root, dir: &str) -> Vec<(String, char)> {
             Vec::new()
         }
     }
+}
+
+/// The names directly in `dir` (relative to the root) that are, or hold, a path git tracks; `None` when git cannot say.
+/// A clean tracked file is in no `git status`, so a directory whose reports are all ignored may still hold tracked files.
+fn tracked_names(git: &Git, root: &Root, dir: &str) -> Option<HashSet<String>> {
+    if root.kind != RootKind::Git {
+        return None;
+    }
+    let mut args = vec!["ls-files", "-z", "--cached"];
+    if !dir.is_empty() {
+        args.extend(["--", dir]);
+    }
+    match git.read(&root.path, &args) {
+        Ok(out) => Some(first_segments(&out, dir)),
+        Err(err) => {
+            tracing::warn!("git ls-files in {}: {err}", root.path.display());
+            None
+        }
+    }
+}
+
+/// The first segment under `dir` of each path of a `-z` listing.
+fn first_segments(listing: &str, dir: &str) -> HashSet<String> {
+    let prefix = if dir.is_empty() {
+        String::new()
+    } else {
+        format!("{dir}/")
+    };
+    listing
+        .split('\0')
+        .filter_map(|path| path.strip_prefix(prefix.as_str()))
+        .filter_map(|rest| rest.split('/').next())
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 /// `get#Roots`: the roots, whether git runs, the user's tier and the site components.
@@ -335,10 +371,24 @@ fn list_directory(
     let context = Context::of(ec, Tier::View)?;
     let root = context.root(&text(parameters, "rootId"))?;
     let resolved = context.resolve(root, &text(parameters, "path"))?;
-    let dir = resolved.relative.clone();
-    let statuses = statuses(&context, root, &dir);
+    let entries = directory_entries(&context.git(), root, &resolved.relative, &resolved.path)?;
+    let mut out = Parameters::new();
+    out.insert("entries".into(), json_value(&entries));
+    Ok(out)
+}
+
+/// The entries of [`list_directory`]: those of `path`, which is `dir` of `root`. A directory is ignored when every
+/// report git has in it is ignored and it holds no tracked path; when git cannot list the tracked paths, the reports
+/// alone decide.
+fn directory_entries(git: &Git, root: &Root, dir: &str, path: &Path) -> Result<Vec<serde_json::Value>, LibError> {
+    let statuses = statuses(git, root, dir);
+    let tracked = if statuses.iter().any(|(_, letter)| *letter == '!') {
+        tracked_names(git, root, dir)
+    } else {
+        None
+    };
     let mut entries = Vec::new();
-    let read = std::fs::read_dir(&resolved.path).map_err(|err| LibError::new(format!("{dir}: {err}")))?;
+    let read = std::fs::read_dir(path).map_err(|err| LibError::new(format!("{dir}: {err}")))?;
     for entry in read.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         if confine::HIDDEN.contains(&name.as_str()) {
@@ -356,7 +406,9 @@ fn list_directory(
             .filter(|(path, _)| *path == relative || (is_dir && path.starts_with(&prefix)))
             .map(|(_, letter)| *letter)
             .collect();
-        let ignored = mine.contains(&'!') && mine.iter().all(|letter| *letter == '!');
+        let ignored = mine.contains(&'!')
+            && mine.iter().all(|letter| *letter == '!')
+            && !tracked.as_ref().is_some_and(|names| names.contains(&name));
         let status = mine
             .iter()
             .filter(|letter| **letter != '!')
@@ -384,9 +436,7 @@ fn list_directory(
                 right["name"].as_str().unwrap_or("").to_lowercase(),
             ))
     });
-    let mut out = Parameters::new();
-    out.insert("entries".into(), json_value(&entries));
-    Ok(out)
+    Ok(entries)
 }
 
 /// `get#File`: a file's text with its hash, line ending, byte order mark, git status, and whether (and why) it is read
@@ -445,7 +495,7 @@ fn get_file(
             out.insert("binary".into(), Value::Bool(true));
         }
     }
-    let status = statuses(&context, root, &resolved.relative)
+    let status = statuses(&context.git(), root, &resolved.relative)
         .into_iter()
         .find(|(path, _)| *path == resolved.relative)
         .map(|(_, letter)| letter.to_string())
@@ -526,7 +576,7 @@ fn after_write(context: &Context, root: &Root, resolved: &confine::Resolved, tex
             skill: Some(format!("{}#Extending", moqui_devkit::check::SKILL_FILE)),
         });
     }
-    let status = statuses(context, root, &resolved.relative)
+    let status = statuses(&context.git(), root, &resolved.relative)
         .into_iter()
         .find(|(path, _)| *path == resolved.relative)
         .map(|(_, letter)| letter.to_string())
@@ -1326,6 +1376,13 @@ fn create_site_component(
             ..Write::default()
         },
     );
+    // no reload sees a new component: the report tells Home a restart is needed
+    moqui_devkit::note_restart(
+        &context.factory,
+        &target.join("component.xml"),
+        Some(&name),
+        "new site component: it loads after a restart",
+    );
     let mut out = Parameters::new();
     out.insert("location".into(), Value::string(target.display().to_string()));
     out.insert("restart".into(), Value::Bool(true));
@@ -1386,6 +1443,13 @@ fn create_component(
             ..Write::default()
         },
     );
+    // no reload sees a new component: the report tells Home a restart is needed
+    moqui_devkit::note_restart(
+        &context.factory,
+        &target.join("component.xml"),
+        Some(&name),
+        "new component: it loads after a restart",
+    );
     let mut out = Parameters::new();
     out.insert("location".into(), Value::string(target.display().to_string()));
     out.insert("restart".into(), Value::Bool(true));
@@ -1408,5 +1472,84 @@ mod tests {
         assert_eq!(crate::site::class_of("my-site"), "MySite");
         assert_eq!(crate::site::class_of("acme_corp"), "AcmeCorp");
         assert_eq!(sha256(b"").len(), 64);
+    }
+
+    #[test]
+    fn first_segments_under_a_directory() {
+        let listing = "a.txt\0mixed/a.txt\0mixed/deep/c.xml\0runtime/conf/x.xml\0";
+        let top = first_segments(listing, "");
+        assert_eq!(top.len(), 3);
+        assert!(top.contains("a.txt") && top.contains("mixed") && top.contains("runtime"));
+        let mixed = first_segments(listing, "mixed");
+        assert_eq!(mixed.len(), 2);
+        assert!(mixed.contains("a.txt") && mixed.contains("deep"));
+        assert!(first_segments("", "mixed").is_empty());
+    }
+
+    /// A scratch git repository: a folder with a tracked file and an ignored one (as runtime/ with its tracked conf and
+    /// ignored log/) is not ignored, a folder with only ignored files is, and inside the first the ignored file is.
+    #[test]
+    fn a_folder_holding_tracked_files_is_not_ignored() {
+        let setup = |dir: &Path, args: &[&str]| {
+            std::process::Command::new("git")
+                .args(["-c", "user.name=Spec", "-c", "user.email=spec@example.com"])
+                .args(args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .output()
+                .is_ok_and(|output| output.status.success())
+        };
+        let dir = std::env::temp_dir().join(format!("dev-aide-ignored-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("mixed")).unwrap();
+        std::fs::create_dir_all(dir.join("junk")).unwrap();
+        if !setup(&dir, &["init", "-q"]) {
+            let _ = std::fs::remove_dir_all(&dir);
+            return; // no git here
+        }
+        std::fs::write(dir.join(".gitignore"), "*.log\njunk/\n").unwrap();
+        std::fs::write(dir.join("mixed/a.txt"), "tracked\n").unwrap();
+        std::fs::write(dir.join("mixed/b.log"), "ignored\n").unwrap();
+        std::fs::write(dir.join("junk/c.txt"), "ignored\n").unwrap();
+        assert!(setup(&dir, &["add", "."]));
+        assert!(setup(&dir, &["commit", "-q", "-m", "first"]));
+        let root = Root {
+            id: "scratch".into(),
+            label: "scratch".into(),
+            path: dir.clone(),
+            kind: RootKind::Git,
+            components: Vec::new(),
+            upstream: true,
+            read_only: false,
+            publish_branch: None,
+            publish_branch_required: false,
+            hosted: None,
+            worktree_of: None,
+            conversation_id: None,
+            worktree_user_id: None,
+        };
+        let git = Git {
+            command: "git".into(),
+            read_timeout: std::time::Duration::from_secs(30),
+            network_timeout: std::time::Duration::from_secs(30),
+            write_timeout: std::time::Duration::from_secs(30),
+        };
+        let ignored = |entries: &[serde_json::Value], name: &str| {
+            entries
+                .iter()
+                .find(|entry| entry["name"] == name)
+                .unwrap_or_else(|| panic!("no {name} in {entries:?}"))["ignored"]
+                .as_bool()
+                .unwrap()
+        };
+        let top = directory_entries(&git, &root, "", &dir).unwrap();
+        let inside = directory_entries(&git, &root, "mixed", &dir.join("mixed")).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(!ignored(&top, "mixed"), "{top:?}");
+        assert!(ignored(&top, "junk"), "{top:?}");
+        assert!(!ignored(&top, ".gitignore"));
+        assert!(!ignored(&inside, "a.txt"));
+        assert!(ignored(&inside, "b.log"), "{inside:?}");
     }
 }

@@ -664,7 +664,8 @@ fn merge_form_nodes(base: &MNode, over: &MNode, deep_copy: bool, copy_fields: bo
     }
 }
 
-/// `ScreenForm.mergeFieldNode`: a field of the same name is merged in place, else appended.
+/// `ScreenForm.mergeFieldNode`: a field of the same name is merged in place, else added after the field its `after`
+/// names, or last.
 pub(super) fn merge_field_node(base: &MNode, over: &MNode, deep_copy: bool) {
     let name = over.attribute("name");
     let existing = base
@@ -683,7 +684,20 @@ pub(super) fn merge_field_node(base: &MNode, over: &MNode, deep_copy: bool) {
             }
         }
         None => {
-            base.append_node(if deep_copy { over.deep_copy() } else { over.clone() });
+            let added = if deep_copy { over.deep_copy() } else { over.clone() };
+            // after the field its `after` names, so a form with no layout or columns shows it there too
+            let anchor = over
+                .attribute("after")
+                .filter(|after| !after.is_empty())
+                .and_then(|after| {
+                    base.children()
+                        .iter()
+                        .position(|child| child.has_name("field") && child.attribute_is("name", &after))
+                });
+            match anchor {
+                Some(index) => base.insert_node(index + 1, added),
+                None => base.append_node(added),
+            }
             if base.first_named("field-layout").is_some() {
                 add_field_to_layout(base, over);
             }

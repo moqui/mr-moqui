@@ -1411,8 +1411,8 @@ level at the path itself (no walk down the default subscreens), which is how the
 - **Nodes** carry `t` and an `id`. Ids are stable across renders and unique in the document: an element's own id or name, else its element
   path, with `~2`, `~3` for a repeat (an iterated section, a section included twice). Structure: `section`, `container`, `box` (`title`, `type`,
   `initial` open or closed for a collapsible box; a `region` named `toolbar` first in `c`), `row` and `col` (`xs` to `lg` spans), `panel`
-  (`region`s `header`, `left`, `center`, `right`, `footer`, a side's `size` in px), `split` (`sideWidth`, `selectParameter`, `region`s `side`
-  and `main`), `dialog` (`title`, `button`, its body in `c`; `list` when it is a row action of that list), `dynamicDialog` (`url`, `button`,
+  (`region`s `header`, `left`, `center`, `right`, `footer`, a side's `size` in px), `split` (`sideWidth`, `selectParameter`, `selected` while that
+  parameter has a value, which puts `main` first when the panes stack, `region`s `side` and `main`), `dialog` (`title`, `button`, its body in `c`; `list` when it is a row action of that list), `dynamicDialog` (`url`, `button`,
   `title`) and `dynamicContainer` (`url`): the client renders the url in `tui` (a transition's redirect followed) and puts the body in `c`, its
   ids prefixed with the node's id and `/`; `dashboard`, `subscreens` (`kind` tab, popup, wizard or stack; `items` of `{title, url, active}`;
   a wizard's `finishText`; the active level in `c`), `active`. Content: `text` (`style` h1 to h6, pre...), `image` (`alt`, `url`, opened in
@@ -1426,7 +1426,7 @@ level at the path itself (no walk down the default subscreens), which is how the
   client draws a `t` it does not know as a placeholder.
 - **Actions.** `link`: `text`, `url` with its parameters, `kind` (the `link-type`), `method`, `confirm`, `btnType`, `icon` (a Material Symbols
   name), `badge`, `tooltip`, `disabled`. A hidden-form link posts.
-- **Forms.** `form`: `name`, `kind`, `transitionUrl` (empty for a find form, which asks for the screen again with its fields), `method`, `hidden`
+- **Forms.** `form`: `name`, `kind`, `transitionUrl` (empty for a find form, which asks for the screen again with its fields), `method` (`post` to a transition; `get` when the form goes to a screen, which the client opens with the fields as parameters), `hidden`
   `[{name, value}]` (credential names left out), `submitMessage`, `backgroundReloadId`, `backgroundHideId`, its fields and layout rows in `c`.
   A form with a file field has `multipart`.
   `formList`: `columns` `[{title, orderBy, printWidth, printWidthType, align}]`, `rows` `[{id, selectId, cells, hidden}]` (a cell is text, one

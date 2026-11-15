@@ -236,6 +236,40 @@ pub(crate) fn reload_paths_held(factory: &Arc<ExecutionContextFactory>, paths: &
     report
 }
 
+/// Note a change that takes a restart and that no reload sees, such as a component made in a directory the server did
+/// not load: a report of it, with `summary`, so Dev AIDE's Home offers the restart and its reload log says why.
+pub fn note_restart(factory: &Arc<ExecutionContextFactory>, path: &Path, component: Option<&str>, summary: &str) {
+    let report = ReloadReport {
+        at: now_millis(),
+        files: vec![FileReload {
+            path: path.display().to_string(),
+            component: component.map(str::to_string),
+            kind: ArtifactKind::Conf,
+            summary: summary.to_string(),
+            added: Vec::new(),
+            removed: Vec::new(),
+            problems: Vec::new(),
+            ddl: Vec::new(),
+            restart: true,
+            rebuild: false,
+        }],
+        restart: true,
+        ..ReloadReport::default()
+    };
+    let reloads = reloads_of(factory);
+    {
+        let mut reports = lock(&reloads.reports);
+        if reports.len() == KEPT_REPORTS {
+            reports.pop_front();
+        }
+        reports.push_back(Arc::new(report.clone()));
+    }
+    let listeners: Vec<Listener> = lock(&reloads.listeners).clone();
+    for listener in &listeners {
+        listener(factory, &report);
+    }
+}
+
 fn run(factory: &Arc<ExecutionContextFactory>, paths: &[PathBuf]) -> ReloadReport {
     let started = std::time::Instant::now();
     let mut files: Vec<FileReload> = Vec::new();

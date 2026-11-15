@@ -689,14 +689,18 @@ impl Session {
         changed
     }
 
-    /// Fire the waits for typing to stop (a server search's options, the palette's search) now rather than when they
-    /// are due: the agent mode answers once the screen has settled. The counters are left to their time. Returns true
-    /// when one fired.
+    /// Fire the waits for typing to stop (a server search's options, the palette's search, a code editor's check) now
+    /// rather than when they are due: the agent mode answers once the screen has settled. The counters and the
+    /// components' polls are left to their time. Returns true when one fired.
     pub fn fire_waits(&mut self) -> bool {
         let waits: Vec<Timer> = self
             .timers
             .keys()
-            .filter(|timer| !matches!(timer, Timer::Counts | Timer::Assist | Timer::Component(_)))
+            .filter(|timer| match timer {
+                Timer::Counts | Timer::Assist => false,
+                Timer::Component(id) => self.component_tick_is_wait(id),
+                _ => true,
+            })
             .cloned()
             .collect();
         for timer in &waits {

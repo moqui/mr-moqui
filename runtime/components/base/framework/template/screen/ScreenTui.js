@@ -917,7 +917,7 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
         const focus = attr(node, "focus-field") || "";
         const body = layoutCode(node);
         const transitionCode = transition
-            ? `const $made = sri.makeUrlByType(${jsString(transition)}, "transition", ${S.nodeLit(node, false)}, "true");\n$transitionUrl = $made ? ($made.url || "") : "";\n$formWrites = !!$made && (!$made.isScreenUrl() || $made.isTransition()) && !$made.isReadOnly();\n`
+            ? `const $made = sri.makeUrlByType(${jsString(transition)}, "transition", ${S.nodeLit(node, false)}, "true");\n$transitionUrl = $made ? ($made.url || "") : "";\n$formWrites = !!$made && (!$made.isScreenUrl() || $made.isTransition()) && !$made.isReadOnly();\nif ($made && $made.isScreenUrl() && !$made.isTransition()) $formMethod = "get";\n`
             : "";
         const focusCode = focus
             ? `const $focusName = ec.resource.expand(${jsString(focus)}, "");\nif ($focusName && $focusName !== "null") sri.setFocusField(${jsString(name)} + "." + $focusName);\n`
@@ -954,7 +954,9 @@ try {
     }
     let $transitionUrl = "";
     let $formWrites = false;
-    ${transitionCode}${transition ? `{
+    ${transition ? `// a form that goes to a screen, not a transition, opens that screen with its fields as parameters
+    let $formMethod = "post";
+    ` : ""}${transitionCode}${transition ? `{
         // the transition's service in-parameters that are parameters of the current screen (EditBudget's budgetId for
         // update#Budget) go with the post, unless the form has a field of that name; another context value that only
         // shares a parameter's name (a statusId the form leaves out) is not posted over the record
@@ -968,7 +970,7 @@ try {
             $hidden.push({name:String($key),value:String($value)});
         }
     }
-    ` : ""}${focusCode}$openChildren({t:"form",id:$uid(${jsString(id)}),name:${jsString(name)},kind:"single",excludeEmptyFields:${attr(node, "exclude-empty-fields") === "true"},${multipart ? "multipart:true," : ""}transitionUrl:$transitionUrl,domId:${domIdExpr(node)},writes:$formWrites,method:${jsString(transition ? "post" : "")},hidden:$hidden,submitMessage:${attr(node, "submit-message") ? S.expandExpr(attr(node, "submit-message")) : '""'},backgroundReloadId:${exprOf(attr(node, "background-reload-id") || "")},backgroundHideId:${exprOf(attr(node, "background-hide-id") || "")}});
+    ` : ""}${focusCode}$openChildren({t:"form",id:$uid(${jsString(id)}),name:${jsString(name)},kind:"single",excludeEmptyFields:${attr(node, "exclude-empty-fields") === "true"},${multipart ? "multipart:true," : ""}transitionUrl:$transitionUrl,domId:${domIdExpr(node)},writes:$formWrites,method:${transition ? "$formMethod" : '""'},hidden:$hidden,submitMessage:${attr(node, "submit-message") ? S.expandExpr(attr(node, "submit-message")) : '""'},backgroundReloadId:${exprOf(attr(node, "background-reload-id") || "")},backgroundHideId:${exprOf(attr(node, "background-hide-id") || "")}});
     ${body}$closeChildren();
 } finally {
     sri.popContext();
@@ -1588,7 +1590,12 @@ ${regionCode(node, child(node, "box-toolbar"), "toolbar")}${body}$closeChildren(
         "container-split": stmt((node) => {
             const width = /^\d+$/.test(attr(node, "side-width")) ? `,sideWidth:${attr(node, "side-width")}` : "";
             const regions = regionCode(node, child(node, "split-side"), "side") + regionCode(node, child(node, "split-main"), "main");
-            return `$openChildren({t:"split",id:$uid(${jsString(idOf(node))})${width}${attr(node, "select-parameter") ? `,selectParameter:${jsString(attr(node, "select-parameter"))}` : ""}});\n${regions}$closeChildren();\n`;
+            // selected while the select parameter has a value: a terminal too narrow for both panes shows the main one first
+            const select = attr(node, "select-parameter");
+            const selectCode = select
+                ? `,selectParameter:${jsString(select)},selected:(($v) => $v != null && $v !== "")(ec.context.get(${jsString(select)}))`
+                : "";
+            return `$openChildren({t:"split",id:$uid(${jsString(idOf(node))})${width}${selectCode}});\n${regions}$closeChildren();\n`;
         }),
         "report-panel": stmt((node) => guarded(node, `$emit({t:"component",id:$uid(${jsString(idOf(node))}),name:"report-panel",props:${S.reportPropsExpr(node)}});\n`)),
         "report-dashboard": stmt((node) => guarded(node, `$emit({t:"component",id:$uid(${jsString(idOf(node))}),name:"report-dashboard",props:${S.reportPropsExpr(node)}});\n`)),

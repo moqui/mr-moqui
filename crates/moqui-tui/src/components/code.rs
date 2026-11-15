@@ -1033,6 +1033,10 @@ impl Component for Code {
         (state.local["check_due"] == true && !prop(props, "check", "").is_empty()).then_some(CHECK_MILLIS)
     }
 
+    fn tick_is_wait(&self, _props: &Value, _state: &ComponentState) -> bool {
+        true
+    }
+
     fn tick(&self, props: &Value, state: &mut ComponentState) -> Vec<Act> {
         let mut editor = Editor::of(props, state);
         if !std::mem::take(&mut editor.check_due) {

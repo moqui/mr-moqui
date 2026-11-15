@@ -150,7 +150,7 @@ session is found only by its own user. It ends on `close`, or after 10 minutes w
 | --- | --- |
 | `look` | the screen again |
 | `key <chord>...` | keys, as `F10`, `Enter`, `Esc`, `Tab`, `Shift+Tab`, `Down`, `Ctrl+K`, `Alt+M`, `F4` |
-| `type <text>` | characters as typed; `\r` is Enter, `\t` is Tab |
+| `type <text>` | characters as typed; `\r` is Enter, `\t` is Tab; the text is trimmed, so begin it with `\ ` for a leading space |
 | `go <path[?query]>` | go to a screen |
 | `focus <element>` | move the focus |
 | `set <element> <value>` | replace a field's value; a drop-down takes a choice's value or label and chooses it as a person does, so its dependent fields follow |
@@ -453,7 +453,7 @@ The framework's components, with their props documented at the top of each file 
 | `calendar` | An agenda by day, with the month grid from lg; `source` answers `{month, events}`, or the props hold the events; an event's `_open` is its screen | Up/Down, PgUp/PgDn months, `t` today |
 | `calcgrid` | A CalcGrid workbook's sheet ([Database](../tools/Database.md#calc-mode)): the formula bar, the column letters, the cells that fit (frozen rows and columns kept, numbers right, a text running on into empty cells, bold and underline), the sheet tabs, and who else has it open and where; `room` is what `open#CalcDocument` answered when the screen drew, and the screen's `calc*` transitions answer the rest | Arrows, PgUp/PgDn, Home/End, Shift to select; Enter or `e` edits a cell, `=` or a digit starts one (Tab takes a completion); Delete; `u`/`U` undo and redo; `b` `i` `_`; `[` `]` sheets; `<` `>` width; `F` freeze; `d` fill down; `c` charts; `z` kiosk; `R` refresh; `m` the rest |
 | `chart` | A table of the datasets (`labels`, `series`) with a bar for the first series | `r` reads again |
-| `code` | An editor for one text: line numbers with problem marks (`!` an error, `·` a warning), light highlighting, long lines scrolled sideways, and a status line (Ln/Col, the language, `●` when changed, the problem at the cursor); below | Arrows, Home/End, PgUp/PgDn, Ctrl+Home/End; Ctrl+Left/Right by word; Shift to select; Ctrl+C/X/V; Tab/Shift+Tab indent and outdent; Esc lets go; Ctrl+Z/Y; Ctrl+G; Ctrl+F, F3/Shift+F3; Ctrl+Space; F8/Shift+F8 |
+| `code` | An editor for one text: line numbers with problem marks (`!` an error, `·` a warning), light highlighting, long lines scrolled sideways, and a status line (Ln/Col, the language, `●` when changed, the problem at the cursor); below. Dev AIDE's twins, System › Conf's Edit (`Conf/EditTui`) and Tools › SQL (`SqlTui`) | Arrows, Home/End, PgUp/PgDn, Ctrl+Home/End; Ctrl+Left/Right by word; Shift to select; Ctrl+C/X/V; Tab/Shift+Tab indent and outdent; Esc lets go; Ctrl+Z/Y; Ctrl+G; Ctrl+F, F3/Shift+F3; Ctrl+Space; F8/Shift+F8 |
 | `timeline` | Entries (`items`) in order, each its time, title and text | Up/Down, Enter |
 
 The `code` component's props:

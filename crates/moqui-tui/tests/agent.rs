@@ -726,3 +726,20 @@ fn a_form_whose_transition_sends_a_file_is_a_download_and_the_screen_stays() {
     }));
     assert_eq!(names, ["Report.json"]);
 }
+
+/// A code editor's check after typing is a wait for typing to stop, which the agent fires before it answers, so the
+/// answer already shows the problems the check found.
+#[test]
+fn a_code_editors_check_runs_before_the_agent_answers() {
+    let model = r#"{"v":1,"screen":{"path":"/edit"},"c":[{"t":"component","id":"Ed","name":"code","base":"/edit",
+        "props":{"text":"<a/>","language":"xml","check":"check"}}]}"#;
+    let link = FakeLink::from_json(&[model]).unwrap();
+    let mut agent = Agent::open(link.clone(), "/edit", 100, 30);
+    assert!(agent.run("focus Ed").ok);
+    assert!(agent.run("type x").ok);
+    let checked = link
+        .calls()
+        .iter()
+        .any(|call| matches!(call, LinkCall::Json { url, .. } if url.ends_with("check")));
+    assert!(checked, "{:?}", link.calls());
+}

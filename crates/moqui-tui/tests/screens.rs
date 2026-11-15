@@ -20,6 +20,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use moqui_tui::render_text;
 use moqui_tui::{
     gallery_link, AdminSetup, AppView, FakeLink, Key, KeyPress, MenuItem, Role, ScreenLink, ScreenModel, Session,
     ShellInfo, Target, Theme, GALLERY_DETAIL_PATH, GALLERY_LIST_PATH,
@@ -658,4 +659,39 @@ fn radio_labels_wrap_without_covering_the_next_field_or_changing_keyboard_select
             assert!(picker.contains("Space=Toggle  Enter=Done"), "{picker}");
         }
     }
+}
+
+/// A row of tabs wider than the terminal goes on to a second line, so no tab is cut off (Dev AIDE's entity editor at 80
+/// columns lost Seed data, Doc and Text).
+#[test]
+fn tabs_that_do_not_fit_wrap_onto_another_line() {
+    let items: Vec<String> = [
+        "Fields 11",
+        "Relationships 3",
+        "Indexes",
+        "Incoming",
+        "EECA rules 0",
+        "Table",
+        "Seed data",
+        "Doc",
+        "Text",
+    ]
+    .iter()
+    .enumerate()
+    .map(|(at, title)| format!(r#"{{"title":"{title}","url":"/t?tab={at}","active":{}}}"#, at == 0))
+    .collect();
+    let json = format!(
+        r#"{{"v":1,"screen":{{"path":"/t","title":"T"}},"c":[{{"t":"subscreens","id":"Tabs","kind":"tab","items":[{}],"c":[{{"t":"text","id":"body","text":"Body"}}]}}]}}"#,
+        items.join(",")
+    );
+    let model = ScreenModel::from_json(&json).unwrap();
+    let link = FakeLink::from_json(&[json.as_str()]).unwrap();
+    let text = render_text(&model, &link, 80, 12);
+    assert!(text.contains("9:Text"), "{text}");
+    let tabs: Vec<&str> = text
+        .lines()
+        .filter(|line| line.contains(":Fields") || line.contains("9:Text"))
+        .collect();
+    assert_eq!(tabs.len(), 2, "{text}");
+    assert!(text.contains("Body"), "{text}");
 }

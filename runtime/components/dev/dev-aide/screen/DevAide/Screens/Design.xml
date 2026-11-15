@@ -19,11 +19,15 @@ along with this software (see the LICENSE.md file). If not, see
     <parameter name="rootId"/>
     <parameter name="path"/>
     <parameter name="page"/>
+    <parameter name="node"/>
+    <parameter name="tab"/>
+    <parameter name="previewQuery"/>
     <widgets>
         <render-mode>
             <text type="qvue" location="component://dev-aide/screen/DevAide/GuidedEdit.qvue" template="false"/>
             <text type="tui"><![CDATA[${JSON.stringify([{t: 'dynamicContainer', id: 'ScreenDesignTui', url: sri.buildUrl('../DesignTui')
-                .addParameters({rootId: rootId || null, path: path || null, page: page || null}).getUrlWithParams()}])}]]></text>
+                .addParameters({rootId: rootId || null, path: path || null, page: page || null, node: node || null, tab: tab || null,
+                    previewQuery: previewQuery || null}).getUrlWithParams()}])}]]></text>
         </render-mode>
     </widgets>
 </screen>

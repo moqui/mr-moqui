@@ -12,9 +12,12 @@ try {
     }
     let $transitionUrl = "";
     let $formWrites = false;
+    // a form that goes to a screen, not a transition, opens that screen with its fields as parameters
+    let $formMethod = "post";
     const $made = sri.makeUrlByType("search", "transition", {"name":"form-single","attrs":{"name":"Find","transition":"search"},"parent":{"name":"widgets","attrs":{}}}, "true");
 $transitionUrl = $made ? ($made.url || "") : "";
 $formWrites = !!$made && (!$made.isScreenUrl() || $made.isTransition()) && !$made.isReadOnly();
+if ($made && $made.isScreenUrl() && !$made.isTransition()) $formMethod = "get";
 {
         // the transition's service in-parameters that are parameters of the current screen (EditBudget's budgetId for
         // update#Budget) go with the post, unless the form has a field of that name; another context value that only
@@ -29,7 +32,7 @@ $formWrites = !!$made && (!$made.isScreenUrl() || $made.isTransition()) && !$mad
             $hidden.push({name:String($key),value:String($value)});
         }
     }
-    $openChildren({t:"form",id:$uid("Find"),name:"Find",kind:"single",excludeEmptyFields:false,transitionUrl:$transitionUrl,domId:(String("Find" ?? "") + $sec()),writes:$formWrites,method:"post",hidden:$hidden,submitMessage:"",backgroundReloadId:"",backgroundHideId:""});
+    $openChildren({t:"form",id:$uid("Find"),name:"Find",kind:"single",excludeEmptyFields:false,transitionUrl:$transitionUrl,domId:(String("Find" ?? "") + $sec()),writes:$formWrites,method:$formMethod,hidden:$hidden,submitMessage:"",backgroundReloadId:"",backgroundHideId:""});
     $emit((() => {
             let $required = false;
             const $max = 0;

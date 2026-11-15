@@ -192,53 +192,67 @@ function serviceContext(artifact) {
         shortName
     }
 }
+// The parameter types that hold parameters of their own (Nested parameters are for List, Map, Node, etc.).
+const HOLDER_TYPES = ["Map", "List", "Set", "Collection", "Node"]
 // A service's parameters as rows: the staged element's own (children flattened and indented) when the file is
-// staged, else the definition's; the implied ones (auto) from the definition after them.
+// staged, else the definition's; the implied ones (auto) from the definition after them. Each row has its parent's
+// path of names (parentPath, dotted, empty at the top), its own (path), a key for ids made from them (key), and
+// whether it holds parameters (holder).
 function parameterRows(service, which) {
     const {ops, view, node, serviceFile} = service
     const defined = (view && view.service && view.service[which === "in-parameters" ? "inParameters" : "outParameters"]) || []
     const rows = []
-    const push = (parameter, depth, implied) => {
+    const push = (parameter, parents, implied) => {
+        const depth = parents.length
+        const type = parameter.type || "String"
+        const path = parents.concat([parameter.name]).join(".")
         rows.push({
             which,
             name: parameter.name,
+            parentPath: parents.join("."),
+            path,
+            key: (which === "out-parameters" ? "out-" : "in-") + path.replace(/\./g, "-"),
             shown: (depth ? "  ".repeat(depth - 1) + "  └ " : "") + parameter.name + (implied ? " (auto)" : ""),
-            type: parameter.type || "String",
+            type,
             required: parameter.required === "true" || parameter.required === true ? "yes" : "",
             defaultValue: parameter.defaultValue || parameter.default || "",
             description: parameter.description || "",
             top: !depth && !implied,
+            editable: !implied,
+            holder: !implied && HOLDER_TYPES.includes(type.split(".").pop()),
             requiredFlag: parameter.required === "true" || parameter.required === true ? "true" : ""
         })
     }
     if (serviceFile && serviceFile.staged && node) {
         const holder = ops.pure.children(node, [which])[0]
-        const walk = (parent, depth) => {
+        const walk = (parent, parents) => {
             for (const child of ops.pure.children(parent, ["parameter"])) {
                 const description = ops.pure.children(child, ["description"])[0]
+                const name = ops.pure.attrOf(child, "name")
                 push(
                     {
-                        name: ops.pure.attrOf(child, "name"),
+                        name,
                         type: ops.pure.attrOf(child, "type"),
                         required: ops.pure.attrOf(child, "required"),
                         defaultValue: ops.pure.attrOf(child, "default-value"),
                         description: description ? description.text : ""
                     },
-                    depth,
+                    parents,
                     false
                 )
-                walk(child, depth + 1)
+                walk(child, parents.concat([name]))
             }
         }
-        if (holder) walk(holder, 0)
-        const own = new Set(rows.map(row => row.name))
-        for (const parameter of defined) if (parameter.implied && !own.has(parameter.name)) push(parameter, 0, true)
+        if (holder) walk(holder, [])
+        const own = new Set(rows.filter(row => !row.parentPath).map(row => row.name))
+        for (const parameter of defined) if (parameter.implied && !own.has(parameter.name)) push(parameter, [], true)
         return rows
     }
-    for (const parameter of defined) {
-        push(parameter, 0, !!parameter.implied)
-        for (const child of parameter.children || []) push(child, 1, false)
+    const walk = (parameter, parents, implied) => {
+        push(parameter, parents, implied)
+        for (const child of parameter.children || []) walk(child, parents.concat([parameter.name]), false)
     }
+    for (const parameter of defined) walk(parameter, [], !!parameter.implied)
     return rows
 }
 
@@ -302,6 +316,112 @@ function entityEdit(entity, build) {
     }
     return {ops: first.concat(build(element || {path, children: [], attrs: []}))}
 }
+// The seed file's tables in the terminal (tui nodes): each a list of its records, with Edit (a field per column, posted
+// as seed_<name>, and one more attribute by name) and Remove on each when `canEdit`, and Add row after it. `tables` are
+// GuidedOps recordTables (a record is keyed by its outline path joined); `url(transition, parameters)` makes a link.
+function seedListNodes(artifact, tables, canEdit, url) {
+    const keyOf = row => row.path.join(".")
+    const cellsOf = (table, row) => table.columns.map(name => (row.values[name] == null ? "" : String(row.values[name])))
+    const form = (id, transition, hidden, values, columns, button) => ({
+        t: "form",
+        id,
+        name: id,
+        kind: "single",
+        method: "post",
+        writes: true,
+        transitionUrl: url(transition),
+        hidden: Object.entries(hidden).map(([name, value]) => ({name, value: String(value)})),
+        c: columns
+            .map(name => ({
+                t: "field",
+                id: id + ".seed_" + name,
+                name: "seed_" + name,
+                title: name,
+                w: {kind: "textLine", value: values[name] == null ? "" : String(values[name])}
+            }))
+            .concat([
+                {
+                    t: "field",
+                    id: id + ".seedAttrName",
+                    name: "seedAttrName",
+                    title: "Another attribute",
+                    w: {kind: "textLine", value: ""}
+                },
+                {
+                    t: "field",
+                    id: id + ".seedAttrValue",
+                    name: "seedAttrValue",
+                    title: "Its value",
+                    w: {kind: "textLine", value: ""}
+                },
+                {t: "field", id: id + ".submitButton", name: "submitButton", title: "", w: {kind: "submit", text: button}}
+            ])
+    })
+    const actions = (table, at, row) => [
+        {
+            t: "dialog",
+            id: "SeedEdit" + at + "_" + keyOf(row),
+            title: "Edit the " + table.entity + " record",
+            button: "Edit",
+            c: [
+                form(
+                    "SeedEditForm" + at + "_" + keyOf(row),
+                    "setSeedValue",
+                    {artifact, seedPath: keyOf(row), seedEntity: table.entity},
+                    row.values,
+                    table.columns,
+                    "Stage"
+                )
+            ]
+        },
+        {
+            t: "link",
+            id: "SeedRemove" + at + "_" + keyOf(row),
+            text: "Remove",
+            method: "post",
+            writes: true,
+            confirm: "Remove this " + table.entity + " record?",
+            url: url("removeSeedRecord", {artifact, seedPath: keyOf(row), seedEntity: table.entity})
+        }
+    ]
+    return tables.flatMap((table, at) =>
+        [
+            {t: "text", id: "SeedTitle" + at, style: "h6", text: table.entity},
+            {
+                t: "formList",
+                id: "SeedRecords" + at,
+                name: "SeedRecords" + at,
+                columns: table.columns.concat(canEdit ? [""] : []).map(name => ({title: name})),
+                rows: table.rows.map(row => ({
+                    id: keyOf(row),
+                    cells: cellsOf(table, row).concat(canEdit ? [actions(table, at, row)] : [])
+                })),
+                paging: {index: 0, size: table.rows.length, count: table.rows.length}
+            }
+        ].concat(
+            canEdit
+                ? [
+                      {
+                          t: "dialog",
+                          id: "SeedAdd" + at,
+                          title: "Add a " + table.entity + " record",
+                          button: "Add row",
+                          c: [
+                              form(
+                                  "SeedAddForm" + at,
+                                  "addSeedRecord",
+                                  {artifact, seedEntity: table.entity},
+                                  {},
+                                  table.columns,
+                                  "Add"
+                              )
+                          ]
+                      }
+                  ]
+                : []
+        )
+    )
+}
 
 // ---- the screen builder ----
 
@@ -343,6 +463,56 @@ function nodePath(key) {
         .map(Number)
 }
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
+// An element of the site's screen-extend in extension mode, by its outline key with "e:" before it ("e:0.1").
+function isExtendKey(key) {
+    return String(key || "").startsWith("e:")
+}
+// The intents on an element of the site's own screen-extend, as the browser's outline of it has them: its properties
+// (the schema digest of screen-extend), Remove, and Move among its siblings. The base screen's elements stay with the
+// inserts, Replace and Override, since a screen-extend cannot alter them. Answers {ops, node} or {refused}.
+function extendIntent(screen, key, intent, values) {
+    const pure = screen.ops.pure
+    const ops = screen.ops.screen
+    if (!screen.extension) return {refused: "This screen is edited in place: choose its element in the outline"}
+    const outline = screen.editFile && screen.editFile.outline
+    if (!outline)
+        return {
+            refused:
+                "The site's screen-extend does not read as XML: " +
+                ((screen.editFile && screen.editFile.outlineError) || "not read")
+        }
+    const path = nodePath(String(key).slice(2))
+    const node = pure.outlineAt(outline, path)
+    if (!node) return {refused: "That element is not in the site's screen-extend as staged: choose it again"}
+    const keyOf = at => (at.length ? "e:" + at.join(".") : "")
+    const step = (delta, last) => {
+        if (!path.length) return {refused: "The screen-extend itself does not move"}
+        const at = Math.min(last, Math.max(0, path[path.length - 1] + delta))
+        return {ops: ops.stepOp(outline, path, delta), node: keyOf(path.slice(0, -1).concat([at]))}
+    }
+    const table = {
+        setProperty() {
+            return !values.attrName
+                ? {refused: "Name the attribute"}
+                : {ops: pure.setAttributeOps(node, values.attrName, values.attrValue)}
+        },
+        remove() {
+            return !path.length
+                ? {refused: "The screen-extend itself is not removed here"}
+                : {ops: [{op: "remove", at: path}], node: keyOf(path.slice(0, -1))}
+        },
+        moveUp() {
+            return step(-1, Infinity)
+        },
+        moveDown() {
+            const parent = pure.outlineAt(outline, path.slice(0, -1))
+            return step(1, ((parent && parent.children) || []).length - 1)
+        }
+    }
+    return table[intent]
+        ? table[intent]()
+        : {refused: "The site's own elements take Properties, Remove and Move: choose an element of the screen for the others"}
+}
 // The operations of an intent of the screen builder (11.2) on the selected node of the base screen: in place on the
 // screen's file, or in extension mode into the site's screen-extend of it. Answers {ops, node} (the key selected
 // after it) or {refused}.
@@ -357,6 +527,7 @@ function screenIntent(screen, key, intent, values) {
         }
     if (!screen.edit)
         return {refused: "This screen is upstream and there is no site component to extend it in: create one on Home"}
+    if (isExtendKey(key)) return extendIntent(screen, key, intent, values || {})
     const path = nodePath(key)
     const node = pure.outlineAt(base, path)
     if (!node) return {refused: "That element is not in the screen as staged: choose it again in the outline"}
@@ -367,7 +538,13 @@ function screenIntent(screen, key, intent, values) {
     const form = ops.formOf(base, path)
     const formName = form ? pure.attrOf(form, "name") : ""
     const inPlace = what =>
-        extension ? {refused: what + " is for a screen edited in place; this one is extended in the site's screen-extend"} : null
+        extension
+            ? {
+                  refused:
+                      what +
+                      " is for a screen edited in place; this one is extended in the site's screen-extend, whose own elements take it"
+              }
+            : null
     const onlyExtension = what => (extension ? null : {refused: what + " is for an upstream screen in extension mode"})
     const named = (value, what) => (NAME.test(String(value || "")) ? null : {refused: what + " is letters, digits and _"})
     const keyOf = at => at.join(".")
@@ -526,7 +703,9 @@ function screenIntent(screen, key, intent, values) {
     serviceShortName,
     entityContext,
     entityEdit,
+    seedListNodes,
     screenContext,
     nodePath,
+    isExtendKey,
     screenIntent
 })

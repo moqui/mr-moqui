@@ -49,6 +49,22 @@ fn an_extension_field_goes_after_the_named_field_in_the_layout() {
     assert_eq!(refs_in(&layout), ["c", "tail", "lost"]);
 }
 
+/// In a form with no layout the fields show in their order: a new field goes after its `after` field, or last.
+#[test]
+fn an_extension_field_goes_after_the_named_field_in_a_form_with_no_layout() {
+    let form = parse(r#"<form-single name="F"><field name="a"/><field name="b"/><field name="save"/></form-single>"#);
+    let extension = parse(
+        r#"<form-single name="F"><field name="due" after="b"/><field name="tail"/><field name="lost" after="nope"/></form-single>"#,
+    );
+    merge_form_nodes(&form, &extension, true, true);
+    let names: Vec<String> = form
+        .children_named("field")
+        .iter()
+        .map(|field| field.attribute("name").unwrap_or_default())
+        .collect();
+    assert_eq!(names, ["a", "b", "due", "save", "tail", "lost"]);
+}
+
 /// A form-list with `form-list-column`s gives a new field a column after the column of its `after` field.
 #[test]
 fn an_extension_field_gets_a_column_after_the_named_one() {

@@ -12,9 +12,12 @@ try {
     }
     let $transitionUrl = "";
     let $formWrites = false;
+    // a form that goes to a screen, not a transition, opens that screen with its fields as parameters
+    let $formMethod = "post";
     const $made = sri.makeUrlByType("save", "transition", {"name":"form-single","attrs":{"name":"Edit","transition":"save"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}, "true");
 $transitionUrl = $made ? ($made.url || "") : "";
 $formWrites = !!$made && (!$made.isScreenUrl() || $made.isTransition()) && !$made.isReadOnly();
+if ($made && $made.isScreenUrl() && !$made.isTransition()) $formMethod = "get";
 {
         // the transition's service in-parameters that are parameters of the current screen (EditBudget's budgetId for
         // update#Budget) go with the post, unless the form has a field of that name; another context value that only
@@ -29,7 +32,7 @@ $formWrites = !!$made && (!$made.isScreenUrl() || $made.isTransition()) && !$mad
             $hidden.push({name:String($key),value:String($value)});
         }
     }
-    $openChildren({t:"form",id:$uid("Edit"),name:"Edit",kind:"single",excludeEmptyFields:false,multipart:true,transitionUrl:$transitionUrl,domId:(String("Edit" ?? "") + $sec()),writes:$formWrites,method:"post",hidden:$hidden,submitMessage:"",backgroundReloadId:"",backgroundHideId:""});
+    $openChildren({t:"form",id:$uid("Edit"),name:"Edit",kind:"single",excludeEmptyFields:false,multipart:true,transitionUrl:$transitionUrl,domId:(String("Edit" ?? "") + $sec()),writes:$formWrites,method:$formMethod,hidden:$hidden,submitMessage:"",backgroundReloadId:"",backgroundHideId:""});
     $emit((() => {
             let $required = false;
             const $max = 0;
@@ -354,9 +357,12 @@ try {
     }
     let $transitionUrl = "";
     let $formWrites = false;
+    // a form that goes to a screen, not a transition, opens that screen with its fields as parameters
+    let $formMethod = "post";
     const $made = sri.makeUrlByType("bulk", "transition", {"name":"form-single","attrs":{"name":"Bulk","transition":"bulk"},"parent":{"name":"action","attrs":{},"parent":{"name":"row-selection","attrs":{"id-field":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}}, "true");
 $transitionUrl = $made ? ($made.url || "") : "";
 $formWrites = !!$made && (!$made.isScreenUrl() || $made.isTransition()) && !$made.isReadOnly();
+if ($made && $made.isScreenUrl() && !$made.isTransition()) $formMethod = "get";
 {
         // the transition's service in-parameters that are parameters of the current screen (EditBudget's budgetId for
         // update#Budget) go with the post, unless the form has a field of that name; another context value that only
@@ -371,7 +377,7 @@ $formWrites = !!$made && (!$made.isScreenUrl() || $made.isTransition()) && !$mad
             $hidden.push({name:String($key),value:String($value)});
         }
     }
-    $openChildren({t:"form",id:$uid("Bulk"),name:"Bulk",kind:"single",excludeEmptyFields:false,transitionUrl:$transitionUrl,domId:(String("Bulk" ?? "") + $sec()),writes:$formWrites,method:"post",hidden:$hidden,submitMessage:"",backgroundReloadId:"",backgroundHideId:""});
+    $openChildren({t:"form",id:$uid("Bulk"),name:"Bulk",kind:"single",excludeEmptyFields:false,transitionUrl:$transitionUrl,domId:(String("Bulk" ?? "") + $sec()),writes:$formWrites,method:$formMethod,hidden:$hidden,submitMessage:"",backgroundReloadId:"",backgroundHideId:""});
     $emit((() => {
             let $required = false;
             const $max = 0;

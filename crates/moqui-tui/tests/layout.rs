@@ -192,6 +192,17 @@ fn a_panel_and_a_split_stack_below_md() {
     );
 }
 
+/// Stacked, a split whose select parameter has a value (a file open in the Workspace) shows that record first and the
+/// list to pick another after it; side by side nothing moves.
+#[test]
+fn a_stacked_split_with_a_selection_puts_the_main_pane_first() {
+    let nodes = r#"{"t":"split","id":"S","selectParameter":"path","selected":true,"c":[
+            {"t":"region","id":"S.side","name":"side","c":[{"t":"text","id":"s","text":"list"}]},
+            {"t":"region","id":"S.main","name":"main","c":[{"t":"text","id":"r","text":"record"}]}]}"#;
+    assert_eq!(outline(&screen(nodes), 90), "class=sm canvas=90\ntext record\ntext list\n");
+    assert!(outline(&screen(nodes), 160).contains("col x=0 w=35\n  text list"));
+}
+
 #[test]
 fn a_box_toolbar_and_buttons_are_their_own_lines() {
     let nodes = r#"{"t":"box","id":"B","title":"Order","c":[
