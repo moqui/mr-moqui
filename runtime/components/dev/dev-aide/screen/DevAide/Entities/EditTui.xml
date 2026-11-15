@@ -249,7 +249,13 @@ along with this software (see the LICENSE.md file). If not, see
             else if (extra && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(extra)) ec.message.addError('An attribute name is letters, digits and _: ' + extra)
             else {
                 const values = {}
-                for (const name of found.table.columns) { const value = ec.context.get('seed_' + name); if (value != null) values[name] = String(value) }
+                // from the request, where a field emptied is "" (in the context it is null, as a field not given): an empty value
+                // removes the attribute, a field not posted stays
+                const posted = ec.web.parameters
+                for (const name of found.table.columns) {
+                    const value = posted['seed_' + name]
+                    if (value !== undefined) values[name] = value == null ? '' : String(value)
+                }
                 if (extra) values[extra] = String(seedAttrValue || '')
                 guided.apply(entity.target, entity.seed, ops.setRecordValues(found.row, values), true)
             }
