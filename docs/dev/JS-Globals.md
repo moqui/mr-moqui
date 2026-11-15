@@ -64,7 +64,8 @@ The engine is quickjs-oxide. It has the ECMAScript built-ins: `Object`, `Array`,
 `JSON` (with `JSON.rawJSON`), `Math`, `Date`, `RegExp`, `Promise`, `Proxy`, `Reflect`, `Symbol`, `BigInt`,
 `Iterator`, the typed arrays, `ArrayBuffer`, `DataView`, the error classes, `encodeURIComponent` and the rest, and
 explicit resource management (`using`, `DisposableStack`, `AsyncDisposableStack`, `SuppressedError`,
-`Symbol.dispose`). The framework adds these (`script/oxide/builtins.rs`), which a script may replace as it may any
+`Symbol.dispose`). Strings have `normalize(form)` (`"NFC"` by default, `"NFD"`, `"NFKC"`, `"NFKD"`), and a regular
+expression with the `u` flag has the Unicode properties (`\p{L}`, `\p{M}`, `\p{Nd}`). The framework adds these (`script/oxide/builtins.rs`), which a script may replace as it may any
 built-in:
 
 | Built-in | |
@@ -282,7 +283,7 @@ helper functions above are also on the class Java has them on. Sources: `script/
 | `paddedNumber(number, length)` | The whole number with zeros before it: `paddedNumber(42, 5)` is `"00042"` |
 | `paddedString(text, length, rightPad)`, `paddedString(text, length, padChar, rightPad)` | Cut or padded to the length, on the left unless `rightPad` |
 | `removeNonAlphaNumeric(text)`, `replaceNonAlphaNumeric(text, replacement)` | Null for null |
-| `isAlphaNumeric(text, also)` | Every character is a letter, a digit or one of the characters of `also` |
+| `isAlphaNumeric(text, also, marks)` | Every character is a letter, a digit or one of the characters of `also`. With `marks` true a combining mark (`\p{M}`: a Devanagari or Thai vowel sign, an Arabic vowel, an accent in NFD) is one too, but only after a letter, a digit or another mark, so never first |
 | `findFirstNumber(text)` | The first run of digits, or null |
 | `getRandomString(length)` | Random text, as `ec.user.randomString` |
 | `pathStringToList(path, skipSegments)` | The segments between `/`, without the first `skipSegments` |
