@@ -24,6 +24,7 @@
 //! terminal. Its data comes from the screen's own transitions (the ones its `.qvue` twin calls), through the session's
 //! link; it holds its state in a [`ComponentState`] the session keeps by node id.
 
+mod artifact_browser;
 mod board;
 mod calc;
 mod calendar;
@@ -191,6 +192,7 @@ pub struct Registered(pub &'static dyn Component);
 
 inventory::collect!(Registered);
 
+inventory::submit! { Registered(&artifact_browser::ArtifactBrowser) }
 inventory::submit! { Registered(&board::Board) }
 inventory::submit! { Registered(&calc::CalcGrid) }
 inventory::submit! { Registered(&calendar::Calendar) }
@@ -299,6 +301,7 @@ mod tests {
         assert_eq!(
             names(),
             [
+                "artifact-browser",
                 "board",
                 "calcgrid",
                 "calendar",

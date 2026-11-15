@@ -14,12 +14,19 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- The Artifact Browser (plans/design-dev-aide.md 7.3, D9, P9): an artifact in the center, what uses it and what it uses
     in cards beside it, each row expanding into the next column. The page is Browse.qvue, which loads the client
-    (DevAide.js, DevAideBrowser.js) and reads the index through the Workspace's transitions. The same references as lists
-    are Refs, which the terminal reaches. -->
+    (DevAide.js, DevAideBrowser.js) and reads the index through the Workspace's transitions. The terminal twin is
+    BrowseTui.xml: the same references as Miller columns (the artifact-browser component). The same references as lists
+    are Refs. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Browser" default-menu-index="4" render-modes="qvue">
+        default-menu-title="Browser" default-menu-index="4" render-modes="qvue,tui">
     <parameter name="artifactId"/>
+    <parameter name="text"/>
     <widgets>
-        <render-mode><text type="qvue" location="component://dev-aide/screen/DevAide/Artifacts/Browse.qvue" template="false"/></render-mode>
+        <render-mode>
+            <text type="qvue" location="component://dev-aide/screen/DevAide/Artifacts/Browse.qvue" template="false"/>
+            <!-- the terminal twin: BrowseTui, with the center or the search text -->
+            <text type="tui"><![CDATA[[{"t": "dynamicContainer", "id": "BrowseTui", "url": ${JSON.stringify(sri.buildUrl('../BrowseTui')
+                .addParameter('artifactId', artifactId || null).addParameter('text', text || null).getUrlWithParams())}}] ]]></text>
+        </render-mode>
     </widgets>
 </screen>

@@ -25,6 +25,10 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   sentences, chips that edit an attribute, the palette, the generated JavaScript), its SECA rules, and Try in sim with the
   rows it would write, Save as spec and Run spec (in the sim). **ECA Rules** lists the active rules of each kind with their
   files; a rules file opens in the ECA view.
+- **Browser** (Artifacts › Browser) is an artifact in the center with what uses it and what it uses, by kind: a
+  pan-and-zoom canvas in the browser, and in the terminal Miller columns (`BrowseTui.xml`, the `artifact-browser`
+  component) where Enter re-centers on a row, Backspace and `]` walk the trail, `k`, `h` and `x` filter, and the
+  center's links have keys ([docs/ui/TUI.md](../../../../docs/ui/TUI.md#components)).
 - **Docs** (Artifacts › Docs) is the Markdown doc of any artifact, package or tree, made from its template as the server
   has it now, with Mermaid diagrams (a click opens one in a zoom dialog) and a button that copies it; the entity modeler and service writer have a Doc tab,
   the screen builder a Doc panel. **Export docs** writes a tree of them into a repository (`autodoc/` by default), as
@@ -67,7 +71,7 @@ Its Rust crate is linked into the Dev and Debug packages (the `devtools` feature
 and the services say they are not built in.
 
 - **Tests** ([the two suites](../../../../docs/Build-Test.md#the-two-suites)): the regression suite is `./moq test
-  dev-aide` (the screens, the Workspace's terminal form on a scratch root, the docs), `cargo test -p dev-aide` (confinement, the git parsers),
+  dev-aide` (the screens, the Workspace's terminal form on a scratch root, the docs), `cargo test -p dev-aide` (confinement, the git parsers, the Browser's sections),
   `moqui test-client runtime/components/dev/dev-aide --offline` (the client), `cargo test -p moqui-host --test it devaide` (saves, the lock and tiers, git and Publish on scratch
   repositories, an entity save's relink, a docs export; `devaide_group`: the instance as its own group server, Connect
   through the app sign-in, merge requests, push to review, check out, review threads, statuses, the agreement and
