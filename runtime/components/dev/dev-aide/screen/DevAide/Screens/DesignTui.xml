@@ -181,7 +181,11 @@ along with this software (see the LICENSE.md file). If not, see
             // Preview: the screen's own terminal form, rendered from the staged buffer
             previewQuery = previewQuery != null ? previewQuery : (view ? view.query || '' : '')
             previewUrl = view && view.urlPath ? view.urlPath + '?' + (previewQuery ? previewQuery + '&' : '') + 'moquiPreview=' + encodeURIComponent('buffer:' + screen.buffer.bufferId) : ''
-            requiredParameters = view ? (view.parameters || []).filter((parameter) => parameter.required).map((parameter) => parameter.name).join(', ') : ''
+            // the terminal renders the screen in the apps tree: /qapps is the browser's app shell, which has no terminal form
+            terminalPreviewUrl = previewUrl.replace(/^\/qapps\//, '/apps/')
+            const givenNames = String(previewQuery || '').split('&').map((pair) => decodeURIComponent(pair.split('=')[0] || '')).filter((name) => name)
+            requiredParameters = view ? (view.parameters || []).filter((parameter) => parameter.required && !givenNames.includes(parameter.name))
+                .map((parameter) => parameter.name).join(', ') : ''
 
             // Text and the extension points
             targetText = (extension ? editFile.text : baseFile.text) || ''
@@ -371,7 +375,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <label text="It needs ${requiredParameters}." type="p" style="text-warning" condition="requiredParameters"/>
                 <label text="This screen renders at no path the app tree reaches, so it has no preview here." type="p" condition="!previewUrl"/>
                 <render-mode>
-                    <text type="tui"><![CDATA[${JSON.stringify(previewUrl ? {t: 'dynamicContainer', id: 'ScreenPreview', url: previewUrl} : [])}]]></text>
+                    <text type="tui"><![CDATA[${JSON.stringify(terminalPreviewUrl ? {t: 'dynamicContainer', id: 'ScreenPreview', url: terminalPreviewUrl} : [])}]]></text>
                     <text type="html,qvt"><![CDATA[${previewUrl ? '<p><a target="_blank" href="' + html(previewUrl) + '">Open the preview</a> of the staged screen</p>' : ''}]]></text>
                 </render-mode>
             </widgets></section>
