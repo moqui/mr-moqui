@@ -76,7 +76,7 @@ pub(crate) fn run_target(factory: &Arc<ExecutionContextFactory>, target: &Previe
 
 fn in_sim(factory: &Arc<ExecutionContextFactory>, target: &PreviewTarget<'_>) -> Result<Json, Error> {
     let label = format!("the preview of approval {}", target.approval_id);
-    let run = sim_body(factory, target.username, &label, || run_write(factory, target))?;
+    let run = sim_body(factory, target.username, &label, None, || run_write(factory, target))?;
     Ok(json!({"ok": true, "rows": run.rows, "more": run.more}))
 }
 
@@ -102,9 +102,27 @@ pub fn run_in_sim<T: Send>(
     label: &str,
     body: impl FnOnce() -> Result<T, Error> + Send,
 ) -> Result<SimRun<T>, Error> {
+    run_in_sim_within(factory, username, label, None, body)
+}
+
+/// [`run_in_sim`] inside the frame of the service `within` when given: the sim's thread starts with no frames, so a
+/// tool that runs something as a real run of it would (the dev-aide's Try, inside its own service's frame) names that
+/// service, and the body, and the check of which rows the user may see, have what its frame passes on
+/// (`inheritAuthz`).
+///
+/// # Errors
+///
+/// As [`run_in_sim`], and the frame's own refusal.
+pub fn run_in_sim_within<T: Send>(
+    factory: &Arc<ExecutionContextFactory>,
+    username: &str,
+    label: &str,
+    within: Option<&str>,
+    body: impl FnOnce() -> Result<T, Error> + Send,
+) -> Result<SimRun<T>, Error> {
     std::thread::scope(|scope| {
         scope
-            .spawn(|| sim_body(factory, username, label, body))
+            .spawn(|| sim_body(factory, username, label, within, body))
             .join()
             .unwrap_or_else(|_| Err(Error::new("the sim run failed unexpectedly")))
     })
@@ -124,10 +142,22 @@ impl Drop for LeaveSim<'_> {
     }
 }
 
+/// The frame of the service a sim run is within, popped when dropped.
+struct WithinFrame<'a>(&'a moqui_core::context::ExecutionContext);
+
+impl Drop for WithinFrame<'_> {
+    fn drop(&mut self) {
+        if let Err(error) = self.0.pop() {
+            tracing::error!("the frame a sim ran within was not popped: {error}");
+        }
+    }
+}
+
 fn sim_body<T>(
     factory: &Arc<ExecutionContextFactory>,
     username: &str,
     label: &str,
+    within: Option<&str>,
     body: impl FnOnce() -> Result<T, Error>,
 ) -> Result<SimRun<T>, Error> {
     let context = factory.new_context();
@@ -136,6 +166,22 @@ fn sim_body<T>(
         let _authz = context.disable_authz();
         moqui_core::user::internal_login_user(username).map_err(|error| Error::new(error.to_string()))?;
     }
+    let _within = match within {
+        Some(service) => {
+            context
+                .push_checked(
+                    "AT_SERVICE",
+                    service,
+                    "all",
+                    moqui_core::context::Authz::Required,
+                    moqui_core::context::Tarpit::Skip,
+                    None,
+                )
+                .map_err(|error| Error::new(error.to_string()))?;
+            Some(WithinFrame(&context))
+        }
+        None => None,
+    };
     let facade = run::facade_of(factory)?;
     cache::enter_sim(&facade)?;
     let left = LeaveSim { facade: &facade, label };

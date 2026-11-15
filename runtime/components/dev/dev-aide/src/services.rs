@@ -86,7 +86,7 @@ fn condition_actions(condition: &str, context: &serde_json::Map<String, Json>) -
 /// EECA's against a record). Answers whether it holds, and its messages and log.
 fn eval_condition(
     ec: &ExecutionContext,
-    _service: &ServiceInfo<'_>,
+    service: &ServiceInfo<'_>,
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
@@ -103,7 +103,7 @@ fn eval_condition(
     }
     let actions = condition_actions(&condition, &object_in(parameters, "against"));
     moqui_core::script::check_actions(&actions)?;
-    let answer = in_sim(&context, "Try a rule's condition", move || {
+    let answer = in_sim(&context, service.name, "Try a rule's condition", move || {
         moqui_core::script::run_actions(&actions).map_err(|err| moqui_lib::error::Error::new(err.to_string()))?;
         Ok(BTreeMap::new())
     });
@@ -291,16 +291,26 @@ fn call_parameters(object: &serde_json::Map<String, Json>) -> BTreeMap<String, V
         .collect()
 }
 
-/// A run of `body` in the sim as the current user: its out-parameters, messages and errors, the rows it would write
-/// and its time, or why it failed (its own error, not that the sim was rolled back).
+/// The Dev AIDE service a sim run of `caller` goes within: its own, at the extend tier and above, so the run has what
+/// that service's group passes on (`DEV_AIDE_APP`, `inheritAuthz`) as a real run of it has, and a Try in sim may run
+/// what a Run for real may (9.4); none at the view tier, which has no real run and keeps only the user's own grants.
+fn sim_within(tier: Tier, caller: &str) -> Option<&str> {
+    (tier >= Tier::Extend).then_some(caller)
+}
+
+/// A run of `body` in the sim as the current user, within `caller`'s frame ([`sim_within`]): its out-parameters,
+/// messages and errors, the rows it would write and its time, or why it failed (its own error, not that the sim was
+/// rolled back).
 fn in_sim(
     context: &Context,
+    caller: &str,
     label: &str,
     body: impl FnOnce() -> Result<BTreeMap<String, Value>, moqui_lib::error::Error> + Send,
 ) -> Json {
     let username = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
     let started = std::time::Instant::now();
-    let ran = moqui_llm::approval::preview::run_in_sim(&context.factory, &username, label, || {
+    let within = sim_within(context.tier, caller);
+    let ran = moqui_llm::approval::preview::run_in_sim_within(&context.factory, &username, label, within, || {
         let (out, log, more) = moqui_core::devtools::log_capture::with(body);
         let log = (log, more);
         let (messages, errors) = messages();
@@ -327,7 +337,7 @@ fn in_sim(
 /// real: the extend tier, `confirm` set, audited.
 fn try_service(
     ec: &ExecutionContext,
-    _service: &ServiceInfo<'_>,
+    service: &ServiceInfo<'_>,
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
@@ -368,9 +378,9 @@ fn try_service(
             "this server has no sim (it needs embedded Postgres): run it for real",
         ));
     }
-    let service = name.clone();
-    let answer = in_sim(&context, &format!("Try in sim of {name}"), move || {
-        moqui_core::service::sync(&service, &call).map_err(|err| moqui_lib::error::Error::new(err.to_string()))
+    let called = name.clone();
+    let answer = in_sim(&context, service.name, &format!("Try in sim of {name}"), move || {
+        moqui_core::service::sync(&called, &call).map_err(|err| moqui_lib::error::Error::new(err.to_string()))
     });
     out.insert("result".into(), json_value(&answer));
     Ok(out)
@@ -412,7 +422,7 @@ fn snippet_actions(language: &str, body: &str, given: &serde_json::Map<String, J
 /// only (9.4).
 fn try_snippet(
     ec: &ExecutionContext,
-    _service: &ServiceInfo<'_>,
+    service: &ServiceInfo<'_>,
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
@@ -427,7 +437,7 @@ fn try_snippet(
         &object_in(parameters, "parameters"),
     );
     moqui_core::script::check_actions(&actions)?;
-    let answer = in_sim(&context, "Try in sim of a snippet", move || {
+    let answer = in_sim(&context, service.name, "Try in sim of a snippet", move || {
         moqui_core::script::run_actions(&actions).map_err(|err| moqui_lib::error::Error::new(err.to_string()))?;
         Ok(BTreeMap::new())
     });
@@ -592,11 +602,7 @@ fn save_try_spec(
 
 /// `run#Spec`: a spec file (`rootId` and `path`) run in process inside the sim, so nothing it writes is kept: each
 /// feature's outcome, and the calls of each service, which the coverage column shows.
-fn run_spec(
-    ec: &ExecutionContext,
-    _service: &ServiceInfo<'_>,
-    parameters: &Parameters,
-) -> Result<Parameters, LibError> {
+fn run_spec(ec: &ExecutionContext, service: &ServiceInfo<'_>, parameters: &Parameters) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
     let root = context.root(&text(parameters, "rootId"))?;
     let resolved = context.resolve(root, &text(parameters, "path"))?;
@@ -621,8 +627,13 @@ fn run_spec(
     };
     let filter = Some(text(parameters, "feature")).filter(|text| !text.is_empty());
     let username = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
-    let ran =
-        moqui_llm::approval::preview::run_in_sim(&context.factory, &username, &format!("Run spec {name}"), || {
+    let within = sim_within(context.tier, service.name);
+    let ran = moqui_llm::approval::preview::run_in_sim_within(
+        &context.factory,
+        &username,
+        &format!("Run spec {name}"),
+        within,
+        || {
             moqui_core::service::coverage::enable();
             let result = moqui_devkit::testkit::run_spec(
                 &spec,
@@ -634,7 +645,8 @@ fn run_spec(
             );
             let calls = moqui_core::service::coverage::finish();
             Ok((result, calls))
-        });
+        },
+    );
     let (result, calls) = ran?.value;
     {
         let mut kept = lock(coverage());

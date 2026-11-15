@@ -9,17 +9,17 @@ const svc = (name, params) => ec.service.sync().name("org.moqui.devaide.ServiceW
 spec({
     setupSpec() {
         login("john.doe")
-        // the Try runs as the user: let ADMIN create examples
+        // the Try runs as the user, with what Dev AIDE's own frame passes on at the extend tier (ADMIN, here) as a real
+        // run has; a reader of the view tier keeps only their own grants
         ec.artifactExecution.disableAuthz()
         try {
             const make = (entity, fields) => { const row = ec.entity.makeValue(entity); row.setFields(fields, true, null, null); row.createOrUpdate() }
-            make("moqui.security.ArtifactGroup", { artifactGroupId: "SPEC_DEV_TRY", description: "Examples to try" })
-            make("moqui.security.ArtifactGroupMember", { artifactGroupId: "SPEC_DEV_TRY", artifactName: "moqui.example.Example", artifactTypeEnumId: "AT_ENTITY",
-                nameIsPattern: "N", inheritAuthz: "Y" })
-            make("moqui.security.ArtifactGroupMember", { artifactGroupId: "SPEC_DEV_TRY", artifactName: "create#moqui.example.Example", artifactTypeEnumId: "AT_SERVICE",
-                nameIsPattern: "N", inheritAuthz: "Y" })
-            make("moqui.security.ArtifactAuthz", { artifactAuthzId: "SPEC_DEV_TRY", userGroupId: "ADMIN", artifactGroupId: "SPEC_DEV_TRY",
+            make("moqui.security.UserGroup", { userGroupId: "SPEC_DEV_VIEWERS", description: "Dev AIDE readers (spec)" })
+            make("moqui.security.UserGroupPermission", { userGroupId: "SPEC_DEV_VIEWERS", userPermissionId: "DEV_AIDE_VIEW", fromDate: new Date(Date.now() - 60000) })
+            make("moqui.security.ArtifactAuthz", { artifactAuthzId: "SPEC_DEV_VIEWERS_APP", artifactGroupId: "DEV_AIDE_APP", userGroupId: "SPEC_DEV_VIEWERS",
                 authzTypeEnumId: "AUTHZT_ALWAYS", authzActionEnumId: "AUTHZA_ALL" })
+            make("moqui.security.UserAccount", { userId: "specDevViewer", username: "spec.dev.viewer", userFullName: "Spec Dev Viewer" })
+            make("moqui.security.UserGroupMember", { userGroupId: "SPEC_DEV_VIEWERS", userId: "specDevViewer", fromDate: new Date(Date.now() - 60000) })
         } finally {
             ec.artifactExecution.enableAuthz()
         }
@@ -58,6 +58,23 @@ feature("a Try in sim answers the rows it would write and keeps none", {
         result.rows.some((row) => row.entity == "moqui.example.Example" && row.action == "create"
             && row.fields.some((field) => field.field == "exampleName" && field.after == "Tried in sim"))
         before == after
+    },
+})
+
+feature("a Try in sim at the view tier has only the user's own grants", {
+    when() {
+        ec.user.internalLoginUser("spec.dev.viewer")
+        try {
+            return svc("try#Service", { serviceName: "create#moqui.example.Example",
+                parameters: JSON.stringify({ exampleName: "Tried by a reader", exampleTypeEnumId: "EXT_MADE_UP" }) }).result
+        } finally {
+            ec.message.clearAll()
+            ec.user.internalLoginUser("john.doe")
+        }
+    },
+    then(result) {
+        result.sim
+        result.failed.includes("not authorized")
     },
 })
 

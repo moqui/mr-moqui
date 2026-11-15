@@ -1060,7 +1060,9 @@ descriptions and parameters (the index), the browser, and Go to artifact.
 - The Try panel: a form of the in-parameters (values kept per service in the browser), Run in sim (the default) and Run
   for real (with a confirm), as the current user.
 - In sim it runs on a thread of its own logged in as the user, as the approval preview does (`enter_sim`, the sim fence
-  that refuses outside effects, `sim_changes`), for at most 30 s, and answers the out-parameters, messages and errors,
+  that refuses outside effects, `sim_changes`). At the extend tier and above it runs within the Try's own service
+  frame (`run_in_sim_within`), so it has what `DEV_AIDE_APP` passes on (`inheritAuthz`), as a Run for real has; the
+  view tier, which has no real run, has only the user's own grants. It runs for at most 30 s, and answers the out-parameters, messages and errors,
   the rows written (entity, create or update or delete, key, fields before and after), the call's log lines and its
   time. Sim needs embedded Postgres (`EntityFacade::sim_available`); without it Try offers Run for real only.
 - **Save as spec** writes a feature into `test/<Service>.spec.js` of the service's component (made when missing):
