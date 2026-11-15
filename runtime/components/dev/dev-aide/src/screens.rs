@@ -160,43 +160,68 @@ fn update_subscreen(
         });
     }
     // an upstream parent: its subscreens merge in the site's screen-extend of it
-    let location = location_of(root, &parent).ok_or_else(|| LibError::new(format!("{parent} is in no component")))?;
+    let attributes: Vec<(&str, String)> = if menu_index.is_empty() {
+        Vec::new()
+    } else {
+        vec![("menu-index", menu_index.clone())]
+    };
+    extend_subscreens(
+        &context,
+        root,
+        &parent,
+        &name,
+        make_default,
+        &attributes,
+        !menu_index.is_empty(),
+    )
+}
+
+/// The site's `screen-extend` of an upstream `parent` (its `subscreens` merge, D17): `default-item` set to `name` when
+/// `make_default`, and the `subscreens-item` of `name` given `attributes`, or added with them when `add`.
+fn extend_subscreens(
+    context: &Context,
+    root: &Root,
+    parent: &str,
+    name: &str,
+    make_default: bool,
+    attributes: &[(&str, String)],
+    add: bool,
+) -> Result<Parameters, LibError> {
+    let location = location_of(root, parent).ok_or_else(|| LibError::new(format!("{parent} is in no component")))?;
     let after = location.strip_prefix("component://").unwrap_or(&location);
-    let target = site::site_path(&context, &format!("screen-extend/{after}"))
+    let target = site::site_path(context, &format!("screen-extend/{after}"))
         .ok_or_else(|| LibError::new("the parent is upstream and there is no site component to extend it in"))?;
     let site_root = context.root(&target.root_id)?.clone();
     let empty = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<screen-extend xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/xml-screen-3.xsd\">\n</screen-extend>\n";
-    edit_file(&context, &site_root, &target.path, empty, |outline| {
+    let item = format!(
+        "<subscreens-item name=\"{name}\"{}/>",
+        attributes
+            .iter()
+            .map(|(attribute, value)| format!(" {attribute}=\"{}\"", crate::workspace::xml_attr(value)))
+            .collect::<String>()
+    );
+    edit_file(context, &site_root, &target.path, empty, |outline| {
         let mut ops = Vec::new();
-        let item = format!(
-            "<subscreens-item name=\"{name}\"{}/>",
-            if menu_index.is_empty() {
-                String::new()
-            } else {
-                format!(" menu-index=\"{menu_index}\"")
-            }
-        );
         match child(outline, "subscreens") {
             Some(node) => {
                 if make_default {
                     ops.push(Op::SetAttribute {
                         at: Locator::Path(node.path.clone()),
                         name: "default-item".into(),
-                        value: name.clone(),
+                        value: name.to_string(),
                     });
                 }
                 match node
                     .children
                     .iter()
-                    .find(|have| have.name == "subscreens-item" && have.attr("name") == Some(name.as_str()))
+                    .find(|have| have.name == "subscreens-item" && have.attr("name") == Some(name))
                 {
-                    Some(have) if !menu_index.is_empty() => ops.push(Op::SetAttribute {
+                    Some(have) => ops.extend(attributes.iter().map(|(attribute, value)| Op::SetAttribute {
                         at: Locator::Path(have.path.clone()),
-                        name: "menu-index".into(),
-                        value: menu_index.clone(),
-                    }),
-                    Some(_) => {}
-                    None if !menu_index.is_empty() => ops.push(Op::Insert {
+                        name: (*attribute).to_string(),
+                        value: value.clone(),
+                    })),
+                    None if add => ops.push(Op::Insert {
                         at: Locator::Path(node.path.clone()),
                         position: Position::Last,
                         xml: item.clone(),
@@ -204,7 +229,7 @@ fn update_subscreen(
                     None => {}
                 }
             }
-            None => ops.push(Op::Insert {
+            None if make_default || add => ops.push(Op::Insert {
                 at: Locator::Path(Vec::new()),
                 position: Position::Last,
                 xml: format!(
@@ -214,13 +239,10 @@ fn update_subscreen(
                     } else {
                         String::new()
                     },
-                    if menu_index.is_empty() {
-                        String::new()
-                    } else {
-                        item.clone()
-                    }
+                    if add { item.as_str() } else { "" }
                 ),
             }),
+            None => {}
         }
         ops
     })
@@ -676,8 +698,9 @@ const ARCHETYPES: &[&str] = &[
 
 /// `create#Subscreen`: a new screen file in the directory of a parent screen (`rootId` and `parentPath`, the parent's
 /// file; the new one at `<parent dir>/<Parent>/<name>.xml`), from an archetype of the gallery (its XML, with its menu
-/// title) or empty. Answers its path and whether the parent is upstream, when its directory is not the site's: the
-/// item then goes in the site's `screen-extend` of the parent, which the client writes.
+/// title) or empty. For an upstream parent the file goes in the site component instead (`screen/<the parent's path
+/// under screen/>/<name>.xml`) and a `subscreens-item` with its location in the site's `screen-extend` of the parent
+/// mounts it there. Answers its root and path, and whether the parent is upstream.
 fn create_subscreen(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -697,8 +720,30 @@ fn create_subscreen(
     let directory = parent
         .strip_suffix(".xml")
         .ok_or_else(|| LibError::new("the parent is a screen file"))?;
-    let relative = format!("{directory}/{name}.xml");
-    let resolved = context.resolve(root, &relative)?;
+    let upstream = !root.is_site_path(&parent);
+    // an upstream parent's new screen is the site's, mounted by its screen-extend of the parent
+    let site_target = if upstream {
+        let location =
+            location_of(root, &parent).ok_or_else(|| LibError::new(format!("{parent} is in no component")))?;
+        let rest = location.strip_prefix("component://").unwrap_or(&location);
+        let rest = rest.split_once('/').map_or(rest, |(_, rest)| rest);
+        let under = rest.strip_prefix("screen/").unwrap_or(rest).trim_end_matches(".xml");
+        Some(
+            site::site_path(&context, &format!("screen/{under}/{name}.xml")).ok_or_else(|| {
+                LibError::new("the parent is upstream and there is no site component to make the screen in")
+            })?,
+        )
+    } else {
+        None
+    };
+    let file_root = match &site_target {
+        Some(target) => context.root(&target.root_id)?.clone(),
+        None => root.clone(),
+    };
+    let relative = site_target
+        .as_ref()
+        .map_or_else(|| format!("{directory}/{name}.xml"), |target| target.path.clone());
+    let resolved = context.resolve(&file_root, &relative)?;
     if resolved.path.exists() {
         return Err(LibError::new(format!("{relative} is there already")));
     }
@@ -719,10 +764,21 @@ fn create_subscreen(
             title.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;")
         )
     };
-    let saved = crate::workspace::save_text(&context, root, &resolved, &body, "", None)?;
+    let saved = crate::workspace::save_text(&context, &file_root, &resolved, &body, "", None)?;
+    if upstream {
+        let location = location_of(&file_root, &relative)
+            .ok_or_else(|| LibError::new(format!("{relative} is in no component")))?;
+        let menu_title = text(parameters, "menuTitle");
+        let mut attributes = vec![("location", location)];
+        if !menu_title.is_empty() {
+            attributes.push(("menu-title", menu_title));
+        }
+        extend_subscreens(&context, root, &parent, &name, false, &attributes, true)?;
+    }
     let mut out = saved;
+    out.insert("rootId".into(), Value::string(file_root.id.clone()));
     out.insert("path".into(), Value::string(relative));
-    out.insert("upstreamParent".into(), Value::Bool(!root.is_site_path(&parent)));
+    out.insert("upstreamParent".into(), Value::Bool(upstream));
     Ok(out)
 }
 

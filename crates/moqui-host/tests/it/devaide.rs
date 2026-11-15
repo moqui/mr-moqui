@@ -1718,6 +1718,36 @@ fn the_screen_tree_orders_moves_and_removes() {
             || extend.contains("<subscreens default-item=\"Extra\"/>"),
         "{extend}"
     );
+    // a new screen under an upstream parent: the site's, mounted by the site's screen-extend of the parent
+    let made = call(
+        &factory,
+        "john.doe",
+        &format!("{SCREENS}create#Subscreen"),
+        &[
+            ("rootId", "upstream-app"),
+            ("parentPath", "screen/Up.xml"),
+            ("name", "Added"),
+            ("menuTitle", "Added screen"),
+        ],
+    )
+    .unwrap();
+    assert_eq!(made.get("upstreamParent"), Some(&Value::Bool(true)), "{made:?}");
+    assert!(read("screen/Up/Added.xml").contains("default-menu-title=\"Added screen\""));
+    let extend = read("screen-extend/upstream-app/screen/Up.xml");
+    assert!(
+        extend.contains("<subscreens-item name=\"Added\" location=\"component://my-site/screen/Up/Added.xml\" menu-title=\"Added screen\"/>")
+            && extend.contains("default-item=\"Extra\""),
+        "{extend}"
+    );
+    assert!(!gate.runtime.join("components/addon/upstream-app/screen/Up").exists());
+    let children = call(
+        &factory,
+        "john.doe",
+        &format!("{SCREENS}get#ScreenChildren"),
+        &[("location", "component://upstream-app/screen/Up.xml")],
+    )
+    .unwrap();
+    assert!(format!("{children:?}").contains("Added"), "{children:?}");
     assert_eq!(
         std::fs::read_to_string(gate.runtime.join("components/addon/upstream-app/screen/Up.xml")).unwrap(),
         "<screen><widgets/></screen>\n"

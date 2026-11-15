@@ -49,7 +49,8 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="stamps" type="Map"/></out-parameters>
     </service>
     <service verb="create" noun="Subscreen" type="rust" location="dev_aide::screens::create_subscreen" allow-remote="false">
-        <description>A new screen file in the directory of a parent screen, from a gallery archetype or empty.</description>
+        <description>A new screen file in the directory of a parent screen, from a gallery archetype or empty; for an upstream
+            parent, in the site component, mounted by the site's screen-extend of the parent.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
             <parameter name="parentPath" required="true"/>
@@ -58,6 +59,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="menuTitle"/>
         </in-parameters>
         <out-parameters>
+            <parameter name="rootId"/>
             <parameter name="path"/>
             <parameter name="upstreamParent" type="Boolean"/>
             <parameter name="hash"/>

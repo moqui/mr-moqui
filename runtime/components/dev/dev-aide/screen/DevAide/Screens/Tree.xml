@@ -37,7 +37,10 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
     </transition>
     <transition name="createSubscreen">
-        <service-call name="org.moqui.devaide.ScreenServices.create#Subscreen" in-map="{rootId: parentRootId, parentPath: parentPath, name: name, archetype: archetype, menuTitle: menuTitle}"/>
+        <actions>
+            <service-call name="org.moqui.devaide.ScreenServices.create#Subscreen" out-map="made" in-map="{rootId: parentRootId, parentPath: parentPath, name: name, archetype: archetype, menuTitle: menuTitle}"/>
+            <if condition="made.upstreamParent"><message>The parent is upstream: the new screen is the site's (${made.path}), mounted under it by the site's screen-extend</message></if>
+        </actions>
         <default-response url="."/>
     </transition>
 
