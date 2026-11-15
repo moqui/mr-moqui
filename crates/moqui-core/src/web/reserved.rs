@@ -19,6 +19,11 @@
 //! test of `moqui-host` fails for a route whose first segment is not here), and scripts read it as
 //! `ec.web.reservedPaths` (docs/dev/JS-Core-API.md), so an application keeps its mounts, pages and names off them.
 //!
+//! Beside that fixed list, the first segment of every servlet the conf's `webroot` webapp declares (the default conf's
+//! `/search` and `/dashboard` proxies, a component's web script such as PASS's tracking redirect at `/trk/*`) is
+//! reserved too, since a servlet answers on every host ahead of the screens: [`reserved_paths_of`], which
+//! `ec.web.reservedPaths` gives. A request is not checked against those here: the servlet takes it first.
+//!
 //! A segment is matched as written, case and all (`Login`); an application that compares names without case lowers
 //! both.
 //!
@@ -27,7 +32,7 @@
 //! route). A request path, a site page's route, is the framework's when [`is_reserved_path`] says so: its first segment
 //! is wholly reserved, or it is under one of those sub-paths. A name that owns everything under it (a repository group,
 //! a mount, a handle) must stay off the whole segment, since `/ci/runner` would shadow its `ci/runner`: those check
-//! [`is_reserved_name`] and read [`reserved_paths`] (`ec.web.reservedPaths`), which lists both kinds whole.
+//! [`is_reserved_name`] and read [`reserved_paths_of`] (`ec.web.reservedPaths`), which lists both kinds whole.
 
 /// What a reserved segment is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -186,14 +191,28 @@ pub fn is_static(first: &str) -> bool {
         .any(|reserved| reserved.kind == Kind::Static && reserved.segment == first)
 }
 
-/// The reserved first segments, whole and partly reserved alike, in the lists' order: what `ec.web.reservedPaths`
-/// gives, the names no repository group, mount or handle may take ([`is_reserved_name`]).
+/// The reserved first segments, whole and partly reserved alike, in the lists' order: the names no repository group,
+/// mount or handle may take ([`is_reserved_name`]); `ec.web.reservedPaths` adds the conf's servlets
+/// ([`reserved_paths_of`]).
 pub fn reserved_paths() -> Vec<&'static str> {
     RESERVED
         .iter()
         .map(|reserved| reserved.segment)
         .chain(PARTLY_RESERVED.iter().map(|partly| partly.segment))
         .collect()
+}
+
+/// The reserved first segments with the conf's: [`reserved_paths`], then the first segment of each servlet pattern the
+/// conf's `webroot` webapp declares, enabled or not, that is not in it already ([`super::servlet::WebappScripts`]), in
+/// the conf's order. What `ec.web.reservedPaths` gives.
+pub fn reserved_paths_of(factory: &crate::context::ExecutionContextFactory) -> Vec<String> {
+    let mut paths: Vec<String> = reserved_paths().into_iter().map(str::to_string).collect();
+    for segment in factory.webapp_scripts().declared_segments() {
+        if !paths.iter().any(|path| path == segment) {
+            paths.push(segment.clone());
+        }
+    }
+    paths
 }
 
 /// The host routes a host whose root screen refuses the framework's routes (`framework-routes="refuse"`, a site of
