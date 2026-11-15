@@ -551,6 +551,44 @@ pub fn login_key_user_by_hash(hashed: &str) -> Result<Option<String>, Error> {
     Ok((!user_id.is_empty() && !still_disabled(&account, now) && !terminated(&account, now)).then_some(user_id))
 }
 
+/// The kind of `UserLoginKey` a login by key used (`ec.user.loginKeyKind`), read from its row: what an application
+/// asks of a request signed in by the `api_key` or `login_key` header, so it need not hash the key itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoginKeyKind {
+    /// A device's key (`deviceName`, [`get_device_key`]): the desktop or mobile client's.
+    Device,
+    /// An access token (`description`, `create#UserAccessToken`).
+    Token,
+    /// A key from [`get_login_key`], with neither.
+    Session,
+    /// A key made for one service alone ([`get_scoped_key`]), which only that service's login takes.
+    Scoped,
+}
+
+impl LoginKeyKind {
+    /// The name scripts see: `device`, `token`, `session` or `scoped`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Device => "device",
+            Self::Token => "token",
+            Self::Session => "session",
+            Self::Scoped => "scoped",
+        }
+    }
+
+    fn of(row: &EntityValue) -> Self {
+        if !text_field(row, "scope").is_empty() {
+            Self::Scoped
+        } else if !text_field(row, "deviceName").is_empty() {
+            Self::Device
+        } else if !text_field(row, "description").is_empty() {
+            Self::Token
+        } else {
+            Self::Session
+        }
+    }
+}
+
 /// `session_user`, when the session is already signed in, is the only user the key may log in: a key for another
 /// user is refused before the login, so it never takes over that session or its attributes. A key made for one scope
 /// (`UserLoginKey.scope`) logs in only where `scope` names it.
@@ -586,6 +624,7 @@ fn check_login_key(key: &str, session_user: Option<&str>, scope: Option<&str>) -
         return Err(Error::new(INVALID_LOGIN));
     };
     recorded_login(&text_field(&account, "username"))?;
+    session::set_login_key_kind(Some(LoginKeyKind::of(&row)));
     // a device's key shows when it was last used, in the user's device list (plans/Mobile-Desktop.md, MD3)
     if !text_field(&row, "deviceName").is_empty() {
         note_key_used(&facade, &row, &hashed);

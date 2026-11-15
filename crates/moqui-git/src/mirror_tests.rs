@@ -575,7 +575,7 @@ fn the_basic_value_is_redacted_and_an_ssh_mirror_connects_by_a_checked_address()
         "Basic *** for ***"
     );
 
-    use super::{credential_target, ssh_address};
+    use super::ssh_address;
     assert_eq!(
         ssh_address("8.8.8.8:2222", false).unwrap(),
         ("8.8.8.8".to_string(), 2222)
@@ -592,32 +592,11 @@ fn the_basic_value_is_redacted_and_an_ssh_mirror_connects_by_a_checked_address()
         ssh_address("git.internal:2200", true).unwrap(),
         ("git.internal".to_string(), 2200)
     );
-
-    assert_eq!(
-        credential_target("https://GitHub.com/o/r.git"),
-        credential_target("https://github.com:443/other/repo.git")
-    );
-    assert_ne!(
-        credential_target("https://github.com/o/r.git"),
-        credential_target("https://github.com.evil.example/o/r.git")
-    );
-    assert_ne!(
-        credential_target("https://github.com/o/r.git"),
-        credential_target("https://github.com:8443/o/r.git")
-    );
-    assert_eq!(
-        credential_target("git@github.com:o/r.git"),
-        credential_target("ssh://git@github.com:22/o/other.git")
-    );
-    assert_ne!(
-        credential_target("git@github.com:o/r.git"),
-        credential_target("other@github.com:o/r.git")
-    );
 }
 
-/// A change of where a mirror's credential goes (another host or port, another user, another host key) needs the
+/// A change of where a mirror's credential goes (any change of the URL, another user, another host key) needs the
 /// credential again in the same call, or clearCredential: one who may edit the mirror does not send the stored
-/// credential to a host of their own. Another repository path on the same host keeps it.
+/// credential to a host of their own, nor push with it to another repository on the same host.
 #[test]
 fn a_new_destination_needs_the_credential_again() {
     let fixture = fixture("mirror-destination", "");
@@ -639,6 +618,8 @@ fn a_new_destination_needs_the_credential_again() {
     for change in [
         vec![("url", s("https://attacker.example/o/r.git"))],
         vec![("url", s("https://github.com:8443/o/r.git"))],
+        vec![("url", s("https://github.com/attacker/r.git"))],
+        vec![("url", s("https://GitHub.com/o/other.git"))],
         vec![("username", s("someone-else"))],
     ] {
         let mut parameters = vec![("mirrorId", s(&id))];
@@ -653,10 +634,23 @@ fn a_new_destination_needs_the_credential_again() {
             ("https://github.com/o/r.git".to_string(), "admin-token".to_string())
         );
     }
-    // the same host: kept
-    let (_, errors) = store(&[("mirrorId", s(&id)), ("url", s("https://GitHub.com/o/other.git"))]);
+    // the same URL, or none given: kept
+    let (_, errors) = store(&[("mirrorId", s(&id)), ("url", s(" https://github.com/o/r.git "))]);
+    assert!(errors.trim().is_empty(), "{errors}");
+    let (_, errors) = store(&[("mirrorId", s(&id)), ("refPattern", s("main"))]);
     assert!(errors.trim().is_empty(), "{errors}");
     assert_eq!(credential(), "admin-token");
+    // another path on the same host with the credential again
+    let (_, errors) = store(&[
+        ("mirrorId", s(&id)),
+        ("url", s("https://github.com/o/other.git")),
+        ("credential", s("other-token")),
+    ]);
+    assert!(errors.trim().is_empty(), "{errors}");
+    assert_eq!(
+        (url(), credential()),
+        ("https://github.com/o/other.git".to_string(), "other-token".to_string())
+    );
     // another host with a credential of its own, or with the stored one cleared
     let (_, errors) = store(&[
         ("mirrorId", s(&id)),

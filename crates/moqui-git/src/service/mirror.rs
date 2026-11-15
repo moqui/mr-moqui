@@ -94,9 +94,10 @@ fn yes_no(parameters: &Parameters, key: &str) -> Result<Option<&'static str>, St
 
 /// `store#GitRepositoryMirror`: create a mirror (no `mirrorId`) or change one; an empty credential keeps the one
 /// stored. `clearRefPattern` empties the patterns (every branch and tag) and `clearCredential` the username and the
-/// credential, as a null parameter is not told from one left out. A change of where the credential goes (the URL's
-/// scheme, host and port, its user or `username`, the host key) needs the credential again in the same call, or
-/// `clearCredential`: a user who may edit the mirror does not send the stored credential to a host of their own. Who
+/// credential, as a null parameter is not told from one left out. A change of where the credential goes (any change
+/// of the URL, its path too, of `username` or of the host key) needs the credential again in the same call, or
+/// `clearCredential`: a user who may edit the mirror does not send the stored credential to a host, or a repository on
+/// the same host, of their own. Who
 /// gives a credential (or makes the mirror) is its `createdByUserId`, whose right its pushes are held to unless it was
 /// given with authorization disabled (`storedAuthzDisabled`). A new or re-enabled mirror is pushed soon (its
 /// `nextAttemptDate` is now). Out: `mirrorId`.
@@ -172,13 +173,13 @@ fn store_mirror(parameters: &Parameters, facade: &EntityFacade) -> Out {
         } else {
             field(row, "username")
         };
-        let moved = mirror::credential_target(&field(row, "url").unwrap_or_default())
-            != mirror::credential_target(&url)
+        // any change of the URL: on one host the same token reaches other repositories, a user's own among them
+        let moved = field(row, "url").unwrap_or_default().trim() != url
             || username_now != field(row, "username")
             || fingerprint != field(row, "hostKeyFingerprint");
         if moved && field(row, "credential").is_some() && credential.is_none() && !clear_credential {
             add_error(
-                "the mirror's credential goes only where it was given for: with a new host, user or host key give the \
+                "the mirror's credential goes only where it was given for: with a new URL, user or host key give the \
                  credential again (credential) or clear it (clearCredential)",
             );
             return none();

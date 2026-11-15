@@ -34,7 +34,7 @@ The gateway is off by default; while it is off everything under `/llm/v1` answer
 - A caller needs the `LlmGatewayUse` permission and, for its credential, an `LlmApiClient` row (System › LLM › Gateway,
   `store#LlmApiClient`) that names it (`loginKey`, kept as the hash a `UserLoginKey` is stored under, or
   `appPasswordId`), of the same user, not disabled, with `gateway` in `scopes`. An app password (made for DAV, SFTP or
-  git) always needs one; a login key needs one with `require-client` (the default). The row of the credential with
+  git) always needs one; an account's login key needs one with `require-client` (the default). The row of the credential with
   the gateway scope is the one used (rows for A2A or MCP are not); `store#LlmApiClient` refuses a second gateway row
   for a credential, and two found are refused as ambiguous. The client's `allowedAliases` (empty for all) narrow the
   aliases, and its `dailyTokens`, `dailyCost` and `requestsPerMinute` apply on top of the user's own limits (a client
@@ -42,7 +42,11 @@ The gateway is off by default; while it is off everything under `/llm/v1` answer
 
 A key for the gateway alone (`create#UserScopedKey`, `UserLoginKey.scope` `gateway`; `/rest/s1/moqui/hosting/gatewayKey`)
 opens the gateway as its user's login key does, and nothing else: a dev instance's Connect writes one into its `.env`
-in place of the account's key (docs/Run-Deploy.md). It is a login key to `require-client` and the client rows.
+in place of the account's key (docs/Run-Deploy.md). It is its own client: `require-client` does not ask an
+`LlmApiClient` of it, since its user made it for the gateway, it opens nothing else, and the user's `LlmGatewayUse` and
+quota still apply (an admin could not make a row for it anyway, without the key). An `LlmApiClient` that names it
+(`loginKey`) still applies its aliases and limits; revoking the key (`revoke#UserDeviceKey`) or the permission ends it.
+`require-client` stays for the account's own key, which opens everything.
 
 ## Calling it
 

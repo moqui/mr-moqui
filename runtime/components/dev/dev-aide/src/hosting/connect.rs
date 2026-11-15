@@ -683,7 +683,7 @@ fn plan(context: &Context, server: &Server) -> Json {
             "available": gateway, "url": server.offered("gateway.url"), "alias": "default", "writable": instance_files,
             "lines": [format!("{ENV_URL}={}", server.offered("gateway.url")),
                 format!("{ENV_KEY}=(a key for the gateway alone, made by the server)"), format!("{ENV_MODEL}=default")],
-            // with require-client on, the server's admin names the key's client (an LlmApiClient) before it opens
+            // the server's require-client, shown; the key made for the gateway alone is its own client under it
             "requireClient": server.offer["gateway"]["requireClient"].as_bool().unwrap_or(false),
         },
         "gitCredential": {

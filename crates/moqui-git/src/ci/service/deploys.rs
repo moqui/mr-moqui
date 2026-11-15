@@ -15,7 +15,8 @@
 //! The deployments of `org.moqui.git.GitCiServices` (docs/interfaces/Pipelines.md "Deployments"): asked for with the
 //! update right on the repository, approved or refused by an approver who is not the requester, cancelled by the
 //! requester or with the update right, read with the view right. A repository the caller does not view is not found,
-//! and so is its deployment. The moves are [`crate::ci::deploy`]'s.
+//! and so is its deployment. Why one failed (`errorText`, which may hold the target's own words) is read by a
+//! maintainer (the delete right) only. The moves are [`crate::ci::deploy`]'s.
 
 use std::collections::BTreeMap;
 
@@ -64,8 +65,9 @@ fn environment_of(facade: &EntityFacade, parameters: &Parameters, repository: &s
 
 /// `request#GitDeployment`: deploy the head of a branch (`refName`, the default branch when empty; `commitId`, when
 /// given, must be its head) to an environment of the repository, as the caller. Needs the update right; the branch
-/// must be protected or one the environment's `allowedRefs` names; the environment must name its pipeline, its
-/// target and its token. Out: `deploymentId`, `statusId`, `pipelineRunId`, `message`.
+/// must be protected or one the environment's `allowedRefs` names (one no branch rule protects waits for an approver);
+/// the environment must name its pipeline, its target and its token. Out: `deploymentId`, `statusId`,
+/// `pipelineRunId`, `message`.
 fn request_git_deployment(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let Some(repository) = text(parameters, "repositoryId") else {
         add_error("repositoryId is required");
@@ -116,18 +118,25 @@ fn request_git_deployment(parameters: &Parameters, facade: &EntityFacade) -> Out
             return none();
         }
     }
-    let allowed = {
+    let protected = {
         let _rows = crate::rows_guard();
         crate::ci::trust::is_protected(facade, &repository, Event::Deploy, &ref_name)?
-            || crate::ci::trust::allowed_ref(&environment, &ref_name)
     };
-    if !allowed {
+    if !protected && !crate::ci::trust::allowed_ref(&environment, &ref_name) {
         add_error(format!(
             "environment {name} takes protected branches and those its allowedRefs names; {ref_name} is neither"
         ));
         return none();
     }
-    let requested = deploy::request(&provider, facade, &environment, &ref_name, &head, current_user())?;
+    let requested = deploy::request(
+        &provider,
+        facade,
+        &environment,
+        &ref_name,
+        &head,
+        current_user(),
+        protected,
+    )?;
     Ok(out([
         ("deploymentId", Value::string(&requested.deployment_id)),
         ("statusId", Value::string(&requested.status)),
@@ -244,8 +253,14 @@ fn cancel_git_deployment(parameters: &Parameters, facade: &EntityFacade) -> Out 
     }
 }
 
-fn deployment_value(facade: &EntityFacade, row: &EntityValue) -> Value {
+/// A deployment as the services answer it; `errorText` only to a maintainer (`maintainer`).
+fn deployment_value(facade: &EntityFacade, row: &EntityValue, maintainer: bool) -> Value {
     let copy = |name: &'static str| (name, field_value(row, name));
+    let error_text = if maintainer {
+        field_value(row, "errorText")
+    } else {
+        Value::Null
+    };
     let run_num = field(row, "pipelineRunId")
         .and_then(|id| one(facade, PIPELINE_RUN, "pipelineRunId", &id).ok().flatten())
         .and_then(|run| crate::ci::long(&run, "runNum"));
@@ -263,9 +278,10 @@ fn deployment_value(facade: &EntityFacade, row: &EntityValue) -> Value {
         copy("requestedByUserId"),
         copy("approvedByUserId"),
         copy("approvedDate"),
+        copy("approvalRequired"),
         copy("refusedByUserId"),
         copy("deployResult"),
-        copy("errorText"),
+        ("errorText", error_text),
         copy("createdDate"),
         copy("startedDate"),
         copy("finishedDate"),
@@ -273,8 +289,8 @@ fn deployment_value(facade: &EntityFacade, row: &EntityValue) -> Value {
 }
 
 /// `find#GitDeployments`: the deployments of a repository the caller views, newest first, by `environment` (name),
-/// `statusId` and `commitId`; paged (`pageIndex`, `pageSize` 20, at most 100). Out: `deploymentList`,
-/// `deploymentCount`.
+/// `statusId` and `commitId`; paged in the database (`pageIndex`, `pageSize` 20, at most 100). Out: `deploymentList`,
+/// `deploymentCount` (all that match).
 fn find_git_deployments(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let Some(repository) = text(parameters, "repositoryId") else {
         add_error("repositoryId is required");
@@ -284,29 +300,36 @@ fn find_git_deployments(parameters: &Parameters, facade: &EntityFacade) -> Out {
         add_error(format!("repository {repository} not found"));
         return none();
     }
+    let maintainer = may(&repository, "delete");
     let _rows = crate::rows_guard();
-    let mut find = facade.find(DEPLOYMENT)?.eq("repositoryId", Value::string(&repository));
-    for (parameter, field_name) in [
-        ("environment", "environmentName"),
-        ("statusId", "statusId"),
-        ("commitId", "commitId"),
-    ] {
-        if let Some(value) = text(parameters, parameter) {
-            find = find.eq(field_name, Value::string(value));
+    let filtered = || -> Result<_, moqui_lib::error::Error> {
+        let mut find = facade.find(DEPLOYMENT)?.eq("repositoryId", Value::string(&repository));
+        for (parameter, field_name) in [
+            ("environment", "environmentName"),
+            ("statusId", "statusId"),
+            ("commitId", "commitId"),
+        ] {
+            if let Some(value) = text(parameters, parameter) {
+                find = find.eq(field_name, Value::string(value));
+            }
         }
-    }
-    let rows = find.order_by("createdDate", true).limit(5000).list()?;
-    let size = usize::try_from(number(parameters, "pageSize", 20).clamp(1, 100)).unwrap_or(20);
-    let index = usize::try_from(number(parameters, "pageIndex", 0).max(0)).unwrap_or(0);
-    let page: Vec<Value> = rows
+        Ok(find)
+    };
+    let count = filtered()?.count()?;
+    let size = number(parameters, "pageSize", 20).clamp(1, 100);
+    let index = number(parameters, "pageIndex", 0).clamp(0, i64::from(u32::MAX));
+    let page: Vec<Value> = filtered()?
+        .order_by("createdDate", true)
+        .order_by("deploymentId", true)
+        .offset(index * size)
+        .limit(size)
+        .list()?
         .iter()
-        .skip(index * size)
-        .take(size)
-        .map(|row| deployment_value(facade, row))
+        .map(|row| deployment_value(facade, row, maintainer))
         .collect();
     Ok(out([
         ("deploymentList", Value::List(page)),
-        ("deploymentCount", int(i64::try_from(rows.len()).unwrap_or(0))),
+        ("deploymentCount", int(count)),
     ]))
 }
 
@@ -326,8 +349,9 @@ fn get_git_deployment(parameters: &Parameters, facade: &EntityFacade) -> Out {
             deploy::REQUESTED | deploy::WAITING_PIPELINE | deploy::WAITING_APPROVAL
         ) || (state == deploy::DEPLOYING && field(&deployment, "startedDate").is_none()));
     let value = {
+        let maintainer = may(&repository, "delete");
         let _rows = crate::rows_guard();
-        deployment_value(facade, &deployment)
+        deployment_value(facade, &deployment, maintainer)
     };
     Ok(out([
         ("deployment", value),

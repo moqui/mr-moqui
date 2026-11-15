@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use super::{context, endpoint, REST_PATH};
+use super::{check_clone_url, context, endpoint, public_description, REST_PATH};
 
 #[test]
 fn a_target_is_https_or_http_to_a_loopback_address_with_no_credentials() {
@@ -37,4 +37,38 @@ fn a_target_is_https_or_http_to_a_loopback_address_with_no_credentials() {
         assert!(!err.contains("secret"), "{err}");
     }
     assert_eq!(context("prod"), "deploy/prod");
+}
+
+/// A clone URL is https or ssh with no credentials in it (an ssh account name is no secret); a refusal does not
+/// repeat the URL.
+#[test]
+fn a_clone_url_is_https_or_ssh_with_no_credentials() {
+    for good in [
+        "https://source.example.com/git/site.git",
+        "ssh://git@source.example.com/git/site.git",
+        "ssh://source.example.com:2222/site.git",
+    ] {
+        assert!(check_clone_url(good).is_ok(), "{good}");
+    }
+    for refused in [
+        "https://user:secret@source.example.com/site.git",
+        "https://token@source.example.com/site.git",
+        "ssh://git:secret@source.example.com/site.git",
+        "http://source.example.com/site.git",
+        "git@source.example.com:site.git",
+        "file:///srv/site.git",
+        "https:///site.git",
+    ] {
+        let err = check_clone_url(refused).unwrap_err();
+        assert!(!err.contains("secret"), "{refused}: {err}");
+    }
+}
+
+/// A deployment's public status says how it ended and no more: the target's words are in errorText only.
+#[test]
+fn a_deployments_public_status_says_how_it_ended_only() {
+    assert_eq!(public_description(super::FAILED), "Deploy failed");
+    assert_eq!(public_description(super::REFUSED), "Deploy refused");
+    assert_eq!(public_description(super::CANCELLED), "Deploy cancelled");
+    assert_eq!(public_description(super::DEPLOYED), "Deployed");
 }

@@ -913,6 +913,62 @@ fn login_key_header_logs_in_and_an_expired_key_does_not() {
 }
 
 #[test]
+fn a_key_login_names_its_kind_for_the_request_and_a_cookie_session_has_none() {
+    let (_lock, ctx, facade, _key) = setup();
+    let _entered = ctx.enter();
+    let factory = Arc::clone(ctx.factory());
+    create_user(&facade, "ada", "Secret1!");
+    for (key, field, value) in [
+        ("device-key", "deviceName", "Ada's phone"),
+        ("token-key", "description", "CI token"),
+        ("session-key", "", ""),
+        ("scoped-key", "scope", "gateway"),
+    ] {
+        create_login_key(&facade, key, "ada", None);
+        if !field.is_empty() {
+            facade
+                .find("moqui.security.UserLoginKey")
+                .unwrap()
+                .eq("loginKey", Value::string(hash_login_key(key).unwrap()))
+                .update_all([(field.to_string(), Value::string(value))])
+                .unwrap();
+        }
+    }
+    let script_kind = || crate::script::eval_value("ec.user.loginKeyKind").unwrap();
+    let guard = bind(&factory, None, None, false).unwrap();
+    for (key, kind) in [
+        ("device-key", "device"),
+        ("token-key", "token"),
+        ("session-key", "session"),
+    ] {
+        assert!(login::apply_header_keys(Some(key), None).unwrap());
+        assert_eq!(login_key_kind().map(login::LoginKeyKind::as_str), Some(kind), "{key}");
+        assert_eq!(script_kind(), Value::string(kind), "{key}");
+        login::logout().unwrap();
+        assert_eq!(login_key_kind(), None, "a logout ends it");
+    }
+    // a scoped key logs in only where its scope is named, and says so there
+    assert!(login::apply_header_keys(None, Some("scoped-key")).is_err());
+    assert_eq!(login_key_kind(), None);
+    login::login_user_key_for("scoped-key", "gateway").unwrap();
+    assert_eq!(login_key_kind(), Some(login::LoginKeyKind::Scoped));
+    login::logout().unwrap();
+    // a password login has none, and the session it leaves carries none to its next request
+    login::apply_header_keys(Some("device-key"), None).unwrap();
+    login::login_user("ada", "Secret1!").unwrap();
+    assert_eq!(login_key_kind(), None);
+    login::apply_header_keys(Some("device-key"), None).unwrap();
+    let id = guard.session_id();
+    drop(guard);
+    let cookie = format_session_cookie(&id, false).unwrap();
+    let again = bind(&factory, Some(cookie_value(&cookie)), None, false).unwrap();
+    assert_eq!(again.session_id(), id);
+    assert_eq!(current_username().unwrap().as_deref(), Some("ada"));
+    assert_eq!(login_key_kind(), None, "the next request by cookie alone");
+    assert_eq!(script_kind(), Value::Null);
+}
+
+#[test]
 fn a_query_string_api_key_is_not_consulted() {
     let (_lock, ctx, facade, _key) = setup();
     let _entered = ctx.enter();

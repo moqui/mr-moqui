@@ -470,25 +470,28 @@ and `attest.rs`; the target's side is Component-Deploy's ([the gate](../tools/Co
 
 | Field | |
 | --- | --- |
-| `targetUrl` | The target instance's base URL: `https`, or `http` to a loopback IP literal only (the instance and itself). Its address follows the webhooks' rules: a loopback, private or link-local one (written out or resolved) is refused unless `git-ci` `deploy-private-network="true"`. |
-| `token` (`targetToken`) | The secret the target issued: its `component-deploy` `attestation-secret`, at least 16 characters. Encrypted, never read back (`hasToken`), and never sent: it signs. |
+| `targetUrl` | The target instance's base URL: `https`, or `http` to a loopback IP literal only (the instance and itself). Its address follows the webhooks' rules: a loopback, private or link-local one (written out or resolved) is refused unless `git-ci` `deploy-private-network="true"`. It is the attestation's `audience`, which the target compares with its own `public-urls`. `find#CiEnvironments` answers it to a maintainer only. |
+| `token` (`targetToken`) | The secret the target issued: its `component-deploy` `attestation-secret`, at least 32 characters. Encrypted, never read back (`hasToken`), and never sent: it signs. |
 | `requiredPipeline` | The pipeline that must pass for the commit. It must have the `deploy` event (`on="deploy"`, beside others if it likes). |
 | `approvalRequired`, `approverGroupId` | Whether an approver approves once the pipeline passed, and who: the members of the group who view the repository, else a maintainer (the delete right). Never the requester. |
-| `allowedRefs` | The branches that deploy besides protected ones (as for the environment's secrets). |
-| `cloneUrl` | The URL the target fetches from (https or ssh); the repository's public clone URL when empty. |
+| `allowedRefs` | The branches that deploy besides protected ones (as for the environment's secrets). A deployment of a branch no branch rule protects waits for an approver whatever `approvalRequired` says: whoever pushes to it chose the commit and the pipeline file that tests it. |
+| `cloneUrl` | The URL the target fetches from (https or ssh, with no user or password in it); the repository's public clone URL when empty. To a maintainer only, as `targetUrl`. The target's `allow` entry names this URL. |
+| `dataTypes` | The data types the target loads of the component's data files, comma separated, signed in each attestation; empty for the target's defaults (those of Deploy and Update). |
 
 **The steps.** `request#GitDeployment` (the update right; a repository the caller does not view is not found) takes a
 branch (`refName`, the default branch when empty), protected or named by `allowedRefs`, and deploys its head
 (`commitId`, when given, must be that head: Component-Deploy fetches a branch). It writes a `GitDeployment`
-(`requested`) and queues `requiredPipeline` for the commit with the `deploy` event through the engine's queue, as the
-requester, so the run check decides trust and approval as for any run (`waiting-pipeline`; `failed` at once when the
-commit has no such pipeline, the run is refused, or pipelines are off here). A job of that pipeline in an environment
-that requires approval holds the run for a maintainer first, as any such run; an approval of the run by an approver
-other than the requester counts for the deployment too. When the run ends:
+(`requested`, with `approvalRequired` Y when the environment requires approval or no branch rule protects the branch)
+and queues `requiredPipeline` for the commit with the `deploy` event through the engine's queue, as the requester, so
+the run check decides trust and approval as for any run (`waiting-pipeline`; `failed` at once when the commit has no
+such pipeline, the run is refused, or pipelines are off here). A job of that pipeline in an environment that requires
+approval holds the run for a maintainer first, as any such run; that approval is of the run, and does not count for
+the deployment: `decide#GitDeployment` is the one approval step (as approving opens the lease in
+[Vault-Instances](../../plans/Vault-Instances.md) §4.6). When the run ends:
 
 - not `success`: the deployment is `failed` (`errorText` names the run and how it ended);
-- `success`, with `approvalRequired`: `waiting-approval` until `decide#GitDeployment` (`approve` or `refuse` with a
-  `reason`); refused is `refused`;
+- `success`, with `approvalRequired` (the deployment's or the environment's): `waiting-approval` until
+  `decide#GitDeployment` (`approve` or `refuse` with a `reason`); refused is `refused`;
 - else, or approved: `deploying`, and the deploy step starts on a thread of its own once the transaction commits (a
   step left waiting is started again by `end#OverdueJobRuns`; one that began more than `deploy-timeout-seconds` and
   five minutes ago and never ended fails).
@@ -506,23 +509,35 @@ other than the requester counts for the deployment too. When the run ends:
    no redirect followed, at most `deploy-timeout-seconds` (600), 1 MiB of answer read;
 4. records the answer: `deployed` with `deployResult` (`status` deployed or up-to-date, `component`, `commitId`,
    `problems`), the environment's `lastCommitId`, `lastDeploymentId` and `lastDeployDate`; or `failed` with the
-   target's errors in `errorText`.
+   target's errors in `errorText`, which `get#` and `find#GitDeployment(s)` answer to a maintainer (the delete right)
+   only.
 
-**The attestation** is the JSON text of `{kind: "moqui-deploy-attestation", v: 1, repositoryUrl, refName, commitId,
-component, pipeline, pipelineRunId, runNum, runStatus: "success", environment, deploymentId, issuedAt (milliseconds),
-source}`, and the signature is `sha256=` and the hex HMAC-SHA256, keyed with the token, of
-`moqui-deploy-attestation-v1\n` followed by that exact text. The target verifies the signature over the text it was
-sent, then that it is no older than its `max-age-seconds` (and not over a minute ahead of its clock), then deploys that
-component at that commit only, while the branch it fetches is still there.
+**The attestation** (version 2) is the JSON text of `{kind: "moqui-deploy-attestation", v: 2, audience, repositoryUrl,
+refName, commitId, component, pipeline, pipelineRunId, runNum, runStatus: "success", environment, deploymentId,
+issuedAt (milliseconds), source, dataTypes}`, where `audience` is the environment's `targetUrl` (scheme and host in
+lower case, no default port or trailing slash) and `dataTypes` its data types, and the signature is `sha256=` and the
+hex HMAC-SHA256, keyed with the token, of `moqui-deploy-attestation-v2\n` followed by that exact text. Version 1 is
+not taken. The target verifies the signature over the text it was sent, then that it is no older than its
+`max-age-seconds` (and not over a minute ahead of its clock), that `audience` is one of its own public URLs, and that
+an `allow` entry names the component, URL and branch, then claims it (none replayed) and deploys that component at
+that commit only, while the branch it fetches is still there ([the gate](../tools/Component-Deploy.md#the-gate)).
+
+**What a passed run attests.** The pipeline that ran is read from `ci.xml` at the deployed commit, as for any run: a
+person who may push to the branch chooses both the change and the tests that pass it. A protected branch takes a
+change only by its rule (a merge request with its approvals, or its push group); a branch only `allowedRefs` names has
+no such rule, which is why its deployment always waits for an approver.
 
 **Events.** Each move writes the commit status `deploy/<environment>`: `pending` (requested, waiting for its pipeline
 or approval, deploying), then `success` (deployed), `failure` (failed) or `error` (refused, cancelled), with the run's
-page as its target. Keep users from posting it as for `ci/`: `git-server` `reserved-status-contexts="ci/,deploy/"`.
+page as its target. Whoever views the repository reads a status, so an ended one says only how it ended (`Deployed`,
+`Deploy failed`, `Deploy refused`, `Deploy cancelled`); why is in `errorText`. Keep users from posting it as for
+`ci/`: `git-server` `reserved-status-contexts="ci/,deploy/"`.
 The requester is told each end, and the approver group when one is awaited or decided, on the notification topic
 `GitDeployment` (sub-topic the repository; `{deploymentId, repositoryId, environment, commitId, statusId}`).
 
-On moqui.org: a demo instance's environment with `allowedRefs="main"` and no approval, which a rule or a person asks
-for after each green merge; moqui.org's own with `approvalRequired` and its target set to `require-passed-run`.
+On moqui.org: a demo instance's environment for the protected main with no approval, which a rule or a person asks
+for after each green merge; moqui.org's own with `approvalRequired` and its target set to `require-passed-run`, with an
+`allow` entry for each component it takes.
 
 ## Records
 
@@ -537,11 +552,11 @@ In `moqui.resource` (`framework/entity/GitCiEntities.xml`). States are plain cod
 | `GitRunArtifact` | An upload: `artifactKind` (artifact, report, cache), `name`, `path`, `blobId`, `sizeBytes`, `sha256`, `cacheKey`, `protectedRef`, `keep`, `expireDate`, `lastUsedDate` |
 | `GitRunTestFailure` | A failed test: `suiteName`, `testName`, `filePath`, `lineNumber`, `message`, `durationMillis` |
 | `GitCiSecret` | `repositoryId` or `ownerId`, `name`, `secretValue` (encrypted), `scope`, `environmentId`, `lastUsedDate` |
-| `GitCiEnvironment` | `repositoryId` or `ownerId`, `name`, `allowedRefs`, and for deployments `targetUrl`, `targetToken` (encrypted), `cloneUrl`, `requiredPipeline`, `approvalRequired`, `approverGroupId`, `lastCommitId`, `lastDeploymentId`, `lastDeployDate` |
+| `GitCiEnvironment` | `repositoryId` or `ownerId`, `name`, `allowedRefs`, and for deployments `targetUrl`, `targetToken` (encrypted), `cloneUrl`, `requiredPipeline`, `approvalRequired`, `approverGroupId`, `dataTypes`, `lastCommitId`, `lastDeploymentId`, `lastDeployDate` |
 | `GitRunnerPool`, `GitRunner` | Pools and their registered runners |
 | `GitRunnerUsage` | The time of one job run, written when it ends: `repositoryId`, `ownerId`, `runnerPoolId`, `trusted`, `periodKey` (yyyy-MM), `secondsUsed`, `minutesUsed` (started minutes) |
 | `GitPipelineSchedule` | The schedule pipelines of a repository's default branch |
-| `GitDeployment` | A deployment ([deployments](#deployments)): `repositoryId`, `environmentId`, `environmentName`, `commitId`, `refName`, `componentName`, `pipelineRunId`, `statusId` (requested, waiting-pipeline, waiting-approval, deploying, deployed, failed, refused, cancelled), `requestedByUserId`, `approvedByUserId`, `approvedDate`, `refusedByUserId`, `deployResult`, `errorText` (never a secret), `createdDate`, `startedDate`, `finishedDate` |
+| `GitDeployment` | A deployment ([deployments](#deployments)): `repositoryId`, `environmentId`, `environmentName`, `commitId`, `refName`, `componentName`, `pipelineRunId`, `statusId` (requested, waiting-pipeline, waiting-approval, deploying, deployed, failed, refused, cancelled), `requestedByUserId`, `approvalRequired`, `approvedByUserId`, `approvedDate`, `refusedByUserId`, `deployResult`, `errorText` (a maintainer's only; never a secret), `createdDate`, `startedDate`, `finishedDate` |
 
 Logs and uploads are content blobs ([Git-Hosting](Git-Hosting.md)): the rows refer to them, and `gc#ContentBlobs`
 deletes a blob once no row does. `delete#GitRepository` removes a repository's rows of these entities with it, in
@@ -705,7 +720,7 @@ hidden one on a server with `review-start-hidden`, a merge, and the delete of a 
 code, and the container driver's requests against a small Docker API in the test, over TCP and a Unix socket
 (`ci/driver/docker_tests.rs`). Deployments are tested the same way (`server/ci_deploy_tests.rs`), with the deploy step's
 call over loopback to a target that verifies the attestation with `ci::attest::verify`, the code of the real target's
-`deploy#AttestedComponent`, whose gate is tested in moqui-devkit (`deploy/git_tests.rs`, `--features git`). One job on
+`deploy#AttestedComponent`, whose gate is tested in moqui-devkit (`deploy/git_tests.rs`, `gate_tests.rs` and `services_tests.rs`, `--features git`: the allow list, the audience, the claim under concurrency, an attested update of a `db` repository, a start and another member under the gate, and the service called with no user, as its REST resource calls it). One job on
 a real Docker or Podman socket is opt-in:
 
 ```sh

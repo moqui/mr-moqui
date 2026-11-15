@@ -15,15 +15,19 @@
 //! The attestation of a deployment (plans/Dogfood.md §8.6, DG10; docs/tools/Component-Deploy.md "The gate"): the
 //! source server says that a commit of a repository passed an environment's pipeline, as a JSON text signed with
 //! HMAC-SHA256 under the secret the target issued (the environment's token, the target's `component-deploy`
-//! `attestation-secret`). The target verifies the signature over the exact text it was sent, then its freshness, and
-//! deploys only that commit of that repository. The secret itself is never sent. Both ends use this module: the
+//! `attestation-secret`). The target verifies the signature over the exact text it was sent, then its freshness, that
+//! it is addressed to the target itself (`audience`, the URL the source posts to), and deploys only that commit of
+//! that repository, with the data types the attestation names. The secret itself is never sent. Both ends use this module: the
 //! source's deploy step ([`super::deploy`]) signs, the target's `deploy#AttestedComponent` (moqui-devkit) verifies.
 
 use hmac::{KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 
+/// The version of the attestation's format: 2 added `audience` and `dataTypes` (v1 is not taken).
+pub const VERSION: u32 = 2;
+
 /// What the signature covers: this prefix, then the attestation's text.
-const DOMAIN: &str = "moqui-deploy-attestation-v1\n";
+const DOMAIN: &str = "moqui-deploy-attestation-v2\n";
 
 /// The `kind` of an attestation.
 pub const KIND: &str = "moqui-deploy-attestation";
@@ -31,8 +35,9 @@ pub const KIND: &str = "moqui-deploy-attestation";
 /// The longest attestation text a target reads.
 pub const MAX_TEXT: usize = 8 * 1024;
 
-/// The shortest secret either end takes: a secret a person could guess signs nothing.
-pub const MIN_SECRET: usize = 16;
+/// The shortest secret either end takes: a secret a person could guess signs nothing (`openssl rand -hex 32` makes
+/// 64 characters).
+pub const MIN_SECRET: usize = 32;
 
 /// How far ahead of the target's clock an attestation may be issued (the two clocks differ).
 const SKEW_MILLIS: i64 = 60_000;
@@ -42,8 +47,11 @@ const SKEW_MILLIS: i64 = 60_000;
 #[serde(rename_all = "camelCase")]
 pub struct Attestation {
     pub kind: String,
-    /// 1.
+    /// [`VERSION`].
     pub v: u32,
+    /// The target's base URL the source posts to (its environment's `targetUrl`): a target takes only one addressed to
+    /// one of its own public URLs, so an attestation for one target is not taken by another that shares the secret.
+    pub audience: String,
     /// The URL the target fetches the repository from.
     pub repository_url: String,
     /// The branch, a full ref (`refs/heads/main`).
@@ -63,6 +71,9 @@ pub struct Attestation {
     pub issued_at: i64,
     /// The source server's public URL, for the target's log.
     pub source: String,
+    /// The data types the target loads of the component's changed data files (the environment's `dataTypes`); empty
+    /// for the target's defaults, as its own Deploy and Update use.
+    pub data_types: Vec<String>,
 }
 
 impl Attestation {
@@ -102,6 +113,31 @@ fn unhex(text: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
+/// A base URL as two ends compare it: the scheme and the host in lower case, no default port, no trailing slash.
+#[must_use]
+pub fn base_url(url: &str) -> String {
+    let url = url.trim().trim_end_matches('/');
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    let scheme = scheme.to_ascii_lowercase();
+    let (authority, path) = match rest.split_once('/') {
+        Some((authority, path)) => (authority, format!("/{path}")),
+        None => (rest, String::new()),
+    };
+    let authority = authority.to_ascii_lowercase();
+    let default_port = match scheme.as_str() {
+        "https" => ":443",
+        "http" => ":80",
+        _ => "",
+    };
+    let authority = match authority.strip_suffix(default_port) {
+        Some(host) if !default_port.is_empty() => host.to_string(),
+        _ => authority,
+    };
+    format!("{scheme}://{authority}{path}")
+}
+
 /// Sign `attestation` with `secret`.
 ///
 /// # Errors
@@ -125,6 +161,9 @@ pub fn sign(secret: &str, attestation: &Attestation) -> Result<Signed, String> {
 pub enum Refusal {
     /// No secret here, or a short one.
     NoSecret,
+    /// Signed with this secret, but addressed to another target than this one (`audience`), or this target does not
+    /// know its own public URL to compare.
+    Audience,
     /// The signature is not this secret's over this text: forged, altered, or signed for another target.
     Signature,
     /// Signed, but not an attestation of a passed run this version reads.
@@ -143,6 +182,11 @@ impl std::fmt::Display for Refusal {
                 "this server takes no attested deploys (component-deploy attestation-secret)"
             ),
             Self::Signature => write!(f, "the attestation's signature does not verify"),
+            Self::Audience => write!(
+                f,
+                "the attestation is addressed to another server (its audience is not one of this server's public URLs, \
+                 component-deploy public-urls)"
+            ),
             Self::Malformed(why) => write!(f, "the attestation is not one this server reads: {why}"),
             Self::Stale => write!(f, "the attestation is too old (component-deploy max-age-seconds)"),
             Self::Future => write!(f, "the attestation is issued in the future"),
@@ -182,7 +226,7 @@ pub fn verify(
     mac.verify_slice(&digest).map_err(|_| Refusal::Signature)?;
     let attestation: Attestation = serde_json::from_str(text).map_err(|err| Refusal::Malformed(err.to_string()))?;
     let malformed = |why: &str| Err(Refusal::Malformed(why.to_string()));
-    if attestation.kind != KIND || attestation.v != 1 {
+    if attestation.kind != KIND || attestation.v != VERSION {
         return malformed("its kind or version");
     }
     if attestation.run_status != "success" {
@@ -198,6 +242,9 @@ pub fn verify(
     {
         return malformed("its component, repository URL or deployment");
     }
+    if attestation.audience.trim().is_empty() {
+        return malformed("its audience");
+    }
     if attestation.issued_at > now + SKEW_MILLIS {
         return Err(Refusal::Future);
     }
@@ -205,6 +252,23 @@ pub fn verify(
         return Err(Refusal::Stale);
     }
     Ok(attestation)
+}
+
+/// Whether `attestation` is addressed to this target, whose public base URLs are `own` ([`base_url`] compared).
+///
+/// # Errors
+///
+/// [`Refusal::Audience`] when it is not, or when `own` is empty (the target cannot tell).
+pub fn check_audience(attestation: &Attestation, own: &[String]) -> Result<(), Refusal> {
+    let audience = base_url(&attestation.audience);
+    if own
+        .iter()
+        .any(|url| !url.trim().is_empty() && base_url(url) == audience)
+    {
+        Ok(())
+    } else {
+        Err(Refusal::Audience)
+    }
 }
 
 #[cfg(test)]

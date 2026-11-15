@@ -407,23 +407,25 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="deleted" type="Boolean"/></out-parameters>
     </service>
     <service verb="find" noun="CiEnvironments" type="rust" location="moqui_git::ci::service::secrets::find_ci_environments">
-        <description>The environments of a repository the caller may view, or of an owner (authorization disabled).</description>
+        <description>The environments of a repository the caller may view, or of an owner (authorization disabled).
+            The target and clone URLs only to a maintainer (the delete right) or the application.</description>
         <in-parameters>
             <parameter name="repositoryId"/>
             <parameter name="ownerId"/>
         </in-parameters>
         <out-parameters><parameter name="environmentList" type="List"><description>Maps: environmentId, name,
-            targetUrl, cloneUrl, requiredPipeline, approvalRequired, approverGroupId, allowedRefs, hasToken (never the
-            token), lastCommitId, lastDeploymentId, lastDeployDate</description></parameter></out-parameters>
+            targetUrl and cloneUrl (a maintainer's only), dataTypes, requiredPipeline, approvalRequired,
+            approverGroupId, allowedRefs, hasToken (never the token), lastCommitId, lastDeploymentId,
+            lastDeployDate</description></parameter></out-parameters>
     </service>
     <service verb="store" noun="CiEnvironment" type="rust" location="moqui_git::ci::service::secrets::store_ci_environment">
         <description>Make or change an environment of a repository (the delete right, a maintainer's) or of an owner
             (authorization disabled). The target's token is encrypted and never read back. Its secrets go only to a
             run of a protected ref or of a branch allowedRefs names, never to a merge request's, and with
             approvalRequired only to an approved run. For deployments (docs/interfaces/Pipelines.md "Deployments"):
-            the target instance (https, or http to a loopback IP literal), the token it issued (at least 16
+            the target instance (https, or http to a loopback IP literal), the token it issued (at least 32
             characters: its component-deploy attestation-secret, which signs each attestation and is never sent), the
-            pipeline with the deploy event that must pass, and who approves.</description>
+            pipeline with the deploy event that must pass, who approves, and the data types the target loads.</description>
         <in-parameters>
             <parameter name="repositoryId"/>
             <parameter name="ownerId"/>
@@ -431,14 +433,17 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="name"/>
             <parameter name="targetUrl"><description>The target instance's base URL</description></parameter>
             <parameter name="token" allow-html="any"><description>Written, never read back; left out on a change, it stays</description></parameter>
-            <parameter name="cloneUrl"><description>The URL the target fetches the repository from (https or ssh);
-                the repository's public clone URL when empty</description></parameter>
+            <parameter name="cloneUrl"><description>The URL the target fetches the repository from (https or ssh, with
+                no user or password in it); the repository's public clone URL when empty</description></parameter>
             <parameter name="requiredPipeline"><description>The pipeline, with the deploy event, that must pass</description></parameter>
             <parameter name="approvalRequired" type="Boolean"/>
             <parameter name="approverGroupId"><description>The user group whose members approve; a maintainer of
                 the repository (the delete right) when empty</description></parameter>
             <parameter name="allowedRefs"><description>Branch patterns, separated by spaces, whose runs get the
-                environment's secrets, and which deploy to it, besides protected refs</description></parameter>
+                environment's secrets, and which deploy to it, besides protected refs (a deployment of one no branch
+                rule protects waits for an approver)</description></parameter>
+            <parameter name="dataTypes"><description>The data types the target loads of the component's data files,
+                comma separated, signed in each attestation; empty for the target's defaults</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="environmentId"/></out-parameters>
     </service>
@@ -457,8 +462,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="request" noun="GitDeployment" type="rust" location="moqui_git::ci::service::deploys::request_git_deployment">
         <description>Deploy the head of a branch to an environment of the repository, as the caller (the update right):
             the environment's pipeline (requiredPipeline, which must have the deploy event) is queued for the commit
-            with the deploy event, so the run check decides as for any run; when it passes the deployment waits for an
-            approver if the environment requires one, then the deploy step posts an attestation of the passed run to
+            with the deploy event, so the run check decides as for any run; when it passes the deployment waits for
+            decide#GitDeployment if the environment requires approval or no branch rule protects the branch (an
+            approval of the run does not count), then the deploy step posts an attestation of the passed run to
             the target's Component-Deploy REST. The branch must be protected or named by the environment's
             allowedRefs; the target deploys the commit only while it is still the branch's head. A repository the
             caller does not view is not found. The status deploy/[environment] of the commit follows each move.</description>
@@ -495,7 +501,8 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="statusId"/></out-parameters>
     </service>
     <service verb="find" noun="GitDeployments" type="rust" location="moqui_git::ci::service::deploys::find_git_deployments">
-        <description>The deployments of a repository the caller views, newest first.</description>
+        <description>The deployments of a repository the caller views, newest first, paged in the database;
+            errorText to a maintainer (the delete right) only.</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="environment"><description>The environment's name</description></parameter>
@@ -508,9 +515,10 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="deploymentList" type="List"><description>Maps: deploymentId, repositoryId,
                 environmentId, environment, commitId, refName, componentName, statusId (requested, waiting-pipeline,
                 waiting-approval, deploying, deployed, failed, refused, cancelled), pipelineRunId, runNum,
-                requestedByUserId, approvedByUserId, approvedDate, refusedByUserId, deployResult (the target's answer as
-                JSON), errorText, createdDate, startedDate, finishedDate</description></parameter>
-            <parameter name="deploymentCount" type="Integer"/>
+                requestedByUserId, approvalRequired, approvedByUserId, approvedDate, refusedByUserId, deployResult (the
+                target's answer as JSON), errorText (a maintainer's only: it may hold the target's own words),
+                createdDate, startedDate, finishedDate</description></parameter>
+            <parameter name="deploymentCount" type="Integer"><description>All that match</description></parameter>
         </out-parameters>
     </service>
     <service verb="get" noun="GitDeployment" type="rust" location="moqui_git::ci::service::deploys::get_git_deployment">

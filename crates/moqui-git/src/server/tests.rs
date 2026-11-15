@@ -1625,6 +1625,23 @@ fn a_drive_repository_takes_the_drive_members() {
         base.replacen("http://", &format!("http://drive.viewer:{app_password}@"), 1) + "/git/DRIVE_D1.git";
     let out = git_ok(&fixture.dir, &home, &["ls-remote", &with_app_password]);
     assert!(out.contains("refs/heads/main"), "{out}");
+
+    // the drive's answer kept in the context is the user's: after another user logs in to the same context, a check
+    // is theirs, and as_user's (a context of its own) too
+    let _entered = fixture.context.enter();
+    moqui_core::user::internal_login_user("drive.editor").unwrap();
+    assert!(super::permitted("DRIVE_D1", "update"));
+    moqui_core::user::internal_login_user("drive.stranger").unwrap();
+    assert!(
+        !super::permitted("DRIVE_D1", "view"),
+        "the editor's answer is not the stranger's"
+    );
+    let as_other =
+        |user: &str, action: &str| moqui_core::user::as_user(user, || super::permitted("DRIVE_D1", action)).unwrap();
+    assert!(as_other("drive.editor", "update") && !as_other("drive.viewer", "update"));
+    moqui_core::user::internal_login_user("drive.viewer").unwrap();
+    assert!(super::permitted("DRIVE_D1", "view") && !super::permitted("DRIVE_D1", "update"));
+    moqui_core::user::logout().unwrap();
 }
 
 // ---- packs without the command line ----

@@ -248,34 +248,60 @@ deployment, [Pipelines](../interfaces/Pipelines.md#deployments)). In its conf:
 
 ```xml
 <component-deploy require-passed-run="true" attestation-secret="${component_deploy_attestation_key}"
-        max-age-seconds="300"/>
+        max-age-seconds="300" public-urls="https://demo.example.com">
+    <allow component="site" repository-url="https://git.example.com/git/site.git" branch="main"/>
+</component-deploy>
 ```
 
-and in `runtime/.env` a secret of at least 16 characters (`openssl rand -hex 32`):
+and in `runtime/.env` a secret of at least 32 characters (`openssl rand -hex 32`):
 `component_deploy_attestation_key=...`. Give the same secret to the source server as its environment's token
-(`store#CiEnvironment` `token`), with this server's base URL as the environment's `targetUrl`.
+(`store#CiEnvironment` `token`), with this server's base URL (one of `public-urls`) as the environment's `targetUrl`.
 
+- **Read once at start.** The whole element, its secret and its `allow` entries are read when the server starts; a
+  conf reload or a live override (Monitor › Settings) changes none of it until the next start, and the conf reload
+  says it waits for a restart. Changing the secret is a restart.
+- **`allow`** (several): the components an attested deploy may bring, each from one repository URL (as the source
+  sends it: its environment's `cloneUrl`, else the repository's public clone URL; compared without the case of the
+  scheme and host or a trailing slash) and one branch. An attestation of any other component, URL or branch is
+  refused, and with no entry none is taken. A component deployed from git already is updated only from its own row's
+  URL and branch too.
+- **`public-urls`**: this server's public base URLs, separated by spaces or commas. An attestation names the URL the
+  source posted to (`audience`), which must be one of them, so an attestation for one target is not taken by another
+  that shares the secret. Empty: the webroot webapp's URL when `webapp_http_host` is set; with neither, every
+  attestation is refused.
 - **Attested deploys.** `deploy#AttestedComponent` (REST `POST /rest/s1/moqui/components/deploy`, no session) takes
-  `attestation`, a JSON text that names a repository URL, a branch, a commit, a component, the pipeline and run that
-  passed, the environment, the source's deployment and when it was signed, and `signature`, its HMAC-SHA256 under the
-  secret. It verifies the signature over the text as sent, then that the text is no older than `max-age-seconds` (and
-  not ahead of the clock), and that it is newer than the last attestation the component took
-  (`DeployedComponent.attestedDate`, so none is replayed). Then it fetches the branch from the URL, with the database
-  storage, and deploys the component while the branch's head is still that commit; a component deployed from that URL
-  already is updated to it (up to date when it is there). The attestation is the authority: no user signs in, the
-  attestation stands for `COMPONENT_DEPLOY` for that component at that commit only, and on a production instance
+  `attestation`, a JSON text that names the target it is for, a repository URL, a branch, a commit, a component, the
+  pipeline and run that passed, the environment, the source's deployment, the data types to load and when it was
+  signed, and `signature`, its HMAC-SHA256 under the secret (the format is in
+  [Pipelines](../interfaces/Pipelines.md#deployments)). It verifies the signature over the text as sent; a signature
+  that does not verify, and any attestation on a server with no secret, gets one answer ("the attestation is not
+  accepted", so a caller does not learn whether a secret is set) and counts as a failed sign-in for web protection.
+  Then that the text is no older than `max-age-seconds` (and not ahead of the clock), that it is addressed to this
+  server, and that an `allow` entry names its component, URL and branch. Then, holding the component's lock across
+  the cluster (a `GitLease`, `component-deploy:<name>`), it claims the attestation: one conditional update of the
+  component's `DeployedComponentAttestation`, which holds only when the component took no attestation issued at or
+  after it, so none is replayed and none rolls back to an older attested commit. The record is apart from the
+  `DeployedComponent` row, so a discarded or removed component keeps it. Then it fetches the branch from the URL,
+  with the database storage, and deploys the component while the branch's head is still that commit; a component
+  deployed from that URL and branch already is updated to it (up to date when it is there). The data types are the
+  attestation's (the environment's `dataTypes`, signed; empty for the defaults Deploy and Update use); no request
+  parameter widens them. The attestation is the authority: no user signs in, the attestation stands for
+  `COMPONENT_DEPLOY` for that component at that commit only, and on a production instance
   `component_deploy_enabled=true` is still needed. Each is audited (`moqui.monitor.audit`, with the source's
-  deployment, environment, pipeline and run) and kept in `DeployedComponentHistory`. A signature that does not verify
-  counts as a failed sign-in for web protection. With no secret, the service refuses everything.
+  deployment, environment, pipeline and run) and kept in `DeployedComponentHistory`; the record names the commit put
+  in place (`deployedCommitId`).
 - **`require-passed-run="true"`.** `deploy#Component` and `update#Component` refuse to put a commit in place unless the
   request is an attested one for that component and commit, so **Deploy**, **Update** and their restart forms on
   System › Components are refused, whoever asks; `load#Component` (a directory, which has no commit) is refused too.
-  Fetch and preview still work. The other members of a cluster apply what the deploying member did from the shared
-  repository, as for any deploy.
+  Fetch and preview still work. A start writes a component kept in the database only at the commit an attested deploy
+  put in place (never an empty commit, the repository's head; a component deployed before the gate was on is deployed
+  again through its environment), and another cluster member applies a deploy or update only at the commit the
+  component's last attestation names.
 
-The setting is live (a conf reload applies it). What it does not cover: whoever edits the conf (`CONF_EDIT`) or the
-runtime's files turns it off or puts a component in a component directory for the next start; it keeps the server's
-own deploy services to attested commits, not its file system. See [Attack-Surface](../security/Attack-Surface.md#component-deploy-and-conf-reload).
+What it does not cover: whoever edits the conf (`CONF_EDIT`) or the runtime's files turns it off or puts a component in
+a component directory for the next start; whoever writes the database (Tools' SQL with Allow Changes, Data Load, an
+entity editor) can change the rows a start reads; it keeps the server's own deploy services to attested commits, not
+its file system or database. See [Attack-Surface](../security/Attack-Surface.md#component-deploy-and-conf-reload).
 
 ## Clusters and containers
 
