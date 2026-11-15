@@ -148,16 +148,42 @@ pub(crate) fn sections(refs: &[Json], direction: Direction, filter: &Filter) -> 
                 *counts.entry(str_of(row, "shortName").to_string()).or_default() += 1;
             }
             for row in &mut rows {
-                let (short, name) = (str_of(row, "shortName"), str_of(row, "name"));
-                if counts.get(short).copied().unwrap_or(0) > 1 && name != short {
-                    let parts: Vec<&str> = name.split(['.', ':', '/']).collect();
-                    let owner = parts[parts.len().saturating_sub(2)..].join(".");
-                    row["shortName"] = json!(owner);
+                let short = str_of(row, "shortName");
+                if counts.get(short).copied().unwrap_or(0) > 1 {
+                    if let Some(owner) = owner_name(str_of(row, "name"), str_of(row, "id"), short) {
+                        row["shortName"] = json!(owner);
+                    }
                 }
             }
             json!({"kind": kind, "count": rows.len(), "rows": rows})
         })
         .collect()
+}
+
+/// A row's name told apart from others of its short name: the last two parts of its full name, or, when the index
+/// names it by its short name alone (a form or transition, `ExampleList`), of its id's location
+/// (`form:component://…/Search.xml#ExampleList` is `Search.xml#ExampleList`, a transition's `:any` left off). None
+/// when neither says more than the short name.
+pub(crate) fn owner_name(name: &str, id: &str, short: &str) -> Option<String> {
+    let full = if name != short {
+        name
+    } else {
+        let location = id.split_once(':').map_or("", |(_, rest)| rest);
+        match location.split_once('#') {
+            Some((file, anchor)) => {
+                let anchor = anchor.split(':').next().unwrap_or(anchor);
+                return Some(format!("{}#{anchor}", last_parts(file, 2)));
+            }
+            None if !location.is_empty() && location != short => location,
+            None => return None,
+        }
+    };
+    Some(last_parts(full, 2))
+}
+
+fn last_parts(text: &str, count: usize) -> String {
+    let parts: Vec<&str> = text.split(['.', ':', '/']).collect();
+    parts[parts.len().saturating_sub(count)..].join(".")
 }
 
 /// The kinds of the other sides of `refs`, sorted, for the browser's kind filter.

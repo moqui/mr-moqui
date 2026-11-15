@@ -215,3 +215,38 @@ fn the_centers_links_follow_its_kind() {
         ]
     );
 }
+
+#[test]
+fn rows_the_index_names_by_short_name_are_told_apart_by_their_ids_location() {
+    // the index names a form or transition by its own name only; its id carries the screen
+    assert_eq!(
+        owner_name(
+            "ExampleList",
+            "form:component://example/screen/Gallery/Search.xml#ExampleList",
+            "ExampleList"
+        )
+        .as_deref(),
+        Some("Search.xml#ExampleList")
+    );
+    assert_eq!(
+        owner_name(
+            "updateExample",
+            "transition:component://example/screen/Gallery/EditExample.xml#updateExample:any",
+            "updateExample"
+        )
+        .as_deref(),
+        Some("EditExample.xml#updateExample")
+    );
+    // a full name says it already
+    assert_eq!(
+        owner_name(
+            "shop.OrderServices.place#Order",
+            "service:shop.OrderServices.place#Order",
+            "place#Order"
+        )
+        .as_deref(),
+        Some("OrderServices.place#Order")
+    );
+    // nothing more to say
+    assert_eq!(owner_name("orders", "rest:orders", "orders"), None);
+}
