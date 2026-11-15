@@ -17,6 +17,7 @@ moqui tui --path /apps/gallery/List         start on a screen
 moqui tui --serve                           also open the HTTP, SSH and cluster ports, for the browser beside it
 moqui tui --snapshot /apps/gallery/Detail --size 100x40     print one screen as text and exit
 moqui tui --server https://erp.example.com  the apps of a running server, over HTTP
+moqui tui --keys classic                    the Classic keys for this run (Keys)
 ```
 
 The client runs in this process on this runtime. It opens no port unless `--serve`, and it writes nothing to stderr: the
@@ -156,7 +157,7 @@ session is found only by its own user. It ends on `close`, or after 10 minutes w
 | `set <element> <value>` | replace a field's value; a drop-down takes a choice's value or label and chooses it as a person does, so its dependent fields follow. `set <element>` alone, or with `""` as its value, empties it (over ssh, quote it from the local shell: `'""'`) |
 | `do <element>` | focus and press Enter: a button, link, dialog button, menu (a submit button by its text); with a confirm open, `do Yes` answers it |
 | `do Find [list]` | open a list's find fields (as `f` on the list), and with the find open, find: the list again with the fields set, each with its own operator, and none of an empty field's flags |
-| `find <text>` | move to the text on the screen, a list or tree row's included (it becomes the current row), and a button menu by its items; then `key Right` follows the row's link |
+| `find <text>` | move to the text on the screen, a list or tree row's included (it becomes the current row), and a button menu by its items; then `key Right` follows the row's link (an agent's keys are Classic unless `--keys modern`) |
 | `elements` | the focusable elements: number, kind, id, label, value, and required, changed or error marks |
 | `size <cols>x<rows>` | the drawing size; a tall one shows a long list whole (the page size follows the rows) |
 | `format text\|json` | the answers' form; `--json` on one command for that one |
@@ -233,35 +234,77 @@ the account wants its code.
 
 ## Keys
 
-The scheme follows 5250 function keys and Lynx link travel. Single-letter keys act only when focus is not in a text
-field; function keys and Alt combinations work everywhere. No default uses Ctrl+A, Ctrl+B, Ctrl+Z, Ctrl+\ or Ctrl+], so
-tmux, screen, job control and ssh escapes are left alone. F1 lists the keys in use, a theme's included.
+There are two key schemes. **Modern**, the default, has the keys of today's terminal apps and desktop editors: the
+arrows move, Enter follows, Backspace goes back, Esc opens the palette when nothing is open, and the vi keys that clash
+with nothing work too (`j`, `k`, `/`, `n`, `:`). **Classic** is the 5250 green screen with Lynx link travel: F3 goes
+back, F12 cancels, Right follows a link and Left goes back.
+
+- **Choosing.** The palette's **Keys: switch to …** row changes the scheme and keeps it as the user's `TUI_KEYS`
+  preference. **Terminal keys** in the browser's Appearance dialog does the same.
+- **No choice yet.** A user who has not chosen gets the theme's `STRT_TUI_KEY_SCHEME` (Green Screen's is Classic),
+  else Modern.
+- **One run.** `moqui tui --keys modern|classic` uses a scheme for one run and keeps nothing.
+- **Agents.** An agent (`--agent`, `agent-apps`, Assist's screen tools) uses Classic unless `--keys` says otherwise.
+
+F1 names the scheme and lists the keys in use, a theme's included. Single-letter keys act only when focus is not in a
+text field; function keys and Ctrl and Alt combinations work everywhere. Ctrl+C copies and never stops the client;
+Ctrl+Q quits. No default uses Ctrl+B, Ctrl+\ or Ctrl+], and none uses Ctrl+Z outside a text field, so tmux, job
+control and ssh escapes are left alone. Classic leaves Ctrl+A alone too, for GNU screen.
+
+The keys that differ:
+
+| Action | Modern | Classic |
+| --- | --- | --- |
+| Next / previous field, link, button or list | Tab, Down, Right, `j` / Shift+Tab, Up, Left, `k` | Tab, Down / Shift+Tab, Up |
+| Follow, press, open (see Enter below) | Enter | Enter, Right |
+| Back to the screen before | Backspace (not in a field), Alt+Left | F3, Alt+Left, Left and Backspace (not in a field) |
+| Esc | Close the top dialog, list or row editor; with nothing open, the palette | Close the top dialog or list; else clear the message; else leave the edits, after asking (F12 too) |
+| Previous / next page | PgUp / PgDn | F7 / F8, PgUp / PgDn |
+| Prompt: a drop-down's list, a date's picker, a text find's operator | F4, Alt+Down | F4 |
+| The palette | Ctrl+K, Ctrl+P, `:` | Ctrl+K, `:` |
+| Go to a path (`/apps/...`) or a menu title | `g`, Ctrl+G | `g` |
+| Find text on the screen, then the next and previous match | Ctrl+F, `/`; F3, `n`; Shift+F3, `N` | `/`; `n`; `N` |
+| Quick create | `+` | F6, `+` |
+| Select all rows | Ctrl+A, `*` | `*` |
+
+**Enter.** In a field it submits the field's form (a find form finds). On a link it follows the link, and on a button it
+presses it. On a menu button it opens the items, and on a box title it opens or closes the box. In a text area it is a
+new line. On a list row:
+
+- in Modern, Enter follows the row's first link, and edits the row when it has no link;
+- in Classic, Enter edits the row when it has fields, and opens its first link otherwise. Right follows the link.
+
+In both schemes `e` edits the row.
+
+**Lists and trees.** In both schemes:
+
+- On a tree, Right opens a node and Left closes it. Classic's Right also follows a leaf.
+- On a radio, Left and Right change the choice.
+- In the confirm buttons, the tray and the date picker, Left and Right move as they always have.
+
+In Modern, Left and Right move as Up and Down do in menus and the drawer, and `j`/`k` move through a list's or a
+tree's rows.
+
+The keys both schemes share:
 
 | Key | Action |
 | --- | --- |
-| Tab, Down / Shift+Tab, Up | Next / previous field, link, button or list |
-| Enter | In a field: submit its form (a find form finds). On a link: follow it. On a button: press it. On a list: edit the row when it has fields, else open its first link. On a menu button: its items. On a box title: open or close it. In a text area: a new line |
-| Right / Left | Not in a field: follow / back (on a list row, its first link). In a field: move the cursor. On a tree: open / close a node |
-| Home, End, PgUp, PgDn | On a tree: its first and last rows, ten rows up and down |
+| Home, End | A list's first and last row of the page, else the first and last thing to focus; on a tree its first and last rows |
+| PgUp, PgDn on a tree | Ten rows up and down |
 | Alt+Enter, Ctrl+S | Submit the focused form from anywhere, a text area included |
-| Esc, F12 | Close the top dialog or list; else clear the message; else leave the edits, after asking |
-| F1, `?` | The keys, the focused component's keys, and the screen's documents: a document's number opens it |
-| F3, Alt+Left, Backspace (not in a field) | Back to the screen before |
-| F4 | Prompt: a drop-down's list, a date's picker, a text find's operator |
+| F1, `?` | The keys, the focused field's or component's keys, and the screen's documents: a document's number opens it |
 | F5, Ctrl+R | Refresh the screen |
-| F6, `+` | Quick create: the apps' create forms, each in a dialog |
-| F7 / F8, PgUp / PgDn | Previous / next page of the focused list (else the first list); on a wizard with no list, PgDn is Next |
 | Shift+Left / Shift+Right | Scroll a list wider than the screen; its first column stays |
 | F9 | Show the drawer and focus it; again to hide it. The choice is kept for the user (`TUI_DRAWER_OPEN`) |
 | F10 | Actions: the screen's button menus, then the focused list's row actions, Edit row, Find, Saved finds, Columns and exports |
-| Ctrl+K, `:` | The palette: apps, recent screens, actions, and what the server's search finds as you type |
-| `g` | Go to a path (`/apps/...`) or a menu title |
-| `/`, `n`, `N` | Find text on the screen (links, fields, list rows), then the next and previous match |
-| Space, `*` | On a list: select the row, select all. On a check box: toggle |
+| Space | On a list: select the row. On a check box: toggle |
 | `f`, `s`, `e` | On a list: the find dialog of its header fields, cycle the sort, edit the row |
 | `v` | On a list with `views`, or its board or calendar: the next view (list, board, calendar), kept for the user |
-| Alt+B, Alt+I, Alt+K | In a Markdown text area: bold, italic or link the word at the cursor |
+| Ctrl+C | Copy: in a text field the selection (else all of it), on a list the current row's cells, on a link its text |
+| Ctrl+PgUp / Ctrl+PgDn | The previous / next subscreen tab |
 | Alt+1…Alt+9, 1…9 | Subscreen tab N |
+| Ctrl+N / Ctrl+P | Down and up in a drop-down's list, a menu and the palette |
+| Alt+B, Alt+I, Alt+K | In a Markdown text area: bold, italic or link the word at the cursor |
 | `#` | Number the links; then digits and Enter follow link N |
 | `=` | Info: the screen, its address, the focused link's target |
 | `o` | Open the screen or the focused link in the browser (its address on the message line) |
@@ -273,6 +316,23 @@ tmux, screen, job control and ssh escapes are left alone. F1 lists the keys in u
 | Alt+X | Stop Assist's run |
 | Ctrl+L | Redraw |
 | Ctrl+Q | Quit, after asking if a form changed |
+
+**A text field** edits as a desktop editor does, in both schemes:
+
+| Key | In a text field or text area |
+| --- | --- |
+| Shift+Left, Right, Home, End (Up, Down in a text area) | Select; Ctrl+Shift+Left and Right select a word |
+| Ctrl+Left, Ctrl+Right; Ctrl+Home, Ctrl+End | A word left and right; the text's start and end |
+| Ctrl+C, Ctrl+X | Copy, cut: the selection, else all of the field. It goes on the terminal's clipboard (OSC 52) and is kept for Ctrl+V |
+| Ctrl+V | Paste what was copied in the client (a field's, a row's, the code editor's), through the field's length and mask. The terminal's own paste (Ctrl+Shift+V) brings the system clipboard in |
+| Ctrl+Z, Ctrl+Y | Undo, redo; a run of typing is one step |
+| Alt+Backspace, Ctrl+Backspace; Ctrl+Delete | Delete the word before the cursor; the word after it |
+| Ctrl+U; Ctrl+E | Delete back to the line's start; go to the line's end |
+| Ctrl+A | Select all of the field (Modern) |
+| Esc | Drop the selection; with none, Esc is the screen's |
+
+Typing, Backspace, Delete and a paste take the place of the selection. The selection is drawn underlined in the
+selection color. Many terminals send Ctrl+Backspace as Backspace; Alt+Backspace works in all of them.
 
 In a drop-down list, typing narrows it, Up and Down move, Enter picks and Esc closes; a search drop-down (an
 `ac-transition` text line, or `server-search`) asks the server for what is typed once the typing stops. A `scan-input` is a
@@ -311,7 +371,7 @@ more above or below. The preview scrolls the same way.
 
 A row of buttons wider than the screen goes on as many lines as it needs.
 
-Leaving a changed form (a link, F3, Ctrl+Q) asks: Stay, Discard or Save. A button or link with a `confirmation` asks
+Leaving a changed form (a link, Back, Ctrl+Q) asks: Stay, Discard or Save. A button or link with a `confirmation` asks
 No or Yes, starting at No.
 
 A successful write and F5 refresh the current screen and its cached parent screens, so a record's header and actions
@@ -377,10 +437,12 @@ A screen theme (the user's `STT_INTERNAL_QUASAR` theme, else `DEFAULT_QUASAR`) c
 | --- | --- | --- |
 | `STRT_TUI_BREAKPOINTS` | `sm`, `md`, `lg`, `xl`, `drawer` (columns) | `md = 110` |
 | `STRT_TUI_COLORS` | `text`, `primary`, `secondary`, `positive`, `negative`, `warning`, `info`, `muted`, `field`, `focus`, `changed`, `selection`, `border` | `primary = #1976d2` |
-| `STRT_TUI_KEYS` | an action name: `next`, `prev`, `activate`, `submit`, `back`, `cancel`, `help`, `prompt`, `refresh`, `page-prev`, `page-next`, `drawer`, `select`, `select-all`, `find`, `sort`, `view`, `number-links`, `info`, `open-browser`, `redraw`, `log`, `palette`, `go-to`, `quick-create`, `actions`, `find-text`, `find-next`, `find-prev`, `messages`, `tray`, `edit-row`, `assist`, `assist-stop`, `quit`, `tab-1` to `tab-9` | `back = f3 \| alt+left` |
+| `STRT_TUI_KEYS` | an action name: `next`, `prev`, `activate`, `submit`, `back`, `cancel`, `help`, `prompt`, `refresh`, `page-prev`, `page-next`, `drawer`, `select`, `select-all`, `find`, `sort`, `view`, `number-links`, `info`, `open-browser`, `redraw`, `log`, `palette`, `go-to`, `quick-create`, `actions`, `find-text`, `find-next`, `find-prev`, `messages`, `tray`, `edit-row`, `assist`, `assist-stop`, `quit`, `first`, `last`, `tab-next`, `tab-prev`, `copy`, `tab-1` to `tab-9`; with `modern.` or `classic.` before it (`classic.back`), for that key scheme only | `back = f3 \| alt+left` |
+| `STRT_TUI_KEY_SCHEME` | `modern` or `classic`: the scheme of a user who has not chosen one (Keys) | `classic` |
 
 A value that does not read is logged and the built-in one stays. Esc, Enter and Tab keep what they do whatever a theme
-binds.
+binds. A `STRT_TUI_KEYS` row replaces the action's chords in the scheme in use. A row for one scheme (`modern.find-next
+= f7`) wins over the same action's row without one, and a row for the other scheme is left out.
 
 - **Brand colors.** The theme's browser brand colors (`STRT_QUASAR_CONFIG`, `{"brand": {"primary": …}}`) are the
   terminal's `primary`, `secondary`, `positive`, `negative`, `warning` and `info` too; a `STRT_TUI_COLORS` row wins.
@@ -485,7 +547,7 @@ clipboard (OSC 52, as a drag does) and keep it for Ctrl+V. The terminal does not
 text copied elsewhere comes in with the terminal's own paste (Ctrl+Shift+V, or Cmd+V), which the editor takes as one
 edit. Undo keeps the last 200 edits; typed characters on one line undo together. A read-only text refuses edits with a
 message; it does not hold Tab, so Tab moves on from it. The keys the editor does not use go on to the screen's: F1, F5,
-Ctrl+K, Ctrl+S, the Alt keys. Ctrl+Z and Ctrl+Y act only in the editor; no screen key uses them.
+Ctrl+K, Ctrl+S, the Alt keys. Ctrl+Z and Ctrl+Y act only in the editor and in text fields; no screen key uses them.
 
 A name the client does not know draws a placeholder naming it, and `=` lists the components the client has: a remote
 client knows only those it was built with. An add-on crate registers its own behind a `tui` feature of its crate, which
@@ -572,4 +634,5 @@ rename or delete. The mouse does nothing in the pane.
 
 ## Not yet
 
-Per-user key bindings, a two-way rich-text editor, and a `diagram` component wait; plans/Remaining-Work.md lists them.
+A user's own key for one action (only whole schemes are chosen per user), vi and emacs key schemes, a two-way rich-text
+editor, and a `diagram` component wait; plans/Remaining-Work.md lists them.

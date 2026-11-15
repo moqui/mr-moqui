@@ -9269,6 +9269,11 @@
                             '<template v-if="allowed(\'THEME_LINE_HEIGHT\')"><q-toggle dense :label="labels.lineRelaxed" :model-value="value(\'THEME_LINE_HEIGHT\') === \'relaxed\'" @update:model-value="set(\'THEME_LINE_HEIGHT\', $event ? \'relaxed\' : \'\')"></q-toggle><br></template>' +
                             '<q-toggle v-if="allowed(\'THEME_LINKS_UNDERLINE\')" dense :label="labels.linksUnderline" :model-value="value(\'THEME_LINKS_UNDERLINE\') === \'true\'" @update:model-value="set(\'THEME_LINKS_UNDERLINE\', $event ? \'true\' : \'\')"></q-toggle></div>' +
                     '</div>' +
+                    // the terminal client's keys (docs/ui/TUI.md, Keys): TUI_KEYS, which the TUI palette's Keys row sets too
+                    '<div v-if="allowed(\'TUI_KEYS\')" id="m-appearance-terminal-keys"><div class="text-subtitle2 q-mb-xs">{{labels.terminalKeys}}</div>' +
+                        '<q-btn-toggle :model-value="terminalKeys" @update:model-value="setTerminalKeys" dense no-caps unelevated toggle-color="primary" ' +
+                            ':options="[{label:labels.keysModern,value:\'modern\'},{label:labels.keysClassic,value:\'classic\'}]"></q-btn-toggle>' +
+                        '<div class="text-caption m-muted q-mt-xs">{{labels.terminalKeysHint}}</div></div>' +
                     '<div class="row justify-between items-center"><q-btn flat dense no-caps color="negative" :label="labels.resetDefaults" @click="reset"></q-btn>' +
                         '<q-btn unelevated no-caps color="primary" :label="labels.done" v-close-popup></q-btn></div>' +
                 '</div>' +
@@ -9302,7 +9307,13 @@
                 return [{ key: "THEME_SIZE_SMALL", label: this.labels.sizeSmall }, { key: "THEME_SIZE_LARGE", label: this.labels.sizeLarge }]
                     .filter((size) => this.allowed(size.key));
             },
-            sizeOptions() { return moqui.appearanceSizes.map((size) => ({ label: Math.round(Number(size) * 100) + "%", value: size })); }
+            sizeOptions() { return moqui.appearanceSizes.map((size) => ({ label: Math.round(Number(size) * 100) + "%", value: size })); },
+            // the shell data's tui.keyScheme: the user's TUI_KEYS, else the theme's STRT_TUI_KEY_SCHEME, else modern
+            terminalKeys() {
+                this.version;
+                const tui = (this.$root.shellData && this.$root.shellData.tui) || {};
+                return tui.keyScheme === "classic" ? "classic" : "modern";
+            }
         },
         methods: {
             value(key) { this.version; return this.appearance.values[key] || ""; },
@@ -9327,6 +9338,11 @@
                 this.version++;
             },
             setDensity(value) { this.set("SHELL_DENSITY", value); },
+            setTerminalKeys(value) {
+                this.$root.setPreference("TUI_KEYS", value);
+                if (this.$root.shellData) this.$root.shellData.tui = Object.assign({}, this.$root.shellData.tui, { keyScheme: value });
+                this.version++;
+            },
             reset() { moqui.appearanceKeys.forEach((key) => { if (this.appearance.values[key] && this.allowed(key)) this.set(key, ""); }); }
         }
     });
@@ -9594,7 +9610,8 @@
         themeDefault: "Theme default", textSize: "Text size", sizeSmall: "Small text (tables, captions)", sizeLarge: "Large text (headings)",
         density: "Density", densityComfortable: "Comfortable", densityCompact: "Compact", motion: "Motion", motionAuto: "Follow the system",
         motionReduce: "Reduce", motionFull: "Full", readability: "Readability", lineRelaxed: "Relaxed line spacing", linksUnderline: "Underline links",
-        corners: "Corners", cornersDefault: "Rounded", cornersSquare: "Square", cornersRound: "More rounded", resetDefaults: "Reset to defaults", done: "Done" };
+        corners: "Corners", cornersDefault: "Rounded", cornersSquare: "Square", cornersRound: "More rounded", resetDefaults: "Reset to defaults", done: "Done",
+        terminalKeys: "Terminal keys", keysModern: "Modern", keysClassic: "Classic (green screen)", terminalKeysHint: "For the terminal client: moqui tui, and over SSH" };
 
     const rootOptions = (config) => ({
         data() {
@@ -9763,7 +9780,8 @@
                 return moqui.request(this.appRootPath + "/shellData").then((result) => {
                     const data = result.json && moqui.isPlainObject(result.json) ? result.json : null;
                     if (!data) return;
-                    this.shellData = { apps: Array.isArray(data.apps) ? data.apps : [], shell: moqui.isPlainObject(data.shell) ? data.shell : {}, counts: data.counts };
+                    this.shellData = { apps: Array.isArray(data.apps) ? data.apps : [], shell: moqui.isPlainObject(data.shell) ? data.shell : {}, counts: data.counts,
+                        tui: moqui.isPlainObject(data.tui) ? data.tui : {} };
                     this.shellCounts = moqui.isPlainObject(data.counts) ? data.counts : {};
                     this.registerProviderKeys();
                     this.restoreTray();

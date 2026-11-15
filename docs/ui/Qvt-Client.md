@@ -543,6 +543,7 @@ below): a locked choice has no control, and the dark mode toggle and the menu it
 | `THEME_MOTION` | `reduce`, `full`, empty (the system's reduced motion) | the body class `m-motion-reduce` or `m-motion-full` |
 | `THEME_LINE_HEIGHT` | `relaxed` | `--m-line-height` 1.75 |
 | `THEME_LINKS_UNDERLINE` | `true` | the body class `m-links-underline` |
+| `TUI_KEYS` | `modern`, `classic` | not in the browser: the terminal client's key scheme ([TUI](TUI.md#keys)). **Terminal keys** shows it from the shell data's `tui.keyScheme` (the user's, else the theme's `STRT_TUI_KEY_SCHEME`, else Modern); a theme's `lockedKeys` may name it. Reset to defaults leaves it |
 | `THEME_RADIUS` | `square`, `round` | the body class `m-radius-square` or `m-radius-round` |
 | `SHELL_DENSITY` | `comfortable`, `compact` | see Preferences |
 
