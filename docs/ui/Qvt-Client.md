@@ -1422,7 +1422,7 @@ level at the path itself (no walk down the default subscreens), which is how the
   (`url`, `openPath`, `parameters`: the roots are asked for with `treeNodeId=#`, a node's children with its id and `treeNodeName`, and the
   answer is `m-tree-item`'s list of `{id, text, a_attr: {urlText}, li_attr: {treeNodeName}, children: true | false | [...]}`),
   `buttonMenu` (`text`, its items as links in `c`), `placeholder` (`text`, the browser `url`), `error`. A `fragment` holds the nodes of a
-  `text type="tui"`, and a `component` (`name`, `props`, `base`: the screen path the server sets) names a client component (docs/ui/TUI.md). A
+  `text type="tui"`, and a `component` (`name`, `props`, `base`: the screen path the server sets) names a client component (the framework's are listed in docs/ui/TUI.md, Components). A
   client draws a `t` it does not know as a placeholder.
 - **Actions.** `link`: `text`, `url` with its parameters, `kind` (the `link-type`), `method`, `confirm`, `btnType`, `icon` (a Material Symbols
   name), `badge`, `tooltip`, `disabled`. A hidden-form link posts.

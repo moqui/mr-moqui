@@ -432,6 +432,26 @@ fn phase3_view() -> AppView {
     view
 }
 
+/// The `code` component: the gutter with its problem marks, the highlighted text (drawn as plain text here), the cursor
+/// and the status line with the problem under the cursor.
+#[test]
+fn code_editor_snapshot() {
+    let json = r#"{"v":1,"screen":{"path":"/code","title":"Code"},"c":[{"t":"component","id":"Editor","name":"code","base":"/code",
+        "props":{"language":"xml","cursorLine":3,"rows":8,
+        "text":"<screen require-authentication=\"false\">\n    <!-- the list -->\n    <widgets>\n        <label text=\"${name}\" typo=\"x\"/>\n    </widgets>\n</screen>",
+        "problems":[{"line":4,"column":40,"severity":"error","message":"typo is not an attribute of label"},
+            {"line":3,"column":5,"severity":"warning","message":"widgets is empty"}]}}]}"#;
+    let link = FakeLink::from_json(&[json]).unwrap();
+    let mut view = view_of(ScreenModel::from_json(json).unwrap(), link);
+    view.session_mut().resize(100, 40);
+    while view.session().focus_id() != "Editor" {
+        press(&mut view, Key::Tab);
+    }
+    press(&mut view, Key::Down);
+    press(&mut view, Key::End);
+    golden("code-100x40", &view.screen_text(100, 40));
+}
+
 #[test]
 fn phase_three_pieces_and_overlays() {
     let mut view = phase3_view();

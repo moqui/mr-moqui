@@ -37,7 +37,12 @@ impl Session {
                 }
             }
         }
-        let Some(form) = self.index.form_of(node).map(|form| form.id.clone()) else {
+        let Some(form) = self
+            .index
+            .form_of(node)
+            .map(|form| form.id.clone())
+            .or_else(|| self.component_form(node))
+        else {
             return;
         };
         // The browser posts the pressed button with its field name as both name and value (Java's submit macro), which a

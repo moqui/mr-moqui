@@ -1,0 +1,40 @@
+ ≡ Code                                                                                   Tue 14:32
+────────────────────────────────────────────────────────────────────────────────────────────────────
+   1  <screen require-authentication="false">
+   2      <!-- the list -->
+   3·     <widgets>
+   4!         <label text="${name}" typo="x"/>
+   5      </widgets>
+   6  </screen>
+ Ln 4, Col 41  xml  ! typo is not an attribute of label
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ F1=Help  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to
