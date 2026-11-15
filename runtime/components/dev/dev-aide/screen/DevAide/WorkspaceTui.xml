@@ -1,0 +1,724 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The Workspace's terminal form (plans/design-dev-aide.md D14), in a dynamic container of Workspace.xml with its
+    parameters. A header with the root, the branch and its changes, a Git menu (Fetch, Pull, Push, Switch branch, New
+    branch) and Restart needed; then the tabs Code (the file tree, Go to file, Search, the file in the code component
+    with Save, its problems, a save conflict's diff, the file's actions), Changes (stage, unstage and discard the files
+    selected, the diff of one, the commit form, the contributor agreement) and Commits (a page of the log, a commit's
+    message, files and diffs, Cherry-pick and Revert). Each call is the service behind the Workspace's own transition
+    (WorkspaceServices, VcsServices, HostingServices), which checks the instance purpose, the user's tier and the root's
+    read only flag; git commands run to the end before the answer. Each write goes back to the Workspace with a message;
+    what a save or a conflict leaves for the page after it is kept in the session (DevAideTui.*). Branches, tags,
+    stashes, merge requests, sessions, review, blame and hunks are the browser's. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Workspace" default-menu-include="false">
+    <parameter name="rootId"/>
+    <parameter name="path"/>
+    <parameter name="line"/>
+    <parameter name="view"/>
+    <parameter name="tab"/>
+    <parameter name="query"/>
+    <parameter name="regex"/>
+    <parameter name="changePath"/>
+    <parameter name="staged"/>
+    <parameter name="commitId"/>
+    <parameter name="commitPath"/>
+    <parameter name="pageIndex"/>
+    <parameter name="diff"/>
+
+    <!-- ==== reads for the page's parts, as JSON ==== -->
+    <!-- the tree's nodes (the tui tree node): a directory's entries from list#Directory, `#` the root's; the directories
+        on treeOpenPath come with their entries, so the tree opens at the file -->
+    <transition name="fileTree" read-only="true">
+        <actions><script><![CDATA[
+            const workspace = sri.buildUrl('../Workspace').path
+            const parts = String(context.treeOpenPath || '').split('/').filter((part) => part)
+            const openDirs = new Set(parts.slice(0, -1).map((part, index) => parts.slice(0, index + 1).join('/')))
+            const nodesOf = (dir) => {
+                const out = ec.service.sync().name('org.moqui.devaide.WorkspaceServices.list#Directory').parameters({rootId: rootId, path: dir}).call()
+                if (ec.message.hasError()) return null
+                return Array.from((out && out.entries) || []).map((entry) => {
+                    const relative = dir ? dir + '/' + entry.name : entry.name
+                    // a directory's ignored mark is rolled up from what is in it, so only a file's is shown
+                    const text = (entry.status ? entry.status + ' ' : '') + entry.name + (entry.dir ? '/' : '') + (entry.ignored && !entry.dir ? ' (ignored)' : '')
+                    if (entry.dir) return {id: relative, text: text, children: (openDirs.has(relative) && nodesOf(relative)) || true}
+                    return {id: relative, text: text, children: false,
+                        a_attr: {urlText: workspace + '?rootId=' + encodeURIComponent(rootId || '') + '&path=' + encodeURIComponent(relative)}}
+                })
+            }
+            const node = String(context.treeNodeId || '#')
+            const nodes = nodesOf(node === '#' ? '' : node)
+            if (nodes == null) {
+                const errors = ec.message.errorsString
+                ec.message.clearErrors()
+                ec.web.sendJsonResponse({errors: errors})
+            } else {
+                ec.web.sendJsonResponse(nodes)
+            }
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- Go to file: the root's files (find#Files) that hold every word typed, those whose name holds it first -->
+    <transition name="fileChoices" read-only="true">
+        <actions><script><![CDATA[
+            const files = Array.from((ec.service.sync().name('org.moqui.devaide.WorkspaceServices.find#Files').parameters({rootId: rootId}).call() || {}).files || [])
+            const term = String(context.term || '').trim().toLowerCase()
+            const words = term.split(/\s+/).filter((word) => word)
+            const nameOf = (file) => file.split('/').pop().toLowerCase()
+            const hits = files.filter((file) => words.every((word) => file.toLowerCase().includes(word)))
+            hits.sort((left, right) => (nameOf(left).includes(term) ? 0 : 1) - (nameOf(right).includes(term) ? 0 : 1) || left.length - right.length)
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(errors ? {errors: errors} : {options: hits.slice(0, 50).map((file) => ({value: file, label: file}))})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the code component's check (800 ms after the typing stops) and its completion: the schema digest of the root element -->
+    <transition name="checkText"><service-call name="org.moqui.devaide.WorkspaceServices.check#File" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="schemaDigest" read-only="true"><service-call name="org.moqui.dev.DevToolsServices.get#SchemaDigest" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+
+    <!-- ==== the file ==== -->
+    <!-- Save: the text read at baseHash, or with overDisk the text a conflict kept, over the disk's hash. A conflict keeps
+        both texts for the compare; a save keeps its problems for the file at its new hash. -->
+    <transition name="saveFile">
+        <actions><script><![CDATA[
+            const conflictKey = 'DevAideTui.conflict'
+            let text = context.fileText
+            let base = context.baseHash
+            let ready = true
+            if (String(context.overDisk) === 'true') {
+                let kept = null
+                try { kept = JSON.parse(ec.web.sessionAttributes[conflictKey] || 'null') } catch (e) { kept = null }
+                if (!kept || kept.rootId !== rootId || kept.path !== path) {
+                    ec.message.addError(ec.l10n.localize('Nothing to save over the disk: open the file and save it again'))
+                    ready = false
+                } else {
+                    text = kept.text
+                    base = kept.diskHash
+                }
+            }
+            if (ready) {
+                ec.web.sessionAttributes.remove(conflictKey)
+                const out = ec.service.sync().name('org.moqui.devaide.WorkspaceServices.save#File').parameters({rootId: rootId, path: path,
+                    text: String(text ?? ''), baseHash: String(base || '')}).call() || {}
+                if (!ec.message.hasError() && out.conflict) {
+                    ec.web.sessionAttributes[conflictKey] = JSON.stringify({rootId: rootId, path: path, text: String(text ?? ''),
+                        diskHash: out.diskHash || '', diskText: out.diskText || ''})
+                    ec.message.addMessage(path + ' ' + ec.l10n.localize('changed on disk since it was opened: compare them below'), 'warning')
+                } else if (!ec.message.hasError()) {
+                    const files = Array.from((out.reload && out.reload.files) || [])
+                    const problems = Array.from(out.problems || [])
+                    const summary = files.map((file) => file.summary).filter((one) => one).join('; ')
+                    ec.message.addMessage(ec.l10n.localize('Saved') + (summary ? ' · ' + summary : '') + (out.reload ? ' · ' + out.reload.millis + ' ms' : ''),
+                        problems.some((problem) => problem.severity === 'error') ? 'warning' : 'success')
+                    const ddl = files.flatMap((file) => Array.from(file.ddl || []))
+                    if (ddl.length) ec.message.addMessage(ec.l10n.localize('DDL run') + ': ' + ddl.join('; '), 'info')
+                    if (out.rebuild) ec.message.addMessage(ec.l10n.localize('A change needs a rebuild (./moq build) and a restart'), 'warning')
+                    else if (out.restart) ec.message.addMessage(ec.l10n.localize('A change needs a restart to apply'), 'warning')
+                    if (out.restart || out.rebuild) ec.web.sessionAttributes['DevAideTui.restart'] = 'true'
+                    ec.web.sessionAttributes['DevAideTui.problems'] = JSON.stringify({rootId: rootId, path: path, hash: out.hash || '', problems: problems})
+                }
+            }
+        ]]></script></actions>
+        <default-response url="../Workspace"/>
+        <error-response url="../Workspace"/>
+    </transition>
+    <!-- Take the disk's: forget the text a conflict kept; the page reads the file again -->
+    <transition name="takeDisk">
+        <actions><script>ec.web.sessionAttributes.remove('DevAideTui.conflict')</script></actions>
+        <default-response url="../Workspace"/>
+    </transition>
+    <!-- Check: the file's problems as a save would find them, kept as a save's are -->
+    <transition name="checkFile">
+        <actions><script><![CDATA[
+            const file = ec.service.sync().name('org.moqui.devaide.WorkspaceServices.get#File').parameters({rootId: rootId, path: path}).call() || {}
+            if (!ec.message.hasError()) {
+                const problems = Array.from((ec.service.sync().name('org.moqui.devaide.WorkspaceServices.check#File')
+                    .parameters({rootId: rootId, path: path, text: file.text || ''}).call() || {}).problems || [])
+                if (!ec.message.hasError()) {
+                    ec.web.sessionAttributes['DevAideTui.problems'] = JSON.stringify({rootId: rootId, path: path, hash: file.hash || '', problems: problems})
+                    ec.message.addMessage(problems.length ? problems.length + ' ' + ec.l10n.localize('problems') : ec.l10n.localize('No problems'),
+                        problems.length ? 'warning' : 'success')
+                }
+            }
+        ]]></script></actions>
+        <default-response url="../Workspace"/>
+        <error-response url="../Workspace"/>
+    </transition>
+    <transition name="createFile">
+        <actions>
+            <service-call name="org.moqui.devaide.WorkspaceServices.create#File" in-map="{rootId:rootId, path:newPath, text:''}" out-map="made"/>
+            <set field="path" from="made?.path || path"/>
+            <set field="line" from="null"/>
+        </actions>
+        <default-response url="../Workspace"/>
+        <error-response url="../Workspace"/>
+    </transition>
+    <transition name="createDirectory">
+        <actions><service-call name="org.moqui.devaide.WorkspaceServices.create#Directory" in-map="{rootId:rootId, path:newPath}"/>
+            <message type="success">Made the folder ${newPath}</message></actions>
+        <default-response url="../Workspace"/>
+        <error-response url="../Workspace"/>
+    </transition>
+    <transition name="renamePath">
+        <actions>
+            <service-call name="org.moqui.devaide.WorkspaceServices.rename#Path" in-map="{rootId:rootId, path:path, to:to}" out-map="moved"/>
+            <set field="path" from="moved?.path || path"/>
+        </actions>
+        <default-response url="../Workspace"/>
+        <error-response url="../Workspace"/>
+    </transition>
+    <transition name="deletePath">
+        <actions>
+            <service-call name="org.moqui.devaide.WorkspaceServices.delete#Path" in-map="{rootId:rootId, path:path}"/>
+            <message type="success">Deleted ${path}</message>
+            <set field="path" from="null"/>
+            <set field="line" from="null"/>
+        </actions>
+        <default-response url="../Workspace"/>
+        <error-response url="../Workspace"/>
+    </transition>
+
+    <!-- ==== git: the selected files (paths, a comma list from a row action) or the open one (path) ==== -->
+    <transition name="stageFiles">
+        <actions><service-call name="org.moqui.devaide.VcsServices.stage#Files" in-map="{rootId:rootId, paths:String(paths || path || '').split(',').filter((one) =&gt; one)}"/>
+            <message type="success">Staged</message></actions>
+        <default-response url="../Workspace"/>
+        <error-response url="../Workspace"/>
+    </transition>
+    <transition name="unstageFiles">
+        <actions><service-call name="org.moqui.devaide.VcsServices.unstage#Files" in-map="{rootId:rootId, paths:String(paths || path || '').split(',').filter((one) =&gt; one)}"/>
+            <message type="success">Unstaged</message></actions>
+        <default-response url="../Workspace"/>
+        <error-response url="../Workspace"/>
+    </transition>
+    <transition name="discardFiles">
+        <actions>
+            <service-call name="org.moqui.devaide.VcsServices.discard#Files" in-map="{rootId:rootId, paths:String(paths || path || '').split(',').filter((one) =&gt; one)}"/>
+            <message type="success">Discarded the changes</message>
+            <set field="changePath" from="null"/>
+        </actions>
+        <default-response url="../Workspace"/>
+        <error-response url="../Workspace"/>
+    </transition>
+    <!-- Commit, and with the Commit and push button the push after it -->
+    <transition name="commitChanges">
+        <actions><script><![CDATA[
+            const lastLine = (text) => String(text || '').trim().split(/\r?\n/).pop()
+            const out = ec.service.sync().name('org.moqui.devaide.VcsServices.commit#Changes').parameters({rootId: rootId, summary: context.summary || '',
+                body: context.body || '', task: context.task || '', amend: String(context.amend) === 'true', signOff: String(context.signOff) === 'true'}).call() || {}
+            if (!ec.message.hasError()) {
+                ec.message.addMessage(ec.l10n.localize('Committed') + ' ' + String(out.commitId || '').slice(0, 9), 'success')
+                if (context.commitPushButton) {
+                    const pushed = ec.service.sync().name('org.moqui.devaide.VcsServices.push#Remote').parameters({rootId: rootId}).call() || {}
+                    if (!ec.message.hasError()) ec.message.addMessage(pushed.message || (ec.l10n.localize('Pushed') + (pushed.output ? ': ' + lastLine(pushed.output) : '')), 'success')
+                }
+                changePath = null
+            }
+        ]]></script></actions>
+        <default-response url="../Workspace"/>
+        <error-response url="../Workspace"/>
+    </transition>
+    <!-- Fetch, Pull and Push run to the end here (no progress, no operationId) and say git's last line -->
+    <transition name="gitNetwork">
+        <actions><script><![CDATA[
+            const verbs = {fetch: 'fetch#Remote', pull: 'pull#Remote', push: 'push#Remote'}
+            const done = {fetch: 'Fetched', pull: 'Pulled', push: 'Pushed'}
+            if (!verbs[context.command]) {
+                ec.message.addError(ec.l10n.localize('Unknown git command') + ': ' + (context.command || ''))
+            } else {
+                const out = ec.service.sync().name('org.moqui.devaide.VcsServices.' + verbs[context.command]).parameters({rootId: rootId}).call() || {}
+                if (!ec.message.hasError()) {
+                    const last = String(out.output || '').trim().split(/\r?\n/).pop()
+                    ec.message.addMessage(out.message || (ec.l10n.localize(done[context.command]) + (last ? ': ' + last : '')), 'success')
+                    if (out.extensionsAffected) ec.message.addMessage(out.extensionsAffected + ' ' +
+                        ec.l10n.localize('site extensions are affected: see Artifacts › Customizations'), 'warning')
+                }
+            }
+        ]]></script></actions>
+        <default-response url="../Workspace"/>
+        <error-response url="../Workspace"/>
+    </transition>
+    <transition name="switchBranch">
+        <actions>
+            <service-call name="org.moqui.devaide.VcsServices.switch#Branch" in-map="{rootId:rootId, branch:branch}" out-map="switched"/>
+            <message type="success">On ${branch}</message>
+            <script>if (switched?.restart) ec.web.sessionAttributes['DevAideTui.restart'] = 'true'</script>
+        </actions>
+        <default-response url="../Workspace"/>
+        <error-response url="../Workspace"/>
+    </transition>
+    <transition name="createBranch">
+        <actions><service-call name="org.moqui.devaide.VcsServices.create#Branch" in-map="{rootId:rootId, branch:branch}"/>
+            <message type="success">On ${branch}</message></actions>
+        <default-response url="../Workspace"/>
+        <error-response url="../Workspace"/>
+    </transition>
+    <transition name="signAgreement">
+        <actions><service-call name="org.moqui.devaide.HostingServices.sign#Agreement" in-map="{rootId:rootId, legalName:legalName}" out-map="signedOut"/>
+            <message type="success">Signed: ${signedOut?.line ?? ''}. Push it to the server.</message></actions>
+        <default-response url="../Workspace"/>
+        <error-response url="../Workspace"/>
+    </transition>
+    <!-- Cherry-pick or Revert the commit shown; a stop at conflicts is the browser's to resolve -->
+    <transition name="replayCommit">
+        <actions><script><![CDATA[
+            const verbs = {cherryPick: 'cherryPick#Commit', revert: 'revert#Commit'}
+            if (!verbs[context.replay]) {
+                ec.message.addError(ec.l10n.localize('Unknown action') + ': ' + (context.replay || ''))
+            } else {
+                const out = ec.service.sync().name('org.moqui.devaide.VcsServices.' + verbs[context.replay]).parameters({rootId: rootId, commitId: commitId}).call() || {}
+                if (!ec.message.hasError()) ec.message.addMessage(out.conflict
+                    ? ec.l10n.localize('It stopped at conflicts: resolve them in the browser\'s Workspace')
+                    : ec.l10n.localize(context.replay === 'revert' ? 'Reverted' : 'Cherry-picked') + ' ' + String(commitId || '').slice(0, 9),
+                    out.conflict ? 'warning' : 'success')
+            }
+        ]]></script></actions>
+        <default-response url="../Workspace"/>
+        <error-response url="../Workspace"/>
+    </transition>
+    <transition name="restartServer">
+        <actions><service-call name="org.moqui.dev.DevToolsServices.restart#Server"/>
+            <script>ec.web.sessionAttributes.remove('DevAideTui.restart')</script>
+            <message type="warning">Restarting…</message></actions>
+        <default-response url="../Workspace"/>
+        <error-response url="../Workspace"/>
+    </transition>
+
+    <actions><script><![CDATA[
+        // A read for the page: its answer, or null with its errors kept for the page to show.
+        loadErrors = []
+        const read = (name, parameters) => {
+            const out = ec.service.sync().name(name).parameters(parameters).requireNewTransaction(true).call()
+            if (ec.message.hasError()) { loadErrors.push(ec.message.errorsString); ec.message.clearErrors(); return null }
+            return out || {}
+        }
+        const kept = (key) => { try { return JSON.parse(ec.web.sessionAttributes[key] || 'null') } catch (e) { return null } }
+        const workspaceUrl = (parameters) => sri.buildUrl('../Workspace').addParameters(Object.fromEntries(Object.entries(parameters)
+            .filter(([, value]) => value != null && value !== ''))).getUrlWithParams()
+        const diffText = (original, modified, from, to) => String(ec.resource.textDiff(original || '', modified || '', from, to).unifiedDiff || '')
+
+        // the root, the user's tier, and whether this user may write here (the services decide; this only hides)
+        const rootsOut = read('org.moqui.devaide.WorkspaceServices.get#Roots', {}) || {}
+        const roots = Array.from(rootsOut.roots || [])
+        tier = rootsOut.tier || 'view'
+        root = roots.find((one) => one.id === rootId) || (rootId ? null : roots[0]) || null
+        rootMissing = !!rootId && !root
+        rootId = root ? root.id : rootId
+        rootOptions = roots.map((one) => ({id: one.id, label: one.label + (one.kind === 'git' ? '' : ' (directory)') + (one.readOnly ? ' (read only)' : '')}))
+        rootValues = {rootId: rootId, tab: tab || 'code'}
+        isGit = !!root && root.kind === 'git' && rootsOut.gitAvailable !== false
+        canWrite = !!root && tier !== 'view' && !root.readOnly
+        tab = ['code', 'changes', 'commits'].includes(tab) ? tab : 'code'
+        restartNeeded = ec.web.sessionAttributes['DevAideTui.restart'] === 'true'
+
+        // the header: the branch, ahead and behind, the changes; and the tabs
+        status = root && isGit ? read('org.moqui.devaide.VcsServices.get#Status', {rootId: rootId}) : null
+        const entries = Array.from((status && status.entries) || [])
+        branchText = status ? (status.branch || '(detached)') + (status.upstream ? ' → ' + status.upstream : '') : ''
+        aheadText = status && (status.ahead || status.behind) ? '↑' + (status.ahead || 0) + ' ↓' + (status.behind || 0) : ''
+        changesText = status ? entries.length + ' ' + ec.l10n.localize('changed') : ''
+        headerText = [branchText, aheadText, changesText].filter((part) => part).join('   ')
+        operationText = status && status.operation ? ec.l10n.localize('A ' + status.operation + ' stopped at conflicts: resolve it in the browser\'s Workspace') : ''
+        branchOptions = Array.from((status && status.branches) || []).filter((branch) => !branch.current)
+            .map((branch) => ({name: branch.name, label: branch.name + (branch.upstream ? ' → ' + branch.upstream : '')}))
+        tabItems = [['code', 'Code'], ['changes', 'Changes'], ['commits', 'Commits']].map(([key, title]) => ({title: ec.l10n.localize(title),
+            url: workspaceUrl({rootId: rootId, tab: key, path: key === 'code' ? path : null, line: key === 'code' ? line : null}), active: tab === key}))
+
+        // ---- Code ----
+        file = null
+        if (tab === 'code' && root && path) file = read('org.moqui.devaide.WorkspaceServices.get#File', {rootId: rootId, path: path})
+        const language = {xml: 'xml', xsd: 'xml', qvue: 'xml', qvt: 'xml', vue: 'xml', html: 'xml', htm: 'xml', js: 'js', mjs: 'js', cjs: 'js', ts: 'js',
+            json: 'json', sql: 'sql', md: 'md'}[String(path || '').split('/').pop().split('.').pop().toLowerCase()] || 'plain'
+        hasText = !!file && file.text != null
+        fileReadOnly = !file || !!file.readOnly || !canWrite
+        fileLine = (root ? root.label : '') + ' › ' + (path || '') + (file && file.status ? ' · ' + file.status : '')
+            + (file && file.readOnly ? ' · ' + ec.l10n.localize('read only') + (file.readOnlyReason ? ': ' + file.readOnlyReason : '') : '')
+        fileValues = {rootId: rootId, path: path, baseHash: file ? file.hash : '', fileText: hasText ? file.text : ''}
+        // the problems of the last save or Check of this file, while the file is as it was then
+        const keptProblems = kept('DevAideTui.problems')
+        const problemList = file && keptProblems && keptProblems.rootId === rootId && keptProblems.path === path && keptProblems.hash === file.hash
+            ? Array.from(keptProblems.problems || []) : []
+        problemRows = problemList.map((problem) => ({line: problem.line || '', severity: problem.severity || 'error', message: problem.message || '',
+            lineUrl: problem.line ? workspaceUrl({rootId: rootId, path: path, line: String(problem.line)}) : ''}))
+        editor = hasText ? {t: 'component', id: 'WorkspaceEditor', name: 'code', props: {text: file.text, language: language, readOnly: fileReadOnly,
+            cursorLine: Number(line) || 1, form: 'WorkspaceFile', field: 'fileText', check: 'checkText', complete: language === 'xml' ? 'schemaDigest' : '',
+            parameters: {rootId: rootId, path: path}, problems: problemList.filter((problem) => problem.line > 0)
+                .map((problem) => ({line: problem.line, column: problem.column || 0, severity: problem.severity, message: problem.message}))}} : null
+        // a conflict a save kept for this file: the disk's text against the one saved
+        const conflict = kept('DevAideTui.conflict')
+        conflictDiff = file && conflict && conflict.rootId === rootId && conflict.path === path
+            ? diffText(conflict.diskText, conflict.text, 'disk/' + path, 'mine/' + path) || ec.l10n.localize('The texts are the same') : ''
+        fileDiff = ''
+        if (file && diff === 'Y' && isGit) {
+            const sides = read('org.moqui.devaide.VcsServices.get#Diff', {rootId: rootId, path: path})
+            fileDiff = sides ? diffText(sides.original, sides.modified, 'a/' + path, 'b/' + path) || ec.l10n.localize('No changes') : ''
+        }
+        treeNode = root && tab === 'code' ? {t: 'tree', id: 'WorkspaceFileTree', url: sri.buildUrl('fileTree').path, parameters: {rootId: rootId},
+            openPath: path || ''} : null
+        hitRows = []
+        hitsTruncated = false
+        if (tab === 'code' && root && query) {
+            const found = read('org.moqui.devaide.WorkspaceServices.search#Files', {rootId: rootId, query: query, regex: regex === 'true'})
+            hitRows = Array.from((found && found.results) || []).map((hit) => ({hitText: hit.path + ':' + hit.line, text: String(hit.text || '').trim(),
+                hitPath: hit.path, hitLine: String(hit.line)}))
+            hitsTruncated = !!(found && found.truncated)
+        }
+        searchValues = {rootId: rootId, tab: 'code', path: path, query: query, regex: regex}
+
+        // ---- Changes ----
+        changeRows = entries.map((entry) => ({path: entry.path, letter: entry.letter,
+            stateText: entry.conflicted ? ec.l10n.localize('conflicted') : entry.untracked ? ec.l10n.localize('new')
+                : entry.staged && entry.unstaged ? ec.l10n.localize('staged, changed since') : entry.staged ? ec.l10n.localize('staged') : ec.l10n.localize('changed'),
+            diffStaged: entry.staged && !entry.unstaged ? 'true' : '', bothSides: !!(entry.staged && entry.unstaged)}))
+        changeDiff = ''
+        if (tab === 'changes' && isGit && changePath) {
+            const sides = read('org.moqui.devaide.VcsServices.get#Diff', {rootId: rootId, path: changePath, staged: staged === 'true'})
+            changeDiff = sides ? diffText(sides.original, sides.modified, 'a/' + changePath, 'b/' + changePath) || ec.l10n.localize('No changes') : ''
+        }
+        commitValues = {rootId: rootId, task: (status && status.currentTask) || ''}
+        agreement = tab === 'changes' && isGit && root.hosted ? read('org.moqui.devaide.HostingServices.get#Agreement', {rootId: rootId}) : null
+        agreementNeeded = !!(agreement && agreement.required && !agreement.signed)
+
+        // ---- Commits ----
+        logPage = Math.max(0, parseInt(pageIndex || '0', 10) || 0)
+        commitRows = []
+        logMore = false
+        if (tab === 'commits' && isGit) {
+            const log = read('org.moqui.devaide.VcsServices.get#Log', {rootId: rootId, pageIndex: logPage, pageSize: 100})
+            const commits = Array.from((log && log.commits) || [])
+            logMore = commits.length === 100
+            commitRows = commits.map((commit) => ({id: commit.id, subject: commit.subject || '', shortId: commit.shortId,
+                authorName: commit.authorName, dateText: commit.date ? ec.l10n.format(new Date(commit.date), 'yyyy-MM-dd HH:mm') : ''}))
+        }
+        commit = null
+        commitFiles = []
+        commitDiff = ''
+        if (tab === 'commits' && isGit && commitId) {
+            commit = read('org.moqui.devaide.VcsServices.get#Commit', {rootId: rootId, commitId: commitId})
+            commitFiles = Array.from((commit && commit.files) || []).map((one) => ({status: one.status, filePath: one.path}))
+            if (commit && commitPath) {
+                const sides = read('org.moqui.devaide.VcsServices.get#Diff', {rootId: rootId, path: commitPath, commitId: commitId})
+                commitDiff = sides ? diffText(sides.original, sides.modified, 'a/' + commitPath, 'b/' + commitPath) || ec.l10n.localize('No changes') : ''
+            }
+        }
+        commitTitle = commit && commit.commit ? commit.commit.shortId + ' ' + commit.commit.subject : String(commitId || '').slice(0, 9)
+        commitByline = commit && commit.commit ? commit.commit.authorName + ' <' + commit.commit.authorEmail + '> · '
+            + (commit.commit.date ? ec.l10n.format(new Date(commit.commit.date), 'yyyy-MM-dd HH:mm') : '') : ''
+    ]]></script></actions>
+    <widgets>
+        <render-mode><text type="html,qvt"><![CDATA[<p>The Workspace's terminal form. In the browser, <a href="Workspace">open the Workspace</a>.</p>]]></text>
+            <text type="tui" template="false">[]</text></render-mode>
+        <section-iterate name="WorkspaceLoadErrors" list="loadErrors" entry="loadError"><widgets>
+            <label text="${loadError}" type="p" style="text-negative"/>
+        </widgets></section-iterate>
+        <label text="There is no root ${rootId}: choose one." type="p" style="text-negative" condition="rootMissing"/>
+
+        <!-- ==== the header ==== -->
+        <container-row>
+            <row-col md="4">
+                <form-single name="WorkspaceRoot" transition="../Workspace" map="rootValues">
+                    <field name="rootId"><default-field title="Root">
+                        <drop-down allow-empty="false" submit-on-select="true"><list-options list="rootOptions" key="${id}" text="${label}"/></drop-down>
+                    </default-field></field>
+                    <field name="tab"><default-field><hidden/></default-field></field>
+                    <!-- another root opens with no file -->
+                    <field name="path" from="''"><default-field><hidden/></default-field></field>
+                    <field name="line" from="''"><default-field><hidden/></default-field></field>
+                </form-single>
+            </row-col>
+            <row-col md="5">
+                <label text="${headerText}" style="text-weight-bold" condition="headerText"/>
+            </row-col>
+            <row-col md="3">
+                <button-menu text="Git" icon="sym_o_commit" condition="isGit &amp;&amp; canWrite">
+                    <link url="gitNetwork" link-type="hidden-form" text="Fetch" parameter-map="{rootId:rootId, command:'fetch'}"/>
+                    <link url="gitNetwork" link-type="hidden-form" text="Pull" parameter-map="{rootId:rootId, command:'pull'}"/>
+                    <link url="gitNetwork" link-type="hidden-form" text="Push" parameter-map="{rootId:rootId, command:'push'}"
+                            condition="!root.publishBranchRequired"/>
+                    <container-dialog id="WorkspaceSwitchBranch" button-text="Switch branch…" condition="tier == 'full' &amp;&amp; branchOptions.length">
+                        <form-single name="WorkspaceSwitchBranchForm" transition="switchBranch">
+                            <field name="rootId"><default-field><hidden/></default-field></field>
+                            <field name="branch"><default-field title="Branch">
+                                <drop-down allow-empty="false"><list-options list="branchOptions" key="${name}" text="${label}"/></drop-down>
+                            </default-field></field>
+                            <field name="submitButton"><default-field title="Switch"><submit/></default-field></field>
+                        </form-single>
+                    </container-dialog>
+                    <container-dialog id="WorkspaceNewBranch" button-text="New branch…">
+                        <form-single name="WorkspaceNewBranchForm" transition="createBranch">
+                            <field name="rootId"><default-field><hidden/></default-field></field>
+                            <field name="branch" from="''"><default-field title="New branch, from the current commit"><text-line size="40"/></default-field></field>
+                            <field name="submitButton"><default-field title="Make and switch to it"><submit/></default-field></field>
+                        </form-single>
+                    </container-dialog>
+                </button-menu>
+                <link url="restartServer" link-type="hidden-form" text="Restart needed" btn-type="danger" condition="restartNeeded"
+                        confirmation="Restart the server? Sessions and the sim overlay are lost." parameter-map="{rootId:rootId}"/>
+            </row-col>
+        </container-row>
+        <label text="${operationText}" type="p" style="text-warning" condition="operationText"/>
+        <label text="Branches, tags, stashes, merge requests, sessions, review, blame and hunks: open the Workspace in the browser (o)."
+                type="p" style="text-caption m-muted"/>
+        <render-mode><text type="tui"><![CDATA[${JSON.stringify({t: 'subscreens', id: 'WorkspaceTabs', kind: 'tab', items: tabItems, c: []})}]]></text></render-mode>
+
+        <!-- ==== Code ==== -->
+        <section name="WorkspaceCode" condition="tab == 'code' &amp;&amp; root"><widgets>
+            <container-split id="WorkspaceCodeSplit" side-width="320" min-main="480" select-parameter="path" back-text="Files">
+                <split-side>
+                    <form-single name="WorkspaceGoTo" transition="../Workspace" map="searchValues">
+                        <field name="rootId"><default-field><hidden/></default-field></field>
+                        <field name="tab"><default-field><hidden/></default-field></field>
+                        <field name="line" from="''"><default-field><hidden/></default-field></field>
+                        <field name="path"><default-field title="Go to file">
+                            <drop-down allow-empty="true" submit-on-select="true">
+                                <dynamic-options transition="fileChoices" server-search="true" min-length="1" parameter-map="{rootId:rootId}"/>
+                            </drop-down>
+                        </default-field></field>
+                    </form-single>
+                    <form-single name="WorkspaceSearch" transition="../Workspace" map="searchValues">
+                        <field name="rootId"><default-field><hidden/></default-field></field>
+                        <field name="tab"><default-field><hidden/></default-field></field>
+                        <field name="path"><default-field><hidden/></default-field></field>
+                        <field name="query"><default-field title="Search in files"><text-line size="30"/></default-field></field>
+                        <field name="regex"><default-field title="Regular expression"><check><option key="true" text="Yes"/></check></default-field></field>
+                        <field name="searchButton"><default-field title="Search"><submit/></default-field></field>
+                    </form-single>
+                    <render-mode><text type="tui"><![CDATA[${JSON.stringify(treeNode ? [treeNode] : [])}]]></text></render-mode>
+                </split-side>
+                <split-main>
+                    <section name="WorkspaceHits" condition="query"><widgets>
+                        <container-box><box-header title="${hitRows.length}${hitsTruncated ? '+' : ''} lines hold ${query}"/><box-toolbar>
+                            <link url="../Workspace" text="Close" link-type="anchor" parameter-map="{query:'', regex:'', line:''}"/>
+                        </box-toolbar><box-body>
+                            <form-list name="WorkspaceHitList" list="hitRows" skip-form="true" paginate="false">
+                                <field name="hitText"><default-field title="Where">
+                                    <link url="../Workspace" text="${hitText}" link-type="anchor" parameter-map="{path:hitPath, line:hitLine, diff:''}"/>
+                                </default-field></field>
+                                <field name="text"><default-field title="Line"><display/></default-field></field>
+                            </form-list>
+                            <label text="Nothing found" type="p" style="m-muted" condition="!hitRows.length"/>
+                        </box-body></container-box>
+                    </widgets></section>
+                    <section name="WorkspaceFileOpen" condition="file"><widgets>
+                        <container style="row items-center q-gutter-sm">
+                            <label text="${fileLine}" style="text-caption"/>
+                            <button-menu text="File" icon="more_horiz">
+                                <container-dialog id="WorkspaceNewFile" button-text="New file…" condition="canWrite">
+                                    <form-single name="WorkspaceNewFileForm" transition="createFile">
+                                        <field name="rootId"><default-field><hidden/></default-field></field>
+                                        <field name="newPath" from="path.includes('/') ? path.split('/').slice(0, -1).join('/') + '/' : ''"><default-field title="Path in the root"><text-line size="50"/></default-field></field>
+                                        <field name="submitButton"><default-field title="Make the file"><submit/></default-field></field>
+                                    </form-single>
+                                </container-dialog>
+                                <container-dialog id="WorkspaceNewFolder" button-text="New folder…" condition="canWrite">
+                                    <form-single name="WorkspaceNewFolderForm" transition="createDirectory">
+                                        <field name="rootId"><default-field><hidden/></default-field></field>
+                                        <field name="path"><default-field><hidden/></default-field></field>
+                                        <field name="newPath" from="path.includes('/') ? path.split('/').slice(0, -1).join('/') + '/' : ''"><default-field title="Path in the root"><text-line size="50"/></default-field></field>
+                                        <field name="submitButton"><default-field title="Make the folder"><submit/></default-field></field>
+                                    </form-single>
+                                </container-dialog>
+                                <container-dialog id="WorkspaceRename" button-text="Rename or move…" condition="canWrite">
+                                    <form-single name="WorkspaceRenameForm" transition="renamePath">
+                                        <field name="rootId"><default-field><hidden/></default-field></field>
+                                        <field name="path"><default-field><hidden/></default-field></field>
+                                        <field name="to" from="path"><default-field title="New path in the root"><text-line size="50"/></default-field></field>
+                                        <field name="submitButton"><default-field title="Rename"><submit/></default-field></field>
+                                    </form-single>
+                                </container-dialog>
+                                <link url="deletePath" link-type="hidden-form" text="Delete" btn-type="danger" condition="canWrite"
+                                        confirmation="Delete ${path}?" parameter-map="{rootId:rootId, path:path}"/>
+                                <link url="../Workspace" text="${diff == 'Y' ? 'Hide the diff' : 'Diff'}" condition="isGit" parameter-map="{diff:(diff == 'Y' ? '' : 'Y')}"/>
+                                <link url="checkFile" link-type="hidden-form" text="Check" parameter-map="{rootId:rootId, path:path}"/>
+                                <link url="stageFiles" link-type="hidden-form" text="Stage" condition="isGit &amp;&amp; canWrite &amp;&amp; file.status"
+                                        parameter-map="{rootId:rootId, path:path}"/>
+                                <link url="discardFiles" link-type="hidden-form" text="Discard changes" btn-type="danger"
+                                        condition="isGit &amp;&amp; canWrite &amp;&amp; file.status" parameter-map="{rootId:rootId, path:path}"
+                                        confirmation="Throw away the changes of ${path}? A new file is deleted."/>
+                            </button-menu>
+                        </container>
+
+                        <section name="WorkspaceConflict" condition="conflictDiff"><widgets>
+                            <container-box type="warning"><box-header title="${path} changed on disk since it was opened"/><box-body>
+                                <label type="p" text="The diff takes the disk's text to yours."/>
+                                <label text="${conflictDiff}" type="pre"/>
+                                <container style="row q-gutter-sm">
+                                    <link url="saveFile" link-type="hidden-form" text="Save mine over it" btn-type="danger"
+                                            confirmation="Write your text over the disk's?" parameter-map="{rootId:rootId, path:path, overDisk:'true'}"/>
+                                    <link url="takeDisk" link-type="hidden-form" text="Take the disk's" parameter-map="{rootId:rootId, path:path}"/>
+                                </container>
+                            </box-body></container-box>
+                        </widgets></section>
+                        <section name="WorkspaceFileDiff" condition="fileDiff"><widgets>
+                            <container-box><box-header title="Changes of ${path}"/><box-body>
+                                <label text="${fileDiff}" type="pre"/>
+                            </box-body></container-box>
+                        </widgets></section>
+
+                        <section name="WorkspaceEditorText" condition="editor"><widgets>
+                            <render-mode><text type="tui"><![CDATA[${JSON.stringify([editor])}]]></text></render-mode>
+                            <form-single name="WorkspaceFile" transition="saveFile" map="fileValues">
+                                <field name="rootId"><default-field><hidden/></default-field></field>
+                                <field name="path"><default-field><hidden/></default-field></field>
+                                <field name="baseHash"><default-field><hidden/></default-field></field>
+                                <field name="fileText"><default-field><hidden/></default-field></field>
+                                <field name="submitButton"><conditional-field condition="!fileReadOnly" title="Save (Ctrl+S)"><submit/></conditional-field>
+                                    <default-field><ignored/></default-field></field>
+                            </form-single>
+                        </widgets><fail-widgets>
+                            <label type="p" text="${file.binary ? 'A binary file: open it in the browser.' : (file.readOnlyReason || 'This file has no text to show.')}"/>
+                        </fail-widgets></section>
+
+                        <section name="WorkspaceProblems" condition="problemRows.length"><widgets>
+                            <form-list name="WorkspaceProblemList" list="problemRows" skip-form="true" paginate="false">
+                                <field name="line"><default-field title="Line">
+                                    <link url="${lineUrl}" url-type="plain" text="${line}" link-type="anchor" condition="lineUrl"/>
+                                </default-field></field>
+                                <field name="severity"><default-field title="Severity"><display/></default-field></field>
+                                <field name="message"><default-field title="Problem"><display/></default-field></field>
+                            </form-list>
+                        </widgets></section>
+                    </widgets><fail-widgets>
+                        <label type="p" style="m-muted" condition="!query"
+                                text="Open a file from the tree, Go to file, or the palette (Ctrl+K), which finds artifacts by name."/>
+                    </fail-widgets></section>
+                </split-main>
+            </container-split>
+        </widgets></section>
+
+        <!-- ==== Changes ==== -->
+        <section name="WorkspaceChanges" condition="tab == 'changes' &amp;&amp; root"><widgets>
+            <label text="${root.label} is not a git repository." type="p" style="m-muted" condition="!isGit"/>
+            <section name="WorkspaceChangesGit" condition="isGit"><widgets>
+                <label text="No changes" type="p" style="m-muted" condition="!changeRows.length"/>
+                <form-list name="WorkspaceChangeList" list="changeRows" skip-form="true" paginate="false" condition="changeRows.length">
+                    <row-selection id-field="path" parameter="paths" list-mode="true" condition="canWrite">
+                        <action>
+                            <dialog button-text="Stage" title="Stage the selected files"/>
+                            <form-single name="WorkspaceStageSelected" transition="stageFiles">
+                                <field name="rootId"><default-field><hidden/></default-field></field>
+                                <field name="submitButton"><default-field title="Stage"><submit/></default-field></field>
+                            </form-single>
+                        </action>
+                        <action>
+                            <dialog button-text="Unstage" title="Unstage the selected files"/>
+                            <form-single name="WorkspaceUnstageSelected" transition="unstageFiles">
+                                <field name="rootId"><default-field><hidden/></default-field></field>
+                                <field name="submitButton"><default-field title="Unstage"><submit/></default-field></field>
+                            </form-single>
+                        </action>
+                        <action>
+                            <dialog button-text="Discard" title="Throw away the changes of the selected files"/>
+                            <form-single name="WorkspaceDiscardSelected" transition="discardFiles">
+                                <field name="rootId"><default-field><hidden/></default-field></field>
+                                <field name="note"><default-field title=""><label text="Their changes in the work tree are lost, and a new file is deleted."/></default-field></field>
+                                <field name="submitButton"><default-field title="Discard"><submit type="danger" confirmation="Throw away the changes of the selected files?"/></default-field></field>
+                            </form-single>
+                        </action>
+                    </row-selection>
+                    <field name="letter"><default-field title=""><display/></default-field></field>
+                    <field name="path"><default-field title="File">
+                        <link url="../Workspace" text="${path}" link-type="anchor" parameter-map="{changePath:path, staged:diffStaged}"/>
+                    </default-field></field>
+                    <field name="stateText"><default-field title="State"><display/></default-field></field>
+                    <field name="tools" align="right"><default-field title="">
+                        <link url="../Workspace" text="Staged diff" link-type="anchor" condition="bothSides" parameter-map="{changePath:path, staged:'true'}"/>
+                        <link url="../Workspace" text="Open" link-type="anchor" parameter-map="{tab:'code', path:path, line:'', changePath:'', staged:''}"/>
+                    </default-field></field>
+                </form-list>
+                <section name="WorkspaceChangeDiff" condition="changeDiff"><widgets>
+                    <container-box><box-header title="${staged == 'true' ? 'Staged changes' : 'Changes'} of ${changePath}"/><box-toolbar>
+                        <link url="../Workspace" text="Close" link-type="anchor" parameter-map="{changePath:'', staged:''}"/>
+                    </box-toolbar><box-body>
+                        <label text="${changeDiff}" type="pre"/>
+                    </box-body></container-box>
+                </widgets></section>
+
+                <section name="WorkspaceAgreement" condition="agreementNeeded"><widgets>
+                    <container-box type="warning"><box-header title="Contributor agreement"/><box-body>
+                        <label type="p" text="${agreement.authorEmail || 'The commit\'s author'} has not signed the hosted repository's contributor agreement: the server may not take these commits. ${agreement.message || ''}"/>
+                        <container-dialog id="WorkspaceSignAgreement" button-text="Sign" condition="agreement.hasAuthorsFile &amp;&amp; canWrite">
+                            <form-single name="WorkspaceSignForm" transition="signAgreement">
+                                <field name="rootId"><default-field><hidden/></default-field></field>
+                                <field name="note"><default-field title=""><label text="Your line goes under both lists of AUTHORS.md, as &quot;${agreement.line || '- Written in [year] by [legal name] - [account]'}&quot;, and is committed alone."/></default-field></field>
+                                <field name="legalName" from="''"><default-field title="Your legal name"><text-line size="40"/></default-field></field>
+                                <field name="submitButton"><default-field title="Sign"><submit/></default-field></field>
+                            </form-single>
+                        </container-dialog>
+                    </box-body></container-box>
+                </widgets></section>
+
+                <section name="WorkspaceCommitForm" condition="canWrite"><widgets>
+                    <container-box><box-header title="Commit what is staged"/><box-body>
+                        <form-single name="WorkspaceCommit" transition="commitChanges" map="commitValues">
+                            <field name="rootId"><default-field><hidden/></default-field></field>
+                            <field name="summary" from="''"><default-field title="Summary"><text-line size="72"/></default-field></field>
+                            <field name="body" from="''"><default-field title="Body"><text-area rows="4" cols="72"/></default-field></field>
+                            <field name="task"><default-field title="Task" tooltip="Added as the commit's task trailer"><text-line size="20"/></default-field></field>
+                            <field name="amend"><default-field title=""><check><option key="true" text="Amend the last commit"/></check></default-field></field>
+                            <field name="signOff"><default-field title=""><check><option key="true" text="Sign off"/></check></default-field></field>
+                            <field name="commitButton"><default-field title="Commit"><submit/></default-field></field>
+                            <field name="commitPushButton"><conditional-field condition="!root.publishBranchRequired" title="Commit and push"><submit/></conditional-field>
+                                <default-field><ignored/></default-field></field>
+                        </form-single>
+                    </box-body></container-box>
+                </widgets></section>
+            </widgets></section>
+        </widgets></section>
+
+        <!-- ==== Commits ==== -->
+        <section name="WorkspaceCommits" condition="tab == 'commits' &amp;&amp; root"><widgets>
+            <label text="${root.label} is not a git repository." type="p" style="m-muted" condition="!isGit"/>
+            <section name="WorkspaceCommitDetail" condition="commit"><widgets>
+                <container-box><box-header title="${commitTitle}"/><box-toolbar>
+                    <link url="replayCommit" link-type="hidden-form" text="Cherry-pick" condition="canWrite"
+                            confirmation="Apply ${commitTitle} on the current branch?" parameter-map="{rootId:rootId, commitId:commitId, replay:'cherryPick'}"/>
+                    <link url="replayCommit" link-type="hidden-form" text="Revert" btn-type="danger" condition="canWrite"
+                            confirmation="Make a commit that undoes ${commitTitle}?" parameter-map="{rootId:rootId, commitId:commitId, replay:'revert'}"/>
+                    <link url="../Workspace" text="Close" link-type="anchor" parameter-map="{commitId:'', commitPath:''}"/>
+                </box-toolbar><box-body>
+                    <label text="${commitByline}" type="p" style="text-caption"/>
+                    <label text="${commit.message || ''}" type="pre"/>
+                    <form-list name="WorkspaceCommitFiles" list="commitFiles" skip-form="true" paginate="false">
+                        <field name="status"><default-field title=""><display/></default-field></field>
+                        <field name="filePath"><default-field title="File">
+                            <link url="../Workspace" text="${filePath}" link-type="anchor" parameter-map="{commitPath:filePath}"/>
+                        </default-field></field>
+                    </form-list>
+                    <section name="WorkspaceCommitDiff" condition="commitDiff"><widgets>
+                        <label text="${commitPath}" type="h6"/>
+                        <label text="${commitDiff}" type="pre"/>
+                    </widgets></section>
+                </box-body></container-box>
+            </widgets></section>
+            <form-list name="WorkspaceCommitList" list="commitRows" skip-form="true" paginate="false" condition="isGit">
+                <field name="subject"><default-field title="Commit">
+                    <link url="../Workspace" text="${subject || shortId}" link-type="anchor" parameter-map="{commitId:id, commitPath:''}"/>
+                </default-field></field>
+                <field name="shortId"><default-field title="Id"><display/></default-field></field>
+                <field name="authorName"><default-field title="Author"><display/></default-field></field>
+                <field name="dateText"><default-field title="Date"><display/></default-field></field>
+            </form-list>
+            <container style="row q-gutter-sm">
+                <link url="../Workspace" text="Newer commits" condition="isGit &amp;&amp; logPage &gt; 0"
+                        parameter-map="{pageIndex:(logPage &gt; 1 ? String(logPage - 1) : ''), commitId:'', commitPath:''}"/>
+                <link url="../Workspace" text="Older commits" condition="logMore" parameter-map="{pageIndex:String(logPage + 1), commitId:'', commitPath:''}"/>
+            </container>
+        </widgets></section>
+    </widgets>
+</screen>
