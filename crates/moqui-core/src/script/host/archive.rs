@@ -20,6 +20,8 @@
 //! ec.resource.digest(location, "sha256" | "sha1")            -> lower-case hex of the file's bytes
 //! ec.resource.digestText(text, "sha256" | "sha1")            -> lower-case hex of the text's UTF-8 bytes: a stable key
 //!     for a value too long to be a key itself
+//! ec.resource.hmac(key, message, "hex" | "base64url")         -> HMAC-SHA256 of the message's UTF-8 bytes with the key's,
+//!     lower-case hex (or unpadded base64url): the same value for the same key and message, refused without a key
 //! ec.resource.gunzip(source, target, maxBytes)                 -> bytes written; refused past maxBytes
 //! ec.resource.extractArchive(source, targetDir, limits)        -> {entries: [{path, size}], skipped: [{path, reason}]}
 //!     a tar, gzip-compressed or not; regular files only, no absolute or parent paths, limits {maxBytes, maxEntries}
@@ -39,6 +41,7 @@ use super::{method, with_ec, Call, HostError, Method, Ret};
 pub(super) static METHODS: &[Method] = &[
     method!("tools", "resourceDigest", [Text, Text], resource_digest),
     method!("tools", "textDigest", [Text, Text], None, leaf, text_digest),
+    method!("tools", "textHmac", [Text, Text, Text], None, leaf, text_hmac),
     method!("tools", "resourceGunzip", [Text, Text, Number], resource_gunzip),
     method!(
         "tools",
@@ -133,6 +136,31 @@ fn text_digest(call: &mut Call<'_>) -> Result<Ret, HostError> {
         "sha256" => Ok(hex(&sha2::Sha256::digest(text.as_bytes())).into()),
         "sha1" => Ok(hex(&sha1::Sha1::digest(text.as_bytes())).into()),
         other => Err(unknown_digest(other)),
+    }
+}
+
+/// HMAC-SHA256 (RFC 2104) of `message` with `key`.
+fn hmac_sha256(key: &[u8], message: &[u8]) -> Vec<u8> {
+    use hmac::{KeyInit, Mac};
+    // HMAC takes a key of any length, so making the MAC cannot fail
+    let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(key).expect("HMAC takes any key length");
+    mac.update(message);
+    mac.finalize().into_bytes().to_vec()
+}
+
+fn text_hmac(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    use base64::Engine;
+    let key = call.text_or_empty(0);
+    if key.is_empty() {
+        return Err(HostError::message("an hmac needs a key"));
+    }
+    let tag = hmac_sha256(key.as_bytes(), call.text_or_empty(1).as_bytes());
+    match call.text(2).unwrap_or_default() {
+        "" | "hex" => Ok(hex(&tag).into()),
+        "base64url" => Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(tag).into()),
+        other => Err(HostError::message(format!(
+            "unknown encoding {other}: use hex or base64url"
+        ))),
     }
 }
 
@@ -367,4 +395,29 @@ fn resource_write_tar_gz(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let written = with_ec(|ec| ec.factory().resource().write_bytes(&target, &bytes))?;
     written.map_err(|err| HostError::message(err.message()))?;
     Ok(Value::F64(count).into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// RFC 4231's HMAC-SHA256 test cases 1, 2 and 6 (a key longer than the block).
+    #[test]
+    fn hmac_sha256_matches_rfc_4231() {
+        assert_eq!(
+            hex(&hmac_sha256(&[0x0b; 20], b"Hi There")),
+            "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+        );
+        assert_eq!(
+            hex(&hmac_sha256(b"Jefe", b"what do ya want for nothing?")),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+        assert_eq!(
+            hex(&hmac_sha256(
+                &[0xaa; 131],
+                b"Test Using Larger Than Block-Size Key - Hash Key First"
+            )),
+            "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
+        );
+    }
 }
