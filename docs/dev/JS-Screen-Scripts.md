@@ -244,11 +244,14 @@ of each form-list are left out and fetched by `GET <screen>/actions/<form>`.
 
 **Only the names the template reads.** When the template is built, the names its compiled render function reads
 (`_ctx.name`, `$scope['name']`) are recorded, and the package holds only those, `hideNav`, and the names listed in
-`client-context` on the screen's `always-actions`, `pre-actions` and `actions` and on the actions of the sections that
-ran. A name kept is sent whole: `item` read as `item.name` sends the whole `item` map, so a value the browser must not
+`client-context` on the actions that ran: the `always-actions` of every screen on the path (a parent's included), the
+`pre-actions` of the screens whose pre-actions ran (from the third screen on), and the screen's own `actions` and the
+actions of its sections that ran (a parent's `actions` and sections do not run for a subscreen's request). A name kept is sent whole: `item` read as `item.name` sends the whole `item` map, so a value the browser must not
 see is kept out of a map the template reads, not only out of the template. The rows of `GET <screen>/actions/<form>`
 keep the names the template reads, the form's fields (with their `_display` texts), the fields its `row-selection` and
-views name, and the `client-context` of its `row-actions`; a key of a list entry that no column shows is left out. An
+views name, and the `client-context` of its `row-actions`; a key of a list entry that no column shows is left out. The
+rows of a screen that is not server-static are limited the same way, with no template names: only its list views (a
+board's rows, a calendar's range, a tree's children) fetch them, and they read the fields the form and its views name. An
 `actions` request that comes before any `.qvt` request (after a restart, on another node) builds the template first;
 if it cannot be built, the package holds only the `client-context` names and `hideNav`.
 

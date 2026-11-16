@@ -870,13 +870,18 @@ fn collect_widget(
     }
 }
 
-/// `GET {screen}/actions`: the context names `reads` (the template's), the `client-context` names of the screen's
-/// always-actions, pre-actions and actions and of the sections whose actions ran, and [`CLIENT_READS`]. A name kept is
-/// sent whole, with all that its value holds (SEC-RTE-02).
-fn screen_package(state: &RenderState, def: &ScreenDef, reads: &BTreeSet<String>) -> Result<(), Error> {
+/// `GET {screen}/actions`: the context names `reads` (the template's), `path_context` (the `client-context` names of the
+/// always-actions of every screen on the path and of the pre-actions that ran: [`path_client_context`]), those of the
+/// screen's actions and of the sections whose actions ran, and [`CLIENT_READS`]. A name kept is sent whole, with all
+/// that its value holds (SEC-RTE-02).
+fn screen_package(
+    state: &RenderState,
+    def: &ScreenDef,
+    reads: &BTreeSet<String>,
+    path_context: &BTreeSet<String>,
+) -> Result<(), Error> {
     let mut allowed = prepare_screen(state, def)?;
-    allowed.extend(def.always_client_context.iter().cloned());
-    allowed.extend(def.pre_client_context.iter().cloned());
+    allowed.extend(path_context.iter().cloned());
     allowed.extend(CLIENT_READS.iter().map(|name| (*name).to_string()));
     allowed.extend(reads.iter().cloned());
     let mut package = unwrap_context();
@@ -1032,8 +1037,9 @@ fn node_wants_pass_through(
     Ok(false)
 }
 
-/// The keys a row of the form-list `node` keeps in a server-static screen's answer (SEC-RTE-02): the names the template
-/// reads (`reads`; the row slots are in the same script), the form's fields and their `_display` texts, the
+/// The keys a row of the form-list `node` keeps in a screen's answer (SEC-RTE-02): the names a server-static screen's
+/// template reads (`reads`, the row slots being in the same script; none for another screen, whose rows are fetched
+/// only by the list views, which read the fields they name), the form's fields and their `_display` texts, the
 /// `client-context` of its `row-actions`, and what `m-static-form-list` and the list views read of a row outside the
 /// template: [`ROW_CLIENT_READS`], the row's availability key, its row-selection id field, and the fields its views
 /// name (`view-board`, `view-calendar`, `view-tree`), with their `_display` texts.
@@ -1066,10 +1072,9 @@ fn row_names(reads: &BTreeSet<String>, node: &MNode) -> BTreeSet<String> {
 }
 
 /// A row as JSON with only the keys `keep` names; an aggregated row's sub-rows (`aggregateSubList`) the same.
-fn kept_row(row: serde_json::Value, keep: Option<&BTreeSet<String>>) -> serde_json::Value {
-    let (mut map, keep) = match (row, keep) {
-        (serde_json::Value::Object(map), Some(keep)) => (map, keep),
-        (row, _) => return row,
+fn kept_row(row: serde_json::Value, keep: &BTreeSet<String>) -> serde_json::Value {
+    let serde_json::Value::Object(mut map) = row else {
+        return row;
     };
     map.retain(|key, _| keep.contains(key));
     if let Some(serde_json::Value::Array(entries)) = map.get_mut("aggregateSubList") {
@@ -1082,14 +1087,10 @@ fn kept_row(row: serde_json::Value, keep: Option<&BTreeSet<String>>) -> serde_js
     serde_json::Value::Object(map)
 }
 
-/// `GET {screen}/actions/{formName}`. `limit` is the template's reads for a server-static screen, whose rows keep only
-/// [`row_names`]; another screen's rows are answered whole.
-fn form_package(
-    state: &RenderState,
-    def: &ScreenDef,
-    name: &str,
-    limit: Option<&BTreeSet<String>>,
-) -> Result<(), Error> {
+/// `GET {screen}/actions/{formName}`. Every row keeps only [`row_names`], with `reads` the template's reads for a
+/// server-static screen and none for another, whose rows only the list views fetch (a board's rows, a calendar's range,
+/// a tree's children), and they read only the fields the form and its views name.
+fn form_package(state: &RenderState, def: &ScreenDef, name: &str, reads: &BTreeSet<String>) -> Result<(), Error> {
     let Some(definition) = def.forms.get(name) else {
         if let Some(tree) = def.trees.get(name) {
             let nodes = super::tree::sub_node_json(state, tree, &def.location)?;
@@ -1173,8 +1174,8 @@ fn form_package(
         .position(|row| row.get("_moquiRowType").and_then(Value::as_str) == Some("total"))
         .map(|index| rows.remove(index));
 
-    let keep = limit.map(|reads| row_names(reads, &node));
-    let keep = keep.as_ref();
+    let keep = row_names(reads, &node);
+    let keep = &keep;
     let mut body = serde_json::Map::new();
     body.insert(
         instance.list_name.clone(),
@@ -1560,12 +1561,7 @@ pub(crate) fn run_actions_transition(state: &RenderState, path: &str) -> Result<
     };
     let none = BTreeSet::new();
     let reads = template.as_ref().map_or(&none, |template| &template.reads);
-    // The mode is always standalone, so the pre-actions of the screens from the third on run, as for a qvt render.
-    let first_pre = if state.facade.is_always_standalone("qvt") && defs.len() > 2 {
-        2
-    } else {
-        info.render_path_difference
-    };
+    let first_pre = first_pre_index(state);
     // As a render does first: the user's default saved find, or the one the request names, and the saved page size.
     let target_parameters: Vec<String> = info
         .target_screen
@@ -1601,10 +1597,36 @@ pub(crate) fn run_actions_transition(state: &RenderState, path: &str) -> Result<
             );
             Ok(())
         }
-        None => screen_package(state, &target, reads),
-        // the rows of a screen that is not server-static are drawn by a server-merged template, whose reads are not known
-        Some(name) => form_package(state, &target, name, static_screen.then_some(reads)),
+        None => screen_package(state, &target, reads, &path_client_context(defs, first_pre)),
+        // the rows of a screen that is not server-static are fetched only by the list views, which read the fields
+        // the form names: no template names
+        Some(name) => form_package(state, &target, name, reads),
     }
+}
+
+/// The index of the first screen on the path whose pre-actions run for an actions request: the mode is always
+/// standalone, so the screens from the third on, as for a qvt render; else from the render's path difference.
+fn first_pre_index(state: &RenderState) -> usize {
+    let info = &state.url_info;
+    if state.facade.is_always_standalone("qvt") && info.path_defs.len() > 2 {
+        2
+    } else {
+        info.render_path_difference
+    }
+}
+
+/// The `client-context` names of the actions that ran for an actions request before the screen's own: the
+/// always-actions of every screen on the path (`defs`) and the pre-actions of those from `first_pre` on (SEC-RTE-02).
+/// A parent's actions and sections do not run for a subscreen's request, so theirs are not.
+fn path_client_context(defs: &[Arc<ScreenDef>], first_pre: usize) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for (index, def) in defs.iter().enumerate() {
+        names.extend(def.always_client_context.iter().cloned());
+        if index >= first_pre {
+            names.extend(def.pre_client_context.iter().cloned());
+        }
+    }
+    names
 }
 
 /// Whether `GET {screen}/actions` answers the screen's package: only for a screen that is sent as a server-static
