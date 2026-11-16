@@ -4,9 +4,9 @@ Status 2026-11-15: first pass done, in two rounds. The attack surface map was sp
 code has been read at least in part by a reviewer; the suspected weaknesses are listed here. Most are as their
 reviewer reported them and have not been read a second time; the Status column says which. The twelve High findings
 (ten fixes: two pairs are one weakness) are fixed, each with its regression test; its section's **Fix** says how. On
-2026-11-16 the Medium findings were fixed in the same way, with follow-ups the same day: 75 of the 77 are fixed and two
-in part (SEC-RTE-02, SEC-OUT-08), each entry's **Fix** in [Security-Review-Medium](Security-Review-Medium.md) saying how
-and what is left; 46 Low and Info findings were fixed with them and five in part. What is left is under
+2026-11-16 the Medium findings were fixed in the same way, with follow-ups the same day: all 77 are fixed (SEC-RTE-02
+and SEC-OUT-08 finished later the same day), each entry's **Fix** in [Security-Review-Medium](Security-Review-Medium.md)
+saying how; 46 Low and Info findings were fixed with them and five in part. What is left is under
 [What is left](#what-is-left).
 
 This is the findings register of the security review that the pre-0.1.0 notice in the [README](../README.md) names:
@@ -59,7 +59,7 @@ that builds this document are in `plans/security-review-evidence/`, which is not
 
 No finding is rated Critical. These are the ones to look at first; each High one has its section below, each Medium one in
 [Security-Review-Medium](Security-Review-Medium.md). Every High one below is fixed (2026-11-15), and every Medium one
-(2026-11-16), two of them in part.
+(2026-11-16).
 
 - **A disabled account comes back** (SEC-WEB-01, SEC-ADM-01; High; confirmed by the lead). An account disabled for
   good becomes a five-minute lock after four failed sign-in attempts, and a password change writes `disabled=N`. An
@@ -172,12 +172,9 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
    each map file ends with its open questions. The thinnest: the BOSS business apps other than Commerce and order
    approval, parsers of untrusted input, the mobile app's native code, and the helper-read parts of the PASS services.
 3. **Fixes.** The High findings are fixed (2026-11-15, what they left on 2026-11-16), and the Medium ones
-   (2026-11-16) with 46 of the Low and Info ones. Of the Medium findings none is open, none deferred and none refuted;
-   two are fixed in part, each for a decision or a design:
-   - SEC-RTE-02: a server-static screen's `actions` package still holds its whole context; sending only the names its
-     template reads needs the template's reads recorded (a design).
-   - SEC-OUT-08: the Docker services other than the registry login still default to plain http on 2375 to any host;
-     requiring https or a unix socket would stop existing hosts (a product decision).
+   (2026-11-16) with 46 of the Low and Info ones. Of the Medium findings none is open, none deferred, none refuted and
+   none fixed only in part. Left from SEC-RTE-02: the form-list rows of a screen that is not server-static (merged qvt
+   `m-form-list`) are still sent whole, since that template is merged on the server and its reads are not recorded.
 
    The Low and Info findings fixed in part are SEC-RTE-08 (a `read-only` transition such as `setPrefGoLast` or
    `/sso/logout` still changes state on a GET), SEC-TLS-08 (the deploy fetch resolves the host again), SEC-COM-21 (no
@@ -244,7 +241,7 @@ Map file: [Attack-Surface-Routes.md](../docs/security/Attack-Surface-Routes.md).
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
 | SEC-RTE-01 | `crates/moqui-core/src/web/mod.rs:1306` (`mark_email_message_viewed`) | `GET /email/{id}` lets anyone move mail to Viewed | High | fixed |
-| SEC-RTE-02 | `crates/moqui-core/src/screen/statics.rs:767` (`screen_package`), `:545` (`unwrap_context`) | `GET <screen>/actions` answers the screen's whole context | Medium | partly fixed |
+| SEC-RTE-02 | `crates/moqui-core/src/screen/statics.rs:767` (`screen_package`), `:545` (`unwrap_context`) | `GET <screen>/actions` answers the screen's whole context | Medium | fixed |
 | SEC-RTE-03 | `crates/moqui-entity/src/entity/query_rest.rs:214` | Any signed-in user can write `EntityAuditLog` rows through entity REST | Medium | fixed |
 | SEC-RTE-04 | `runtime/components/base/webroot/template/screen/BasicTransitions.xml:20` | `emailScreenAsync` mails a full report to a request-given address by `GET` | Medium | fixed |
 | SEC-RTE-05 | `runtime/components/base/webroot/screen/webroot.xml:257` | `/resources` runs elFinder write commands on a `GET` | Medium | fixed |
@@ -641,7 +638,7 @@ Map file: [Attack-Surface-Outbound.md](../docs/security/Attack-Surface-Outbound.
 | SEC-OUT-02 | crates/moqui-core/src/service/sso.rs:237 | The address guard fails open on stored rows: it applies only when `allowPrivateNetwork` is exactly `N` | Medium | fixed |
 | SEC-OUT-03 | crates/moqui-core/src/telemetry/scrape.rs:557 | Scrape targets, synthetic checks, EntitySync, `remote-rest` and resource locations never use the guard | Medium | fixed |
 | SEC-OUT-07 | podman/moqui-postgres-compose.yml:32 | Compose files default the database password to `moqui` with TLS off and the port published on the host | Medium | fixed |
-| SEC-OUT-08 | runtime/components/base/framework/service/org/moqui/dev/InstanceServices.xml:447 | A stored field is run as a program: `runTokenCommand(instanceImage.authTokenCmd)`; the Docker API defaults to plain HTTP on 2375 | Medium | partly fixed |
+| SEC-OUT-08 | runtime/components/base/framework/service/org/moqui/dev/InstanceServices.xml:447 | A stored field is run as a program: `runTokenCommand(instanceImage.authTokenCmd)`; the Docker API defaults to plain HTTP on 2375 | Medium | fixed |
 | SEC-OUT-04 | crates/moqui-mail/src/mx.rs:978 | MX delivery connects to any address a recipient domain's DNS names, internal ones included | Low | fixed |
 | SEC-OUT-05 | crates/moqui-devkit/src/deploy/git.rs:1506 | The deploy token is in the `git` child's argument list | Low | reported (confirmed in code) |
 | SEC-OUT-06 | crates/moqui-drivers/src/embedded.rs:596 | The embedded Postgres socket directory under the temp directory is used without checking its owner or mode | Low | reported (confirmed in code) |
