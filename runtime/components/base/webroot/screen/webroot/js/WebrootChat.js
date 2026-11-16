@@ -671,8 +671,37 @@
                 "alt", "src", "start", "summary", "colspan", "rowspan", "headers", "data-mention-id", "data-record-entity", "data-record-id"],
             ALLOW_DATA_ATTR: false, ALLOW_ARIA_ATTR: false,
         },
+        // An image a message may show: only this server's rich-text image route, as the server's chat cleaner keeps
+        // (StringUtilities.cleanChatHtml, SEC-COM-02). Another host's image would tell its sender each reader's address
+        // and when they read.
+        ownImage(src) {
+            return /^\/richTextImage\/[A-Za-z0-9_-]+$/.test(String(src || ""));
+        },
         clean(html) {
-            return root.DOMPurify.sanitize(String(html || ""), chat.purifyConfig);
+            const purify = root.DOMPurify;
+            const hook = (node, data) => {
+                if (node.nodeName === "IMG" && data.attrName === "src" && !chat.ownImage(data.attrValue)) data.keepAttr = false;
+            };
+            purify.addHook("uponSanitizeAttribute", hook);
+            try {
+                return purify.sanitize(String(html || ""), chat.purifyConfig);
+            } finally {
+                purify.removeHook("uponSanitizeAttribute", hook);
+            }
+        },
+        // A plain room's message as the server stored it, with the src of any image that is not this server's taken
+        // out (a message stored before the rule). Parsed in a template, whose content loads nothing.
+        ownImages(html) {
+            const text = String(html || "");
+            const doc = root.document;
+            if (!doc || !/<img\b/i.test(text)) return text;
+            const box = doc.createElement("template");
+            box.innerHTML = text;
+            let changed = false;
+            box.content.querySelectorAll("img").forEach((img) => {
+                if (!chat.ownImage(img.getAttribute("src"))) { img.removeAttribute("src"); changed = true; }
+            });
+            return changed ? box.innerHTML : text;
         },
         // the type a decrypted file's blob is made with: an image the room shows inline keeps its type, anything else is
         // bytes to save (a blob URL is of this origin, so a decrypted page or SVG must never open as one)

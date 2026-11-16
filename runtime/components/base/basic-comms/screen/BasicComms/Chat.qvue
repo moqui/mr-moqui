@@ -284,7 +284,8 @@ const fileIcon = (file) => {
     return 'sym_o_attach_file';
 };
 // mentions of me read in bold (the rich-text content style tints every mention)
-const decorateBody = (html, me) => String(html || '').replace(/<span data-mention-id="([^"]*)"/g,
+// an image of another host loses its src (SEC-COM-02; the server keeps no such image since, moqui.chat.ownImages)
+const decorateBody = (html, me) => (moqui.chat && moqui.chat.ownImages ? moqui.chat.ownImages(html) : String(html || '')).replace(/<span data-mention-id="([^"]*)"/g,
     (match, id) => '<span class="m-chat-mention' + (id === me ? ' text-weight-bold' : '') + '" data-mention-id="' + id + '"');
 const plainOf = (html) => (moqui.richText && moqui.richText.toPlain ? moqui.richText.toPlain(html || '') : String(html || '').replace(/<[^>]*>/g, ' ')).trim();
 // a pushed event merged into a timeline list (the page's chat store; nothing without it)
@@ -1423,7 +1424,7 @@ const chatRoom = {
                     undecryptable: !event.redacted && !!event.undecryptable,
                     edited: !!event.edited, editedText: event.editedDate ? fill(t('Edited {when}'), { when: fullTime(event.editedDate) }) : t('Edited'),
                     attachments: event.attachments || [], records: event.records || [], reactions: event.reactions || [],
-                    forwardOf: event.forwardOf || null, poll: event.poll || null, linkPreviews: event.linkPreviews || [],
+                    forwardOf: event.forwardOf ? Object.assign({}, event.forwardOf, { body: event.forwardOf.body && moqui.chat && moqui.chat.ownImages ? moqui.chat.ownImages(event.forwardOf.body) : event.forwardOf.body }) : null, poll: event.poll || null, linkPreviews: event.linkPreviews || [],
                     replyTo: event.replyToEventSeq != null ? this.replyOf(event) : null, threadReplyCount: Number(event.threadReplyCount || 0),
                     threadLastDate: event.threadLastDate, pinned: !!event.pinned, grouped, mine: event.senderUserId === me,
                     highlight: this.highlightSeq === Number(event.eventSeq), readers: opts.readers ? (this.readersBySeq[event.eventSeq] || null) : null };

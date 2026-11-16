@@ -2214,7 +2214,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="send" noun="Message" transaction="cache">
         <description>A message from the current user (a member of the room, which is not archived). body is safe HTML (the
-            m-rich-text light value: mentions are span data-mention-id); a message needs a body or attachments
+            m-rich-text light value: mentions are span data-mention-id), and an image only of this server (/richTextImage/id, StringUtilities.cleanChatHtml: another image loses its src); a message needs a body or attachments
             (chatAttachmentIdList, files the sender uploaded to this room with upload#Attachment and not yet sent).
             replyToEventSeq quotes a message of the room; threadRootEventSeq puts it in a thread (a reply's root is its own
             root). recordList [{entity, id}] names records the message is about (record cards). Mentions are counted and
@@ -2363,10 +2363,11 @@ along with this software (see the LICENSE.md file). If not, see
                     return
                 }
             } else clientRef = null
-            const html = body ? String(body).trim() : ''
+            // only this server's own images (SEC-COM-02): another host's would learn each reader's address and when they read
+            const html = body ? StringUtilities.cleanChatHtml(String(body)).trim() : ''
             if (html.length > 65536) { ec.message.addError(ec.l10n.localize('The message is too long')); return }
             const bodyText = toText(html)
-            const emptyBody = !bodyText && !/<img\b/i.test(html)
+            const emptyBody = !bodyText && !/<img\b[^>]*\bsrc=/i.test(html)
             const attachmentIds = Array.from(new Set((chatAttachmentIdList || []).map((id) => String(id || '').trim()).filter((id) => id)))
 
             // a forward: made here from the message, which the sender may read as a member of its room
@@ -2397,7 +2398,7 @@ along with this software (see the LICENSE.md file). If not, see
                         name = account ? account.userFullName || account.username || source.senderUserId : source.senderUserId
                     }
                     forwardOf = {senderUserId: source.senderUserId ?? null, senderName: name, sentDate: Number(source.sentDate),
-                        body: sourceBody ? String(sourceBody).replace(/\s+data-mention-id="[^"]*"/g, '') : null, bodyText: source.bodyText ?? null}
+                        body: sourceBody ? StringUtilities.cleanChatHtml(String(sourceBody)).replace(/\s+data-mention-id="[^"]*"/g, '') : null, bodyText: source.bodyText ?? null}
                 }
                 forwardFiles = Array.from(ec.entity.find('moqui.chat.ChatAttachment').condition('chatRoomId', forwardOfChatRoomId)
                         .condition('eventSeq', forwardOfEventSeq).orderBy('attachmentSeq').list())
@@ -2668,9 +2669,10 @@ along with this software (see the LICENSE.md file). If not, see
                 ciphertext = externalActor || (body != null && String(body).trim()) ? null : megolm(encrypted)
                 if (!ciphertext) { reasonCode = 'encryptedRoom'; ec.message.addError(ec.l10n.localize('This room is end-to-end encrypted: its messages are encrypted in the browser')); return }
             } else if (encrypted != null) { reasonCode = 'notEncrypted'; ec.message.addError(ec.l10n.localize('This room is not encrypted')); return }
-            const html = body ? String(body).trim() : ''
+            // only this server's own images (SEC-COM-02), as send#Message
+            const html = body ? StringUtilities.cleanChatHtml(String(body)).trim() : ''
             const bodyText = toText(html)
-            if (!ciphertext && !bodyText && !/<img\b/i.test(html)) { ec.message.addError(ec.l10n.localize('Delete the message to remove its text')); return }
+            if (!ciphertext && !bodyText && !/<img\b[^>]*\bsrc=/i.test(html)) { ec.message.addError(ec.l10n.localize('Delete the message to remove its text')); return }
             if (html.length > 65536) { ec.message.addError(ec.l10n.localize('The message is too long')); return }
             const room = access.room
             const memberRows = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).list())

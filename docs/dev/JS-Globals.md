@@ -276,6 +276,7 @@ helper functions above are also on the class Java has them on. Sources: `script/
 | `camelCaseToPretty(text)` | `"productStoreId"` to `"Product Store ID"` |
 | `prettyToCamelCase(text, firstUpper)` | The reverse. Characters that are not letters or digits start a new word |
 | `cleanHtml(text)` | The HTML cleaned as an `allow-html="safe"` parameter is |
+| `cleanChatHtml(text)` | The HTML cleaned for a chat message: the safe set, with an image only when its `src` is this server's `/richTextImage/<id>` |
 | `encodeForXmlAttribute(text, addZeroWidthSpaces)` | Text escaped for an XML attribute, characters above ASCII as character references |
 | `decodeFromXml(text)` | `&lt;`, `&gt;`, `&quot;`, `&apos;` and `&amp;` put back. Null for null |
 | `urlEncodeIfNeeded(text)` | URL-encoded unless it is already safe. A space is `+` |
