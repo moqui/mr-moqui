@@ -910,18 +910,28 @@ fn page_nodes(nodes: &mut [Node], index: usize) {
     }
 }
 
-/// The link Right and Enter open on a row, as its id and url: its first navigation link to another screen, else its first
-/// link back to the screen shown (`here`, its path), as a list beside its detail selects a row with one. A link to the
-/// screen shown is often a filter or a toggle that stages a change, so a link that opens the record wins over it. A row
-/// action that posts or writes stays on its own key and on F10. None for the show-total row.
+/// The link Right and Enter open on a row, as its id and url: the link the list names to open its rows (its
+/// `row-open-field`'s, marked `open`), else its first navigation link to another screen, else its first link back to the
+/// screen shown (`here`, its path), as a list beside its detail selects a row with one. A link to the screen shown is
+/// often a filter or a toggle that stages a change, so a link that opens the record wins over it. A row action that
+/// posts or writes stays on its own key and on F10. None for the show-total row.
 pub fn row_link_target<'a>(row: &'a ListRow, here: &str) -> Option<(&'a str, &'a str)> {
     if row.total {
         return None;
     }
-    let mut links = row.cells.iter().flat_map(Cell::nodes).filter_map(|node| match node {
-        Node::Link { id, url, .. } if navigates(node) => Some((id.as_str(), url.as_str())),
-        _ => None,
-    });
+    let links: Vec<(&str, &str, bool)> = row
+        .cells
+        .iter()
+        .flat_map(Cell::nodes)
+        .filter_map(|node| match node {
+            Node::Link { id, url, open, .. } if navigates(node) => Some((id.as_str(), url.as_str(), *open)),
+            _ => None,
+        })
+        .collect();
+    if let Some((id, url, _)) = links.iter().find(|(_, _, open)| *open) {
+        return Some((id, url));
+    }
+    let mut links = links.into_iter().map(|(id, url, _)| (id, url));
     let first = links.next()?;
     if !same_screen(first.1, here) {
         return Some(first);

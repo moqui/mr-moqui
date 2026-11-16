@@ -231,9 +231,19 @@ impl Session {
                 .filter(|(id, _)| !self.index.fields.contains_key(id))
                 .map(|(id, text)| format!("{id}: {text}"))
                 .collect();
+            // The error lines repeat each validation error (Java's toStringPretty, "Enter a name(for field Name"):
+            // as the browser's placeFieldErrors, one that a field's mark already says is left out (an error for a
+            // field not shown is on the line as `name: message` below).
+            let placed: Vec<&str> = marks.iter().map(|(_, text)| text.as_str()).collect();
+            let mut line: Vec<String> = outcome
+                .messages
+                .errors
+                .iter()
+                .filter(|error| !placed.iter().any(|text| repeats_mark(error, text)))
+                .cloned()
+                .collect();
             // The line shows the first mark, unless the server sent a message or named a field this form does not show.
             self.apply_marks(marks);
-            let mut line = outcome.messages.errors.clone();
             line.extend(unshown);
             if !line.is_empty() {
                 self.set_message(line.join("; "), true);
@@ -408,4 +418,16 @@ impl Session {
             }
         }
     }
+}
+
+/// Whether an errors line only repeats a validation error's message: the message itself, or its pretty form, the
+/// message followed by `(` and the field, form and service names (Java's `ValidationError.toStringPretty`).
+fn repeats_mark(error: &str, message: &str) -> bool {
+    let error = error.trim();
+    let message = message.trim();
+    !message.is_empty()
+        && (error == message
+            || error
+                .strip_prefix(message)
+                .is_some_and(|rest| rest.trim_start().starts_with('(')))
 }

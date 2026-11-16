@@ -740,6 +740,28 @@ fn server_validation_focuses_the_first_bad_field() {
 }
 
 #[test]
+fn an_errors_line_repeating_a_validation_error_is_left_out() {
+    let (mut session, link) = edit_session();
+    let mut outcome = TransitionOutcome::invalid(vec![ValidationError {
+        form: "Edit".to_string(),
+        field: "name".to_string(),
+        message: "Enter the customer name".to_string(),
+    }]);
+    // the server's errors: the message, its pretty form (no space before the parenthesis, none closing it) and another
+    outcome.messages.errors = vec![
+        "Enter the customer name".to_string(),
+        "Enter the customer name(for field Name on form Edit".to_string(),
+        "The customer was not saved".to_string(),
+    ];
+    link.answer_transition("/edit/update", outcome);
+    session.set_buffer("Edit.name", "Ann".to_string());
+    press(&mut session, &link, Key::Tab);
+    press(&mut session, &link, Key::Enter);
+    assert_eq!(session.mark("Edit.name"), Some("Enter the customer name"));
+    assert_eq!(session.message(), "The customer was not saved");
+}
+
+#[test]
 fn paging_and_sort_ask_again_with_the_parameters_of_the_screen() {
     let link = gallery_link();
     let mut session = Session::new(ScreenModel::from_json(GALLERY_LIST_JSON).unwrap());

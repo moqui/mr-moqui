@@ -29,8 +29,9 @@ const TREE_JSON: &str = r#"{
     { "t": "buttonMenu", "id": "Actions", "text": "Actions",
       "c": [ { "t": "link", "id": "a1", "text": "Approve", "url": "/tree/approve", "kind": "hidden-form-link", "method": "post" },
              { "t": "link", "id": "a2", "text": "Print", "url": "/print" },
-             { "t": "dialog", "id": "AddThing", "title": "Add Thing",
-               "c": [ { "t": "field", "id": "AddThing.name", "name": "name", "title": "Name", "w": { "kind": "textLine", "value": "" } } ] } ] },
+             { "t": "dialog", "id": "AddThing", "title": "Add Thing", "button": "New thing of any kind",
+               "c": [ { "t": "field", "id": "AddThing.name", "name": "name", "title": "Name", "w": { "kind": "textLine", "value": "" } } ] },
+             { "t": "dialog", "id": "Untitled", "title": "Only a title", "c": [] } ] },
     { "t": "statusBar", "id": "Status", "text": "Approved",
       "stages": [ { "statusId": "P", "label": "Placed", "state": "done" }, { "statusId": "A", "label": "Approved", "state": "current" },
                   { "statusId": "S", "label": "Shipped", "state": "todo" } ],
@@ -195,7 +196,8 @@ fn a_button_menu_opens_its_items_and_one_posts() {
         panic!("{:?}", session.overlays());
     };
     let labels: Vec<&str> = menu.items.iter().map(|item| item.label.as_str()).collect();
-    assert_eq!(labels, ["Approve", "Print", "Add Thing"]);
+    // a dialog's item is its button text, else its title
+    assert_eq!(labels, ["Approve", "Print", "New thing of any kind", "Only a title"]);
     press(&mut session, &link, Key::Enter);
     assert!(link
         .calls()
@@ -323,6 +325,46 @@ fn a_wizard_saves_its_step_before_next_and_a_stack_shows_its_trail() {
         .iter()
         .position(|call| matches!(call, LinkCall::Level { path, .. } if path == "/wiz/Confirm"));
     assert!(saved.is_some() && next.is_some() && saved < next, "{calls:?}");
+}
+
+/// Next on a step whose form nothing changed still posts the form, so the step's validation runs (Hire employee's
+/// employer), and the next step follows the answer; a refused post stays on the step.
+#[test]
+fn a_wizard_posts_an_unchanged_step_before_next() {
+    let link = FakeLink::from_json(&[WIZARD_JSON]).unwrap();
+    let mut session = Session::start("/wiz/Options");
+    session.run_now(&link);
+    press(&mut session, &link, Key::PageDown);
+    let calls = link.calls();
+    let saved = calls
+        .iter()
+        .position(|call| matches!(call, LinkCall::Transition { url, .. } if url == "/wiz/Options/save"));
+    let next = calls
+        .iter()
+        .position(|call| matches!(call, LinkCall::Level { path, .. } if path == "/wiz/Confirm"));
+    assert!(saved.is_some() && next.is_some() && saved < next, "{calls:?}");
+
+    let link = FakeLink::from_json(&[WIZARD_JSON]).unwrap();
+    link.answer_transition(
+        "/wiz/Options/save",
+        moqui_tui::TransitionOutcome::invalid(vec![moqui_tui::ValidationError {
+            form: "Opt".to_string(),
+            field: "size".to_string(),
+            message: "Choose a size".to_string(),
+        }]),
+    );
+    let mut session = Session::start("/wiz/Options");
+    session.run_now(&link);
+    press(&mut session, &link, Key::PageDown);
+    assert!(
+        !link
+            .calls()
+            .iter()
+            .any(|call| matches!(call, LinkCall::Level { path, .. } if path == "/wiz/Confirm")),
+        "{:?}",
+        link.calls()
+    );
+    assert_eq!(session.mark("Opt.size"), Some("Choose a size"));
 }
 
 /// A Markdown text area: Alt+B, Alt+I and Alt+K wrap the word at the cursor in its source, which stays the value.

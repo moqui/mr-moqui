@@ -181,3 +181,63 @@ fn partial_and_subtotal_metadata_are_not_numeric_chart_series() {
 fn gaps_are_missing_in_sparklines() {
     assert_eq!(sparkline(&[json!(1), Value::Null, json!(3)], 3), "▁ █");
 }
+#[test]
+fn panel_tables_title_columns_by_display_name_and_right_align_numbers() {
+    let frame = json!({"fields":[
+        {"name":"currency","type":"string","config":{"displayName":"Currency"},"values":["USD"]},
+        {"name":"value","type":"number","config":{"displayName":"Order value"},"values":[708]}]});
+    let lines: Vec<String> = panel_lines(&frame, &json!({"title":"Orders","visualization":"table"}), 40)
+        .iter()
+        .map(line_text)
+        .collect();
+    let header = lines
+        .iter()
+        .find(|line| line.contains("Currency"))
+        .expect("a header line");
+    assert!(
+        header.contains("Order value") && !header.contains("currency"),
+        "{lines:?}"
+    );
+    // the number ends where its column ends, under the end of its right-aligned title
+    let row = lines.iter().find(|line| line.contains("708")).expect("a value row");
+    assert_eq!(row.trim_end().len(), header.trim_end().len(), "{lines:?}");
+    assert!(row.starts_with("USD "), "{lines:?}");
+}
+#[test]
+fn annotations_fold_into_one_line_and_a_lists_them_by_minute() {
+    let props = json!({"panel":{"title":"Latency","visualization":"table",
+        "annotations":[{"time":"2026-11-16T04:39:34.009790491Z","text":"moqui 0.1.0 (cf741799)"},{"time":1763267974000_i64,"text":"deploy"}]},
+        "frame":{"fields":[{"name":"n","type":"number","values":[1]}]}});
+    let text = |state: &ComponentState| {
+        ReportPanel
+            .lines(&props, state, 80, false)
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let mut state = ComponentState::default();
+    let folded = text(&state);
+    assert!(folded.contains("▸ 2 annotations"), "{folded}");
+    assert!(!folded.contains("cf741799") && !folded.contains("04:39:34"), "{folded}");
+    ReportPanel.key(&props, &mut state, &KeyPress::plain(Key::Char('a')), false);
+    let open = text(&state);
+    assert!(open.contains("▾ 2 annotations"), "{open}");
+    assert!(open.contains("2026-11-16 04:39 UTC · moqui 0.1.0 (cf741799)"), "{open}");
+    assert!(!open.contains("009790491"), "{open}");
+}
+#[test]
+fn a_panel_that_could_not_be_computed_says_so_without_the_server_text() {
+    let panel = json!({"title":"Digest","notices":[{"level":"error","complete":false,
+        "message":"terms on the text field contactListName needs sortable=Y"}]});
+    let text = panel_lines(&json!({"fields":[]}), &panel, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        text.contains("Not available: this panel could not be computed"),
+        "{text}"
+    );
+    assert!(!text.contains("sortable"), "{text}");
+}

@@ -695,6 +695,21 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
         !contexts.is_empty() && contexts.iter().all(|url| url.starts_with("/apps/system/Monitor/LogContext?")),
         "{contexts:?}"
     );
+    // a log row opens its Surrounding entries (the list's row-open-field), not the user's account or the trace
+    let here = logs.session().path().to_string();
+    let opened: Vec<String> = logs
+        .session()
+        .list_page("ExploreDocuments")
+        .iter()
+        .filter_map(|row| moqui_tui::row_link_target(row, &here).map(|(_, url)| url.to_string()))
+        .collect();
+    assert!(
+        !opened.is_empty()
+            && opened
+                .iter()
+                .all(|url| url.starts_with("/apps/system/Monitor/LogContext?")),
+        "{opened:?}"
+    );
     logs.session_mut().navigate(&traces[0], true);
     logs.run_requests();
     assert!(

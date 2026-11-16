@@ -424,13 +424,13 @@ impl Index {
                         }
                     });
                     // A dialog among the menu's items opens from the menu: it is indexed (its fields, its body) as a dialog of
-                    // the screen, but is not a stop of its own.
+                    // the screen, but is not a stop of its own. Its item reads as its button, as in the browser's menu
+                    // ("New group of any kind"), its title only when it has no button text.
                     let mut dialogs = Vec::new();
                     for item in c {
                         let (dialog_id, label) = match item {
-                            Node::Dialog { id, title, .. } => (id, title),
-                            Node::DynamicDialog { id, button, title, .. } => {
-                                (id, if title.is_empty() { button } else { title })
+                            Node::Dialog { id, button, title, .. } | Node::DynamicDialog { id, button, title, .. } => {
+                                (id, if button.trim().is_empty() { title } else { button })
                             }
                             _ => continue,
                         };

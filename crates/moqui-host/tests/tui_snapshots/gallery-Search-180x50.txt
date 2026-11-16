@@ -2,7 +2,7 @@
 ─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▾ Gallery               │ Examples
    • Search              │ [ New example… ]  [ New address… ]
-     Landing             │ Any Field  : [ _______________________________________]
+     Landing             │ [ _______________________________________]
      List                │ < Search >
      Detail              │   ID Name Type Description
      360                 │ ───────────────────────────
@@ -46,5 +46,5 @@
                          │
                          │
 ─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- Any Field · Matches part of the name
+ Matches part of the name
  F1=Help  Alt+Enter=Save  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

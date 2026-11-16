@@ -385,12 +385,12 @@ fn drawer(paint: &mut Painter, session: &Session, framed: &Frame, top: u16, bott
         let active = marks.get(at).copied().unwrap_or(false);
         // a disabled item has no url either: dimmed, not bold, and no click target
         let heading = url.is_empty() && !disabled;
-        // ▾ only on a row whose items follow it
+        // ▾ only on a row whose items follow it: an app, or a screen of the path with its own subscreens under it
         let parent = rows.get(at + 1).is_some_and(|next| next.depth > *depth);
         let mark = match (*depth, active) {
             _ if heading || *disabled => " ",
             _ if home => paint.theme.glyph(Glyph::Apps),
-            (0, _) if parent => paint.theme.glyph(Glyph::Open),
+            _ if parent => paint.theme.glyph(Glyph::Open),
             (_, true) => paint.theme.glyph(Glyph::Active),
             _ => " ",
         };
@@ -460,6 +460,8 @@ fn message_line(paint: &mut Painter, session: &Session, row: u16, width: u16) {
             .map(|field| {
                 if field.tooltip.is_empty() {
                     field.title.clone()
+                } else if field.title.is_empty() {
+                    field.tooltip.clone()
                 } else {
                     format!("{} · {}", field.title, field.tooltip)
                 }
@@ -1398,16 +1400,29 @@ fn draw_inline(paint: &mut Painter, session: &Session, items: &[Inline], x: u16,
             .unwrap_or_default();
         let (text, look) = match item {
             Inline::Link {
-                text, btn_type, button, ..
+                text,
+                btn_type,
+                button,
+                checked,
+                ..
             } => {
-                let role = Role::of_type(btn_type).unwrap_or(Role::Primary);
+                let text = if *checked {
+                    format!("{} {text}", paint.theme.glyph(Glyph::Done))
+                } else {
+                    text.clone()
+                };
                 if btn_type == "image" {
                     (
                         format!("{number}{} {text}", paint.theme.glyph(Glyph::Image)),
                         Look::role(Role::Primary).underline(),
                     )
                 } else if *button {
-                    (format!("{number}[ {text} ]"), Look::role(role))
+                    // A button with no type is a plain one, as in the browser, and a primary one is bold too: among
+                    // links drawn as tabs (Product 360's), the current tab is the one marked primary, and it stands
+                    // out without color.
+                    let look = Look::role(Role::of_type(btn_type).unwrap_or(Role::Secondary));
+                    let look = if btn_type == "primary" { look.bold() } else { look };
+                    (format!("{number}[ {text} ]"), look)
                 } else {
                     (format!("{number}{text}"), Look::role(Role::Primary).underline())
                 }
@@ -1688,16 +1703,32 @@ fn draw_list(paint: &mut Painter, session: &Session, laid: &LaidList, x: u16, y:
     }
 }
 
-/// `Status = Approved` for each header field with a value, as qvt's filter summary.
-fn filter_summary(session: &Session, list: &crate::model::FormList) -> Option<String> {
+/// `Status = Approved` for each header field with a value, as qvt's filter summary: a drop-down's, radio's or check's
+/// value by its option's label (each of several values), not its id.
+pub(crate) fn filter_summary(session: &Session, list: &crate::model::FormList) -> Option<String> {
     let mut parts = Vec::new();
     crate::model::walk(&list.header_fields, &mut |node| {
-        if let Node::Field { id, title, .. } = node {
+        if let Node::Field { id, title, w, .. } = node {
             let value = session.buffer(id);
             let from = session.buffer(&format!("{id}#from"));
             let thru = session.buffer(&format!("{id}#thru"));
             if !value.is_empty() {
-                parts.push(format!("{title} = {value}"));
+                let shown = match w {
+                    Widget::DropDown { .. } | Widget::Radio { .. } | Widget::Check { .. } => {
+                        let choices = session.index().choices(id);
+                        if choices.iter().any(|choice| choice.value == value) {
+                            label_of(choices, value)
+                        } else {
+                            value
+                                .split(',')
+                                .map(|part| label_of(choices, part.trim()))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        }
+                    }
+                    _ => value.to_string(),
+                };
+                parts.push(format!("{title} = {shown}"));
             } else if !from.is_empty() || !thru.is_empty() {
                 parts.push(format!("{title} {from}–{thru}"));
             }

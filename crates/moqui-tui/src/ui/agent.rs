@@ -605,10 +605,24 @@ impl<L: ScreenLink> Agent<L> {
                 let list = text.trim().get("find".len()..).unwrap_or_default();
                 self.open_find(list.trim())
             }
+            // a subscreen tab is no element: its title opens it, as Alt+N does (a tab past the ninth has no key)
+            Named::None if self.open_tab(text) => Ok(()),
             // a row's text (its id, say) names the row: move to it as `find` does, then open it with Enter
             Named::None if self.open_row(text) => Ok(()),
             _ => self.resolve_one(text).map(|_| ()),
         }
+    }
+
+    /// The subscreen tab `text` names (its title, or the one title holding it), opened. False when none is named.
+    fn open_tab(&mut self, text: &str) -> bool {
+        let Some(at) = self.session().tab_named(undecorated(text)) else {
+            return false;
+        };
+        let opened = self.view.session_mut().open_tab(at);
+        if opened {
+            self.settle();
+        }
+        opened
     }
 
     /// A list row whose text holds `text`: moved to as `find` moves, and opened with Enter when the move lands on a list.

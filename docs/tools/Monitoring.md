@@ -376,7 +376,10 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   the Services dashboard's) keeps the range; a heatmap draws latency from histogram buckets (the Services dashboard has
   one). The TUI draws the same charts with block characters, formats currency, and has kiosk mode (↑/↓ go a panel at a
   time, PgUp/PgDn scroll) and auto refresh; `p` opens its time picker of quick ranges, `m` the selected panel's menu
-  (Remove asks for a second Enter), and its editor lists the suggested visualizations first, with why. Titles of
+  (Remove asks for a second Enter), and its editor lists the suggested visualizations first, with why. Its tables
+  title a column by the field's `displayName` and right-align numbers; a panel's annotations are one folded line
+  (`▸ 2 annotations`), which `a` on a single panel opens, each its time to the minute and its text; a panel that could
+  not be computed says so in a line, its reason left to the inspector (`i`). Titles of
   dashboards, panels, rows, tabs and variables, and the widgets' own text, show in the viewer's language when the
   catalog has them (mr-l10n).
 - **Repeats.** A panel, or a row or tab item, with `repeat: {variable, direction: "h"|"v", maxPerRow}` is copied once
@@ -425,7 +428,8 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   places a saved dashboard, one of its panels or a library panel on any screen. It renders as the viewer, so a
   visitor who is not signed in (such as on a public site) gets nothing, and a definition the viewer may not read logs
   a warning and renders nothing. A definition the viewer may read over a dataset the viewer may not is drawn, each such
-  panel saying "Not available: viewer may not read dataset …": a screen that embeds for readers who may lack the
+  panel saying "Not available: viewer may not read dataset …" (in the terminal "Not available: this panel could not be
+  computed", the reason in the inspector): a screen that embeds for readers who may lack the
   dataset checks first (`list#Datasets` leaves out what the user may not read) and leaves the embed out, as Tools'
   service and entity detail do.
 - **Reusing the dashboard list.** `Dashboards/Home.xml`'s links run through its own transitions (`dashboard`, `star`,

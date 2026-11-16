@@ -1284,7 +1284,8 @@ pub(super) fn json_envelope(
 
 /// The menu title of each name of `pathList`, for the breadcrumb: the parent's `subscreens-item` menu-title, else the
 /// screen's default-menu-title, localized and expanded as the menus title them (menu.rs). A name with no screen (a wiki
-/// page, a transition), or whose title is empty or does not expand, keeps its name.
+/// page, a transition), or whose title is empty or does not expand, keeps its name, percent-decoded (`Getting%20started`
+/// is `Getting started`; a `+` in a path is itself).
 fn path_titles(info: &ScreenUrlInfo) -> Vec<String> {
     let strip = super::sri::strip_controls;
     info.full_path
@@ -1299,7 +1300,11 @@ fn path_titles(info: &ScreenUrlInfo) -> Vec<String> {
                 }
                 _ => None,
             };
-            strip(title.as_deref().unwrap_or(name))
+            match title {
+                Some(title) => strip(&title),
+                None if name.contains('%') => strip(&crate::web::percent_decode(&name.replace('+', "%2B"))),
+                None => strip(name),
+            }
         })
         .collect()
 }

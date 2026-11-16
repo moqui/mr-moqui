@@ -21,8 +21,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use super::{
-    drawer_rows, encode, DrawerRow, Message, Overlay, Session, Submitted, Timer, COUNTS_SECONDS, PUSHED_COUNTS_SECONDS,
-    SEARCH_MILLIS,
+    drawer_rows_with_levels, encode, DrawerRow, Message, Overlay, Session, Submitted, Timer, COUNTS_SECONDS,
+    PUSHED_COUNTS_SECONDS, SEARCH_MILLIS,
 };
 use crate::edit::{self, Limits};
 use crate::forms::{Extra, FocusItem, FocusKind};
@@ -168,7 +168,7 @@ impl Session {
 
     /// The drawer's rows: the app's menu, the screen's saved finds, and Home. A row with no url is a heading.
     pub fn drawer_rows(&self) -> Vec<DrawerRow> {
-        let mut rows = drawer_rows(&self.shell.menu);
+        let mut rows = drawer_rows_with_levels(&self.shell.menu, &self.deep_menu);
         if !self.finds.is_empty() {
             rows.push(DrawerRow::new("Saved finds", "", 0));
             rows.extend(self.finds.iter().map(|find| DrawerRow::new(&find.title, &find.url, 1)));
@@ -863,12 +863,18 @@ impl Session {
     }
 
     /// The last entry of `menuData` is the screen: its `screenDocList` for the help, and its `savedFinds` for the drawer.
+    /// Each entry is a level of the path with its subscreens: those below the app's top-level screens are nested in the
+    /// drawer (`drawer_rows_with_levels`).
     pub(super) fn menu_reply(&mut self, result: Result<serde_json::Value, LinkError>) {
         let Ok(value) = result else {
             // The help and drawer work without them.
             return;
         };
-        let Some(screen) = value.as_array().and_then(|entries| entries.last()) else {
+        let Some(entries) = value.as_array() else {
+            return;
+        };
+        self.deep_menu = entries.iter().filter_map(menu_level).collect();
+        let Some(screen) = entries.last() else {
             return;
         };
         self.docs = screen
@@ -1084,7 +1090,48 @@ impl Session {
                 }
                 self.set_message(format!("Found \"{}\"", self.search), false);
             }
-            None => self.set_message(format!("\"{}\" is not on this screen", self.search), true),
+            // a subscreen tab is no stop: say how it opens (past the ninth, tabs have no number key)
+            None => match self.tab_named(&self.search) {
+                Some(at) => {
+                    let title = self.index.tabs[at].title.clone();
+                    let how = if at < 9 {
+                        format!("Alt+{} opens it", at + 1)
+                    } else {
+                        "Ctrl+PgDn reaches it".to_string()
+                    };
+                    self.set_message(format!("Found the tab \"{title}\": {how}"), false);
+                }
+                None => self.set_message(format!("\"{}\" is not on this screen", self.search), true),
+            },
+        }
+    }
+
+    /// The subscreen tab `text` names: the one titled so (ignoring case), else the one tab whose title holds it.
+    pub fn tab_named(&self, text: &str) -> Option<usize> {
+        let wanted = text.trim().to_lowercase();
+        if wanted.is_empty() {
+            return None;
+        }
+        let titles: Vec<String> = self.index.tabs.iter().map(|tab| tab.title.to_lowercase()).collect();
+        if let Some(at) = titles.iter().position(|title| title.trim() == wanted) {
+            return Some(at);
+        }
+        let holding: Vec<usize> = (0..titles.len()).filter(|at| titles[*at].contains(&wanted)).collect();
+        match holding.as_slice() {
+            [at] => Some(*at),
+            _ => None,
+        }
+    }
+
+    /// Open the subscreen tab at `at` (from 0), as Alt+N does for the first nine. False when there is none, or it is
+    /// not a link.
+    pub fn open_tab(&mut self, at: usize) -> bool {
+        match self.index.tabs.get(at).map(|tab| tab.url.clone()) {
+            Some(url) if !url.is_empty() => {
+                self.follow_url(&url);
+                true
+            }
+            _ => false,
         }
     }
 
@@ -1419,6 +1466,49 @@ fn location_text(location: &Location) -> String {
         .map(|(name, value)| format!("{}={}", encode(name), encode(value)))
         .collect();
     format!("{}?{}", location.path, query.join("&"))
+}
+
+/// A level of the menu data with subscreens: its path and its subscreens as drawer items (`pathWithParams`, else
+/// `path`; `disableLink` dimmed), the one on the path named. None for a level with none.
+fn menu_level(entry: &serde_json::Value) -> Option<super::MenuLevel> {
+    let subscreens = entry.get("subscreens")?.as_array().filter(|list| !list.is_empty())?;
+    let path = terminal_url(&json_text(entry, "path"));
+    if path.is_empty() {
+        return None;
+    }
+    let mut active_title = String::new();
+    let items = subscreens
+        .iter()
+        .filter_map(|item| {
+            let title = json_text(item, "title");
+            let url = match json_text(item, "pathWithParams") {
+                with_params if with_params.is_empty() => json_text(item, "path"),
+                with_params => with_params,
+            };
+            if title.is_empty() && url.is_empty() {
+                return None;
+            }
+            if item.get("active").and_then(serde_json::Value::as_bool) == Some(true) {
+                active_title.clone_from(&title);
+            }
+            Some(MenuItem {
+                title: if title.is_empty() {
+                    json_text(item, "name")
+                } else {
+                    title
+                },
+                url: terminal_url(&url),
+                disabled: item.get("disableLink").and_then(serde_json::Value::as_bool) == Some(true),
+                group: json_text(item, "group"),
+                ..MenuItem::default()
+            })
+        })
+        .collect();
+    Some(super::MenuLevel {
+        path: path.split(['?', '#']).next().unwrap_or(&path).to_string(),
+        items,
+        active_title,
+    })
 }
 
 pub(super) fn json_text(value: &serde_json::Value, name: &str) -> String {

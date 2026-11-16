@@ -666,6 +666,10 @@ fn every_phase_two_widget_and_region_is_a_node_the_client_reads() {
     parameters.insert("descr_not".to_string(), Value::string("Y"));
     parameters.insert("amount_from".to_string(), Value::string("5"));
     parameters.insert("flag".to_string(), Value::string("N"));
+    parameters.insert(
+        "body".to_string(),
+        Value::string("<p>Hello <b>world</b></p><p>Two&nbsp;lines</p>"),
+    );
     let output = render(
         "widgets",
         r#"<screen require-authentication="false"><widgets>
@@ -707,6 +711,8 @@ fn every_phase_two_widget_and_region_is_a_node_the_client_reads() {
     assert_eq!(field("note")["w"]["rows"], json!(4));
     assert_eq!(field("note")["tooltip"], json!("A note"));
     assert_eq!(field("body")["w"]["readOnly"], json!(true));
+    // rich text is shown as its text, a block a line, not as its tags
+    assert_eq!(field("body")["w"]["value"], json!("Hello world\nTwo lines"), "{doc}");
     assert_eq!(field("descr")["w"]["op"], json!("begins"));
     assert_eq!(field("descr")["w"]["not"], json!(true));
     assert_eq!(field("when")["w"]["kind"], json!("dateFind"));
@@ -1960,22 +1966,33 @@ fn the_envelope_gives_each_levels_menu_title() {
     .unwrap();
     std::fs::write(
         dir.join("FindBom.xml"),
-        r#"<screen require-authentication="false"><widgets><label text="Content"/></widgets></screen>"#,
+        r#"<screen require-authentication="false" allow-extra-path="true"><widgets><label text="Content"/></widgets></screen>"#,
     )
     .unwrap();
     let context = ExecutionContextFactory::test_context();
-    let output = make_render(context.factory())
-        .root_screen(dir.join("Root.xml").to_string_lossy().into_owned())
-        .screen_path("BillsOfMaterials/FindBom")
-        .render_mode("tui")
-        .render()
-        .unwrap();
+    let render = |path: &str| {
+        make_render(context.factory())
+            .root_screen(dir.join("Root.xml").to_string_lossy().into_owned())
+            .screen_path(path)
+            .render_mode("tui")
+            .render()
+            .unwrap()
+    };
+    let output = render("BillsOfMaterials/FindBom");
+    // an extra path's name (a wiki page) is its name decoded, a `+` kept as written
+    let extra = render("BillsOfMaterials/FindBom/Getting%20started+more");
     let _ = std::fs::remove_dir_all(&dir);
     let doc = document(&output);
     assert_eq!(doc["screen"]["pathList"], json!(["BillsOfMaterials", "FindBom"]), "{doc}");
     assert_eq!(doc["screen"]["pathTitles"], json!(["Bills of Materials", "Find BOM"]), "{doc}");
     let model = client_model(&output.body_text());
     assert_eq!(model.screen.path_titles, ["Bills of Materials", "Find BOM"]);
+    let extra = document(&extra);
+    assert_eq!(
+        extra["screen"]["pathTitles"][2],
+        json!("Getting started+more"),
+        "{extra}"
+    );
 }
 
 /// A wizard or stack panel is a subscreens node like the tabs: the steps, the active one, a wizard's finish text, and the
@@ -2673,4 +2690,85 @@ fn an_agents_render_leaves_out_the_text_of_ai_opt_out_fields_of_row_forms_and_vi
     assert!(row["cells"].to_string().contains("Not shared with AI"), "{row}");
     assert_eq!(list["views"]["board"]["rows"][0]["f0"], json!("Not shared with AI"));
     client_model(&agent);
+}
+
+/// A form-list's `row-open-field` marks its field's links `open`, so the client opens the row by that link before the
+/// row's first link to another screen (Monitor Logs' Surrounding entries, not the user's account); a board card opens
+/// it too.
+#[test]
+fn a_row_open_field_marks_the_link_that_opens_the_row() {
+    let output = render(
+        "row-open-field",
+        r#"<screen require-authentication="false"><actions><script><![CDATA[
+            rows = [{id: 'L1', userId: 'john', stage: 'a'}, {id: 'L2', userId: '', stage: 'b'}]
+        ]]></script></actions><widgets>
+            <form-list name="Logs" list="rows" id-field="id" skip-form="true" row-open-field="context" views="list,board">
+                <view-board group-field="stage" key-fields="id" card-title-field="id"/>
+                <field name="userId"><default-field title="User">
+                    <link condition="userId" url="/apps/user" text="${userId}" link-type="anchor" url-type="plain"/></default-field></field>
+                <field name="context"><default-field title="Context">
+                    <link url="/apps/context" text="Surrounding entries" link-type="anchor" url-type="plain" parameter-map="{id:id}"/></default-field></field>
+            </form-list>
+        </widgets></screen>"#,
+        BTreeMap::new(),
+    );
+    let doc = document(&output);
+    let list = nodes(&doc)
+        .into_iter()
+        .find(|node| node.get("t").and_then(Json::as_str) == Some("formList"))
+        .unwrap_or_else(|| panic!("no list in {doc}"));
+    let user = &list["rows"][0]["cells"][0];
+    let context = &list["rows"][0]["cells"][1];
+    assert_eq!(user["text"], json!("john"), "{doc}");
+    assert!(user.get("open").is_none(), "{doc}");
+    assert_eq!(context["open"], json!(true), "{doc}");
+    let model = client_model(&output.body_text());
+    let mut rows = Vec::new();
+    moqui_tui::walk(&model.c, &mut |node| {
+        if let moqui_tui::Node::FormList { list } = node {
+            rows.extend(list.rows.clone());
+        }
+    });
+    let (_, url) = moqui_tui::row_link_target(&rows[0], "/somewhere").expect("a link opens the row");
+    assert!(url.starts_with("/apps/context"), "{url}");
+    // a board card opens the same link
+    assert!(output.body_text().contains(r#""_open":"/apps/context"#), "{doc}");
+}
+
+/// A column of submit buttons has no title, as qvt's header leaves it blank; `align="right"` right-aligns a column as a
+/// number column is, and an explicit `left` keeps a number column left; a form-single field whose title is `""` has no
+/// title, not its field name.
+#[test]
+fn submit_columns_are_untitled_align_is_read_and_an_empty_title_is_none() {
+    let xml = r##"<screen require-authentication="false">
+        <transition name="save"><default-response type="none"/></transition>
+        <actions><script>rows = [{name: 'Alpha', amount: '12.50', count: 3}]</script></actions>
+        <widgets><form-list name="Rows" list="rows" transition="save">
+            <field name="name"><default-field><display/></default-field></field>
+            <field name="amount" align="right"><default-field><display/></default-field></field>
+            <field name="count" align="left"><default-field><display format="#,##0"/></default-field></field>
+            <field name="submitButton"><default-field title="Update"><submit/></default-field></field>
+        </form-list>
+        <form-single name="Note">
+            <field name="note"><default-field title=""><display text="Shipped by the framework"/></default-field></field>
+        </form-single></widgets></screen>"##;
+    let output = render("submit-align-title", xml, BTreeMap::new());
+    let doc = document(&output);
+    let list = list_named(&doc, "Rows");
+    let columns = list["columns"].as_array().unwrap();
+    let titles: Vec<&Json> = columns.iter().map(|column| &column["title"]).collect();
+    assert_eq!(
+        titles,
+        [&json!("Name"), &json!("Amount"), &json!("Count"), &json!("")],
+        "{list:?}"
+    );
+    let aligns: Vec<&Json> = columns.iter().map(|column| &column["align"]).collect();
+    assert_eq!(
+        aligns,
+        [&Json::Null, &json!("right"), &Json::Null, &Json::Null],
+        "{list:?}"
+    );
+    let note = field_named(&doc, "note");
+    assert_eq!(note["title"], json!(""), "{note:?}");
+    client_model(&output.body_text());
 }

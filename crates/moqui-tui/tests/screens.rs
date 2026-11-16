@@ -854,3 +854,58 @@ fn a_fields_link_is_drawn_after_its_label() {
     press(&mut view, Key::Enter);
     assert_eq!(view.session().path(), "/asset");
 }
+
+/// A list's find footer names a drop-down's, radio's or check's value by its option's label, not its id.
+#[test]
+fn the_find_footer_shows_option_labels() {
+    let model = ScreenModel::from_json(
+        r#"{"v":1,"screen":{"path":"/approvals","title":"Approvals"},"c":[
+          {"t":"formList","id":"Items","name":"Items","columns":[{"title":"Name"}],
+           "rows":[{"id":"1","cells":["Anvil"]}],
+           "headerFields":[
+             {"t":"field","id":"Items.list","name":"list","title":"List","w":{"kind":"radio","value":"toApprove",
+               "options":[{"value":"toApprove","label":"To approve"},{"value":"mine","label":"Mine"}]}},
+             {"t":"field","id":"Items.statusId","name":"statusId","title":"Status","w":{"kind":"dropDown","value":"ST_A,ST_B",
+               "options":[{"value":"ST_A","label":"Approved"},{"value":"ST_B","label":"Billed"}]}},
+             {"t":"field","id":"Items.name","name":"name","title":"Name","w":{"kind":"textLine","value":"anv"}}]}]}"#,
+    )
+    .unwrap();
+    let text = render_text(&model, &FakeLink::from_json(&[]).unwrap(), 160, 20);
+    assert!(
+        text.contains("Find: List = To approve, Status = Approved, Billed, Name = anv"),
+        "{text}"
+    );
+    assert!(!text.contains("toApprove") && !text.contains("ST_A"), "{text}");
+}
+
+/// Link buttons drawn as tabs (Product 360's) mark the current one only by `btn-type="primary"`: a button with no type
+/// is a plain one, the primary one is bold, so it stands out without color; a view chooser marked only by a check icon
+/// (Cases' views) shows the check.
+#[test]
+fn a_primary_link_button_stands_out_and_a_check_icon_is_drawn() {
+    let model = ScreenModel::from_json(
+        r#"{"v":1,"screen":{"path":"/p/Summary","title":"Summary"},"c":[
+          {"t":"link","id":"tabSummary","text":"Summary","url":"/p/Summary","kind":"anchor-button","btnType":"primary"},
+          {"t":"link","id":"tabPrices","text":"Prices","url":"/p/Prices","kind":"anchor-button"},
+          {"t":"link","id":"viewMine","text":"Assigned to me","url":"/p/Summary?view=mine","kind":"anchor-button","icon":"sym_o_check"},
+          {"t":"link","id":"viewAll","text":"All permitted","url":"/p/Summary?view=all","kind":"anchor-button"}]}"#,
+    )
+    .unwrap();
+    let view = view_of(model, FakeLink::from_json(&[]).unwrap());
+    let mut buffer = Buffer::new(120, 20);
+    view.render(&mut RenderContext::new(&mut buffer, Rect::new(0, 0, 120, 20)));
+    let find = |text: &str| {
+        (0..20u16).find_map(|y| {
+            let line: String = (0..120).map(|x| buffer.get(x, y).unwrap().symbol).collect();
+            line.find(text).map(|at| (line[..at].chars().count() as u16, y))
+        })
+    };
+    let (x, y) = find("Summary ]").expect("the Summary button");
+    let (px, py) = find("Prices ]").expect("the Prices button");
+    // the current tab focus may sit on the first button, so its look is read off a letter beyond the focus mark
+    assert!(buffer.get(x + 2, y).unwrap().modifier.contains(Modifier::BOLD));
+    assert!(!buffer.get(px + 2, py).unwrap().modifier.contains(Modifier::BOLD));
+    assert_ne!(buffer.get(x + 2, y).unwrap().fg, buffer.get(px + 2, py).unwrap().fg);
+    assert!(find("✓ Assigned to me").is_some());
+    assert!(find("✓ All permitted").is_none());
+}

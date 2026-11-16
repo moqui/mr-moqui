@@ -28,7 +28,7 @@
                          │ └─────────────────────────────────────────────────────────────────────────┘
                          │ ┌─ Groups ────────────────────────────────────────────────────────────────┐
                          │ │ Add to group                                                            │
-                         │ │   Group     Description                  Type                 Since     │
+                         │ │   Group     Description                  Type                      Since│
                          │ │ ────────────────────────────────────────────────────────────────────────│
                          │ │   ADMIN     Administrators (full access) Moqui Administrators 2010-02-03│
                          │ │   ADMIN_ADV Administrators - Advanced    Moqui Administrators 2010-02-03│

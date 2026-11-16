@@ -155,9 +155,9 @@ session is found only by its own user. It ends on `close`, or after 10 minutes w
 | `go <path[?query]>` | go to a screen |
 | `focus <element>` | move the focus |
 | `set <element> <value>` | replace a field's value; a drop-down takes a choice's value or label and chooses it as a person does, so its dependent fields follow. `set <element>` alone, or with `""` as its value, empties it (over ssh, quote it from the local shell: `'""'`) |
-| `do <element>` | focus and press Enter: a button, link, dialog button, menu (a submit button by its text); with a confirm open, `do Yes` answers it |
+| `do <element>` | focus and press Enter: a button, link, dialog button, menu (a submit button by its text); a subscreen tab by its title (one past the ninth too, which has no number key); with a confirm open, `do Yes` answers it |
 | `do Find [list]` | open a list's find fields (as `f` on the list), and with the find open, find: the list again with the fields set, each with its own operator, and none of an empty field's flags |
-| `find <text>` | move to the text on the screen, a list or tree row's included (it becomes the current row), and a button menu by its items; then `key Right` follows the row's link (an agent's keys are Classic unless `--keys modern`) |
+| `find <text>` | move to the text on the screen, a list or tree row's included (it becomes the current row), and a button menu by its items; then `key Right` follows the row's link (an agent's keys are Classic unless `--keys modern`). A subscreen tab is no stop: `find` names it and how it opens |
 | `elements` | the focusable elements: number, kind, id, label, value, and required, changed or error marks |
 | `size <cols>x<rows>` | the drawing size; a tall one shows a long list whole (the page size follows the rows) |
 | `format text\|json` | the answers' form; `--json` on one command for that one |
@@ -274,10 +274,12 @@ new line. On a list row:
 - in Modern, Enter follows the row's link, and edits the row when it has no link;
 - in Classic, Enter edits the row when it has fields, and opens its link otherwise. Right follows the link.
 
-The row's link is its first link to another screen. A link back to the screen shown (a filter on a value, or a toggle
-that stages a change, as on Access Capabilities) opens the row only when it has no link to another screen, as a list
-beside its detail selects a row with one. A card of a board, an event of a calendar and a row of a tree open the
-same way: the link the server gives each (`_open`) is its first link to another screen, else its first back to this one.
+The row's link is the link of the field the list names in `row-open-field`, when the row has one (Monitor › Logs opens
+a line's Surrounding entries, not its user's account); else its first link to another screen. A link back to the screen
+shown (a filter on a value, or a toggle that stages a change, as on Access Capabilities) opens the row only when it has
+no link to another screen, as a list beside its detail selects a row with one. A card of a board, an event of a
+calendar and a row of a tree open the same way: the link the server gives each (`_open`) is its `row-open-field` link,
+else its first link to another screen, else its first back to this one.
 A link that posts or writes never opens the row; it stays on F10 and on numbered links. A row with no link to open says "Nothing to open on this row" (and points to F10 when it
 has other links). The show-total row opens nothing. In both schemes `e` edits the row.
 
@@ -345,7 +347,10 @@ search drop-down over its screen's `scanResolve` transition: the code typed or s
 and the form posts the id with a scan id the screen made when it rendered ([Qvt-Client](Qvt-Client.md#scan-input)). In the date
 picker the arrows move a day or a week, PgUp and PgDn a month, Home is today and Enter picks.
 
-A list draws its column titles unless it has `skip-header`. A column wider than the room left is drawn cut to that room
+A list draws its column titles unless it has `skip-header`; a column of submit buttons has none, as in the browser. A
+column whose field has `align="right"`, or that shows numbers, is right-aligned, its title too; `align="left"` keeps a
+number column left. The paging footer names the find's values (`Find: Status = Approved`), a drop-down's, radio's or
+check's by its option's label. A column wider than the room left is drawn cut to that room
 (at least 8 columns), and Shift+Right brings the columns after it; a row takes the lines of its tallest cell among the
 columns drawn. A cell's row actions (an icon or button link, a link that posts, a dialog, a button) share one line. The
 `show-total` row is drawn bold under the rows, with only the totals' columns filled, no checkbox and nothing to open; it
@@ -369,7 +374,8 @@ width, or when the long form would cut the breadcrumb, the middle form with thre
 word's first letter and the two consonants after it) takes over, then the short form `T3 C1 N2`, then the user and the
 clock give way. The breadcrumb names each level by its menu title (`Bills of Materials`, not `BillsOfMaterials`), the
 envelope's `pathTitles` beside `pathList`; a level whose title is empty or does not expand, and an extra path's name (a
-wiki page), keeps its name.
+wiki page), keeps its name, percent-decoded (`Getting started`). A level named as the one after it (a screen whose
+default subscreen is its own list) is one crumb, as in the browser.
 
 A list with `views` (`view-board`, `view-calendar`, `view-tree`; style guide §8.2) opens in the view the user chose last
 (the `LIST_VIEW_` preference the browser keeps), else the first the form names. The board shows the page's rows as cards in
@@ -381,7 +387,8 @@ browser's levels fetched on open and its moves are not in the terminal yet). `v`
 An `editor-type="md"` text area shows its Markdown source styled as it is typed: headings and links in the primary
 color, bold and italic, code in the info color, and the markers (`#`, `**`, backticks, a link's brackets and url, list
 bullets) muted. The source is the value, so nothing is converted and nothing is lost. F4 shows the preview and the
-source again. Rich-text fields (`html`, `rich`) stay read-only, with "open in browser". A text area longer than its
+source again. Rich-text fields (`html`, `rich`, `rich-light`) stay read-only: their HTML is shown as its text, a block a
+line, with a line under it to edit it in the browser. A text area longer than its
 rows scrolls with its cursor, and PgUp, PgDn and the wheel move it by its rows; `▲` and `▼` on its bar say there is
 more above or below. The preview scrolls the same way.
 
@@ -389,6 +396,17 @@ A row of buttons wider than the screen goes on as many lines as it needs.
 
 Leaving a changed form (a link, Back, Ctrl+Q) asks: Stay, Discard or Save. A button or link with a `confirmation` asks
 No or Yes, starting at No.
+
+A wizard's Next (and PgDn on a step with no list) posts the step's form, changed or not, so its validation runs, and
+the next step follows the answer; a step with no form goes on at once. The step's form is the first form inside the
+wizard that is not a list's, a row action's or in a dialog, as the browser's `stepForm`.
+
+After a refused post each field the server names is marked with its message; the errors the server lists too (the same
+message, or Java's form of it, `Enter a name(for field Name`) are not repeated on the message line, as the browser
+leaves them out. A dialog among a button menu's items is listed by its button text, else its title. A link button with
+no `btn-type` is drawn as a plain one and a `primary` one bold, so a row of link buttons that marks the current one
+`primary` (Product 360's tabs) shows it without color; a link's check icon (`check`, `done`, `check_circle`,
+`task_alt`) is drawn as `✓` before its text (Cases' current view).
 
 A successful write and F5 refresh the current screen and its cached parent screens, so a record's header and actions
 reflect child-screen changes. Moving between child tabs, or resizing the terminal, reuses those parents. Each parent
@@ -442,7 +460,10 @@ The client measures the canvas: the terminal less a docked drawer. The width cla
 
 The 26-column drawer docks while the canvas left beside it is still md, from a terminal of 146 columns; F9 shows or
 hides it at any width. In it `▾` marks an app with its screens under it, `•` the screen shown (bold), and `◂ Home`, the
-last row, is the link to all the apps. Where rows share a screen, as a saved find (`?formListFindId=`) does its Find
+last row, is the link to all the apps. As the browser's drawer, it opens the current path below the app's top-level
+screens: each screen on the path that has subscreens lists them under it, a level more indented (from the screen's
+menu data, `menuData`), so Payroll's runs and settings are there though Payroll has no tab bar; a screen whose
+subscreen on the path has its own title gives way to it. The arrows walk every row. Where rows share a screen, as a saved find (`?formListFindId=`) does its Find
 screen, the one whose parameters the screen shown holds is marked, and the plain row only when none is. A box narrower
 than 40 columns goes on a line of its own rather than squeeze, where it stands among the others (a label column stays
 above its value). A word too long for its line, a URL, is broken across lines rather than cut. A list's page size
@@ -484,7 +505,13 @@ needs a `tui` text of its own beside it to show in the terminal; until it has on
 the browser address. `moqui lint --screens` lists those parts under "TUI worklist".
 
 In a `form-single`, a link in a field with a `title` is the field's value, with the title as its label; a link in an
-untitled field is one of the buttons under the form. A label with a `condition` beside such a link (the text shown when
+untitled field is one of the buttons under the form. A field with `title=""` has no label (not its field name), as in
+the browser.
+
+A list whose row has no single record to open, where its first link to another screen is not what the row is about,
+names the field whose link opens it: `<form-list row-open-field="context">` (the XSD documents it). Enter and Right on
+the row, and a card or event of its views, open that link; when the field has no link on a row, the row opens as
+without it. The browser does not open rows by a link and ignores it. A label with a `condition` beside such a link (the text shown when
 there is nothing to link to) adds no line when its condition fails.
 
 A screen's `menu-group` (or its `default-menu-group`) is a heading in the drawer above the first of each run of menu

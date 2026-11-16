@@ -320,6 +320,9 @@ pub struct Session {
     docs: Vec<(String, String)>,
     /// The screen's saved finds, for the drawer.
     finds: Vec<MenuItem>,
+    /// The levels of the screen's path below its app's top-level screens, from its menu data: each screen on the path
+    /// (by its path) with its subscreens, nested under it in the drawer as the browser's drawer does.
+    deep_menu: Vec<MenuLevel>,
     /// The screen's declared actions that open a screen (`extActions` of its menu data, screen/ext.rs), for the drawer.
     ext_actions: Vec<ExtAction>,
     counts: BTreeMap<String, i64>,
@@ -394,6 +397,7 @@ impl Session {
             palette_found: (String::new(), Vec::new()),
             docs: Vec::new(),
             finds: Vec::new(),
+            deep_menu: Vec::new(),
             ext_actions: Vec::new(),
             counts: BTreeMap::new(),
             downloads: Vec::new(),
@@ -599,8 +603,15 @@ impl Session {
 
     /// The screen's place, `Gallery ▸ Detail`, each level by its menu title (`Bills of Materials ▸ Find BOM`, not
     /// `BillsOfMaterials ▸ FindBom`): the title line's breadcrumb before it is cut to the width. A server that sends no
-    /// titles gives the names, with the leaf's title in place of its name.
+    /// titles gives the names, with the leaf's title in place of its name. A level named as the one after it (a
+    /// screen whose default subscreen is its own list, `Suppliers ▸ Suppliers`) is one crumb, as in the browser.
     pub fn crumbs(&self) -> Vec<String> {
+        let mut crumbs = self.level_names();
+        crumbs.dedup();
+        crumbs
+    }
+
+    fn level_names(&self) -> Vec<String> {
         let screen = &self.model().screen;
         if !screen.path_titles.is_empty() && screen.path_titles.len() == screen.path_list.len() {
             return screen.path_titles.iter().skip(1).cloned().collect();
@@ -2319,21 +2330,75 @@ impl DrawerRow {
 /// The drawer's rows: each app menu item and the items under it. An item whose group is not that of the item before
 /// it, at its level, has the group as a heading above it.
 pub fn drawer_rows(menu: &[MenuItem]) -> Vec<DrawerRow> {
-    fn level(items: &[MenuItem], depth: usize, rows: &mut Vec<DrawerRow>) {
-        let mut group = "";
-        for item in items {
-            if !item.group.is_empty() && item.group != group {
-                rows.push(DrawerRow::new(&item.group, "", depth));
-            }
-            group = &item.group;
-            rows.push(DrawerRow::of_item(item, depth));
-            if depth == 0 {
-                level(&item.children, 1, rows);
-            }
+    let mut rows = Vec::new();
+    menu_level(menu, 0, true, &mut rows);
+    rows
+}
+
+fn menu_level(items: &[MenuItem], depth: usize, children: bool, rows: &mut Vec<DrawerRow>) {
+    let mut group = "";
+    for item in items {
+        if !item.group.is_empty() && item.group != group {
+            rows.push(DrawerRow::new(&item.group, "", depth));
+        }
+        group = &item.group;
+        rows.push(DrawerRow::of_item(item, depth));
+        if children && depth == 0 {
+            menu_level(&item.children, 1, false, rows);
         }
     }
-    let mut rows = Vec::new();
-    level(menu, 0, &mut rows);
+}
+
+/// A screen on the path below the app's top-level screens and its subscreens, from the menu data: what the drawer lists
+/// under it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MenuLevel {
+    /// The screen's path, with no query.
+    pub path: String,
+    pub items: Vec<MenuItem>,
+    /// The title of the subscreen on the path, empty when none is.
+    pub active_title: String,
+}
+
+/// The drawer's rows with the deeper levels of the path nested in them, as the browser's drawer (`moqui.drawerRows`)
+/// opens the current path: each level's subscreens under the row of its screen, a level more indented. A screen whose
+/// subscreen on the path has its own title (its own list) gives way to it: its row is left out and its subscreens take
+/// its place, so the drawer never reads `Suppliers › Suppliers`. A level whose screen has no row (another app, or a
+/// screen the menu does not list) adds nothing.
+pub fn drawer_rows_with_levels(menu: &[MenuItem], levels: &[MenuLevel]) -> Vec<DrawerRow> {
+    let mut rows = drawer_rows(menu);
+    let path_of = |url: &str| {
+        url.split(['?', '#'])
+            .next()
+            .unwrap_or(url)
+            .trim_end_matches('/')
+            .to_string()
+    };
+    for level in levels {
+        let path = level.path.trim_end_matches('/');
+        let Some(at) = rows
+            .iter()
+            .rposition(|row| row.depth >= 1 && !row.url.is_empty() && path_of(&row.url) == path)
+        else {
+            continue;
+        };
+        let depth = rows[at].depth;
+        // the screen's own rows already there (none, unless two levels share a path) are replaced
+        let end = (at + 1..rows.len())
+            .find(|&next| rows[next].depth <= depth)
+            .unwrap_or(rows.len());
+        let mut nested = Vec::new();
+        menu_level(&level.items, depth + 1, false, &mut nested);
+        let gives_way = !level.active_title.is_empty() && level.active_title == rows[at].title;
+        if gives_way {
+            for row in &mut nested {
+                row.depth = depth;
+            }
+            rows.splice(at..end, nested);
+        } else {
+            rows.splice(at + 1..end, nested);
+        }
+    }
     rows
 }
 

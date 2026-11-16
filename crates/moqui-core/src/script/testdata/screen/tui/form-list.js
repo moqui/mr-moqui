@@ -10,7 +10,7 @@ $colHide[0] = !!((hideAmt));
 if (!$colHide[0]) $columns.push({title:[String(ec.l10n.localize("Amt") || "")].filter(($part) => $part).join(" / "),align:"right",fields:["amt"]});
 $columns.push({title:[String(ec.l10n.localize("Status") || "")].filter(($part) => $part).join(" / "),fields:["status"]});
 $columns.push({title:[String(ec.l10n.localize("Open") || "")].filter(($part) => $part).join(" / "),fields:["link"]});
-$columns.push({title:[String(ec.l10n.localize("Do") || "")].filter(($part) => $part).join(" / "),fields:["b"]});
+$columns.push({title:[""].filter(($part) => $part).join(" / "),fields:["b"]});
 const $headerFields = [];
         if (!$isAgent()) {
 $headerFields.push((() => {

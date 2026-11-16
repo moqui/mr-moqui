@@ -13,7 +13,7 @@
      Wizard              │ Type . . . . : [Email Type                               ▾]
      Dialog              │ Description  : [____________________]
      Report              │ < Find >
-     Panel               │       ID                           Description                       Type       State Code Seq Parent Changed
+     Panel               │       ID                           Description                       Type       State Code Seq Parent          Changed
      Widgets             │ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
      Editor              │   [ ] EMT_ACCOUNT_INVITE           Account Invitation                Email Type Plain                 <stamp> Open Clone
      Message             │   [ ] EMT_ADDED_EMAIL_AUTHC_FACTOR Added Email Authentication Type   Email Type Child          System <stamp> Open Clone
@@ -27,7 +27,7 @@
                          │   [ ] EMT_SINGLE_USE_CODE          Single Use Code                   Email Type Child          System <stamp> Open Clone
                          │   [ ] EMT_SYSTEM                   System                            Email Type Plain                 <stamp> Open Clone
                          │   [ ] EMT_UPD_INFO_CONFIRM         Update Personal Info Confirmation Email Type Plain                 <stamp> Open Clone
-                         │   Rows 1–12 of 12 · Page 1/1   Find: Type = EmailType
+                         │   Rows 1–12 of 12 · Page 1/1   Find: Type = Email Type
                          │ Tag  : [reviewed_______]
                          │ < Tag selected >
                          │ Back to the Landing

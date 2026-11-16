@@ -14,12 +14,12 @@
      Dialog              │ │ < Confirm >  [ Short ]  Skip                                                                                                                         │
      Report              │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
      Panel               │ ┌─ Remaining lines (6) ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-     Widgets             │ │   2 A-03-14 WIDGET-BLU-L · Blue widget, large  2                                                                                                     │
+     Widgets             │ │   2 A-03-14 WIDGET-BLU-L · Blue widget, large   2                                                                                                    │
      Editor              │ │   3 A-04-01 GADGET-STD · Gadget, standard      12                                                                                                    │
-     Message             │ │   4 B-01-07 GIZMO-MINI · Gizmo, mini           1                                                                                                     │
-     Views               │ │   5 B-02-03 WIDGET-GRN-S · Green widget, small 6                                                                                                     │
-     Handheld            │ │   6 C-11-20 BRACKET-L · Bracket, left          8                                                                                                     │
-     Nav cards           │ │   7 C-11-21 BRACKET-R · Bracket, right         8                                                                                                     │
+     Message             │ │   4 B-01-07 GIZMO-MINI · Gizmo, mini            1                                                                                                    │
+     Views               │ │   5 B-02-03 WIDGET-GRN-S · Green widget, small  6                                                                                                    │
+     Handheld            │ │   6 C-11-20 BRACKET-L · Bracket, left           8                                                                                                    │
+     Nav cards           │ │   7 C-11-21 BRACKET-R · Bracket, right          8                                                                                                    │
  ◂ Home                  │ │   Rows 1–6 of 6 · Page 1/1                                                                                                                           │
                          │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
                          │

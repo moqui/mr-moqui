@@ -463,6 +463,9 @@ pub enum Inline {
         text: String,
         btn_type: String,
         button: bool,
+        /// Its icon is a check (`sym_o_check`, `done`): drawn as the done glyph before the text, as the browser draws
+        /// the icon, so a view chooser marked only by its icon (Cases' views) shows the one chosen.
+        checked: bool,
     },
     /// A submit or reset field. `primary` is the form's submit: dim until the form changes (style guide §4.6).
     Button { id: String, text: String, primary: bool },
@@ -485,10 +488,15 @@ impl Inline {
         let number = number.map_or(0, |n| n.to_string().len() + 2);
         match self {
             Self::Link {
-                text, btn_type, button, ..
+                text,
+                btn_type,
+                button,
+                checked,
+                ..
             } => {
                 number
                     + display_width(text)
+                    + if *checked { 2 } else { 0 }
                     + if btn_type == "image" {
                         2
                     } else if *button {
@@ -845,6 +853,15 @@ fn toolbar_inlines(nodes: &[Node]) -> Vec<Inline> {
     out
 }
 
+/// A check icon (Material's `check`, `done`, `check_circle`, `task_alt`, in any of its symbol styles).
+fn check_icon(icon: &str) -> bool {
+    let name = ["sym_o_", "sym_r_", "sym_s_", "o_", "r_", "s_"]
+        .iter()
+        .find_map(|prefix| icon.strip_prefix(prefix))
+        .unwrap_or(icon);
+    matches!(name, "check" | "done" | "check_circle" | "task_alt")
+}
+
 fn inline_of(node: &Node) -> Option<Inline> {
     match node {
         Node::Link {
@@ -852,6 +869,7 @@ fn inline_of(node: &Node) -> Option<Inline> {
             text,
             kind,
             btn_type,
+            icon,
             disabled: false,
             ..
         } => Some(Inline::Link {
@@ -860,6 +878,7 @@ fn inline_of(node: &Node) -> Option<Inline> {
             btn_type: btn_type.clone(),
             // A link with a button type is a button, as a status bar's transitions are (style guide §4.6).
             button: kind.contains("button") || kind == "hidden-form" || !btn_type.is_empty(),
+            checked: check_icon(icon),
         }),
         Node::Dialog { id, button, title, .. } => Some(Inline::Dialog {
             id: id.clone(),
@@ -890,6 +909,7 @@ fn inline_of(node: &Node) -> Option<Inline> {
             text: alt.clone(),
             btn_type: "image".to_string(),
             button: false,
+            checked: false,
         }),
         _ => None,
     }
@@ -977,6 +997,7 @@ fn place_one(node: &Node, ctx: &Ctx<'_>, width: u16) -> Vec<Piece> {
                     text: value.clone(),
                     btn_type: String::new(),
                     button: false,
+                    checked: false,
                 }])
             };
             let mut body = vec![body];
@@ -1076,6 +1097,7 @@ fn place_subscreens(
                     text: "Back".to_string(),
                     btn_type: String::new(),
                     button: true,
+                    checked: false,
                 });
             }
             let last = active + 1 == items.len();
@@ -1089,6 +1111,7 @@ fn place_subscreens(
                     },
                     btn_type: "primary".to_string(),
                     button: true,
+                    checked: false,
                 });
             }
             if !buttons.is_empty() {
@@ -1141,6 +1164,7 @@ fn references(id: &str, links: &[HtmlLink], width: u16) -> Vec<Piece> {
             text: truncate_width(&format!("{}. {text}", at + 1), usize::from(width)),
             btn_type: String::new(),
             button: false,
+            checked: false,
         }]));
     }
     pieces

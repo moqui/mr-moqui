@@ -12,15 +12,17 @@
      Settings            │ │ text-area . . . . . . . . . . . . . . . . : │Plain text area.             text-area editor-type=md  . . . . . . . . : │**Markdown** text area with   │
      Wizard              │ │                                             │                                                                         │                              │
      Dialog              │ │                                                                                                                       │                              │
-     Report              │ │ text-area editor-type=rich mention-trans… : │<h3>Rich text</h3><p>The <strtext-area editor-type=rich-light  . . . . : │<p>A <strong>light</strong>…  │
-     Panel               │ │                                             HTML is read-only in the                                                  HTML is read-only in the       │
-   • Widgets             │ │                                             terminal. Use the browser                                                 terminal. Use the browser      │
-     Editor              │ │                                             form.                                                                     form.                          │
-     Message             │ │ drop-down entity-options  . . . . . . . . : [Screen Theme Type [Scree… ▾] drop-down allow-multiple  . . . . . . . . : [UserGroup, UserAccount    ▾]  │
-     Views               │ │ drop-down dynamic-options server-search . : [                          ▾] date-time type=date . . . . . . . . . . . : [2026-10-18________]           │
-     Handheld            │ │ date-time type=time . . . . . . . . . . . : [09:30_____________]          date-time type=date-time  . . . . . . . . : [2026-10-18 09:30__]           │
-     Nav cards           │ │ date-period . . . . . . . . . . . . . . . : [___________] – [___________] date-find type=date . . . . . . . . . . . : [___________] – [___________]  │
- ◂ Home                  │ │ range-find  . . . . . . . . . . . . . . . : [________] – [________]       text-find . . . . . . . . . . . . . . . . : [_________________]            │
+     Report              │ │ text-area editor-type=rich mention-trans… : │Rich text                    text-area editor-type=rich-light  . . . . : │A light editor for notes an…  │
+     Panel               │ │                                             │The Tiptap editor: marks, lists, links[1] and code.                      HTML is read-only in the       │
+   • Widgets             │ │                                             │Type @ for a mention                                                     terminal. Use the browser      │
+     Editor              │ │                                             HTML is read-only in the                                                  form.                          │
+     Message             │ │                                             terminal. Use the browser                                                                                │
+     Views               │ │                                             form.                                                                                                    │
+     Handheld            │ │ drop-down entity-options  . . . . . . . . : [Screen Theme Type [Scree… ▾] drop-down allow-multiple  . . . . . . . . : [UserGroup, UserAccount    ▾]  │
+     Nav cards           │ │ drop-down dynamic-options server-search . : [                          ▾] date-time type=date . . . . . . . . . . . : [2026-10-18________]           │
+ ◂ Home                  │ │ date-time type=time . . . . . . . . . . . : [09:30_____________]          date-time type=date-time  . . . . . . . . : [2026-10-18 09:30__]           │
+                         │ │ date-period . . . . . . . . . . . . . . . : [___________] – [___________] date-find type=date . . . . . . . . . . . : [___________] – [___________]  │
+                         │ │ range-find  . . . . . . . . . . . . . . . : [________] – [________]       text-find . . . . . . . . . . . . . . . . : [_________________]            │
                          │ │ check (single)  . . . . . . . . . . . . . : [x] Active                    check with options  . . . . . . . . . . . : [x] Email  [ ] SMS  [ ] Push   │
                          │ │ radio . . . . . . . . . . . . . . . . . . : (•) Task  ( ) Call  ( ) Event file  . . . . . . . . . . . . . . . . . . : [ choose… ]  upload in the brow│
                          │ │ display (label-wrapper) . . . . . . . . . : A read-only value with a      display-entity EnumerationType  . . . . . : Screen Theme Type              │
@@ -43,8 +45,6 @@
                          │ │ Tonal primary  [ Tonal success ]  [ Tonal info ]  [ Tonal warning ]  [ Delete ]  [ More ▾ ]                                                          │
                          │ │ Flat (tertiary): icon-only links with link-type=hidden-form-link. The first uses a Material Symbols outlined name (icon=sym_o_edit_note, the style   │
                          │ │ guide's icons), the second a Material Icons name (icon=edit), the third a Font Awesome class (icon=fa fa-pencil); a name is written as a q-icon and  │
-                         │ │ a class as an i element.                                                                                                                             │
-                         │ │ Edit (Material Symbols name)  Edit (Material name)  Edit (Font Awesome class)  Flat with text                                                        │
 ─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  text-line mask=(999) 999-9999 · A masked text line
  F1=Help  Alt+Enter=Save  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

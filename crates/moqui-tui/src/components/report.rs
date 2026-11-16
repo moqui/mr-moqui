@@ -269,6 +269,23 @@ fn numeric_field(field: &Value) -> bool {
     matches!(field["type"].as_str(), Some("number" | "integer"))
 }
 
+/// A table column's title: the field's `displayName` (its config's, merged in by `all_configured_fields`), else its name.
+fn column_title(field: &Value) -> String {
+    field["displayName"]
+        .as_str()
+        .filter(|name| !name.trim().is_empty())
+        .or_else(|| field["name"].as_str())
+        .unwrap_or("")
+        .to_owned()
+}
+
+/// The text cut to the width and padded on the left.
+fn fit_right(text: &str, width: usize) -> String {
+    let shown = crate::layout::truncate_width(text, width);
+    let pad = width.saturating_sub(crate::layout::display_width(&shown));
+    format!("{}{shown}", " ".repeat(pad))
+}
+
 struct TrendSeries {
     label: String,
     field: Value,
@@ -566,13 +583,67 @@ fn is_metadata(field: &Value) -> bool {
     matches!(name, "partial" | "__subtotal" | "__level") || (field["type"] == "boolean" && bucket_flag)
 }
 
+#[cfg(test)]
 fn panel_lines(frame: &Value, panel: &Value, width: u16) -> Vec<Line> {
-    panel_view(frame, panel, width, true)
+    panel_view(frame, panel, width, true, false)
+}
+
+/// The panel's annotations folded into one line, as the browser's details block; `open` (`a` on a single panel) lists
+/// them, each its time to the minute and its text.
+fn annotation_lines(panel: &Value, open: bool) -> Vec<Line> {
+    let annotations: Vec<&Value> = panel["annotations"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(200)
+        .collect();
+    if annotations.is_empty() {
+        return Vec::new();
+    }
+    let count = annotations.len();
+    let noun = if count == 1 { "annotation" } else { "annotations" };
+    let mut lines = vec![vec![Span::new(
+        format!("{} {count} {noun}", if open { "▾" } else { "▸" }),
+        Role::Muted,
+    )]];
+    if open {
+        lines.extend(annotations.into_iter().take(20).map(|annotation| {
+            vec![Span::new(
+                format!(
+                    "  {} · {}",
+                    annotation_time(annotation.get("time")),
+                    text_of(annotation.get("text"))
+                ),
+                Role::Muted,
+            )]
+        }));
+    }
+    lines
+}
+
+/// An annotation's time (epoch milliseconds or ISO text) to the minute, in UTC; a time that does not read stays as sent.
+fn annotation_time(time: Option<&Value>) -> String {
+    let stamp = match time {
+        Some(Value::Number(millis)) => millis
+            .as_i64()
+            .and_then(|millis| jiff::Timestamp::from_millisecond(millis).ok()),
+        Some(Value::String(text)) => text.parse::<jiff::Timestamp>().ok().or_else(|| {
+            text.parse::<i64>()
+                .ok()
+                .and_then(|millis| jiff::Timestamp::from_millisecond(millis).ok())
+        }),
+        _ => None,
+    };
+    stamp.map_or_else(
+        || text_of(time),
+        |stamp| stamp.strftime("%Y-%m-%d %H:%M UTC").to_string(),
+    )
 }
 
 /// A panel's lines. A chart replaces the table unless `table` (a single panel, or a dashboard panel in table mode,
 /// whose cells take the arrows, links and filters); a chart that does not fit or has nothing to draw is the table.
-fn panel_view(frame: &Value, panel: &Value, width: u16, table: bool) -> Vec<Line> {
+/// `annotations_open` lists the annotations under their folded line.
+fn panel_view(frame: &Value, panel: &Value, width: u16, table: bool, annotations_open: bool) -> Vec<Line> {
     let mut lines = Vec::new();
     let title = panel["title"].as_str().unwrap_or("Report");
     lines.push(vec![Span::new(title, Role::Text).bold()]);
@@ -594,22 +665,18 @@ fn panel_view(frame: &Value, panel: &Value, width: u16, table: bool) -> Vec<Line
         .unwrap_or(0);
     if count == 0 {
         // A panel that could not be read (a dataset the viewer may not read, a failed query) says so, never "no data".
-        match unavailable_notice(panel) {
-            Some(message) => lines.push(vec![Span::new(format!("Not available: {message}"), Role::Negative)]),
-            None => lines.push(vec![Span::new("No data in this time range", Role::Muted)]),
+        // The notice's own text is the server's (a field name, a configuration hint), kept for the inspector (`i`).
+        if unavailable_notice(panel).is_some() {
+            lines.push(vec![Span::new(
+                "Not available: this panel could not be computed",
+                Role::Negative,
+            )]);
+        } else {
+            lines.push(vec![Span::new("No data in this time range", Role::Muted)]);
         }
         return lines;
     }
-    for annotation in panel["annotations"].as_array().into_iter().flatten().take(20) {
-        lines.push(vec![Span::new(
-            format!(
-                "↳ {} {}",
-                text_of(annotation.get("time")),
-                text_of(annotation.get("text"))
-            ),
-            Role::Muted,
-        )]);
-    }
+    lines.extend(annotation_lines(panel, annotations_open));
     let visual = panel["visualization"].as_str().unwrap_or("table");
     if let Some(chart) = visual::chart(frame, panel, visual, usize::from(width)) {
         lines.extend(chart);
@@ -636,11 +703,19 @@ fn panel_view(frame: &Value, panel: &Value, width: u16, table: bool) -> Vec<Line
         return lines;
     }
     let col_width = (usize::from(width).saturating_sub(cols * 2) / cols).clamp(4, 36);
+    // a number column is right-aligned, its title too, as the browser's table and a list's money columns
+    let cell = |text: &str, field: &Value| {
+        if numeric_field(field) {
+            fit_right(text, col_width)
+        } else {
+            fit(text, col_width)
+        }
+    };
     lines.push(vec![Span::new(
         fields
             .iter()
             .take(cols)
-            .map(|field| fit(field["name"].as_str().unwrap_or(""), col_width))
+            .map(|field| cell(&column_title(field), field))
             .collect::<Vec<_>>()
             .join("  "),
         Role::Text,
@@ -650,7 +725,7 @@ fn panel_view(frame: &Value, panel: &Value, width: u16, table: bool) -> Vec<Line
         let cells: Vec<String> = fields
             .iter()
             .take(cols)
-            .map(|field| fit(&formatted_at(&field["values"][at], field, at), col_width))
+            .map(|field| cell(&formatted_at(&field["values"][at], field, at), field))
             .collect();
         lines.push(vec![Span::new(cells.join("  "), Role::Text)]);
     }
@@ -677,7 +752,13 @@ impl Component for ReportPanel {
         let data = state.data.as_ref().unwrap_or(props);
         let frame = data.get("frame").or_else(|| data["frames"].get(0)).unwrap_or(data);
         let frame = table_frame(frame, state);
-        let mut lines = panel_lines(&frame, &props["panel"], width);
+        let mut lines = panel_view(
+            &frame,
+            &props["panel"],
+            width,
+            true,
+            state.closed.contains("__report_annotations"),
+        );
         lines.insert(0, selection_line(&frame, &props["panel"], state));
         if state.closed.contains("__report_inspector") {
             lines.extend(
@@ -694,6 +775,12 @@ impl Component for ReportPanel {
         if press.key == Key::Char('i') && press.is_plain() {
             if !state.closed.remove("__report_inspector") {
                 state.closed.insert("__report_inspector".into());
+            }
+            return Some(Vec::new());
+        }
+        if press.key == Key::Char('a') && press.is_plain() {
+            if !state.closed.remove("__report_annotations") {
+                state.closed.insert("__report_annotations".into());
             }
             return Some(Vec::new());
         }
@@ -718,6 +805,7 @@ impl Component for ReportPanel {
         &[
             ("r", "Refresh report"),
             ("i", "Inspect frame and query"),
+            ("a", "Show or fold the annotations"),
             ("arrows", "Select table cell"),
             ("s", "Sort selected column"),
             ("Enter", "Open selected data link"),
@@ -1415,6 +1503,7 @@ impl Component for ReportDashboard {
                 panel,
                 width,
                 at == state.at && state.closed.contains("__table_mode"),
+                false,
             ));
             if at == state.at && state.closed.contains("__report_inspector") {
                 lines.push(vec![Span::new("Inspector: authorized query requests and per-step input/output snapshots (native view capped at 1,200 lines; server sampling/truncation flags included)",Role::Muted)]);

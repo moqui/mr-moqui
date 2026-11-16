@@ -457,6 +457,15 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="focus-field" type="xs:string">
             <xs:annotation><xs:documentation>The name of the field to focus on in the first row when the form is rendered.</xs:documentation></xs:annotation>
         </xs:attribute>
+        <xs:attribute name="row-open-field" type="xs:string">
+            <xs:annotation><xs:documentation>The name of the field whose link opens a row, where a row has no single
+                record to open by itself (a log line's Surrounding entries beside its User and Trace links). The terminal
+                client opens it with Enter and Right on the row, and a board card or calendar event with it, before any
+                other link of the row; without it the row opens its first link to another screen. The link must be a
+                plain GET link (not one that posts or writes); when the field has none on a row (a condition fails) the
+                row opens as without the attribute. The browser does not open rows by a link, so it ignores this.
+                See docs/ui/TUI.md, Keys.</xs:documentation></xs:annotation>
+        </xs:attribute>
         <xs:attribute name="skip-start" type="boolean" default="false"/>
         <xs:attribute name="skip-end" type="boolean" default="false"/>
         <xs:attribute name="skip-form" type="boolean" default="false">

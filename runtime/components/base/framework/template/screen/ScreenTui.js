@@ -200,6 +200,20 @@ const $addPart = ($parts, $start, $piece) => {
     }
     $parts.push($lines.length === 1 ? $lines[0] : $lines);
 };
+// The links of a form-list's row-open-field, its parts from $start: marked as what opens the row (the client's
+// row_link_target and a card's _open take a marked link before any other).
+const $markOpen = ($parts, $start) => {
+    const $mark = ($node) => {
+        if (Array.isArray($node)) {
+            $node.forEach($mark);
+            return;
+        }
+        if (!$node || typeof $node !== "object") return;
+        if ($node.t === "link") $node.open = true;
+        if (Array.isArray($node.c)) $node.c.forEach($mark);
+    };
+    for (let $at = $start; $at < $parts.length; $at++) $mark($parts[$at]);
+};
 // A cell of its parts, at most $cellLines lines: the lines of a text past them join its last line kept.
 const $cellOf = ($parts) => {
     let $room = $cellLines - $parts.filter(($part) => !Array.isArray($part)).length;
@@ -261,6 +275,9 @@ $w("]");
     const exprNoL10n = (text) => (text && String(text).includes("${") ? S.expandNoL10nExpr(text) : jsString(text || ""));
     // A title as the other modes show it: expanded and localized.
     const titleOf = (text) => (text ? S.expandExpr(text) : '""');
+    // A field's label: title="" (or blank) is no title, as qvt's titleCode reads it (DatasetDetail's note under the form),
+    // where the other modes' titleText falls back to the field name.
+    const fieldTitleOf = (sub) => (sub && has(sub, "title") && !attr(sub, "title").trim() ? '""' : S.localizedTitle(sub));
     const guarded = (node, code) => {
         const condition = attr(node, "condition");
         if (!condition || !code) return code;
@@ -519,10 +536,14 @@ ${kind === "check" ? "" : `        if ($value && !$options.some(($opt) => $opt.v
         if (widget.name === "scan-input") return scanDropDown(widget);
         if (widget.name === "text-area") {
             // D12: rich text is shown, never posted, so the stored HTML is not overwritten from the terminal.
+            // Its HTML is shown as text (the blocks of sri.htmlText, a line each), not as its tags; the client's hint
+            // says to edit it in the browser.
             const editor = attr(widget, "editor-type");
-            const readOnly = flag(widget, "read-only") || ["html", "rich", "rich-light"].includes(editor);
+            const rich = ["html", "rich", "rich-light"].includes(editor);
+            const readOnly = flag(widget, "read-only") || rich;
             const rows = /^\d+$/.test(attr(widget, "rows")) ? attr(widget, "rows") : "0";
-            return `{kind:"textArea",value:String(${valueCall(widget)} || ""),rows:${rows},editorType:${jsString(editor)}${readOnly ? ",readOnly:true" : ""}}`;
+            const value = rich ? `$htmlPlain(${valueCall(widget)}, false)` : `${valueCall(widget)} || ""`;
+            return `{kind:"textArea",value:String(${value}),rows:${rows},editorType:${jsString(editor)}${readOnly ? ",readOnly:true" : ""}}`;
         }
         if (widget.name === "text-find") {
             const ignoreCase = !attr(widget, "ignore-case") || flag(widget, "ignore-case");
@@ -619,7 +640,7 @@ ${kind === "check" ? "" : `        if ($value && !$options.some(($opt) => $opt.v
                 if ($found[$ri].kind === "required") $required = true;
                 else $rules.push($found[$ri]);
             }
-            const $field = {t:"field",id:${idExpr},name:${nameExpr},title:String(${S.localizedTitle(sub)} || ""),w:${nullable ? "$w" : w}};
+            const $field = {t:"field",id:${idExpr},name:${nameExpr},title:String(${fieldTitleOf(sub)} || ""),w:${nullable ? "$w" : w}};
             if ($required) $field.required = true;
             if ($max > 0) $field.maxlength = $max;
             if ($rules.length) $field.rules = $rules;
@@ -678,7 +699,7 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
         const code = ownContext(fieldHasSet(field), S.fieldChain(field, (sub) => emitSub(field, sub)));
         // an agent's render: the field's title with the placeholder as a display, never its value
         const sub = child(field, "default-field") || child(field, "conditional-field");
-        const placeholder = `$emit({t:"field",id:$uid(${jsString(fieldIdOf(field))}),name:${jsString(attr(field, "name") || "field")},title:String(${sub ? S.localizedTitle(sub) : '""'} || ""),w:{kind:"display",text:$aiOffText()}});`;
+        const placeholder = `$emit({t:"field",id:$uid(${jsString(fieldIdOf(field))}),name:${jsString(attr(field, "name") || "field")},title:String(${sub ? fieldTitleOf(sub) : '""'} || ""),w:{kind:"display",text:$aiOffText()}});`;
         // a hide expression is checked when the form renders, as qvt does: a field the screen hides was drawn and
         // took input the transition never read (ACC-UI-023, Insights' report options)
         return S.hideGuard(field, aiOffBranch(field, placeholder, code));
@@ -900,7 +921,9 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
                     });
                     return inner;
                 });
-                if (body) code += S.hideGuard(field, `$start = $parts.length;\n${aiOffBranch(field, "$addPart($parts, $start, $aiOffText());", ownContext(fieldHasSet(field), body))}`);
+                // the field the list names to open its rows (row-open-field): its links are marked to open the row
+                const opens = !!list.openField && attr(field, "name") === list.openField;
+                if (body) code += S.hideGuard(field, `$start = $parts.length;\n${aiOffBranch(field, "$addPart($parts, $start, $aiOffText());", ownContext(fieldHasSet(field), body))}${opens ? "$markOpen($parts, $start);\n" : ""}`);
             });
             code += !listTotals ? `$cells.push($cellOf($parts));\n`
                 : totals ? `$cells.push($totalRow ? $plainCell($cellOf($parts)) : $cellOf($parts));\n` : `$cells.push($cellOf($parts));\n}\n`;
@@ -1108,7 +1131,7 @@ try {
         // A row form for each row, or one multi form of every row, when the list has a transition.
         const hasForm = !!attr(node, "transition") && attr(node, "skip-form") !== "true";
         const multi = hasForm && attr(node, "multi") === "true";
-        const list = { hasForm, multi };
+        const list = { hasForm, multi, openField: attr(node, "row-open-field") };
         const formCode = hasForm ? `let $listForm = false;
         let $transitionUrl = "";
         let $listWrites = false;
@@ -1226,6 +1249,8 @@ try {
                 // a title the field gives, even an empty one (a column of Remove links), is the header, as qvt's titleCode:
                 // the header-field's, else the default-field's, else that of the part the header is drawn from
                 const sub = S.headerSub(field);
+                // a column of submit buttons has no title, as qvt's header and Java's leave it blank
+                if (sub && child(sub, "submit")) return '""';
                 const holder = [child(field, "header-field"), child(field, "default-field"), sub]
                     .find((part) => part?.attrs?.title !== undefined);
                 if (holder) return attr(holder, "title") ? `String(${S.localizedTitle(holder)} || "")` : '""';
@@ -1242,7 +1267,9 @@ try {
             // The client sizes columns from print-width as the text mode does, against the canvas it has.
             const sized = column.find((field) => attr(field, "print-width"));
             const widthCode = sized ? `,printWidth:${jsString(attr(sized, "print-width"))},printWidthType:${jsString(attr(sized, "print-width-type") || "characters")}` : "";
-            const alignCode = column.some(numeric) ? `,align:"right"` : "";
+            // align="right" on a field (a money column), else a column of numbers, is drawn right-aligned; an explicit left or
+            // center keeps a numeric column where it is
+            const alignCode = column.some((field) => attr(field, "align") === "right" || (!attr(field, "align") && numeric(field))) ? `,align:"right"` : "";
             // the names of the fields the column's cell shows, in its parts' order: the keys of a canvas read's rows
             const names = column.filter((field) => attr(field, "hide") !== "true").map((field) => attr(field, "name")).filter((name) => name);
             const fieldsCode = names.length ? `,fields:${JSON.stringify(names)}` : "";
@@ -1371,19 +1398,21 @@ try {
         ${bySet(titles)}const $headerFields = [];
         ${headerFields(node)}const $rows = [];
         ${selectOn}${hasViews ? `const $viewRows = [];
-        // a card opens its first navigation link to another screen, else its first back to this one, as the client's
-        // row_link_target: a link to the screen shown is often a filter or a toggle
+        // a card opens the link the list names (row-open-field), else its first navigation link to another screen, else its
+        // first back to this one, as the client's row_link_target: a link to the screen shown is often a filter or a toggle
         const $here = String(sri.getScreenUrlInstance().path || "").replace(/\\/+$/, "");
-        const $links = ($cells, $out) => {
+        const $links = ($cells, $out, $opens) => {
             for (const $cell of $cells || []) {
-                if (Array.isArray($cell)) $links($cell, $out);
-                else if ($cell && typeof $cell === "object" && $cell.t === "link" && $cell.url && !$cell.disabled
+                if (Array.isArray($cell)) $links($cell, $out, $opens);
+                else if ($cell && typeof $cell === "object" && $cell.t === "link" && $cell.url && !$cell.disabled && (!$opens || $cell.open)
                     && !$cell.writes && $cell.kind !== "hidden-form" && $cell.kind !== "hidden-form-link"
                     && String($cell.method || "").toLowerCase() !== "post") $out.push(String($cell.url));
             }
             return $out;
         };
         const $firstLink = ($cells) => {
+            const $open = $links($cells, [], true);
+            if ($open.length) return $open[0];
             const $all = $links($cells, []);
             const $path = ($url) => $url.split(/[?#]/)[0];
             return $all.find(($url) => $path($url) !== "." && $path($url).replace(/\\/+$/, "") !== $here) || $all[0] || "";

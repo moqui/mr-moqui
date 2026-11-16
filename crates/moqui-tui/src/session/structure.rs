@@ -26,7 +26,7 @@ use crate::forms::FocusKind;
 use crate::keys::{Key, KeyPress, KeyScheme};
 use crate::layout::{Shown, TreeMark, TreeRow};
 use crate::link::{LinkCall, LinkError, RawBody};
-use crate::model::Widget;
+use crate::model::{Node, Widget};
 
 /// The rows PgUp and PgDn move in a tree.
 const TREE_PAGE: usize = 10;
@@ -239,6 +239,7 @@ impl Session {
         if path_changed {
             self.docs.clear();
             self.finds.clear();
+            self.deep_menu.clear();
             self.ext_actions.clear();
             self.request_menu();
         }
@@ -797,15 +798,16 @@ impl Session {
 
     // ---- a wizard ----
 
-    /// Next: the step's changed form is saved first and the next step follows its answer; with nothing changed, the
-    /// next step at once (`m-subscreens-wizard`).
+    /// Next: the step's form is saved first, changed or not, and the next step follows its answer, so the step's
+    /// validation always runs; a step with no form goes to the next step at once (`m-subscreens-wizard`'s `next`).
     pub(super) fn wizard_next(&mut self) {
         let Some(wizard) = self.index.wizard.clone() else {
             return;
         };
+        let form = self.first_dirty_form().or_else(|| self.wizard_step_form(&wizard.id));
         let Some(next) = wizard.steps.get(wizard.active + 1).map(|step| step.url.clone()) else {
             // The last step: its finish is its form's submit.
-            if let Some(form) = self.first_dirty_form() {
+            if let Some(form) = form {
                 self.submit_form(&form, None);
             }
             return;
@@ -814,10 +816,49 @@ impl Session {
         if next.is_empty() {
             return;
         }
-        match self.first_dirty_form() {
+        match form {
             Some(form) => self.submit_form(&form, Some(Then::Navigate(next))),
             None => self.navigate(&next, true),
         }
+    }
+
+    /// The step's form, as the browser's `stepForm`: the first form in document order inside the wizard (its own
+    /// children, then the levels below it) that is not a list's row form, a row action's form or in a dialog, and posts
+    /// somewhere.
+    fn wizard_step_form(&self, wizard_id: &str) -> Option<String> {
+        fn first_form(nodes: &[Node]) -> Option<&str> {
+            nodes.iter().find_map(|node| match node {
+                Node::Dialog { .. } | Node::DynamicDialog { .. } | Node::FormList { .. } => None,
+                Node::Form {
+                    id,
+                    list,
+                    transition_url,
+                    ..
+                } if list.is_empty() && !transition_url.is_empty() => Some(id.as_str()),
+                other => first_form(other.children()),
+            })
+        }
+        fn wizard_body<'a>(nodes: &'a [Node], wizard_id: &str) -> Option<&'a [Node]> {
+            nodes.iter().find_map(|node| match node {
+                Node::Subscreen { id, c, .. } if id == wizard_id => Some(c.as_slice()),
+                other => wizard_body(other.children(), wizard_id),
+            })
+        }
+        let mut inside = false;
+        for model in self.nav().models() {
+            let nodes = if inside {
+                Some(model.c.as_slice())
+            } else {
+                wizard_body(&model.c, wizard_id)
+            };
+            if let Some(nodes) = nodes {
+                inside = true;
+                if let Some(id) = first_form(nodes).filter(|id| self.index.forms.contains_key(*id)) {
+                    return Some(id.to_string());
+                }
+            }
+        }
+        None
     }
 
     // ---- the row editor ----

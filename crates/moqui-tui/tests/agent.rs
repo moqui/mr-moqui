@@ -791,3 +791,56 @@ fn a_check_with_a_blank_title_is_named_by_its_one_option() {
     assert!(line.contains("Closes the opportunity"), "{line}");
     assert!(agent.run("focus closes the opportunity").ok, "{}", listed.text);
 }
+
+/// A subscreen tab is no element, but its title names it: `do` opens it (a tab past the ninth has no key), and `find`
+/// says how it opens.
+#[test]
+fn do_and_find_name_a_tab_by_its_title() {
+    let titles = [
+        "Overview",
+        "Cases",
+        "Orders",
+        "Returns",
+        "Quotes",
+        "Invoices",
+        "Payments",
+        "Shipments",
+        "Contacts",
+        "Files",
+        "History",
+    ];
+    let items: Vec<String> = titles
+        .iter()
+        .enumerate()
+        .map(|(at, title)| {
+            format!(
+                r#"{{"title":"{title}","url":"/c/{title}"{}}}"#,
+                if at == 0 { r#","active":true"# } else { "" }
+            )
+        })
+        .collect();
+    let screen = format!(
+        r#"{{"v":1,"screen":{{"path":"/c/Overview","title":"Overview"}},"c":[
+            {{"t":"subscreens","id":"Tabs","kind":"tab","items":[{}],"c":[{{"t":"text","id":"t","text":"Body"}}]}}]}}"#,
+        items.join(",")
+    );
+    let history = r#"{"v":1,"screen":{"path":"/c/History","title":"History"},"c":[]}"#;
+    let link = FakeLink::from_json(&[screen.as_str(), history]).unwrap();
+    let mut agent = Agent::open(link.clone(), "/c/Overview", 120, 40);
+    let found = agent.run("find History");
+    assert!(found.ok, "{}", found.text);
+    assert!(
+        found.text.contains("Found the tab \"History\": Ctrl+PgDn reaches it"),
+        "{}",
+        found.text
+    );
+    let answer = agent.run("do History");
+    assert!(answer.ok, "{}", answer.text);
+    assert!(
+        link.calls()
+            .iter()
+            .any(|call| matches!(call, LinkCall::Level { path, .. } if path == "/c/History")),
+        "{:?}",
+        link.calls()
+    );
+}

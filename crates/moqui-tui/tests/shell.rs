@@ -902,6 +902,12 @@ fn the_breadcrumb_uses_each_levels_menu_title() {
         "pathList":["apps","mfg","BillsOfMaterials","FindBom"],"title":"Find BOM"},"c":[]}"#;
     let session = Session::new(moqui_tui::ScreenModel::from_json(plain).unwrap());
     assert_eq!(session.crumbs(), ["mfg", "BillsOfMaterials", "Find BOM"]);
+    // a level titled as the one after it (a screen whose default subscreen is its own list) is one crumb
+    let repeated = r#"{"v":1,"screen":{"path":"/apps/purchasing/Suppliers/Suppliers",
+        "pathList":["apps","purchasing","Suppliers","Suppliers"],
+        "pathTitles":["Applications","Purchasing","Suppliers","Suppliers"],"title":"Suppliers"},"c":[]}"#;
+    let session = Session::new(moqui_tui::ScreenModel::from_json(repeated).unwrap());
+    assert_eq!(session.crumbs(), ["Purchasing", "Suppliers"]);
 }
 
 /// A saved find is a drawer row on its Find screen's path: the one the screen's parameters hold is marked as shown, not
@@ -932,4 +938,98 @@ fn a_drawer_row_with_a_query_is_shown_only_when_the_screen_holds_it() {
         moqui_tui::drawer_active(&rows, &paths, &BTreeMap::new()),
         [true, true, false, false, false, false]
     );
+}
+
+/// The drawer opens the current path below the app's top-level screens, as the browser's does: each level's subscreens
+/// (from the menu data) under its screen's row, a level more indented, the one shown marked; a level whose subscreen on
+/// the path has its own title gives way to it; Down walks every row.
+#[test]
+fn the_drawer_nests_the_deeper_levels_of_the_path() {
+    let item = |title: &str, url: &str, children: Vec<MenuItem>| MenuItem {
+        title: title.to_string(),
+        url: url.to_string(),
+        children,
+        ..MenuItem::default()
+    };
+    let leaf = r#"{"v":1,"screen":{"path":"/apps/people/Payroll/Runs/Open","pathList":["apps","people","Payroll","Runs","Open"],
+        "title":"Open runs"},"c":[]}"#;
+    let closed = r#"{"v":1,"screen":{"path":"/apps/people/Payroll/Runs/Closed","title":"Closed runs"},"c":[]}"#;
+    let link = FakeLink::from_json(&[leaf, closed]).unwrap();
+    link.answer_shell(ShellInfo {
+        menu: vec![item(
+            "People",
+            "/apps/people",
+            vec![
+                item("Employees", "/apps/people/Employees", Vec::new()),
+                item("Payroll", "/apps/people/Payroll", Vec::new()),
+                item("Time & leave", "/apps/people/Time", Vec::new()),
+            ],
+        )],
+        drawer_open: Some(true),
+        ..ShellInfo::default()
+    });
+    link.answer_json(
+        "/menuData/apps/people/Payroll/Runs/Open",
+        BTreeMap::new(),
+        serde_json::json!([
+            { "title": "Applications", "path": "/apps", "subscreens": [{ "title": "People", "path": "/apps/people", "active": true }] },
+            { "title": "People", "path": "/apps/people", "subscreens": [
+                { "title": "Employees", "path": "/apps/people/Employees" },
+                { "title": "Payroll", "path": "/apps/people/Payroll", "active": true } ] },
+            { "title": "Payroll", "path": "/apps/people/Payroll", "subscreens": [
+                { "title": "Runs", "path": "/apps/people/Payroll/Runs", "active": true },
+                { "title": "Pay grades", "path": "/apps/people/Payroll/Grades", "group": "Setup" },
+                { "title": "Locked", "path": "/apps/people/Payroll/Locked", "disableLink": true } ] },
+            { "title": "Runs", "path": "/apps/people/Payroll/Runs", "subscreens": [
+                { "title": "Runs", "path": "/apps/people/Payroll/Runs/Open", "active": true },
+                { "title": "Closed runs", "path": "/apps/people/Payroll/Runs/Closed" } ] },
+            { "title": "Open runs", "path": "/apps/people/Payroll/Runs/Open", "subscreens": [] }
+        ]),
+    );
+    let mut session = Session::start("/apps/people/Payroll/Runs/Open");
+    session.run_now(&link);
+    let rows = session.drawer_rows();
+    let shown: Vec<(usize, &str)> = rows.iter().map(|row| (row.depth, row.title.as_str())).collect();
+    assert_eq!(
+        shown,
+        [
+            (0, "People"),
+            (1, "Employees"),
+            (1, "Payroll"),
+            // Runs' own list has its title: the list takes Runs' place, its sibling beside it
+            (2, "Runs"),
+            (2, "Closed runs"),
+            (2, "Setup"),
+            (2, "Pay grades"),
+            (2, "Locked"),
+            (1, "Time & leave"),
+            (0, "Home"),
+        ],
+        "{rows:?}"
+    );
+    assert!(rows[7].disabled && rows[7].url.is_empty(), "{rows:?}");
+    let marks = moqui_tui::drawer_active(&rows, &session.paths(), session.parameters());
+    let marked: Vec<&str> = rows
+        .iter()
+        .zip(&marks)
+        .filter(|(_, on)| **on)
+        .map(|(row, _)| row.url.as_str())
+        .collect();
+    assert_eq!(
+        marked,
+        ["/apps/people", "/apps/people/Payroll", "/apps/people/Payroll/Runs/Open"],
+        "{rows:?}"
+    );
+    // F9 focuses the drawer; the arrows reach a nested row and Enter follows it
+    session.press(&KeyPress::plain(Key::F(9)), &link);
+    for _ in 0..rows.len() {
+        match session.drawer_focus() {
+            Some(at) if at < 4 => press(&mut session, &link, Key::Down),
+            Some(at) if at > 4 => press(&mut session, &link, Key::Up),
+            _ => break,
+        };
+    }
+    assert_eq!(session.drawer_focus(), Some(4), "{:?}", session.overlays());
+    press(&mut session, &link, Key::Enter);
+    assert_eq!(session.path(), "/apps/people/Payroll/Runs/Closed");
 }

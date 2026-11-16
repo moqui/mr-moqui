@@ -553,7 +553,8 @@ fn a_mounted_dashboard_links_its_apps_screens_and_an_unreadable_panel_says_so() 
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        unavailable.contains("Not available: viewer may not read dataset sales"),
+        unavailable.contains("Not available: this panel could not be computed")
+            && !unavailable.contains("viewer may not read"),
         "{unavailable}"
     );
     assert!(!unavailable.contains("No data"), "{unavailable}");

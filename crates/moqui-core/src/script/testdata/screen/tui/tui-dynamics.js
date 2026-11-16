@@ -176,7 +176,7 @@ $columns.push({title:[String(ec.l10n.localize("Name") || "")].filter(($part) => 
 } else {
 $columns.push({title:[String(ec.l10n.localize("Name") || ""),String(ec.l10n.localize("Qty") || "")].filter(($part) => $part).join(" / "),fields:["name","qty"]});
 $columns.push({title:[String(ec.l10n.localize("When") || "")].filter(($part) => $part).join(" / "),fields:["when"]});
-$columns.push({title:[String(ec.l10n.localize("Go") || "")].filter(($part) => $part).join(" / "),fields:["go"]});
+$columns.push({title:[""].filter(($part) => $part).join(" / "),fields:["go"]});
 }
 const $headerFields = [];
         const $rows = [];

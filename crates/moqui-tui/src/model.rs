@@ -425,6 +425,10 @@ pub enum Node {
         /// waits for the user's approval (plans/LLM-A2A-Assist.md 4.7). The server's gate stays the authority.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         writes: bool,
+        /// A link of the field a form-list's `row-open-field` names: what Right and Enter open on its row, before any
+        /// other link of the row.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        open: bool,
     },
     Form {
         id: String,
