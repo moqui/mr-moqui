@@ -965,7 +965,9 @@
         const link = (n, inField) => {
             const urlType = at(n, "url-type") || "transition";
             const found = urlType === "transition" || urlType === "screen" ? sri.staticUrl(at(n, "url"), urlType) : null;
-            const disable = disableOf(n, found);
+            // disable-condition: shown, not followed, with disable-message as the reason (ScreenQvt.js linkParts)
+            const unavailable = at(n, "disable-condition") ? held(at(n, "disable-condition"), n, "disable-condition") : null;
+            const disable = unavailable ? "(" + unavailable + "||" + disableOf(n, found) + ")" : disableOf(n, found);
             const img = first(n, "image");
             const linkType = at(n, "link-type");
             // read-only="true" overrides hasActions: the target is a GET anchor (Parity-Diffs P3-03).
@@ -1035,6 +1037,7 @@
                 }
                 out = "<" + tag + A(attrs) + ">" + button + "</" + tag + ">";
             }
+            if (unavailable) out = unavailableWrap(n, unavailable, out, at(n, "text") ? exp(at(n, "text"), n, "text", true) : accessibleLabel);
             const wrapper = inField && linkType === "anchor" && n.parent && n.parent.parent && n.parent.parent.parent && n.parent.parent.parent.name === "form-single";
             if (wrapper) out = "<m-field" + A({ ":label": titleExpr(n.parent) }) + ">" + out + "</m-field>";
             w(withCondition(n, out + (inField ? "" : "\n")));
@@ -1084,6 +1087,19 @@
 
         // The dialogs as ScreenQvt.js writes them: the icon attribute is the button-icon, and in a form-list cell the button is flat and
         // dense (the button slot of a container-dialog, the button-class m-btn-flat of a dynamic-dialog).
+        // An action shown disabled by its disable-condition (the expression `unavailable`): wrapped in a note that, while it holds,
+        // is focusable, names the action and its reason (disable-message), and shows the reason as its tooltip, since the
+        // disabled button takes no focus or pointer (ScreenQvt.js unavailableReason).
+        const unavailableWrap = (n, unavailable, inner, nameExpr) => {
+            const message = at(n, "disable-message");
+            const reason = message ? exp(message, n, "disable-message", true) : null;
+            const attrs = { ":tabindex": unavailable + "?0:undefined", ":role": unavailable + "?'note':undefined" };
+            if (reason) attrs[":aria-label"] = unavailable + "?(" + (nameExpr ? "(" + nameExpr + ")+': '+" : "") + "(" + reason + ")):undefined";
+            return "<span" + A(attrs) + ">" + inner + (reason ? '<q-tooltip v-if="' + e(unavailable) + '"><span v-text="' + e(reason) + '"></span></q-tooltip>' : "") + "</span>";
+        };
+
+        // The dialog's opening, and the closing it needs after </m-container-dialog>: the condition's template, and with a
+        // disable-condition the disabled button in its place while it holds.
         const containerDialog = (n) => {
             const inCell = st.inList;
             const out = { color: quasarColor(at(n, "type") || "primary") || null, width: at(n, "width") || null, "button-icon": inCell ? null : at(n, "icon") || null, "button-class": inCell ? null : at(n, "button-style") || null };
@@ -1099,8 +1115,18 @@
                 textAttr(btn, "label", at(n, "button-text"), n, true);
                 slot = "<template v-slot:button><q-btn" + A(btn) + "></q-btn></template>";
             }
-            w(open + "<m-container-dialog" + A(out) + ">" + slot);
-            return !!open;
+            let unavailableOpen = "";
+            if (at(n, "disable-condition")) {
+                const unavailable = held(at(n, "disable-condition"), n, "disable-condition");
+                const btn = { disable: true, dense: inCell || null, flat: inCell || null, unelevated: inCell ? null : true, "no-caps": true,
+                    icon: at(n, "icon") || null, class: cls(inCell ? "m-link" : null, at(n, "button-style") || null) };
+                textAttr(btn, "label", at(n, "button-text"), n, true);
+                unavailableOpen = '<template v-if="' + e(unavailable) + '">' +
+                    unavailableWrap(n, unavailable, "<q-btn" + A(btn) + "></q-btn>", at(n, "button-text") ? exp(at(n, "button-text"), n, "button-text", true) : null) +
+                    "</template><template v-else>";
+            }
+            w(open + unavailableOpen + "<m-container-dialog" + A(out) + ">" + slot);
+            return (unavailableOpen ? "</template>" : "") + (open ? "</template>" : "");
         };
 
         const dynamicDialog = (n) => {
@@ -1434,7 +1460,10 @@
             if (!text && !img && !icon) return "";
             if (at(n, "encode") === "false") note("encode-false", n, "button-menu with encode=false writes text as html");
             let out = (at(n, "condition") ? '<template v-if="' + e(X(at(n, "condition"), n, "condition")) + '">' : "") +
-                "<q-btn-dropdown" + A(Object.assign({ dense: true, unelevated: true, "no-caps": true }, btnKindOf(n, at(n, "style") || null))) + "><template v-slot:label>";
+                // the menu's name for assistive technology: its text (Quasar names a slot-labelled dropdown "Expand"; ACC-UI-041)
+                "<q-btn-dropdown" + A(Object.assign({ dense: true, unelevated: true, "no-caps": true,
+                    ":toggle-aria-label": text ? textOf(n) : at(n, "tooltip") ? exp(at(n, "tooltip"), n, "tooltip", true) : "ec.l10n.localize('Menu')" },
+                    btnKindOf(n, at(n, "style") || null))) + "><template v-slot:label>";
             if (at(n, "tooltip")) out += '<q-tooltip><span v-text="' + e(exp(at(n, "tooltip"), n, "tooltip", true)) + '"></span></q-tooltip>';
             if (icon) out += iconTag(icon, !!text);
             out += img ? imageTag(img) : '<span v-text="' + e(textOf(n)) + '"></span>';
@@ -1445,7 +1474,8 @@
             return out + "</template><q-list>";
         };
         // A button-menu item does not use v-close-popup: that closes an enclosing dialog as well as the menu.
-        const buttonMenuItem = (kid) => "<q-item clickable" + (at(kid, "condition") ? ' v-if="' + e(X(at(kid, "condition"), kid, "condition")) + '"' : "") + "><q-item-section>";
+        // the row is no second focus stop around its button or link (ACC-UI-041)
+        const buttonMenuItem = (kid) => "<q-item clickable tabindex=\"-1\"" + (at(kid, "condition") ? ' v-if="' + e(X(at(kid, "condition"), kid, "condition")) + '"' : "") + "><q-item-section>";
         const buttonMenuClose = (n) => "</q-list></q-btn-dropdown>" + (at(n, "condition") ? "</template>" : "") + "\n";
 
         // An XML condition element as one expression, as XmlActions.js writes it for an if: and, or and not join their parts, an expression
@@ -1522,9 +1552,9 @@
                 w("</m-scope></template>");
                 if (off) w("</div>");
             } else if (name === "container-dialog") {
-                const wrapped = containerDialog(n);
+                const close = containerDialog(n);
                 n.children.forEach(renderNode);
-                w(wrapped ? "</m-container-dialog></template>\n" : "</m-container-dialog>\n");
+                w("</m-container-dialog>" + close + "\n");
             } else if (name === "dynamic-container") dynamicContainer(n);
             else if (name === "dynamic-dialog") dynamicDialog(n);
             else if (name === "tree") tree(n);
@@ -2468,7 +2498,7 @@
             (child(node, "panel-footer") ? write('<div class="container-panel-footer">') + part("panel-footer") + write("</div>") : "") + write("</div>\n");
     });
 
-    const containerDialogMacro = stmt((node, children) => `{\n    const $c = $s.containerDialog(${wlit(node, false)});\n${children}    sri.write($c ? "</m-container-dialog></template>\\n" : "</m-container-dialog>\\n");\n}\n`);
+    const containerDialogMacro = stmt((node, children) => `{\n    const $c = $s.containerDialog(${wlit(node, false)});\n${children}    sri.write("</m-container-dialog>" + $c + "\\n");\n}\n`);
 
     const buttonMenuMacro = stmt((node) => {
         const image = child(node, "image");

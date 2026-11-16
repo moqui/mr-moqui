@@ -64,6 +64,7 @@ return function render(_ctx, _cache) {
       dense: "",
       unelevated: "",
       "no-caps": "",
+      "toggle-aria-label": _ctx.ec.resource.expand('Menu of ${productName}',{'productName':()=>(_ctx.$mq.inMap((_ctx.product),'productName')?_ctx.$mq.inMap((_ctx.product),'productName',true):(_ctx.productName))}),
       class: "m-btn-tonal text-primary"
     }, {
       label: _withCtx(() => [
@@ -75,7 +76,10 @@ return function render(_ctx, _cache) {
       default: _withCtx(() => [
         _createVNode(_component_q_list, null, {
           default: _withCtx(() => [
-            _createVNode(_component_q_item, { clickable: "" }, {
+            _createVNode(_component_q_item, {
+              clickable: "",
+              tabindex: "-1"
+            }, {
               default: _withCtx(() => [
                 _createVNode(_component_q_item_section, null, {
                   default: _withCtx(() => [
@@ -100,7 +104,8 @@ return function render(_ctx, _cache) {
             ((_ctx.qty > 3))
               ? (_openBlock(), _createBlock(_component_q_item, {
                   key: 0,
-                  clickable: ""
+                  clickable: "",
+                  tabindex: "-1"
                 }, {
                   default: _withCtx(() => [
                     _createVNode(_component_q_item_section, null, {
@@ -122,7 +127,8 @@ return function render(_ctx, _cache) {
             ((_ctx.qty <= 3))
               ? (_openBlock(), _createBlock(_component_q_item, {
                   key: 1,
-                  clickable: ""
+                  clickable: "",
+                  tabindex: "-1"
                 }, {
                   default: _withCtx(() => [
                     _createVNode(_component_q_item_section, null, {
@@ -146,7 +152,7 @@ return function render(_ctx, _cache) {
         })
       ]),
       _: 1
-    }),
+    }, 8, ["toggle-aria-label"]),
     _createVNode(_component_m_scope, {
       value: (_ctx.product),
       extra: _ctx.$scope['mqExtra_ProductForm']

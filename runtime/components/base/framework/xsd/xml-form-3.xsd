@@ -744,6 +744,15 @@ along with this software (see the LICENSE.md file). If not, see
             For a link that posts through a hidden form: after the post show this message.</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="condition" type="xs:string"><xs:annotation><xs:documentation>
             If specified and evaluates to false link is not rendered.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="disable-condition" type="xs:string"><xs:annotation><xs:documentation>
+            If specified and evaluates to true, the link is shown disabled and does nothing: the user sees that the action exists
+            and why it is not theirs (disable-message), and can ask for it. Use it for an action the user lacks the authority
+            for; leave out with condition what makes no sense in the record's state, and what would crowd a row or a menu. It
+            is presentation only: the transition must still refuse the user.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="disable-message" type="xs:string"><xs:annotation><xs:documentation>
+            Why the action is disabled (disable-condition), in the user's words, such as "Exchange rates are maintained by a
+            finance administrator of every organization": the tooltip and accessible description in qvt and html, and the
+            hint and message in the terminal. Localized and expanded as the text is.</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="entity-name" type="xs:string"/>
         <xs:attribute name="entity-key-name" type="xs:string"/>
         <xs:attribute name="entity-use-cache" default="true" type="boolean"/>

@@ -378,6 +378,7 @@ $w("]");
             ${attr(node, "icon") ? `$link.icon = String(${S.expandExpr(attr(node, "icon"))} || "");` : ""}
             ${attr(node, "badge") ? `$link.badge = String(${S.expandNoL10nExpr(attr(node, "badge"))} || "");` : ""}
             ${attr(node, "tooltip") ? `$link.tooltip = String(${S.expandExpr(attr(node, "tooltip"))} || "");` : ""}
+            ${attr(node, "disable-condition") ? `if (${attr(node, "disable-condition")}) { $link.disabled = true; $link.reason = String(${titleOf(attr(node, "disable-message"))} || ""); }` : ""}
             ${kind === "hidden-form-link" ? `$link.method = "post";` : ""}
             ${kind === "anchor" || kind === "anchor-button" ? "" : `if ($isTransition && !$link.method && !sri.isAnchorLink(${S.nodeLit(node, true)}, $made)
                 && $made.getTransitionMethod() !== "get") $link.method = "post";`}
@@ -861,7 +862,8 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
             return `(() => {
                 const $dialog = $captured(() => {\n${widget.source}})[0];
                 if (!$dialog) return "";
-                if ($dialog.t === "dialog") $dialog.id = $uid(${jsString(idOf(widget) + ".")} + $rowKey);
+                // a disabled one (disable-condition) is its button as a link, its id the row's too
+                if ($dialog.t === "dialog" || $dialog.t === "link") $dialog.id = $uid(${jsString(idOf(widget) + ".")} + $rowKey);
                 return $dialog;
             })()`;
         }
@@ -1698,7 +1700,12 @@ ${regionCode(node, child(node, "box-toolbar"), "toolbar")}${body}$closeChildren(
         "container-dialog": stmt((node, children) => {
             const button = attr(node, "button-text") || "";
             const title = attr(node, "title") || button;
-            return guarded(node, `$openChildren({t:"dialog",id:$uid(${idLit(node)}),title:${titleOf(title)},button:${titleOf(button)}});\n${children}$closeChildren();\n`);
+            const dialog = `$openChildren({t:"dialog",id:$uid(${idLit(node)}),title:${titleOf(title)},button:${titleOf(button)}});\n${children}$closeChildren();\n`;
+            const disable = attr(node, "disable-condition");
+            if (!disable) return guarded(node, dialog);
+            // disable-condition: its button as a disabled link with the reason (disable-message), and no dialog
+            return guarded(node, `if (${disable}) $emit({t:"link",id:$uid(${idLit(node)}),text:String(${titleOf(button || title)} || ""),url:"",kind:"anchor-button",` +
+                `disabled:true,reason:String(${titleOf(attr(node, "disable-message"))} || "")});\nelse {\n${dialog}}\n`);
         }),
         "container-split": stmt((node) => {
             const width = /^\d+$/.test(attr(node, "side-width")) ? `,sideWidth:${attr(node, "side-width")}` : "";

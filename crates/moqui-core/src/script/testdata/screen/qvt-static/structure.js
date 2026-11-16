@@ -44,7 +44,7 @@ sri.write("</div>\n");
 {
     const $c = $s.containerDialog({"name":"container-dialog","attrs":{"id":"D1","button-text":"Open ${name}"}});
 $s.label({"name":"label","attrs":{"text":"in dialog"}});
-    sri.write($c ? "</m-container-dialog></template>\n" : "</m-container-dialog>\n");
+    sri.write("</m-container-dialog>" + $c + "\n");
 }
 sri.write('<div class="m-ai-opt-out" data-ai-opt-out="section">');
 $s.label({"name":"label","attrs":{"text":"first"}});

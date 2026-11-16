@@ -12,6 +12,11 @@
     <widgets>
         <link url="conditional" text="Conditional"/>
         <link url="missing" text="Missing"/>
+        <!-- disable-condition: shown disabled with the reason while the scope's expression holds, the dialog then left out -->
+        <link url="conditional" text="Ask first" disable-condition="!canUse" disable-message="Only an approver ${allowed}"/>
+        <container-dialog id="AddThing" button-text="Add thing" disable-condition="!canUse" disable-message="Adding needs an approver">
+            <label text="the add form"/>
+        </container-dialog>
         <section-iterate name="Entries" list="entries" entry="item"><widgets>
             <link url="." text="Entry ${item.id}" parameter-map="{entryId:item.id}"/>
             <link url="iterationAction" text="Act ${item.id}" parameter-map="{entryId:item.id}"/>

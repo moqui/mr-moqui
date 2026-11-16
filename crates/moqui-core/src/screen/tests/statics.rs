@@ -88,6 +88,18 @@ fn cached_templates_get_request_and_row_specific_disabled_controls() {
         html.contains(":disable=\"true\""),
         "a missing target is disabled in the template: {html}"
     );
+    // disable-condition (ACC-UI-039): the link's disable and its reason's note and tooltip follow the scope's expression, and
+    // the dialog's disabled button stands in for it while the expression holds
+    for expected in [
+        "<span :tabindex=\"(() =&gt; { try { return !!(!canUse); } catch { return false; } })()?0:undefined\"",
+        "<q-tooltip v-if=\"(() =&gt; { try { return !!(!canUse); } catch { return false; } })()\">",
+        "<template v-if=\"(() =&gt; { try { return !!(!canUse); } catch { return false; } })()\"><span",
+        ":label=\"ec.l10n.localize('Add thing')\"",
+        "</template><template v-else><m-container-dialog",
+    ] {
+        assert!(html.contains(expected), "{expected} in {html}");
+    }
+    super::qvt::assert_compiles(&["Disabled".to_string()], std::slice::from_ref(&html));
     let values = |output: RenderOutput| -> serde_json::Value {
         assert_eq!(output.status, 200, "{}", output.body_text());
         serde_json::from_str(&output.body_text()).unwrap()

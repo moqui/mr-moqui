@@ -35,7 +35,7 @@ sri.write("</div>\n");
 {
     const $c = $s.containerDialog({"name":"container-dialog","attrs":{"id":"Dlg","button-text":"Open","icon":"fa fa-plus","condition":"allowed","width":"500"}});
 $s.label({"name":"label","attrs":{"text":"dialog body"}});
-    sri.write($c ? "</m-container-dialog></template>\n" : "</m-container-dialog>\n");
+    sri.write("</m-container-dialog>" + $c + "\n");
 }
 $s.dynamicContainer({"name":"dynamic-container","attrs":{"id":"Dyn","transition":"load"},"children":[{"name":"parameter","attrs":{"name":"p","value":"1"}}]});
 $s.dynamicDialog({"name":"dynamic-dialog","attrs":{"id":"DynDlg","button-text":"Edit","transition":"edit"},"children":[{"name":"parameter","attrs":{"name":"id","from":"rowId"}}]});

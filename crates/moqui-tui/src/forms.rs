@@ -117,6 +117,8 @@ pub struct LinkInfo {
     pub method: String,
     pub confirm: String,
     pub disabled: bool,
+    /// Why it is disabled, when its author says: the message when it is followed.
+    pub reason: String,
     /// It runs a transition that is not read-only.
     pub writes: bool,
     /// An authored browser target, independent of the URL's route or content type.
@@ -145,6 +147,7 @@ impl LinkInfo {
             method,
             confirm,
             disabled,
+            reason,
             writes,
             ..
         } = node
@@ -159,6 +162,7 @@ impl LinkInfo {
             method: method.clone(),
             confirm: confirm.clone(),
             disabled: *disabled,
+            reason: reason.clone(),
             writes: *writes,
             browser: *browser,
         })
@@ -360,11 +364,14 @@ impl Index {
                     self.add(c, &inner);
                 }
                 Node::Field { .. } => self.add_field(node, at),
-                Node::Link { id, disabled, .. } => {
+                Node::Link {
+                    id, disabled, reason, ..
+                } => {
                     if let Some(link) = LinkInfo::of_node(node) {
                         self.add_link(link, true);
                     }
-                    if !disabled {
+                    // a link disabled for a reason takes focus, to say why (section 1.2's hint line)
+                    if !disabled || !reason.is_empty() {
                         self.push(id, FocusKind::Link, at);
                     }
                 }

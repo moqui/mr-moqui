@@ -87,6 +87,17 @@ fn containers_links_and_labels() {
     let out = check("containers", &[]);
     // data is text and not an interpolation
     assert!(!out.contains("{{"), "{out}");
+    // a button-menu is named by its text, not Quasar's "Expand", and its rows are no focus stop around their controls
+    // (ACC-UI-041)
+    assert!(
+        out.contains(r#"<q-btn-dropdown dense unelevated no-caps toggle-aria-label="Actions""#),
+        "{out}"
+    );
+    assert!(
+        out.contains(r#"<q-item clickable tabindex="-1"><q-item-section>"#),
+        "{out}"
+    );
+    assert!(!out.contains("<q-item clickable><q-item-section>"), "{out}");
     // a container-dialog's tooltip, expanded; a hidden-form-link is a flat button with its text at the left, and its
     // background-* attributes are the m-form's submit-* properties, as a form-single's
     for expected in [
@@ -1658,4 +1669,83 @@ fn a_scan_input_resolves_through_the_screen() {
     assert!(text.contains(r#""name":"countScanId""#), "{text}");
     let plain = render_mode("scan", "", "text", &[]);
     assert!(!plain.contains("scan-input"), "{plain}");
+}
+
+/// `disable-condition` and `disable-message` (ACC-UI-039): an action the user lacks the authority for is shown disabled with
+/// its reason, as a tooltip on a focusable note that names it, and does nothing (a container-dialog has no dialog, a link no
+/// form); when the condition is false it is as usual. html gives the reason as the title, and tui a disabled link with the
+/// reason.
+#[test]
+fn an_action_disabled_for_a_reason_shows_it_and_does_nothing() {
+    let out = check("unavailable", &[]);
+    let reason = "Exchange rates are maintained by a finance administrator of every organization";
+    assert!(
+        out.contains(&format!(
+            r#"<span tabindex="0" role="note" aria-label="Add exchange rate: {reason}"><q-btn id="AddRate_button" disabled unelevated no-caps icon="sym_o_add" label="Add exchange rate"></q-btn><q-tooltip>{reason}</q-tooltip></span>"#
+        )),
+        "{out}"
+    );
+    assert!(
+        !out.contains("the add form") && !out.contains(r#"<m-container-dialog id="AddRate""#),
+        "{out}"
+    );
+    assert!(
+        out.contains(r#"<m-container-dialog id="EditRate""#) && out.contains("the edit form"),
+        "{out}"
+    );
+    let import = part_of(&out, r#"aria-label="Import rates: Imports need"#, "</span>");
+    assert!(
+        import.contains("<q-btn")
+            && import.contains(" disabled ")
+            && import.contains("<q-tooltip>Imports need a finance"),
+        "{import}"
+    );
+    assert!(
+        !out.contains(r#"<m-form name="#) || out.matches("<m-form").count() == 1,
+        "only Fetch rates has a form: {out}"
+    );
+    assert!(!out.contains(r#"aria-label="Fetch rates: "#), "{out}");
+
+    let html = render_mode("unavailable", "", "html", &[]);
+    assert!(
+        html.contains(&format!(
+            r#"disabled data-btn="primary" title="{reason}" aria-label="Add exchange rate: {reason}">"#
+        )),
+        "{html}"
+    );
+    assert!(
+        !html.contains("the add form") && html.contains("the edit form"),
+        "{html}"
+    );
+    assert!(
+        html.contains(r#"aria-disabled="true" title="Imports need a finance administrator of every organization""#),
+        "{html}"
+    );
+
+    let tui: serde_json::Value = serde_json::from_str(&render_mode("unavailable", "", "tui", &[])).unwrap();
+    let text = tui.to_string();
+    let walk = |id: &str| -> serde_json::Value {
+        fn find(node: &serde_json::Value, id: &str) -> Option<serde_json::Value> {
+            if node.get("id").and_then(|v| v.as_str()) == Some(id) {
+                return Some(node.clone());
+            }
+            let kids = node.get("c").or(node.as_array().map(|_| node))?;
+            kids.as_array()?.iter().find_map(|kid| find(kid, id))
+        }
+        find(&tui, id).unwrap_or_else(|| panic!("no {id} in {text}"))
+    };
+    let add = walk("AddRate");
+    assert_eq!(add["t"], "link", "{add}");
+    assert_eq!(add["disabled"], true, "{add}");
+    assert_eq!(add["reason"], reason, "{add}");
+    assert_eq!(walk("EditRate")["t"], "dialog");
+    assert!(
+        !text.contains("the add form") && text.contains("the edit form"),
+        "{text}"
+    );
+    assert!(
+        text.contains(r#""reason":"Imports need a finance administrator of every organization""#),
+        "{text}"
+    );
+    assert!(!text.contains(r#""reason":"Not yours""#), "{text}");
 }

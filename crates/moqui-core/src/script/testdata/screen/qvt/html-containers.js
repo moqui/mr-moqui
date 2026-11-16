@@ -48,19 +48,21 @@ $v.dynamicDialog({"name":"dynamic-dialog","attrs":{"id":"DynDlg","button-text":"
     let $text = $map ? ec.resource.expand("Actions", "", $map) : ec.resource.expand("Actions", "");
     if ($text === "null") $text = "";
     if ($text || false || true) {
+        // the menu's name for assistive technology: its text (Quasar names a slot-labelled dropdown "Expand")
+        const $name = String($text || "" || ec.l10n.localize("Menu"));
         if ("" !== "false") $text = $v.t($text);
         let $icon = "fa fa-cog";
         if (!$icon && $text) $icon = sri.getThemeIconClass($text) || "";
         const $badge = ec.resource.expand("", "");
-        sri.write("<q-btn-dropdown" + $v.A(Object.assign({dense: true, unelevated: true, "no-caps": true}, $v.btnKind("info", null))) + "><template v-slot:label>" +
+        sri.write("<q-btn-dropdown" + $v.A(Object.assign({dense: true, unelevated: true, "no-caps": true, "toggle-aria-label": $name}, $v.btnKind("info", null))) + "><template v-slot:label>" +
             ($icon ? $v.iconTag($icon, !!$text) : ""));
         // as Java: the image child in the place of the text
         sri.write($text);
         sri.write(($badge ? "<q-badge class=\"on-right\" transparent>" + $v.t($badge) + "</q-badge>" : "") + "</template><q-list>");
-        sri.write("<q-item clickable><q-item-section>");
+        sri.write("<q-item clickable tabindex=\"-1\"><q-item-section>");
         $v.link({"name":"link","attrs":{"url":"one","text":"One","link-type":"anchor"}}, false);
         sri.write("</q-item-section></q-item>");
-        sri.write("<q-item clickable><q-item-section>");
+        sri.write("<q-item clickable tabindex=\"-1\"><q-item-section>");
         $v.link({"name":"link","attrs":{"url":"two","text":"Two","link-type":"anchor","confirmation":"Sure?"}}, false);
         sri.write("</q-item-section></q-item>");
         sri.write("</q-list></q-btn-dropdown>\n");

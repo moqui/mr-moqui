@@ -424,6 +424,10 @@ pub enum Node {
         /// The user may not follow it.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         disabled: bool,
+        /// Why it is disabled, when its author says (`disable-condition` and `disable-message`, or a container-dialog's):
+        /// such a link is drawn dimmed and takes focus, so the user sees the action and why it is not theirs.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        reason: String,
         /// It runs a transition that is not read-only, as qvt's `read-only` attribute tells: an agent's press of it
         /// waits for the user's approval (plans/LLM-A2A-Assist.md 4.7). The server's gate stays the authority.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]

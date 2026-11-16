@@ -473,12 +473,18 @@ pub enum Inline {
     Dialog { id: String, text: String },
     /// A button-menu: `[ More ▾ ]`, Enter opens its items.
     Menu { id: String, text: String },
+    /// An action disabled for a reason its author gives: `[ x ]` dimmed, focusable, its reason on the hint line.
+    Unavailable { id: String, text: String },
 }
 
 impl Inline {
     pub fn id(&self) -> &str {
         match self {
-            Self::Link { id, .. } | Self::Button { id, .. } | Self::Dialog { id, .. } | Self::Menu { id, .. } => id,
+            Self::Link { id, .. }
+            | Self::Button { id, .. }
+            | Self::Dialog { id, .. }
+            | Self::Menu { id, .. }
+            | Self::Unavailable { id, .. } => id,
         }
     }
 
@@ -505,7 +511,7 @@ impl Inline {
                         0
                     }
             }
-            Self::Button { text, .. } => display_width(text) + 4,
+            Self::Button { text, .. } | Self::Unavailable { text, .. } => display_width(text) + 4,
             Self::Dialog { text, .. } => number + display_width(text) + 5,
             Self::Menu { text, .. } => display_width(text) + 6,
         }
@@ -879,6 +885,16 @@ fn inline_of(node: &Node) -> Option<Inline> {
             // A link with a button type is a button, as a status bar's transitions are (style guide §4.6).
             button: kind.contains("button") || kind == "hidden-form" || !btn_type.is_empty(),
             checked: check_icon(icon),
+        }),
+        Node::Link {
+            id,
+            text,
+            disabled: true,
+            reason,
+            ..
+        } if !reason.is_empty() => Some(Inline::Unavailable {
+            id: id.clone(),
+            text: text.clone(),
         }),
         Node::Dialog { id, button, title, .. } => Some(Inline::Dialog {
             id: id.clone(),
