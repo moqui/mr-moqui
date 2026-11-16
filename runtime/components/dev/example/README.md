@@ -45,8 +45,8 @@ is not a member of the mr-moqui workspace, so where this `Cargo.toml` inherits i
 
 ```toml
 [dependencies]
-moqui-core = { path = "../../../crates/moqui-core", default-features = false }
-moqui-lib = { path = "../../../crates/moqui-lib" }
+moqui-core = { path = "../../../../crates/moqui-core", default-features = false }
+moqui-lib = { path = "../../../../crates/moqui-lib" }
 tracing = "0.1"
 ```
 

@@ -10,8 +10,8 @@ and the generated crate takes the same package features as `crates/moqui`. Its `
 
 ```toml
 [dependencies]
-moqui-core = { path = "../../../crates/moqui-core", default-features = false }
-moqui-lib = { path = "../../../crates/moqui-lib" }
+moqui-core = { path = "../../../../crates/moqui-core", default-features = false }
+moqui-lib = { path = "../../../../crates/moqui-lib" }
 ```
 
 **With an application-owned binary.** An application can own its `Cargo.toml` and lockfile instead, in its own workspace, with path or Git dependencies on the same MR revision:
