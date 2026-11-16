@@ -23,8 +23,12 @@
 //! - `reauthenticate#User`: the password, then the code, of the signed-in user ([`crate::user::reauthenticate`]).
 //! - `send#ReauthCode`: a code to an email or SMS factor, once the password was checked.
 //!
+//! - `require#RecentAuth`: the same rule as a refusal, for the services that make or end a credential or a sign-in
+//!   factor of the caller's own account ([`require_recent_auth`]).
+//!
 //! The ChatKeys services refuse a cross-signing reset, a new or deleted key backup and a device revoke without it
-//! (`reauthRequired`); the browser's piece is `js/WebrootReAuth.js` over the `/ReAuth` transitions.
+//! (`reauthRequired`); the browser's piece is `js/WebrootReAuth.js` over the `/ReAuth` transitions, and a form refused for
+//! it ([`REAUTH_HEADER`]) asks there and sends again.
 
 use std::collections::BTreeMap;
 
@@ -40,6 +44,11 @@ use crate::user::CodeLogin;
 const DEFAULT_MAX_AGE_SECONDS: i64 = 300;
 /// The session attribute an SSO login keeps its flow in (`service/sso.rs`).
 const SSO_FLOW_ID: &str = "moquiAuthFlowId";
+/// The response header of a refusal for want of a recent sign-in ([`require_recent_auth`]): a browser form that gets it
+/// asks the user to confirm who they are (`moqui.reauth`) and sends again (`js/WebrootVue.qvt.js` m-form).
+pub(crate) const REAUTH_HEADER: &str = "X-Moqui-Reauth";
+/// The error of that refusal, as the ChatKeys services word it.
+const REAUTH_TEXT: &str = "Confirm it is you: sign in again to do this";
 
 pub(in crate::service) fn register(
     map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
@@ -47,7 +56,40 @@ pub(in crate::service) fn register(
     rust_service!(map, check_recent_auth)?;
     rust_service!(map, reauthenticate_user)?;
     rust_service!(map, send_reauth_code)?;
+    rust_service!(map, require_recent_auth_service)?;
     Ok(())
+}
+
+/// The rule of an action that makes or ends a credential or a sign-in factor of the caller's own account (SEC-ADM-03,
+/// SEC-ADM-07): the session's user signed in, or confirmed who they are, in the last five minutes
+/// ([`crate::user::recent_auth`]: a password, a second factor's code, an SSO sign-in, `reauthenticate#User`; never a key, an
+/// app password or an internal login), so a stolen session or key cannot make itself lasting credentials or take the
+/// account's factors. A caller that disabled authorization (a job, a setup service) answers for the action and passes.
+/// False when refused: the error asking the user to confirm who they are is added and the response carries
+/// [`REAUTH_HEADER`].
+pub(crate) fn require_recent_auth() -> bool {
+    if ExecutionContext::with_current(ExecutionContext::authz_disabled).unwrap_or(false)
+        || crate::user::recent_auth(DEFAULT_MAX_AGE_SECONDS * 1000)
+    {
+        return true;
+    }
+    add_error(localized(REAUTH_TEXT));
+    crate::web::set_header(REAUTH_HEADER, Some("required"));
+    false
+}
+
+/// `require#RecentAuth`: [`require_recent_auth`] for an XML service. Out: `recent`, and `reasonCode` `reauthRequired`
+/// when refused.
+fn require_recent_auth_service(
+    _parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let recent = require_recent_auth();
+    let mut out = BTreeMap::from([("recent".to_string(), Value::Bool(recent))]);
+    if !recent {
+        out.insert("reasonCode".to_string(), Value::string("reauthRequired"));
+    }
+    Ok(out)
 }
 
 fn add_error(text: impl Into<String>) {
@@ -156,7 +198,7 @@ fn check_recent_auth(
     );
     out.insert("authFlowList".to_string(), Value::List(flows));
     if !recent && truthy(parameters, "required") {
-        add_error(localized("Confirm it is you: sign in again to do this"));
+        add_error(localized(REAUTH_TEXT));
     }
     Ok(out)
 }

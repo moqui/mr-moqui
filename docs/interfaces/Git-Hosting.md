@@ -139,8 +139,9 @@ first branch pushed) its default branch.
 
 An account page adds and removes SSH keys and creates and revokes access tokens through
 `org.moqui.impl.UserServices` (My Account, Git Access of mr-marble; BOSS's Git Access): `create#UserSshKey`,
-`delete#UserSshKey`, `create#UserAccessToken` (a `UserLoginKey` with a description; the token is shown once) and
-`revoke#UserAccessToken`, and lists them with `find#UserSshKeys` (each `sshKeyId`, `description`, `keyType`,
+`delete#UserSshKey`, `create#UserAccessToken` (a `UserLoginKey` with a description and `scope` `git`: git over HTTP and the
+[REST](#rest) under `git/` and `hosting/` take it, every other login refuses it; good for 90 days or `expireDays`, at most
+366; the token is shown once) and `revoke#UserAccessToken`, and lists them with `find#UserSshKeys` (each `sshKeyId`, `description`, `keyType`,
 `fingerprint`, `fromDate`, `thruDate`; when a key was last used is not kept) and `find#UserAccessTokens` (each
 `tokenId`, `description`, `fromDate`, `thruDate`). Both list the current user's rows only, the ones in date unless
 `includeEnded`, and never a public key, a token or a token's stored hash: `tokenId` is a digest of that hash, which

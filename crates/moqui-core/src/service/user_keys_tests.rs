@@ -47,10 +47,12 @@ fn key_line(fill: u8) -> String {
     )
 }
 
-/// Call a service of `UserServices` as `username`: what it gave and the errors it left.
+/// Call a service of `UserServices` as `username`, signed in a moment ago as on an account page (the user id is the
+/// username in these tests): what it gave and the errors it left.
 fn call_as(username: &str, name: &str, parameters: &[(&str, Value)]) -> (BTreeMap<String, Value>, String) {
     if !username.is_empty() {
         crate::user::internal_login_user(username).unwrap();
+        crate::user::note_recent_auth(username);
     }
     let parameters: BTreeMap<String, Value> = parameters
         .iter()
@@ -250,7 +252,7 @@ fn a_scoped_key_opens_only_its_scope_and_its_holder_ends_it() {
         "an account login refuses it"
     );
     assert!(
-        crate::user::apply_header_keys(Some(&key), None).is_err(),
+        crate::user::apply_header_keys(Some(&key), None, None).is_err(),
         "a REST header login refuses it"
     );
     crate::user::login_user_key_for(&key, "gateway").unwrap();
@@ -274,4 +276,85 @@ fn a_scoped_key_opens_only_its_scope_and_its_holder_ends_it() {
     assert!(errors.is_empty(), "{errors}");
     assert_eq!(own["revoked"], Value::Bool(true));
     assert!(crate::user::login_user_key_for(&key, "gateway").is_err());
+}
+
+/// An SSH key, an access token and an app password are made only after a sign-in in the last five minutes (SEC-ADM-03,
+/// SEC-ADM-07, SEC-COM-21), so a session or key that came without one cannot make itself lasting credentials. A token
+/// lasts at most 366 days and is git's alone (SEC-PFS-61): git and the git REST take it, every other login refuses it, as
+/// it does a token made before tokens had a scope.
+#[test]
+fn credentials_need_a_recent_sign_in_and_an_access_token_is_for_git_alone() {
+    let (facade, context) = entered();
+    let _entered = context.enter();
+    crate::service::load_definitions().unwrap();
+    {
+        let _authz = context.disable_authz();
+        let mut row = facade.make_value("moqui.security.UserAccount").unwrap();
+        row.set("userId", Value::string("keys.cat"));
+        row.set("username", Value::string("keys.cat"));
+        row.create(&facade).unwrap();
+    }
+    let text = |value: &str| Value::string(value);
+    // an internal login (as a key's or a stolen session's) is no recent sign-in: each is refused, nothing made
+    crate::user::internal_login_user("keys.cat").unwrap();
+    for (name, parameters) in [
+        ("create#UserSshKey", vec![("publicKey", text(&key_line(9)))]),
+        ("create#UserAccessToken", vec![]),
+        ("create#UserAppPassword", vec![("name", text("phone"))]),
+    ] {
+        let (out, refused) = call_as("", name, &parameters);
+        assert!(refused.contains("Confirm it is you"), "{name}: {refused}");
+        assert!(
+            out.values().all(|value| matches!(value, Value::Null)),
+            "{name}: {out:?}"
+        );
+    }
+    crate::user::logout().unwrap();
+
+    let (_, refused) = call_as("keys.cat", "create#UserAccessToken", &[("expireDays", text("400"))]);
+    assert!(refused.contains("at most 366"), "{refused}");
+    let (made, errors) = call_as("keys.cat", "create#UserAccessToken", &[("description", text("ci"))]);
+    assert!(errors.is_empty(), "{errors}");
+    let token = to_plain_string(&made["accessToken"]);
+    let refused_everywhere = |token: &str| {
+        let account = crate::user::login_user_key(token).is_err();
+        let rest = crate::user::apply_header_keys(Some(token), None, None).is_err();
+        let socket = crate::user::login_key_user_by_hash(&crate::user::hash_login_key(token).unwrap())
+            .unwrap()
+            .is_none();
+        account && rest && socket
+    };
+    assert!(refused_everywhere(&token), "a token opens no login but git's");
+    crate::user::login_user_key_for(&token, crate::user::ACCESS_TOKEN_SCOPE).unwrap();
+    assert_eq!(crate::user::login_key_kind(), Some(crate::user::LoginKeyKind::Token));
+    crate::user::logout().unwrap();
+    let scope = crate::user::request_key_scope("/rest/s1/moqui/git/R1/commits");
+    assert!(
+        crate::user::apply_header_keys(Some(&token), None, scope).unwrap(),
+        "the git REST takes it"
+    );
+    crate::user::logout().unwrap();
+    assert_eq!(
+        crate::user::request_key_scope("/rest/s1/moqui/hosting/repository"),
+        Some("git")
+    );
+    assert_eq!(
+        crate::user::request_key_scope("/rest/s1/moqui/git/../../mantle/orders"),
+        None
+    );
+    assert_eq!(crate::user::request_key_scope("/apps/git"), None);
+
+    // a token made before tokens had a scope is git's too
+    {
+        let _authz = context.disable_authz();
+        facade
+            .find("moqui.security.UserLoginKey")
+            .unwrap()
+            .eq("loginKey", Value::string(crate::user::hash_login_key(&token).unwrap()))
+            .update_all([("scope".to_string(), Value::Null)])
+            .unwrap();
+    }
+    assert!(refused_everywhere(&token), "an older token opens no login but git's");
+    crate::user::login_user_key_for(&token, crate::user::ACCESS_TOKEN_SCOPE).unwrap();
+    crate::user::logout().unwrap();
 }

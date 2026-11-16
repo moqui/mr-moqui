@@ -79,14 +79,13 @@ const ensureUser = ({ username, password, group }) => {
     }
     return userId
 }
+// The account's own key, as getLoginKey makes it: no description, which would make it an access token (git's alone).
 const ensureLoginKey = (userId) => {
     if (one("moqui.security.UserLoginKey", { loginKey: LOGIN_KEY_HASH }) != null) return
     const fromDate = ec.user.nowTimestamp
     const thruDate = new Date(ec.user.timestampMillis(fromDate) + 365 * 24 * 60 * 60 * 1000)
     const row = ec.entity.makeValue("moqui.security.UserLoginKey")
-    row.setFields({
-        loginKey: LOGIN_KEY_HASH, userId, fromDate, thruDate, description: "security test known login key",
-    }, true, null, null)
+    row.setFields({ loginKey: LOGIN_KEY_HASH, userId, fromDate, thruDate }, true, null, null)
     row.create()
 }
 // Consuming the code sets thruDate; a later run puts the same hash back and clears thruDate.
@@ -355,7 +354,8 @@ feature("the security proof fixtures", {
         row.lock.disabledDateTime == null
         row.loginKey != null
         row.loginKey.userId == row.keyAccount.userId
-        row.loginKey.description == "security test known login key"
+        row.loginKey.description == null
+        row.loginKey.scope == null
         row.messageType != null
         row.hmac.messageAuthEnumId == "SmatHmacSha256"
         row.hmac.authHeaderName == "X-Moqui-Signature"

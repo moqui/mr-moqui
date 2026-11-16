@@ -618,8 +618,7 @@ pub fn login_key_user_by_hash(hashed: &str) -> Result<Option<String>, Error> {
         return Ok(None);
     };
     let now = now_millis();
-    if field_millis(&row, "thruDate").is_some_and(|thru| key_ended(thru, now)) || !text_field(&row, "scope").is_empty()
-    {
+    if field_millis(&row, "thruDate").is_some_and(|thru| key_ended(thru, now)) || !key_scope(&row).is_empty() {
         return Ok(None);
     }
     let user_id = text_field(&row, "userId");
@@ -635,7 +634,7 @@ pub fn login_key_user_by_hash(hashed: &str) -> Result<Option<String>, Error> {
 pub enum LoginKeyKind {
     /// A device's key (`deviceName`, [`get_device_key`]): the desktop or mobile client's.
     Device,
-    /// An access token (`description`, `create#UserAccessToken`).
+    /// An access token (`description`, `create#UserAccessToken`), for git alone ([`ACCESS_TOKEN_SCOPE`]).
     Token,
     /// A key from [`get_login_key`], with neither.
     Session,
@@ -655,7 +654,10 @@ impl LoginKeyKind {
     }
 
     fn of(row: &EntityValue) -> Self {
-        if !text_field(row, "scope").is_empty() {
+        let scope = text_field(row, "scope");
+        if scope == ACCESS_TOKEN_SCOPE || (scope.is_empty() && is_access_token(row)) {
+            Self::Token
+        } else if !scope.is_empty() {
             Self::Scoped
         } else if !text_field(row, "deviceName").is_empty() {
             Self::Device
@@ -664,6 +666,28 @@ impl LoginKeyKind {
         } else {
             Self::Session
         }
+    }
+}
+
+/// The scope of an access token (`create#UserAccessToken`; SEC-PFS-61): git over HTTP and the git REST
+/// (`/rest/s1/moqui/git/...`, `/rest/s1/moqui/hosting/...`) take it, and every other login refuses it, so a token made for
+/// git is not the account's key on the web, the REST, a socket or a PASS page.
+pub const ACCESS_TOKEN_SCOPE: &str = "git";
+
+/// Whether `row` is an access token by its fields: a description and no device. One made before tokens had a scope has
+/// an empty `scope` and is still git's alone ([`key_scope`]), so no stored row needs changing.
+fn is_access_token(row: &EntityValue) -> bool {
+    !text_field(row, "description").is_empty() && text_field(row, "deviceName").is_empty()
+}
+
+/// The one service a key opens alone: its `scope`, or [`ACCESS_TOKEN_SCOPE`] for an access token without one; empty for
+/// the account's key (a session's or a device's), which every login takes.
+fn key_scope(row: &EntityValue) -> String {
+    let scope = text_field(row, "scope");
+    if scope.is_empty() && is_access_token(row) {
+        ACCESS_TOKEN_SCOPE.to_string()
+    } else {
+        scope
     }
 }
 
@@ -688,7 +712,7 @@ fn check_login_key(key: &str, session_user: Option<&str>, scope: Option<&str>) -
     if session_user.is_some_and(|signed_in| signed_in != user_id) {
         return Err(refused_credential());
     }
-    let key_scope = text_field(&row, "scope");
+    let key_scope = key_scope(&row);
     if !key_scope.is_empty() && Some(key_scope.as_str()) != scope {
         return Err(refused_credential());
     }
@@ -1100,18 +1124,31 @@ fn make_key(user_id: &str, hours: f64, device: Option<&str>, scope: Option<&str>
 /// Header login. Uses `api_key` when it is present, otherwise `login_key`, and returns whether either was there.
 ///
 /// Does not read a query string. A key is the request's authority even when the session is already signed in, so it
-/// is checked every time, and a key for a user other than the session's is refused.
+/// is checked every time, and a key for a user other than the session's is refused. `scope` is the one service the
+/// request is for, when it is one a key may be made for alone (the git REST: [`ACCESS_TOKEN_SCOPE`]): a key of that scope
+/// is taken there, and a scoped key anywhere else is refused.
 ///
 /// # Errors
 ///
 /// Returns the login error when the chosen key is rejected.
-pub fn apply_header_keys(api_key: Option<&str>, login_key: Option<&str>) -> Result<bool, Error> {
+pub fn apply_header_keys(api_key: Option<&str>, login_key: Option<&str>, scope: Option<&str>) -> Result<bool, Error> {
     let Some(key) = present_key(api_key).or_else(|| present_key(login_key)) else {
         return Ok(false);
     };
     let signed_in = session::current_user_id()?.filter(|id| !id.is_empty());
-    check_login_key(key, signed_in.as_deref(), None)?;
+    check_login_key(key, signed_in.as_deref(), scope)?;
     Ok(true)
+}
+
+/// The scope of a request path ([`apply_header_keys`]): [`ACCESS_TOKEN_SCOPE`] for the git REST, the `git` and `hosting`
+/// resources of the framework's REST (`/rest/s1/moqui/git/...`, `/rest/s1/moqui/hosting/...`), by the screen path the
+/// request reaches (`..` and empty names resolved); none for any other path.
+pub fn request_key_scope(path: &str) -> Option<&'static str> {
+    let names = crate::screen::screen_path_names(path);
+    match names.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        ["rest", "s1", "moqui", "git" | "hosting", ..] => Some(ACCESS_TOKEN_SCOPE),
+        _ => None,
+    }
 }
 
 fn present_key(value: Option<&str>) -> Option<&str> {
@@ -1203,7 +1240,7 @@ pub(crate) const REAUTH_PASSWORD: &str = "moquiReauthPassword";
 const REAUTH_PASSWORD_MILLIS: i64 = 5 * 60 * 1000;
 
 /// The session's user signed in (or confirmed who they are) now.
-pub(super) fn note_recent_auth(user_id: &str) {
+pub(crate) fn note_recent_auth(user_id: &str) {
     note_recent_auth_at(user_id, now_millis());
 }
 

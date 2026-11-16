@@ -32,11 +32,23 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="loginAs">
         <parameter name="loginAsUsername"/>
         <actions>
-            <if condition="ec.user.hasPermission('ADMIN_LOGIN_AS')"><then>
-                <script>ec.user.internalLoginUser(loginAsUsername)</script>
-            </then><else>
-                <return error="true" message="You are not permitted to login as another user"/>
-            </else></if>
+            <if condition="!ec.user.hasPermission('ADMIN_LOGIN_AS')">
+                <return error="true" message="You are not permitted to login as another user"/></if>
+            <!-- Bounded and in the record (SEC-ADM-08): another account only, one that holds no access the administrator
+                lacks (Identity.js heldBeyond), and a row of the audit log on the account with who did it from which visit,
+                written before the login takes the session -->
+            <entity-find-one entity-name="moqui.security.UserAccount" value-field="loginAsAccount">
+                <field-map field-name="username" from="loginAsUsername"/></entity-find-one>
+            <if condition="loginAsAccount == null || loginAsAccount.userId == ec.user.userId">
+                <return error="true" message="Choose another user to login as"/></if>
+            <set field="loginAsHeld" from="ec.resource.script('component://framework/service/org/moqui/admin/Identity.js').heldBeyond(loginAsAccount.userId)"/>
+            <if condition="loginAsHeld"><return error="true" message="${loginAsHeld}: you may not login as that user"/></if>
+            <script>
+                ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationLib.js').auditRow('moqui.security.UserAccount',
+                    'loginAs', loginAsAccount.userId, null, null, 'Login as by ' + ec.user.username, null)
+                ec.logger.warn('Login as ' + loginAsAccount.username + ' by ' + ec.user.username + ' in visit ' + (ec.user.visitId || ''))
+                ec.user.internalLoginUser(loginAsUsername)
+            </script>
         </actions>
         <default-response url="/"/>
         <error-response url="."/>

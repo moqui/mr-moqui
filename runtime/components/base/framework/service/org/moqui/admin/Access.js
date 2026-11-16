@@ -1097,6 +1097,10 @@ function applyGrantProposal(p) {
     const reason = reasonText(p)
     const account = text(p.userId) ? one("moqui.security.UserAccount", {userId: text(p.userId)}) : null
     if (!account) return refused("USER_UNAVAILABLE", "User " + text(p.userId) + " is not available")
+    // an identity operator (ADMIN_IDENTITY_MANAGE, not sealed) gives bundles to others, never to their own account: that
+    // would widen their own access, which only an access administrator does (SEC-ADM-06)
+    if (account.userId === ec.user.userId && !ec.user.hasPermission(MANAGE))
+        return refused("OWN_ACCOUNT", "Your own memberships are changed by an access administrator (" + MANAGE + ")")
     const bundleList = proposalBundles(p)
     const first = bundleList.find(row => !row.allowed)
     if (first) return refused(first.reasonCode, first.reason, {bundleList})

@@ -132,7 +132,7 @@ the user services call.
 | Member | |
 |---|---|
 | `userId`, `username` | The signed-in user's id and username; null with nobody signed in |
-| `loginKeyKind` | The kind of login key this request's user signed in with (the `api_key` or `login_key` header, or `loginUserKey`), read from its `UserLoginKey`: `device` (a device's key, `deviceName`), `token` (an access token, `description`), `session` (a `getLoginKey` key) or `scoped` (a key for one service, `scope`, which only that service's login takes); null for a password, cookie or any other login. For this request only: the session's next request by cookie has none |
+| `loginKeyKind` | The kind of login key this request's user signed in with (the `api_key` or `login_key` header, or `loginUserKey`), read from its `UserLoginKey`: `device` (a device's key, `deviceName`), `token` (an access token, `description`, which only git over HTTP and the git REST take: `scope` `git`), `session` (a `getLoginKey` key) or `scoped` (a key for one service, `scope`, which only that service's login takes); null for a password, cookie or any other login. For this request only: the session's next request by cookie has none |
 | `userAccount` | The signed-in `UserAccount` as a map, without its credential and lockout columns; null with nobody |
 | `locale`, `setLocale(locale)` | The session's locale (`en_US`); setting saves it on the signed-in user's account. Null or empty clears it |
 | `timeZone`, `setTimeZone(zone)` | The session's time zone (an IANA name), the user's own, else the server's; setting saves it on the account. An unknown zone is an error |
@@ -173,6 +173,7 @@ the user services call.
 | `randomString(length)` | Random URL-safe text of the length |
 | `totpSecret()` | A new TOTP shared secret (base32) |
 | `totpCodeValid(secret, code)` | Whether the code is the authenticator code of the secret now, or one period either side |
+| `totpCodeStep(secret, code, afterStep)` | The step (period number) the code is the authenticator code of the secret for now, one period either side, when it is after `afterStep` (the last step a code of the factor was taken for; null for none); else null. A factor keeps the step it took (`UserAuthcFactor.lastTotpStep`), so a code works once |
 | `totpUri(label, issuer, secret)` | The `otpauth://totp/` URI an authenticator app scans; null when the secret or label is not valid |
 | `getPeriodRange(period, poffset, pdate)` | `[from, thru]` of a period (`day`, `week`, `month`, `quarter`, `year`, `7d`, `30d`, ...) offset by `poffset` from `pdate` or today |
 | `getPeriodRange(baseName, inputs)` | The range of `{baseName}_period`, `_poffset` and `_pdate` of the inputs map, else its `{baseName}_from` and `_thru` |
@@ -1319,7 +1320,7 @@ Members Moqui Java does not have.
 |---|---|
 | `ec` | `search`, `llm` |
 | `ec.context` | Property reads and writes, `in`, `delete`, `Object.keys` |
-| `ec.user` | `machineTimeZone`, `passwordRules`, `loginRules`, `endVisit`, `hashPassword`, `passwordsMatch`, `checkOldPassword`, `initialAdminLocal`, `initialAdminAllowed`, `singleUseCodeHash`, `randomCode`, `randomString`, `totpSecret`, `totpCodeValid`, `totpUri`, `timestampMillis` |
+| `ec.user` | `machineTimeZone`, `passwordRules`, `loginRules`, `endVisit`, `hashPassword`, `passwordsMatch`, `checkOldPassword`, `initialAdminLocal`, `initialAdminAllowed`, `singleUseCodeHash`, `randomCode`, `randomString`, `totpSecret`, `totpCodeValid`, `totpCodeStep`, `totpUri`, `timestampMillis` |
 | `ec.l10n` | `getAvailableTimeZones`, `getAvailableLocales`, the time zone argument of `format` |
 | `ec.resource` | `makeChangeSet`, `putContent`, `getLastChange`, `getChildChanges`, `getChangeLog`, `getTreeSize`, `restoreVersion`, `getVersionBytes`, `textDiff`, `readLines`, `digest`, `digestText`, `hmac`, `gunzip`, `extractArchive`, `writeZip`, `writeTarGz`, `extractText`, `readSheetPreview`, `makeThumbnail`, `makePdfPreview`, `imageAvailable`, `makeGrant`, `checkGrant`, `runTokenCommand`, `markdownHtml`, `code128Svg`, `barcodeSvg`, `parseGs1`, `isValidGs1CheckDigit`, `theme`; version notes on a reference's `putText`, `putBytes` and `putStream`, and `getVersionDiff` |
 | `ec.artifactExecution` | `runAsSystem`, `runAsUser`, `isPermitted`, `isPermittedOwn` |

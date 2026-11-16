@@ -870,6 +870,8 @@ interface MoquiUserFacade {
     loginUserKey(loginKey: string): boolean;
     /** The old password of a password change, behind the login gate: true when it is the current password or the reset password still in date. A null or unknown userId, a locked or terminated account and a wrong password are all false and take as long; a wrong one counts as a failed login. */
     checkOldPassword(userId: string | null, oldPassword: string | null): boolean;
+    /** The step an authenticator code of the secret is valid for now (one step either side) when it is after afterStep, the last step a code of the factor was taken for: a code works once. Null when the code is not valid now or its step was taken. */
+    totpCodeStep(secret: string | null, code: string | null, afterStep: number | string | null): number | null;
     /** Whether this request comes from this machine (a loopback peer straight to the listener, no proxy's forwarding header), so the first administrator's form needs no setup secret. */
     readonly initialAdminLocal: boolean;
     /** Whether this request may create the first administrator: initialAdminLocal, or setupSecret is the one-time secret of the server's startup log. */
@@ -892,7 +894,7 @@ interface MoquiUserFacade {
     setEffectiveTime(time: TimestampInput | null): void;
     readonly passwordRules: { minLength: number; minDigits: number; minOthers: number };
     getPreference(key: string): string | null;
-    /** The kind of login key this request's user signed in with (the `api_key` or `login_key` header, or `loginUserKey`): `device` (a device's key), `token` (an access token), `session` (a `getLoginKey` key) or `scoped` (a key for one service, which only that service's login takes); null for any other login. */
+    /** The kind of login key this request's user signed in with (the `api_key` or `login_key` header, or `loginUserKey`): `device` (a device's key), `token` (an access token, which only git over HTTP and the git REST take), `session` (a `getLoginKey` key) or `scoped` (a key for one service, which only that service's login takes); null for any other login. */
     readonly loginKeyKind: "device" | "token" | "session" | "scoped" | null;
     getLoginKeyKind(): "device" | "token" | "session" | "scoped" | null;
     /** The `moqui.server.Visit` id of this session, null outside one. */
