@@ -548,6 +548,39 @@ fn a_screen_document_prints_its_pdf_or_reports_that_pdf_is_not_available() {
     );
 }
 
+/// SEC-SCR-02: `screenParametersStr` is read as a JSON object, never run as script.
+#[test]
+fn screen_parameters_text_is_json_and_never_a_script() {
+    let _pdf = crate::screen::pdf_test_lock();
+    crate::screen::clear_pdf_engine();
+    let (_facade, context) = setup();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    install(&["impl/PrintServices.xml"]);
+    let location = format!(
+        "{}/src/screen/testdata/Render/Render/Print.xml",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let script = "(() => { ec.context.planted = 'ran'; return {a: 1} })()";
+    let call = params(&[
+        ("networkPrinterId", "P"),
+        ("screenLocation", &location),
+        ("screenParametersStr", script),
+    ]);
+    crate::service::sync("org.moqui.impl.PrintServices.print#ScreenDocument", &call).unwrap();
+    assert!(errors(&context).contains("not a JSON object"), "{}", errors(&context));
+    assert!(crate::script::context_value("planted").is_none());
+    // a JSON object passes on to the render (which reports that this build has no PDF engine)
+    context.message().clear();
+    let call = params(&[
+        ("networkPrinterId", "P"),
+        ("screenLocation", &location),
+        ("screenParametersStr", r#"{"zeta": "first"}"#),
+    ]);
+    crate::service::sync("org.moqui.impl.PrintServices.print#ScreenDocument", &call).unwrap();
+    assert_eq!(errors(&context), crate::screen::PDF_UNAVAILABLE);
+}
+
 fn crypt(pass: &str) -> crate::entity::crypto::CryptConfig {
     crate::entity::crypto::CryptConfig {
         pass: pass.to_string(),

@@ -483,18 +483,19 @@ fn a_captured_send_is_captured_whatever_the_host() {
     };
     let capture = moqui_core::service::mail_capture::MailCapture::of(context.factory());
 
-    capture.set_enabled(Some(true));
+    moqui_core::service::mail_capture::allow();
+    capture.set_enabled(Some(true)).unwrap();
     capture.clear();
     assert_eq!(send(), "ES_SENT");
     let mails = capture.messages();
     assert_eq!(mails.len(), 1);
     assert_eq!(mails[0].to, ["to@example.com"]);
 
-    capture.set_enabled(Some(false));
+    capture.set_enabled(Some(false)).unwrap();
     capture.clear();
     assert_eq!(send(), "ES_READY");
     assert!(capture.messages().is_empty());
-    capture.set_enabled(None);
+    capture.set_enabled(None).unwrap();
 }
 
 /// A list email's extra headers go out and stay on the message for a send again; one the letter writes itself, or a

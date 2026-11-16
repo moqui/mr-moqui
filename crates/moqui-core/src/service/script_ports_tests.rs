@@ -419,6 +419,32 @@ fn docker_services_call_the_host_admin_api_and_keep_the_container_id() {
     assert!(requests[6].starts_with("DELETE /containers/c0ffee "), "{}", requests[6]);
 }
 
+/// SEC-OUT-08: a registry login is not sent over plain http to a Docker host on another machine.
+#[test]
+fn a_registry_login_is_not_sent_over_plain_http_to_another_host() {
+    let (facade, context) = setup();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    install(&["dev/InstanceServices.xml"]);
+    seed_instance(&facade, 2375);
+    let mut host = facade
+        .find("moqui.server.instance.InstanceHost")
+        .unwrap()
+        .eq("instanceHostId", Value::string("H1"))
+        .one()
+        .unwrap()
+        .unwrap();
+    host.set("hostAddress", Value::string("192.0.2.10"));
+    host.update(&facade).unwrap();
+    let out = crate::service::sync(
+        "org.moqui.dev.InstanceServices.init#InstanceDocker",
+        &params(&[("appInstanceId", "A1")]),
+    )
+    .unwrap_or_default();
+    assert!(errors(&context).contains("over plain http"), "{}", errors(&context));
+    assert_ne!(text(&out, "instanceCreated"), "true");
+}
+
 /// A conf connection that records its statements and answers counts from a table of results.
 struct RecordingDriver {
     statements: Arc<Mutex<Vec<String>>>,
@@ -620,26 +646,6 @@ fn database_services_run_their_admin_sql_on_the_database_host_conf() {
         "{}",
         errors(&context)
     );
-}
-
-#[cfg(unix)]
-#[test]
-fn the_token_command_returns_its_first_line_and_a_failure_throws() {
-    let (_facade, context) = setup();
-    let _entered = context.enter();
-    crate::script::run_actions(
-        r#"<actions><script>token = ec.resource.runTokenCommand("printf tok\\nsecond")</script></actions>"#,
-    )
-    .unwrap();
-    assert_eq!(
-        crate::script::context_value("token")
-            .map(|value| to_plain_string(&value))
-            .as_deref(),
-        Some("tok")
-    );
-    let err = crate::script::run_actions(r#"<actions><script>ec.resource.runTokenCommand("false")</script></actions>"#)
-        .unwrap_err();
-    assert!(err.message().contains("token command false failed"), "{err}");
 }
 
 /// get#UserWikiSpaces: each space the user may view once, though the space is joined to each user's grant; the user's own

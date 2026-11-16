@@ -40,6 +40,56 @@ pub fn secret_parameter(key: &str) -> bool {
             .any(|end| lower.ends_with(end))
 }
 
+/// The secret properties a script may still read with `System.getProperty`: the PASS frontend's credential at its
+/// authority, which mr-pass's REST transport sends as a header (this deployment's client secret at another server, not a
+/// key of this one).
+const SCRIPT_READABLE_SECRETS: &[&str] = &["pass_client_secret"];
+
+/// Whether `System.getProperty` refuses the property `name` to a script (plans/Security-Review-Medium.md SEC-SCR-03): a
+/// `default-property` the conf marks `is-secret="true"` (`conf_secrets`), a name [`secret_parameter`] calls a secret's
+/// (password, secret, token, credential, a `_key` ending), and a name that ends in `_pass` or `_pw` or holds `crypt`;
+/// each in lower case with `.` read as `_`, as the lookup reads a name both ways. [`SCRIPT_READABLE_SECRETS`] stay
+/// readable. A script that needs a secret uses a named host function (`System.isPropertySet`,
+/// `System.propertyMatches`, `System.secretCodeHash`).
+pub(crate) fn script_refused_property(name: &str, conf_secrets: &std::collections::BTreeSet<String>) -> bool {
+    let lower = name.trim().to_ascii_lowercase();
+    let under = lower.replace('.', "_");
+    if SCRIPT_READABLE_SECRETS.contains(&under.as_str()) {
+        return false;
+    }
+    conf_secrets.contains(name.trim())
+        || conf_secrets.contains(&under)
+        || secret_parameter(&lower)
+        || secret_parameter(&under)
+        || under.ends_with("_pass")
+        || under.ends_with("_pw")
+        || under.contains("crypt")
+}
+
+/// The `default-property` names the current conf marks `is-secret="true"`, kept until a conf reload.
+struct ConfSecrets(std::collections::BTreeSet<String>);
+
+/// [`script_refused_property`] with the current factory's conf (none outside a context).
+pub(crate) fn script_refused_property_here(name: &str) -> bool {
+    let secrets = crate::context::ExecutionContext::with_current(|ec| {
+        ec.factory().conf_derived(|factory| {
+            let names = moqui_lib::node::MNode::parse_shared("moqui-conf", &factory.conf_text())
+                .map(|conf| {
+                    conf.named_iter("default-property")
+                        .filter(|node| node.attribute("is-secret").as_deref() == Some("true"))
+                        .filter_map(|node| node.attribute("name"))
+                        .collect()
+                })
+                .unwrap_or_default();
+            ConfSecrets(names)
+        })
+    });
+    match secrets {
+        Some(secrets) => script_refused_property(name, &secrets.0),
+        None => script_refused_property(name, &std::collections::BTreeSet::new()),
+    }
+}
+
 pub(crate) fn server_address() -> &'static (String, String) {
     static ADDRESS: OnceLock<(String, String)> = OnceLock::new();
     ADDRESS.get_or_init(|| {
@@ -93,6 +143,46 @@ mod tests {
             "moqui.artifact.name",
         ] {
             assert!(!super::secret_parameter(name), "{name}");
+        }
+    }
+
+    /// SEC-SCR-03: the names `System.getProperty` refuses to a script, and the setting names scripts read.
+    #[test]
+    fn scripts_read_no_secret_property() {
+        let conf: std::collections::BTreeSet<String> =
+            ["fcm_service_account", "cluster_tls_cert"].iter().map(|name| name.to_string()).collect();
+        for name in [
+            "entity_ds_crypt_pass",
+            "entity_ds_crypt_pass_old",
+            "entity_ds_password",
+            "session_cookie_key",
+            "ENTITY_DS_PASSWORD",
+            "entity.ds.crypt.pass",
+            "xmpp_upload_secret",
+            "git_lfs_token_key_previous",
+            "fcm_service_account",
+            "cluster_tls_cert",
+            "AWS_SECRET_ACCESS_KEY",
+            "GITHUB_TOKEN",
+            "PGPASSWORD",
+            "smtp_pw",
+        ] {
+            assert!(super::script_refused_property(name, &conf), "{name}");
+        }
+        for name in [
+            "pass_backend_url",
+            "pass_client_id",
+            "pass_client_secret",
+            "pass_client_web_sites",
+            "instance_purpose",
+            "webapp_http_host",
+            "mail_change_keep_days",
+            "client_request_keep_days",
+            "xmpp_turn_per_hour",
+            "embedded_db_backup_dir",
+            "default_time_zone",
+        ] {
+            assert!(!super::script_refused_property(name, &conf), "{name}");
         }
     }
 }

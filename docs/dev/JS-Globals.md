@@ -336,6 +336,7 @@ helper functions above are also on the class Java has them on. Sources: `script/
 | `isSafeSinglePathSegment(text)` | The text is one path segment of URL-safe characters |
 | `isSameOriginRedirect(url, configuredHost)` | The URL is a path on this server, or an `http(s)` URL whose host is `configuredHost` (else the webapp's `http-host`). The request's `Host` header does not count |
 | `lastPathSegment(path)` | The part after the last `/` or `\`. Null for null |
+| `reportSaveLocationProblem(location)` | Why a scheduled report may not be saved at the location (outside the conf's `report` `save-roots`, through `..`, in a component, the conf or a `.env` file), or null when it may |
 | `isRestrictedGenericEntity(entityName)` | The entity, or a view over it, is one the generic tools (auto screens, data edit, data import) do not take from a request |
 | `isGenericWriteRefused(entityName)` | `isRestrictedGenericEntity`, or an entity only its own services write (the entity audit log, Monitor's recovery rows, drains and ingest keys): a generic tool's write refuses it |
 | `simpleHttpStringRequest(location, body, contentType)` | The response text of a `POST` of the body, or of a `GET` with no body |
@@ -354,6 +355,9 @@ throws, so the write fails.
 | `assertDocumentExpression(fieldPath)` | Throws for a data document field path that is an expression (it has a `(`) unless the user has `DATABASE_ADMIN` |
 | `assertDocumentTemplate(text)` | Throws for a data document title or link URL or label that is a template (it has `${`) unless the user has `DATABASE_ADMIN` |
 | `assertDocumentCondition(condition)` | Throws for a data document link condition that is not empty unless the user has `DATABASE_ADMIN` |
+| `assertStoredTemplate(text, what)` | Throws for stored text that is a template (it has `${`) unless the user has `DATABASE_ADMIN`: an email template's sender or subject, an attachment's file name, a message remote's send URL, a subscreen row's menu title. `what` names the field in the message |
+| `assertTranslation(original, localized)` | Throws for a translation that adds a `${}` expression to its original, or a message key's template that holds one, unless the user has `DATABASE_ADMIN` |
+| `assertStoredExpression(text, what)` | Throws for a stored expression that is not empty unless the user has `DATABASE_ADMIN`: a filter map, an apply or attachment condition, an identity mapping's expression |
 | `privilegedGroups()` | The effective privileged group ids, sorted |
 | `sealedPermissions()` | The effective sealed permission ids, sorted |
 | `endUserSessions(userId, visitIds)` | Ends the web sessions of the user for the visits named, or all of them with none; the number ended. It checks no authority: the caller does |
@@ -404,7 +408,10 @@ A node kept in the context keeps its methods. The form, service and entity defin
 
 | Global | |
 |---|---|
-| `System.getProperty(name)` | A system property or environment value, null when it is not set or empty |
+| `System.getProperty(name)` | A system property or environment value, null when it is not set or empty, and null for a secret: a property the conf marks `is-secret="true"`, and a name of a password, secret, token, credential or key (`_key`, `_pass`, `_pw`, `crypt`), so the crypt pass, the session key and passwords given in the environment never reach a script (`pass_client_secret`, which mr-pass sends as its client credential, is read) |
+| `System.isPropertySet(name)` | Whether a property, a secret one too, has a value other than the `CHANGEME` placeholder; the value is not returned |
+| `System.propertyMatches(name, given)` | Whether `given` is the property's value, compared by digest on the server; false when either is empty. For a client secret a caller presents |
+| `System.secretCodeHash(name, text)` | `ec.user.singleUseCodeHash` of the secret's value followed by `text`, for `xmpp_upload_secret` only (an XMPP file's download token); null when it is not set |
 | `ResourceReference.isTextFilename(filename)` | Whether the content type of the file name is a text type. It is the only member: get a reference with `ec.resource.getLocationReference(location)` ([JS-Core-API](JS-Core-API.md#ecresource)) |
 
 ### EdiHandler

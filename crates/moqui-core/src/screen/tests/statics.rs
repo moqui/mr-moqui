@@ -972,6 +972,49 @@ fn pass_through_on_an_included_screen_is_on_the_package() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// SEC-RTE-02: `GET {screen}/actions` answers the package only for a screen sent as a server-static template; another
+/// screen's actions (a sign-in screen's rows read for a check) are not answered, while its form-lists still are.
+#[test]
+fn only_a_server_static_screen_answers_its_actions_package() {
+    let context = ExecutionContextFactory::test_context();
+    let factory = context.factory();
+    let dir = std::env::temp_dir().join(format!("moqui-static-only-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root")).unwrap();
+    std::fs::write(
+        dir.join("Root.xml"),
+        "<screen require-authentication=\"false\"><widgets><subscreens-active/></widgets><subscreens default-item=\"Marked\"/></screen>",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Root/Marked.xml"),
+        "<screen require-authentication=\"false\" server-static=\"qvt\"><actions><set field=\"shown\" value=\"yes\"/></actions>\
+         <widgets><label text=\"${shown}\"/></widgets></screen>",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Root/Plain.xml"),
+        "<screen require-authentication=\"false\"><actions><set field=\"checkedRow\" value=\"internal\"/></actions>\
+         <widgets><label text=\"plain\"/></widgets></screen>",
+    )
+    .unwrap();
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let get = |path: &str| {
+        make_render(factory)
+            .root_screen(root.clone())
+            .screen_path(path)
+            .render()
+            .unwrap_or_else(|err| panic!("{path}: {err}"))
+    };
+    let marked = get("/Marked/actions");
+    assert_eq!(marked.status, 200, "{}", marked.body_text());
+    assert_eq!(json_of(&marked)["shown"], "yes");
+    let plain = get("/Plain/actions");
+    assert_eq!(plain.status, 404, "{}", plain.body_text());
+    assert!(!plain.body_text().contains("internal"), "{}", plain.body_text());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A static send is the screen the user got, so it is recorded. `make_render` does not enforce request checks, so it does not.
 #[test]
 fn a_static_screen_is_recorded_in_the_screen_history() {

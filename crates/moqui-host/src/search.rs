@@ -341,6 +341,9 @@ impl OpenSearchProcess {
             ]
         };
         let mut command = opensearch_command(dir, &paths);
+        // only the named environment and OpenSearch's and Java's own, never the server's secrets
+        // (plans/Security-Review-Low.md SEC-OUT-09)
+        moqui_lib::env::limit_child_env(&mut command, &["JAVA_HOME", "OPENSEARCH_*", "DISABLE_*"]);
         if program != home {
             command.env("OPENSEARCH_PATH_CONF", home.join("config"));
         }

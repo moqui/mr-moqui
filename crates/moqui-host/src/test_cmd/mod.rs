@@ -823,6 +823,8 @@ pub fn dispatch_test(args: &[String]) -> Result<(), Error> {
     }
     // a spec may answer outbound HTTP with fixtures (docs/dev/JS-Testkit.md, "HTTP fixtures"), only in a test run
     moqui_core::service::http_fixtures::allow();
+    // and keep sent mail in memory (docs/dev/JS-Testkit.md, "Mail"), only in a test run
+    moqui_core::service::mail_capture::allow();
     let mode = database_mode(&args, &components)?;
     let started = Instant::now();
     #[cfg(feature = "embedded-postgres")]

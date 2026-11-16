@@ -602,6 +602,8 @@
     <default-property name="llm_gateway_enabled" value="false"/>
 
     <!-- The OpenSearch Dashboards behind the /dashboard proxy (the DashboardProxy servlet); an empty host turns it off -->
+    <!-- The roots a scheduled report may save its file under (report save-roots) -->
+    <default-property name="report_save_roots" value="dbresource://report/"/>
     <default-property name="kibana_host" value="127.0.0.1"/>
     <default-property name="kibana_port" value="5601"/>
 
@@ -714,8 +716,11 @@
          moqui.transaction.duration metric by outcome and cache mode. Override per type using
          telemetry/artifact, whose sample-ratio overrides telemetry_sample_ratio above for that type's spans.
          telemetry/metric name="..." attributes="..." narrows or widens one instrument's attributes. -->
-    <!-- Report time rounding: week-start 1 is Monday and 0 Sunday (now/w); the fiscal year (now/fy) starts on this month and day. -->
-    <report week-start="1" fiscal-start-month="1" fiscal-start-day="1"/>
+    <!-- Report time rounding: week-start 1 is Monday and 0 Sunday (now/w); the fiscal year (now/fy) starts on this month and day.
+        save-roots: where a scheduled report may save its file (a schedule's saveToLocation must be under one, separated by
+        commas or spaces), never through .., in a component, the conf or a .env file (plans/Security-Review-Medium.md
+        SEC-TLS-06); report_save_roots sets it. -->
+    <report week-start="1" fiscal-start-month="1" fiscal-start-day="1" save-roots="${report_save_roots}"/>
     <!-- Resource watch: when a reading of the machine or the process is a warning or critical, in percent (the status
          map's Resources, the System home and its attention list). A filesystem is also critical with less than
          disk-free-critical bytes left to write. memory is the process's share of the memory it may use (a container's
@@ -923,7 +928,7 @@
             to either list with authz child elements, privileged-group and sealed-permission, never by repeating the
             attribute, which would replace these defaults. -->
         <authz privileged-groups="ADMIN,ADMIN_ADV,SYSMSG_RECEIVE"
-                sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,TERMINAL_HOST,LOAD_RUNNER,INSTANCE_ADMIN,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,CONF_EDIT,DATABASE_ADMIN,DATABASE_EXTERNAL,ADMIN_CONSTITUTION_GLOBAL,ADMIN_IDENTITY_GLOBAL,ADMIN_ACCESS_MANAGE,ADMIN_BACKUP_DOWNLOAD,GIT_CI_ADMIN"/>
+                sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,TERMINAL_HOST,LOAD_RUNNER,INSTANCE_ADMIN,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,CONF_EDIT,DATABASE_ADMIN,DATABASE_EXTERNAL,ADMIN_CONSTITUTION_GLOBAL,ADMIN_IDENTITY_GLOBAL,ADMIN_ACCESS_MANAGE,ADMIN_BACKUP_DOWNLOAD,GIT_CI_ADMIN,REPORT_SAVE_LOCATION"/>
     </user-facade>
 
     <transaction-facade use-transaction-cache="${entity_tx_cache}" use-connection-stash="true" use-lock-track="${entity_lock_track}" use-statement-timeout="${entity_statement_timeout}">
@@ -1503,6 +1508,11 @@
         from this server's own pages needs such an attestation too. -->
     <component-deploy require-passed-run="false" attestation-secret="${component_deploy_attestation_key}"
             max-age-seconds="300" public-urls="${component_deploy_public_urls}"/>
+    <!-- Hosted instances (System > Instance): the commands that print a registry token for an image pull, by name. An
+        InstanceImage's authTokenCmd names one; a runtime conf adds them, as
+        <token-command name="ecr" command="/opt/moqui/bin/ecr-token us-east-1"/>. The command runs with no shell and
+        only the named environment (get#RegistryToken, plans/Security-Review-Medium.md SEC-TLS-03). -->
+    <instance-hosting/>
 
     <!-- Rust: java names for fresh schemas; set entity_sql_name_style=legacy before opening an old Rust database. -->
     <entity-facade sql-name-style="${entity_sql_name_style ?: 'java'}"

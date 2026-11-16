@@ -53,6 +53,99 @@ along with this software (see the LICENSE.md file). If not, see
             if (!updating || linkCondition != originalValue?.linkCondition) UserSecurityChecks.assertDocumentCondition(linkCondition)
         </script></actions>
     </eeca>
+    <!-- Records whose text runs as script where they are used (plans/Security-Review-Medium.md SEC-SCR-06, SEC-SCR-12): a
+        template (${}) or an expression in them needs DATABASE_ADMIN, the permission for script stored in records, as a
+        DataDocument's does. Only a value that changes is checked, so another field of a row a seed load wrote can still be
+        changed; a data load runs with authorization disabled and is not checked. -->
+    <!-- a translation is expanded where its original is: it may keep the original's placeholders; adding an expression, or
+        a message key's template with one, needs DATABASE_ADMIN -->
+    <eeca id="LocalizedMessageScript" entity="moqui.basic.LocalizedMessage"
+            on-create="true" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>
+            if (eecaOperation != "update" || localized != originalValue?.localized)
+                UserSecurityChecks.assertTranslation(original, localized)
+        </script></actions>
+    </eeca>
+    <eeca id="EmailTemplateScript" entity="moqui.basic.email.EmailTemplate"
+            on-create="true" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>
+            const updating = eecaOperation == "update"
+            if (!updating || fromAddress != originalValue?.fromAddress)
+                UserSecurityChecks.assertStoredTemplate(fromAddress, "EmailTemplate.fromAddress")
+            if (!updating || fromName != originalValue?.fromName)
+                UserSecurityChecks.assertStoredTemplate(fromName, "EmailTemplate.fromName")
+            if (!updating || subject != originalValue?.subject)
+                UserSecurityChecks.assertStoredTemplate(subject, "EmailTemplate.subject")
+        </script></actions>
+    </eeca>
+    <eeca id="EmailTemplateAttachmentScript" entity="moqui.basic.email.EmailTemplateAttachment"
+            on-create="true" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>
+            const updating = eecaOperation == "update"
+            if (!updating || fileName != originalValue?.fileName)
+                UserSecurityChecks.assertStoredTemplate(fileName, "EmailTemplateAttachment.fileName")
+            if (!updating || attachmentCondition != originalValue?.attachmentCondition)
+                UserSecurityChecks.assertStoredExpression(attachmentCondition, "EmailTemplateAttachment.attachmentCondition")
+            if (!updating || forEachIn != originalValue?.forEachIn)
+                UserSecurityChecks.assertStoredExpression(forEachIn, "EmailTemplateAttachment.forEachIn")
+        </script></actions>
+    </eeca>
+    <eeca id="SystemMessageRemoteScript" entity="moqui.service.message.SystemMessageRemote"
+            on-create="true" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>
+            if (eecaOperation != "update" || sendUrl != originalValue?.sendUrl)
+                UserSecurityChecks.assertStoredTemplate(sendUrl, "SystemMessageRemote.sendUrl")
+        </script></actions>
+    </eeca>
+    <!-- a plain claim name is no expression (what store#IdentityProvider writes) -->
+    <eeca id="AuthFlowFieldMapScript" entity="moqui.security.sso.AuthFlowFieldMap"
+            on-create="true" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>
+            const updating = eecaOperation == "update"
+            if (!updating || dstFieldExpression != originalValue?.dstFieldExpression)
+                UserSecurityChecks.assertStoredExpression(dstFieldExpression, "AuthFlowFieldMap.dstFieldExpression")
+            if ((!updating || srcFieldName != originalValue?.srcFieldName) &amp;&amp; srcFieldName
+                    &amp;&amp; !/^[A-Za-z_][A-Za-z0-9_]*$/.test(String(srcFieldName)))
+                UserSecurityChecks.assertStoredExpression(srcFieldName, "AuthFlowFieldMap.srcFieldName")
+        </script></actions>
+    </eeca>
+    <!-- an artifact group member's filter map narrows an authorization, and an entity sync artifact's members are these rows
+        (EntitySyncArtifactDetail is a view of them) -->
+    <eeca id="ArtifactGroupMemberScript" entity="moqui.security.ArtifactGroupMember"
+            on-create="true" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>
+            if (eecaOperation != "update" || filterMap != originalValue?.filterMap)
+                UserSecurityChecks.assertStoredExpression(filterMap, "ArtifactGroupMember.filterMap")
+        </script></actions>
+    </eeca>
+    <eeca id="EntityFilterScript" entity="moqui.security.EntityFilter"
+            on-create="true" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>
+            if (eecaOperation != "update" || filterMap != originalValue?.filterMap)
+                UserSecurityChecks.assertStoredExpression(filterMap, "EntityFilter.filterMap")
+        </script></actions>
+    </eeca>
+    <eeca id="EntityFilterSetScript" entity="moqui.security.EntityFilterSet"
+            on-create="true" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>
+            if (eecaOperation != "update" || applyCond != originalValue?.applyCond)
+                UserSecurityChecks.assertStoredExpression(applyCond, "EntityFilterSet.applyCond")
+        </script></actions>
+    </eeca>
+    <eeca id="ArtifactAuthzFilterScript" entity="moqui.security.ArtifactAuthzFilter"
+            on-create="true" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>
+            if (eecaOperation != "update" || applyCond != originalValue?.applyCond)
+                UserSecurityChecks.assertStoredExpression(applyCond, "ArtifactAuthzFilter.applyCond")
+        </script></actions>
+    </eeca>
+    <eeca id="SubscreensItemMenuTitle" entity="moqui.screen.SubscreensItem"
+            on-create="true" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>
+            if (eecaOperation != "update" || menuTitle != originalValue?.menuTitle)
+                UserSecurityChecks.assertStoredTemplate(menuTitle, "SubscreensItem.menuTitle")
+        </script></actions>
+    </eeca>
     <!-- The new-device sign-in notice (mr-boss plan/impl-admin.md P10, design-admin §4 Sessions): a successful sign-in's
         history row is written by a worker after the sign-in itself (crates/moqui-core/src/user/login.rs save_history, at
         most one row a minute for a user), with its visit; the notice is decided and sent then, in a transaction of its own

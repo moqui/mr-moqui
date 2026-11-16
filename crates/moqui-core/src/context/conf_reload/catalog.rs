@@ -283,6 +283,8 @@ pub static CATALOG: &[Unit] = &[
         "component-deploy",
         Class::Restart("the gate, its secret and its allow entries are read once at start"),
     ),
+    // the registry token commands of hosted instances, read at each image pull (service/registry_token.rs)
+    single("instance-hosting", Class::Live).children(&[keyed("token-command", &["name"], Class::Live)]),
     // read by the desktop and mobile apps, not the server
     single("client-conf", Class::Live),
     sequence(

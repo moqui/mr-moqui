@@ -74,6 +74,7 @@ fn create_schedule(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -
     }
     if !text(p, "saveToLocation").is_empty() {
         require_file_delivery()?;
+        check_save_location(ec, text(p, "saveToLocation"))?;
     }
     let mode = if text(p, "renderMode").is_empty() {
         default_mode(&definition)
@@ -180,6 +181,15 @@ fn pause_schedule(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
     let _metadata = ec.disable_authz();
     row.update(&entity(ec)?)?;
     Ok(Parameters::new())
+}
+/// A report file only under the conf's `report` `save-roots` (`moqui_core::context::report_save_location_problem`,
+/// plans/Security-Review-Medium.md SEC-TLS-06).
+fn check_save_location(ec: &ExecutionContext, location: &str) -> Result<(), Error> {
+    let roots = moqui_core::context::report_save_roots(ec.factory());
+    match moqui_core::context::report_save_location_problem(location, &roots) {
+        Some(problem) => Err(fail(problem)),
+        None => Ok(()),
+    }
 }
 fn require_file_delivery() -> Result<(), Error> {
     if moqui_core::user::has_permission("REPORT_SAVE_LOCATION")? {
@@ -1384,7 +1394,12 @@ pub(crate) fn deliver(
                 let mut failed = Vec::new();
                 for (name, bytes) in &rendered.files {
                     let target = file_location(location, name, rendered.files.len());
-                    match context.factory().resource().write_bytes(&target, bytes) {
+                    let roots = moqui_core::context::report_save_roots(context.factory());
+                    let checked = match moqui_core::context::report_save_location_problem(&target, &roots) {
+                        Some(problem) => Err(moqui_core::context::Error::new(problem)),
+                        None => context.factory().resource().write_bytes(&target, bytes),
+                    };
+                    match checked {
                         Ok(()) => written.push(format!("file:{target}")),
                         Err(error) => {
                             tracing::error!(schedule=id,location=%target,%error,"report file delivery failed; other files and destinations continue");

@@ -1057,7 +1057,7 @@ function sendTestMessage(server) {
 
 const oauthConfigured = provider => {
     const prefix = text(provider.propertyPrefix)
-    return !!prefix && !!text(System.getProperty(prefix + "_client_id")) && !!text(System.getProperty(prefix + "_client_secret"))
+    return !!prefix && !!text(System.getProperty(prefix + "_client_id")) && System.isPropertySet(prefix + "_client_secret")
 }
 const mailOAuthDefinition = {
     adapterKey: "mailOAuth",

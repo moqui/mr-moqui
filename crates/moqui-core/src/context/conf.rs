@@ -242,6 +242,8 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
     merge_database_list(base, over);
     merge_repository_list(base, over);
     merge_edge(base, over);
+    // the registry token commands of hosted instances, by name (service/registry_token.rs)
+    base.merge_child_with_child_key(over, "instance-hosting", "token-command", &["name"], None);
     // elements of settings only: an attribute of the override replaces the base one
     for name in [
         "email-client",

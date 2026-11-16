@@ -79,7 +79,8 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="screenLocation" required="true"/>
             <parameter name="screenParameters" type="Map"/>
-            <parameter name="screenParametersStr"><description>Groovy expression that evaluates to a Map</description></parameter>
+            <parameter name="screenParametersStr"><description>A JSON object of more screen parameters (read as JSON, never
+                run as script)</description></parameter>
             <parameter name="contentType" default-value="application/pdf"/>
             <parameter name="webappName" default-value="webroot"/>
             <parameter name="storeDocument" type="Boolean" default="true"/>

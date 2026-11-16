@@ -53,6 +53,22 @@ use tokio::sync::{Mutex, Semaphore};
 use self::cdp::Connection;
 use crate::chromium::{devtools_url, find_chromium, launch_args, userns_restricted};
 
+/// The variables of the server's environment Chromium gets beside `moqui_lib::env::CHILD_ENV_NAMES`: the user's runtime,
+/// config and cache directories, fonts, and a display when there is one.
+const CHROMIUM_ENV: &[&str] = &[
+    "XDG_RUNTIME_DIR",
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_DATA_HOME",
+    "FONTCONFIG_PATH",
+    "FONTCONFIG_FILE",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+];
+
 /// Default concurrent pages.
 const PAGE_LIMIT: u64 = 4;
 /// Default seconds a render may take.
@@ -682,6 +698,8 @@ impl ChromiumProcess {
         std::fs::create_dir_all(&profile)
             .map_err(|err| Error::new(format!("could not create {}", profile.display())).with_source(err))?;
         let mut command = Command::new(binary);
+        // only the named environment, never the server's secrets (plans/Security-Review-Low.md SEC-OUT-09)
+        moqui_lib::env::limit_child_env(&mut command, CHROMIUM_ENV);
         command
             .args(ISOLATION_ARGS)
             .args(launch_args())

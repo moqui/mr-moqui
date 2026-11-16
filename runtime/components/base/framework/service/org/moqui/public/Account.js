@@ -30,9 +30,6 @@ function recordAttempt(p) {
         })
     return { allowed: count <= Number(p.limit) }
 }
-/* Compare digests so the comparison time does not depend on how much of a secret matched. */
-const secretMatches = (given, expected) =>
-    !!given && !!expected && digest(given) === digest(expected)
 /* `verified`: the caller already authenticated this client another way, the host's PassAuthority over gRPC (the
    secret on its direct listener, or the edge link's identity); only its sites are checked then. Server code only. */
 function clientRegistered(clientId, clientSecret, siteId, verified) {
@@ -42,9 +39,10 @@ function clientRegistered(clientId, clientSecret, siteId, verified) {
     return (
         !!clientId &&
         (verified === true ||
-            secretMatches(
-                clientSecret,
-                System.getProperty('pass_client_' + clientId + '_secret'),
+            // compared by digest on the server; the secret never reaches the script (SEC-SCR-03)
+            System.propertyMatches(
+                'pass_client_' + clientId + '_secret',
+                clientSecret == null ? '' : String(clientSecret),
             )) &&
         (siteId == null || sites.includes(siteId))
     )

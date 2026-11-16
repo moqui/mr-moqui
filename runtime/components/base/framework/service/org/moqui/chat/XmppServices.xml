@@ -714,12 +714,12 @@ along with this software (see the LICENSE.md file). If not, see
             if (ec.message.hasError()) return
             if (!access.canRead) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
             const base = String(System.getProperty('xmpp_upload_url') || '').replace(/\/+$/, '')
-            const secret = String(System.getProperty('xmpp_upload_secret') || '')
-            if (!base || !secret) return
+            // the secret never reaches the script: System.secretCodeHash keys the digest with it (SEC-SCR-03)
+            if (!base || !System.isPropertySet('xmpp_upload_secret')) return
             const files = Array.from(ec.entity.find('moqui.chat.ChatAttachment').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq)
                     .orderBy('chatAttachmentId').disableAuthz().list())
             for (const file of files) {
-                const token = String(ec.user.singleUseCodeHash(secret + ':' + file.chatAttachmentId)).replace(/[^A-Za-z0-9]/g, '').slice(0, 40)
+                const token = String(System.secretCodeHash('xmpp_upload_secret', ':' + file.chatAttachmentId)).replace(/[^A-Za-z0-9]/g, '').slice(0, 40)
                 const tokenHash = ec.user.singleUseCodeHash(token)
                 if (!ec.entity.find('moqui.xmpp.XmppUpload').condition('tokenHash', tokenHash).disableAuthz().count()) {
                     const row = ec.entity.makeValue('moqui.xmpp.XmppUpload')

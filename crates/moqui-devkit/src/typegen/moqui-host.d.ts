@@ -1772,6 +1772,8 @@ interface MoquiWebUtilities {
     isSafeSinglePathSegment(segment: string): boolean;
     isSameOriginRedirect(url: string, host?: string | null): boolean;
     lastPathSegment(path: string): string;
+    /** Why a scheduled report may not be saved at the location (outside the report save-roots, a .., a component, the conf or a .env file), or null. */
+    reportSaveLocationProblem(location: string): string | null;
     isRestrictedGenericEntity(entityName: string): boolean;
     /** isRestrictedGenericEntity, or an entity only its own services write: a generic tool's write refuses it. */
     isGenericWriteRefused(entityName: string): boolean;

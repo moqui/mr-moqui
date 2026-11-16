@@ -53,10 +53,11 @@ const GLOBALS_JS: &str = concat!(
     for (const name of ["compare", "numberToWords", "numberToWordsWithDecimal", "__compareOrder", "__inDateRange"]) {
         global[name] = hidden[name];
     }
-    global.System = { getProperty: hidden.getProperty };
+    global.System = { getProperty: hidden.getProperty, isPropertySet: hidden.isPropertySet,
+        propertyMatches: hidden.propertyMatches, secretCodeHash: hidden.secretCodeHash };
     const web = helpers.WebUtilities, string = helpers.StringUtilities, collection = helpers.CollectionUtilities;
     for (const name of ["encodeHtml", "encodeHtmlJsSafe", "fieldValuesEncodeHtmlJsSafe", "ipMatches",
-        "isSafeSinglePathSegment", "isSameOriginRedirect", "lastPathSegment"]) web[name] = hidden[name];
+        "isSafeSinglePathSegment", "isSameOriginRedirect", "lastPathSegment", "reportSaveLocationProblem"]) web[name] = hidden[name];
     for (const name of ["encodeForXmlAttribute", "base64UrlEncode", "base64UrlDecode", "base64Encode", "base64Decode",
         "cleanHtml",
         "urlEncodeIfNeeded"]) string[name] = hidden[name];
@@ -67,6 +68,9 @@ const GLOBALS_JS: &str = concat!(
         assertDocumentExpression: hidden.assertDocumentExpression,
         assertDocumentTemplate: hidden.assertDocumentTemplate,
         assertDocumentCondition: hidden.assertDocumentCondition,
+        assertStoredTemplate: hidden.assertStoredTemplate,
+        assertStoredExpression: hidden.assertStoredExpression,
+        assertTranslation: hidden.assertTranslation,
         assertSealedGroupMembership: hidden.assertSealedGroupMembership,
         privilegedGroups: hidden.privilegedGroups,
         sealedPermissions: hidden.sealedPermissions,
@@ -182,6 +186,9 @@ pub(crate) static SHIM: Shim = Shim {
             in_date_range
         ),
         method!("System", "getProperty", [Text], None, leaf, get_property),
+        method!("System", "isPropertySet", [Text], None, leaf, is_property_set),
+        method!("System", "propertyMatches", [Text, OptText], None, leaf, property_matches),
+        method!("System", "secretCodeHash", [Text, OptText], None, leaf, secret_code_hash),
         method!("WebUtilities", "encodeHtml", [OptValue], None, leaf, encode_html),
         method!(
             "WebUtilities",
@@ -223,6 +230,14 @@ pub(crate) static SHIM: Shim = Shim {
             None,
             leaf,
             last_path_segment
+        ),
+        method!(
+            "WebUtilities",
+            "reportSaveLocationProblem",
+            [OptText],
+            None,
+            leaf,
+            report_save_location_problem
         ),
         method!(
             "StringUtilities",
@@ -301,6 +316,9 @@ pub(crate) static SHIM: Shim = Shim {
         method!("UserSecurityChecks", "assertDocumentExpression", [OptValue], None, assert_document_expression),
         method!("UserSecurityChecks", "assertDocumentTemplate", [OptValue], None, assert_document_template),
         method!("UserSecurityChecks", "assertDocumentCondition", [OptValue], None, assert_document_condition),
+        method!("UserSecurityChecks", "assertStoredTemplate", [OptValue, OptValue], None, assert_stored_template),
+        method!("UserSecurityChecks", "assertStoredExpression", [OptValue, OptValue], None, assert_stored_expression),
+        method!("UserSecurityChecks", "assertTranslation", [OptValue, OptValue], None, assert_translation),
         method!(
             "UserSecurityChecks",
             "assertSealedGroupMembership",
@@ -345,6 +363,27 @@ fn assert_document_expression(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// `UserSecurityChecks.assertDocumentTemplate(text)`: a document title or link text with `${` needs `DATABASE_ADMIN`.
 fn assert_document_template(call: &mut Call<'_>) -> Result<Ret, HostError> {
     crate::service::assert_document_template(&super::entity_facade()?, &id_text(call, 0)).map_err(lib)?;
+    Ok(Ret::Undefined)
+}
+
+/// `UserSecurityChecks.assertStoredTemplate(text, what)`: stored text with `${`, run as script where its record is used,
+/// needs `DATABASE_ADMIN` (`Security.eecas.xml`, SEC-SCR-06).
+fn assert_stored_template(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    crate::service::assert_stored_template(&super::entity_facade()?, &id_text(call, 0), &id_text(call, 1)).map_err(lib)?;
+    Ok(Ret::Undefined)
+}
+
+/// `UserSecurityChecks.assertStoredExpression(text, what)`: a stored expression that is not empty needs `DATABASE_ADMIN`.
+fn assert_stored_expression(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    crate::service::assert_stored_expression(&super::entity_facade()?, &id_text(call, 0), &id_text(call, 1))
+        .map_err(lib)?;
+    Ok(Ret::Undefined)
+}
+
+/// `UserSecurityChecks.assertTranslation(original, localized)`: a translation that adds an expression to its original,
+/// or a message key's template with one, needs `DATABASE_ADMIN` (SEC-SCR-06).
+fn assert_translation(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    crate::service::assert_translation(&super::entity_facade()?, &id_text(call, 0), &id_text(call, 1)).map_err(lib)?;
     Ok(Ret::Undefined)
 }
 
@@ -574,10 +613,62 @@ fn in_date_range(call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok((started && open).into())
 }
 
-/// `System.getProperty(name)`: a property or environment value, null when it is not set.
+/// `System.getProperty(name)`: a property or environment value, null when it is not set, or when it is a secret
+/// (`identity::script_refused_property`: the crypt pass, the session key, passwords, tokens, what the conf marks
+/// `is-secret`; plans/Security-Review-Medium.md SEC-SCR-03).
 fn get_property(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let found = moqui_lib::env::get_prop_or_env(&call.text_or_empty(0));
+    let name = call.text_or_empty(0);
+    if crate::context::identity::script_refused_property_here(&name) {
+        return Ok(None::<String>.into());
+    }
+    let found = moqui_lib::env::get_prop_or_env(&name);
     Ok(Some(found).filter(|value| !value.is_empty()).into())
+}
+
+/// The value of a property for the named functions below, which never hand a secret to the script.
+fn property_value(name: &str) -> String {
+    moqui_lib::env::get_prop_or_env(name)
+}
+
+/// `System.isPropertySet(name)`: whether the property, a secret one too, has a value other than the `CHANGEME`
+/// placeholder; the value is not returned.
+fn is_property_set(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let value = property_value(&call.text_or_empty(0));
+    Ok((!value.trim().is_empty() && value.trim() != "CHANGEME").into())
+}
+
+/// `System.propertyMatches(name, given)`: whether `given` is the property's value, compared by digest so the time does
+/// not depend on how much matched; false when either is empty. The value is not returned.
+fn property_matches(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    use sha2::Digest as _;
+    let value = property_value(&call.text_or_empty(0));
+    let given = call.opt_text(1).unwrap_or_default();
+    if value.is_empty() || given.is_empty() {
+        return Ok(false.into());
+    }
+    Ok((sha2::Sha256::digest(value.as_bytes()) == sha2::Sha256::digest(given.as_bytes())).into())
+}
+
+/// The secret properties [`secret_code_hash`] keys a digest with: the XMPP upload secret, which `get#AttachmentUrls`
+/// derives a file's download token from.
+const KEYED_SECRETS: &[&str] = &["xmpp_upload_secret"];
+
+/// `System.secretCodeHash(name, text)`: `ec.user.singleUseCodeHash` of the secret property's value followed by `text`,
+/// for a name of [`KEYED_SECRETS`] only; null when the property is not set. The secret is not returned.
+fn secret_code_hash(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let name = call.text_or_empty(0);
+    if !KEYED_SECRETS.contains(&name.as_str()) {
+        return Err(lib(moqui_lib::error::Error::new(format!(
+            "secretCodeHash does not take the property {name}"
+        ))));
+    }
+    let secret = property_value(&name);
+    if secret.is_empty() {
+        return Ok(None::<String>.into());
+    }
+    let hash = crate::user::single_use_hash(&format!("{secret}{}", call.opt_text(1).unwrap_or_default()))
+        .map_err(|err| lib(moqui_lib::error::Error::new(err.message())))?;
+    Ok(hash.into())
 }
 
 /// Text of an optional argument: empty for null or undefined, a number's or boolean's text.
@@ -608,6 +699,15 @@ fn ip_matches(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let patterns = call.opt_text(0).unwrap_or_default();
     let address = call.opt_text(1).unwrap_or_default();
     Ok((patterns.is_empty() || crate::web::ip_matches(&patterns, &address)).into())
+}
+
+/// `WebUtilities.reportSaveLocationProblem(location)`: why a scheduled report may not be saved there (outside the
+/// conf's `report` `save-roots`, a `..`, a component, the conf or a `.env` file), or null when it may.
+fn report_save_location_problem(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.opt_text(0).unwrap_or_default();
+    let roots = crate::context::ExecutionContext::with_current(|ec| crate::context::report_save_roots(ec.factory()))
+        .unwrap_or_else(|| crate::context::DEFAULT_REPORT_SAVE_ROOTS.to_string());
+    Ok(crate::context::report_save_location_problem(&location, &roots).into())
 }
 
 fn safe_segment(call: &mut Call<'_>) -> Result<Ret, HostError> {

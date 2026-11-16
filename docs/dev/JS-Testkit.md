@@ -343,8 +343,9 @@ and so `send#EmailTemplate` and the mail client's `send#Draft`, does all of a re
 `ES_SENT` status and `sentDate`, the mail client's Sent folder) except connect, and keeps the message in memory. The
 `EmailServer` must still have an SMTP host, as for a real send (an empty one sends nothing); it is never connected. A
 spec turns it on for itself, and the conf property `mail_capture_sends=true` turns it on for a whole run
-(`mail_capture_sends=true ./moq test ...`) or a server that must not send mail; it is off otherwise, so a spec that
-checks a send that cannot connect sees one. `send#Draft` called in a transaction (as `send#Compose` calls it) only
+(`mail_capture_sends=true ./moq test ...`, a `moqui test --serve` server too); it is off otherwise, so a spec that
+checks a send that cannot connect sees one. Only a `moqui test` run captures: elsewhere `enable()` throws and the
+property is ignored with a warning, so no running server can hold back its mail. `send#Draft` called in a transaction (as `send#Compose` calls it) only
 claims the message there and sends once that commits, on a service worker: such a spec waits for the message's status
 before it reads the capture. The tool reads and clears what was captured:
 

@@ -17,7 +17,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{data_hash, prune_snapshots, scratch_runtime, USED_MARK};
+use super::{data_hash, keep_runtime_env, prune_snapshots, restore_runtime_env, scratch_runtime, USED_MARK};
 
 /// A runtime with the framework, `components/addon/plain` and the dev component `components/dev/devonly`.
 fn runtime() -> PathBuf {
@@ -157,4 +157,28 @@ fn a_runs_end_prunes_the_snapshots_no_run_has_used_for_an_hour() {
     // a second prune, as each worker's end makes, finds them gone and says nothing of it
     prune_snapshots(&save, &kept);
     let _ = std::fs::remove_dir_all(&save);
+}
+
+/// The loader's `.env` (its generated `entity_ds_crypt_pass`) goes with the snapshot and into each runtime that restores
+/// it, so every worker reads the encrypted demo data with the loader's key.
+#[test]
+fn a_snapshot_carries_the_loaders_runtime_env() {
+    let root = std::env::temp_dir().join(format!("moqui-fixture-env-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let (loader, snapshot, worker) = (root.join("loader"), root.join("save/test-1"), root.join("worker"));
+    for dir in [&loader, &snapshot, &worker] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    std::fs::write(loader.join(".env"), "entity_ds_crypt_pass=loader-key\n").unwrap();
+    keep_runtime_env(&loader, &snapshot).unwrap();
+    restore_runtime_env(&snapshot, &worker).unwrap();
+    assert_eq!(std::fs::read_to_string(worker.join(".env")).unwrap(), "entity_ds_crypt_pass=loader-key\n");
+    // a snapshot made before this kept no .env: nothing is written
+    let older = root.join("save/test-0");
+    std::fs::create_dir_all(&older).unwrap();
+    let fresh = root.join("fresh");
+    std::fs::create_dir_all(&fresh).unwrap();
+    restore_runtime_env(&older, &fresh).unwrap();
+    assert!(!fresh.join(".env").exists());
+    let _ = std::fs::remove_dir_all(&root);
 }

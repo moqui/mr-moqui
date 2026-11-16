@@ -717,8 +717,6 @@ macro_rules! tools_js {
     // a second argument that is a charset name (a Rust-port extension; Java's is the cache flag) decodes the bytes in it
     ec.resource.getLocationText = (location, cacheOrCharset) => typeof cacheOrCharset === "string" && cacheOrCharset.trim()
         ? host.resourceTextIn(String(location), cacheOrCharset) : host.resourceText(String(location));
-    // the registry token of a Docker image (InstanceImage.authTokenCmd): the command's first output line, no shell
-    ec.resource.runTokenCommand = (command) => host.runTokenCommand(String(command));
 
     // ---- forms: the field names a form has, for the DB form response services ----
     // A DbForm is read as of a date (now by default), with its drafts when includeDrafts (db_form.rs).
@@ -1277,7 +1275,6 @@ static METHODS: &[Method] = &[
     method!("tools", "textDiff", [Text, Text, Text, Text], None, leaf, text_diff),
     method!("tools", "markdownHtml", [Text], None, leaf, markdown_html),
     method!("tools", "restSend", [Value], rest_send),
-    method!("tools", "runTokenCommand", [Text], run_token_command),
     method!("tools", "testConfConnection", [Value], test_conf_connection),
     method!("tools", "runSqlCountConf", [Text, Text, Value], run_sql_count_conf),
     method!("tools", "runSqlUpdateConf", [Text, Value], run_sql_update_conf),
@@ -2603,81 +2600,6 @@ fn run_sql_update_conf(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let rows = conn.execute(&sql, &[]).map_err(HostError::Lib)?;
     #[allow(clippy::cast_precision_loss)]
     Ok(Ret::from(rows as f64))
-}
-
-// ---- registry token command (init#InstanceDocker) ----
-
-/// How long a token command may run.
-const TOKEN_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-
-/// `runTokenCommand(cmd)`: run a configured command, split on whitespace with no shell, and return the first line of
-/// its output, trimmed. A command that fails, or runs past the timeout, throws with its error output.
-fn run_token_command(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let command = call.text_or_empty(0);
-    Ok(Ret::from(run_command_first_line(&command).map_err(HostError::Lib)?))
-}
-
-fn run_command_first_line(command: &str) -> Result<String, moqui_lib::error::Error> {
-    use std::io::Read as _;
-    use std::process::{Command, Stdio};
-    let mut words = command.split_whitespace();
-    let Some(program) = words.next() else {
-        return Err(moqui_lib::error::Error::new("the token command is empty"));
-    };
-    crate::entity::fence::check_effect(crate::entity::fence::Effect::Process, program)?;
-    let mut child = Command::new(program)
-        .args(words)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|err| moqui_lib::error::Error::new(format!("could not run token command {program}: {err}")))?;
-    // Read both pipes on their own threads, so a child that writes much is not blocked on a full pipe.
-    let mut stdout = child.stdout.take();
-    let mut stderr = child.stderr.take();
-    let out = std::thread::spawn(move || {
-        let mut text = String::new();
-        if let Some(pipe) = stdout.as_mut() {
-            let _ = pipe.read_to_string(&mut text);
-        }
-        text
-    });
-    let err = std::thread::spawn(move || {
-        let mut text = String::new();
-        if let Some(pipe) = stderr.as_mut() {
-            let _ = pipe.read_to_string(&mut text);
-        }
-        text
-    });
-    let started = std::time::Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() >= TOKEN_COMMAND_TIMEOUT => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(moqui_lib::error::Error::new(format!(
-                    "token command {program} did not finish in {} seconds",
-                    TOKEN_COMMAND_TIMEOUT.as_secs()
-                )));
-            }
-            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(20)),
-            Err(wait_err) => {
-                return Err(moqui_lib::error::Error::new(format!(
-                    "token command {program}: {wait_err}"
-                )))
-            }
-        }
-    };
-    let output = out.join().unwrap_or_default();
-    let errors = err.join().unwrap_or_default();
-    if !status.success() {
-        return Err(moqui_lib::error::Error::new(format!(
-            "token command {program} failed ({status}): {}",
-            errors.trim()
-        )));
-    }
-    Ok(output.lines().next().unwrap_or_default().trim().to_string())
 }
 
 // ---- REST client ----

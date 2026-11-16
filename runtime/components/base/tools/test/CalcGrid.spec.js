@@ -384,6 +384,8 @@ feature("a saved document is scheduled as its workbook: an Excel file with its d
         call("calcClose", {roomId}, "post")
         const R = "org.moqui.report.ReportServices."
         const location = "runtime://tmp/spec-calcgrid-scheduled.xlsx"
+        // a report file is saved only under the report save-roots (SEC-TLS-06)
+        setProperty("report_save_roots", "runtime://tmp/")
         const schedule = (renderMode) => {
             const out = ec.service.sync().name(R + "create#Schedule").parameters({definitionId: "spec-calcgrid-scheduled", cronExpression: "0 0 7 * * ?",
                 renderMode, saveToLocation: location}).call() || {}

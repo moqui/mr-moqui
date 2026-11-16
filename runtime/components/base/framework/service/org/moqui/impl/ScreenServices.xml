@@ -228,8 +228,12 @@ along with this software (see the LICENSE.md file). If not, see
                 <!-- saveToLocation -->
                 <if condition="saveToLocation">
                     <script>
-                        const saveToLocationExp = ec.resource.expand(saveToLocation, null)
-                        try {
+                        // the location as stored, not expanded as a template, and only under the report save roots
+                        // (plans/Security-Review-Medium.md SEC-TLS-06, SEC-SCR-06)
+                        const saveToLocationExp = String(saveToLocation)
+                        const saveProblem = WebUtilities.reportSaveLocationProblem(saveToLocationExp)
+                        if (saveProblem) ec.logger.error(`Not saving ScreenScheduled ${screenScheduledId}: ${saveProblem}`)
+                        else try {
                             const saveToRr = ec.resource.getLocationReference(saveToLocationExp)
                             if (attachmentInfo.contentBytes) saveToRr.putBytes(attachmentInfo.contentBytes)
                             else if (attachmentInfo.contentText) saveToRr.putText(attachmentInfo.contentText)

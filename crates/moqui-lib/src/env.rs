@@ -361,6 +361,49 @@ fn is_expand_name(name: &str) -> bool {
     chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.')
 }
 
+/// The environment variables a child process the server starts keeps from the server's own ([`limit_child_env`]): what
+/// finding a program, the user's home, the locale and the temporary directory need, and on Windows what any process
+/// needs to start. Secrets given to the server as environment variables (the database password, `session_cookie_key`,
+/// API keys) are not among them.
+pub const CHILD_ENV_NAMES: &[&str] = &[
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TZ",
+    "TMPDIR",
+    "SYSTEMROOT",
+    "WINDIR",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "LOCALAPPDATA",
+    "APPDATA",
+];
+
+/// Clear the environment `command` would inherit and pass on only [`CHILD_ENV_NAMES`] and the names in `more`, each when
+/// the server has it; a name of `more` that ends in `*` passes every variable that starts with the rest
+/// (plans/Security-Review-Low.md SEC-OUT-09). Variables the caller sets on `command` afterwards are kept.
+pub fn limit_child_env(command: &mut std::process::Command, more: &[&str]) {
+    command.env_clear();
+    for name in CHILD_ENV_NAMES.iter().chain(more).filter(|name| !name.ends_with('*')) {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    let prefixes: Vec<&str> = more.iter().filter_map(|name| name.strip_suffix('*')).collect();
+    if !prefixes.is_empty() {
+        for (name, value) in std::env::vars_os() {
+            if name.to_str().is_some_and(|name| prefixes.iter().any(|prefix| name.starts_with(prefix))) {
+                command.env(name, value);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "env_tests.rs"]
 mod tests;

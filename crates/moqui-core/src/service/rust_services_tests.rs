@@ -36,6 +36,7 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::recent_auth::reauthenticate_user",
         "moqui_core::service::recent_auth::require_recent_auth_service",
         "moqui_core::service::recent_auth::send_reauth_code",
+        "moqui_core::service::registry_token::get_registry_token",
         "moqui_core::service::chat::check_record_visible",
         "moqui_core::service::chat::get_external_users",
         "moqui_core::service::chat::push_signal",

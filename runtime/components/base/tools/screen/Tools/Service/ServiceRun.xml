@@ -24,16 +24,15 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.web.sessionAttributes.remove('toolsServiceRunResults')
                 serviceResults = ec.service.sync().name(serviceName).parameters(context).call()
                 if (serviceResults && !ec.message.hasError()) {
-                    let resultsText = "Service Run Results:\n"
-                    for (const [key, value] of Object.entries(serviceResults)) resultsText += `==> ${key}: ${value?.toString()}\n`
-                    ec.logger.info(resultsText)
+                    // the names only: a value may be a secret the service returns (SEC-TLS-09)
+                    ec.logger.info(`Service Run ${serviceName} results: ${Object.keys(serviceResults).join(", ")}`)
 
                     // Keep the output separately from the request inputs across the redirect. The session stores text,
                     // and the service has already run: output that is not JSON is a message, not a failed request.
                     try {
                         ec.web.sessionAttributes.toolsServiceRunResults = JSON.stringify({serviceName, results: serviceResults})
                     } catch (e) {
-                        ec.message.addMessage(`The service ran; its output cannot be shown here (${e.message}). See the server log.`, "warning")
+                        ec.message.addMessage(`The service ran; its output cannot be shown here (${e.message}).`, "warning")
                     }
                 }
             ]]></script>

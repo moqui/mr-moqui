@@ -112,6 +112,8 @@ fn lock(factory: &Arc<ExecutionContextFactory>, id: &str) -> moqui_core::entity:
         .unwrap()
 }
 fn schedule(factory: &Arc<ExecutionContextFactory>, location: &str, template: Option<&str>) -> String {
+    // the fixtures save under the test's own directories (report save-roots, SEC-TLS-06)
+    moqui_lib::env::set_property("report_save_roots", "/");
     owner(factory,"org.moqui.report.ReportServices.create#Schedule",json!({"definitionId":"lease-dashboard","cronExpression":"0 0 0 * * ?","renderMode":"csv","saveToLocation":location,"emailTemplateId":template,"userId":"EX_JOHN_DOE"}))["screenScheduledId"].as_str().unwrap().to_string()
 }
 #[test]
@@ -261,7 +263,8 @@ fn workers_restart_and_revocation_preserve_single_authorized_delivery() {
     #[cfg(feature = "pdf")]
     if moqui_core::screen::PdfRenderer::available() {
         let capture = moqui_core::service::mail_capture::MailCapture::of(factory);
-        capture.set_enabled(Some(true));
+        moqui_core::service::mail_capture::allow();
+        capture.set_enabled(Some(true)).unwrap();
         capture.clear();
         let file_fails = schedule(factory, gate.runtime.to_str().unwrap(), Some("REPORT_LEASE_CAPTURE"));
         assert!(run(factory, &file_fails).is_err());

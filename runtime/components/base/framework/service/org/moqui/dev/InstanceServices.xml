@@ -418,6 +418,16 @@ along with this software (see the LICENSE.md file). If not, see
         - https://docs.docker.com/engine/security/https/
     -->
 
+    <service verb="get" noun="RegistryToken" type="rust" location="moqui_core::service::registry_token::get_registry_token"
+            allow-remote="false">
+        <description>The registry token of an image pull: the first output line of the conf's instance-hosting token-command
+            that the image's authTokenCmd names (a name, never a command), run with no shell and only the named
+            environment. Needs the sealed INSTANCE_ADMIN (plans/Security-Review-Medium.md SEC-TLS-03, SEC-SCR-04). The body
+            is Rust (crates/moqui-core/src/service/registry_token.rs).</description>
+        <in-parameters><parameter name="instanceImageId" required="true"/></in-parameters>
+        <out-parameters><parameter name="authToken"/></out-parameters>
+    </service>
+
     <service verb="init" noun="InstanceDocker" transaction-timeout="1500" >
         <!-- see https://docs.docker.com/engine/reference/api/docker_remote_api_v1.24/#/create-a-container -->
         <!-- https://docs.docker.com/engine/api/v1.24/#create-an-image -->
@@ -499,20 +509,28 @@ along with this software (see the LICENSE.md file). If not, see
                 jsonBody = mergeNested(JSON.parse(String(appInstance.jsonConfig)), jsonBody)
             }
 
-            ec.logger.info(`Initializing docker container for ${appInstance.instanceName} with:\n${JSON.stringify(jsonBody)}`)
+            // the names only: an Env value may be a password (SEC-TLS-09)
+            ec.logger.info(`Initializing docker container for ${appInstance.instanceName} with image ${jsonBody.Image}, env ${
+                envList.map((entry) => entry.split("=")[0]).join(", ")}, host config ${Object.keys(jsonBody.HostConfig || {}).join(", ")}`)
             restClient.jsonObject(jsonBody)
+
+            // a registry login goes over https or a unix socket, or plain http only to this machine (SEC-OUT-08)
+            const hostProtocol = String(instanceHost.hostProtocol || "http").toLowerCase()
+            const hostAddress = String(instanceHost.hostAddress || "").replace(/^\[|\]$/g, "").toLowerCase()
+            const loopbackHost = hostAddress === "localhost" || hostAddress === "::1" || /^127\.\d+\.\d+\.\d+$/.test(hostAddress)
+            const hasRegistryLogin = !!(instanceImage.authTokenCmd || instanceImage.password)
+            if (hasRegistryLogin && hostProtocol === "http" && !loopbackHost) {
+                ec.message.addError(`The registry login of image ${instanceImage.instanceImageId} is not sent to Docker host ${hostAddress} over plain http: use https or a unix socket`)
+                return
+            }
 
             try {
                 let authTokenPass = null
                 if (instanceImage.authTokenCmd) {
-                    try {
-                        // the configured command, split on spaces with no shell; its first output line is the token
-                        authTokenPass = ec.resource.runTokenCommand(instanceImage.authTokenCmd)
-                    } catch (e) {
-                        authTokenPass = null
-                        ec.logger.error(`Error connecting to Docker host in processing the auth token command: ${e}`)
-                        ec.message.addError(`Error connecting to Docker host: ${e}`)
-                    }
+                    // the conf's token-command the field names, run natively for an INSTANCE_ADMIN holder
+                    authTokenPass = ec.service.sync().name("org.moqui.dev.InstanceServices.get#RegistryToken")
+                            .parameter("instanceImageId", instanceImage.instanceImageId).call()?.authToken ?? null
+                    if (ec.message.hasError()) return
                 } else {
                     authTokenPass = instanceImage.password
                 }
@@ -912,7 +930,13 @@ along with this software (see the LICENSE.md file). If not, see
                     if (!/^[A-Za-z0-9_]+$/.test(String(name ?? ""))) throw new Error(`The ${what} name [${name}] is not a plain identifier`)
                     return String(name)
                 }
-                const quoted = (text) => String(text ?? "").replace(/'/g, "''")
+                // MySQL's default mode reads a backslash as an escape, so doubling quotes is not enough: a password with a
+                // quote or a backslash is refused (SEC-TLS-10)
+                const quoted = (text) => {
+                    const password = String(text ?? "")
+                    if (/['"\\]/.test(password)) throw new Error("The database password may not hold a quote or a backslash")
+                    return password
+                }
                 const databaseName = identifier(envMap.entity_ds_database, "database")
                 const userName = identifier(envMap.entity_ds_user, "user")
 
