@@ -15,7 +15,9 @@ along with this software (see the LICENSE.md file). If not, see
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Export" default-menu-index="6">
 
-    <transition name="EntityExport" begin-transaction="false" read-only="true" authz-action="update">
+    <!-- Not read-only: with output file or dir it writes on the server, and a read-only transition runs on a GET with
+        URL parameters and no session token (plans/Security-Review.md SEC-TLS-01). -->
+    <transition name="EntityExport" begin-transaction="false" authz-action="update">
         <actions>
             <script><![CDATA[
                 const edw = ec.entity.makeDataWriter()
@@ -50,12 +52,14 @@ along with this software (see the LICENSE.md file). If not, see
                 if (masterName) edw.master(masterName)
                 if (fromDate) edw.fromDate(ec.l10n.parseTimestamp(fromDate, null))
                 if (thruDate) edw.thruDate(ec.l10n.parseTimestamp(thruDate, null))
-                // a JavaScript object of field values ({statusId: 'X'}); Java's empty Groovy map, [:], is no filter
+                // a JSON object of field values ({"statusId": "X"}); Java's empty Groovy map, [:], is no filter. Parsed,
+                // never evaluated: an expression here ran as a server script (SEC-TLS-01).
                 const filterText = String(filterMap || '').trim()
                 if (filterText && filterText != '[:]') {
-                    const filter = ec.resource.expression('(' + filterText + ')', null)
+                    let filter = null
+                    try { filter = JSON.parse(filterText) } catch (err) { filter = null }
                     if (filter == null || typeof filter != 'object' || Array.isArray(filter)) {
-                        ec.message.addError(ec.l10n.localize("The filter is not an object of field values, such as {statusId: 'X'}"))
+                        ec.message.addError(ec.l10n.localize('The filter is not a JSON object of field values, such as {"statusId": "X"}'))
                         return
                     }
                     edw.filterMap(filter)
@@ -136,7 +140,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <!-- Several data documents to a file or a directory on the server, or to the browser. Not for transition-include:
         it is a Tools action, under Tools' own authorization. -->
-    <transition name="exportDocuments" read-only="true" authz-action="all">
+    <transition name="exportDocuments" authz-action="all">
         <actions><script><![CDATA[
             if (!context.dataDocumentIds) {
                 ec.message.addError(ec.l10n.localize("No Data Documents specified, not exporting anything."))
@@ -186,7 +190,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="fromDate"><default-field><date-time/></default-field></field>
                 <field name="thruDate"><default-field><date-time/></default-field></field>
 
-                <field name="filterMap"><default-field title="Filter" tooltip="Field values the exported records must have, as a JavaScript object: {statusId: 'X'}">
+                <field name="filterMap"><default-field title="Filter" tooltip="Field values the exported records must have, as a JSON object: {&quot;statusId&quot;: &quot;X&quot;}">
                     <text-line size="80"/></default-field></field>
                 <field name="orderBy"><default-field><text-line size="80"/></default-field></field>
                 <field name="fileType"><default-field>

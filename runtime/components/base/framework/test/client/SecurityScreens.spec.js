@@ -57,6 +57,21 @@ feature("A01 an unknown email tracking id returns the 1x1 PNG", {
     },
 })
 
+// plans/Security-Review.md SEC-TLS-01: Export's EntityExport writes on the server, so a GET with URL parameters (a link
+// from another site) does not run it; it takes a POST with the session token.
+feature("Tools Data Export does not run on a GET with URL parameters", {
+    when() {
+        requireFixture(USER, PASSWORD)
+        const s = formSession(USER, PASSWORD)
+        const res = s.get("/apps/tools/Data/Export/EntityExport?entityNames=moqui.basic.Enumeration&fileType=JSON&output=browser&filterMap=%7B%7D")
+        return { res }
+    },
+    then({ res }) {
+        !(res.header("Content-Disposition") ?? "").includes("attachment")
+        !(res.text ?? "").includes("EnumerationType")
+    },
+})
+
 // test_a01_more.py: test_login_form_action_is_login_path
 feature("A01 the login form posts to the login path", {
     when() { return { body: session().get("/Login").text } },
