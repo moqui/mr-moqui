@@ -2331,7 +2331,9 @@ const messageTemplate = `
             room.useBubbles && item.mine ? 'm-chat-mine' : '', room.useBubbles && room.isDirect ? 'm-chat-in-direct' : '']" :id="room.domId(item.eventSeq, inThread)"
         :data-seq="item.eventSeq" role="article" :tabindex="actionsAvailable ? 0 : -1" :aria-label="messageLabel"
         @focusin="actionFocus = true" @focusout="actionFocus = $event.currentTarget.contains($event.relatedTarget)"
-        @mouseenter="room.hover(item, inThread)" @mouseleave="room.unhover(item, inThread)" @click="room.tap(item, inThread)">
+        @mouseenter="room.hover(item, inThread)" @mouseleave="room.unhover(item, inThread)" @click="room.tap(item, inThread)"
+        @touchstart.passive="room.holdStart(item, inThread, $event)" @touchmove.passive="room.holdCancel()" @touchend="room.holdEnd($event)"
+        @contextmenu="room.contextMenu(item, inThread, $event)">
     <div class="self-stretch" :class="item.highlight ? 'bg-primary' : ''" style="width:3px;margin-right:3px;border-radius:2px"></div>
     <div style="width:40px;min-width:40px" class="q-pr-sm m-chat-avatar">
         <m-avatar v-if="!item.grouped" :name="item.senderName" :user-id="item.senderUserId || undefined" size="32px" class="q-mt-xs"></m-avatar>
@@ -3163,6 +3165,35 @@ const roomTemplate = `
             <q-btn flat no-caps :label="t('Cancel')" v-close-popup></q-btn>
         </div>
     </m-dialog>
+    <!-- a message's actions on a phone: a long press (or a right click) opens them as a sheet from the bottom -->
+    <q-dialog v-model="sheet.open" position="bottom" @hide="sheet.item = null">
+        <q-card v-if="sheet.item" class="m-chat-sheet" style="width:100%;max-width:560px;border-radius:16px 16px 0 0">
+            <div v-if="canPost && bridgeCaps.reaction" class="row no-wrap items-center justify-between q-px-sm q-pt-sm">
+                <q-btn v-for="key in (sheet.allEmoji ? [] : quickReactions)" :key="key" flat dense class="m-chat-sheet-emoji" style="flex:1 1 0;min-width:0;font-size:22px;padding:6px 0" :label="key"
+                        :aria-label="t('React with') + ' ' + key" @click="sheetDo(() => react(sheet.item, key))"></q-btn>
+                <q-btn v-if="!sheet.allEmoji" flat dense icon="sym_o_add_reaction" style="flex:1 1 0;min-width:0;padding:6px 0" :aria-label="t('More reactions')" @click="sheet.allEmoji = true"></q-btn>
+            </div>
+            <div v-if="sheet.allEmoji" class="row q-pa-sm justify-center">
+                <q-btn v-for="key in emoji" :key="key" flat dense size="md" class="q-px-xs" :label="key" :aria-label="t('React with') + ' ' + key"
+                        @click="sheetDo(() => react(sheet.item, key))"></q-btn>
+            </div>
+            <q-list v-else class="q-pb-sm">
+                <template v-if="canPost && !sheet.inThread">
+                    <q-item clickable @click="sheetDo(() => startReply(sheet.item))"><q-item-section avatar><q-icon name="sym_o_reply"></q-icon></q-item-section><q-item-section>{{t('Reply')}}</q-item-section></q-item>
+                    <q-item clickable @click="sheetDo(() => openThread(sheet.item.eventSeq))"><q-item-section avatar><q-icon name="sym_o_forum"></q-icon></q-item-section><q-item-section>{{t('Reply in thread')}}</q-item-section></q-item>
+                </template>
+                <q-item clickable @click="sheetDo(() => copyText(sheet.item))"><q-item-section avatar><q-icon name="sym_o_content_copy"></q-icon></q-item-section><q-item-section>{{t('Copy text')}}</q-item-section></q-item>
+                <q-item v-if="isMember && !sealed" clickable @click="sheetDo(() => openForward(sheet.item))"><q-item-section avatar><q-icon name="sym_o_forward"></q-icon></q-item-section><q-item-section>{{t('Forward…')}}</q-item-section></q-item>
+                <q-item v-if="canEdit(sheet.item)" clickable @click="sheetDo(() => startEdit(sheet.item))"><q-item-section avatar><q-icon name="sym_o_edit"></q-icon></q-item-section><q-item-section>{{t('Edit')}}</q-item-section></q-item>
+                <q-item v-if="canPost" clickable @click="sheetDo(() => pin(sheet.item, !sheet.item.pinned))"><q-item-section avatar><q-icon name="sym_o_keep"></q-icon></q-item-section>
+                    <q-item-section>{{sheet.item.pinned ? t('Unpin') : t('Pin to the room')}}</q-item-section></q-item>
+                <q-item v-if="isMember && !sheet.inThread" clickable @click="sheetDo(() => markUnreadFrom(sheet.item))"><q-item-section avatar><q-icon name="sym_o_mark_chat_unread"></q-icon></q-item-section><q-item-section>{{t('Mark unread from here')}}</q-item-section></q-item>
+                <q-item clickable @click="sheetDo(() => copyLink(sheet.item))"><q-item-section avatar><q-icon name="sym_o_link"></q-icon></q-item-section><q-item-section>{{t('Copy link')}}</q-item-section></q-item>
+                <q-item v-if="canRedact(sheet.item)" clickable @click="sheetDo(() => redact(sheet.item))"><q-item-section avatar><q-icon name="sym_o_delete" color="negative"></q-icon></q-item-section>
+                    <q-item-section class="text-negative">{{t('Delete message')}}</q-item-section></q-item>
+            </q-list>
+        </q-card>
+    </q-dialog>
 </div>`;
 
 let roomCount = 0;
@@ -3178,7 +3209,7 @@ const chatRoom = {
             uid: roomCount, state: 'loading', room: null, member: null, access: {}, members: [], names: {},
             events: [], hasMoreBefore: false, hasMoreAfter: false, gapBefore: false, gapAfter: false, loadingOlder: false, loadingNewer: false,
             myLastRead: 0, dividerSeq: null, highlightSeq: null, atBottom: true, newBelow: 0, holdRead: false,
-            hoverKey: null, tapKey: null, editing: null, replyTo: null, side: null,
+            hoverKey: null, tapKey: null, sheet: { open: false, item: null, inThread: false, allEmoji: false }, editing: null, replyTo: null, side: null,
             threadView: { rootSeq: null, events: [], loading: false }, pinned: { list: [], loading: false },
             threadsPane: { list: [], loading: false, hasMore: false, mine: false }, filesPane: { list: [], loading: false, next: null, kind: 'all' },
             forward: { open: false, item: null, roomId: null, comment: '', busy: false },
@@ -3853,10 +3884,35 @@ const chatRoom = {
         unhover(item, inThread) { const key = (inThread ? 't' : 'm') + item.eventSeq; if (this.hoverKey === key) this.hoverKey = null; },
         isHovered(item, inThread) { return this.hoverKey === (inThread ? 't' : 'm') + item.eventSeq; },
         tap(item, inThread) {
-            if (!this.isTouch()) return;
+            if (!this.isTouch() || this.useBubbles) return;
             const key = (inThread ? 't' : 'm') + item.eventSeq;
             this.tapKey = this.tapKey === key ? null : key;
         },
+        // a long press on a message (in bubbles, as on a phone) opens its actions as a sheet; a move or a short tap does not
+        holdStart(item, inThread, event) {
+            this.holdCancel();
+            if (!this.useBubbles || (event.touches && event.touches.length > 1)) return;
+            if (event.target && event.target.closest && event.target.closest('input, textarea, [contenteditable="true"], .q-btn')) return;
+            this.holdTimer = setTimeout(() => { this.holdTimer = null; this.held = true; this.openSheet(item, inThread); }, 450);
+        },
+        holdCancel() { if (this.holdTimer) { clearTimeout(this.holdTimer); this.holdTimer = null; } },
+        holdEnd(event) {
+            this.holdCancel();
+            // the press that opened the sheet is not also a click on what is under it
+            if (this.held) { this.held = false; if (event.cancelable) event.preventDefault(); }
+        },
+        contextMenu(item, inThread, event) {
+            if (!this.useBubbles) return;
+            event.preventDefault();
+            if (!this.sheet.open) this.openSheet(item, inThread);
+        },
+        openSheet(item, inThread) {
+            if (item.redacted || this.isEditing(item) || this.state !== 'ready') return;
+            this.tapKey = null;
+            this.sheet = { open: true, item, inThread: !!inThread, allEmoji: false };
+            if (navigator.vibrate) { try { navigator.vibrate(10); } catch (e) { /* no vibration here */ } }
+        },
+        sheetDo(action) { this.sheet.open = false; action(); },
         isTouch() { return !!(this.$q.platform && this.$q.platform.has && this.$q.platform.has.touch) && this.$q.screen.lt.md; },
         showActions(item, inThread) {
             if (item.redacted || this.isEditing(item) || this.state !== 'ready') return false;
@@ -4484,6 +4540,7 @@ const chatRoom = {
         this.load();
     },
     beforeUnmount() {
+        this.holdCancel();
         (this.unsubscribe || []).forEach((off) => off());
         document.removeEventListener('visibilitychange', this.onVisibleBound);
         clearInterval(this.ticker);
@@ -5817,6 +5874,7 @@ module.exports = {
                   const _component_m_dialog = _resolveComponent("m-dialog")
                   const _component_m_check = _resolveComponent("m-check")
                   const _component_m_date_time = _resolveComponent("m-date-time")
+                  const _component_q_dialog = _resolveComponent("q-dialog")
                   const _directive_close_popup = _resolveDirective("close-popup")
 
                   return (_openBlock(), _createElementBlock("div", {
@@ -8340,7 +8398,286 @@ module.exports = {
                         ])
                       ]),
                       _: 1
-                    }, 8, ["modelValue", "onUpdate:modelValue", "title"])
+                    }, 8, ["modelValue", "onUpdate:modelValue", "title"]),
+                    _createVNode(_component_q_dialog, {
+                      modelValue: _ctx.sheet.open,
+                      "onUpdate:modelValue": $event => ((_ctx.sheet.open) = $event),
+                      position: "bottom",
+                      onHide: $event => (_ctx.sheet.item = null)
+                    }, {
+                      default: _withCtx(() => [
+                        (_ctx.sheet.item)
+                          ? (_openBlock(), _createBlock(_component_q_card, {
+                              key: 0,
+                              class: "m-chat-sheet",
+                              style: {"width":"100%","max-width":"560px","border-radius":"16px 16px 0 0"}
+                            }, {
+                              default: _withCtx(() => [
+                                (_ctx.canPost && _ctx.bridgeCaps.reaction)
+                                  ? (_openBlock(), _createElementBlock("div", {
+                                      key: 0,
+                                      class: "row no-wrap items-center justify-between q-px-sm q-pt-sm"
+                                    }, [
+                                      (_openBlock(true), _createElementBlock(_Fragment, null, _renderList((_ctx.sheet.allEmoji ? [] : _ctx.quickReactions), (key) => {
+                                        return (_openBlock(), _createBlock(_component_q_btn, {
+                                          key: key,
+                                          flat: "",
+                                          dense: "",
+                                          class: "m-chat-sheet-emoji",
+                                          style: {"flex":"1 1 0","min-width":"0","font-size":"22px","padding":"6px 0"},
+                                          label: key,
+                                          "aria-label": _ctx.t('React with') + ' ' + key,
+                                          onClick: $event => (_ctx.sheetDo(() => _ctx.react(_ctx.sheet.item, key)))
+                                        }, null, 8, ["label", "aria-label", "onClick"]))
+                                      }), 128)),
+                                      (!_ctx.sheet.allEmoji)
+                                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                                            key: 0,
+                                            flat: "",
+                                            dense: "",
+                                            icon: "sym_o_add_reaction",
+                                            style: {"flex":"1 1 0","min-width":"0","padding":"6px 0"},
+                                            "aria-label": _ctx.t('More reactions'),
+                                            onClick: $event => (_ctx.sheet.allEmoji = true)
+                                          }, null, 8, ["aria-label", "onClick"]))
+                                        : _createCommentVNode("", true)
+                                    ]))
+                                  : _createCommentVNode("", true),
+                                (_ctx.sheet.allEmoji)
+                                  ? (_openBlock(), _createElementBlock("div", {
+                                      key: 1,
+                                      class: "row q-pa-sm justify-center"
+                                    }, [
+                                      (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.emoji, (key) => {
+                                        return (_openBlock(), _createBlock(_component_q_btn, {
+                                          key: key,
+                                          flat: "",
+                                          dense: "",
+                                          size: "md",
+                                          class: "q-px-xs",
+                                          label: key,
+                                          "aria-label": _ctx.t('React with') + ' ' + key,
+                                          onClick: $event => (_ctx.sheetDo(() => _ctx.react(_ctx.sheet.item, key)))
+                                        }, null, 8, ["label", "aria-label", "onClick"]))
+                                      }), 128))
+                                    ]))
+                                  : (_openBlock(), _createBlock(_component_q_list, {
+                                      key: 2,
+                                      class: "q-pb-sm"
+                                    }, {
+                                      default: _withCtx(() => [
+                                        (_ctx.canPost && !_ctx.sheet.inThread)
+                                          ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+                                              _createVNode(_component_q_item, {
+                                                clickable: "",
+                                                onClick: $event => (_ctx.sheetDo(() => _ctx.startReply(_ctx.sheet.item)))
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                    default: _withCtx(() => [
+                                                      _createVNode(_component_q_icon, { name: "sym_o_reply" })
+                                                    ]),
+                                                    _: 1
+                                                  }),
+                                                  _createVNode(_component_q_item_section, null, {
+                                                    default: _withCtx(() => [
+                                                      _createTextVNode(_toDisplayString(_ctx.t('Reply')), 1)
+                                                    ]),
+                                                    _: 1
+                                                  })
+                                                ]),
+                                                _: 1
+                                              }, 8, ["onClick"]),
+                                              _createVNode(_component_q_item, {
+                                                clickable: "",
+                                                onClick: $event => (_ctx.sheetDo(() => _ctx.openThread(_ctx.sheet.item.eventSeq)))
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                    default: _withCtx(() => [
+                                                      _createVNode(_component_q_icon, { name: "sym_o_forum" })
+                                                    ]),
+                                                    _: 1
+                                                  }),
+                                                  _createVNode(_component_q_item_section, null, {
+                                                    default: _withCtx(() => [
+                                                      _createTextVNode(_toDisplayString(_ctx.t('Reply in thread')), 1)
+                                                    ]),
+                                                    _: 1
+                                                  })
+                                                ]),
+                                                _: 1
+                                              }, 8, ["onClick"])
+                                            ], 64))
+                                          : _createCommentVNode("", true),
+                                        _createVNode(_component_q_item, {
+                                          clickable: "",
+                                          onClick: $event => (_ctx.sheetDo(() => _ctx.copyText(_ctx.sheet.item)))
+                                        }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_item_section, { avatar: "" }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_icon, { name: "sym_o_content_copy" })
+                                              ]),
+                                              _: 1
+                                            }),
+                                            _createVNode(_component_q_item_section, null, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(_ctx.t('Copy text')), 1)
+                                              ]),
+                                              _: 1
+                                            })
+                                          ]),
+                                          _: 1
+                                        }, 8, ["onClick"]),
+                                        (_ctx.isMember && !_ctx.sealed)
+                                          ? (_openBlock(), _createBlock(_component_q_item, {
+                                              key: 1,
+                                              clickable: "",
+                                              onClick: $event => (_ctx.sheetDo(() => _ctx.openForward(_ctx.sheet.item)))
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_icon, { name: "sym_o_forward" })
+                                                  ]),
+                                                  _: 1
+                                                }),
+                                                _createVNode(_component_q_item_section, null, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(_ctx.t('Forward…')), 1)
+                                                  ]),
+                                                  _: 1
+                                                })
+                                              ]),
+                                              _: 1
+                                            }, 8, ["onClick"]))
+                                          : _createCommentVNode("", true),
+                                        (_ctx.canEdit(_ctx.sheet.item))
+                                          ? (_openBlock(), _createBlock(_component_q_item, {
+                                              key: 2,
+                                              clickable: "",
+                                              onClick: $event => (_ctx.sheetDo(() => _ctx.startEdit(_ctx.sheet.item)))
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_icon, { name: "sym_o_edit" })
+                                                  ]),
+                                                  _: 1
+                                                }),
+                                                _createVNode(_component_q_item_section, null, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(_ctx.t('Edit')), 1)
+                                                  ]),
+                                                  _: 1
+                                                })
+                                              ]),
+                                              _: 1
+                                            }, 8, ["onClick"]))
+                                          : _createCommentVNode("", true),
+                                        (_ctx.canPost)
+                                          ? (_openBlock(), _createBlock(_component_q_item, {
+                                              key: 3,
+                                              clickable: "",
+                                              onClick: $event => (_ctx.sheetDo(() => _ctx.pin(_ctx.sheet.item, !_ctx.sheet.item.pinned)))
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_icon, { name: "sym_o_keep" })
+                                                  ]),
+                                                  _: 1
+                                                }),
+                                                _createVNode(_component_q_item_section, null, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(_ctx.sheet.item.pinned ? _ctx.t('Unpin') : _ctx.t('Pin to the room')), 1)
+                                                  ]),
+                                                  _: 1
+                                                })
+                                              ]),
+                                              _: 1
+                                            }, 8, ["onClick"]))
+                                          : _createCommentVNode("", true),
+                                        (_ctx.isMember && !_ctx.sheet.inThread)
+                                          ? (_openBlock(), _createBlock(_component_q_item, {
+                                              key: 4,
+                                              clickable: "",
+                                              onClick: $event => (_ctx.sheetDo(() => _ctx.markUnreadFrom(_ctx.sheet.item)))
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_icon, { name: "sym_o_mark_chat_unread" })
+                                                  ]),
+                                                  _: 1
+                                                }),
+                                                _createVNode(_component_q_item_section, null, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(_ctx.t('Mark unread from here')), 1)
+                                                  ]),
+                                                  _: 1
+                                                })
+                                              ]),
+                                              _: 1
+                                            }, 8, ["onClick"]))
+                                          : _createCommentVNode("", true),
+                                        _createVNode(_component_q_item, {
+                                          clickable: "",
+                                          onClick: $event => (_ctx.sheetDo(() => _ctx.copyLink(_ctx.sheet.item)))
+                                        }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_item_section, { avatar: "" }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_icon, { name: "sym_o_link" })
+                                              ]),
+                                              _: 1
+                                            }),
+                                            _createVNode(_component_q_item_section, null, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(_ctx.t('Copy link')), 1)
+                                              ]),
+                                              _: 1
+                                            })
+                                          ]),
+                                          _: 1
+                                        }, 8, ["onClick"]),
+                                        (_ctx.canRedact(_ctx.sheet.item))
+                                          ? (_openBlock(), _createBlock(_component_q_item, {
+                                              key: 5,
+                                              clickable: "",
+                                              onClick: $event => (_ctx.sheetDo(() => _ctx.redact(_ctx.sheet.item)))
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_icon, {
+                                                      name: "sym_o_delete",
+                                                      color: "negative"
+                                                    })
+                                                  ]),
+                                                  _: 1
+                                                }),
+                                                _createVNode(_component_q_item_section, { class: "text-negative" }, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(_ctx.t('Delete message')), 1)
+                                                  ]),
+                                                  _: 1
+                                                })
+                                              ]),
+                                              _: 1
+                                            }, 8, ["onClick"]))
+                                          : _createCommentVNode("", true)
+                                      ]),
+                                      _: 1
+                                    }))
+                              ]),
+                              _: 1
+                            }))
+                          : _createCommentVNode("", true)
+                      ]),
+                      _: 1
+                    }, 8, ["modelValue", "onUpdate:modelValue", "onHide"])
                   ], 42, ["onDragover", "onDragleave", "onDrop"]))
                 }
             })();
@@ -8626,7 +8963,11 @@ module.exports = {
                     onFocusout: $event => (_ctx.actionFocus = $event.currentTarget.contains($event.relatedTarget)),
                     onMouseenter: $event => (_ctx.room.hover(_ctx.item, _ctx.inThread)),
                     onMouseleave: $event => (_ctx.room.unhover(_ctx.item, _ctx.inThread)),
-                    onClick: $event => (_ctx.room.tap(_ctx.item, _ctx.inThread))
+                    onClick: $event => (_ctx.room.tap(_ctx.item, _ctx.inThread)),
+                    onTouchstartPassive: $event => (_ctx.room.holdStart(_ctx.item, _ctx.inThread, $event)),
+                    onTouchmovePassive: $event => (_ctx.room.holdCancel()),
+                    onTouchend: $event => (_ctx.room.holdEnd($event)),
+                    onContextmenu: $event => (_ctx.room.contextMenu(_ctx.item, _ctx.inThread, $event))
                   }, [
                     _createElementVNode("div", {
                       class: _normalizeClass(["self-stretch", _ctx.item.highlight ? 'bg-primary' : '']),
@@ -9561,7 +9902,7 @@ module.exports = {
                           })
                         ], 8, ["onClick"]))
                       : _createCommentVNode("", true)
-                  ], 42, ["id", "data-seq", "tabindex", "aria-label", "onFocusin", "onFocusout", "onMouseenter", "onMouseleave", "onClick"]))
+                  ], 42, ["id", "data-seq", "tabindex", "aria-label", "onFocusin", "onFocusout", "onMouseenter", "onMouseleave", "onClick", "onTouchstartPassive", "onTouchmovePassive", "onTouchend", "onContextmenu"]))
                 }
             })();
             delete target.template;

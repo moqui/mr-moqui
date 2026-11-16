@@ -355,7 +355,9 @@ const messageTemplate = `
             room.useBubbles && item.mine ? 'm-chat-mine' : '', room.useBubbles && room.isDirect ? 'm-chat-in-direct' : '']" :id="room.domId(item.eventSeq, inThread)"
         :data-seq="item.eventSeq" role="article" :tabindex="actionsAvailable ? 0 : -1" :aria-label="messageLabel"
         @focusin="actionFocus = true" @focusout="actionFocus = $event.currentTarget.contains($event.relatedTarget)"
-        @mouseenter="room.hover(item, inThread)" @mouseleave="room.unhover(item, inThread)" @click="room.tap(item, inThread)">
+        @mouseenter="room.hover(item, inThread)" @mouseleave="room.unhover(item, inThread)" @click="room.tap(item, inThread)"
+        @touchstart.passive="room.holdStart(item, inThread, $event)" @touchmove.passive="room.holdCancel()" @touchend="room.holdEnd($event)"
+        @contextmenu="room.contextMenu(item, inThread, $event)">
     <div class="self-stretch" :class="item.highlight ? 'bg-primary' : ''" style="width:3px;margin-right:3px;border-radius:2px"></div>
     <div style="width:40px;min-width:40px" class="q-pr-sm m-chat-avatar">
         <m-avatar v-if="!item.grouped" :name="item.senderName" :user-id="item.senderUserId || undefined" size="32px" class="q-mt-xs"></m-avatar>
@@ -1187,6 +1189,35 @@ const roomTemplate = `
             <q-btn flat no-caps :label="t('Cancel')" v-close-popup></q-btn>
         </div>
     </m-dialog>
+    <!-- a message's actions on a phone: a long press (or a right click) opens them as a sheet from the bottom -->
+    <q-dialog v-model="sheet.open" position="bottom" @hide="sheet.item = null">
+        <q-card v-if="sheet.item" class="m-chat-sheet" style="width:100%;max-width:560px;border-radius:16px 16px 0 0">
+            <div v-if="canPost && bridgeCaps.reaction" class="row no-wrap items-center justify-between q-px-sm q-pt-sm">
+                <q-btn v-for="key in (sheet.allEmoji ? [] : quickReactions)" :key="key" flat dense class="m-chat-sheet-emoji" style="flex:1 1 0;min-width:0;font-size:22px;padding:6px 0" :label="key"
+                        :aria-label="t('React with') + ' ' + key" @click="sheetDo(() => react(sheet.item, key))"></q-btn>
+                <q-btn v-if="!sheet.allEmoji" flat dense icon="sym_o_add_reaction" style="flex:1 1 0;min-width:0;padding:6px 0" :aria-label="t('More reactions')" @click="sheet.allEmoji = true"></q-btn>
+            </div>
+            <div v-if="sheet.allEmoji" class="row q-pa-sm justify-center">
+                <q-btn v-for="key in emoji" :key="key" flat dense size="md" class="q-px-xs" :label="key" :aria-label="t('React with') + ' ' + key"
+                        @click="sheetDo(() => react(sheet.item, key))"></q-btn>
+            </div>
+            <q-list v-else class="q-pb-sm">
+                <template v-if="canPost && !sheet.inThread">
+                    <q-item clickable @click="sheetDo(() => startReply(sheet.item))"><q-item-section avatar><q-icon name="sym_o_reply"></q-icon></q-item-section><q-item-section>{{t('Reply')}}</q-item-section></q-item>
+                    <q-item clickable @click="sheetDo(() => openThread(sheet.item.eventSeq))"><q-item-section avatar><q-icon name="sym_o_forum"></q-icon></q-item-section><q-item-section>{{t('Reply in thread')}}</q-item-section></q-item>
+                </template>
+                <q-item clickable @click="sheetDo(() => copyText(sheet.item))"><q-item-section avatar><q-icon name="sym_o_content_copy"></q-icon></q-item-section><q-item-section>{{t('Copy text')}}</q-item-section></q-item>
+                <q-item v-if="isMember && !sealed" clickable @click="sheetDo(() => openForward(sheet.item))"><q-item-section avatar><q-icon name="sym_o_forward"></q-icon></q-item-section><q-item-section>{{t('Forward…')}}</q-item-section></q-item>
+                <q-item v-if="canEdit(sheet.item)" clickable @click="sheetDo(() => startEdit(sheet.item))"><q-item-section avatar><q-icon name="sym_o_edit"></q-icon></q-item-section><q-item-section>{{t('Edit')}}</q-item-section></q-item>
+                <q-item v-if="canPost" clickable @click="sheetDo(() => pin(sheet.item, !sheet.item.pinned))"><q-item-section avatar><q-icon name="sym_o_keep"></q-icon></q-item-section>
+                    <q-item-section>{{sheet.item.pinned ? t('Unpin') : t('Pin to the room')}}</q-item-section></q-item>
+                <q-item v-if="isMember && !sheet.inThread" clickable @click="sheetDo(() => markUnreadFrom(sheet.item))"><q-item-section avatar><q-icon name="sym_o_mark_chat_unread"></q-icon></q-item-section><q-item-section>{{t('Mark unread from here')}}</q-item-section></q-item>
+                <q-item clickable @click="sheetDo(() => copyLink(sheet.item))"><q-item-section avatar><q-icon name="sym_o_link"></q-icon></q-item-section><q-item-section>{{t('Copy link')}}</q-item-section></q-item>
+                <q-item v-if="canRedact(sheet.item)" clickable @click="sheetDo(() => redact(sheet.item))"><q-item-section avatar><q-icon name="sym_o_delete" color="negative"></q-icon></q-item-section>
+                    <q-item-section class="text-negative">{{t('Delete message')}}</q-item-section></q-item>
+            </q-list>
+        </q-card>
+    </q-dialog>
 </div>`;
 
 let roomCount = 0;
@@ -1202,7 +1233,7 @@ const chatRoom = {
             uid: roomCount, state: 'loading', room: null, member: null, access: {}, members: [], names: {},
             events: [], hasMoreBefore: false, hasMoreAfter: false, gapBefore: false, gapAfter: false, loadingOlder: false, loadingNewer: false,
             myLastRead: 0, dividerSeq: null, highlightSeq: null, atBottom: true, newBelow: 0, holdRead: false,
-            hoverKey: null, tapKey: null, editing: null, replyTo: null, side: null,
+            hoverKey: null, tapKey: null, sheet: { open: false, item: null, inThread: false, allEmoji: false }, editing: null, replyTo: null, side: null,
             threadView: { rootSeq: null, events: [], loading: false }, pinned: { list: [], loading: false },
             threadsPane: { list: [], loading: false, hasMore: false, mine: false }, filesPane: { list: [], loading: false, next: null, kind: 'all' },
             forward: { open: false, item: null, roomId: null, comment: '', busy: false },
@@ -1877,10 +1908,35 @@ const chatRoom = {
         unhover(item, inThread) { const key = (inThread ? 't' : 'm') + item.eventSeq; if (this.hoverKey === key) this.hoverKey = null; },
         isHovered(item, inThread) { return this.hoverKey === (inThread ? 't' : 'm') + item.eventSeq; },
         tap(item, inThread) {
-            if (!this.isTouch()) return;
+            if (!this.isTouch() || this.useBubbles) return;
             const key = (inThread ? 't' : 'm') + item.eventSeq;
             this.tapKey = this.tapKey === key ? null : key;
         },
+        // a long press on a message (in bubbles, as on a phone) opens its actions as a sheet; a move or a short tap does not
+        holdStart(item, inThread, event) {
+            this.holdCancel();
+            if (!this.useBubbles || (event.touches && event.touches.length > 1)) return;
+            if (event.target && event.target.closest && event.target.closest('input, textarea, [contenteditable="true"], .q-btn')) return;
+            this.holdTimer = setTimeout(() => { this.holdTimer = null; this.held = true; this.openSheet(item, inThread); }, 450);
+        },
+        holdCancel() { if (this.holdTimer) { clearTimeout(this.holdTimer); this.holdTimer = null; } },
+        holdEnd(event) {
+            this.holdCancel();
+            // the press that opened the sheet is not also a click on what is under it
+            if (this.held) { this.held = false; if (event.cancelable) event.preventDefault(); }
+        },
+        contextMenu(item, inThread, event) {
+            if (!this.useBubbles) return;
+            event.preventDefault();
+            if (!this.sheet.open) this.openSheet(item, inThread);
+        },
+        openSheet(item, inThread) {
+            if (item.redacted || this.isEditing(item) || this.state !== 'ready') return;
+            this.tapKey = null;
+            this.sheet = { open: true, item, inThread: !!inThread, allEmoji: false };
+            if (navigator.vibrate) { try { navigator.vibrate(10); } catch (e) { /* no vibration here */ } }
+        },
+        sheetDo(action) { this.sheet.open = false; action(); },
         isTouch() { return !!(this.$q.platform && this.$q.platform.has && this.$q.platform.has.touch) && this.$q.screen.lt.md; },
         showActions(item, inThread) {
             if (item.redacted || this.isEditing(item) || this.state !== 'ready') return false;
@@ -2508,6 +2564,7 @@ const chatRoom = {
         this.load();
     },
     beforeUnmount() {
+        this.holdCancel();
         (this.unsubscribe || []).forEach((off) => off());
         document.removeEventListener('visibilitychange', this.onVisibleBound);
         clearInterval(this.ticker);
