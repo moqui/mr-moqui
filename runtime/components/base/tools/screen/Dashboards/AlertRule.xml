@@ -394,22 +394,26 @@
                                 <label type="p" style="m-muted" text="${found.audienceNote}" condition="found.audienceNote"/>
                             </box-body>
                             <box-body-nopad>
-                                <form-list name="AudienceResults" list="audience" skip-form="true" paginate="false" condition="audience.length">
-                                    <field name="recipientName"><default-field title="Person"><display/></default-field></field>
-                                    <field name="viaText"><default-field title="How"><display/></default-field></field>
-                                    <field name="resultText"><default-field title="Result">
-                                        <render-mode>
-                                            <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${resultColor}">${
+                                <section name="AudienceResultsSection" condition="audience.length">
+                                    <widgets>
+                                        <form-list name="AudienceResults" list="audience" skip-form="true" paginate="false">
+                                            <field name="recipientName"><default-field title="Person"><display/></default-field></field>
+                                            <field name="viaText"><default-field title="How"><display/></default-field></field>
+                                            <field name="resultText"><default-field title="Result">
+                                                <render-mode>
+                                                    <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${resultColor}">${
                                                 WebUtilities.encodeHtml(resultText)}</q-chip>]]></text>
-                                            <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: resultText})}]]></text>
-                                            <text type="html">${resultText}</text>
-                                        </render-mode>
-                                    </default-field></field>
-                                    <columns type="mobile">
-                                        <column><field-ref name="recipientName"/></column>
-                                        <column><field-ref name="resultText"/></column>
-                                    </columns>
-                                </form-list>
+                                                    <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: resultText})}]]></text>
+                                                    <text type="html">${resultText}</text>
+                                                </render-mode>
+                                            </default-field></field>
+                                            <columns type="mobile">
+                                                <column><field-ref name="recipientName"/></column>
+                                                <column><field-ref name="resultText"/></column>
+                                            </columns>
+                                        </form-list>
+                                    </widgets>
+                                </section>
                             </box-body-nopad>
                         </container-box>
                     </widgets></section>
@@ -453,20 +457,24 @@
                                 <label type="p" style="m-muted" text="No contact point has been added here: a state change notifies nobody but through a shared contact point." condition="!contactList.length"/>
                             </box-body>
                             <box-body-nopad>
-                                <form-list name="Contacts" list="contactList" skip-form="true" paginate="false" condition="contactList.length">
-                                    <field name="id"><default-field title="ID"><display/></default-field></field>
-                                    <field name="type"><default-field title="Type"><display/></default-field></field>
-                                    <field name="topic"><default-field title="Topic"><display/></default-field></field>
-                                    <field name="userId"><default-field title="User"><display/></default-field></field>
-                                    <field name="userGroupId"><default-field title="User group"><display/></default-field></field>
-                                    <field name="toAddresses"><default-field title="Email recipients"><display/></default-field></field>
-                                    <field name="url"><default-field title="Webhook URL"><display/></default-field></field>
-                                    <field name="remove"><default-field title=""><link url="removeItem" text="Remove" link-type="hidden-form-link" condition="canEdit" parameter-map="{definitionId:definitionId,collection:'contactPoints',itemIndex:itemIndex}"/></default-field></field>
-                                    <columns type="mobile">
-                                        <column><field-ref name="id"/><field-ref name="type"/></column>
-                                        <column><field-ref name="topic"/><field-ref name="remove"/></column>
-                                    </columns>
-                                </form-list>
+                                <section name="ContactsSection" condition="contactList.length">
+                                    <widgets>
+                                        <form-list name="Contacts" list="contactList" skip-form="true" paginate="false">
+                                            <field name="id"><default-field title="ID"><display/></default-field></field>
+                                            <field name="type"><default-field title="Type"><display/></default-field></field>
+                                            <field name="topic"><default-field title="Topic"><display/></default-field></field>
+                                            <field name="userId"><default-field title="User"><display/></default-field></field>
+                                            <field name="userGroupId"><default-field title="User group"><display/></default-field></field>
+                                            <field name="toAddresses"><default-field title="Email recipients"><display/></default-field></field>
+                                            <field name="url"><default-field title="Webhook URL"><display/></default-field></field>
+                                            <field name="remove"><default-field title=""><link url="removeItem" text="Remove" link-type="hidden-form-link" condition="canEdit" parameter-map="{definitionId:definitionId,collection:'contactPoints',itemIndex:itemIndex}"/></default-field></field>
+                                            <columns type="mobile">
+                                                <column><field-ref name="id"/><field-ref name="type"/></column>
+                                                <column><field-ref name="topic"/><field-ref name="remove"/></column>
+                                            </columns>
+                                        </form-list>
+                                    </widgets>
+                                </section>
                             </box-body-nopad>
                         </container-box>
                     </widgets></section>
@@ -478,27 +486,35 @@
                     <box-header title="Shared notification and quieting settings"/>
                     <box-body>
                         <label type="p" style="m-muted" text="${found.business ? 'Link reusable silences or mute timings to this rule.' : 'Link reusable contact points, silences or mute timings to this rule.'}"/>
-                        <form-single name="AddSharedRef" transition="addRef" condition="canEdit">
-                            <field name="definitionId"><default-field><hidden/></default-field></field>
-                            <field name="sharedRef"><default-field title="Shared item"><drop-down><list-options list="sharedChoices" key="${id}" text="${label}"/></drop-down></default-field></field>
-                            <field name="add"><default-field title=""><submit text="Use shared item"/></default-field></field>
-                            <field-layout>
-                                <field-ref name="definitionId"/>
-                                <field-row><field-ref name="sharedRef"/><field-ref name="add"/></field-row>
-                            </field-layout>
-                        </form-single>
+                        <section name="AddSharedRefSection" condition="canEdit">
+                            <widgets>
+                                <form-single name="AddSharedRef" transition="addRef">
+                                    <field name="definitionId"><default-field><hidden/></default-field></field>
+                                    <field name="sharedRef"><default-field title="Shared item"><drop-down><list-options list="sharedChoices" key="${id}" text="${label}"/></drop-down></default-field></field>
+                                    <field name="add"><default-field title=""><submit text="Use shared item"/></default-field></field>
+                                    <field-layout>
+                                        <field-ref name="definitionId"/>
+                                        <field-row><field-ref name="sharedRef"/><field-ref name="add"/></field-row>
+                                    </field-layout>
+                                </form-single>
+                            </widgets>
+                        </section>
                         <label type="p" style="m-muted" text="No shared items are linked." condition="!refList.length"/>
                     </box-body>
                     <box-body-nopad>
-                        <form-list name="SharedRefs" list="refList" skip-form="true" paginate="false" condition="refList.length">
-                            <field name="kind"><default-field title="Type"><display/></default-field></field>
-                            <field name="title"><default-field title="Shared item">
-                                <link id="OpenShared" url="${found.sharedUrl}" text="${title}" link-type="anchor" condition="!!found.sharedUrl" parameter-map="{definitionId:refId, sharedType:''}"/>
-                                <label text="${title}" condition="!found.sharedUrl"/>
-                            </default-field></field>
-                            <field name="refId"><default-field title="ID"><display/></default-field></field>
-                            <field name="remove"><default-field title=""><link url="removeRef" text="Remove" link-type="hidden-form-link" condition="canEdit" parameter-map="{definitionId:definitionId,refKey:refKey,refId:refId}"/></default-field></field>
-                        </form-list>
+                        <section name="SharedRefsSection" condition="refList.length">
+                            <widgets>
+                                <form-list name="SharedRefs" list="refList" skip-form="true" paginate="false">
+                                    <field name="kind"><default-field title="Type"><display/></default-field></field>
+                                    <field name="title"><default-field title="Shared item">
+                                        <link id="OpenShared" url="${found.sharedUrl}" text="${title}" link-type="anchor" condition="!!found.sharedUrl" parameter-map="{definitionId:refId, sharedType:''}"/>
+                                        <label text="${title}" condition="!found.sharedUrl"/>
+                                    </default-field></field>
+                                    <field name="refId"><default-field title="ID"><display/></default-field></field>
+                                    <field name="remove"><default-field title=""><link url="removeRef" text="Remove" link-type="hidden-form-link" condition="canEdit" parameter-map="{definitionId:definitionId,refKey:refKey,refId:refId}"/></default-field></field>
+                                </form-list>
+                            </widgets>
+                        </section>
                     </box-body-nopad>
                 </container-box>
                 <container style="row q-col-gutter-md">
@@ -529,12 +545,16 @@
                                 <label type="p" style="m-muted" text="No one-off silence has been added here." condition="!silenceList.length"/>
                             </box-body>
                             <box-body-nopad>
-                                <form-list name="Silences" list="silenceList" skip-form="true" paginate="false" condition="silenceList.length">
-                                    <field name="from"><default-field title="From"><display/></default-field></field>
-                                    <field name="thru"><default-field title="Through"><display/></default-field></field>
-                                    <field name="comment"><default-field title="Comment"><display/></default-field></field>
-                                    <field name="remove"><default-field title=""><link url="removeItem" text="Remove" link-type="hidden-form-link" condition="canEdit" parameter-map="{definitionId:definitionId,collection:'silences',itemIndex:itemIndex}"/></default-field></field>
-                                </form-list>
+                                <section name="SilencesSection" condition="silenceList.length">
+                                    <widgets>
+                                        <form-list name="Silences" list="silenceList" skip-form="true" paginate="false">
+                                            <field name="from"><default-field title="From"><display/></default-field></field>
+                                            <field name="thru"><default-field title="Through"><display/></default-field></field>
+                                            <field name="comment"><default-field title="Comment"><display/></default-field></field>
+                                            <field name="remove"><default-field title=""><link url="removeItem" text="Remove" link-type="hidden-form-link" condition="canEdit" parameter-map="{definitionId:definitionId,collection:'silences',itemIndex:itemIndex}"/></default-field></field>
+                                        </form-list>
+                                    </widgets>
+                                </section>
                             </box-body-nopad>
                         </container-box>
                     </container>
@@ -564,13 +584,17 @@
                                 <label type="p" style="m-muted" text="No recurring mute timing has been added here." condition="!muteList.length"/>
                             </box-body>
                             <box-body-nopad>
-                                <form-list name="MuteTimings" list="muteList" skip-form="true" paginate="false" condition="muteList.length">
-                                    <field name="name"><default-field title="Name"><display/></default-field></field>
-                                    <field name="weekdays"><default-field title="Weekdays"><display text="${weekdayNames}"/></default-field></field>
-                                    <field name="start"><default-field title="Start"><display/></default-field></field>
-                                    <field name="end"><default-field title="End"><display/></default-field></field>
-                                    <field name="remove"><default-field title=""><link url="removeItem" text="Remove" link-type="hidden-form-link" condition="canEdit" parameter-map="{definitionId:definitionId,collection:'muteTimings',itemIndex:itemIndex}"/></default-field></field>
-                                </form-list>
+                                <section name="MuteTimingsSection" condition="muteList.length">
+                                    <widgets>
+                                        <form-list name="MuteTimings" list="muteList" skip-form="true" paginate="false">
+                                            <field name="name"><default-field title="Name"><display/></default-field></field>
+                                            <field name="weekdays"><default-field title="Weekdays"><display text="${weekdayNames}"/></default-field></field>
+                                            <field name="start"><default-field title="Start"><display/></default-field></field>
+                                            <field name="end"><default-field title="End"><display/></default-field></field>
+                                            <field name="remove"><default-field title=""><link url="removeItem" text="Remove" link-type="hidden-form-link" condition="canEdit" parameter-map="{definitionId:definitionId,collection:'muteTimings',itemIndex:itemIndex}"/></default-field></field>
+                                        </form-list>
+                                    </widgets>
+                                </section>
                             </box-body-nopad>
                         </container-box>
                     </container>
@@ -585,24 +609,28 @@
                         <label type="p" text="${found.stateNote}" condition="found.stateNote"/>
                     </box-body>
                     <box-body-nopad>
-                        <form-list name="OwnAlertState" list="seriesStates" skip-form="true" paginate="false" condition="seriesStates.length">
-                            <field name="seriesText"><default-field title="Series"><display/></default-field></field>
-                            <field name="stateText"><default-field title="State">
-                                <render-mode>
-                                    <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${
+                        <section name="OwnAlertStateSection" condition="seriesStates.length">
+                            <widgets>
+                                <form-list name="OwnAlertState" list="seriesStates" skip-form="true" paginate="false">
+                                    <field name="seriesText"><default-field title="Series"><display/></default-field></field>
+                                    <field name="stateText"><default-field title="State">
+                                        <render-mode>
+                                            <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${
                                         WebUtilities.encodeHtml(stateText)}</q-chip>]]></text>
-                                    <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
-                                    <text type="html">${stateText}</text>
-                                </render-mode>
-                            </default-field></field>
-                            <field name="valueText"><default-field title="Value"><display/></default-field></field>
-                            <field name="sinceText"><default-field title="Since"><display/></default-field></field>
-                            <field name="evaluatedText"><default-field title="Evaluated"><display/></default-field></field>
-                            <columns type="mobile">
-                                <column><field-ref name="seriesText"/><field-ref name="valueText"/></column>
-                                <column><field-ref name="stateText"/><field-ref name="sinceText"/></column>
-                            </columns>
-                        </form-list>
+                                            <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                                            <text type="html">${stateText}</text>
+                                        </render-mode>
+                                    </default-field></field>
+                                    <field name="valueText"><default-field title="Value"><display/></default-field></field>
+                                    <field name="sinceText"><default-field title="Since"><display/></default-field></field>
+                                    <field name="evaluatedText"><default-field title="Evaluated"><display/></default-field></field>
+                                    <columns type="mobile">
+                                        <column><field-ref name="seriesText"/><field-ref name="valueText"/></column>
+                                        <column><field-ref name="stateText"/><field-ref name="sinceText"/></column>
+                                    </columns>
+                                </form-list>
+                            </widgets>
+                        </section>
                     </box-body-nopad>
                 </container-box>
                 <section name="DeliveriesBox" condition="found.business &amp;&amp; !alert.template"><widgets>
@@ -613,24 +641,28 @@
                             <label type="p" style="m-muted" text="Nobody has been told yet." condition="!deliveries.length"/>
                         </box-body>
                         <box-body-nopad>
-                            <form-list name="AlertDeliveryStatus" list="deliveries" skip-form="true" paginate="false" condition="deliveries.length">
-                                <field name="recipientName"><default-field title="Recipient"><display/></default-field></field>
-                                <field name="toldText"><default-field title="Told"><display text="${toldText} · ${channelText}"/></default-field></field>
-                                <field name="stateText"><default-field title="Outcome">
-                                    <render-mode>
-                                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${
+                            <section name="AlertDeliveryStatusSection" condition="deliveries.length">
+                                <widgets>
+                                    <form-list name="AlertDeliveryStatus" list="deliveries" skip-form="true" paginate="false">
+                                        <field name="recipientName"><default-field title="Recipient"><display/></default-field></field>
+                                        <field name="toldText"><default-field title="Told"><display text="${toldText} · ${channelText}"/></default-field></field>
+                                        <field name="stateText"><default-field title="Outcome">
+                                            <render-mode>
+                                                <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${
                                             WebUtilities.encodeHtml(stateText)}</q-chip>]]></text>
-                                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
-                                        <text type="html">${stateText}</text>
-                                    </render-mode>
-                                </default-field></field>
-                                <field name="reasonText"><default-field title="Why"><display/></default-field></field>
-                                <field name="attemptText"><default-field title="When"><display/></default-field></field>
-                                <columns type="mobile">
-                                    <column><field-ref name="recipientName"/><field-ref name="toldText"/></column>
-                                    <column><field-ref name="stateText"/><field-ref name="reasonText"/></column>
-                                </columns>
-                            </form-list>
+                                                <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                                                <text type="html">${stateText}</text>
+                                            </render-mode>
+                                        </default-field></field>
+                                        <field name="reasonText"><default-field title="Why"><display/></default-field></field>
+                                        <field name="attemptText"><default-field title="When"><display/></default-field></field>
+                                        <columns type="mobile">
+                                            <column><field-ref name="recipientName"/><field-ref name="toldText"/></column>
+                                            <column><field-ref name="stateText"/><field-ref name="reasonText"/></column>
+                                        </columns>
+                                    </form-list>
+                                </widgets>
+                            </section>
                         </box-body-nopad>
                     </container-box>
                 </widgets></section>

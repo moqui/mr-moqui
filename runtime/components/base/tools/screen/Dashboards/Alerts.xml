@@ -91,111 +91,123 @@
         <section name="OwnAlerts" condition="view == 'all' || view == 'mine'"><widgets>
             <label type="p" style="m-muted" condition="!alertList.length"
                     text="${found.operational ? 'No alert rule yet. Create one to evaluate a query and track its state, or copy a template.' : 'You have no alert yet. Copy a template, or start one from a panel\'s menu on a dashboard.'}"/>
-            <form-list name="AlertRules" list="alertList" paginate="false" condition="alertList.length">
-                <row-selection id-field="definitionId" parameter="definitionIds" list-mode="true">
-                    <action>
-                        <dialog button-text="Pause" title="Pause the selected alerts"/>
-                        <form-single name="PauseSelected" transition="pauseAlerts">
-                            <field name="paused"><default-field><hidden default-value="true"/></default-field></field>
-                            <field name="note"><default-field title=""><label text="The selected alerts are not evaluated and tell nobody until activated again. Each one's result is shown."/></default-field></field>
-                            <field name="submitButton"><default-field title="Pause"><submit/></default-field></field>
-                        </form-single>
-                    </action>
-                </row-selection>
-                <field name="title"><default-field title="Alert">
-                    <link id="OpenRule" url="${found.ruleUrl}" text="${title}" link-type="anchor" condition="!!found.ruleUrl"
-                            parameter-map="{definitionId:definitionId, dashboardId:'', panelId:'', queryIndex:''}"/>
-                    <label text="${title}" condition="!found.ruleUrl"/>
-                </default-field></field>
-                <field name="kindText"><default-field title="Kind"><display text="${kindText}${view == 'all' ? ' · ' + ownerText : ''}"/></default-field></field>
-                <field name="conditionText"><default-field title="Fires when"><display/></default-field></field>
-                <field name="audienceText"><default-field title="Tells"><display/></default-field></field>
-                <field name="stateText"><default-field title="State">
-                    <render-mode>
-                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${
+            <section name="AlertRulesSection" condition="alertList.length">
+                <widgets>
+                    <form-list name="AlertRules" list="alertList" paginate="false">
+                        <row-selection id-field="definitionId" parameter="definitionIds" list-mode="true">
+                            <action>
+                                <dialog button-text="Pause" title="Pause the selected alerts"/>
+                                <form-single name="PauseSelected" transition="pauseAlerts">
+                                    <field name="paused"><default-field><hidden default-value="true"/></default-field></field>
+                                    <field name="note"><default-field title=""><label text="The selected alerts are not evaluated and tell nobody until activated again. Each one's result is shown."/></default-field></field>
+                                    <field name="submitButton"><default-field title="Pause"><submit/></default-field></field>
+                                </form-single>
+                            </action>
+                        </row-selection>
+                        <field name="title"><default-field title="Alert">
+                            <link id="OpenRule" url="${found.ruleUrl}" text="${title}" link-type="anchor" condition="!!found.ruleUrl"
+                                    parameter-map="{definitionId:definitionId, dashboardId:'', panelId:'', queryIndex:''}"/>
+                            <label text="${title}" condition="!found.ruleUrl"/>
+                        </default-field></field>
+                        <field name="kindText"><default-field title="Kind"><display text="${kindText}${view == 'all' ? ' · ' + ownerText : ''}"/></default-field></field>
+                        <field name="conditionText"><default-field title="Fires when"><display/></default-field></field>
+                        <field name="audienceText"><default-field title="Tells"><display/></default-field></field>
+                        <field name="stateText"><default-field title="State">
+                            <render-mode>
+                                <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${
                             WebUtilities.encodeHtml(stateText)}</q-chip>]]></text>
-                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
-                        <text type="html">${stateText}</text>
-                    </render-mode>
-                </default-field></field>
-                <field name="lastText"><default-field title="Evaluated"><display/></default-field></field>
-                <field name="actions"><default-field title="">
-                    <link url="pauseAlerts" link-type="hidden-form" text="Pause" condition="changeable &amp;&amp; !paused"
-                            confirmation="Pause ${title}? It is not evaluated and tells nobody until activated again."
-                            parameter-map="{definitionIds:definitionId, paused:'true'}"/>
-                    <link url="pauseAlerts" link-type="hidden-form" text="Activate" condition="changeable &amp;&amp; paused"
-                            confirmation="Activate ${title}? Its reading is run as you first, and whom it tells (${audienceText}) is checked."
-                            parameter-map="{definitionIds:definitionId, paused:'false'}"/>
-                    <link url="evaluate" link-type="hidden-form" text="Evaluate now" condition="found.canEvaluate &amp;&amp; !template &amp;&amp; !paused"
-                            confirmation="Request an evaluation of ${title} now? Its evaluation interval still applies, and a state change notifies whom it tells."
-                            parameter-map="{definitionId:definitionId}"/>
-                    <link url="deleteAlert" link-type="hidden-form" text="Delete" condition="changeable"
-                            confirmation="Delete ${title} with its state, its delivery history and its versions? ${audienceText} is no longer told."
-                            parameter-map="{definitionId:definitionId}"/>
-                </default-field></field>
-                <columns type="mobile">
-                    <column><field-ref name="title"/><field-ref name="conditionText"/></column>
-                    <column><field-ref name="stateText"/><field-ref name="actions"/></column>
-                </columns>
-            </form-list>
+                                <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                                <text type="html">${stateText}</text>
+                            </render-mode>
+                        </default-field></field>
+                        <field name="lastText"><default-field title="Evaluated"><display/></default-field></field>
+                        <field name="actions"><default-field title="">
+                            <link url="pauseAlerts" link-type="hidden-form" text="Pause" condition="changeable &amp;&amp; !paused"
+                                    confirmation="Pause ${title}? It is not evaluated and tells nobody until activated again."
+                                    parameter-map="{definitionIds:definitionId, paused:'true'}"/>
+                            <link url="pauseAlerts" link-type="hidden-form" text="Activate" condition="changeable &amp;&amp; paused"
+                                    confirmation="Activate ${title}? Its reading is run as you first, and whom it tells (${audienceText}) is checked."
+                                    parameter-map="{definitionIds:definitionId, paused:'false'}"/>
+                            <link url="evaluate" link-type="hidden-form" text="Evaluate now" condition="found.canEvaluate &amp;&amp; !template &amp;&amp; !paused"
+                                    confirmation="Request an evaluation of ${title} now? Its evaluation interval still applies, and a state change notifies whom it tells."
+                                    parameter-map="{definitionId:definitionId}"/>
+                            <link url="deleteAlert" link-type="hidden-form" text="Delete" condition="changeable"
+                                    confirmation="Delete ${title} with its state, its delivery history and its versions? ${audienceText} is no longer told."
+                                    parameter-map="{definitionId:definitionId}"/>
+                        </default-field></field>
+                        <columns type="mobile">
+                            <column><field-ref name="title"/><field-ref name="conditionText"/></column>
+                            <column><field-ref name="stateText"/><field-ref name="actions"/></column>
+                        </columns>
+                    </form-list>
+                </widgets>
+            </section>
         </widgets></section>
 
         <section name="ReceivedAlerts" condition="view == 'received'"><widgets>
             <label type="p" style="m-muted" condition="!received.length" text="No alert has told you anything yet."/>
-            <form-list name="ReceivedList" list="received" skip-form="true" paginate="false" condition="received.length">
-                <field name="title"><default-field title="Alert">
-                    <link id="OpenRule" url="${found.ruleUrl}" text="${title}" link-type="anchor" condition="readable &amp;&amp; !!found.ruleUrl"
-                            parameter-map="{definitionId:definitionId, dashboardId:'', panelId:'', queryIndex:''}"/>
-                    <label text="${title}" condition="!readable || !found.ruleUrl"/>
-                </default-field></field>
-                <field name="toldText"><default-field title="You were told"><display text="${toldText} · ${channelText}"/></default-field></field>
-                <field name="attemptText"><default-field title="When"><display/></default-field></field>
-                <field name="stateText"><default-field title="Your delivery">
-                    <render-mode>
-                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${
+            <section name="ReceivedListSection" condition="received.length">
+                <widgets>
+                    <form-list name="ReceivedList" list="received" skip-form="true" paginate="false">
+                        <field name="title"><default-field title="Alert">
+                            <link id="OpenRule" url="${found.ruleUrl}" text="${title}" link-type="anchor" condition="readable &amp;&amp; !!found.ruleUrl"
+                                    parameter-map="{definitionId:definitionId, dashboardId:'', panelId:'', queryIndex:''}"/>
+                            <label text="${title}" condition="!readable || !found.ruleUrl"/>
+                        </default-field></field>
+                        <field name="toldText"><default-field title="You were told"><display text="${toldText} · ${channelText}"/></default-field></field>
+                        <field name="attemptText"><default-field title="When"><display/></default-field></field>
+                        <field name="stateText"><default-field title="Your delivery">
+                            <render-mode>
+                                <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${
                             WebUtilities.encodeHtml(stateText)}</q-chip>]]></text>
-                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
-                        <text type="html">${stateText}</text>
-                    </render-mode>
-                </default-field></field>
-                <field name="ruleStateText"><default-field title="Now">
-                    <render-mode>
-                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${ruleStateColor}">${
+                                <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                                <text type="html">${stateText}</text>
+                            </render-mode>
+                        </default-field></field>
+                        <field name="ruleStateText"><default-field title="Now">
+                            <render-mode>
+                                <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${ruleStateColor}">${
                             WebUtilities.encodeHtml(ruleStateText)}</q-chip>]]></text>
-                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: ruleStateText})}]]></text>
-                        <text type="html">${ruleStateText}</text>
-                    </render-mode>
-                </default-field></field>
-                <columns type="mobile">
-                    <column><field-ref name="title"/><field-ref name="toldText"/></column>
-                    <column><field-ref name="ruleStateText"/><field-ref name="attemptText"/></column>
-                </columns>
-            </form-list>
+                                <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: ruleStateText})}]]></text>
+                                <text type="html">${ruleStateText}</text>
+                            </render-mode>
+                        </default-field></field>
+                        <columns type="mobile">
+                            <column><field-ref name="title"/><field-ref name="toldText"/></column>
+                            <column><field-ref name="ruleStateText"/><field-ref name="attemptText"/></column>
+                        </columns>
+                    </form-list>
+                </widgets>
+            </section>
         </widgets></section>
 
         <section name="AlertTemplates" condition="view == 'templates'"><widgets>
             <label type="p" style="m-muted" text="A shipped alert is a template: it runs only once copied. Your copy is yours alone; one over business data stays inactive until you set its threshold and whom it tells and activate it."/>
             <label type="p" style="m-muted" condition="!templates.length" text="No shipped alert is yours to read."/>
-            <form-list name="TemplateList" list="templates" skip-form="true" paginate="false" condition="templates.length">
-                <field name="title"><default-field title="Template">
-                    <link id="OpenRule" url="${found.ruleUrl}" text="${title}" link-type="anchor" condition="!!found.ruleUrl"
-                            parameter-map="{definitionId:definitionId, dashboardId:'', panelId:'', queryIndex:''}"/>
-                    <label text="${title}" condition="!found.ruleUrl"/>
-                </default-field></field>
-                <field name="description"><default-field title="What it watches"><display/></default-field></field>
-                <field name="kindText"><default-field title="Kind"><display/></default-field></field>
-                <field name="conditionText"><default-field title="Fires when"><display/></default-field></field>
-                <field name="copy"><default-field title="">
-                    <link url="copyAlert" link-type="hidden-form" text="Copy" condition="available"
-                            confirmation="Copy ${title}? The copy is yours alone."
-                            parameter-map="{sourceDefinitionId:definitionId}"/>
-                    <label text="${availableText}" style="m-muted" condition="!available"/>
-                </default-field></field>
-                <columns type="mobile">
-                    <column><field-ref name="title"/><field-ref name="conditionText"/></column>
-                    <column><field-ref name="copy"/></column>
-                </columns>
-            </form-list>
+            <section name="TemplateListSection" condition="templates.length">
+                <widgets>
+                    <form-list name="TemplateList" list="templates" skip-form="true" paginate="false">
+                        <field name="title"><default-field title="Template">
+                            <link id="OpenRule" url="${found.ruleUrl}" text="${title}" link-type="anchor" condition="!!found.ruleUrl"
+                                    parameter-map="{definitionId:definitionId, dashboardId:'', panelId:'', queryIndex:''}"/>
+                            <label text="${title}" condition="!found.ruleUrl"/>
+                        </default-field></field>
+                        <field name="description"><default-field title="What it watches"><display/></default-field></field>
+                        <field name="kindText"><default-field title="Kind"><display/></default-field></field>
+                        <field name="conditionText"><default-field title="Fires when"><display/></default-field></field>
+                        <field name="copy"><default-field title="">
+                            <link url="copyAlert" link-type="hidden-form" text="Copy" condition="available"
+                                    confirmation="Copy ${title}? The copy is yours alone."
+                                    parameter-map="{sourceDefinitionId:definitionId}"/>
+                            <label text="${availableText}" style="m-muted" condition="!available"/>
+                        </default-field></field>
+                        <columns type="mobile">
+                            <column><field-ref name="title"/><field-ref name="conditionText"/></column>
+                            <column><field-ref name="copy"/></column>
+                        </columns>
+                    </form-list>
+                </widgets>
+            </section>
         </widgets></section>
 
         <section name="SeriesStates" condition="found.operational &amp;&amp; instanceList.length"><widgets>

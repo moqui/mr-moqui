@@ -648,39 +648,43 @@ along with this software (see the LICENSE.md file). If not, see
             <label text="${root.label} is not a git repository." type="p" style="m-muted" condition="!isGit"/>
             <section name="WorkspaceChangesGit" condition="isGit"><widgets>
                 <label text="No changes" type="p" style="m-muted" condition="!changeRows.length"/>
-                <form-list name="WorkspaceChangeList" list="changeRows" skip-form="true" paginate="false" condition="changeRows.length">
-                    <row-selection id-field="path" parameter="paths" list-mode="true" condition="canWrite">
-                        <action>
-                            <form-single name="WorkspaceStageSelected" transition="stageFiles">
-                                <field name="rootId"><default-field><hidden/></default-field></field>
-                                <field name="submitButton"><default-field title="Stage selected"><submit/></default-field></field>
-                            </form-single>
-                        </action>
-                        <action>
-                            <form-single name="WorkspaceUnstageSelected" transition="unstageFiles">
-                                <field name="rootId"><default-field><hidden/></default-field></field>
-                                <field name="submitButton"><default-field title="Unstage selected"><submit/></default-field></field>
-                            </form-single>
-                        </action>
-                        <action>
-                            <dialog button-text="Discard" title="Throw away the changes of the selected files"/>
-                            <form-single name="WorkspaceDiscardSelected" transition="discardFiles">
-                                <field name="rootId"><default-field><hidden/></default-field></field>
-                                <field name="note"><default-field title=""><label text="Their changes in the work tree are lost, and a new file is deleted."/></default-field></field>
-                                <field name="submitButton"><default-field title="Discard"><submit type="danger" confirmation="Throw away the changes of the selected files?"/></default-field></field>
-                            </form-single>
-                        </action>
-                    </row-selection>
-                    <field name="letter"><default-field title=""><display/></default-field></field>
-                    <field name="path"><default-field title="File">
-                        <link url="../Workspace" text="${path}" link-type="anchor" parameter-map="{changePath:path, staged:diffStaged}"/>
-                    </default-field></field>
-                    <field name="stateText"><default-field title="State"><display/></default-field></field>
-                    <field name="tools" align="right"><default-field title="">
-                        <link url="../Workspace" text="Staged diff" link-type="anchor" condition="bothSides" parameter-map="{changePath:path, staged:'true'}"/>
-                        <link url="../Workspace" text="Open" link-type="anchor" parameter-map="{tab:'code', path:path, line:'', changePath:'', staged:''}"/>
-                    </default-field></field>
-                </form-list>
+                <section name="WorkspaceChangeListSection" condition="changeRows.length">
+                    <widgets>
+                        <form-list name="WorkspaceChangeList" list="changeRows" skip-form="true" paginate="false">
+                            <row-selection id-field="path" parameter="paths" list-mode="true" condition="canWrite">
+                                <action>
+                                    <form-single name="WorkspaceStageSelected" transition="stageFiles">
+                                        <field name="rootId"><default-field><hidden/></default-field></field>
+                                        <field name="submitButton"><default-field title="Stage selected"><submit/></default-field></field>
+                                    </form-single>
+                                </action>
+                                <action>
+                                    <form-single name="WorkspaceUnstageSelected" transition="unstageFiles">
+                                        <field name="rootId"><default-field><hidden/></default-field></field>
+                                        <field name="submitButton"><default-field title="Unstage selected"><submit/></default-field></field>
+                                    </form-single>
+                                </action>
+                                <action>
+                                    <dialog button-text="Discard" title="Throw away the changes of the selected files"/>
+                                    <form-single name="WorkspaceDiscardSelected" transition="discardFiles">
+                                        <field name="rootId"><default-field><hidden/></default-field></field>
+                                        <field name="note"><default-field title=""><label text="Their changes in the work tree are lost, and a new file is deleted."/></default-field></field>
+                                        <field name="submitButton"><default-field title="Discard"><submit type="danger" confirmation="Throw away the changes of the selected files?"/></default-field></field>
+                                    </form-single>
+                                </action>
+                            </row-selection>
+                            <field name="letter"><default-field title=""><display/></default-field></field>
+                            <field name="path"><default-field title="File">
+                                <link url="../Workspace" text="${path}" link-type="anchor" parameter-map="{changePath:path, staged:diffStaged}"/>
+                            </default-field></field>
+                            <field name="stateText"><default-field title="State"><display/></default-field></field>
+                            <field name="tools" align="right"><default-field title="">
+                                <link url="../Workspace" text="Staged diff" link-type="anchor" condition="bothSides" parameter-map="{changePath:path, staged:'true'}"/>
+                                <link url="../Workspace" text="Open" link-type="anchor" parameter-map="{tab:'code', path:path, line:'', changePath:'', staged:''}"/>
+                            </default-field></field>
+                        </form-list>
+                    </widgets>
+                </section>
                 <section name="WorkspaceChangeDiff" condition="changeDiff"><widgets>
                     <container-box><box-header title="${staged == 'true' ? 'Staged changes' : 'Changes'} of ${changePath}"/><box-toolbar>
                         <link url="../Workspace" text="Close" link-type="anchor" parameter-map="{changePath:'', staged:''}"/>
@@ -746,14 +750,18 @@ along with this software (see the LICENSE.md file). If not, see
                     </widgets></section>
                 </box-body></container-box>
             </widgets></section>
-            <form-list name="WorkspaceCommitList" list="commitRows" skip-form="true" paginate="false" condition="isGit">
-                <field name="subject"><default-field title="Commit">
-                    <link url="../Workspace" text="${subject || shortId}" link-type="anchor" parameter-map="{commitId:id, commitPath:''}"/>
-                </default-field></field>
-                <field name="shortId"><default-field title="Id"><display/></default-field></field>
-                <field name="authorName"><default-field title="Author"><display/></default-field></field>
-                <field name="dateText"><default-field title="Date"><display/></default-field></field>
-            </form-list>
+            <section name="WorkspaceCommitListSection" condition="isGit">
+                <widgets>
+                    <form-list name="WorkspaceCommitList" list="commitRows" skip-form="true" paginate="false">
+                        <field name="subject"><default-field title="Commit">
+                            <link url="../Workspace" text="${subject || shortId}" link-type="anchor" parameter-map="{commitId:id, commitPath:''}"/>
+                        </default-field></field>
+                        <field name="shortId"><default-field title="Id"><display/></default-field></field>
+                        <field name="authorName"><default-field title="Author"><display/></default-field></field>
+                        <field name="dateText"><default-field title="Date"><display/></default-field></field>
+                    </form-list>
+                </widgets>
+            </section>
             <container style="row q-gutter-sm">
                 <link url="../Workspace" text="Newer commits" condition="isGit &amp;&amp; logPage &gt; 0"
                         parameter-map="{pageIndex:(logPage &gt; 1 ? String(logPage - 1) : ''), commitId:'', commitPath:''}"/>

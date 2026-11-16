@@ -54,16 +54,20 @@ along with this software (see the LICENSE.md file). If not, see
                 <label text="Not in effect: another skill of this name counts (${detail.inEffectSkillId ?? 'none, it is not published or not allowed'})." type="p" style="text-warning"
                         condition="detail.inEffectSkillId != skillId"/>
                 <label text="Source ${skill.provenance ?? ''}, version ${skill.versionNum ?? 1}, ${skill.useCount ?? 0} uses, risk ${detail.risk ?? ''} (only a skill a person wrote lowers a risk), body ${detail.bodyChars ?? 0} characters." type="p"/>
-                <form-single name="SkillForm" transition="storeSkill" condition="!skill.sourceLocation">
-                    <field name="skillId"><default-field><hidden/></default-field></field>
-                    <field name="skillText"><default-field title="Skill" tooltip="Markdown with front matter; a front matter error is shown and nothing is saved">
-                        <text-area rows="24" cols="100"/></default-field></field>
-                    <field name="statusId" from="skill.statusId"><default-field title="Status"><drop-down allow-empty="false">
-                        <entity-options key="${statusId}" text="${description}"><entity-find entity-name="moqui.basic.StatusItem">
-                            <econdition field-name="statusTypeId" value="AgentSkill"/><order-by field-name="sequenceNum"/></entity-find></entity-options>
-                    </drop-down></default-field></field>
-                    <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
-                </form-single>
+                <section name="SkillFormSection" condition="!skill.sourceLocation">
+                    <widgets>
+                        <form-single name="SkillForm" transition="storeSkill">
+                            <field name="skillId"><default-field><hidden/></default-field></field>
+                            <field name="skillText"><default-field title="Skill" tooltip="Markdown with front matter; a front matter error is shown and nothing is saved">
+                                <text-area rows="24" cols="100"/></default-field></field>
+                            <field name="statusId" from="skill.statusId"><default-field title="Status"><drop-down allow-empty="false">
+                                <entity-options key="${statusId}" text="${description}"><entity-find entity-name="moqui.basic.StatusItem">
+                                    <econdition field-name="statusTypeId" value="AgentSkill"/><order-by field-name="sequenceNum"/></entity-find></entity-options>
+                            </drop-down></default-field></field>
+                            <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                        </form-single>
+                    </widgets>
+                </section>
                 <label text="${skillText ?? ''}" type="pre" encode="true" condition="skill.sourceLocation"/>
             </fail-widgets></section>
         </box-body></container-box>

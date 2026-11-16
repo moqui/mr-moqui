@@ -174,26 +174,34 @@
                                 <label type="p" style="m-muted" text="${found.audienceNote}" condition="found.audienceNote"/>
                             </box-body>
                             <box-body-nopad>
-                                <form-list name="AudienceMembers" list="recipients" skip-form="true" paginate="false" condition="recipients.length">
-                                    <field name="name"><default-field title="Recipient"><display/></default-field></field>
-                                    <field name="kind"><default-field title="Kind"><display/></default-field></field>
-                                </form-list>
-                                <form-list name="AudienceResults" list="audience" skip-form="true" paginate="false" condition="audience.length">
-                                    <field name="recipientName"><default-field title="Person"><display/></default-field></field>
-                                    <field name="viaText"><default-field title="How"><display/></default-field></field>
-                                    <field name="resultText"><default-field title="Result">
-                                        <render-mode>
-                                            <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${resultColor}">${
+                                <section name="AudienceMembersSection" condition="recipients.length">
+                                    <widgets>
+                                        <form-list name="AudienceMembers" list="recipients" skip-form="true" paginate="false">
+                                            <field name="name"><default-field title="Recipient"><display/></default-field></field>
+                                            <field name="kind"><default-field title="Kind"><display/></default-field></field>
+                                        </form-list>
+                                    </widgets>
+                                </section>
+                                <section name="AudienceResultsSection" condition="audience.length">
+                                    <widgets>
+                                        <form-list name="AudienceResults" list="audience" skip-form="true" paginate="false">
+                                            <field name="recipientName"><default-field title="Person"><display/></default-field></field>
+                                            <field name="viaText"><default-field title="How"><display/></default-field></field>
+                                            <field name="resultText"><default-field title="Result">
+                                                <render-mode>
+                                                    <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${resultColor}">${
                                                 WebUtilities.encodeHtml(resultText)}</q-chip>]]></text>
-                                            <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: resultText})}]]></text>
-                                            <text type="html">${resultText}</text>
-                                        </render-mode>
-                                    </default-field></field>
-                                    <columns type="mobile">
-                                        <column><field-ref name="recipientName"/></column>
-                                        <column><field-ref name="resultText"/></column>
-                                    </columns>
-                                </form-list>
+                                                    <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: resultText})}]]></text>
+                                                    <text type="html">${resultText}</text>
+                                                </render-mode>
+                                            </default-field></field>
+                                            <columns type="mobile">
+                                                <column><field-ref name="recipientName"/></column>
+                                                <column><field-ref name="resultText"/></column>
+                                            </columns>
+                                        </form-list>
+                                    </widgets>
+                                </section>
                             </box-body-nopad>
                         </container-box>
                     </widgets></section>
@@ -226,25 +234,29 @@
                         <label type="p" style="m-muted" text="Not yet run." condition="!runs.length"/>
                     </box-body>
                     <box-body-nopad>
-                        <form-list name="ScheduleRuns" list="runs" skip-form="true" paginate="false" condition="runs.length">
-                            <field name="dateText"><default-field title="Run">
-                                <link url="../ReportDelivery" text="${dateText}" link-type="anchor" parameter-map="{occurrenceId:occurrenceId}"/>
-                            </default-field></field>
-                            <field name="kindText"><default-field title="How"><display/></default-field></field>
-                            <field name="stateText"><default-field title="State">
-                                <render-mode>
-                                    <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${
+                        <section name="ScheduleRunsSection" condition="runs.length">
+                            <widgets>
+                                <form-list name="ScheduleRuns" list="runs" skip-form="true" paginate="false">
+                                    <field name="dateText"><default-field title="Run">
+                                        <link url="../ReportDelivery" text="${dateText}" link-type="anchor" parameter-map="{occurrenceId:occurrenceId}"/>
+                                    </default-field></field>
+                                    <field name="kindText"><default-field title="How"><display/></default-field></field>
+                                    <field name="stateText"><default-field title="State">
+                                        <render-mode>
+                                            <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${
                                         WebUtilities.encodeHtml(stateText)}</q-chip>]]></text>
-                                    <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
-                                    <text type="html">${stateText}</text>
-                                </render-mode>
-                            </default-field></field>
-                            <field name="countsText"><default-field title="Recipients"><display text="${countsText}${reasonText ? ' · ' + reasonText : ''}"/></default-field></field>
-                            <columns type="mobile">
-                                <column><field-ref name="dateText"/><field-ref name="countsText"/></column>
-                                <column><field-ref name="stateText"/></column>
-                            </columns>
-                        </form-list>
+                                            <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                                            <text type="html">${stateText}</text>
+                                        </render-mode>
+                                    </default-field></field>
+                                    <field name="countsText"><default-field title="Recipients"><display text="${countsText}${reasonText ? ' · ' + reasonText : ''}"/></default-field></field>
+                                    <columns type="mobile">
+                                        <column><field-ref name="dateText"/><field-ref name="countsText"/></column>
+                                        <column><field-ref name="stateText"/></column>
+                                    </columns>
+                                </form-list>
+                            </widgets>
+                        </section>
                     </box-body-nopad>
                 </container-box>
             </widgets></section>

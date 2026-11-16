@@ -356,14 +356,18 @@
             <link condition="showPatterns !== 'Y'" url="." text="Show log patterns" parameter-map="{datasetId:datasetId,queryString:queryString,from:from,thru:thru,filtersJson:filtersJson,showPatterns:'Y'}"/>
             <link condition="showPatterns === 'Y'" url="." text="Hide log patterns" parameter-map="{datasetId:datasetId,queryString:queryString,from:from,thru:thru,filtersJson:filtersJson}"/>
             <label condition="showPatterns === 'Y'" text="Patterns of the newest ${Math.min(patternLines || 0,1000)} of ${patternLines || 0} matching lines. Numbers, ids and quoted text are shown as &lt;*&gt;; a pattern narrows the search to its lines." type="p"/>
-            <form-list name="Patterns" list="patternList" skip-form="true" paginate="false" condition="showPatterns === 'Y'">
-                <field name="pattern"><default-field><link url="." text="${pattern}" link-type="anchor" condition="query" parameter-map="{datasetId:datasetId,from:from,thru:thru,filtersJson:filtersJson,showPatterns:'Y',queryString:(queryString ? '('+queryString+') AND ' : '')+query}"/><display condition="!query"/></default-field></field>
-                <field name="count"><default-field><display/></default-field></field>
-                <field name="share"><default-field title="Share"><display text="${share}%"/></default-field></field>
-                <field name="severity"><default-field title="Level"><display/></default-field></field>
-                <field name="last"><default-field title="Latest"><display format="yyyy-MM-dd HH:mm:ss"/></default-field></field>
-                <field name="sample"><default-field title="Newest line"><display/></default-field></field>
-            </form-list>
+            <section name="PatternsSection" condition="showPatterns === 'Y'">
+                <widgets>
+                    <form-list name="Patterns" list="patternList" skip-form="true" paginate="false">
+                        <field name="pattern"><default-field><link url="." text="${pattern}" link-type="anchor" condition="query" parameter-map="{datasetId:datasetId,from:from,thru:thru,filtersJson:filtersJson,showPatterns:'Y',queryString:(queryString ? '('+queryString+') AND ' : '')+query}"/><display condition="!query"/></default-field></field>
+                        <field name="count"><default-field><display/></default-field></field>
+                        <field name="share"><default-field title="Share"><display text="${share}%"/></default-field></field>
+                        <field name="severity"><default-field title="Level"><display/></default-field></field>
+                        <field name="last"><default-field title="Latest"><display format="yyyy-MM-dd HH:mm:ss"/></default-field></field>
+                        <field name="sample"><default-field title="Newest line"><display/></default-field></field>
+                    </form-list>
+                </widgets>
+            </section>
         </widgets></section>
         <form-single name="InspectField" transition=".">
             <field name="filtersJson"><default-field><hidden/></default-field></field>

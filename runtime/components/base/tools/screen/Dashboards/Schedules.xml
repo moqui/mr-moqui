@@ -127,79 +127,87 @@
         <section name="OwnedSchedules" condition="view != 'received'"><widgets>
             <label type="p" style="m-muted" condition="!scheduleList.length"
                     text="${view == 'shared' ? 'You own no schedule that delivers to other people.' : 'You have no schedule yet. Start one with New schedule.'}"/>
-            <form-list name="ScreenScheduledList" list="scheduleList" paginate="false" condition="scheduleList.length">
-                <row-selection id-field="screenScheduledId" parameter="screenScheduledIds" list-mode="true">
-                    <action>
-                        <dialog button-text="Pause" title="Pause the selected schedules"/>
-                        <form-single name="PauseSelected" transition="pauseSchedules">
-                            <field name="paused"><default-field><hidden default-value="true"/></default-field></field>
-                            <field name="note"><default-field title=""><label text="The selected schedules send nothing until resumed. Each one's result is shown."/></default-field></field>
-                            <field name="submitButton"><default-field title="Pause"><submit/></default-field></field>
-                        </form-single>
-                    </action>
-                </row-selection>
-                <field name="title"><default-field title="Schedule">
-                    <link url="../ScheduledReportDetail" text="${title}" link-type="anchor" parameter-map="{screenScheduledId:screenScheduledId}"/>
-                </default-field></field>
-                <field name="definitionTitle"><default-field title="Report"><display/></default-field></field>
-                <field name="cronText"><default-field title="When"><display text="${cronText} · ${formatText}"/></default-field></field>
-                <field name="modeText"><default-field title="To"><display text="${audienceText}"/></default-field></field>
-                <field name="stateText"><default-field title="State">
-                    <render-mode>
-                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${
+            <section name="ScreenScheduledListSection" condition="scheduleList.length">
+                <widgets>
+                    <form-list name="ScreenScheduledList" list="scheduleList" paginate="false">
+                        <row-selection id-field="screenScheduledId" parameter="screenScheduledIds" list-mode="true">
+                            <action>
+                                <dialog button-text="Pause" title="Pause the selected schedules"/>
+                                <form-single name="PauseSelected" transition="pauseSchedules">
+                                    <field name="paused"><default-field><hidden default-value="true"/></default-field></field>
+                                    <field name="note"><default-field title=""><label text="The selected schedules send nothing until resumed. Each one's result is shown."/></default-field></field>
+                                    <field name="submitButton"><default-field title="Pause"><submit/></default-field></field>
+                                </form-single>
+                            </action>
+                        </row-selection>
+                        <field name="title"><default-field title="Schedule">
+                            <link url="../ScheduledReportDetail" text="${title}" link-type="anchor" parameter-map="{screenScheduledId:screenScheduledId}"/>
+                        </default-field></field>
+                        <field name="definitionTitle"><default-field title="Report"><display/></default-field></field>
+                        <field name="cronText"><default-field title="When"><display text="${cronText} · ${formatText}"/></default-field></field>
+                        <field name="modeText"><default-field title="To"><display text="${audienceText}"/></default-field></field>
+                        <field name="stateText"><default-field title="State">
+                            <render-mode>
+                                <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${
                             WebUtilities.encodeHtml(stateText)}</q-chip>]]></text>
-                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
-                        <text type="html">${stateText}</text>
-                    </render-mode>
-                </default-field></field>
-                <field name="lastText"><default-field title="Last run">
-                    <link url="../ReportDelivery" text="${lastText}" link-type="anchor" condition="lastOccurrenceId" parameter-map="{occurrenceId:lastOccurrenceId}"/>
-                    <label text="${lastText}" condition="!lastOccurrenceId"/>
-                </default-field></field>
-                <field name="actions"><default-field title="">
-                    <link url="pauseSchedules" link-type="hidden-form" text="Pause" condition="!paused"
-                            confirmation="Pause ${title}? It sends nothing until resumed."
-                            parameter-map="{screenScheduledIds:screenScheduledId, paused:'true'}"/>
-                    <link url="pauseSchedules" link-type="hidden-form" text="Resume" condition="paused"
-                            confirmation="Resume ${title}? Its recipients (${audienceText}) are checked again first."
-                            parameter-map="{screenScheduledIds:screenScheduledId, paused:'false'}"/>
-                    <link url="sendNow" link-type="hidden-form" text="Send now" condition="!screenSchedule &amp;&amp; !paused"
-                            confirmation="Send ${title} now to ${audienceText}? This is a new run, not a repeat of an earlier one."
-                            parameter-map="{screenScheduledId:screenScheduledId}"/>
-                </default-field></field>
-                <columns type="mobile">
-                    <column><field-ref name="title"/><field-ref name="cronText"/></column>
-                    <column><field-ref name="stateText"/><field-ref name="actions"/></column>
-                </columns>
-            </form-list>
+                                <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                                <text type="html">${stateText}</text>
+                            </render-mode>
+                        </default-field></field>
+                        <field name="lastText"><default-field title="Last run">
+                            <link url="../ReportDelivery" text="${lastText}" link-type="anchor" condition="lastOccurrenceId" parameter-map="{occurrenceId:lastOccurrenceId}"/>
+                            <label text="${lastText}" condition="!lastOccurrenceId"/>
+                        </default-field></field>
+                        <field name="actions"><default-field title="">
+                            <link url="pauseSchedules" link-type="hidden-form" text="Pause" condition="!paused"
+                                    confirmation="Pause ${title}? It sends nothing until resumed."
+                                    parameter-map="{screenScheduledIds:screenScheduledId, paused:'true'}"/>
+                            <link url="pauseSchedules" link-type="hidden-form" text="Resume" condition="paused"
+                                    confirmation="Resume ${title}? Its recipients (${audienceText}) are checked again first."
+                                    parameter-map="{screenScheduledIds:screenScheduledId, paused:'false'}"/>
+                            <link url="sendNow" link-type="hidden-form" text="Send now" condition="!screenSchedule &amp;&amp; !paused"
+                                    confirmation="Send ${title} now to ${audienceText}? This is a new run, not a repeat of an earlier one."
+                                    parameter-map="{screenScheduledId:screenScheduledId}"/>
+                        </default-field></field>
+                        <columns type="mobile">
+                            <column><field-ref name="title"/><field-ref name="cronText"/></column>
+                            <column><field-ref name="stateText"/><field-ref name="actions"/></column>
+                        </columns>
+                    </form-list>
+                </widgets>
+            </section>
         </widgets></section>
 
         <section name="ReceivedReports" condition="view == 'received'"><widgets>
             <label type="p" style="m-muted" condition="!received.length"
                     text="${found.canRead ? 'No report has been delivered to you yet.' : 'Scheduled reports are not available to you.'}"/>
-            <form-list name="ReceivedList" list="received" skip-form="true" paginate="true" condition="received.length">
-                <field name="title"><default-field title="Report">
-                    <link url="../ReportDelivery" text="${title}" link-type="anchor" parameter-map="{occurrenceId:occurrenceId}"/>
-                </default-field></field>
-                <field name="dateText"><default-field title="Run"><display/></default-field></field>
-                <field name="stateText"><default-field title="Your delivery">
-                    <render-mode>
-                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${
+            <section name="ReceivedListSection" condition="received.length">
+                <widgets>
+                    <form-list name="ReceivedList" list="received" skip-form="true" paginate="true">
+                        <field name="title"><default-field title="Report">
+                            <link url="../ReportDelivery" text="${title}" link-type="anchor" parameter-map="{occurrenceId:occurrenceId}"/>
+                        </default-field></field>
+                        <field name="dateText"><default-field title="Run"><display/></default-field></field>
+                        <field name="stateText"><default-field title="Your delivery">
+                            <render-mode>
+                                <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${
                             WebUtilities.encodeHtml(stateText)}</q-chip>]]></text>
-                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
-                        <text type="html">${stateText}</text>
-                    </render-mode>
-                </default-field></field>
-                <field name="reasonText"><default-field title="Why"><display/></default-field></field>
-                <field name="open"><default-field title="">
-                    <link url="ownReportFile" text="Open my report" link-type="anchor" target-window="_blank" condition="sent"
-                            parameter-map="{deliveryId:deliveryId}"/>
-                </default-field></field>
-                <columns type="mobile">
-                    <column><field-ref name="title"/><field-ref name="dateText"/></column>
-                    <column><field-ref name="stateText"/><field-ref name="open"/></column>
-                </columns>
-            </form-list>
+                                <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                                <text type="html">${stateText}</text>
+                            </render-mode>
+                        </default-field></field>
+                        <field name="reasonText"><default-field title="Why"><display/></default-field></field>
+                        <field name="open"><default-field title="">
+                            <link url="ownReportFile" text="Open my report" link-type="anchor" target-window="_blank" condition="sent"
+                                    parameter-map="{deliveryId:deliveryId}"/>
+                        </default-field></field>
+                        <columns type="mobile">
+                            <column><field-ref name="title"/><field-ref name="dateText"/></column>
+                            <column><field-ref name="stateText"/><field-ref name="open"/></column>
+                        </columns>
+                    </form-list>
+                </widgets>
+            </section>
         </widgets></section>
     </widgets>
 </screen>
