@@ -522,6 +522,22 @@ pub(crate) fn active_depth() -> usize {
     ACTIVE.with(|stack| stack.borrow().len())
 }
 
+/// Run `body` with a qvt render of `info` in progress, as a `.qvt` request of its path makes one before it sends the
+/// static template, without rendering anything: the actions transition builds the template under it, so the template is
+/// the one that request sends.
+pub(super) fn with_qvt_render<R>(
+    factory: &Arc<ExecutionContextFactory>,
+    facade: &Arc<ScreenFacade>,
+    info: Arc<ScreenUrlInfo>,
+    body: impl FnOnce(&RenderState) -> R,
+) -> R {
+    let mode = "qvt".to_string();
+    let (content_type, encoding) = output_type(facade, &info, &mode);
+    let state = Rc::new(RenderState::new(factory, facade, info, mode, content_type, encoding));
+    let _active = ActiveGuard::install(Rc::clone(&state));
+    body(&state)
+}
+
 /// Run `body` with the render in progress on this thread, if there is one.
 pub fn with_current_render<R>(body: impl FnOnce(&RenderState) -> R) -> Option<R> {
     let state = ACTIVE.with(|stack| stack.borrow().last().cloned())?;
@@ -1675,6 +1691,12 @@ impl Frames {
             crate::web::set_attribute("moqui.telemetry.artifact.name", Some(Value::string(&def.location)));
             crate::web::set_attribute("moqui.telemetry.artifact.action", Some(Value::string("view")));
         }
+        self.enter_screen_untold(def, is_last)
+    }
+
+    /// [`Self::enter_screen`] without naming the screen in the request's telemetry: the frames the actions transition
+    /// builds the screen's static template under, as its `.qvt` request does.
+    pub(super) fn enter_screen_untold(&mut self, def: &ScreenDef, is_last: bool) -> Result<(), Error> {
         self.push_screen(def, is_last && def.authentication == Authentication::Required)?;
         self.apply_anonymous(def)
     }
@@ -2013,7 +2035,7 @@ fn run_transition_steps(
     match transition.implicit {
         super::Implicit::Actions => {
             in_transaction(transition.begin_transaction, None, || {
-                super::statics::run_actions_transition(state)
+                super::statics::run_actions_transition(state, job.path)
             })?;
 
             return Ok(Step::Sent);

@@ -4,7 +4,8 @@
     <parameter name="pageIndex"/>
     <transition name="saveItem"><default-response type="none"/></transition>
     <transition name="viewItem" read-only="true"><default-response type="none"/></transition>
-    <always-actions><set field="alwaysTag" value="always-ran"/></always-actions>
+    <!-- the template does not read alwaysTag: client-context sends it all the same -->
+    <always-actions client-context="alwaysTag"><set field="alwaysTag" value="always-ran"/></always-actions>
     <actions>
         <set field="greeting" value="ZEBRA greeting for Ada Lovelace"/>
         <set field="item" from="{itemId: 'ZEBRA-I1', name: 'ZEBRA Widget', status: 'ACTIVE', price: 1234.5, currentPassword: 'ZEBRA-HASH', note: 'ZEBRA note', enabled: 'N', enabledOn: 'Y', selectedFlags: 'A,N,B'}"/>

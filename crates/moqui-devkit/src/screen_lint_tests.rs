@@ -35,6 +35,34 @@ fn unnamed_containers_are_listed_as_anchors_a_screen_extend_cannot_use() {
     );
 }
 
+/// SEC-RTE-02: a `client-context` name that its actions never set is listed; one they set, or that a script names, is
+/// not, and actions that may set any name (a service call into the context) are not checked.
+#[test]
+fn client_context_names_their_actions_never_set_are_listed() {
+    let text = r#"<screen><always-actions client-context="kept, typo"><set field="kept.part" value="x"/></always-actions>
+    <actions client-context="found"><entity-find entity-name="A" list="found"/><script>const other = 1</script></actions>
+    <widgets><section name="S"><actions client-context="byScript"><script>context.byScript = 2</script></actions><widgets/></section>
+    <form-list name="L" list="l"><row-actions client-context="missing"><set field="present" value="y"/></row-actions></form-list>
+    <section name="T"><actions client-context="anything"><service-call name="a.b"/></actions><widgets/></section>
+    </widgets></screen>"#;
+    let file = super::lint_screen_text(std::path::Path::new("Client.xml"), text)
+        .unwrap()
+        .unwrap();
+    let gaps: Vec<&str> = file
+        .client_context_gaps
+        .iter()
+        .map(|(_, detail)| detail.as_str())
+        .collect();
+    assert_eq!(
+        gaps,
+        [
+            "<always-actions client-context> names typo, which these actions never set",
+            "<row-actions client-context> names missing, which these actions never set",
+        ]
+    );
+    assert!(file.unknown_attributes.is_empty(), "{:?}", file.unknown_attributes);
+}
+
 /// An attribute the XSD does not define on its element is listed as a warning, as `moqui check`'s
 /// schema.unknown-attribute: `<container condition>` is ignored by every renderer (a section has the condition).
 #[test]

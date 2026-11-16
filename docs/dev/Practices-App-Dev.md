@@ -330,6 +330,11 @@ References: [JS-Screen-Scripts](JS-Screen-Scripts.md) (actions, transitions and 
   to the list (ProjectDetail), instead of failing the page.
 - **Do not repeat the access check** in every transition and section. Check once in `always-actions` and read
   `sharedMountContext.capabilities` where a widget depends on a capability.
+- **A server-static screen sends only what its template reads.** Its `GET {screen}/actions` holds the context names
+  the compiled template reads, and a form-list's rows its fields and what the template reads; a name kept is sent
+  whole, so keep a value the browser must not see out of a map the template reads. A name the template reads by a
+  computed name, or a client component reads by itself, goes in the actions element's `client-context`
+  ([JS-Screen-Scripts](JS-Screen-Scripts.md#server-static-screens)).
 - **Shared transitions** go in a `transition-include` file (`template/CatalogChoiceTransitions.xml`), not copied into
   each screen. A `transition-include` copies **one** transition by its name: a template with several needs one include
   per transition, and a form whose `transition` is not on its own screen posts to nothing. Shared widgets go in a

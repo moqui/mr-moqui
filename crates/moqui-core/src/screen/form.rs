@@ -618,6 +618,16 @@ fn merge_form_nodes(base: &MNode, over: &MNode, deep_copy: bool, copy_fields: bo
         let target = base
             .first_named("row-actions")
             .unwrap_or_else(|| base.append("row-actions"));
+        // the names each part's row-actions need sent to the client are joined (SEC-RTE-02)
+        let mut names = super::definition::client_context_of(Some(&target));
+        for name in super::definition::client_context_of(Some(&actions)) {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        if !names.is_empty() {
+            target.set_attribute("client-context", names.join(","));
+        }
         for action in actions.children() {
             target.append_node(action.deep_copy());
         }
