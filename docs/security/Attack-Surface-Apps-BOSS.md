@@ -111,6 +111,8 @@ People's hire and separation reach Admin's lifecycle through `ironstone.admin.Li
 
 The Commons root is open to every `BOSS_USERS` member, with `MANTLE_USER_ORG` and `MANTLE_PRIVATE_CONTACT`. Commons holds files and drives, contacts, calendars, tasks, knowledge spaces, requests and the notification inboxes.
 
+A drive's export (`Commons/Files/DriveSettings.xml` `exportZip` and `exportGit`, which call the framework's `export#Drive`) is refused unless the caller manages the drive (`get#DriveSettings` level 3) and it is not a personal or records drive, the condition its Export and archive section is shown on. The framework lets a git drive's viewer export what a clone gives them, but the export writes a bare copy on the server (DC-UI-041).
+
 `ironstone.commons.ContactServices.check#ContactAccess` reads the party and treats it as visible when it has no `privateOwnerUserId` or the owner is the caller. An edit needs the owner for a personal contact, or a contact administrator (`CONTACT_ADMIN`, the group `BOSS_CONTACT_ADMIN` or `ADMIN`) for a shared one. A holder of `SALES_ACCOUNT_EDIT` may edit the identity fields of a person who has no user account and is a contact of an account in their Sales scope. A delete of a shared contact needs a contact administrator, no user account on the party and no `OrgInternal` role. The find is by `partyId` with authorization on, so the `Party` filters of the authorizing record apply; the service adds no organization condition of its own. `ContactServices.migrate#NotDuplicateSettings` is `anonymous-all` and runs with authorization disabled over every `BossNotDuplicates` party setting.
 
 ## People
