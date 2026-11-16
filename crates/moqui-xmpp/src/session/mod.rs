@@ -559,7 +559,7 @@ impl Session {
         let result = self
             .server
             .backend
-            .call(Caller::User(account.username.clone()), service, parameters)
+            .call(Caller::User(account.username.clone()), self.peer, service, parameters)
             .await;
         if let Err(err) = &result {
             tracing::debug!("XMPP {}: {service} refused: {err}", account.username);
@@ -567,8 +567,13 @@ impl Session {
         result
     }
 
+    /// Call a service as internal work for this session (the sign-in lookups); a login in it checks `ipAllowed`
+    /// against the session's peer.
     pub(crate) async fn call_internal(&self, service: &str, parameters: Json) -> Result<Json, CallError> {
-        self.server.backend.call(Caller::Internal, service, parameters).await
+        self.server
+            .backend
+            .call(Caller::Internal, self.peer, service, parameters)
+            .await
     }
 
     /// The registry entry of this session, made when it binds.

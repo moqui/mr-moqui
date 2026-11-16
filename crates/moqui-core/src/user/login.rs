@@ -797,21 +797,65 @@ fn check_app_password(username: &str, password: &str) -> Result<(), Error> {
         return Err(refused_credential());
     }
     recorded_login(&account_username)?;
+    note_app_password_used(&facade, &row);
+    Ok(())
+}
+
+/// Write an app password's `lastUsedDate`, at most once a minute, in a transaction of its own; the login stands
+/// whatever happens to the note of its use.
+fn note_app_password_used(facade: &EntityFacade, row: &EntityValue) {
     let now = now_millis();
-    if field_millis(&row, "lastUsedDate").is_none_or(|used| now - used > 60_000) {
-        let mut used = facade.make_value(USER_APP_PASSWORD)?;
-        used.set("appPasswordId", Value::string(text_field(&row, "appPasswordId")));
+    if field_millis(row, "lastUsedDate").is_some_and(|used| now - used <= 60_000) {
+        return;
+    }
+    let written = facade.make_value(USER_APP_PASSWORD).and_then(|mut used| {
+        used.set("appPasswordId", Value::string(text_field(row, "appPasswordId")));
         used.set("lastUsedDate", stamp_value(now));
         let tx = facade.transactions_for(USER_APP_PASSWORD)?;
-        // the login stands whatever happens to the note of its use
-        if let Err(err) = tx.run(crate::transaction::TransactionAttribute::ForceNew, None, || {
-            used.update(&facade)
-        }) {
-            tracing::warn!(
-                "app password {}: last use not written: {err}",
-                text_field(&row, "appPasswordId")
-            );
+        tx.run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+            used.update(facade)
+        })
+    });
+    if let Err(err) = written {
+        tracing::warn!(
+            "app password {}: last use not written: {err}",
+            text_field(row, "appPasswordId")
+        );
+    }
+}
+
+/// The sign-in of a protocol session whose app password the protocol verified itself (XMPP SCRAM, or a FAST token of an
+/// app password): the account's checks of a key login (lock window, terminate date, a display account, `ipAllowed`
+/// against the [`with_client_ip`] address), recorded in the login history, and the app password's `lastUsedDate`
+/// written, as a PLAIN sign-in ([`login_app_password`]) does (SEC-COM-11, SEC-COM-22). `app_password_id` must be the
+/// user's and not revoked.
+///
+/// # Errors
+///
+/// Returns [`INVALID_LOGIN`](Error) when the app password is not the user's or is revoked, or the account may not sign
+/// in from here.
+pub fn login_verified_app_password(username: &str, app_password_id: Option<&str>) -> Result<(), Error> {
+    let row = match app_password_id.filter(|id| !id.is_empty()) {
+        Some(id) => {
+            let _authz = without_authz();
+            let facade = entity_facade()?;
+            let Some(row) = facade.find(USER_APP_PASSWORD)?.eq("appPasswordId", Value::string(id)).one()? else {
+                return Err(Error::new(INVALID_LOGIN));
+            };
+            let owner = find_user_id(&facade, &text_field(&row, "userId"))?;
+            if field_millis(&row, "revokedDate").is_some()
+                || !owner.is_some_and(|account| text_field(&account, "username").eq_ignore_ascii_case(username.trim()))
+            {
+                return Err(Error::new(INVALID_LOGIN));
+            }
+            Some(row)
         }
+        None => None,
+    };
+    recorded_login(username)?;
+    if let Some(row) = row {
+        let _authz = without_authz();
+        note_app_password_used(&entity_facade()?, &row);
     }
     Ok(())
 }

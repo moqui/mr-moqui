@@ -625,6 +625,63 @@ fn key_app_password_and_external_logins_leave_history_rows() {
     session::reset_session();
 }
 
+/// SEC-COM-11, SEC-COM-22: an XMPP SCRAM or FAST sign-in by an app password the session verified checks the account's
+/// ipAllowed against the session's address, and is recorded in the login history with the app password's last use;
+/// another user's or a revoked app password is refused.
+#[test]
+fn a_verified_app_password_sign_in_checks_ip_allowed_and_is_recorded() {
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    create_user(&facade, "xmpp", "Secret1!", |value| {
+        value.set("ipAllowed", Value::string("10.1.*.*"));
+    });
+    create_user(&facade, "other", "Secret1!", |_| {});
+    let mut row = facade.make_value(USER_APP_PASSWORD).unwrap();
+    row.set("appPasswordId", Value::string("AP_XMPP"));
+    row.set("userId", Value::string("xmpp"));
+    row.set("passwordHash", Value::string("unused"));
+    row.create(&facade).unwrap();
+    let last_used = || {
+        facade
+            .find(USER_APP_PASSWORD)
+            .unwrap()
+            .eq("appPasswordId", Value::string("AP_XMPP"))
+            .one()
+            .unwrap()
+            .and_then(|row| field_millis(&row, "lastUsedDate"))
+    };
+
+    with_client_ip("10.1.2.3", || login_verified_app_password("xmpp", Some("AP_XMPP"))).unwrap();
+    assert_eq!(session::current_username().unwrap().as_deref(), Some("xmpp"));
+    logout().unwrap();
+    assert!(last_used().is_some());
+    let history = facade
+        .find(USER_LOGIN_HISTORY)
+        .unwrap()
+        .eq("userId", Value::string("xmpp"))
+        .list()
+        .unwrap();
+    assert!(history.iter().any(|row| text(row, "successfulLogin") == "Y"));
+
+    let refused = with_client_ip("192.0.2.10", || login_verified_app_password("xmpp", Some("AP_XMPP")));
+    assert!(refused.unwrap_err().to_string().contains("not in allowed list"));
+    assert!(session::current_username().unwrap().is_none());
+
+    assert_eq!(
+        with_client_ip("10.1.2.3", || login_verified_app_password("other", Some("AP_XMPP")))
+            .unwrap_err()
+            .to_string(),
+        INVALID_LOGIN
+    );
+    update_user(&facade, "xmpp", &[("ipAllowed", Value::Null)]).unwrap();
+    let mut revoked = facade.make_value(USER_APP_PASSWORD).unwrap();
+    revoked.set("appPasswordId", Value::string("AP_XMPP"));
+    revoked.set("revokedDate", stamp(now_millis() - 1000));
+    revoked.update(&facade).unwrap();
+    assert!(login_verified_app_password("xmpp", Some("AP_XMPP")).is_err());
+    session::reset_session();
+}
+
 #[test]
 fn a_password_below_the_current_policy_still_logs_in() {
     // The policy applies when a password is set. Java does not check it at login, so a user

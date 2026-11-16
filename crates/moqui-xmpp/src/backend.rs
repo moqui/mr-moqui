@@ -18,6 +18,7 @@
 //! the calls on its request workers; the tests have an in-memory backend.
 
 use std::future::Future;
+use std::net::IpAddr;
 use std::pin::Pin;
 
 use serde_json::Value as Json;
@@ -44,8 +45,25 @@ impl std::fmt::Display for CallError {
 }
 
 pub trait Backend: Send + Sync {
-    /// Call `service` with `parameters` (a JSON object) as `caller`; its out-parameters as a JSON object.
-    fn call(&self, caller: Caller, service: &str, parameters: Json) -> BoxFuture<'_, Result<Json, CallError>>;
+    /// Call `service` with `parameters` (a JSON object) as `caller`, for a session whose peer is `client`; its
+    /// out-parameters as a JSON object. A login the call makes checks the account's `ipAllowed` against `client`.
+    fn call(
+        &self,
+        caller: Caller,
+        client: IpAddr,
+        service: &str,
+        parameters: Json,
+    ) -> BoxFuture<'_, Result<Json, CallError>>;
+
+    /// The sign-in of `username` from `client` by a credential the session verified itself (SCRAM, or a FAST token),
+    /// `credential` its app password: the account's own checks (`ipAllowed` among them), recorded in its login history
+    /// with the app password's last use. An error refuses the sign-in.
+    fn sign_in(
+        &self,
+        username: &str,
+        client: IpAddr,
+        credential: Option<&str>,
+    ) -> BoxFuture<'_, Result<(), CallError>>;
 }
 
 /// The services this crate calls.
