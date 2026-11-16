@@ -1239,27 +1239,28 @@ pub fn change_password(user_id: &str, new_password: &str) -> Result<(), Error> {
     tx.run(crate::transaction::TransactionAttribute::UseOrBegin, None, || {
         remember_history(&facade, &account, user_id)?;
         trim_history(&facade, user_id)?;
-        Ok(update_password_fields(&facade, user_id, &hashed)?)
+        Ok(update_password_fields(&facade, &account, &hashed)?)
     })?;
     Ok(())
 }
 
-fn update_password_fields(facade: &EntityFacade, user_id: &str, hashed: &str) -> Result<(), Error> {
-    update_user(
-        facade,
-        user_id,
-        &[
-            ("currentPassword", Value::string(hashed)),
-            ("passwordHashType", Value::string("argon2")),
-            ("passwordSalt", Value::string("")),
-            ("passwordBase64", Value::string("N")),
-            ("passwordSetDate", now_value()),
-            ("requirePasswordChange", Value::string("N")),
-            ("disabled", Value::string("N")),
-            ("resetPassword", Value::Null),
-            ("resetPasswordSetDate", Value::Null),
-        ],
-    )
+/// The new password's fields. A password change ends a tarpit lock (`disabled` with a `disabledDateTime`), as Java's
+/// does; an account disabled for good stays disabled (SEC-ADM-01), and only `enable#UserAccount` opens it.
+fn update_password_fields(facade: &EntityFacade, account: &EntityValue, hashed: &str) -> Result<(), Error> {
+    let mut fields = vec![
+        ("currentPassword", Value::string(hashed)),
+        ("passwordHashType", Value::string("argon2")),
+        ("passwordSalt", Value::string("")),
+        ("passwordBase64", Value::string("N")),
+        ("passwordSetDate", now_value()),
+        ("requirePasswordChange", Value::string("N")),
+        ("resetPassword", Value::Null),
+        ("resetPasswordSetDate", Value::Null),
+    ];
+    if !disabled_for_good(account) {
+        fields.push(("disabled", Value::string("N")));
+    }
+    update_user(facade, &text_field(account, "userId"), &fields)
 }
 
 pub(crate) fn entity_facade() -> Result<EntityFacade, Error> {
@@ -1528,8 +1529,12 @@ fn terminated(account: &EntityValue, now: i64) -> bool {
 /// tarpit lock (disabled with a `disabledDateTime`) stops new logins only until it expires and does not end a session, so
 /// failed logins by someone else cannot sign the account's owner out.
 pub(crate) fn account_closed(account: &EntityValue, now: i64) -> bool {
-    (text_field(account, "disabled") == "Y" && field_millis(account, "disabledDateTime").is_none())
-        || terminated(account, now)
+    disabled_for_good(account) || terminated(account, now)
+}
+
+/// Disabled with no `disabledDateTime`, as `disable#UserAccount` leaves it: closed until an administrator enables it.
+fn disabled_for_good(account: &EntityValue) -> bool {
+    text_field(account, "disabled") == "Y" && field_millis(account, "disabledDateTime").is_none()
 }
 
 /// [`account_closed`] for the account `user_id`, read now; an unknown account is closed. For the notification socket's
@@ -1733,7 +1738,11 @@ fn write_failed_increment(
         };
         let previous = row.get("successiveFailedLogins").filter(|value| !value.is_null());
         let next = row_i64(row, "successiveFailedLogins").saturating_add(1);
-        let disable = next > policy::max_failures();
+        // An account disabled for good (`disabled` with no `disabledDateTime`) stays so: a lock time would turn it into a
+        // tarpit lock that ends by itself (SEC-WEB-01). Only the count goes up.
+        let closed = row.get("disabled").and_then(Value::as_str).map(str::trim) == Some("Y")
+            && row_value(row, "disabledDateTime").is_null();
+        let disable = next > policy::max_failures() && !closed;
         let disabled = if disable {
             Value::string("Y")
         } else {
