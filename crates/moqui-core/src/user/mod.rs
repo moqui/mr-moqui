@@ -50,7 +50,7 @@ pub use login::app_password_key;
 pub(crate) use login::login_user_local;
 pub use login::stamp_value;
 pub use login::{
-    apply_header_keys, change_password, get_device_key, get_login_key, header_login_session,
+    apply_header_keys, change_password, check_old_password, get_device_key, get_login_key, header_login_session,
     internal_login_queued_user, internal_login_user, issue_device_key, login_anonymous, login_app_password,
     login_external_user, login_key_user_by_hash, login_ssh_key_user, login_user, login_user_key, logout, logout_anonymous_only,
     logout_local, looks_like_app_password, new_app_password, note_header_login, now_value, renew_device_key,

@@ -62,6 +62,13 @@ pub(super) static USER: HostClass = HostClass {
         method!("ec.user", "hashPassword", [Text], hash_password),
         method!(
             "ec.user",
+            "checkOldPassword",
+            [OptNullableText, OptNullableText],
+            None,
+            check_old_password
+        ),
+        method!(
+            "ec.user",
             "passwordsMatch",
             [Value, Value, OptValue, OptValue, OptValue],
             passwords_match
@@ -504,6 +511,16 @@ fn hash_password(call: &mut Call<'_>) -> Result<Ret, HostError> {
 
 /// `getCredentialsMatcher(hashType, base64).doCredentialsMatch`: `plain` against a stored hash, argon2 or a legacy
 /// digest. An empty stored hash never matches.
+/// `ec.user.checkOldPassword(userId, oldPassword)`: the old password of a password change, behind the login gate
+/// ([`crate::user::check_old_password`]). A null or unknown `userId` is refused after the same work as a wrong password.
+fn check_old_password(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let user_id = call.text_or_empty(0);
+    let old_password = call.text_or_empty(1);
+    crate::user::check_old_password(&user_id, &old_password)
+        .map(Ret::from)
+        .map_err(|err| user_error(&err))
+}
+
 fn passwords_match(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let plain = call.text_or_empty(0);
     let stored = call.text_or_empty(1);

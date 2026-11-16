@@ -371,6 +371,44 @@ fn attempts_during_a_lock_window_do_not_restart_it_and_internal_logins_do_not_co
     session::reset_session();
 }
 
+/// SEC-WEB-02, SEC-ADM-02: the old password of a password change is behind the login gate. A wrong one counts and is
+/// noted; during the lock window even the right one is refused, counted and noted; an unknown user is refused; a reset
+/// password in date is taken, an ended one is not.
+#[test]
+fn the_old_password_of_a_change_is_behind_the_login_gate() {
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    create_user(&facade, "ada", "Secret1!", |_| {});
+    crate::web::take_auth_failure();
+    assert!(check_old_password("ada", "Secret1!").unwrap());
+    assert!(!crate::web::take_auth_failure());
+    for _ in 0..4 {
+        assert!(!check_old_password("ada", "wrong").unwrap());
+        assert!(crate::web::take_auth_failure());
+    }
+    let locked = load_user(&facade, "ada");
+    assert_eq!(text(&locked, "disabled"), "Y");
+    assert_eq!(i64_field(&locked, "successiveFailedLogins"), 4);
+    assert!(!check_old_password("ada", "Secret1!").unwrap(), "the lock window refuses the right one");
+    assert!(crate::web::take_auth_failure());
+    assert_eq!(i64_field(&load_user(&facade, "ada"), "successiveFailedLogins"), 5);
+
+    assert!(!check_old_password("nobody", "Secret1!").unwrap());
+    assert!(!check_old_password("", "Secret1!").unwrap());
+    assert!(crate::web::take_auth_failure());
+
+    let reset_hash = hash_password("Reset-1234").unwrap();
+    create_user(&facade, "bob", "Secret1!", |value| {
+        value.set("resetPassword", Value::string(&reset_hash));
+        value.set("resetPasswordSetDate", stamp(now_millis()));
+    });
+    assert!(check_old_password("bob", "Reset-1234").unwrap());
+    update_user(&facade, "bob", &[("resetPasswordSetDate", stamp(now_millis() - 49 * 3_600_000))]).unwrap();
+    assert!(!check_old_password("bob", "Reset-1234").unwrap());
+    assert_eq!(i64_field(&load_user(&facade, "bob"), "successiveFailedLogins"), 1);
+    session::reset_session();
+}
+
 #[test]
 fn a_correct_password_logs_in_after_the_disable_window() {
     let (ctx, facade) = open_ctx();

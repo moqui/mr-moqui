@@ -136,30 +136,12 @@ fn check_password_login(username: &str, password: &str) -> Result<bool, Error> {
     let _authz = without_authz();
     let facade = entity_facade()?;
     let now = now_millis();
-    // No more of the user's logins are checked at once than the failures the account has left, so concurrent guesses
-    // cannot all pass the gate before the first failure is counted. Another waits for one to end and reads the account
-    // again. One at a time, the logins checked are Java's.
-    let (account, _checking) = loop {
-        let Some(account) = find_username(&facade, username)? else {
-            password::burn_verify(password);
-            return Err(Error::new(INVALID_LOGIN));
-        };
-        if let Err(err) = gate_account(&facade, &account, now, true) {
-            password::burn_verify(password);
-            return Err(err);
-        }
-        // a display account has no sign-in of its own, whatever password someone gave it (user/device.rs)
-        if is_display_account(&account) {
-            password::burn_verify(password);
-            return Err(Error::new(INVALID_LOGIN));
-        }
-        let left = policy::max_failures() + 1 - field_i64(&account, "successiveFailedLogins").unwrap_or(0);
-        let user_id = text_field(&account, "userId");
-        if let Some(checking) = LoginCheck::enter(&user_id, left) {
-            break (account, checking);
-        }
-        LoginCheck::wait(&user_id);
-    };
+    let (account, _checking) = gate_password(&facade, password, now, || find_username(&facade, username))?;
+    // a display account has no sign-in of its own, whatever password someone gave it (user/device.rs)
+    if is_display_account(&account) {
+        password::burn_verify(password);
+        return Err(Error::new(INVALID_LOGIN));
+    }
     // Once the account passes the gate every outcome is kept in the login history, a pending second factor as one
     // that did not log in.
     let outcome = authenticate(&facade, &account, username, password, now);
@@ -171,6 +153,92 @@ fn check_password_login(username: &str, password: &str) -> Result<bool, Error> {
         Checked::SecondFactor => true,
         Checked::LoggedIn { rotate } => rotate,
     })
+}
+
+/// The account gate in front of a password compare: the account `find` reads, when it is there and [`gate_account`]
+/// passes it, with its place among the checks of that user running now. An unknown or refused account takes an argon2
+/// verify, so the time does not tell it from a wrong password; a refusal during a lock window counts as a failed login.
+/// No more of the user's checks run at once than the failures the account has left, so concurrent guesses cannot all
+/// pass the gate before the first failure is counted. Another waits for one to end and reads the account again. One at
+/// a time, the checks are Java's.
+fn gate_password(
+    facade: &EntityFacade,
+    password: &str,
+    now: i64,
+    find: impl Fn() -> Result<Option<EntityValue>, Error>,
+) -> Result<(EntityValue, LoginCheck), Error> {
+    loop {
+        let Some(account) = find()? else {
+            password::burn_verify(password);
+            return Err(Error::new(INVALID_LOGIN));
+        };
+        if let Err(err) = gate_account(facade, &account, now, true) {
+            password::burn_verify(password);
+            return Err(err);
+        }
+        let left = policy::max_failures() + 1 - field_i64(&account, "successiveFailedLogins").unwrap_or(0);
+        let user_id = text_field(&account, "userId");
+        if let Some(checking) = LoginCheck::enter(&user_id, left) {
+            return Ok((account, checking));
+        }
+        LoginCheck::wait(&user_id);
+    }
+}
+
+/// The old password of a password change (`update#Password`, `ec.user.checkOldPassword`), behind the gate of a password
+/// login ([`gate_password`]): true when it is the account's current password, or its reset password while that is in
+/// date (`password/@email-expire-hours`). Every refusal is the same false, whether the account is unknown (`user_id`
+/// empty or not found), locked, terminated or the password wrong, and takes as long; a wrong password counts as a
+/// failed login, and each refusal is noted for the web protection (SEC-WEB-02, SEC-ADM-02).
+///
+/// # Errors
+///
+/// Returns a storage error when the account cannot be read or the failure cannot be counted.
+pub fn check_old_password(user_id: &str, old_password: &str) -> Result<bool, Error> {
+    let checked = match old_password_ok(user_id, old_password) {
+        Err(err) if err.message() == INVALID_LOGIN => Ok(false),
+        other => other,
+    };
+    if matches!(checked, Ok(false)) {
+        crate::web::note_auth_failure();
+    }
+    checked
+}
+
+fn old_password_ok(user_id: &str, old_password: &str) -> Result<bool, Error> {
+    if old_password.is_empty() {
+        return Ok(false);
+    }
+    let _authz = without_authz();
+    let facade = entity_facade()?;
+    let now = now_millis();
+    let (account, _checking) = gate_password(&facade, old_password, now, || {
+        if user_id.is_empty() {
+            return Ok(None);
+        }
+        find_user_id(&facade, user_id)
+    })?;
+    if legacy_hash(&account) {
+        password::burn_verify(old_password);
+    }
+    if password_ok(&account, old_password)? || reset_password_ok(&account, old_password, now)? {
+        return Ok(true);
+    }
+    increment_failed(&facade, &text_field(&account, "userId"))?;
+    Ok(false)
+}
+
+/// Whether `plain` is the account's reset password (`reset#Password`, always argon2) and that is still in date; a
+/// reset password with no set date is ended.
+fn reset_password_ok(account: &EntityValue, plain: &str, now: i64) -> Result<bool, Error> {
+    let reset = text_field(account, "resetPassword");
+    let Some(set_at) = field_millis(account, "resetPasswordSetDate") else {
+        return Ok(false);
+    };
+    if reset.is_empty() || now > set_at.saturating_add(policy::email_expire_hours().saturating_mul(3_600_000)) {
+        return Ok(false);
+    }
+    password::passwords_match(plain, &reset, "argon2", "", false)
 }
 
 /// What [`authenticate`] ended with.
