@@ -1291,8 +1291,8 @@
         bytes of an upload-pack request, max-push-size bytes of a push (each as sent and as a gzip body inflates, and
         over SSH for the whole conversation), at most fetch-max-lines lines (wants, haves, capabilities) in
         fetch-max-request-bytes of an upload-pack request, max-object-size bytes of one pushed object;
-        idle-timeout seconds of silence in a request body end it. pack-threads (all cores when empty) compress and index
-        packs. Credentials over plain HTTP are refused unless allow-http. lfs-max-object-size: the largest Git LFS
+        idle-timeout seconds of silence in a request body end it. pack-threads (2 when empty) compress and index one
+        pack; a pushed or fetched delta chain is at most max-delta-depth deep. Credentials over plain HTTP are refused unless allow-http. lfs-max-object-size: the largest Git LFS
         object, at /git/<repositoryId>.git/info/lfs. eca-max-commits: the most commits one change raises gitECA commit
         events for. Repository webhooks are not delivered to loopback, private or link-local addresses unless
         webhook-private-network="true". lfs-upload-check-service: a service asked before Git LFS objects new to a
@@ -1315,7 +1315,9 @@
         over a repository of more than gc-max-objects objects.
         Push to review (docs/interfaces/Git-Hosting.md, Push to review): with review-push a user who may view a
         repository pushes refs/for/[branch], which opens or updates a merge request, and nothing else; one with no
-        push right brings at most review-max-push-bytes a push and review-max-account-bytes a day (0: no cap). With
+        push right brings at most review-max-push-bytes a push and review-max-account-bytes a day (0: no cap), counted
+        as its objects inflate when that is more, objects of at most review-max-object-size in delta chains at most
+        review-max-delta-depth deep. With
         review-start-hidden such a merge request starts hidden, until the application shows it. What the server does
         for such a user is small: a push's commands, shallow lines and options are at most review-max-commands each
         in review-max-request-bytes (push-max-commands and push-max-request-bytes for a user who may push), it builds
@@ -1346,7 +1348,7 @@
             lfs-token-key-previous="${git_lfs_token_key_previous}"
             max-concurrent="4" anonymous-max-concurrent="" max-queued="16" max-request="67108864" max-push-size="2147483648"
             fetch-max-lines="1000000" fetch-max-request-bytes="67108864"
-            max-object-size="536870912" idle-timeout="120" pack-threads="" allow-http="false"
+            max-object-size="536870912" max-delta-depth="4095" idle-timeout="120" pack-threads="" allow-http="false"
             lfs-max-object-size="5368709120" lfs-upload-check-service="" outbound-check-service="" eca-max-commits="10000"
             webhook-private-network="false" blame-max-bytes="1048576" blame-max-lines="50000"
             blame-max-commits="10000" blame-max-diffs="2000" blame-max-seconds="10"
@@ -1356,6 +1358,7 @@
             db-delta-depth="50" db-delta-max-size="16777216" db-large-object="8388608" db-write-format="v2"
             db-cache-bytes="67108864" gc-prune-days="14" gc-reflog-days="30" gc-max-objects="20000000"
             review-push="true" review-start-hidden="false" review-max-push-bytes="52428800" review-max-account-bytes="209715200"
+            review-max-object-size="33554432" review-max-delta-depth="250"
             review-max-commands="8" review-max-request-bytes="65536" review-max-built-on="8" review-max-trees="20000"
             review-max-refused="30" push-max-commands="100000" push-max-request-bytes="16777216"
             merge-request-url="" rest-write-check-service="" offer-service="" agreement-check-service="" review-thread-service=""

@@ -360,7 +360,11 @@ pub(crate) fn fetch_pack<'a>(
             Some(_) => {}
         }
     }
-    let received = pack_in::receive(store, &mut reader, dir, max_object, super::pack_threads())
+    let limits = pack_in::PackLimits {
+        max_object,
+        ..pack_in::PackLimits::of(false)
+    };
+    let received = pack_in::receive(store, &mut reader, dir, limits, super::pack_threads())
         .map_err(|err| Error::new(format!("{what} {}: {}", remote.shown(), remote.redact(err.message()))))?;
     if reader.get_ref().limit() == 0 {
         return Err(Error::new(format!(

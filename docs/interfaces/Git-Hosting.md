@@ -251,7 +251,8 @@ fetches, edit pushes new refs and fast-forwards on a drive that is not read only
   each counted as sent and, for a `Content-Encoding: gzip` body, as inflated, and over SSH for the whole conversation's input
   (more is refused, not cut short); `git-server` `fetch-max-lines` (1,000,000 want, have, shallow, deepen and argument lines,
   each capability on a want line counted as one) in `fetch-max-request-bytes` (64 MB) of a fetch request (a v0 conversation,
-  a v2 command), else `GitFetchRequestTooLarge`; `git-server` `max-object-size` (512 MB) for one pushed object; `git-server` `pack-threads` (all cores when empty) compress and index.
+  a v2 command), else `GitFetchRequestTooLarge`; `git-server` `max-object-size` (512 MB) for one pushed object, `max-delta-depth` (4095, the deepest git writes) deltas
+  from a pushed object to a whole one (`GitDeltaTooDeep`); `git-server` `pack-threads` (2) compress and index one pack.
 
 ## gitECA rules
 
@@ -649,6 +650,7 @@ merge request`). Match the start of the error; the text after it may change.
 | `GitReviewRefusals` | a push to `refs/for/`, `commit#GitFiles` (`asProposal`) | too many of the account's pushes for review and proposals were refused this hour (`review-max-refused`) |
 | `GitReviewPushTooWide` | a push to `refs/for/` | it builds on more commits of the repository than `review-max-built-on` |
 | `GitFetchRequestTooLarge` | a fetch or clone | more want, have or argument lines than the server takes (`fetch-max-lines`, `fetch-max-request-bytes`) |
+| `GitDeltaTooDeep` | a push, a fetch | a pushed or fetched object is a chain of more deltas than `max-delta-depth` (`review-max-delta-depth` for a push for review) |
 | `GitPushRequestTooLarge` | a push | more commands, shallow lines or push options than the server takes (`push-max-commands`, `review-max-commands`) |
 | `GitNeedsSharedStorage` | a write, `init#GitRepository`, `fetch#GitRepository`, `fork#GitRepository` | a new `local` or `remote` repository on a cluster member without `git-server` `shared-storage` ([shared storage](#shared-storage-in-a-cluster)) |
 | `GitLeaseBusy` | a push, a write, `fork#GitRepository`, `delete#GitRepository` | another cluster member writes the repository past `shared-lock-wait-seconds` |
@@ -1039,8 +1041,10 @@ remote:   https://moqui.org/moqui/mr-moqui/-/merge-requests/12
   uploads no LFS objects. A branch that is not there (`GitNoSuchRef`), and a push that brings nothing the branch does
   not have, are refused.
 - **Caps**, for a user with no push right (a user who may push is not capped: they could push a branch): the pack
-  of one push is at most `git-server` `review-max-push-bytes` (50 MiB, `GitReviewPushTooLarge`), and no more than
-  that is read from such a user's connection, over HTTP and SSH alike; the packs of an account's pushes for review
+  of one push is at most `git-server` `review-max-push-bytes` (50 MiB, `GitReviewPushTooLarge`), counted as its
+  objects inflate when that is more (a `db` repository stores a large object inflated), and no more than
+  that is read from such a user's connection, over HTTP and SSH alike; one object is at most `review-max-object-size`
+  (32 MiB) and a delta chain at most `review-max-delta-depth` (250) deep; the packs of an account's pushes for review
   in the last day, over every repository, are at most `review-max-account-bytes` (200 MiB, `GitReviewQuota`); 0 is
   no cap. `GitUpdate.packBytes` and `reviewPush` keep what was counted. A pre-receive rule sees `forReview`, the
   ref's `targetBranch`, `userId` and `packBytes`, and refuses by the application's own rules (a confirmed address,

@@ -94,7 +94,8 @@ pub(crate) struct UpdateOrigin {
     pub remote_address: Option<String>,
     pub push_options: Vec<String>,
     /// The bytes of the pack a push sent, as it is kept in quarantine (a thin pack completed); 0 with no pack (only
-    /// deletes) and for a change that is not a push. A pre-receive rule's `packBytes`, for a quota.
+    /// deletes) and for a change that is not a push; for a push for review by a user with no push right, what its
+    /// objects inflate to when that is more. A pre-receive rule's `packBytes`, for a quota.
     pub pack_bytes: u64,
     /// A push to `refs/for/*` by a user with no push right: its bytes count toward the account's cap.
     pub review_push: bool,

@@ -342,7 +342,8 @@ impl GitProvider {
                 if size > most {
                     return Ok(Some(FileAt::TooLarge(size)));
                 }
-                self.file_content(&repo, &blob).map(|bytes| Some(FileAt::Content(bytes)))
+                self.file_content(&repo, &blob)
+                    .map(|bytes| Some(FileAt::Content(bytes)))
             }
             _ => Ok(None),
         }
