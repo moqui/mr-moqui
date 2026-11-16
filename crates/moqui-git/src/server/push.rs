@@ -264,9 +264,15 @@ pub(crate) fn write_request(
     Ok(planned.objects.len())
 }
 
+/// The largest refs advertisement read from a server: a repository with tens of thousands of refs is well within it.
+pub(crate) const MAX_ADVERTISEMENT: u64 = 32 * 1024 * 1024;
+/// The largest push report read.
+pub(crate) const MAX_REPORT: u64 = 1024 * 1024;
+
 /// Push `refs` (remote name, local id) over one receive-pack conversation: `input` is what the server writes,
 /// `output` what it reads. A ref already at its id is left out; when none is left nothing is sent but a flush. With
-/// `delete_covered`, the server's refs those maps cover that `refs` does not name are deleted.
+/// `delete_covered`, the server's refs those maps cover that `refs` does not name are deleted. The server's refs are
+/// read up to [`MAX_ADVERTISEMENT`] and its report up to [`MAX_REPORT`], as over HTTPS.
 pub(crate) fn push(
     store: &dyn GitStore,
     refs: &[(String, ObjectId)],
@@ -274,7 +280,14 @@ pub(crate) fn push(
     input: &mut dyn Read,
     output: &mut dyn Write,
 ) -> Result<PushOutcome, Error> {
-    let remote = read_advertisement(input)?;
+    let mut limited = (&mut *input).take(MAX_ADVERTISEMENT);
+    let remote = read_advertisement(&mut limited);
+    if limited.limit() == 0 {
+        return Err(Error::new(format!(
+            "the server's refs are more than {MAX_ADVERTISEMENT} bytes"
+        )));
+    }
+    let remote = remote?;
     let mut outcome = PushOutcome::default();
     let commands = commands(&remote, refs, delete_covered, &mut outcome);
     if commands.is_empty() {
@@ -283,7 +296,14 @@ pub(crate) fn push(
         return Ok(outcome);
     }
     outcome.objects = write_request(store, &remote, &commands, output)?;
-    read_report(input, &mut outcome)?;
+    let mut report = (&mut *input).take(MAX_REPORT);
+    let read = read_report(&mut report, &mut outcome);
+    if report.limit() == 0 {
+        return Err(Error::new(format!(
+            "the server's report is more than {MAX_REPORT} bytes"
+        )));
+    }
+    read?;
     Ok(outcome)
 }
 

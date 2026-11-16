@@ -39,6 +39,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// How long a connection, a login, or one protocol call may take.
 const TIMEOUT: Duration = Duration::from_secs(120);
+/// How long a whole command may run (a push mirror's push over SSH), as a push over HTTPS may take.
+const EXEC_DEADLINE: Duration = Duration::from_secs(30 * 60);
+/// The most of a command's standard error kept; the rest is dropped.
+const MAX_STDERR: usize = 64 * 1024;
 
 /// Serializes reads and writes of the known-hosts file.
 static KNOWN_HOSTS_LOCK: Mutex<()> = Mutex::new(());
@@ -263,6 +267,7 @@ async fn start(config: SftpConfig, trust: Trust, command: String) -> Result<Russ
         stderr: Vec::new(),
         exit_status: None,
         ended: false,
+        deadline: std::time::Instant::now() + EXEC_DEADLINE,
         target,
     })
 }
@@ -280,7 +285,24 @@ pub struct RusshExec {
     stderr: Vec<u8>,
     exit_status: Option<u32>,
     ended: bool,
+    /// When the command has run [`EXEC_DEADLINE`]: each wait ends by then.
+    deadline: std::time::Instant,
     target: String,
+}
+
+impl RusshExec {
+    /// How long the next wait may take: [`TIMEOUT`], or less as the deadline nears; an error past it.
+    fn wait(&self) -> Result<Duration, Error> {
+        let left = self.deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return Err(Error::new(format!(
+                "{} ran for more than {} minutes",
+                self.target,
+                EXEC_DEADLINE.as_secs() / 60
+            )));
+        }
+        Ok(left.min(TIMEOUT))
+    }
 }
 
 /// What [`RusshExec::read`] waited for.
@@ -297,9 +319,10 @@ impl SshExec for RusshExec {
         let bytes = bytes::Bytes::copy_from_slice(bytes);
         let target = self.target.clone();
         let inner = Arc::clone(&self.inner);
+        let wait = self.wait()?;
         crate::edge::block_on(async move {
             let channel = inner.channel.lock().await;
-            tokio::time::timeout(TIMEOUT, channel.data_bytes(bytes))
+            tokio::time::timeout(wait, channel.data_bytes(bytes))
                 .await
                 .map_err(|_| Error::new(format!("timed out writing to {target}")))?
                 .map_err(|err| Error::new(format!("writing to {target}: {err}")))
@@ -322,9 +345,10 @@ impl SshExec for RusshExec {
         while self.pending.is_empty() && !self.ended {
             let target = self.target.clone();
             let inner = Arc::clone(&self.inner);
+            let wait = self.wait()?;
             let received = crate::edge::block_on(async move {
                 let mut channel = inner.channel.lock().await;
-                let message = tokio::time::timeout(TIMEOUT, channel.wait())
+                let message = tokio::time::timeout(wait, channel.wait())
                     .await
                     .map_err(|_| Error::new(format!("timed out reading from {target}")))?;
                 Ok::<_, Error>(match message {
@@ -337,7 +361,10 @@ impl SshExec for RusshExec {
             })??;
             match received {
                 Received::Data(data) => self.pending.extend_from_slice(&data),
-                Received::Stderr(data) => self.stderr.extend_from_slice(&data),
+                Received::Stderr(data) => {
+                    let room = MAX_STDERR.saturating_sub(self.stderr.len());
+                    self.stderr.extend_from_slice(&data[..data.len().min(room)]);
+                }
                 Received::Exit(status) => self.exit_status = Some(status),
                 Received::End => self.ended = true,
                 Received::Other => {}

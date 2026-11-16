@@ -191,3 +191,43 @@ fn a_push_mirror_sends_what_the_server_lacks_under_the_mapped_name() {
         head_of(&fixture, "src", "refs/heads/main")
     );
 }
+
+/// SEC-GIT-06: over SSH a push mirror reads a server's refs and report within the caps the HTTPS path has, so one
+/// that lists refs or report lines without end is cut off.
+#[test]
+fn a_servers_refs_and_report_are_read_within_their_caps() {
+    let id = "1111111111111111111111111111111111111111";
+    let store = crate::store::MemoryStore::default();
+    let mut wire = Vec::new();
+    super::pktline::data(
+        &mut wire,
+        format!("{id} refs/heads/main\0report-status delete-refs\n").as_bytes(),
+    )
+    .unwrap();
+    let mut branch = 0;
+    while (wire.len() as u64) <= push::MAX_ADVERTISEMENT {
+        super::pktline::data(&mut wire, format!("{id} refs/heads/b{branch}\n").as_bytes()).unwrap();
+        branch += 1;
+    }
+    super::pktline::flush(&mut wire).unwrap();
+    let err = push::push(&store, &[], None, &mut wire.as_slice(), &mut Vec::new()).unwrap_err();
+    assert!(err.message().contains("refs are more than"), "{err}");
+
+    // a delete, then a report longer than its cap
+    let mut wire = Vec::new();
+    super::pktline::data(
+        &mut wire,
+        format!("{id} refs/heads/old\0report-status delete-refs\n").as_bytes(),
+    )
+    .unwrap();
+    super::pktline::flush(&mut wire).unwrap();
+    super::pktline::data(&mut wire, b"unpack ok\n").unwrap();
+    let start = wire.len() as u64;
+    while (wire.len() as u64) - start <= push::MAX_REPORT {
+        super::pktline::data(&mut wire, b"ok refs/heads/old\n").unwrap();
+    }
+    super::pktline::flush(&mut wire).unwrap();
+    let covered = [map("refs/heads/*", "refs/heads/*")];
+    let err = push::push(&store, &[], Some(&covered), &mut wire.as_slice(), &mut Vec::new()).unwrap_err();
+    assert!(err.message().contains("report is more than"), "{err}");
+}
