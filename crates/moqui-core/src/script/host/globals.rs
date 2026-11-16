@@ -68,6 +68,9 @@ const GLOBALS_JS: &str = concat!(
         assertDocumentExpression: hidden.assertDocumentExpression,
         assertDocumentTemplate: hidden.assertDocumentTemplate,
         assertDocumentCondition: hidden.assertDocumentCondition,
+        assertStoredTemplate: hidden.assertStoredTemplate,
+        assertStoredExpression: hidden.assertStoredExpression,
+        assertTranslation: hidden.assertTranslation,
         assertSealedGroupMembership: hidden.assertSealedGroupMembership,
         privilegedGroups: hidden.privilegedGroups,
         sealedPermissions: hidden.sealedPermissions,
@@ -305,6 +308,9 @@ pub(crate) static SHIM: Shim = Shim {
         method!("UserSecurityChecks", "assertDocumentExpression", [OptValue], None, assert_document_expression),
         method!("UserSecurityChecks", "assertDocumentTemplate", [OptValue], None, assert_document_template),
         method!("UserSecurityChecks", "assertDocumentCondition", [OptValue], None, assert_document_condition),
+        method!("UserSecurityChecks", "assertStoredTemplate", [OptValue, OptValue], None, assert_stored_template),
+        method!("UserSecurityChecks", "assertStoredExpression", [OptValue, OptValue], None, assert_stored_expression),
+        method!("UserSecurityChecks", "assertTranslation", [OptValue, OptValue], None, assert_translation),
         method!(
             "UserSecurityChecks",
             "assertSealedGroupMembership",
@@ -349,6 +355,27 @@ fn assert_document_expression(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// `UserSecurityChecks.assertDocumentTemplate(text)`: a document title or link text with `${` needs `DATABASE_ADMIN`.
 fn assert_document_template(call: &mut Call<'_>) -> Result<Ret, HostError> {
     crate::service::assert_document_template(&super::entity_facade()?, &id_text(call, 0)).map_err(lib)?;
+    Ok(Ret::Undefined)
+}
+
+/// `UserSecurityChecks.assertStoredTemplate(text, what)`: stored text with `${`, run as script where its record is used,
+/// needs `DATABASE_ADMIN` (`Security.eecas.xml`, SEC-SCR-06).
+fn assert_stored_template(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    crate::service::assert_stored_template(&super::entity_facade()?, &id_text(call, 0), &id_text(call, 1)).map_err(lib)?;
+    Ok(Ret::Undefined)
+}
+
+/// `UserSecurityChecks.assertStoredExpression(text, what)`: a stored expression that is not empty needs `DATABASE_ADMIN`.
+fn assert_stored_expression(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    crate::service::assert_stored_expression(&super::entity_facade()?, &id_text(call, 0), &id_text(call, 1))
+        .map_err(lib)?;
+    Ok(Ret::Undefined)
+}
+
+/// `UserSecurityChecks.assertTranslation(original, localized)`: a translation that adds an expression to its original,
+/// or a message key's template with one, needs `DATABASE_ADMIN` (SEC-SCR-06).
+fn assert_translation(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    crate::service::assert_translation(&super::entity_facade()?, &id_text(call, 0), &id_text(call, 1)).map_err(lib)?;
     Ok(Ret::Undefined)
 }
 

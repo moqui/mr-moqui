@@ -222,6 +222,57 @@ pub(crate) fn assert_document_condition(facade: &EntityFacade, condition: &str) 
     require_document_script(facade, "A DataDocument link condition")
 }
 
+/// Refuses stored text that is a template (it has `${`), run as script where the record is used (an email template's
+/// subject or sender, an attachment's file name, a message remote's send URL, a subscreen row's menu title), unless the
+/// user has [`DOCUMENT_EXPRESSION_PERMISSION`], the permission for script stored in records (plans/Security-Review-Medium.md
+/// SEC-SCR-06, SEC-SCR-12). Plain text, and any write while authorization is disabled (a data load), are allowed.
+pub(crate) fn assert_stored_template(facade: &EntityFacade, text: &str, what: &str) -> Result<(), Error> {
+    SECURITY_CHECKS.with(|count| count.set(count.get() + 1));
+    if !text.contains("${") {
+        return Ok(());
+    }
+    require_document_script(facade, &stored_what(what, "template"))
+}
+
+/// Refuses a stored expression that is not empty (a filter map, an apply or attachment condition, an identity mapping's
+/// expression), run as script where the record is used, unless the user has [`DOCUMENT_EXPRESSION_PERMISSION`]
+/// (SEC-SCR-06). An empty one, and any write while authorization is disabled, are allowed.
+pub(crate) fn assert_stored_expression(facade: &EntityFacade, text: &str, what: &str) -> Result<(), Error> {
+    SECURITY_CHECKS.with(|count| count.set(count.get() + 1));
+    if text.trim().is_empty() {
+        return Ok(());
+    }
+    require_document_script(facade, &stored_what(what, "expression"))
+}
+
+/// Refuses a `LocalizedMessage` whose `localized` text adds a `${}` expression to its `original`
+/// (`l10n::translation_adds_expression`; a message key's template counts as adding) unless the user has
+/// [`DOCUMENT_EXPRESSION_PERMISSION`]: the text is expanded as a template wherever the original is (SEC-SCR-06). A
+/// translation that keeps the original's placeholders, and any write while authorization is disabled, are allowed.
+pub(crate) fn assert_translation(facade: &EntityFacade, original: &str, localized: &str) -> Result<(), Error> {
+    SECURITY_CHECKS.with(|count| count.set(count.get() + 1));
+    let adds = if crate::l10n::translation_adds_expression(original, localized) {
+        true
+    } else {
+        // a key's template: any expression in it
+        localized.contains("${") && !original.contains("${") && !original.chars().any(char::is_whitespace)
+    };
+    if !adds {
+        return Ok(());
+    }
+    require_document_script(facade, "A translation that adds an expression to its original")
+}
+
+/// The record and field a stored script check names, or a general name.
+fn stored_what(what: &str, kind: &str) -> String {
+    let what = what.trim();
+    if what.is_empty() {
+        format!("A stored {kind}")
+    } else {
+        format!("The {kind} {what}")
+    }
+}
+
 /// `what` is script that runs on the server as whoever reads the document: allowed with authorization disabled or
 /// [`DOCUMENT_EXPRESSION_PERMISSION`].
 fn require_document_script(facade: &EntityFacade, what: &str) -> Result<(), Error> {

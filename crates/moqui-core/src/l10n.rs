@@ -251,7 +251,7 @@ fn lookup(original: &str, locale: &str) -> (String, bool) {
             .or_else(|| find(text, "default"))
     };
     if let Some(found) = chain(original) {
-        return (found, true);
+        return (kept_placeholders(original, found), true);
     }
     if failed.get() {
         return (original.to_string(), false);
@@ -263,10 +263,61 @@ fn lookup(original: &str, locale: &str) -> (String, bool) {
         .filter(|hash| *hash > 0 && close_curly.is_none_or(|close| *hash > close))
     {
         let base = &original[..hash];
-        let text = chain(base).unwrap_or_else(|| base.to_string());
+        let text = chain(base).map_or_else(|| base.to_string(), |found| kept_placeholders(base, found));
         return (text, !failed.get());
     }
     (original.to_string(), !failed.get())
+}
+
+/// The `${}` expressions of a template, as written, outside a `\${` escape.
+fn placeholders(text: &str) -> Vec<&str> {
+    let mut found = Vec::new();
+    let mut from = 0;
+    while let Some(at) = text[from..].find("${").map(|at| at + from) {
+        let escaped = at > 0 && text.as_bytes()[at - 1] == b'\\';
+        match crate::script::template::scan_expression(text, at + 2, b'}') {
+            Some(end) => {
+                if !escaped {
+                    found.push(text[at + 2..end].trim());
+                }
+                from = end + 1;
+            }
+            None => {
+                // an expression with no end: the whole rest, so it matches nothing of the original
+                found.push(text[at + 2..].trim());
+                break;
+            }
+        }
+    }
+    found
+}
+
+/// Whether `original` is a message key (`UserAuthcOtpMessage`, `PostalAddressSimpleTemplate`): no white space and no
+/// `${}`. Its `LocalizedMessage` is the template itself, written as code is (seed data, or a holder of `DATABASE_ADMIN`).
+fn is_message_key(original: &str) -> bool {
+    !original.is_empty() && !original.contains("${") && !original.chars().any(char::is_whitespace)
+}
+
+/// Whether `localized` has a `${}` expression that `original` does not, for a text that is not a message key: a
+/// translation may reorder or drop the original's placeholders but add none (plans/Security-Review-Medium.md SEC-SCR-06;
+/// Admin's store#LocalizedMessage keeps them exactly). A message key's template may hold any.
+pub(crate) fn translation_adds_expression(original: &str, localized: &str) -> bool {
+    if !localized.contains("${") || is_message_key(original) {
+        return false;
+    }
+    let allowed = placeholders(original);
+    !placeholders(localized).iter().all(|body| allowed.contains(body))
+}
+
+/// `translation`, unless it adds an expression to `original` ([`translation_adds_expression`]): then `original`, with a
+/// warning, so a translator's text never runs as script where the original is expanded.
+fn kept_placeholders(original: &str, translation: String) -> String {
+    if translation_adds_expression(original, &translation) {
+        tracing::warn!("A translation of [{original}] adds an expression to it and is not used");
+        original.to_string()
+    } else {
+        translation
+    }
 }
 
 fn decimal_of(value: &Value) -> Option<Decimal> {

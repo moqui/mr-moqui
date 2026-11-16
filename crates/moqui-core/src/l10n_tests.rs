@@ -68,6 +68,28 @@ fn a_message_added_after_a_lookup_shows_on_the_next_one() {
     assert_eq!(localize_in("Late Words", "es").unwrap(), "Palabras tardías");
 }
 
+/// SEC-SCR-06: a translation may reorder or drop the original's `${}` expressions but add none; one that adds an
+/// expression is not used, so a translator's text never runs as script where the original is expanded.
+#[test]
+fn a_translation_that_adds_an_expression_is_not_used() {
+    let context = entity_context();
+    let _entered = context.enter();
+    message(&context, "Order ${orderId} for ${name}", "fr", "Pour ${name}, commande ${ orderId }");
+    message(&context, "Hello ${name}", "fr", "Bonjour ${ec.factory.getTool('MailCapture')}");
+    message(&context, "Plain words", "fr", "Mots ${name}");
+    message(&context, "Escaped", "fr", "Échappé \\${name}");
+    assert_eq!(
+        localize_in("Order ${orderId} for ${name}", "fr").unwrap(),
+        "Pour ${name}, commande ${ orderId }"
+    );
+    assert_eq!(localize_in("Hello ${name}", "fr").unwrap(), "Hello ${name}");
+    assert_eq!(localize_in("Plain words", "fr").unwrap(), "Plain words");
+    assert_eq!(localize_in("Escaped", "fr").unwrap(), "Échappé \\${name}");
+    // a message key's text is the template itself (seed data, or a write with DATABASE_ADMIN)
+    message(&context, "SpecKeyTemplate", "default", "${a ? a + '-' : ''}${b}");
+    assert_eq!(localize_in("SpecKeyTemplate", "fr").unwrap(), "${a ? a + '-' : ''}${b}");
+}
+
 #[test]
 fn a_text_over_255_characters_is_returned_as_it_is() {
     let context = entity_context();

@@ -354,6 +354,9 @@ throws, so the write fails.
 | `assertDocumentExpression(fieldPath)` | Throws for a data document field path that is an expression (it has a `(`) unless the user has `DATABASE_ADMIN` |
 | `assertDocumentTemplate(text)` | Throws for a data document title or link URL or label that is a template (it has `${`) unless the user has `DATABASE_ADMIN` |
 | `assertDocumentCondition(condition)` | Throws for a data document link condition that is not empty unless the user has `DATABASE_ADMIN` |
+| `assertStoredTemplate(text, what)` | Throws for stored text that is a template (it has `${`) unless the user has `DATABASE_ADMIN`: an email template's sender or subject, an attachment's file name, a message remote's send URL, a subscreen row's menu title. `what` names the field in the message |
+| `assertTranslation(original, localized)` | Throws for a translation that adds a `${}` expression to its original, or a message key's template that holds one, unless the user has `DATABASE_ADMIN` |
+| `assertStoredExpression(text, what)` | Throws for a stored expression that is not empty unless the user has `DATABASE_ADMIN`: a filter map, an apply or attachment condition, an identity mapping's expression |
 | `privilegedGroups()` | The effective privileged group ids, sorted |
 | `sealedPermissions()` | The effective sealed permission ids, sorted |
 | `endUserSessions(userId, visitIds)` | Ends the web sessions of the user for the visits named, or all of them with none; the number ended. It checks no authority: the caller does |
