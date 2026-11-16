@@ -153,11 +153,15 @@ along with this software (see the LICENSE.md file). If not, see
             <entity-find-one entity-name="moqui.security.UserAccount" value-field="userAccount"/>
             <script>userAccount.set("successiveFailedLogins", userAccount.get("successiveFailedLogins") ? userAccount.get("successiveFailedLogins") + 1 : 1)</script>
             <set field="maxFailures" from="ec.user.loginRules.maxFailures"/>
-            <!-- if successiveFailedLogins is greater than max in conf then disable account;
-                 refresh disabledDateTime even when already disabled so the window restarts. An account disabled for
-                 good (disabled with no disabledDateTime) stays so: a lock time would end by itself (SEC-WEB-01). -->
+            <!-- if successiveFailedLogins is greater than max in conf then disable account, and after a lock window
+                 ended the next failure starts a new one. An attempt during a lock window counts but does not restart
+                 it, so attempts that go on cannot keep the account locked (SEC-WEB-03, as login.rs
+                 write_failed_increment). An account disabled for good (disabled with no disabledDateTime) stays so: a
+                 lock time would end by itself (SEC-WEB-01). -->
             <set field="disabledForGood" from="userAccount.get('disabled') == 'Y' &amp;&amp; !userAccount.get('disabledDateTime')"/>
-            <if condition="userAccount.get('successiveFailedLogins') > maxFailures &amp;&amp; !disabledForGood">
+            <set field="inLockWindow" from="userAccount.get('disabled') == 'Y' &amp;&amp; userAccount.get('disabledDateTime') &amp;&amp;
+                ec.user.timestampMillis(userAccount.get('disabledDateTime')) + ec.user.loginRules.disableMinutes * 60000 &gt; ec.user.timestampMillis(ec.user.nowTimestamp)"/>
+            <if condition="userAccount.get('successiveFailedLogins') > maxFailures &amp;&amp; !disabledForGood &amp;&amp; !inLockWindow">
                 <script>userAccount.set("disabled", "Y"); userAccount.set("disabledDateTime", ec.user.nowTimestamp)</script>
             </if>
             <log level="warn" message="User ${userId} failed logins [${userAccount.get('successiveFailedLogins')}], maxFailures [${maxFailures}], disabled [${userAccount.get('disabled')}]"/>

@@ -111,6 +111,14 @@ fn password_login(username: &str, password: &str) -> Result<bool, Error> {
     noting_invalid(check_password_login(username, password))
 }
 
+/// The invalid login error for a credential that is not valid (an unknown, ended or another user's key or app
+/// password), noted for the web protection. A valid key or app password the account's gate then refuses (a lock
+/// window) tried nothing wrong and is not noted (SEC-WEB-03).
+fn refused_credential() -> Error {
+    crate::web::note_auth_failure();
+    Error::new(INVALID_LOGIN)
+}
+
 /// `result`, noted with [`crate::web::note_auth_failure`] when it is the invalid login error.
 fn noting_invalid<T>(result: Result<T, Error>) -> Result<T, Error> {
     if result.as_ref().is_err_and(|err| err.message() == INVALID_LOGIN) {
@@ -136,7 +144,7 @@ fn check_password_login(username: &str, password: &str) -> Result<bool, Error> {
             password::burn_verify(password);
             return Err(Error::new(INVALID_LOGIN));
         };
-        if let Err(err) = gate_account(&facade, &account, now) {
+        if let Err(err) = gate_account(&facade, &account, now, true) {
             password::burn_verify(password);
             return Err(err);
         }
@@ -464,8 +472,9 @@ fn internal_login(username: &str, queued: bool, person: bool) -> (Option<String>
         Err(err) => return (None, Err(err)),
     };
     let now = now_millis();
-    // as for a password login, an account the gate stops (disabled, terminated) has no history row
-    if let Err(err) = gate_account(&facade, &account, now) {
+    // as for a password login, an account the gate stops (disabled, terminated) has no history row; no credential of
+    // the account was tried here, so nothing is counted
+    if let Err(err) = gate_account(&facade, &account, now, false) {
         return (None, Err(err));
     }
     // a display account is never signed in: not by a key, an app password, an SSH key, an identity provider, a second
@@ -512,7 +521,7 @@ pub fn login_external_user(username: &str, authenticated_at: Option<i64>) -> Res
 ///
 /// Returns [`INVALID_LOGIN`](Error) when the key is empty, unknown, or expired, or the account cannot log in.
 pub fn login_user_key(key: &str) -> Result<(), Error> {
-    noting_invalid(check_login_key(key, None, None))
+    check_login_key(key, None, None)
 }
 
 /// [`login_user_key`] for the one service `scope` names (`gateway`, the LLM gateway): an account's key, or a key made
@@ -522,7 +531,7 @@ pub fn login_user_key(key: &str) -> Result<(), Error> {
 ///
 /// Returns [`INVALID_LOGIN`](Error) as [`login_user_key`] does, and for a key of another scope.
 pub fn login_user_key_for(key: &str, scope: &str) -> Result<(), Error> {
-    noting_invalid(check_login_key(key, None, Some(scope)))
+    check_login_key(key, None, Some(scope))
 }
 
 /// Recheck a socket's hashed login key without logging in, writing history, or changing its session.
@@ -595,7 +604,7 @@ impl LoginKeyKind {
 /// (`UserLoginKey.scope`) logs in only where `scope` names it.
 fn check_login_key(key: &str, session_user: Option<&str>, scope: Option<&str>) -> Result<(), Error> {
     if key.is_empty() {
-        return Err(Error::new(INVALID_LOGIN));
+        return Err(refused_credential());
     }
     let hashed = password::hash_login_key(key)?;
     let _authz = without_authz();
@@ -605,24 +614,24 @@ fn check_login_key(key: &str, session_user: Option<&str>, scope: Option<&str>) -
         .eq("loginKey", Value::string(&hashed))
         .one()?
     else {
-        return Err(Error::new(INVALID_LOGIN));
+        return Err(refused_credential());
     };
     let user_id = text_field(&row, "userId");
     if session_user.is_some_and(|signed_in| signed_in != user_id) {
-        return Err(Error::new(INVALID_LOGIN));
+        return Err(refused_credential());
     }
     let key_scope = text_field(&row, "scope");
     if !key_scope.is_empty() && Some(key_scope.as_str()) != scope {
-        return Err(Error::new(INVALID_LOGIN));
+        return Err(refused_credential());
     }
     if let Some(thru) = field_millis(&row, "thruDate") {
         if key_ended(thru, now_millis()) {
             save_history(&user_id, false);
-            return Err(Error::new(INVALID_LOGIN));
+            return Err(refused_credential());
         }
     }
     let Some(account) = find_user_id(&facade, &user_id)? else {
-        return Err(Error::new(INVALID_LOGIN));
+        return Err(refused_credential());
     };
     recorded_login(&text_field(&account, "username"))?;
     session::set_login_key_kind(Some(LoginKeyKind::of(&row)));
@@ -669,7 +678,7 @@ fn note_key_used(facade: &EntityFacade, row: &EntityValue, hashed: &str) {
 /// Returns [`INVALID_LOGIN`](Error) when the password is empty, unknown, revoked or another user's, or the account
 /// cannot log in.
 pub fn login_app_password(username: &str, password: &str) -> Result<(), Error> {
-    noting_invalid(check_app_password(username, password))
+    check_app_password(username, password)
 }
 
 /// Whether `password` has the form of an app password ([`new_app_password`]): 20 of its letters and digits once the
@@ -694,7 +703,7 @@ pub fn app_password_key(password: &str) -> String {
 fn check_app_password(username: &str, password: &str) -> Result<(), Error> {
     let key = app_password_key(password);
     if username.is_empty() || key.is_empty() {
-        return Err(Error::new(INVALID_LOGIN));
+        return Err(refused_credential());
     }
     let hashed = password::hash_login_key(&key)?;
     let _authz = without_authz();
@@ -704,20 +713,20 @@ fn check_app_password(username: &str, password: &str) -> Result<(), Error> {
         .eq("passwordHash", Value::string(&hashed))
         .one()?
     else {
-        return Err(Error::new(INVALID_LOGIN));
+        return Err(refused_credential());
     };
     let user_id = text_field(&row, "userId");
     if field_millis(&row, "revokedDate").is_some() {
         save_history(&user_id, false);
-        return Err(Error::new(INVALID_LOGIN));
+        return Err(refused_credential());
     }
     let Some(account) = find_user_id(&facade, &user_id)? else {
-        return Err(Error::new(INVALID_LOGIN));
+        return Err(refused_credential());
     };
     let account_username = text_field(&account, "username");
     // another user's app password: not a login of this row's user, so nothing is recorded
     if !account_username.eq_ignore_ascii_case(username.trim()) {
-        return Err(Error::new(INVALID_LOGIN));
+        return Err(refused_credential());
     }
     recorded_login(&account_username)?;
     let now = now_millis();
@@ -915,7 +924,7 @@ pub fn issue_device_key(user_id: &str, device: &str) -> Result<String, Error> {
         let Some(account) = find_user_id(&facade, user_id)? else {
             return Err(Error::new(INVALID_LOGIN));
         };
-        let gated = gate_account(&facade, &account, now_millis());
+        let gated = gate_account(&facade, &account, now_millis(), false);
         save_history(user_id, gated.is_ok());
         gated?;
     }
@@ -989,7 +998,7 @@ pub fn apply_header_keys(api_key: Option<&str>, login_key: Option<&str>) -> Resu
         return Ok(false);
     };
     let signed_in = session::current_user_id()?.filter(|id| !id.is_empty());
-    noting_invalid(check_login_key(key, signed_in.as_deref(), None))?;
+    check_login_key(key, signed_in.as_deref(), None)?;
     Ok(true)
 }
 
@@ -1174,7 +1183,7 @@ fn reauth_password(user_id: &str, password: &str) -> Result<(), Error> {
             password::burn_verify(password);
             return Err(Error::new(INVALID_LOGIN));
         };
-        if let Err(err) = gate_account(&facade, &account, now) {
+        if let Err(err) = gate_account(&facade, &account, now, true) {
             password::burn_verify(password);
             return Err(err);
         }
@@ -1309,10 +1318,14 @@ pub fn now_millis() -> i64 {
         .unwrap_or(0)
 }
 
-fn gate_account(facade: &EntityFacade, account: &EntityValue, now: i64) -> Result<(), Error> {
+/// Whether the account may sign in now: not in a lock window, not disabled for good, not terminated. `counted`: a
+/// password was tried, so an attempt on a locked account counts as a failed login (the lock window does not restart,
+/// [`write_failed_increment`]). An internal login (a job, a worker, a second factor's finish) and a valid key, app
+/// password or identity provider tried no password of the account, and count nothing (SEC-WEB-03, SEC-COM-12).
+fn gate_account(facade: &EntityFacade, account: &EntityValue, now: i64, counted: bool) -> Result<(), Error> {
     let user_id = text_field(account, "userId");
     if still_disabled(account, now) {
-        if !user_id.is_empty() {
+        if counted && !user_id.is_empty() {
             increment_failed(facade, &user_id)?;
         }
         return Err(Error::new(INVALID_LOGIN));
@@ -1748,9 +1761,15 @@ fn write_failed_increment(
         let next = row_i64(row, "successiveFailedLogins").saturating_add(1);
         // An account disabled for good (`disabled` with no `disabledDateTime`) stays so: a lock time would turn it into a
         // tarpit lock that ends by itself (SEC-WEB-01). Only the count goes up.
-        let closed = row.get("disabled").and_then(Value::as_str).map(str::trim) == Some("Y")
-            && row_value(row, "disabledDateTime").is_null();
-        let disable = next > policy::max_failures() && !closed;
+        let disabled_flag = row.get("disabled").and_then(Value::as_str).map(str::trim) == Some("Y");
+        let closed = disabled_flag && row_value(row, "disabledDateTime").is_null();
+        // An attempt during a lock window counts but does not restart the window, so attempts that go on (or the owner's
+        // integration) cannot keep the account locked for as long as they last (SEC-WEB-03).
+        let window = policy::disable_minutes().saturating_mul(60_000);
+        let locked = disabled_flag
+            && value_millis(&row_value(row, "disabledDateTime"))
+                .is_some_and(|at| at.saturating_add(window) > now_millis());
+        let disable = next > policy::max_failures() && !closed && !locked;
         let disabled = if disable {
             Value::string("Y")
         } else {

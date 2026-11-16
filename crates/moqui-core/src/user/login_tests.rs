@@ -322,6 +322,55 @@ fn a_password_change_keeps_a_permanent_disable_and_ends_a_timed_lock() {
     session::reset_session();
 }
 
+/// SEC-WEB-03, SEC-COM-12: a password tried during a lock window counts but does not restart the window, and an
+/// internal login (an XMPP service call, queued work) or a valid key tried no password and counts nothing, nor is it
+/// noted for the web protection.
+#[test]
+fn attempts_during_a_lock_window_do_not_restart_it_and_internal_logins_do_not_count() {
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    let locked_at = now_millis() - 2 * 60_000;
+    create_user(&facade, "ada", "Secret1!", |_| {});
+    internal_login_user("ada").unwrap();
+    let key = get_login_key(None).unwrap();
+    logout().unwrap();
+    update_user(
+        &facade,
+        "ada",
+        &[
+            ("disabled", Value::string("Y")),
+            ("disabledDateTime", stamp(locked_at)),
+            ("successiveFailedLogins", Value::I64(4)),
+        ],
+    )
+    .unwrap();
+    crate::web::take_auth_failure();
+
+    assert_eq!(login_user("ada", "wrong").unwrap_err().to_string(), INVALID_LOGIN);
+    assert!(crate::web::take_auth_failure());
+    let after_password = load_user(&facade, "ada");
+    assert_eq!(i64_field(&after_password, "successiveFailedLogins"), 5);
+    assert_eq!(field_millis(&after_password, "disabledDateTime"), Some(locked_at));
+
+    for _ in 0..3 {
+        assert_eq!(internal_login_user("ada").unwrap_err().to_string(), INVALID_LOGIN);
+        assert_eq!(internal_login_queued_user("ada").unwrap_err().to_string(), INVALID_LOGIN);
+        assert_eq!(login_user_key(&key).unwrap_err().to_string(), INVALID_LOGIN);
+    }
+    assert!(!crate::web::take_auth_failure(), "a valid key is not a failed credential");
+    let after = load_user(&facade, "ada");
+    assert_eq!(i64_field(&after, "successiveFailedLogins"), 5);
+    assert_eq!(field_millis(&after, "disabledDateTime"), Some(locked_at));
+    assert!(session::current_username().unwrap().is_none());
+
+    // once the window is over, the next wrong password starts a new one
+    update_user(&facade, "ada", &[("disabledDateTime", stamp(now_millis() - 6 * 60_000))]).unwrap();
+    assert_eq!(login_user("ada", "wrong").unwrap_err().to_string(), INVALID_LOGIN);
+    let relocked = field_millis(&load_user(&facade, "ada"), "disabledDateTime").unwrap();
+    assert!(relocked > now_millis() - 60_000);
+    session::reset_session();
+}
+
 #[test]
 fn a_correct_password_logs_in_after_the_disable_window() {
     let (ctx, facade) = open_ctx();
