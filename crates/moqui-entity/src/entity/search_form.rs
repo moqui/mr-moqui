@@ -74,10 +74,21 @@ impl EntityFind {
             .map(str::to_string)
             .collect();
         let fields = self.search_fields()?;
+        // The input is a request's: no condition or order on a password field or an encrypted one, whose row count or
+        // order would read the stored hash a prefix at a time or confirm a guessed secret (plans/Security-Review-Medium.md
+        // SEC-DAT-01). The caller's own defaults and default order may name one.
+        let access = super::sensitive::generic_access(&self.facade, self.entity_name());
+        let mut input_skip = skip.clone();
+        input_skip.extend(
+            fields
+                .iter()
+                .filter(|field| access.hidden(&field.name))
+                .map(|field| field.name.clone()),
+        );
         let mut context = BTreeMap::new();
         let mut added = false;
         if !input.is_empty() {
-            added = self.process_input(input, &skip, &fields)?;
+            added = self.process_input(input, &input_skip, &fields)?;
         }
         self.has_search_parameters = added;
         if !added && !defaults.is_empty() {
@@ -87,6 +98,12 @@ impl EntityFind {
         let order_by = input
             .get("orderByField")
             .map(to_plain_string)
+            .map(|text| {
+                text.split(',')
+                    .filter(|part| !access.hidden(&order_field_name(part)))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
             .filter(|text| !text.is_empty())
             .unwrap_or_else(|| default_order_by.to_string());
         if !order_by.is_empty() {
@@ -377,6 +394,13 @@ fn bound(raw: Option<&Value>, field: &SearchField, day_end: &str) -> Result<Opti
             .ok_or_else(|| not_valid(text, field));
     }
     convert(text, field).map(Some)
+}
+
+/// The field an `orderByField` part names (`-name`, `^name`, `name DESC`, `UPPER(name)`), as the find reads it.
+fn order_field_name(part: &str) -> String {
+    moqui_db::sql::OrderBy::parse(part)
+        .map(|order| order.field.name)
+        .unwrap_or_default()
 }
 
 fn truthy(value: &Value) -> bool {

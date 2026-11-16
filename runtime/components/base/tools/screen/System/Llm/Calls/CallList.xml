@@ -25,7 +25,7 @@ along with this software (see the LICENSE.md file). If not, see
     <widgets>
         <form-list name="CallList" list="callList" skip-form="true" header-dialog="true" show-csv-button="true">
             <entity-find entity-name="moqui.llm.LlmCall" list="callList" use-clone="true">
-                <search-form-inputs default-order-by="-startDate">
+                <search-form-inputs default-order-by="-startDate" skip-fields="errorText,requestJson,responseJson">
                     <default-parameters startDate_poffset="-1" startDate_period="7d"/></search-form-inputs>
                 <select-field field-name="callId,startDate,userId,featureId,modelId,source,runId,httpStatus,finishReason,errorClass,attempt,firstTokenMs,durationMs,inputTokens,cachedInputTokens,outputTokens,cost,currencyUomId"/>
             </entity-find>

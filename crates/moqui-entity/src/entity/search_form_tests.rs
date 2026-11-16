@@ -263,3 +263,39 @@ fn defaults_apply_only_without_input_and_order_and_paging_are_read() {
         .unwrap();
     assert!(conditions(&skipped).is_empty());
 }
+
+/// A request's input takes no condition or order on a password field or an encrypted one: the row count of
+/// `currentPassword_op=begins` read the stored hash a prefix at a time, and an `equals` on an encrypted field confirmed
+/// a guessed secret (plans/Security-Review-Medium.md SEC-DAT-01). The caller's defaults still may.
+#[test]
+fn request_input_takes_no_condition_or_order_on_a_secret_or_encrypted_field() {
+    let facade = crate::testing::open();
+    let account = facade
+        .find("moqui.security.UserAccount")
+        .unwrap()
+        .search_form_map(
+            &input(&[
+                ("currentPassword", "$argon2"),
+                ("currentPassword_op", "begins"),
+                ("username", "u1"),
+                ("orderByField", "-currentPassword,username"),
+            ]),
+            &BTreeMap::new(),
+            "",
+            "",
+            false,
+        )
+        .unwrap();
+    assert_eq!(conditions(&account), [Condition::equals("username", Value::string("u1"))]);
+    assert_eq!(account.context.get("orderByField").and_then(Value::as_str), Some("username"));
+
+    let sync = || facade.find("moqui.entity.sync.EntitySync").unwrap();
+    let guessed = sync()
+        .search_form_map(&input(&[("targetPassword", "guess")]), &BTreeMap::new(), "", "", false)
+        .unwrap();
+    assert!(conditions(&guessed).is_empty());
+    let by_code = sync()
+        .search_form_map(&BTreeMap::new(), &input(&[("targetPassword", "known")]), "", "", false)
+        .unwrap();
+    assert_eq!(conditions(&by_code).len(), 1);
+}

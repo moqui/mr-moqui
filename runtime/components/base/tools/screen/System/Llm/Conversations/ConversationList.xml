@@ -24,7 +24,7 @@ along with this software (see the LICENSE.md file). If not, see
     <widgets>
         <form-list name="ConversationList" list="conversationList" skip-form="true" header-dialog="true">
             <entity-find entity-name="moqui.agent.AgentConversation" list="conversationList" use-clone="true">
-                <search-form-inputs default-order-by="-lastMessageDate"/>
+                <search-form-inputs default-order-by="-lastMessageDate" skip-fields="title,summary,searchText,systemText,compactionSummary,screenStateJson,skillCatalog"/>
                 <select-field field-name="conversationId,userId,agentId,surfaceEnumId,statusId,activeRunId,lastMessageSeq,lastMessageDate,recordEntityName,recordId,createdDate"/>
             </entity-find>
             <field name="conversationId"><header-field title="Conversation" show-order-by="true"><text-find size="10" hide-options="true"/></header-field>
