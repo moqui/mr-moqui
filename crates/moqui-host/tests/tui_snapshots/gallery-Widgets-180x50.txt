@@ -14,17 +14,17 @@
      Dialog              │ │                                                                                                                       │                              │
      Report              │ │ text-area editor-type=rich mention-trans… : │<h3>Rich text</h3><p>The <strtext-area editor-type=rich-light  . . . . : │<p>A <strong>light</strong>…  │
      Panel               │ │                                             HTML is read-only in the                                                  HTML is read-only in the       │
-   ▶ Widgets             │ │                                             terminal. Use the browser                                                 terminal. Use the browser      │
+   • Widgets             │ │                                             terminal. Use the browser                                                 terminal. Use the browser      │
      Editor              │ │                                             form.                                                                     form.                          │
      Message             │ │ drop-down entity-options  . . . . . . . . : [Screen Theme Type [Scree… ▾] drop-down allow-multiple  . . . . . . . . : [UserGroup, UserAccount    ▾]  │
      Views               │ │ drop-down dynamic-options server-search . : [                          ▾] date-time type=date . . . . . . . . . . . : [2026-10-18________]           │
      Handheld            │ │ date-time type=time . . . . . . . . . . . : [09:30_____________]          date-time type=date-time  . . . . . . . . : [2026-10-18 09:30__]           │
      Nav cards           │ │ date-period . . . . . . . . . . . . . . . : [___________] – [___________] date-find type=date . . . . . . . . . . . : [___________] – [___________]  │
- ▾ Home                  │ │ range-find  . . . . . . . . . . . . . . . : [________] – [________]       text-find . . . . . . . . . . . . . . . . : [_________________]            │
+ ◂ Home                  │ │ range-find  . . . . . . . . . . . . . . . : [________] – [________]       text-find . . . . . . . . . . . . . . . . : [_________________]            │
                          │ │ check (single)  . . . . . . . . . . . . . : [x] Active                    check with options  . . . . . . . . . . . : [x] Email  [ ] SMS  [ ] Push   │
                          │ │ radio . . . . . . . . . . . . . . . . . . : (•) Task  ( ) Call  ( ) Event file  . . . . . . . . . . . . . . . . . . : [ choose… ]  upload in the brow│
-                         │ │ display (label-wrapper) . . . . . . . . . : A read-only value with a labeldisplay-entity EnumerationType  . . . . . : Screen Theme Type              │
-                         │ │                                                                                                                                                      │
+                         │ │ display (label-wrapper) . . . . . . . . . : A read-only value with a      display-entity EnumerationType  . . . . . : Screen Theme Type              │
+                         │ │                                             label                                                                                                    │
                          │ │ password  . . . . . . . . . . . . . . . . : [______________________________]                                                                         │
                          │ │ < Save >                                                                                                                                             │
                          │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

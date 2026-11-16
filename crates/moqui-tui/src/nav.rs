@@ -19,7 +19,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::model::ScreenModel;
+use crate::model::{Node, ScreenModel, SubscreenItem};
 
 /// The screens down to the app root (`apps` and the app) are drawn as the drawer, not as levels.
 pub const LEVEL_FLOOR: usize = 2;
@@ -133,6 +133,7 @@ impl Nav {
             .filter(|path| !self.parents.iter().any(|level| &level.model.screen.path == path))
             .collect();
         self.leaf = Level { model, parameters };
+        self.mark_active();
         missing
     }
 
@@ -145,6 +146,21 @@ impl Nav {
         self.parents.retain(|level| level.model.screen.path != path);
         self.parents.push(Level { model, parameters });
         self.parents.sort_by_key(|level| level.model.screen.path.len());
+        self.mark_active();
+    }
+
+    /// A parent level is asked for alone, so its tabs' and wizard steps' `active` is the default subscreen's, not the
+    /// leaf's: each parent's item whose path holds the leaf's (the longest such) is made the active one. A bar with no
+    /// such item keeps what the server said.
+    fn mark_active(&mut self) {
+        let leaf = self.leaf.model.screen.path.clone();
+        for level in &mut self.parents {
+            crate::model::walk_mut(&mut level.model.c, &mut |node| {
+                if let Node::Subscreen { items, .. } = node {
+                    mark_items(items, &leaf);
+                }
+            });
+        }
     }
 
     /// Remember where the user was, before a navigation.
@@ -161,6 +177,26 @@ impl Nav {
 
     pub fn has_history(&self) -> bool {
         !self.history.is_empty()
+    }
+}
+
+/// Make the item whose url's path holds `leaf` the active one, the longest such path when several do.
+fn mark_items(items: &mut [SubscreenItem], leaf: &str) {
+    let holds = |url: &str| {
+        let path = url.split(['?', '#']).next().unwrap_or(url).trim_end_matches('/');
+        !path.is_empty() && (leaf == path || leaf.starts_with(&format!("{path}/")))
+    };
+    let Some(best) = items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| holds(&item.url))
+        .max_by_key(|(_, item)| item.url.split('?').next().unwrap_or("").len())
+        .map(|(at, _)| at)
+    else {
+        return;
+    };
+    for (at, item) in items.iter_mut().enumerate() {
+        item.active = at == best;
     }
 }
 
@@ -263,6 +299,39 @@ mod tests {
         let mut nav = Nav::new(model("/apps/app/Find"));
         // only the screens' own parents, not Wiki/wiki or Wiki/wiki/SPACE1
         assert_eq!(nav.set_leaf(wiki, BTreeMap::new()), ["/apps/app/Wiki"]);
+    }
+
+    #[test]
+    fn a_parents_tabs_follow_the_leaf_shown() {
+        let mut nav = Nav::new(model("/apps/app/Find"));
+        nav.set_leaf(model("/apps/app/Wizard/Options"), BTreeMap::new());
+        let mut wizard = model("/apps/app/Wizard");
+        let item = |title: &str, active: bool| SubscreenItem {
+            title: title.to_string(),
+            url: format!("/apps/app/Wizard/{title}?x=1"),
+            active,
+            disabled: false,
+        };
+        wizard.c = vec![Node::Subscreen {
+            id: "steps".to_string(),
+            kind: "wizard".to_string(),
+            items: vec![item("Basics", true), item("Options", false), item("Review", false)],
+            finish_text: String::new(),
+            c: Vec::new(),
+        }];
+        nav.set_parent(wizard, BTreeMap::new());
+        let active = |nav: &Nav| match &nav.parents()[0].model.c[0] {
+            Node::Subscreen { items, .. } => items
+                .iter()
+                .filter(|item| item.active)
+                .map(|item| item.title.clone())
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        assert_eq!(active(&nav), ["Options"]);
+        // the parent kept, the next step shown
+        nav.set_leaf(model("/apps/app/Wizard/Review"), BTreeMap::new());
+        assert_eq!(active(&nav), ["Review"]);
     }
 
     #[test]

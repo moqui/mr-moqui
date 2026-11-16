@@ -32,7 +32,8 @@ fn split_series_preserve_time_gaps_groups_and_original_rows() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(text.contains("service=A") && text.contains("service=B"));
-    assert!(text.contains("source rows: 1,3,4") && text.contains("source rows: 2,5"));
+    // the source rows are the inspector's, not drawn under each sparkline
+    assert!(!text.contains("source rows"));
     // Compression cannot bridge a missing coordinate.
     assert_eq!(sparkline(&[json!(0), Value::Null, json!(2), json!(3)], 2), " █");
 }
@@ -247,7 +248,11 @@ fn time_picker_applies_a_quick_range_and_panel_menu_runs_its_items() {
     let props = json!({"dashboard":{"definitionId":"d","title":"Board","editable":true,"absoluteTime":{"from":"2026-10-27T00:00:00Z","thru":"2026-10-28T00:00:00Z"},
         "requestedTime":{"from":"now-24h","thru":"now"},"filters":[{"datasetId":"orders","query":{"field":{"name":"status","op":"eq","value":"open"}}}],
         "panels":{"p":{"title":"Orders","queries":[{"datasetId":"orders","queryString":"total:>5","aggregations":[{"id":"n","type":"sum","role":"metric"}]}]}}},"frames":{}});
-    let mut state = ComponentState::default();
+    // focused, as the panel hint and its menu show only then
+    let mut state = ComponentState {
+        focused: true,
+        ..Default::default()
+    };
     let text = |state: &ComponentState| {
         ReportDashboard
             .lines(&props, state, 120, false)

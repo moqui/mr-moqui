@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- The ScreenTui spec's screen (test only, never mounted): what the tui render mode writes for a list link whose text is a
+    localized template, a skip-header list, a section-iterate in a list cell, a show-total row, encode="false" text, an
+    html-view with both text and HTML, and a board whose column-order is an expression. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="false" default-menu-title="Screen TUI">
+    <actions>
+        <set field="itemList" from="[{itemId: 'I1', itemName: 'Alpha', amount: 2, stage: 'Won', tags: ['red', 'blue']},
+                {itemId: 'I2', itemName: 'Beta', amount: 3, stage: 'Open', tags: ['green']}]"/>
+        <set field="boardColumns" value="Open,Won,Lost"/>
+    </actions>
+    <widgets>
+        <form-list name="ItemList" list="itemList" skip-form="true">
+            <field name="itemId"><default-field title="Item"><link url="." text="TuiSpecRowTemplate" link-type="anchor"/></default-field></field>
+            <field name="tags"><default-field title="Tags">
+                <section-iterate name="ItemTags" list="tags" entry="tag"><widgets><label text="#${tag}"/></widgets></section-iterate>
+            </default-field></field>
+            <field name="amount" show-total="sum"><default-field title="Amount"><display/></default-field></field>
+        </form-list>
+        <form-list name="BareList" list="itemList" skip-form="true" skip-header="true">
+            <field name="itemName"><default-field title="Name Text"><display/></default-field></field>
+        </form-list>
+        <label text="Sales &lt;strong&gt;Orders&lt;/strong&gt; &amp;amp; Quotes" encode="false" type="h3"/>
+        <label text="&amp;nbsp;" encode="false" type="div"/>
+        <link text="Customer &lt;strong&gt;Requests&lt;/strong&gt;" encode="false" url="." link-type="anchor"/>
+        <html-view text="Plain words only" html="&lt;p&gt;First paragraph&lt;/p&gt;&lt;blockquote&gt;A quote&lt;/blockquote&gt;"/>
+        <form-list name="StageBoard" list="itemList" skip-form="true">
+            <field name="itemName"><default-field title="Name"><display/></default-field></field>
+            <field name="stage"><default-field title="Stage"><display/></default-field></field>
+            <view-board group-field="stage" card-title-field="itemName" key-fields="itemId" column-order="${boardColumns}"/>
+        </form-list>
+    </widgets>
+</screen>

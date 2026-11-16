@@ -819,11 +819,12 @@ fn f10_offers_only_the_focused_rows_actions_and_keeps_their_confirmation() {
         other => panic!("expected row actions, got {other:?}"),
     };
     press(&mut session, &link, Key::F(10));
-    assert_eq!(labels(&session), ["Edit R1…", "Approve"]);
+    // the row's link that goes somewhere is listed too, under its column
+    assert_eq!(labels(&session), ["Edit R1…", "Approve", "Record ▸ Open R1"]);
     press(&mut session, &link, Key::Escape);
     press(&mut session, &link, Key::Down);
     press(&mut session, &link, Key::F(10));
-    assert_eq!(labels(&session), ["Edit R2…", "Approve"]);
+    assert_eq!(labels(&session), ["Edit R2…", "Approve", "Record ▸ Open R2"]);
     press(&mut session, &link, Key::Down);
     press(&mut session, &link, Key::Enter);
     assert!(matches!(session.top_overlay(), Some(Overlay::Confirm(confirm))
@@ -837,4 +838,38 @@ fn f10_offers_only_the_focused_rows_actions_and_keeps_their_confirmation() {
     press(&mut session, &link, Key::Right);
     press(&mut session, &link, Key::Enter);
     assert_eq!(last_transition(&link), Some(("/approve".into(), map(&[("id", "R2")]))));
+}
+
+/// Enter on a row opens its link to another screen before one back to the screen shown (a filter, a toggle); a row
+/// with no link says there is nothing to open and points to F10 when it has actions.
+#[test]
+fn enter_prefers_a_link_to_another_screen_and_says_when_nothing_opens() {
+    let main = serde_json::json!({"v":1,"screen":{"path":"/caps"},"c":[
+        {"t":"formList","id":"Caps","name":"Caps","columns":[{"title":"Toggle"},{"title":"Group"}],"rows":[
+            {"id":"A","cells":[{"t":"link","id":"t-A","text":"End","url":"/caps?end=A"},
+                               {"t":"link","id":"g-A","text":"Group A","url":"/group?groupId=A"}]},
+            {"id":"B","cells":["Ended", ""]}
+        ]}
+    ]})
+    .to_string();
+    let group = serde_json::json!({"v":1,"screen":{"path":"/group"},"c":[]}).to_string();
+    let link = FakeLink::from_json(&[&main, &group]).unwrap();
+    let mut session = Session::start("/caps");
+    session.run_now(&link);
+    press(&mut session, &link, Key::Down);
+    press(&mut session, &link, Key::Enter);
+    assert!(
+        session.message().starts_with("Nothing to open on this row"),
+        "{}",
+        session.message()
+    );
+    press(&mut session, &link, Key::Up);
+    press(&mut session, &link, Key::Enter);
+    assert!(
+        link.calls()
+            .iter()
+            .any(|call| matches!(call, LinkCall::Level {path, ..} if path == "/group")),
+        "{:?}",
+        link.calls()
+    );
 }

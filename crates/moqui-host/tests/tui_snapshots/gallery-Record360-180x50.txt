@@ -4,7 +4,7 @@
      Landing             │ ┃ A detail for a party seen through the app's role, here a user account: a header card with the avatar, identity, classification chips and key numbers │
      List                │ ┃ that link into the matching lists, the app's actions, then the parts. The real 360 uses subscreens-panel type="tab" for Overview, Groups, Activity   │
      Detail              │ ┃ and the rest; this leaf has no subscreens, so the parts are boxes. Chatter spans every tab.                                                          │
-   ▶ 360                 │ ┃ Fallbacks for §8: number-card size="sm" is the row of numbers inside the header q-card (render-mode); chatter is a box with a compose form and a     │
+   • 360                 │ ┃ Fallbacks for §8: number-card size="sm" is the row of numbers inside the header q-card (render-mode); chatter is a box with a compose form and a     │
      Task                │ ┃ q-timeline; the avatar is initials in a q-avatar because the framework has no party content. Every action is a no-op.                                │
      Board               │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
      Calendar            │ ┌─ John Doe (JD) ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -20,7 +20,7 @@
      Views               │ │ User name . . . . . . . . : john.doe                                    │ │            │                                                             │
      Handheld            │ │ Full name . . . . . . . . : John Doe                                    │ │ < Post >                                                                 │
      Nav cards           │ │ Email . . . . . . . . . . : john.doe@moqui.org                          │ │ ●   Signed in from nowhere yet                                           │
- ▾ Home                  │ │ Locale  . . . . . . . . . : en_US                                       │ │ ● 2010-02-03  Added to Administrators (full access)                      │
+ ◂ Home                  │ │ Locale  . . . . . . . . . : en_US                                       │ │ ● 2010-02-03  Added to Administrators (full access)                      │
                          │ │ Time zone . . . . . . . . : US/Central                                  │ │ ● Seed data  Note: demo account of the framework                         │
                          │ │ Disabled  . . . . . . . . : N                                           │ └──────────────────────────────────────────────────────────────────────────┘
                          │ │ Password change required  : N                                           │

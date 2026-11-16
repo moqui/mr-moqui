@@ -273,6 +273,8 @@ struct TrendSeries {
     label: String,
     field: Value,
     values: Vec<Value>,
+    /// The frame row of each point (none for a gap): the inspector (`i`) lists them, so a point can be found in the
+    /// table.
     rows: Vec<Option<usize>>,
 }
 
@@ -500,26 +502,6 @@ fn trend_lines(frame: &Value, panel: &Value, width: usize, stat: bool) -> Vec<Li
         lines.push(vec![Span::new(
             format!("{} {}{}", series.label, value, sparkline(&series.values, width)),
             Role::Primary,
-        )]);
-        // The table below retains original rows for cell links and filter actions.
-        let rows = series
-            .rows
-            .iter()
-            .flatten()
-            .take(20)
-            .map(|row| (row + 1).to_string())
-            .collect::<Vec<_>>()
-            .join(",");
-        lines.push(vec![Span::new(
-            format!(
-                "  source rows: {rows}{}",
-                if series.rows.iter().flatten().count() > 20 {
-                    ",…"
-                } else {
-                    ""
-                }
-            ),
-            Role::Muted,
         )]);
     }
     if trends.limited {
@@ -1402,7 +1384,7 @@ impl Component for ReportDashboard {
             if kiosk && at < state.at {
                 continue;
             }
-            if at == state.at && !kiosk {
+            if at == state.at && !kiosk && state.focused {
                 lines.push(vec![Span::new(
                     "▶ Selected panel; m opens its menu, i inspects, c/x exports CSV/XLSX",
                     Role::Muted,
@@ -1437,7 +1419,20 @@ impl Component for ReportDashboard {
             if at == state.at && state.closed.contains("__report_inspector") {
                 lines.push(vec![Span::new("Inspector: authorized query requests and per-step input/output snapshots (native view capped at 1,200 lines; server sampling/truncation flags included)",Role::Muted)]);
                 let inspected = &state.local["inspection"]["dashboard"]["panels"][id];
-                lines.extend(serde_json::to_string_pretty(&serde_json::json!({"panelId":id,"panel":panel,"frame":frame,"inspection":inspected["inspection"],"requests":inspected["requests"]})).unwrap_or_default().lines().take(1200).map(|line|vec![Span::new(line,Role::Muted)]));
+                // each trend's frame rows, numbered from 1 as the table's rows are
+                let series: Vec<Value> = trend_series(&frame, panel)
+                    .series
+                    .iter()
+                    .map(|series| {
+                        let rows: Vec<Value> = series
+                            .rows
+                            .iter()
+                            .map(|row| row.map_or(Value::Null, |row| (row + 1).into()))
+                            .collect();
+                        serde_json::json!({"label": series.label, "rows": rows})
+                    })
+                    .collect();
+                lines.extend(serde_json::to_string_pretty(&serde_json::json!({"panelId":id,"panel":panel,"frame":frame,"series":series,"inspection":inspected["inspection"],"requests":inspected["requests"]})).unwrap_or_default().lines().take(1200).map(|line|vec![Span::new(line,Role::Muted)]));
             }
             lines.push(Vec::new());
         }

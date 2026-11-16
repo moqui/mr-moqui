@@ -55,9 +55,9 @@ pub use layout::{
     LaidOut, Piece, Plain, Shown, TreeMark, TreeRow, WidthClass, DRAWER_DOCK_AT, DRAWER_WIDTH, PAGE_ROWS,
 };
 pub use link::{
-    counts_of, gallery_link, row_link, AdminAccount, AdminSetup, CodeAsk, FakeLink, LinkCall, LinkError, MenuItem,
-    Push, PushSink, RawBody, Reply, ScreenLink, Sendable, ShellAction, ShellInfo, Subscription, TransitionOutcome,
-    GALLERY_DETAIL_JSON, GALLERY_DETAIL_PATH, GALLERY_LIST_JSON, GALLERY_LIST_PATH,
+    counts_of, gallery_link, row_link, row_link_target, AdminAccount, AdminSetup, CodeAsk, FakeLink, LinkCall,
+    LinkError, MenuItem, Push, PushSink, RawBody, Reply, ScreenLink, Sendable, ShellAction, ShellInfo, Subscription,
+    TransitionOutcome, GALLERY_DETAIL_JSON, GALLERY_DETAIL_PATH, GALLERY_LIST_JSON, GALLERY_LIST_PATH,
 };
 pub use markdown::blocks as markdown_blocks;
 pub use model::{

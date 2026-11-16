@@ -251,6 +251,11 @@ pub trait Shown {
         None
     }
 
+    /// The columns a list is scrolled sideways (Shift+Right), so its rows take the lines of the columns drawn.
+    fn hscroll(&self, _id: &str) -> usize {
+        0
+    }
+
     /// A component's lines at `width`; None when no component of its name is registered.
     fn component_lines(
         &self,
@@ -518,14 +523,54 @@ pub struct LaidList {
     pub scroll: bool,
     pub rows: usize,
     pub selection: bool,
-    /// The lines of each row: more than one where a column stacks several fields.
+    /// The lines of each row, over the columns drawn: more than one where a column stacks several fields.
     pub heights: Vec<usize>,
+    /// The column titles and their rule are drawn: not for a `skip-header` list.
+    pub header: bool,
 }
+
+/// The fewest columns a column too wide for the room left is shortened to; with less room it waits for a scroll.
+pub const COL_SHORT_MIN: usize = 8;
 
 impl LaidList {
     pub fn height(&self) -> usize {
-        // Header, rule, the rows (or the empty line), footer.
-        2 + self.body_rows().max(1) + 1
+        // Header and rule, the rows (or the empty line), footer.
+        self.header_rows() + self.body_rows().max(1) + 1
+    }
+
+    /// The lines above the rows: the titles and the rule, or none.
+    pub fn header_rows(&self) -> usize {
+        if self.header {
+            2
+        } else {
+            0
+        }
+    }
+
+    /// The columns drawn in `room` columns with the list scrolled `scroll` columns sideways: the first, then from the
+    /// scrolled one on, each with the width it is drawn at. A column wider than the room left is shortened to it, down
+    /// to [`COL_SHORT_MIN`], so a long value column shows (cut) rather than not at all.
+    pub fn drawn(&self, scroll: usize, room: usize) -> Vec<(usize, usize)> {
+        let mut out: Vec<(usize, usize)> = Vec::new();
+        if self.columns.is_empty() {
+            return out;
+        }
+        let scroll = scroll.min(self.columns.len() - 1);
+        let mut used = 2 + if self.selection { 4 } else { 0 };
+        for at in std::iter::once(0).chain((1 + scroll)..self.columns.len()) {
+            let width = self.columns[at].width;
+            if out.is_empty() || used + width <= room {
+                out.push((at, width));
+                used += width + 1;
+                continue;
+            }
+            let left = room.saturating_sub(used);
+            if left >= COL_SHORT_MIN {
+                out.push((at, left));
+            }
+            break;
+        }
+        out
     }
 
     /// The lines the rows take.
@@ -557,10 +602,15 @@ pub struct LaidTabs {
 }
 
 impl LaidTabs {
-    /// The tab's text as drawn: its number, for Alt+n, and its title.
+    /// The tab's text as drawn: its number, for Alt+n, and its title. Only the first nine have a number, as only
+    /// Alt+1 to Alt+9 open one; the others are reached with Ctrl+PgDn or a click.
     #[must_use]
     pub fn text(at: usize, title: &str) -> String {
-        format!("{}:{title}", at + 1)
+        if at < 9 {
+            format!("{}:{title}", at + 1)
+        } else {
+            title.to_string()
+        }
     }
 
     /// The first tab of each line when the tabs, two columns apart, are laid in `width`.
@@ -633,7 +683,10 @@ pub fn layout_levels<'a>(
 
 /// Nodes on their own, as a dialog or the find dialog lays out its body.
 pub fn layout_nodes(nodes: &[Node], width: u16, breakpoints: &Breakpoints, shown: &dyn Shown) -> LaidOut {
-    let ctx = Ctx::new(breakpoints.class(width), shown);
+    let ctx = Ctx {
+        in_dialog: true,
+        ..Ctx::new(breakpoints.class(width), shown)
+    };
     LaidOut {
         class: ctx.class,
         canvas: width,
@@ -651,6 +704,8 @@ struct Ctx<'a> {
     class: WidthClass,
     mode: LabelMode,
     shown: &'a dyn Shown,
+    /// Laid out in a dialog, where a `pre` text wraps: a dialog does not scroll sideways, so a cut line would be lost.
+    in_dialog: bool,
 }
 
 impl<'a> Ctx<'a> {
@@ -663,6 +718,7 @@ impl<'a> Ctx<'a> {
                 LabelMode::Beside
             },
             shown,
+            in_dialog: false,
         }
     }
 }
@@ -854,7 +910,7 @@ fn place_one(node: &Node, ctx: &Ctx<'_>, width: u16) -> Vec<Piece> {
             lines: form_lines(c, ctx, width),
         })],
         Node::FormList { list } => {
-            let mut pieces = vec![Piece::List(lay_list(list, width))];
+            let mut pieces = vec![Piece::List(lay_list(list, width, ctx.shown.hscroll(&list.id)))];
             // The multi form's buttons, once under its rows.
             pieces.extend(place_nodes(&list.buttons, ctx, width));
             pieces.extend(place_nodes(&list.c, ctx, width));
@@ -868,7 +924,7 @@ fn place_one(node: &Node, ctx: &Ctx<'_>, width: u16) -> Vec<Piece> {
                 lines: form_lines(std::slice::from_ref(node), ctx, width),
             })]
         }
-        Node::Text { id, text, style } => vec![Piece::Text(text_piece(id, text, style, width))],
+        Node::Text { id, text, style } => vec![Piece::Text(text_piece(id, text, style, width, ctx.in_dialog))],
         Node::Markdown { id, text } => {
             let (blocks, links) = crate::markdown::blocks(text);
             let mut pieces = html_pieces(id, &blocks, width);
@@ -1069,10 +1125,14 @@ fn references(id: &str, links: &[HtmlLink], width: u16) -> Vec<Piece> {
     pieces
 }
 
-fn text_piece(id: &str, text: &str, style: &str, width: u16) -> LaidText {
+fn text_piece(id: &str, text: &str, style: &str, width: u16, in_dialog: bool) -> LaidText {
     let width = usize::from(width);
     let lines = if style == "pre" || style == "code" {
-        text.lines().map(|line| truncate_width(line, width)).collect()
+        if in_dialog {
+            text.lines().flat_map(|line| break_width(line, width)).collect()
+        } else {
+            text.lines().map(|line| truncate_width(line, width)).collect()
+        }
     } else {
         text.split('\n').flat_map(|line| wrap(line, width)).collect()
     };
@@ -1513,7 +1573,9 @@ fn collect_form(
                 }
                 collect_form(c, ctx, width, label_width, lines, buttons);
             }
-            Node::Text { id, text, style } => lines.push(FormLine::Text(text_piece(id, text, style, width))),
+            Node::Text { id, text, style } => {
+                lines.push(FormLine::Text(text_piece(id, text, style, width, ctx.in_dialog)));
+            }
             Node::Link { .. } | Node::Dialog { .. } => buttons.extend(inline_of(node)),
             other => collect_form(other.children(), ctx, width, label_width, lines, buttons),
         }
@@ -1521,7 +1583,14 @@ fn collect_form(
 }
 
 fn lay_field(id: &str, title: &str, widget: &Widget, mode: LabelMode, label_width: usize, width: u16) -> LaidField {
+    // A field with no title has no label line and no colon: its value in the form's value column, or, with no label
+    // column (a lone editable), where the label would be.
+    let (mode, label_width) = match (title.is_empty(), mode) {
+        (true, LabelMode::Above) => (LabelMode::Beside, 0),
+        _ => (mode, label_width),
+    };
     let room = match mode {
+        LabelMode::Beside if title.is_empty() && label_width == 0 => usize::from(width),
         LabelMode::Beside => usize::from(width).saturating_sub(label_width + 4),
         LabelMode::Above => usize::from(width).saturating_sub(2),
     }
@@ -1625,7 +1694,7 @@ pub(crate) fn radio_layout(options: &[Choice], width: usize) -> RadioLayout {
 
 // ---- lists ----
 
-fn lay_list(list: &FormList, canvas: u16) -> LaidList {
+fn lay_list(list: &FormList, canvas: u16, hscroll: usize) -> LaidList {
     let mut columns = Vec::new();
     // each column's width with no cap, for the room the canvas has left
     let mut wanted = Vec::new();
@@ -1643,11 +1712,15 @@ fn lay_list(list: &FormList, canvas: u16) -> LaidList {
             (Some(percent), "percent") => (usize::from(canvas) * percent / 100).max(display_width(&column.title)),
             (Some(chars), _) => chars,
             (None, _) => {
-                let mut widest = display_width(&column.title);
+                let mut widest = if list.skip_header {
+                    0
+                } else {
+                    display_width(&column.title)
+                };
                 for row in &list.rows {
                     if let Some(cell) = row.cells.get(index) {
-                        for part in cell.parts() {
-                            widest = widest.max(cell_width(part));
+                        for line in cell.lines() {
+                            widest = widest.max(line_width(&line));
                         }
                     }
                 }
@@ -1677,26 +1750,41 @@ fn lay_list(list: &FormList, canvas: u16) -> LaidList {
         total += more;
         spare -= more;
     }
-    LaidList {
+    let mut laid = LaidList {
         id: list.id.clone(),
         name: list.name.clone(),
         columns,
         scroll: total + gutter > usize::from(canvas),
         rows: list.rows.len(),
         selection,
-        heights: list
-            .rows
-            .iter()
-            .map(|row| {
-                row.cells
-                    .iter()
-                    .map(|cell| cell.parts().len())
-                    .max()
-                    .unwrap_or(1)
-                    .max(1)
-            })
-            .collect(),
-    }
+        heights: Vec::new(),
+        header: !list.skip_header,
+    };
+    // A row takes the lines of its tallest cell among the columns drawn: one scrolled out of sight adds none.
+    let drawn: Vec<usize> = laid
+        .drawn(hscroll, usize::from(canvas))
+        .into_iter()
+        .map(|(at, _)| at)
+        .collect();
+    laid.heights = list
+        .rows
+        .iter()
+        .map(|row| {
+            drawn
+                .iter()
+                .filter_map(|at| row.cells.get(*at))
+                .map(|cell| cell.lines().len())
+                .max()
+                .unwrap_or(1)
+                .max(1)
+        })
+        .collect();
+    laid
+}
+
+/// The columns a line of a cell takes: its parts side by side, a space apart.
+pub(crate) fn line_width(line: &[&Cell]) -> usize {
+    line.iter().map(|part| cell_width(part)).sum::<usize>() + line.len().saturating_sub(1)
 }
 
 /// The columns a cell part takes: its text, or an input of a row form, which keeps room to type.
@@ -1798,6 +1886,29 @@ pub fn truncate_width(text: &str, max: usize) -> String {
     let mut out = text[..end].to_string();
     out.push('…');
     out
+}
+
+/// A line of preformatted text to lines of at most `width` columns, broken at the column and its spaces kept.
+pub fn break_width(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![String::new()];
+    }
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    let mut used = 0;
+    for ch in text.chars() {
+        let wide = char_width(ch);
+        if used + wide > width && !line.is_empty() {
+            lines.push(std::mem::take(&mut line));
+            used = 0;
+        }
+        line.push(ch);
+        used += wide;
+    }
+    if !line.is_empty() || lines.is_empty() {
+        lines.push(line);
+    }
+    lines
 }
 
 /// Words to lines of at most `width` columns. A word longer than a line is cut.

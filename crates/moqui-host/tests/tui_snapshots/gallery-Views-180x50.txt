@@ -17,10 +17,10 @@
      Widgets             │ ┃ A work breakdown as a tree (view-tree): the top-level items, each opened to its children as the tree asks the screen's form request for them; the    │
      Editor              │ ┃ totals of each branch (Total est., Total act., Done) come with the rows, and the totals row adds the top-level items. Expand opens to a level or all │
      Message             │ ┃ of it; past six levels a row shows its level. A find on the item shows every match under its ancestors, which are muted. Drag a row onto another's   │
-   ▶ Views               │ ┃ upper or lower edge to move it there, or onto its middle to put it under it; Tab and Shift+Tab indent and outdent the focused row. The estimate is   │
+   • Views               │ ┃ upper or lower edge to move it there, or onto its middle to put it under it; Tab and Shift+Tab indent and outdent the focused row. The estimate is   │
      Handheld            │ ┃ edited in place.                                                                                                                                     │
      Nav cards           │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- ▾ Home                  │ Item                                                                                                Status       Est.  Act  Total est.  Total act.  Done
+ ◂ Home                  │ Item                                                                                                Status       Est.  Act  Total est.  Total act.  Done
                          │   W-1 Customer portal                                                                               In Progress        3            59        32.5  2/14
                          │   W-2 Data migration                                                                                Approved           0            40           0   0/3
                          │   W-3 Training                                                                                      In Planning        0             2           0

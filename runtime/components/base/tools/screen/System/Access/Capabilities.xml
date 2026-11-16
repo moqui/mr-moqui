@@ -36,6 +36,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- the proposal: tokens group~a|e~p:permission or group~a|e~a:artifactGroup -->
     <parameter name="changes"/>
 
+    <transition name="userGroupDetail"><default-response url="../GroupDetail"/></transition>
     <transition name="applyChanges">
         <actions>
             <service-call name="org.moqui.admin.AccessServices.apply#MatrixChanges" out-map="applied"
@@ -315,7 +316,13 @@ along with this software (see the LICENSE.md file). If not, see
                                 </field>
                                 <field name="id"><default-field title="ID"><display style="text-mono"/></default-field></field>
                                 <field name="appName" hide="!!appName"><default-field title="App"><display/></default-field></field>
-                                <field name="groupDescription"><default-field title="Group"><display/></default-field></field>
+                                <!-- the row's open link: the group (its grant link stays on this screen, a staged change) -->
+                                <field name="groupDescription">
+                                    <default-field title="Group">
+                                        <link url="userGroupDetail" text="${groupDescription || userGroupId}" link-type="anchor"
+                                                parameter-map="{userGroupId:userGroupId}"/>
+                                    </default-field>
+                                </field>
                                 <field name="state">
                                     <default-field title="Grant">
                                         <render-mode>

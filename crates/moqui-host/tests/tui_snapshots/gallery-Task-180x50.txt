@@ -5,7 +5,7 @@
      List                │ ┃ the one primary and Short / Skip as tonal actions, then a compact list of what remains. The step is a dynamic-container that reloads after Confirm;  │
      Detail              │ ┃ Short and Skip move to the next line through the URL.                                                                                                │
      360                 │ ┃ This example uses compact controls and an inline list of demonstration pick lines. The Handheld example shows 48 px touch controls and a scan-first  │
-   ▶ Task                │ ┃ workflow.                                                                                                                                            │
+   • Task                │ ┃ workflow.                                                                                                                                            │
      Board               │ ┃ Open the Handheld example                                                                                                                            │
      Calendar            │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
      Split               │ ┌─ Pick · Wave W-118 · line 1 of 7 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -14,16 +14,16 @@
      Dialog              │ │ < Confirm >  [ Short ]  Skip                                                                                                                         │
      Report              │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
      Panel               │ ┌─ Remaining lines (6) ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-     Widgets             │ │   Line Location Product                            Qty                                                                                               │
-     Editor              │ │ ───────────────────────────────────────────────────────                                                                                              │
-     Message             │ │   2    A-03-14  WIDGET-BLU-L · Blue widget, large  2                                                                                                 │
-     Views               │ │   3    A-04-01  GADGET-STD · Gadget, standard      12                                                                                                │
-     Handheld            │ │   4    B-01-07  GIZMO-MINI · Gizmo, mini           1                                                                                                 │
-     Nav cards           │ │   5    B-02-03  WIDGET-GRN-S · Green widget, small 6                                                                                                 │
- ▾ Home                  │ │   6    C-11-20  BRACKET-L · Bracket, left          8                                                                                                 │
-                         │ │   7    C-11-21  BRACKET-R · Bracket, right         8                                                                                                 │
-                         │ │   Rows 1–6 of 6 · Page 1/1                                                                                                                           │
+     Widgets             │ │   2 A-03-14 WIDGET-BLU-L · Blue widget, large  2                                                                                                     │
+     Editor              │ │   3 A-04-01 GADGET-STD · Gadget, standard      12                                                                                                    │
+     Message             │ │   4 B-01-07 GIZMO-MINI · Gizmo, mini           1                                                                                                     │
+     Views               │ │   5 B-02-03 WIDGET-GRN-S · Green widget, small 6                                                                                                     │
+     Handheld            │ │   6 C-11-20 BRACKET-L · Bracket, left          8                                                                                                     │
+     Nav cards           │ │   7 C-11-21 BRACKET-R · Bracket, right         8                                                                                                     │
+ ◂ Home                  │ │   Rows 1–6 of 6 · Page 1/1                                                                                                                           │
                          │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+                         │
+                         │
                          │
                          │
                          │

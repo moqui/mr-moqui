@@ -25,7 +25,7 @@ use crate::forms::FocusKind;
 use crate::keys::Action;
 use crate::layout::{
     display_width, dotted_label, frame_with, layout_levels, truncate_width, Breakpoints, FormLine, Frame, Inline,
-    LabelMode, LaidBox, LaidField, LaidList, LaidOut, LaidStatus, LaidTree, Piece, TreeMark, WidthClass,
+    LabelMode, LaidBox, LaidCol, LaidField, LaidList, LaidOut, LaidStatus, LaidTree, Piece, TreeMark, WidthClass,
 };
 use crate::model::{Cell, Node, Widget};
 use crate::session::{DrawerRow, Session};
@@ -245,8 +245,9 @@ fn title_line(paint: &mut Painter, session: &Session, framed: &Frame, clock: Opt
     } else {
         String::new()
     };
-    // The counters: `Today 3  Chat 1  Notif 2`, or `T3 C1 N2` on a narrow screen or when the long form would cut the
-    // crumbs; then the user and the clock, dropped in that order while the crumbs still do not fit.
+    // The counters: `Today 3  Chat 1  Notif 2`, then `Tdy 3 Cht 1 Ntf 2`, then `T3 C1 N2`, the first that does not cut
+    // the crumbs (the long one from the md width); then the user and the clock, dropped in that order while the crumbs
+    // still do not fit.
     let order = |name: &str| {
         ["today", "chat", "notifications"]
             .iter()
@@ -255,7 +256,7 @@ fn title_line(paint: &mut Painter, session: &Session, framed: &Frame, clock: Opt
     };
     let mut counts: Vec<(&String, &i64)> = session.counts().iter().collect();
     counts.sort_by_key(|(name, _)| order(name));
-    let (mut long, mut short) = (String::new(), String::new());
+    let (mut long, mut middle, mut short) = (String::new(), String::new(), String::new());
     for (name, count) in counts {
         if *count == 0 {
             continue;
@@ -271,6 +272,7 @@ fn title_line(paint: &mut Painter, session: &Session, framed: &Frame, clock: Opt
             }
         };
         short.push_str(&format!("{}{count} ", word.chars().next().unwrap_or(' ')));
+        middle.push_str(&format!("{} {count} ", short_word(&word)));
         long.push_str(&format!("{word} {count}  "));
     }
     if !short.is_empty() {
@@ -289,6 +291,10 @@ fn title_line(paint: &mut Painter, session: &Session, framed: &Frame, clock: Opt
     let mut choices = Vec::new();
     if framed.class >= WidthClass::Md {
         choices.push(format!("{spin}{long}{user}{clock}"));
+    }
+    if !middle.is_empty() {
+        middle.push(' ');
+        choices.push(format!("{spin}{middle}{user}{clock}"));
     }
     choices.push(format!("{spin}{short}{user}{clock}"));
     choices.push(format!("{spin}{short}{clock}"));
@@ -309,6 +315,24 @@ fn title_line(paint: &mut Painter, session: &Session, framed: &Frame, clock: Opt
     paint.fixed(x, 0, &right, Look::role(Role::Muted), display_width(&right));
 }
 
+/// A counter's word in three letters: its first and the consonants after it (`Today` is `Tdy`, `Notif` is `Ntf`), or
+/// its first three letters when it has too few consonants.
+fn short_word(word: &str) -> String {
+    let mut chars = word.chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+    let consonants: String = chars
+        .filter(|c| c.is_alphabetic() && !"aeiouAEIOU".contains(*c))
+        .take(2)
+        .collect();
+    if consonants.chars().count() == 2 {
+        format!("{first}{consonants}")
+    } else {
+        word.chars().take(3).collect()
+    }
+}
+
 fn spinner(ascii: bool) -> &'static str {
     let frames: &[&str] = if ascii {
         &["|", "/", "-", "\\"]
@@ -326,7 +350,7 @@ fn spinner(ascii: bool) -> &'static str {
     frames[tick % frames.len()]
 }
 
-/// The app menu tree: `▾` items with their screens, `▶` the screen shown.
+/// The app menu tree: `▾` items with their screens, `•` the screen shown, `◂ Home` the link to all the apps.
 fn drawer(paint: &mut Painter, session: &Session, framed: &Frame, top: u16, bottom: u16) {
     let width = if framed.drawer > 0 {
         framed.drawer
@@ -356,14 +380,20 @@ fn drawer(paint: &mut Painter, session: &Session, framed: &Frame, top: u16, bott
             break;
         };
         let path = url.split('?').next().unwrap_or(url);
-        let active = paths
-            .iter()
-            .any(|shown| *shown == path || shown.starts_with(&format!("{path}/")));
+        // Home is the link to all the apps, not a group, and is never the screen shown
+        let home = *depth == 0 && path == "/apps";
+        let active = !home
+            && paths
+                .iter()
+                .any(|shown| *shown == path || shown.starts_with(&format!("{path}/")));
         // a disabled item has no url either: dimmed, not bold, and no click target
         let heading = url.is_empty() && !disabled;
+        // ▾ only on a row whose items follow it
+        let parent = rows.get(at + 1).is_some_and(|next| next.depth > *depth);
         let mark = match (*depth, active) {
             _ if heading || *disabled => " ",
-            (0, _) => paint.theme.glyph(Glyph::Open),
+            _ if home => paint.theme.glyph(Glyph::Apps),
+            (0, _) if parent => paint.theme.glyph(Glyph::Open),
             (_, true) => paint.theme.glyph(Glyph::Active),
             _ => " ",
         };
@@ -597,9 +627,9 @@ fn find_in(piece: &Piece, id: &str, session: &Session, y: usize) -> Option<(usiz
             let height = list.heights.get(row).copied().unwrap_or(1);
             // The header with the first row, else the row.
             Some(if row == 0 {
-                (y, 2 + height)
+                (y, list.header_rows() + height)
             } else {
-                (y + 2 + list.row_top(row), height)
+                (y + list.header_rows() + list.row_top(row), height)
             })
         }
         Piece::Tree(tree) if tree.id == id => {
@@ -843,6 +873,8 @@ fn draw_field(paint: &mut Painter, session: &Session, field: &LaidField, x: u16,
     let focused_node = session.focus().is_some_and(|item| item.node == field.id);
     let required = if info.required { "* " } else { "" };
     let (value_x, value_y) = match field.mode {
+        LabelMode::Beside if field.title.is_empty() && field.label_width == 0 => (x, y),
+        LabelMode::Beside if field.title.is_empty() => (x + u16::try_from(field.label_width + 4).unwrap_or(0), y),
         LabelMode::Beside => {
             let label = dotted_label(&format!("{required}{}", field.title), field.label_width + 2);
             let label_look = if focused_node {
@@ -1413,34 +1445,29 @@ fn draw_list(paint: &mut Painter, session: &Session, laid: &LaidList, x: u16, y:
     let selected = session.selected(&laid.id);
     let room = usize::from(paint.right.saturating_sub(x));
     let scroll = session.hscroll(&laid.id).min(laid.columns.len().saturating_sub(1));
-    // The columns shown: the first, then from the scrolled one on.
-    let mut shown: Vec<usize> = Vec::new();
-    if !laid.columns.is_empty() {
-        shown.push(0);
-        shown.extend((1 + scroll)..laid.columns.len());
-    }
+    // The columns shown: the first, then from the scrolled one on, a last one too wide shortened to the room left.
     let gutter = 2 + if laid.selection { 4 } else { 0 };
-    let mut used = gutter;
-    let mut fits = Vec::new();
-    for at in &shown {
-        let width = laid.columns[*at].width;
-        if used + width > room && !fits.is_empty() {
-            break;
-        }
-        used += width + 1;
-        fits.push(*at);
-    }
-    let more_right = fits.last().is_some_and(|last| *last + 1 < laid.columns.len());
+    let fits = laid.drawn(scroll, room);
+    let used = gutter + fits.iter().map(|(_, width)| width + 1).sum::<usize>();
+    let more_right = fits
+        .last()
+        .is_some_and(|(last, width)| *last + 1 < laid.columns.len() || *width < laid.columns[*last].width);
+    // the records: the show-total row is not one
+    let records = list.rows.iter().filter(|row| !row.total).count();
     let total = if list.paging.count > 0 {
         list.paging.count as usize
     } else {
-        list.rows.len()
+        records
     };
     // Header.
     let order = session.order_by();
     let mut col = x + u16::try_from(gutter).unwrap_or(0);
-    for at in &fits {
-        let column = &laid.columns[*at];
+    for (at, width) in fits.iter().filter(|_| laid.header) {
+        let column = LaidCol {
+            width: *width,
+            ..laid.columns[*at].clone()
+        };
+        let column = &column;
         let source = &list.columns[*at];
         let mut title = column.title.clone();
         if !source.order_by.is_empty() {
@@ -1470,10 +1497,10 @@ fn draw_list(paint: &mut Painter, session: &Session, laid: &LaidList, x: u16, y:
         }
         col += u16::try_from(column.width + 1).unwrap_or(0);
     }
-    if scroll > 0 {
+    if laid.header && scroll > 0 {
         paint.text(x, y, paint.theme.glyph(Glyph::ScrollLeft), Look::role(Role::Muted), 1);
     }
-    if more_right {
+    if laid.header && more_right {
         let edge = x + u16::try_from(room.saturating_sub(1)).unwrap_or(0);
         paint.text(
             edge,
@@ -1484,19 +1511,23 @@ fn draw_list(paint: &mut Painter, session: &Session, laid: &LaidList, x: u16, y:
         );
     }
     let rule_width = used.min(room);
-    paint.text(
-        x,
-        y + 1,
-        &paint.theme.glyph(Glyph::Rule).repeat(rule_width),
-        Look::role(Role::Border),
-        rule_width,
-    );
+    if laid.header {
+        paint.text(
+            x,
+            y + 1,
+            &paint.theme.glyph(Glyph::Rule).repeat(rule_width),
+            Look::role(Role::Border),
+            rule_width,
+        );
+    }
+    let body = y + laid.header_rows();
     // Rows: a row takes the lines of its tallest cell, as a column that stacks several fields draws them under each other.
     if list.rows.is_empty() {
-        paint.text(x + 2, y + 2, "No rows match", Look::role(Role::Muted).italic(), room);
+        paint.text(x + 2, body, "No rows match", Look::role(Role::Muted).italic(), room);
     }
+    let here = session.nav().location().path;
     for (at, row) in list.rows.iter().enumerate() {
-        let row_y = y + 2 + laid.row_top(at);
+        let row_y = body + laid.row_top(at);
         let height = laid.heights.get(at).copied().unwrap_or(1);
         let is_current = focused && at == current;
         paint.canvas_area(
@@ -1521,7 +1552,10 @@ fn draw_list(paint: &mut Painter, session: &Session, laid: &LaidList, x: u16, y:
             }
         }
         let mut col = x + 2;
-        if laid.selection {
+        // the show-total row: no checkbox, its values bold
+        if laid.selection && row.total {
+            col += 4;
+        } else if laid.selection {
             let id = if row.select_id.is_empty() {
                 &row.id
             } else {
@@ -1541,53 +1575,68 @@ fn draw_list(paint: &mut Painter, session: &Session, laid: &LaidList, x: u16, y:
             );
             col += 4;
         }
-        for column_at in &fits {
+        for (column_at, width) in &fits {
             let column = &laid.columns[*column_at];
+            let width = *width;
             if let Some(cell) = row.cells.get(*column_at) {
-                for (line, part) in cell.parts().into_iter().enumerate().take(height) {
-                    let (text, look) = cell_part(paint, session, part);
-                    let look = if is_current { look.on(Role::Selection) } else { look };
-                    // A link of a cell is its own target over the row's: a click follows that link. The first column
-                    // of a row with a link of its own is that link (the record, as the browser's first column).
-                    let link = match part {
-                        Cell::Node(node) => match node.as_ref() {
-                            Node::Link { id, .. } => Some(id.clone()),
+                for (line, parts) in cell.lines().into_iter().enumerate().take(height) {
+                    // the parts of a line side by side (a cell's row actions), a space apart; one part fills the column
+                    let mut part_x = col;
+                    let mut left = width;
+                    let alone = parts.len() == 1;
+                    for part in parts {
+                        if left == 0 {
+                            break;
+                        }
+                        let (text, look) = cell_part(paint, session, part);
+                        let look = if is_current { look.on(Role::Selection) } else { look };
+                        let look = if row.total { look.bold() } else { look };
+                        // A link of a cell is its own target over the row's: a click follows that link. The first
+                        // column of a row with a link of its own is that link (the record, as the browser's first
+                        // column).
+                        let link = match part {
+                            Cell::Node(node) => match node.as_ref() {
+                                Node::Link { id, .. } => Some(id.clone()),
+                                _ => None,
+                            },
+                            _ if *column_at == 0 && crate::link::row_link_target(row, &here).is_some() => {
+                                Some(String::new())
+                            }
                             _ => None,
-                        },
-                        _ if *column_at == 0 && crate::link::row_link(row).is_some() => Some(String::new()),
-                        _ => None,
-                    };
-                    let draw = |paint: &mut Painter| {
-                        paint.text(
-                            col,
-                            row_y + line,
-                            &fit(&text, column.width, column.right),
-                            look,
-                            column.width,
-                        )
-                    };
-                    match link {
-                        Some(link) => {
-                            paint.target(
-                                Target::RowLink {
-                                    list: laid.id.clone(),
-                                    row: at,
-                                    link,
-                                },
-                                draw,
-                            );
+                        };
+                        let shown = if alone {
+                            fit(&text, width, column.right)
+                        } else {
+                            truncate_width(&text, left)
+                        };
+                        let span = if alone { width } else { display_width(&shown) };
+                        let draw = |paint: &mut Painter| paint.text(part_x, row_y + line, &shown, look, span);
+                        match link {
+                            Some(link) => {
+                                paint.target(
+                                    Target::RowLink {
+                                        list: laid.id.clone(),
+                                        row: at,
+                                        link,
+                                    },
+                                    draw,
+                                );
+                            }
+                            None => {
+                                draw(paint);
+                            }
                         }
-                        None => {
-                            draw(paint);
-                        }
+                        let step = (span + 1).min(left);
+                        part_x += u16::try_from(step).unwrap_or(0);
+                        left -= step;
                     }
                 }
             }
-            col += u16::try_from(column.width + 1).unwrap_or(0);
+            col += u16::try_from(width + 1).unwrap_or(0);
         }
     }
     // Footer: `Rows 21–40 of 312 · Page 2/16`.
-    let footer_y = y + 2 + laid.body_rows().max(1);
+    let footer_y = body + laid.body_rows().max(1);
     let page = session.page_index(&laid.id) + 1;
     let pages = session.page_count(&laid.id);
     let low = list
@@ -1597,8 +1646,8 @@ fn draw_list(paint: &mut Painter, session: &Session, laid: &LaidList, x: u16, y:
     let high = list
         .paging
         .range_high
-        .map_or(low + list.rows.len().saturating_sub(1), |high| high as usize);
-    let footer = if list.rows.is_empty() {
+        .map_or(low + records.saturating_sub(1), |high| high as usize);
+    let footer = if records == 0 {
         format!("Rows 0 of {total}")
     } else {
         format!("Rows {low}–{high} of {total} · Page {page}/{pages}")

@@ -86,6 +86,49 @@ fn row_navigation_skips_actions_and_uses_the_first_enabled_link_in_stacked_cells
 }
 
 #[test]
+fn row_navigation_prefers_another_screen_and_the_total_row_opens_nothing() {
+    let mut row: moqui_tui::ListRow = serde_json::from_value(serde_json::json!({"cells":[
+        {"t":"link", "id":"toggle", "text":"End", "url":"/apps/sys/Capabilities?groupId=G1&end=true"},
+        {"t":"link", "id":"dot", "text":"Filter", "url":"."},
+        {"t":"link", "id":"group", "text":"G1", "url":"/apps/sys/GroupDetail?groupId=G1"}
+    ]}))
+    .unwrap();
+    assert_eq!(
+        moqui_tui::row_link_target(&row, "/apps/sys/Capabilities").map(|(_, url)| url),
+        Some("/apps/sys/GroupDetail?groupId=G1")
+    );
+    // with no link to another screen, the first link to the screen shown (a list beside its detail)
+    row.cells.pop();
+    assert_eq!(
+        moqui_tui::row_link_target(&row, "/apps/sys/Capabilities").map(|(_, url)| url),
+        Some("/apps/sys/Capabilities?groupId=G1&end=true")
+    );
+    let total: moqui_tui::ListRow = serde_json::from_value(serde_json::json!({"total":true,"cells":[
+        {"t":"link", "id":"group", "text":"G1", "url":"/apps/sys/GroupDetail"}, "5"
+    ]}))
+    .unwrap();
+    assert!(total.total);
+    assert_eq!(moqui_tui::row_link_target(&total, "/apps/sys/Capabilities"), None);
+}
+
+#[test]
+fn a_cells_row_actions_share_a_line_and_other_parts_stack() {
+    let cell: Cell = serde_json::from_value(serde_json::json!([
+        {"t":"link", "id":"rec", "text":"R1", "url":"/r"},
+        "Note",
+        {"t":"link", "id":"open", "text":"Open", "url":"/d", "icon":"fa fa-eye"},
+        {"t":"link", "id":"clone", "text":"Clone", "url":"/c", "method":"post"}
+    ]))
+    .unwrap();
+    let lines: Vec<Vec<&str>> = cell
+        .lines()
+        .iter()
+        .map(|line| line.iter().map(|part| part.text()).collect())
+        .collect();
+    assert_eq!(lines, vec![vec!["R1"], vec!["Note"], vec!["Open", "Clone"]]);
+}
+
+#[test]
 fn unknown_fields_are_ignored_and_a_new_version_is_refused() {
     let text = r#"{"v":1,"extra":true,"screen":{"path":"/t","title":"T","later":1},"c":[
         {"t":"field","id":"a","name":"a","title":"A","nope":2,"w":{"kind":"textLine","value":"v","extra":1}}

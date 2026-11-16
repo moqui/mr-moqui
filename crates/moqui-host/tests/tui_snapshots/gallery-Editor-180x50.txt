@@ -15,12 +15,12 @@
      Report              │ │ dbresource: EXAMPLE                            │ │ Revisions                                                                                        │
      Panel               │ │ Create the git space                           │ │ • Each save keeps the text it replaced.                                                          │
      Widgets             │ └────────────────────────────────────────────────┘ │ • Older text is stored as a reverse delta.                                                       │
-   ▶ Editor              │                                                    │ • Any version can be viewed, compared, restored or published.                                    │
+   • Editor              │                                                    │ • Any version can be viewed, compared, restored or published.                                    │
      Message             │                                                    └──────────────────────────────────────────────────────────────────────────────────────────────────┘
      Views               │
      Handheld            │
      Nav cards           │
- ▾ Home                  │
+ ◂ Home                  │
                          │
                          │
                          │

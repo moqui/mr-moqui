@@ -1,7 +1,7 @@
  gallery ▸ Landing                                                                                                                                              john.doe  Tue 14:32
 ─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▾ Gallery               │ ┌─ Archetype 3.1 Landing ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-   ▶ Landing             │ ┃ The home of an app: a row of counters, the lists of my work, shortcuts and a chart, each a link into the List screen with its filter. Framework data │
+   • Landing             │ ┃ The home of an app: a row of counters, the lists of my work, shortcuts and a chart, each a link into the List screen with its filter. Framework data │
      List                │ ┃ stands in for the business: enumerations by type instead of orders by status. Counters wrap to fit the available width, with one per row on a phone. │
      Detail              │ ┃ The counters are number-card elements in a dashboard. Fallbacks for §8: the assigned-to-me list is an inline list because the framework has no       │
      360                 │ ┃ work-item entity; the status chips are tonal anchor-button links until the m-tonal chip exists.                                                      │
@@ -20,31 +20,31 @@
      Views               │                          └──────────────────────┘
      Handheld            │                          ┌─ Geo Type ───────────┐
      Nav cards           │                          │ 13                   │
- ▾ Home                  │                          └──────────────────────┘
+ ◂ Home                  │                          └──────────────────────┘
                          │ ┌─ Assigned to me ─────────────────────────────────────────────────────────────────────┐ ┌─ Shortcuts ────────────────────────────────────────────────┐
                          │ │ All enumerations                                                                     │ │ New enumeration  Find enumerations  Theme type detail      │
-                         │ │   Title                                 Kind                           Due          ▸│ │ John Doe 360  Status flows                                 │
-                         │ │ ─────────────────────────────────────────────────────────────────────────────────    │ └────────────────────────────────────────────────────────────┘
-                         │ │   Review Contrived                      Example Type                   Today         │ ┌─ Enumerations by type ─────────────────────────────────────┐
-                         │ │   Translate Inspired                    Example Type                   Tomorrow      │ │                           Enumerations                     │
-                         │ │   Approve Made Up                       Example Type                   Yesterday     │ │ Screen Theme Resource T…            34  ██████████████████ │
-                         │ │   Retire Real World                     Example Type                   Fri           │ │ DB Form Field Type                  20  ███████████        │
-                         │ │   Check QZ Print Enabled (true/false)   User Preference Key (optional) Mon           │ │ UOM Type                            16  ████████           │
-                         │ │   Describe QZ Active Label Printer Name User Preference Key (optional) Today         │ │ Entity Comparison Opera…            14  ███████            │
-                         │ │   Rows 1–6 of 6 · Page 1/1                                                           │ │ Geo Type                            13  ███████            │
-                         │ └──────────────────────────────────────────────────────────────────────────────────────┘ │ OpenID Connect JWS Algo…            13  ███████            │
-                         │ ┌─ Changed last ───────────────────────────────────────────────────────────────────────┐ │ Call End Reason                     12  ██████             │
-                         │ │ All enumerations                                                                     │ │ Email Type                          12  ██████             │
-                         │ │   Description                    Enum Type ID                   Last Updated Stamp   │ │ One series, one brand color; the table behind it is the    │
-                         │ │ ───────────────────────────────────────────────────────────────────────────────────  │ │ List screen.                                               │
-                         │ │   Contrived                      Example Type                   <today> hh:mm     │ └────────────────────────────────────────────────────────────┘
-                         │ │   Inspired                       Example Type                   <today> hh:mm     │
-                         │ │   Made Up                        Example Type                   <today> hh:mm     │
-                         │ │   Real World                     Example Type                   <today> hh:mm     │
-                         │ │   QZ Print Enabled (true/false)  User Preference Key (optional) <today> hh:mm     │
+                         │ │   Review Contrived                      Example Type                   Today         │ │ John Doe 360  Status flows                                 │
+                         │ │   Translate Inspired                    Example Type                   Tomorrow      │ └────────────────────────────────────────────────────────────┘
+                         │ │   Approve Made Up                       Example Type                   Yesterday     │ ┌─ Enumerations by type ─────────────────────────────────────┐
+                         │ │   Retire Real World                     Example Type                   Fri           │ │                           Enumerations                     │
+                         │ │   Check QZ Print Enabled (true/false)   User Preference Key (optional) Mon           │ │ Screen Theme Resource T…            34  ██████████████████ │
+                         │ │   Describe QZ Active Label Printer Name User Preference Key (optional) Today         │ │ DB Form Field Type                  20  ███████████        │
+                         │ │   Rows 1–6 of 6 · Page 1/1                                                           │ │ UOM Type                            16  ████████           │
+                         │ └──────────────────────────────────────────────────────────────────────────────────────┘ │ Entity Comparison Opera…            14  ███████            │
+                         │ ┌─ Changed last ───────────────────────────────────────────────────────────────────────┐ │ Geo Type                            13  ███████            │
+                         │ │ All enumerations                                                                     │ │ OpenID Connect JWS Algo…            13  ███████            │
+                         │ │   Contrived                      Example Type                   <today> hh:mm     │ │ Call End Reason                     12  ██████             │
+                         │ │   Inspired                       Example Type                   <today> hh:mm     │ │ Email Type                          12  ██████             │
+                         │ │   Made Up                        Example Type                   <today> hh:mm     │ │ One series, one brand color; the table behind it is the    │
+                         │ │   Real World                     Example Type                   <today> hh:mm     │ │ List screen.                                               │
+                         │ │   QZ Print Enabled (true/false)  User Preference Key (optional) <today> hh:mm     │ └────────────────────────────────────────────────────────────┘
                          │ │   QZ Active Label Printer Name   User Preference Key (optional) <today> hh:mm     │
                          │ │   QZ Active Main Printer Name    User Preference Key (optional) <today> hh:mm     │
                          │ │   Internal Applications - Quasar Screen Theme Type              <today> hh:mm     │
+                         │ │   Business setup                 Admin Health group             <today> hh:mm     │
+                         │ │   Identity                       Admin Health group             <today> hh:mm     │
+                         │ │   Rows 1–10 of 10 · Page 1/1                                                         │
+                         │ └──────────────────────────────────────────────────────────────────────────────────────┘
 ─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
  F1=Help  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

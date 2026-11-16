@@ -617,6 +617,26 @@ impl Session {
                     }
                 }
             }
+            // The row's links that go somewhere, as `column ▸ text`: Right and Enter open only one of them.
+            for (at, cell) in current.cells.iter().enumerate() {
+                let column = list.columns.get(at).map_or("", |column| column.title.as_str());
+                for node in cell.nodes() {
+                    let Some(link) = self.index.links.get(node.id()) else {
+                        continue;
+                    };
+                    if !crate::link::navigates(node) || link.text.is_empty() {
+                        continue;
+                    }
+                    items.push(MenuEntry {
+                        label: if column.is_empty() || column == link.text {
+                            link.text.clone()
+                        } else {
+                            format!("{column} ▸ {}", link.text)
+                        },
+                        act: MenuAct::Link(link.id.clone()),
+                    });
+                }
+            }
         }
         if self.index.rows.contains_key(&row) {
             items.push(MenuEntry {

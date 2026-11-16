@@ -38,6 +38,7 @@ const $rows = [];
             sri.startFormListRow($info, $index);
             try {
                 const $rowKey = String($index);
+                const $totalRow = ec.context.get("_moquiRowType") === "total";
                 const $cells = [];
                 let $parts = [];
 let $start = 0;
@@ -104,6 +105,12 @@ $start = $parts.length;
 $addPart($parts, $start, String(ec.l10n.localize("Do") || ""));
 $cells.push($cellOf($parts));
 const $row = {id:$rowKey,cells:$cells};
+                // the show-total row: drawn bold, with nothing to select, open or post
+                if ($totalRow) {
+                    $row.total = true;
+                    $rows.push($row);
+                    continue;
+                }
                 $rows.push($row);
             } finally {
                 sri.endFormListRow();
@@ -114,8 +121,10 @@ const $row = {id:$rowKey,cells:$cells};
         const $sizeValue = "rowListPageSize" ? ec.context.get("rowListPageSize") : null;
         const $pageSize = $sizeValue == null || $sizeValue === "" ? $whole(ec.context.get("pageSize")) : $whole($sizeValue);
         const $total = "rowListCount" ? ec.context.get("rowListCount") : null;
-        const $count = $total == null || $total === "" ? $info.count : $whole($total);
-        const $size = $pageSize > 0 ? $pageSize : $info.count;
+        // the rows less a show-total row
+        const $shown = $info.count - $rows.filter(($r) => $r.total).length;
+        const $count = $total == null || $total === "" ? $shown : $whole($total);
+        const $size = $pageSize > 0 ? $pageSize : $shown;
         const $paging = {index:$pageIndex,size:$size,count:$count};
         for (const [$key, $suffix] of [["maxIndex", "PageMaxIndex"], ["rangeLow", "PageRangeLow"], ["rangeHigh", "PageRangeHigh"]]) {
             const $value = ec.context.get("rowList" + $suffix);
@@ -141,6 +150,7 @@ const $headerFields = [];
             sri.startFormListRow($info, $index);
             try {
                 const $rowKey = String($index);
+                const $totalRow = ec.context.get("_moquiRowType") === "total";
                 const $cells = [];
                 let $parts = [];
 let $start = 0;
@@ -155,6 +165,12 @@ $start = $parts.length;
 $addPart($parts, $start, String(sri.getFieldValueString({"name":"display","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"c"},"parent":{"name":"form-list","attrs":{"name":"Cols","list":"rowList"},"parent":{"name":"widgets","attrs":{}}}}}}) || ""));
 $cells.push($cellOf($parts));
 const $row = {id:$rowKey,cells:$cells};
+                // the show-total row: drawn bold, with nothing to select, open or post
+                if ($totalRow) {
+                    $row.total = true;
+                    $rows.push($row);
+                    continue;
+                }
                 $rows.push($row);
             } finally {
                 sri.endFormListRow();
@@ -165,8 +181,10 @@ const $row = {id:$rowKey,cells:$cells};
         const $sizeValue = "rowListPageSize" ? ec.context.get("rowListPageSize") : null;
         const $pageSize = $sizeValue == null || $sizeValue === "" ? $whole(ec.context.get("pageSize")) : $whole($sizeValue);
         const $total = "rowListCount" ? ec.context.get("rowListCount") : null;
-        const $count = $total == null || $total === "" ? $info.count : $whole($total);
-        const $size = $pageSize > 0 ? $pageSize : $info.count;
+        // the rows less a show-total row
+        const $shown = $info.count - $rows.filter(($r) => $r.total).length;
+        const $count = $total == null || $total === "" ? $shown : $whole($total);
+        const $size = $pageSize > 0 ? $pageSize : $shown;
         const $paging = {index:$pageIndex,size:$size,count:$count};
         for (const [$key, $suffix] of [["maxIndex", "PageMaxIndex"], ["rangeLow", "PageRangeLow"], ["rangeHigh", "PageRangeHigh"]]) {
             const $value = ec.context.get("rowList" + $suffix);

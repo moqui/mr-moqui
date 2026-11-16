@@ -184,6 +184,7 @@ const $headerFields = [];
             sri.startFormListRow($info, $index);
             try {
                 const $rowKey = String($index);
+                const $totalRow = ec.context.get("_moquiRowType") === "total";
                 const $cells = [];
                 if ($set === 1) {
 let $parts = [];
@@ -247,6 +248,12 @@ $addPart($parts, $start, ($listForm ? "" : String(ec.l10n.localize("Go") || ""))
 $cells.push($cellOf($parts));
 }
 const $row = {id:$rowKey,cells:$cells};
+                // the show-total row: drawn bold, with nothing to select, open or post
+                if ($totalRow) {
+                    $row.total = true;
+                    $rows.push($row);
+                    continue;
+                }
                 if ($listForm) {
                     const $rowHidden = [];
                     $rowHidden.push({name:"id_" + $index,value:String(sri.getFieldValuePlainString({"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}, "") || "")});
@@ -265,8 +272,10 @@ if ($rowHidden.length) $row.hidden = $rowHidden;
         const $sizeValue = "rowsPageSize" ? ec.context.get("rowsPageSize") : null;
         const $pageSize = $sizeValue == null || $sizeValue === "" ? $whole(ec.context.get("pageSize")) : $whole($sizeValue);
         const $total = "rowsCount" ? ec.context.get("rowsCount") : null;
-        const $count = $total == null || $total === "" ? $info.count : $whole($total);
-        const $size = $pageSize > 0 ? $pageSize : $info.count;
+        // the rows less a show-total row
+        const $shown = $info.count - $rows.filter(($r) => $r.total).length;
+        const $count = $total == null || $total === "" ? $shown : $whole($total);
+        const $size = $pageSize > 0 ? $pageSize : $shown;
         const $paging = {index:$pageIndex,size:$size,count:$count};
         for (const [$key, $suffix] of [["maxIndex", "PageMaxIndex"], ["rangeLow", "PageRangeLow"], ["rangeHigh", "PageRangeHigh"]]) {
             const $value = ec.context.get("rows" + $suffix);

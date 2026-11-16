@@ -6,7 +6,7 @@
      Detail              │   Beta Inc. pilot program
      360                 │   45000 · MS · Send deck by Friday
      Task                │   Iota Health devices
-   ▶ Board               │   64000 · AK · Qualify budget owner
+   • Board               │   64000 · AK · Qualify budget owner
      Calendar            │ Propose · 2
      Split               │   Gamma LLC renewal
      Settings            │   18500 · JD · Quote Q-10077 sent
@@ -20,7 +20,7 @@
      Views               │ Won · 2
      Handheld            │   Zeta Partners add-on
      Nav cards           │   9800 · AK · Kickoff scheduled
- ▾ Home                  │   Eta Foods seasonal order
+ ◂ Home                  │   Eta Foods seasonal order
                          │   32000 · JD · Invoice INV-2201 paid
                          │ Lost · 1
                          │   Theta Systems migration

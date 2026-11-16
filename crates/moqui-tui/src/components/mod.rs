@@ -110,6 +110,8 @@ pub struct ComponentState {
     pub local: Value,
     /// The terminal's rows (0 before it is sized), for a component that loads what fits on screen: a sheet's rows.
     pub rows: u16,
+    /// It holds the focus as it is drawn: what only then applies (a report's key hint) shows.
+    pub focused: bool,
 }
 
 /// What a key asks of the session.

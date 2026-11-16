@@ -1,7 +1,7 @@
  gallery ▸ Gallery task                                                                                                                                         john.doe  Tue 14:32
 ─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▾ Gallery               │ A .qvue screen with a tui twin: the form posts to the same saveTask transition.
-   ▶ Gallery task        │ Task  : [ _____________________________]
+   • Gallery task        │ Task  : [ _____________________________]
      Landing             │ < Save >
      List                │
      Detail              │
@@ -21,7 +21,7 @@
      Views               │
      Handheld            │
      Nav cards           │
- ▾ Home                  │
+ ◂ Home                  │
                          │
                          │
                          │

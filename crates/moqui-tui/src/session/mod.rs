@@ -28,8 +28,8 @@ use crate::edit::{self, Edited, FieldEdit, FieldKeys, Limits};
 use crate::forms::{self, Extra, FocusItem, FocusKind, Index, Scope};
 use crate::keys::{scheme_keys, Action, Key, KeyMap, KeyPress, KeyScheme, MergeSkip};
 use crate::layout::PAGE_ROWS;
-use crate::link::{row_link, row_link_target, LinkCall, LinkError, MenuItem, RawBody, Reply, ScreenLink, ShellInfo};
-use crate::model::{Choice, FormList, Node, ScreenModel, Widget};
+use crate::link::{row_link_target, LinkCall, LinkError, MenuItem, RawBody, Reply, ScreenLink, ShellInfo};
+use crate::model::{Cell, Choice, FormList, Node, ScreenModel, Widget};
 use crate::nav::{level_path, Location, Nav};
 use crate::state::{Confirm, Edits, Finished, Lanes, Purpose, Request, Then};
 
@@ -1627,8 +1627,12 @@ impl Session {
                 // Modern: Enter follows the row's first link, else edits the row (`e` always edits). Classic: a row
                 // that has fields to edit opens its editor, else its first link (Right follows).
                 if self.scheme == KeyScheme::Modern {
-                    if !self.follow_row_link(&item.key, at) && editable {
-                        self.edit_row();
+                    if !self.follow_row_link(&item.key, at) {
+                        if editable {
+                            self.edit_row();
+                        } else {
+                            self.nothing_to_open(&item.key, at);
+                        }
                     }
                     return;
                 }
@@ -1636,7 +1640,9 @@ impl Session {
                     self.edit_row();
                     return;
                 }
-                self.follow_row_link(&item.key, at);
+                if !self.follow_row_link(&item.key, at) {
+                    self.nothing_to_open(&item.key, at);
+                }
             }
             FocusKind::Dialog => self.open_dialog(&item.key),
             FocusKind::Menu => self.open_button_menu(&item.key),
@@ -1820,13 +1826,14 @@ impl Session {
         self.follow_url(&link.url);
     }
 
-    /// Open a row by its first navigation link, if any: a known link goes through `follow_link`, which asks its
-    /// confirmation as a click on it does; else the url is followed.
+    /// Open a row by its link ([`row_link_target`]: another screen first), if any: a known link goes through
+    /// `follow_link`, which asks its confirmation as a click on it does; else the url is followed.
     fn follow_row_link(&mut self, list: &str, at: usize) -> bool {
+        let here = self.nav.location().path;
         let Some((id, url)) = self
             .list_page(list)
             .get(at)
-            .and_then(row_link_target)
+            .and_then(|row| row_link_target(row, &here))
             .map(|(id, url)| (id.to_string(), url.to_string()))
         else {
             return false;
@@ -1837,6 +1844,22 @@ impl Session {
             self.follow_url(&url);
         }
         true
+    }
+
+    /// Right or Enter on a row with no link to open: say so, and where its other links are.
+    pub(super) fn nothing_to_open(&mut self, list: &str, at: usize) {
+        let others = self.list_page(list).get(at).is_some_and(|row| {
+            row.cells
+                .iter()
+                .flat_map(Cell::nodes)
+                .any(|node| matches!(node, Node::Link { .. }))
+        });
+        let text = if others {
+            "Nothing to open on this row; F10 lists its actions."
+        } else {
+            "Nothing to open on this row."
+        };
+        self.set_message(text.to_string(), false);
     }
 
     /// Open a url: a screen in the client; an outside address or an explicit print view is the browser's.
@@ -2159,11 +2182,13 @@ impl Session {
         let item = self.focus()?;
         match item.kind {
             FocusKind::Link => self.index.links.get(&item.key).map(|link| link.url.clone()),
-            FocusKind::List => self
-                .list_page(&item.key)
-                .get(self.row_at(&item.key))
-                .and_then(row_link)
-                .map(str::to_string),
+            FocusKind::List => {
+                let here = self.nav.location().path;
+                self.list_page(&item.key)
+                    .get(self.row_at(&item.key))
+                    .and_then(|row| row_link_target(row, &here))
+                    .map(|(_, url)| url.to_string())
+            }
             _ => None,
         }
     }

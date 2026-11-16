@@ -10,7 +10,7 @@
      Calendar            │ Step 1 of 3 · Customer  ● Customer ─ ○ Options ─ ○ Review
      Split               │ [ Next ]
      Settings            │ ┌─ Customer ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-   ▶ Wizard              │ │ Who the customer is and how to reach them.                                                                                                           │
+   • Wizard              │ │ Who the customer is and how to reach them.                                                                                                           │
      Dialog              │ │ Customer name  : [Acme Co. _______________________________]               Contact  . . . : [Jane Doe______________________]                          │
      Report              │ │ Email  . . . . : [jane.doe@acme.example_________]                         Phone  . . . . : [+1 555 0100_________]                                    │
      Panel               │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -20,7 +20,7 @@
      Views               │
      Handheld            │
      Nav cards           │
- ▾ Home                  │
+ ◂ Home                  │
                          │
                          │
                          │

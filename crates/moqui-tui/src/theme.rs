@@ -228,8 +228,10 @@ impl Theme {
             (Glyph::Open, true) => "v",
             (Glyph::Closed, false) => "▸",
             (Glyph::Closed, true) => ">",
-            (Glyph::Active, false) => "▶",
-            (Glyph::Active, true) => ">",
+            (Glyph::Active, false) => "•",
+            (Glyph::Active, true) => "*",
+            (Glyph::Apps, false) => "◂",
+            (Glyph::Apps, true) => "<",
             (Glyph::Row, false) => "▌",
             (Glyph::Row, true) => ">",
             (Glyph::Up, false) => "▲",
@@ -269,7 +271,10 @@ pub enum Glyph {
     Menu,
     Open,
     Closed,
+    /// The drawer's item for the screen shown: not a disclosure mark, so it does not read as a closed parent.
     Active,
+    /// The drawer's Home, the link back to all the apps.
+    Apps,
     Row,
     Up,
     Down,

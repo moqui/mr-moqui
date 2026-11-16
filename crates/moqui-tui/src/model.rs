@@ -658,6 +658,9 @@ pub struct FormList {
     /// The other ways to show the rows: a board, a calendar, a tree (`views`, style-guide §8.2).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub views: Option<Box<ListViews>>,
+    /// `skip-header`: the rows are drawn without the column titles.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub skip_header: bool,
     #[serde(default)]
     pub c: Vec<Node>,
 }
@@ -796,6 +799,9 @@ pub struct ListRow {
     /// The row's values posted with its form and not shown: its hidden fields.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hidden: Vec<HiddenValue>,
+    /// The `show-total` row: drawn bold, with nothing to select, open or edit.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub total: bool,
 }
 
 /// A list cell: plain text, one node (a link, or a field of a row form), or the parts of a column that stacks several
@@ -829,6 +835,49 @@ impl Cell {
         match self {
             Self::Stack(parts) => parts.iter().flat_map(Self::parts).collect(),
             other => vec![other],
+        }
+    }
+
+    /// The lines the cell is drawn on: its parts one a line, but consecutive row actions (an icon or button link, a
+    /// link that posts, a dialog, a button) side by side on one line, as the browser puts them in a row.
+    pub fn lines(&self) -> Vec<Vec<&Cell>> {
+        let mut lines: Vec<Vec<&Cell>> = Vec::new();
+        let mut joining = false;
+        for part in self.parts() {
+            let action = part.is_action();
+            match lines.last_mut() {
+                Some(line) if action && joining => line.push(part),
+                _ => lines.push(vec![part]),
+            }
+            joining = action;
+        }
+        lines
+    }
+
+    /// A row action: a link drawn as an icon or a button, or one that posts; a dialog; a button.
+    fn is_action(&self) -> bool {
+        let Self::Node(node) = self else {
+            return false;
+        };
+        match node.as_ref() {
+            Node::Link {
+                kind,
+                method,
+                icon,
+                btn_type,
+                writes,
+                ..
+            } => {
+                !icon.is_empty()
+                    || !btn_type.is_empty()
+                    || *writes
+                    || kind.ends_with("button")
+                    || kind.starts_with("hidden-form")
+                    || method.eq_ignore_ascii_case("post")
+            }
+            Node::Dialog { .. } | Node::DynamicDialog { .. } => true,
+            Node::Field { w, .. } => matches!(w, Widget::Submit { .. } | Widget::Reset { .. }),
+            _ => false,
         }
     }
 

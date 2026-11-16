@@ -16,11 +16,11 @@
      Panel               │ │ │ The earlier message,                                                  │
      Widgets             │ │   with its lines,                                                       │
      Editor              │ │   and more of them.                                                     │
-   ▶ Message             │ │ References                                                              │
+   • Message             │ │ References                                                              │
      Views               │ │ 1. Read more                                                            │
      Handheld            │ └─────────────────────────────────────────────────────────────────────────┘
      Nav cards           │
- ▾ Home                  │
+ ◂ Home                  │
                          │
                          │
                          │

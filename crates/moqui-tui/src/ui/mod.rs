@@ -50,6 +50,8 @@ pub struct AppView<L: ScreenLink = FakeLink> {
     base_theme: Theme,
     breakpoints: Breakpoints,
     scroll: Cell<usize>,
+    /// The screen the canvas scroll is for, its path and parameters: another screen starts at its top.
+    scrolled_for: RefCell<String>,
     /// The title line's clock, fixed for a snapshot; live when None.
     clock: Option<String>,
     /// The shell data the theme and breakpoints were last taken from.
@@ -127,6 +129,7 @@ impl<L: ScreenLink> AppView<L> {
             theme,
             breakpoints: Breakpoints::default(),
             scroll: Cell::new(0),
+            scrolled_for: RefCell::new(String::new()),
             clock: None,
             applied: ShellInfo::default(),
             notes: Vec::new(),
@@ -407,6 +410,12 @@ impl<L: ScreenLink> AppView<L> {
 
 impl<L: ScreenLink> View for AppView<L> {
     fn render(&self, ctx: &mut RenderContext) {
+        let here = self.session.location_url();
+        if *self.scrolled_for.borrow() != here {
+            self.scroll.set(0);
+            self.free_scroll.set(false);
+            *self.scrolled_for.borrow_mut() = here;
+        }
         let log = self.session.log_open().then_some(&self.log);
         let mut hits = Hits::default();
         draw::draw(

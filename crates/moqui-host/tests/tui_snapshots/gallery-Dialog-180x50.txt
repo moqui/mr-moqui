@@ -11,7 +11,7 @@
      Split               │ ┃ background-submit, background-hide-id and background-reload-id (the XSD │ │   ENTCO_IN          in             IN          [ Edit… ] [ View… ]       │
      Settings            │ ┃ names); the style guide's submit-reload-id is the name of the m-form    │ │   ENTCO_IS_NOT_NULL is-not-null    IS_NOT_NULL [ Edit… ] [ View… ]       │
      Wizard              │ ┃ property they become. A container-dialog is a container of the page by  │ │   ENTCO_IS_NULL     is-null        IS_NULL     [ Edit… ] [ View… ]       │
-   ▶ Dialog              │ ┃ its id, so background-hide-id closes it; its tooltip is the New         │ │   ENTCO_LESS        less           LESS        [ Edit… ] [ View… ]       │
+   • Dialog              │ ┃ its id, so background-hide-id closes it; its tooltip is the New         │ │   ENTCO_LESS        less           LESS        [ Edit… ] [ View… ]       │
      Report              │ ┃ button's.                                                               │ │   ENTCO_LESS_EQ     less-equals    LESS_EQ     [ Edit… ] [ View… ]       │
      Panel               │ └─────────────────────────────────────────────────────────────────────────┘ │   ENTCO_LIKE        like           LIKE        [ Edit… ] [ View… ]       │
      Widgets             │                                                                             │   ENTCO_NOT_BETWEEN not-between    NOT_BETWEEN [ Edit… ] [ View… ]       │
@@ -20,7 +20,7 @@
      Views               │                                                                             │   ENTCO_NOT_LIKE    not-like       NOT_LIKE    [ Edit… ] [ View… ]       │
      Handheld            │                                                                             │   Rows 1–14 of 14 · Page 1/1                                             │
      Nav cards           │                                                                             └──────────────────────────────────────────────────────────────────────────┘
- ▾ Home                  │
+ ◂ Home                  │
                          │
                          │
                          │

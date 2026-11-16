@@ -148,6 +148,10 @@ impl Shown for Session {
         Session::link_number(self, id)
     }
 
+    fn hscroll(&self, id: &str) -> usize {
+        Session::hscroll(self, id)
+    }
+
     fn collapsed(&self, id: &str, initial: &str) -> bool {
         self.collapsed.get(id).copied().unwrap_or(initial == "closed")
     }
@@ -165,7 +169,8 @@ impl Shown for Session {
         wide: bool,
     ) -> Option<Vec<crate::components::Line>> {
         let component = crate::components::find(name)?;
-        let state = self.components.get(id).cloned().unwrap_or_default();
+        let mut state = self.components.get(id).cloned().unwrap_or_default();
+        state.focused = self.focus_id() == id;
         Some(component.lines(props, &state, width, wide))
     }
 }

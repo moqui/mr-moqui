@@ -49,15 +49,38 @@ const $scrub = (value) => {
     return $jsonControl.test(json) ? json.replace($jsonEscapes, $keepEscape) : json;
 };
 const $emit = (value) => { $sep(); $w($scrub(value)); };
-// A text with no \${ expanded once a unit, as expandExpr does: a list's link text is the same on every row.
+// A text with no \${ expanded once a unit, as expandExpr does: a list's link text is the same on every row. A text whose
+// localized form holds \${ (WorkEffortNameTemplate) is expanded on every row, as it reads the row's values.
 const $texts = new Map();
 const $xc = (text) => {
     let found = $texts.get(text);
     if (found === undefined) {
+        const $dynamic = String(ec.l10n.localize(text) ?? "").indexOf("\${") >= 0;
         found = ec.resource.expand(text);
-        $texts.set(text, found);
+        $texts.set(text, $dynamic ? null : found);
+        return found;
     }
-    return found;
+    return found === null ? ec.resource.expand(text) : found;
+};
+// Text with markup (encode="false") as plain text: the blocks of sri.htmlText, one a line (or joined by a space), so
+// <strong> and &nbsp; are not drawn as they are written.
+const $htmlPlain = (value, oneLine) => {
+    const $text = value == null ? "" : String(value);
+    if ($text.indexOf("<") < 0 && $text.indexOf("&") < 0) return $text;
+    const $blocks = Array.from(JSON.parse(sri.htmlText($text)).blocks || []).map(($block) => String($block.text || ""));
+    return $blocks.join(oneLine ? " " : "\\n");
+};
+// Text that is only spaces, no-break spaces included.
+const $blank = (text) => !/[^\\s\\u00a0]/.test(String(text ?? ""));
+// A list attribute of values: a comma list, or one \${} expression of a list, as qvt's idList (a board's column-order).
+const $idList = (text) => {
+    if (!text) return [];
+    const $trimmed = String(text).trim();
+    const $one = $trimmed.startsWith("\${") && $trimmed.endsWith("}") && $trimmed.indexOf("\${", 2) < 0;
+    let $value = $one ? ec.resource.expression($trimmed.slice(2, -1), "") : ec.resource.expandNoL10n(text);
+    if ($value == null) $value = [];
+    if (typeof $value === "string") $value = $value.split(",");
+    return Array.from($value).map(($id) => ($id == null ? "" : String($id).trim())).filter(($id) => $id && $id !== "null");
 };
 const $openRender = (fields) => {
     // A nested render writes to the output itself, so it cannot be captured (a section is taken as a value instead).
@@ -190,6 +213,12 @@ const $cellOf = ($parts) => {
     }
     return $parts.length === 0 ? "" : $parts.length === 1 ? $parts[0] : $parts;
 };
+// A cell of a list's show-total row as text: a link is its text, and an input or a button is left out.
+const $plainCell = ($cell) => {
+    if (Array.isArray($cell)) return $cell.map($plainCell).filter(($part) => $part !== "");
+    if ($cell && typeof $cell === "object") return $cell.t === "link" || $cell.t === "text" ? String($cell.text || "") : "";
+    return $cell == null ? "" : $cell;
+};
 const $range = ($from, $thru) => ($from && $thru ? $from + " – " + $thru : $from ? $from + " –" : $thru ? "– " + $thru : "");
 // A list of ids: an array, a list, or a comma list.
 const $ids = ($value) => {
@@ -318,7 +347,7 @@ $w("]");
         const confirm = attr(node, "confirmation") || "";
         return `(() => {
             let $text = ${!attr(node, "entity-name") && !attr(node, "text-map") && (attr(node, "text") || "").indexOf("${") < 0 ? `$xc(${jsString(attr(node, "text") || "")})` : S.linkTextExpr(node)};
-            if ($text == null || $text === "null") $text = "";
+            if ($text == null || $text === "null") $text = "";${attr(node, "encode") === "false" ? " $text = $htmlPlain($text, true);" : ""}
             ${attr(node, "icon") ? `if (!String($text).trim()) $text = $iconLabel(${jsString(attr(node, "icon"))}, ${attr(node, "tooltip") ? `String(${S.expandExpr(attr(node, "tooltip"))} || "")` : '""'});` : ""}
             const $made = sri.makeUrlByType(${jsString(attr(node, "url") || "")}, ${jsString(attr(node, "url-type") || "transition")}, ${S.nodeLit(node, true)}, ${jsString(attr(node, "expand-transition-url") || "true")});
             const $link = {t:"link",id:$uid(${linkIdExpr(node, inList)}),text:String($text),url:$made ? ($made.getUrlWithParams() || "") : ""};
@@ -769,7 +798,7 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
     };
     // One widget of a list cell: a text, a link, or a field node (an editable; an input or a button of a row form).
     const cellPiece = (field, sub, widget, list) => {
-        if (widget.name === "section") {
+        if (widget.name === "section" || widget.name === "section-iterate") {
             const value = `JSON.parse(sri.renderSectionValue(${jsString(attr(widget, "name") || "")}))`;
             return aiOff(widget) ? `($isAgent() ? $aiOffText() : ${value})` : value;
         }
@@ -833,10 +862,14 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
     };
     const columnCells = (columns, list) => {
         let code = `let $parts = [];\nlet $start = 0;\n`;
+        const isTotal = (field) => attr(field, "show-total") && attr(field, "show-total") !== "false";
+        // a list with a show-total field has a total row (_moquiRowType total), with a value only in a total field's column
+        const listTotals = columns.some((column) => column.some(isTotal));
         columns.forEach((column) => {
             const hidden = columnHidden(column);
             if (hidden) code += `if (!$colHide[${columnNumber(column)}]) {\n`;
-            code += `$parts = [];\n`;
+            const totals = !listTotals || column.some(isTotal);
+            code += totals ? `$parts = [];\n` : `if ($totalRow) $cells.push("");\nelse {\n$parts = [];\n`;
             column.forEach((field) => {
                 if (attr(field, "hide") === "true") return;
                 const body = S.fieldChain(field, (sub) => {
@@ -849,7 +882,8 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
                 });
                 if (body) code += S.hideGuard(field, `$start = $parts.length;\n${aiOffBranch(field, "$addPart($parts, $start, $aiOffText());", ownContext(fieldHasSet(field), body))}`);
             });
-            code += `$cells.push($cellOf($parts));\n`;
+            code += !listTotals ? `$cells.push($cellOf($parts));\n`
+                : totals ? `$cells.push($totalRow ? $plainCell($cellOf($parts)) : $cellOf($parts));\n` : `$cells.push($cellOf($parts));\n}\n`;
             if (hidden) code += `}\n`;
         });
         return code;
@@ -1282,7 +1316,7 @@ try {
             ${viewBoard ? `{
                 const $group = ${jsString(boardGroup)};
                 const $statusTypeId = ${jsString(vb("status-type-id"))};
-                const $order = ${JSON.stringify(namesOf(vb("column-order")))};
+                const $order = ${vb("column-order").includes("${") ? `$idList(${jsString(vb("column-order"))})` : JSON.stringify(namesOf(vb("column-order")))};
                 const $isStatus = !!$statusTypeId || /^statusId$|StatusId$/.test($group);
                 let $groups = [];
                 if ($isStatus || $order.length) {
@@ -1330,8 +1364,15 @@ try {
             sri.startFormListRow($info, $index);
             try {
                 const $rowKey = ${rowKey};
+                const $totalRow = ec.context.get("_moquiRowType") === "total";
                 const $cells = [];
                 ${bySet((columns) => columnCells(columns, list))}const $row = {id:$rowKey,cells:$cells};
+                // the show-total row: drawn bold, with nothing to select, open or post
+                if ($totalRow) {
+                    $row.total = true;
+                    $rows.push($row);
+                    continue;
+                }
                 ${rowHiddenBlock}${selectIdField ? (selectCondition ? `if ($selOn) {
                     const $selectId = ec.context.get(${jsString(selectIdField)});
                     if ($selectId != null && $selectId !== "") $row.selectId = String($selectId);
@@ -1348,14 +1389,16 @@ try {
         const $sizeValue = ${pageName("PageSize")} ? ec.context.get(${pageName("PageSize")}) : null;
         const $pageSize = $sizeValue == null || $sizeValue === "" ? $whole(ec.context.get("pageSize")) : $whole($sizeValue);
         const $total = ${pageName("Count")} ? ec.context.get(${pageName("Count")}) : null;
-        const $count = $total == null || $total === "" ? $info.count : $whole($total);
-        const $size = $pageSize > 0 ? $pageSize : $info.count;
+        // the rows less a show-total row
+        const $shown = $info.count - $rows.filter(($r) => $r.total).length;
+        const $count = $total == null || $total === "" ? $shown : $whole($total);
+        const $size = $pageSize > 0 ? $pageSize : $shown;
         const $paging = {index:$pageIndex,size:$size,count:$count};
         for (const [$key, $suffix] of [["maxIndex", "PageMaxIndex"], ["rangeLow", "PageRangeLow"], ["rangeHigh", "PageRangeHigh"]]) {
             const $value = ${listKey ? `ec.context.get(${jsString(listKey)} + $suffix)` : "null"};
             if ($value != null && $value !== "") $paging[$key] = $whole($value);
         }
-        const $list = {t:"formList",id:$uid(${jsString(id)}),name:${jsString(name)},domId:${domIdExpr(node)},columns:$columns,rows:$rows,paging:$paging,headerFields:$headerFields};
+        const $list = {t:"formList",id:$uid(${jsString(id)}),name:${jsString(name)},domId:${domIdExpr(node)},columns:$columns,rows:$rows,paging:$paging,headerFields:$headerFields${attr(node, "skip-header") === "true" ? ",skipHeader:true" : ""}};
         ${aiOffNames(fields).length ? `if ($isAgent()) $list.aiOff = ${JSON.stringify(aiOffNames(fields))};
         ` : ""}${selection ? `${selectCondition ? "if ($selOn) " : ""}$list.rowSelection = {idField:${jsString(selectIdField)},parameter:${jsString(attr(selection, "parameter") || selectIdField)}${attr(selection, "list-mode") ? `,listMode:${jsString(attr(selection, "list-mode"))}` : ""}};
         ` : ""}${listFormBlock}${savedFindsBlock}${selectColumnsBlock}${exportsBlock}${viewsBlock}$emit($list);
@@ -1645,8 +1688,10 @@ ${regionCode(node, child(node, "box-toolbar"), "toolbar")}${body}$closeChildren(
             return `$emit({t:"placeholder",id:$uid(${jsString(idOf(node))}),text:"render-mode",url:${screenUrlExpr}});\n`;
         }),
         "text": stmt((node) => textCode(node)),
-        "label": stmt((node) => guarded(node,
-            `$emit({t:"text",id:$uid(${jsString(idOf(node))}),text:${S.labelTextExpr(node)}${attr(node, "type") && attr(node, "type") !== "span" ? `,style:${jsString(attr(node, "type"))}` : ""}});\n`)),
+        // encode="false" text is markup: drawn as its plain text, and left out when that is only spaces (an &nbsp; spacer)
+        "label": stmt((node) => guarded(node, attr(node, "encode") === "false"
+            ? `{\n    const $text = $htmlPlain(${S.labelTextExpr(node)}, false);\n    if (!$blank($text)) $emit({t:"text",id:$uid(${jsString(idOf(node))}),text:$text${attr(node, "type") && attr(node, "type") !== "span" ? `,style:${jsString(attr(node, "type"))}` : ""}});\n}\n`
+            : `$emit({t:"text",id:$uid(${jsString(idOf(node))}),text:${S.labelTextExpr(node)}${attr(node, "type") && attr(node, "type") !== "span" ? `,style:${jsString(attr(node, "type"))}` : ""}});\n`)),
         // a click-to-edit text in a container (Task Summary's status, name and description); in a field it is the field's widget
         "editable": stmt((node) => {
             if (fieldNodeOf(node)) return "";
@@ -1705,13 +1750,13 @@ ${children}$closeChildren();
         "markdown-view": stmt((node) => guarded(node,
             `$emit({t:"markdown",id:$uid(${jsString(idOf(node))}),text:String(${S.markdownTextExpr(node)} || "")});\n`)),
         "status-bar": stmt((node) => guarded(node, statusBarCode(node))),
-        // The text when there is one, else the HTML, as the text modes read an html-view.
+        // The HTML when there is some, as blocks that keep its paragraphs and quotes, else the text.
         "html-view": stmt((node) => guarded(node, `{
-    const $text = ec.resource.expandNoL10n(${jsString(attr(node, "text") || "")});
-    if ($text && $text !== "null") $emit({t:"text",id:$uid(${jsString(idOf(node))}),text:String($text).trim()});
-    else {
-        const $html = ec.resource.expandNoL10n(${jsString(attr(node, "html") || "")});
-        ${htmlNode(jsString(idOf(node)), "($html === \"null\" ? \"\" : $html)")}    }
+    const $html = ec.resource.expandNoL10n(${jsString(attr(node, "html") || "")});
+    if ($html && $html !== "null" && String($html).trim()) ${htmlNode(jsString(idOf(node)), "$html")}    else {
+        const $text = ec.resource.expandNoL10n(${jsString(attr(node, "text") || "")});
+        if ($text && $text !== "null") $emit({t:"text",id:$uid(${jsString(idOf(node))}),text:String($text).trim()});
+        else ${htmlNode(jsString(idOf(node)), '""')}    }
 }
 `)),
         // Its items are compiled (button-menu is not opaque here) and are the menu's children: links, dialogs and the like.

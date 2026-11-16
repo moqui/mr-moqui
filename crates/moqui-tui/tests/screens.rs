@@ -281,7 +281,9 @@ fn the_drawer_docks_when_wide_and_f9_shows_and_focuses_it() {
     view.session_mut().set_menu(menu());
     let wide = view.screen_text(180, 40);
     assert!(wide.contains("▾ Gallery"), "{wide}");
-    assert!(wide.contains("▶ List"), "{wide}");
+    // the screen shown has a mark that is not a disclosure one, and Home is the link to all the apps
+    assert!(wide.contains("• List"), "{wide}");
+    assert!(wide.contains("◂ Home"), "{wide}");
     assert!(wide.contains("┬"), "{wide}");
     let narrow = view.screen_text(100, 40);
     assert!(narrow.starts_with(" ≡"), "{narrow}");
@@ -716,7 +718,10 @@ fn a_button_menu_opens_under_its_button() {
     let text = view.screen_text(160, 50);
     let lines: Vec<&str> = text.lines().collect();
     let button = lines.iter().position(|line| line.contains("File ▾")).expect(&text);
-    let title = lines.iter().position(|line| line.contains(" File ") && line.contains('┌')).expect(&text);
+    let title = lines
+        .iter()
+        .position(|line| line.contains(" File ") && line.contains('┌'))
+        .expect(&text);
     assert_eq!(title, button + 1, "{text}");
 }
 
@@ -743,4 +748,81 @@ fn a_long_display_value_in_a_field_row_wraps_in_its_cell() {
     );
     assert!(text.contains("USD"), "{text}");
     assert!(text.contains("reports read"), "{text}");
+}
+
+/// A list as the TUI review found it (2026-11-15): a skip-header list draws no titles; the show-total row is bold with
+/// no checkbox and is not counted; a cell's row actions share a line; a long value column is shortened to the room
+/// left; and a row takes only the lines of the columns drawn.
+#[test]
+fn list_headers_totals_actions_and_columns_as_drawn() {
+    let long = "A value long enough that it does not fit the room left beside the other columns of this list";
+    let json = format!(
+        r#"{{"v":1,"screen":{{"path":"/l","title":"L"}},"c":[
+        {{"t":"formList","id":"Bare","name":"Bare","skipHeader":true,"columns":[{{"title":"Name Text"}}],
+          "rows":[{{"id":"1","cells":["Alpha"]}}]}},
+        {{"t":"formList","id":"Sums","name":"Sums","rowSelection":{{"idField":"id"}},
+          "columns":[{{"title":"Item"}},{{"title":"Act"}},{{"title":"Amount","align":"right"}}],
+          "rows":[{{"id":"I1","cells":["Widget",[{{"t":"link","id":"o1","text":"Open","url":"/d","icon":"eye"}},
+                     {{"t":"link","id":"c1","text":"Clone","url":"/c","method":"post"}}],"2"]}},
+                  {{"id":"T","total":true,"cells":["","","2"]}}]}},
+        {{"t":"formList","id":"Wide","name":"Wide","columns":[{{"title":"Key"}},{{"title":"Value","printWidth":"120"}},{{"title":"Stack"}}],
+          "rows":[{{"id":"1","cells":["K1","{long}",["one","two","three"]]}}]}}
+    ]}}"#
+    );
+    let model = ScreenModel::from_json(&json).unwrap();
+    let link = FakeLink::from_json(&[&json]).unwrap();
+    let mut view = view_of(model, link);
+    let text = view.screen_text(80, 30);
+    assert!(!text.contains("Name Text"), "{text}");
+    assert!(text.contains("Alpha"), "{text}");
+    // the actions side by side, the total row without a checkbox, one record counted
+    assert!(text.contains("Open Clone"), "{text}");
+    let total = text
+        .lines()
+        .find(|line| line.trim_end().ends_with(" 2") && !line.contains("Widget"))
+        .unwrap_or_default();
+    assert!(!total.contains("[ ]"), "{text}");
+    assert!(text.contains("Rows 1–1 of 1"), "{text}");
+    // the Value column is drawn, cut to the room left, and the Stack column behind ▸ adds no lines to the row
+    let row = text.lines().find(|line| line.contains("K1")).unwrap_or_default();
+    assert!(row.contains("A value long"), "{text}");
+    assert!(!text.contains("two"), "{text}");
+    let below = text
+        .lines()
+        .skip_while(|line| !line.contains("K1"))
+        .nth(1)
+        .unwrap_or_default();
+    assert!(below.contains("Rows 1–1 of 1"), "{text}");
+}
+
+/// A field with no title (a lone editable) draws its value with no label and no colon.
+#[test]
+fn a_field_with_no_title_has_no_colon() {
+    let json = r#"{"v":1,"screen":{"path":"/e","title":"E"},"c":[
+        {"t":"field","id":"ed","name":"editable","title":"","w":{"kind":"display","text":"In progress"}}]}"#;
+    let model = ScreenModel::from_json(json).unwrap();
+    let link = FakeLink::from_json(&[json]).unwrap();
+    let text = render_text(&model, &link, 100, 12);
+    let line = text
+        .lines()
+        .find(|line| line.contains("In progress"))
+        .unwrap_or_default();
+    assert!(!line.contains(':'), "{text}");
+}
+
+/// Tabs past the ninth have no number, as only Alt+1 to Alt+9 open a tab.
+#[test]
+fn only_the_first_nine_tabs_are_numbered() {
+    let items: Vec<String> = (1..=11)
+        .map(|n| format!(r#"{{"title":"Tab{n}","url":"/t/T{n}","active":{}}}"#, n == 1))
+        .collect();
+    let json = format!(
+        r#"{{"v":1,"screen":{{"path":"/t","title":"T"}},"c":[{{"t":"subscreens","id":"s","kind":"tab","items":[{}],"c":[]}}]}}"#,
+        items.join(",")
+    );
+    let model = ScreenModel::from_json(&json).unwrap();
+    let link = FakeLink::from_json(&[&json]).unwrap();
+    let text = render_text(&model, &link, 200, 12);
+    assert!(text.contains("9:Tab9"), "{text}");
+    assert!(text.contains("Tab10") && !text.contains("10:Tab10"), "{text}");
 }

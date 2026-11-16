@@ -1,7 +1,7 @@
  gallery ▸ Chatter                                                                                                                                              john.doe  Tue 14:32
 ─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▾ Gallery               │ ┌─ Chatter ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-   ▶ Chatter             │ │ On null null · opens on log. The gallery's stand-in for an app's shared Chatter screen, loaded by the chatter element.                               │
+   • Chatter             │ │ On null null · opens on log. The gallery's stand-in for an app's shared Chatter screen, loaded by the chatter element.                               │
      Landing             │ │ No record                                                                                                                                            │
      List                │ │ Log note  : │                                                                                                                                        │
      Detail              │ │             HTML is read-only in the terminal. Use the browser form.                                                                                 │
@@ -21,7 +21,7 @@
      Views               │
      Handheld            │
      Nav cards           │
- ▾ Home                  │
+ ◂ Home                  │
                          │
                          │
                          │

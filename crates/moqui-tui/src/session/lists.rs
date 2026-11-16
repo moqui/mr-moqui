@@ -45,7 +45,10 @@ impl Session {
             // Classic: Right follows the row's link as Lynx does; Enter edits a row that has fields. Modern leaves Left
             // and Right to the keymap, which moves the focus.
             (Key::Right, false) if press.is_plain() && self.scheme == KeyScheme::Classic => {
-                self.follow_row_link(&item.key, at)
+                if !self.follow_row_link(&item.key, at) {
+                    self.nothing_to_open(&item.key, at);
+                }
+                true
             }
             (Key::Right, true) => {
                 *self.hscroll.entry(item.key).or_default() += 1;
@@ -158,7 +161,8 @@ impl Session {
     pub(super) fn selectable_row(&self, list_id: &str, at: usize) -> Option<String> {
         let list = self.list(list_id)?;
         list.row_selection.as_ref()?;
-        let row = list.rows.get(at)?;
+        // the show-total row is not a record
+        let row = list.rows.get(at).filter(|row| !row.total)?;
         Some(if row.select_id.is_empty() {
             row.id.clone()
         } else {

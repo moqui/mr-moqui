@@ -271,10 +271,14 @@ The keys that differ:
 presses it. On a menu button it opens the items, and on a box title it opens or closes the box. In a text area it is a
 new line. On a list row:
 
-- in Modern, Enter follows the row's first link, and edits the row when it has no link;
-- in Classic, Enter edits the row when it has fields, and opens its first link otherwise. Right follows the link.
+- in Modern, Enter follows the row's link, and edits the row when it has no link;
+- in Classic, Enter edits the row when it has fields, and opens its link otherwise. Right follows the link.
 
-In both schemes `e` edits the row.
+The row's link is its first link to another screen. A link back to the screen shown (a filter on a value, or a toggle
+that stages a change, as on Access Capabilities) opens the row only when it has no link to another screen, as a list
+beside its detail selects a row with one. A link that posts or writes never opens the row; it stays on F10 and on
+numbered links. A row with no link to open says "Nothing to open on this row" (and points to F10 when it
+has other links). The show-total row opens nothing. In both schemes `e` edits the row.
 
 **Lists and trees.** In both schemes:
 
@@ -296,13 +300,13 @@ The keys both schemes share:
 | F5, Ctrl+R | Refresh the screen |
 | Shift+Left / Shift+Right | Scroll a list wider than the screen; its first column stays |
 | F9 | Show the drawer and focus it; again to hide it. The choice is kept for the user (`TUI_DRAWER_OPEN`) |
-| F10 | Actions: the screen's button menus, then the focused list's row actions, Edit row, Find, Saved finds, Columns and exports |
+| F10 | Actions: the screen's button menus, then the focused list's row actions, the row's links as `column ▸ text`, Edit row, Find, Saved finds, Columns and exports |
 | Space | On a list: select the row. On a check box: toggle |
 | `f`, `s`, `e` | On a list: the find dialog of its header fields, cycle the sort, edit the row |
 | `v` | On a list with `views`, or its board or calendar: the next view (list, board, calendar), kept for the user |
 | Ctrl+C | Copy: in a text field the selection (else all of it), on a list the current row's cells, on a link its text |
 | Ctrl+PgUp / Ctrl+PgDn | The previous / next subscreen tab |
-| Alt+1…Alt+9, 1…9 | Subscreen tab N |
+| Alt+1…Alt+9, 1…9 | Subscreen tab N. Only the first nine tabs show a number (`1:Contact`); the others are reached with Ctrl+PgDn or a click |
 | Ctrl+N / Ctrl+P | Down and up in a drop-down's list, a menu and the palette |
 | Alt+B, Alt+I, Alt+K | In a Markdown text area: bold, italic or link the word at the cursor |
 | `#` | Number the links; then digits and Enter follow link N |
@@ -340,20 +344,29 @@ search drop-down over its screen's `scanResolve` transition: the code typed or s
 and the form posts the id with a scan id the screen made when it rendered ([Qvt-Client](Qvt-Client.md#scan-input)). In the date
 picker the arrows move a day or a week, PgUp and PgDn a month, Home is today and Enter picks.
 
+A list draws its column titles unless it has `skip-header`. A column wider than the room left is drawn cut to that room
+(at least 8 columns), and Shift+Right brings the columns after it; a row takes the lines of its tallest cell among the
+columns drawn. A cell's row actions (an icon or button link, a link that posts, a dialog, a button) share one line. The
+`show-total` row is drawn bold under the rows, with only the totals' columns filled, no checkbox and nothing to open; it
+is not counted in the footer. A `pre` text in a dialog wraps at the dialog's edge rather than being cut, and a dialog
+blanks a column and a row around its frame.
+
 A list row with fields (a list with a `transition`) opens in the row editor with Enter or `e`: its fields under their
 column titles; Enter or Ctrl+S saves the row, or every row of a `multi` list. A row action (`row-selection` `action`)
 with a `dialog` is on F10; one without is its form after the list. Either form posts the rows selected with Space. F10 also offers the current row's dialogs and write links,
-including those inside a cell container; each keeps its own row's values and confirmation. Ordinary navigation links
-remain on Enter, Right and numbered links. Labels and links in a cell's containers show in the order the screen
+including those inside a cell container; each keeps its own row's values and confirmation. It then lists the row's
+navigation links as `column ▸ text` (a dashboard row's Name, Receivable, Payable and Settings), since Enter and Right
+open only one of them; they also remain on numbered links. Labels and links in a cell's containers show in the order the screen
 lists them, each under its own name. In the Columns dialog Space shows or hides a field, Alt+Up and Alt+Down move it,
 Enter saves and `r` puts back the list's own columns. An export saves a file to `XDG_DOWNLOAD_DIR` (else
 `~/Downloads`), with its path on the message line; the text export shows in a dialog.
 
 The title line shows the counters (`Today 3  Chat 1  Notif 2`) when the server has a count service. They change when a
 notification comes for the user (in process, and over `--server` through `/notws`), with its title on the message
-line, and are read again every ten minutes besides; a client that cannot be told reads them each minute. The short form
-`T3 C1 N2` takes over below the md width or when the long one would cut the breadcrumb, then the user and the clock give
-way. The breadcrumb ends with the screen's title in place of its name.
+line, and are read again every ten minutes besides; a client that cannot be told reads them each minute. Below the md
+width, or when the long form would cut the breadcrumb, the middle form with three-letter words (`Tdy 3 Cht 1 Ntf 2`: a
+word's first letter and the two consonants after it) takes over, then the short form `T3 C1 N2`, then the user and the
+clock give way. The breadcrumb ends with the screen's title in place of its name.
 
 A list with `views` (`view-board`, `view-calendar`, `view-tree`; style guide §8.2) opens in the view the user chose last
 (the `LIST_VIEW_` preference the browser keeps), else the first the form names. The board shows the page's rows as cards in
@@ -425,7 +438,8 @@ The client measures the canvas: the terminal less a docked drawer. The width cla
 | xl | 240 and up | As lg |
 
 The 26-column drawer docks while the canvas left beside it is still md, from a terminal of 146 columns; F9 shows or
-hides it at any width. A box narrower than 40 columns goes on a line of its own rather than squeeze. A list's page size
+hides it at any width. In it `▾` marks an app with its screens under it, `•` the screen shown (bold), and `◂ Home`, the
+last row, is the link to all the apps. A box narrower than 40 columns goes on a line of its own rather than squeeze. A list's page size
 follows the rows of the terminal (10 to 100).
 
 ## Themes

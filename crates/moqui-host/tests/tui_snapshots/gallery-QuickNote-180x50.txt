@@ -1,7 +1,7 @@
  gallery ▸ Gallery note                                                                                                                                         john.doe  Tue 14:32
 ─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▾ Gallery               │ A note from the shell's quick create. With a record in the screen context it is linked to it.
-   ▶ Gallery note        │ Note  : │
+   • Gallery note        │ Note  : │
      Landing             │         │
      List                │         │
      Detail              │ < Save >
@@ -21,7 +21,7 @@
      Views               │
      Handheld            │
      Nav cards           │
- ▾ Home                  │
+ ◂ Home                  │
                          │
                          │
                          │

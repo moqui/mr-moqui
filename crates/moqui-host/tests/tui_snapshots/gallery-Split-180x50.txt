@@ -8,7 +8,7 @@
      Task                │ ┃ 30 rows and narrowed by the find instead of paged, because a form-list's paging row does not fit in a 320 px pane.                                   │
      Board               │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
      Calendar            │   Country                Code            ┌─ Afghanistan ───────────────────────────────────────┐ ┌─ States and regions ────────────────────────────────┐
-   ▶ Split               │ ──────────────────────────────           │ Edit                                                │ │   Geo ID Name Code Type                             │
+   • Split               │ ──────────────────────────────           │ Edit                                                │ │   Geo ID Name Code Type                             │
      Settings            │ ▌ Afghanistan            AF              │ Geo ID  . . . . . . : AFG                           │ │ ────────────────────────                            │
      Wizard              │   Albania                AL              │ Alpha-2 . . . . . . : AF                            │ │   No rows match                                     │
      Dialog              │   Algeria                DZ              │ Numeric . . . . . . : 004                           │ │   Rows 0 of 0                                       │
@@ -20,7 +20,7 @@
      Views               │   Antigua And Barbuda    AG
      Handheld            │   Argentina              AR
      Nav cards           │   Armenia                AM
- ▾ Home                  │   Aruba                  AW
+ ◂ Home                  │   Aruba                  AW
                          │   Australia              AU
                          │   Austria                AT
                          │   Azerbaijan             AZ

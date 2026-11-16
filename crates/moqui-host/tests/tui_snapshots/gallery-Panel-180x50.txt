@@ -13,14 +13,14 @@
      Wizard              │ 2
      Dialog              │ Send revised quote
      Report              │ task · <today-1> 17:00 · Quote Q-10077 · Acme Co.
-   ▶ Panel               │ Mark done  Snooze to tomorrow
+   • Panel               │ Mark done  Snooze to tomorrow
      Widgets             │ Call back about the delivery date
      Editor              │ call · <today-1> 11:30 · Order SO10023 · Acme Co.
      Message             │ Mark done  Snooze to tomorrow
      Views               │ Due today
      Handheld            │ 4
      Nav cards           │ Reply to the RFQ questions
- ▾ Home                  │ email · 10:00 · RFQ-2041 · Beta Inc.
+ ◂ Home                  │ email · 10:00 · RFQ-2041 · Beta Inc.
                          │ Mark done  Snooze to tomorrow
                          │ Weekly pipeline review
                          │ meeting · 14:00 · Sales team · Room 2

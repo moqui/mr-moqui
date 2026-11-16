@@ -910,31 +910,50 @@ fn page_nodes(nodes: &mut [Node], index: usize) {
     }
 }
 
-/// The first navigation link in a row: its id and url. Row actions remain available through their own controls.
-pub fn row_link_target(row: &ListRow) -> Option<(&str, &str)> {
-    row.cells.iter().flat_map(Cell::nodes).find_map(|node| match node {
-        Node::Link {
-            id,
-            url,
-            disabled,
-            writes,
-            kind,
-            method,
-            ..
-        } if !url.is_empty()
-            && !disabled
-            && !writes
-            && kind != "hidden-form"
-            && kind != "hidden-form-link"
-            && !method.eq_ignore_ascii_case("post") =>
-        {
-            Some((id.as_str(), url.as_str()))
-        }
+/// The link Right and Enter open on a row, as its id and url: its first navigation link to another screen, else its first
+/// link back to the screen shown (`here`, its path), as a list beside its detail selects a row with one. A link to the
+/// screen shown is often a filter or a toggle that stages a change, so a link that opens the record wins over it. A row
+/// action that posts or writes stays on its own key and on F10. None for the show-total row.
+pub fn row_link_target<'a>(row: &'a ListRow, here: &str) -> Option<(&'a str, &'a str)> {
+    if row.total {
+        return None;
+    }
+    let mut links = row.cells.iter().flat_map(Cell::nodes).filter_map(|node| match node {
+        Node::Link { id, url, .. } if navigates(node) => Some((id.as_str(), url.as_str())),
         _ => None,
-    })
+    });
+    let first = links.next()?;
+    if !same_screen(first.1, here) {
+        return Some(first);
+    }
+    Some(links.find(|(_, url)| !same_screen(url, here)).unwrap_or(first))
 }
 
-/// First navigation link url in a row, if the row has one.
+/// A link that goes somewhere with a GET: not disabled, not a write, and not a hidden form's post.
+pub fn navigates(node: &Node) -> bool {
+    matches!(node, Node::Link {
+        url,
+        disabled,
+        writes,
+        kind,
+        method,
+        ..
+    } if !url.is_empty()
+        && !disabled
+        && !writes
+        && kind != "hidden-form"
+        && kind != "hidden-form-link"
+        && !method.eq_ignore_ascii_case("post"))
+}
+
+/// Whether `url` is the screen at the path `here`, whatever its parameters.
+pub fn same_screen(url: &str, here: &str) -> bool {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    path == "." || path.trim_end_matches('/') == here.trim_end_matches('/')
+}
+
+/// The url of the row's first navigation link, whatever screen it goes to; Right and Enter open
+/// [`row_link_target`], which prefers a link to another screen.
 pub fn row_link(row: &ListRow) -> Option<&str> {
-    row_link_target(row).map(|(_, url)| url)
+    row_link_target(row, "").map(|(_, url)| url)
 }

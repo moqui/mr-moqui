@@ -1,7 +1,7 @@
  gallery ▸ Search                                                                                                                                               john.doe  Tue 14:32
 ─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▾ Gallery               │ Examples
-   ▶ Search              │ [ New example… ]  [ New address… ]
+   • Search              │ [ New example… ]  [ New address… ]
      Landing             │ Any Field  : [ _______________________________________]
      List                │ < Search >
      Detail              │   ID Name Type Description
@@ -21,7 +21,7 @@
      Views               │
      Handheld            │
      Nav cards           │
- ▾ Home                  │
+ ◂ Home                  │
                          │
                          │
                          │

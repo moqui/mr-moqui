@@ -3,7 +3,7 @@
  v Gallery               | +- Archetype 3.3 Detail -------------------------------------------------------------------------------------------------------------------------------+
      Landing             | # One record with its parts and actions: a title row with the identifier, the status flow, one primary action and a menu of secondary actions; the     |
      List                | # parts as boxes (three or fewer, so no tabs) and Chatter at the right from 1440 px, below it on narrower screens. Read-only values are display fields |
-   > Detail              | # with a label. Every action is a no-op here.                                                                                                          |
+   * Detail              | # with a label. Every action is a no-op here.                                                                                                          |
      360                 | # The status-bar element shows the stages of the framework's EntitySync status flow (the status is the syncStatusId parameter, as the gallery writes   |
      Task                | # nothing): the current stage filled, the done ones checked, and the transitions from it as buttons, the next stage the primary action and Error in    |
      Board               | # the negative color; each confirms and posts setStatus with statusId. The Chatter column is the chatter and record-files elements: they load the      |
@@ -20,7 +20,7 @@
      Views               | | Type  . . . . : Screen Theme Type                                       |
      Handheld            | | Description . : Error Screens                                           |
      Nav cards           | | Code  . . . . : ERROR                                                   |
- v Home                  | | Sequence  . . :                                                         |
+ < Home                  | | Sequence  . . :                                                         |
                          | | Parent  . . . :                                                         |
                          | | Option value  :                                                         |
                          | | Related . . . :                                                         |

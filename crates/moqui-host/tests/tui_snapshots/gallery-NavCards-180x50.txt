@@ -19,8 +19,8 @@
      Message             │                                                                                                                              plain anchor
      Views               │ Not a link
      Handheld            │ A card without a link,
-   ▶ Nav cards           │ or whose link the user
- ▾ Home                  │ may not follow, is plain
+   • Nav cards           │ or whose link the user
+ ◂ Home                  │ may not follow, is plain
                          │ From a list
                          │ Admin Health group
                          │ Enumerations of the type

@@ -270,7 +270,7 @@ fn body_box(
         canvas.y + (canvas.height - height) / 2
     };
     let rect = Rect::new(x, y, width, height);
-    paint.clear(rect);
+    clear_around(paint, rect, canvas);
     paint.fixed_frame(rect, &format!(" {title} "));
     let saved = (paint.top, paint.bottom, paint.scroll, paint.left, paint.right);
     paint.top = y + 1;
@@ -284,6 +284,20 @@ fn body_box(
         at += piece.height();
     }
     (paint.top, paint.bottom, paint.scroll, paint.left, paint.right) = saved;
+}
+
+/// Blank a dialog's box and a column and a row around it, inside the canvas less its left edge (the drawer's border), so
+/// the text under it does not run into its frame.
+fn clear_around(paint: &mut Painter, rect: Rect, canvas: Rect) {
+    let left = rect.x.saturating_sub(1).max(canvas.x + 1).min(rect.x);
+    let top = rect.y.saturating_sub(1).max(canvas.y).min(rect.y);
+    let right = (rect.x + rect.width + 1)
+        .min(canvas.x + canvas.width)
+        .max(rect.x + rect.width);
+    let bottom = (rect.y + rect.height + 1)
+        .min(canvas.y + canvas.height)
+        .max(rect.y + rect.height);
+    paint.clear(Rect::new(left, top, right - left, bottom - top));
 }
 
 /// A small centered box of text lines; answers where it is.
@@ -302,7 +316,7 @@ fn small_box(paint: &mut Painter, canvas: Rect, title: &str, lines: &[String]) -
         width,
         height,
     );
-    paint.clear(rect);
+    clear_around(paint, rect, canvas);
     paint.fixed_frame(rect, &format!(" {title} "));
     for (at, line) in lines.iter().enumerate() {
         let row = rect.y + 1 + u16::try_from(at).unwrap_or(0);

@@ -18,9 +18,9 @@
      Editor              │
      Message             │
      Views               │
-   ▶ Handheld            │
+   • Handheld            │
      Nav cards           │
- ▾ Home                  │
+ ◂ Home                  │
                          │
                          │
                          │
