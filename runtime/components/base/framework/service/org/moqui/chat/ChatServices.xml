@@ -277,6 +277,71 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
+    <service verb="get" noun="RefusedUsers" allow-remote="false">
+        <description>Internal (SEC-COM-01): of userIdList, the users the current user may not reach, whom the people
+            search leaves out and create#Room, add#Member and a public room's mentions answer as users that do not exist:
+            those a provider of hook (chat-target, or call-target for the Calls pickers) of the apps the user may open
+            refuses (org.moqui.ui.ShellServices.call#Providers; a provider that fails refuses them all, as call-target does
+            in Calls.js), and for an external caller (EXTERNAL_USER) everyone they share no room with. The current user is
+            never refused. A caller with authorization disabled (internal work) is refused no one; with no user everyone is
+            refused.</description>
+        <in-parameters>
+            <parameter name="userIdList" type="List"/>
+            <parameter name="hook" default-value="chat-target"/>
+        </in-parameters>
+        <out-parameters><parameter name="refusedUserIdList" type="List"/></out-parameters>
+        <actions><script><![CDATA[
+            refusedUserIdList = []
+            const ids = Array.from(new Set(Array.from(userIdList || []).map((id) => String(id || '').trim()).filter((id) => id)))
+            if (!ids.length || ec.artifactExecution.authzDisabled()) return
+            const me = ec.user.userId
+            if (!me) { refusedUserIdList = ids; return }
+            const asked = ids.filter((id) => id !== me)
+            if (!asked.length) return
+            const refused = new Set()
+            // an external caller reaches only the people of their own rooms (a direct room's even after leaving it)
+            const outside = ec.service.sync().name('org.moqui.chat.ChatServices.get#ExternalUsers').parameter('userIdList', [me])
+                    .disableAuthz().call()
+            if (!outside || outside.anyExternal !== false) {
+                const mine = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('userId', me)
+                        .selectField('chatRoomId').selectField('leftDate').disableAuthz().list())
+                const roomIds = Array.from(new Set(mine.map((row) => row.chatRoomId)))
+                const direct = new Set(roomIds.length ? Array.from(ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', 'in', roomIds)
+                        .condition('roomTypeEnumId', 'CrtDirect').selectField('chatRoomId').disableAuthz().list()).map((row) => row.chatRoomId) : [])
+                const current = mine.filter((row) => !row.leftDate || direct.has(row.chatRoomId)).map((row) => row.chatRoomId)
+                const shared = new Set(current.length ? Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', 'in', current)
+                        .condition('userId', 'in', asked).selectField('chatRoomId').selectField('userId').selectField('leftDate').disableAuthz().list())
+                        .filter((row) => !row.leftDate || direct.has(row.chatRoomId)).map((row) => row.userId) : [])
+                for (const id of asked) if (!shared.has(id)) refused.add(id)
+            }
+            const hookName = hook === 'call-target' ? 'call-target' : 'chat-target'
+            const open = asked.filter((id) => !refused.has(id))
+            if (open.length) {
+                ec.message.pushErrors()
+                try {
+                    const out = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers').parameters({hook: hookName,
+                        parameters: {userIdList: open}}).call() || {}
+                    if (out.unavailable !== true) {
+                        if (Array.from(out.failedParts || []).length) {
+                            ec.logger.warn(`The ${hookName} providers failed for ${open.join(', ')}: every one is refused`)
+                            open.forEach((id) => refused.add(id))
+                        } else {
+                            for (const answer of Array.from(out.results || []))
+                                for (const id of Array.from(answer?.refusedUserIdList || [])) if (open.includes(String(id))) refused.add(String(id))
+                        }
+                    }
+                } catch (err) {
+                    ec.logger.warn(`The ${hookName} providers failed for ${open.join(', ')}: ${err && err.message ? err.message : err}`)
+                    open.forEach((id) => refused.add(id))
+                } finally {
+                    ec.message.clearErrors()
+                    ec.message.popErrors()
+                }
+            }
+            refusedUserIdList = asked.filter((id) => refused.has(id))
+        ]]></script></actions>
+    </service>
+
     <service verb="push" noun="Signal" type="rust" location="moqui_core::service::chat::push_signal" authenticate="false"
             transaction="ignore">
         <description>Internal: send message to the users of userIdList on a chat topic (chatRoom:id, chatUser:userId or
@@ -1337,7 +1402,11 @@ along with this software (see the LICENSE.md file). If not, see
                 const found = new Set(Array.from(ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', others)
                         .condition(ec.entity.conditionFactory.makeCondition('disabled', 'not-equals', 'Y', true))
                         .selectField('userId').disableAuthz().list()).map((row) => row.userId))
-                const missing = others.filter((id) => !found.has(id))
+                // a user an app's chat-target provider keeps from this one, or anyone outside an external user's rooms, is
+                // answered as one that does not exist (SEC-COM-01)
+                const refused = new Set(ec.service.sync().name('org.moqui.chat.ChatServices.get#RefusedUsers')
+                        .parameter('userIdList', others.filter((id) => found.has(id))).call()?.refusedUserIdList || [])
+                const missing = others.filter((id) => !found.has(id) || refused.has(id))
                 if (missing.length) { ec.message.addError(`User ${missing.join(', ')} not found`); return }
             }
             const now = ec.user.nowTimestamp
@@ -1625,7 +1694,11 @@ along with this software (see the LICENSE.md file). If not, see
                 const found = new Set(Array.from(ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', targets)
                         .condition(ec.entity.conditionFactory.makeCondition('disabled', 'not-equals', 'Y', true))
                         .selectField('userId').disableAuthz().list()).map((row) => row.userId))
-                const missing = targets.filter((id) => !found.has(id))
+                // a user an app's chat-target provider keeps from this one, or anyone outside an external user's rooms, is
+                // answered as one that does not exist (SEC-COM-01)
+                const refused = new Set(ec.service.sync().name('org.moqui.chat.ChatServices.get#RefusedUsers')
+                        .parameter('userIdList', targets.filter((id) => found.has(id))).call()?.refusedUserIdList || [])
+                const missing = targets.filter((id) => !found.has(id) || refused.has(id))
                 if (missing.length) { ec.message.addError(`User ${missing.join(', ')} not found`); return }
                 // nobody adds an external user (EXTERNAL_USER) to a room bound to a record
                 if (room.roomTypeEnumId === 'CrtRecord' || room.visibilityEnumId === 'CrvRecord' || room.recordEntityName) {
@@ -2397,6 +2470,13 @@ along with this software (see the LICENSE.md file). If not, see
                 const users = new Set(Array.from(ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', mentioned)
                         .selectField('userId').disableAuthz().list()).map((row) => row.userId))
                 mentionIds = mentioned.filter((id) => users.has(id) && (current(memberOf[id]) || room.visibilityEnumId === 'CrvUsers' || recordReader(id)))
+                // a public room's mention of a non-member reaches only a user the sender may reach (SEC-COM-01)
+                const strangers = room.visibilityEnumId === 'CrvUsers' ? mentionIds.filter((id) => !current(memberOf[id])) : []
+                if (strangers.length) {
+                    const refused = new Set(ec.service.sync().name('org.moqui.chat.ChatServices.get#RefusedUsers')
+                            .parameter('userIdList', strangers).call()?.refusedUserIdList || [])
+                    mentionIds = mentionIds.filter((id) => !refused.has(id))
+                }
             }
             // @room: every current member, from a moderator or owner, or from anyone in a room of 20 members or fewer
             if (mentionedAll.includes(ROOM_MENTION)) {

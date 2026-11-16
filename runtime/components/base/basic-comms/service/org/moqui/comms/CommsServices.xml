@@ -18,17 +18,23 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The people to share a mail account with, mention or message: active user accounts whose name or username
             has the term, as {id (the userId), value (the same), label}. Leaves out disabled accounts and the system's own
             (an agent's or another account whose username starts with _). Any signed-in user may look people up by name, as
-            in a mail client's address book.</description>
+            in a mail client's address book, but only the people they may reach (SEC-COM-01): no external user
+            (EXTERNAL_USER) is found by anyone, an external caller finds only the people of their own rooms, and a user an
+            app's chat-target provider refuses (call-target for purpose call, the Calls pickers) is left out, as one that
+            does not exist (org.moqui.chat.ChatServices get#RefusedUsers).</description>
         <in-parameters>
             <parameter name="term"/>
             <parameter name="limit" type="Integer" default="10"/>
+            <parameter name="purpose" default-value="chat"><description>chat (find, message, share) or call (the
+                provider hook asked is then call-target).</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="userList" type="List"/></out-parameters>
         <actions>
             <!-- the term as text: its % and _ are not wildcards (a search for _agent is not one for any character then agent) -->
             <set field="termText" from="String(term || '').trim().replace(/[\\%_]/g, '\\$&amp;')"/>
             <set field="pageLimit" from="Math.min(Math.max(Number(limit) || 10, 1), 50)"/>
-            <entity-find entity-name="moqui.security.UserAccount" list="accountList" limit="${pageLimit}" disable-authz="true">
+            <!-- more than a page, so the people left out below seldom leave it short -->
+            <entity-find entity-name="moqui.security.UserAccount" list="accountList" limit="${Math.min(pageLimit * 3, 150)}" disable-authz="true">
                 <econditions combine="or">
                     <econdition field-name="username" operator="like" value="%${termText}%" ignore-case="true"/>
                     <econdition field-name="userFullName" operator="like" value="%${termText}%" ignore-case="true"/>
@@ -39,7 +45,16 @@ along with this software (see the LICENSE.md file). If not, see
                 <select-field field-name="userId,username,userFullName"/>
             </entity-find>
             <script><![CDATA[
-                userList = Array.from(accountList).map((account) => ({id: account.userId, value: account.userId,
+                const ids = Array.from(accountList).map((account) => account.userId)
+                // no external user is found by anyone (a failed check leaves everyone out)
+                const outside = ids.length ? ec.service.sync().name('org.moqui.chat.ChatServices.get#ExternalUsers').parameter('userIdList', ids)
+                        .disableAuthz().call() : {externalUserIdList: []}
+                const external = new Set(outside ? Array.from(outside.externalUserIdList || []) : ids)
+                const inside = ids.filter((id) => !external.has(id))
+                const refused = new Set(inside.length ? ec.service.sync().name('org.moqui.chat.ChatServices.get#RefusedUsers')
+                        .parameters({userIdList: inside, hook: purpose === 'call' ? 'call-target' : 'chat-target'}).call()?.refusedUserIdList || [] : [])
+                userList = Array.from(accountList).filter((account) => !external.has(account.userId) && !refused.has(account.userId))
+                        .slice(0, pageLimit).map((account) => ({id: account.userId, value: account.userId,
                     label: account.userFullName || account.username}))
             ]]></script>
         </actions>

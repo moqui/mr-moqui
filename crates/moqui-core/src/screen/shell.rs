@@ -169,7 +169,7 @@ pub struct PageAction {
 /// The provider hooks an app root's `shell-providers` may declare (plans/archive/Comms-Framework.md §3.3): services the framework
 /// calls through [`crate::service`]'s `call#Providers` and combines, so several apps answer one hook. Each is declared
 /// with a provider-qualified `name`, a `service` and a `sequence`, and merged by `name` in a screen-extend.
-pub const PROVIDER_HOOKS: [&str; 13] = [
+pub const PROVIDER_HOOKS: [&str; 14] = [
     "inbox-source",
     "recipient-source",
     "record-lookup",
@@ -185,6 +185,8 @@ pub const PROVIDER_HOOKS: [&str; 13] = [
     "sms-consent",
     // whether the current user may call, transfer a call to or add a user (CallTransfers.js, Calls.js refusedTargets)
     "call-target",
+    // whether the current user may find, message or add a user to a chat room (ChatServices get#RefusedUsers)
+    "chat-target",
 ];
 
 /// The hooks a component may also answer from its `MoquiConf.xml`, apart from any app root

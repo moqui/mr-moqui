@@ -77,6 +77,8 @@ along with this software (see the LICENSE.md file). If not, see
         <call-context name="gallery.callContextFailing" service="example.ExampleServices.get#GalleryCallContextFailing" sequence="91"/>
         <!-- who may be called, transferred to or added (the hardening pass): an example refusing the users named *.offlimits -->
         <call-target name="gallery.callTarget" service="example.ExampleServices.get#GalleryCallTarget" sequence="90"/>
+        <!-- who may be found, messaged or put in a room (SEC-COM-01): the same example, as chat-target -->
+        <chat-target name="gallery.chatTarget" service="example.ExampleServices.get#GalleryCallTarget" sequence="90"/>
         <!-- a box on Comms Home and a provider failing on purpose (for a user whose preference example.gallery.homeFailing
             is Y, as a spec sets), and the contact card of the gallery's addresses (plans/archive/Comms-Framework.md §3.3) -->
         <home-source name="gallery.home" service="example.ExampleServices.get#GalleryHomeSource" sequence="90"/>
