@@ -169,8 +169,8 @@ pub(super) fn send_rest(
         headers,
         body: Some(body),
         timeout: None,
-        // a remote that may not use the private network (a delegated administrator's on a production instance)
-        deny_internal: field(&remote, "allowPrivateNetwork") == "N",
+        // a remote that may not use the private network: N, or not Y on a production instance
+        deny_internal: crate::outbound::deny_private_network(&field(&remote, "allowPrivateNetwork")),
     })?;
     let status = response.status;
     if !(200..300).contains(&status) {

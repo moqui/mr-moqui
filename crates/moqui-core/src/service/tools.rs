@@ -292,7 +292,7 @@ fn server_of(printer: &moqui_lib::object::ValueMap) -> PrintServer {
     PrintServer {
         host: map_text(printer, "serverHost"),
         port: if port == 0 { IPP_PORT } else { port },
-        deny_internal: map_text(printer, "allowPrivateNetwork") == "N",
+        deny_internal: crate::outbound::deny_private_network(&map_text(printer, "allowPrivateNetwork")),
     }
 }
 

@@ -97,6 +97,18 @@ pub struct Response {
     pub headers: Vec<(String, String)>,
 }
 
+/// Whether a stored row's `allowPrivateNetwork` keeps its requests off internal addresses: always for `N`, never for
+/// `Y`, and for anything else (empty, an older row, a data file's) on a production instance only, as the remote agent
+/// and MCP rows of `moqui-llm` fail closed. A link-local or metadata address is refused even with `Y`
+/// (`service::shared_http_client`).
+pub fn deny_private_network(allow_private_network: &str) -> bool {
+    match allow_private_network.trim() {
+        "Y" => false,
+        "N" => true,
+        _ => crate::web::is_production(),
+    }
+}
+
 /// Sends a request on the host's transport. A transport failure is an error; an HTTP error status is
 /// a [`Response`].
 pub trait HttpSender: Send + Sync {
@@ -592,6 +604,31 @@ mod http_tests {
         // the shared client tries it (and finds nothing listening on port 1)
         let tried = send_default(request(false)).unwrap_err();
         assert!(!tried.message().contains("internal address"), "{tried}");
+        // the shared client never goes to a link-local or metadata address
+        let metadata = Request {
+            url: "http://169.254.169.254/latest/meta-data".to_string(),
+            ..request(false)
+        };
+        let refused = send_default(metadata).unwrap_err();
+        assert!(refused.message().contains("link-local address"), "{refused}");
+    }
+
+    /// A row's `allowPrivateNetwork`: N denies, Y allows, and anything else denies on production only (SEC-OUT-02).
+    #[test]
+    fn a_row_that_does_not_say_y_is_denied_on_production() {
+        let rule = |production: bool, value: &str| {
+            crate::web::TEST_PRODUCTION.with(|flag| flag.set(Some(production)));
+            let deny = super::deny_private_network(value);
+            crate::web::TEST_PRODUCTION.with(|flag| flag.set(None));
+            deny
+        };
+        for production in [true, false] {
+            assert!(rule(production, "N"));
+            assert!(!rule(production, "Y"));
+        }
+        assert!(rule(true, ""));
+        assert!(rule(true, "y"));
+        assert!(!rule(false, ""));
     }
 }
 

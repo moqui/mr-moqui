@@ -280,6 +280,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="targetServerUrl" type="text-medium"/>
         <field name="targetUsername" type="text-medium"/>
         <field name="targetPassword" type="text-medium" encrypt="true"/>
+        <field name="allowPrivateNetwork" type="text-indicator" enable-audit-log="update"><description>Y: the push to
+            targetServerUrl may go to a loopback or private address. N: public addresses only. Empty: as N on a production
+            instance, as Y on another. A link-local or metadata address is refused always.</description></field>
         <field name="targetPath" type="text-medium">
             <description>For sending to via file the path and filename to use, or path/filename pattern using Groovy string expand</description></field>
         <field name="keepRemoveInfoHours" type="number-decimal"/>

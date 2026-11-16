@@ -77,7 +77,7 @@ impl ReqwestTransport {
                     .redirect(reqwest::redirect::Policy::none())
                     .timeout(TIMEOUT);
                 if deny_internal {
-                    builder = builder.dns_resolver(Arc::new(moqui_lib::http::PublicOnly));
+                    builder = builder.no_proxy().dns_resolver(Arc::new(moqui_lib::http::PublicOnly));
                 }
                 builder.build().map_err(|err| err.to_string())
             })

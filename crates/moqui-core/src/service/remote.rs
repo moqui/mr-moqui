@@ -27,7 +27,8 @@ use crate::outbound::{self, redacted, Method};
 #[cfg(feature = "http")]
 pub fn shared_http_client() -> &'static moqui_lib::http::RestClient {
     static CLIENT: std::sync::OnceLock<moqui_lib::http::RestClient> = std::sync::OnceLock::new();
-    CLIENT.get_or_init(moqui_lib::http::RestClient::new)
+    // Never to a link-local or cloud metadata address, whoever gave the URL.
+    CLIENT.get_or_init(|| moqui_lib::http::RestClient::new().deny_link_local_addresses(true))
 }
 
 /// Call a `remote-rest` location. `sim` denies before anything is sent.
@@ -56,6 +57,7 @@ pub fn run_remote_rest(
         url = with_query(&url, parameters);
     }
     let shown = redacted(&url);
+    let deny_internal = crate::web::is_production() && caller_names_host(location, parameters);
     if sim {
         return Err(Error::new(format!(
             "HTTP {http_method} {shown} denied because sim mode is active"
@@ -67,7 +69,8 @@ pub fn run_remote_rest(
         headers: Vec::new(),
         body: None,
         timeout: None,
-        deny_internal: false,
+        // the definition's own host may be internal; one a caller's parameter names is public only, on production
+        deny_internal,
     };
     if http_method != Method::Get && !parameters.is_empty() {
         // Java's `RestClient.text` refuses a body for these.
@@ -135,6 +138,26 @@ fn expand_location(location: &str, parameters: &BTreeMap<String, Value>) -> Resu
     }
     out.push_str(rest);
     Ok(moqui_lib::env::expand(&out)?)
+}
+
+/// Whether a placeholder in the scheme, user, host or port of `location` is filled from `parameters`: the caller then
+/// chooses where the request goes, not the service definition.
+fn caller_names_host(location: &str, parameters: &BTreeMap<String, Value>) -> bool {
+    let after_scheme = location.split_once("://").map_or(location, |(_, rest)| rest);
+    let authority_end =
+        location.len() - after_scheme.len() + after_scheme.find(['/', '?', '#']).unwrap_or(after_scheme.len());
+    let mut rest = &location[..authority_end];
+    while let Some((_, after)) = rest.split_once("${") {
+        let Some((name, tail)) = after.split_once('}') else {
+            // an unclosed placeholder takes the path's text too, so the host is not the definition's alone
+            return true;
+        };
+        if parameters.contains_key(name) {
+            return true;
+        }
+        rest = tail;
+    }
+    false
 }
 
 fn with_query(url: &str, parameters: &BTreeMap<String, Value>) -> String {

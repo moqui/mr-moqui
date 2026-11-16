@@ -453,3 +453,26 @@ mod installed_sender {
         assert_eq!(fake.seen.lock().unwrap()[0].method, Method::Get);
     }
 }
+
+/// On a production instance a host that a caller's parameter fills is public only; the definition's own host is not
+/// checked (SEC-OUT-03).
+#[test]
+#[cfg(feature = "http")]
+fn on_production_a_host_from_a_parameter_is_refused_when_internal() {
+    let parameters = BTreeMap::from([("host".to_string(), Value::string("127.0.0.1"))]);
+    assert!(super::caller_names_host("http://${host}:9/x", &parameters));
+    assert!(super::caller_names_host("${host}/x", &parameters));
+    assert!(!super::caller_names_host("http://127.0.0.1:9/${host}", &parameters));
+    assert!(!super::caller_names_host("http://${other}/x", &parameters));
+    crate::web::TEST_PRODUCTION.with(|production| production.set(Some(true)));
+    let call = |location: &str| {
+        run_remote_rest("example.get#Item", location, Some("GET"), "get", &parameters, false)
+            .expect_err("nothing listens on port 9")
+            .to_string()
+    };
+    let chosen = call("http://${host}:9/x");
+    let own = call("http://127.0.0.1:9/x");
+    crate::web::TEST_PRODUCTION.with(|production| production.set(None));
+    assert!(chosen.contains("internal address"), "{chosen}");
+    assert!(!own.contains("internal address"), "{own}");
+}

@@ -234,7 +234,7 @@ fn load_flow_as(
             )))
         }
     };
-    let deny_internal = field(&flow, "allowPrivateNetwork") == "N";
+    let deny_internal = crate::outbound::deny_private_network(&field(&flow, "allowPrivateNetwork"));
     Ok((
         flow,
         FlowConfig {

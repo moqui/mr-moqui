@@ -748,7 +748,7 @@ along with this software (see the LICENSE.md file). If not, see
             loopback, private or link-local address for this server (looked up once and connected to at the address
             found). store#Connection saves N for a relay a delegated administrator started or repointed on a production
             instance and never changes it back: an instance administrator allows a relay on the instance's own
-            network. Empty or Y: as before.</description></field>
+            network. Y: allowed. Empty: as N on a production instance, as Y on another.</description></field>
         <relationship type="one" title="EmailAuthType" related="moqui.basic.Enumeration" short-alias="authType">
             <key-map field-name="authTypeEnumId"/></relationship>
         <relationship type="one" title="EmailOAuthProvider" related="moqui.basic.Enumeration" short-alias="oauthProvider">
@@ -1328,8 +1328,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="allowPrivateNetwork" type="text-indicator" enable-audit-log="update"><description>N: the print
             client sends nothing to a loopback, private or link-local address for this printer. store#Connection saves N
             for a printer a delegated administrator started or repointed on a production instance and never changes it
-            back: an instance administrator allows a printer on the instance's own network, where most are. Empty or Y:
-            as before.</description></field>
+            back: an instance administrator allows a printer on the instance's own network, where most are, with Y.
+            Empty: as N on a production instance, as Y on another.</description></field>
     </entity>
     <entity entity-name="PrintJob" package="moqui.basic.print" use="nontransactional" short-alias="printJobs" cache="never">
         <field name="printJobId" type="id" is-pk="true"/>

@@ -18,6 +18,9 @@
         <field name="intervalSeconds" type="number-integer"/>
         <field name="timeoutSeconds" type="number-integer"/>
         <field name="bearerToken" type="text-medium" encrypt="true"/>
+        <field name="allowPrivateNetwork" type="text-indicator" enable-audit-log="update"><description>Y: may reach
+            loopback and private addresses, set only by a holder of MONITOR_PRIVATE_NETWORK. N: public addresses only. Empty:
+            public addresses only on a production instance. A link-local or cloud metadata address is refused always.</description></field>
         <field name="enabled" type="text-indicator"/>
         <field name="lastScrapeDate" type="date-time"/>
         <field name="lastStatus" type="text-short"/>
@@ -32,6 +35,9 @@
         <field name="method" type="text-short"><description>GET (default), HEAD or POST</description></field>
         <field name="expectStatus" type="number-integer"><description>200 when empty</description></field>
         <field name="expectBodyContains" type="text-medium"/>
+        <field name="allowPrivateNetwork" type="text-indicator" enable-audit-log="update"><description>Y: may reach
+            loopback and private addresses, set only by a holder of MONITOR_PRIVATE_NETWORK. N: public addresses only. Empty:
+            public addresses only on a production instance. A link-local or cloud metadata address is refused always.</description></field>
         <field name="intervalSeconds" type="number-integer"/>
         <field name="timeoutSeconds" type="number-integer"/>
         <field name="enabled" type="text-indicator"/>
