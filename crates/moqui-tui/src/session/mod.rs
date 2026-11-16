@@ -99,7 +99,7 @@ pub struct Login {
     pub password: String,
     pub code: String,
     /// The field: 0 username, 1 password, 2 code; in setup 0 username, 1 password, 2 password again, 3 full name,
-    /// 4 email.
+    /// 4 email, and 5 the setup secret when the setup asks for it.
     pub at: usize,
     pub error: String,
     /// The password was right and a code is wanted: the password is kept for the next try, and these factors take a
@@ -112,26 +112,29 @@ pub struct Login {
     pub verify: String,
     pub full_name: String,
     pub email: String,
+    pub setup_secret: String,
 }
 
 /// The setup's field labels, by field.
 pub const SETUP_FIELDS: [&str; 5] = ["Username", "Password", "Password again", "Full name", "Email"];
+/// The setup's field labels when it takes the setup secret of the server's startup log (from another machine).
+pub const SETUP_SECRET_FIELDS: [&str; 6] = ["Username", "Password", "Password again", "Full name", "Email", "Setup secret"];
 /// The login's field labels, by field.
 pub const LOGIN_FIELDS: [&str; 3] = ["Username", "Password", "Code"];
 
 impl Login {
     /// The labels of the fields the dialog has now.
     pub fn labels(&self) -> &'static [&'static str] {
-        if self.setup.is_some() {
-            &SETUP_FIELDS
-        } else {
-            &LOGIN_FIELDS
+        match &self.setup {
+            Some(setup) if setup.secret_required => &SETUP_SECRET_FIELDS,
+            Some(_) => &SETUP_FIELDS,
+            None => &LOGIN_FIELDS,
         }
     }
 
     /// Whether field `at` is masked.
     pub fn masked(&self, at: usize) -> bool {
-        at == 1 || (self.setup.is_some() && at == 2)
+        at == 1 || (self.setup.is_some() && (at == 2 || at == 5))
     }
 
     /// The text of field `at` (the last field past the end).
@@ -142,7 +145,8 @@ impl Login {
             (false, _) => &self.code,
             (true, 2) => &self.verify,
             (true, 3) => &self.full_name,
-            (true, _) => &self.email,
+            (true, 4) => &self.email,
+            (true, _) => &self.setup_secret,
         }
     }
 
@@ -153,7 +157,8 @@ impl Login {
             (false, _) => &mut self.code,
             (true, 2) => &mut self.verify,
             (true, 3) => &mut self.full_name,
-            (true, _) => &mut self.email,
+            (true, 4) => &mut self.email,
+            (true, _) => &mut self.setup_secret,
         }
     }
 }

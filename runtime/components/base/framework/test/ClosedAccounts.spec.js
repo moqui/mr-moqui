@@ -76,13 +76,17 @@ feature("an account disabled for good keeps its disable through failed attempts,
     }
 })
 
+// The old password is behind the login gate (SEC-WEB-02): during the lock window update#Password refuses even the
+// right one, so the lock ends here by a change that needs no old password (a password administrator's).
 feature("a tarpit lock ends with a password change", {
     when() {
         ec.user.logoutUser()
-        const change = call("update#Password", {username: username(LOCKED), oldPassword: PASSWORD, newPassword: NEW_PASSWORD, newPasswordVerify: NEW_PASSWORD})
-        return {change, after: account(LOCKED)}
+        const refused = call("update#Password", {username: username(LOCKED), oldPassword: PASSWORD, newPassword: NEW_PASSWORD, newPasswordVerify: NEW_PASSWORD})
+        const change = sys(() => call("update#PasswordInternal", {userId: LOCKED, newPassword: NEW_PASSWORD, newPasswordVerify: NEW_PASSWORD}))
+        return {refused, change, after: account(LOCKED)}
     },
-    then({change, after}) {
+    then({refused, change, after}) {
+        refused.updateSuccessful != true
         change.updateSuccessful == true
         after.disabled == "N"
     }

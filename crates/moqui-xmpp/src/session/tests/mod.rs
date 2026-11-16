@@ -254,6 +254,56 @@ async fn scram_plus_with_bind_2_then_fast_with_its_binding() {
     );
 }
 
+/// SEC-COM-11, SEC-COM-22: a SCRAM or FAST sign-in is put to the backend with the session's peer (which checks the
+/// account's ipAllowed and records the sign-in), and each service call carries the peer; a refused sign-in fails.
+#[tokio::test]
+async fn a_verified_sign_in_is_checked_and_recorded_for_the_sessions_peer() {
+    let (server, fake) = server();
+    let (_client, token) = sign_in(&server, "john.doe", JOHN_PASSWORD, "Conversations").await;
+    {
+        let state = fake.state.lock().unwrap();
+        assert_eq!(
+            state.sign_ins,
+            vec![("john.doe".to_string(), peer(), Some("AP-U1".to_string()))]
+        );
+        assert!(!state.call_clients.is_empty() && state.call_clients.iter().all(|client| *client == peer()));
+    }
+    fake.state.lock().unwrap().refused_from.push(peer());
+
+    let mut fast_client = Client::new(&server, Transport::Tcp { tls: true }, Some(EXPORTER.to_vec()));
+    fast_client.open().await;
+    let out = fast_client
+        .send(&format!(
+            "<authenticate xmlns='urn:xmpp:sasl:2' mechanism='HT-SHA-256-EXPR'><initial-response>{}</initial-response>\
+             <user-agent id='d4565fa7-4d72-4749-b3d3-740edbf87770'/><fast xmlns='urn:xmpp:fast:0' count='5'/></authenticate>",
+            STANDARD.encode(fast::initial_response("john.doe", &token, &EXPORTER))
+        ))
+        .await;
+    assert!(find(&out, "failure", ns::SASL2).is_some(), "{}", text_of(&out));
+    assert!(find(&out, "success", ns::SASL2).is_none(), "{}", text_of(&out));
+
+    let mut scram_client = Client::new(&server, Transport::Tcp { tls: true }, Some(EXPORTER.to_vec()));
+    scram_client.open().await;
+    let (mut scram, first) = ClientExchange::new("john.doe", JOHN_PASSWORD, Some(EXPORTER.to_vec()));
+    let challenge = scram_client
+        .send(&format!(
+            "<authenticate xmlns='urn:xmpp:sasl:2' mechanism='SCRAM-SHA-256-PLUS'><initial-response>{}</initial-response>\
+             </authenticate>",
+            STANDARD.encode(first)
+        ))
+        .await;
+    let challenge = find(&challenge, "challenge", ns::SASL2).expect("a challenge");
+    let last = scram.respond(&STANDARD.decode(challenge.text()).unwrap()).unwrap();
+    let out = scram_client
+        .send(&format!(
+            "<response xmlns='urn:xmpp:sasl:2'>{}</response>",
+            STANDARD.encode(last)
+        ))
+        .await;
+    assert!(find(&out, "failure", ns::SASL2).is_some(), "{}", text_of(&out));
+    assert_eq!(fake.state.lock().unwrap().sign_ins.len(), 1, "no refused sign-in is recorded");
+}
+
 #[tokio::test]
 async fn sasl_before_starttls_is_refused_on_the_plain_port() {
     let (server, _) = server();

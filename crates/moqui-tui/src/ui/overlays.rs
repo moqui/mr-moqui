@@ -196,6 +196,12 @@ pub fn draw(paint: &mut Painter, session: &Session, breakpoints: &Breakpoints, c
                 let title = match &login.setup {
                     Some(setup) => {
                         lines.insert(fields, format!("  The password: {}", setup.hint()));
+                        if setup.secret_required {
+                            lines.insert(
+                                fields + 1,
+                                "  The setup secret is in the server's startup log (moqui.log), in the line that begins \"No user account exists yet\"".to_string(),
+                            );
+                        }
                         lines.push("Enter=Next  Ctrl+S=Create and log in  Tab=Next  Esc=Cancel".to_string());
                         "Welcome to your new system: create the first administrator"
                     }

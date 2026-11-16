@@ -36,6 +36,7 @@ mod pdf;
 mod public_site;
 pub use public_site::hosts as public_site_hosts;
 pub use public_site::is_site_host as is_public_site_host;
+pub use public_site::screen_path_names;
 mod render;
 pub(crate) mod saved_finds;
 pub(crate) mod scan;

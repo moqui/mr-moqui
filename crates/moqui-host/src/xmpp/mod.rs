@@ -578,16 +578,49 @@ struct HostBackend {
 }
 
 impl Backend for HostBackend {
-    fn call(&self, caller: Caller, service: &str, parameters: Json) -> BoxFuture<'_, Result<Json, CallError>> {
+    /// The call runs with the session's peer as the login address ([`moqui_core::user::with_client_ip`]), so a login in
+    /// it (the user's for a call as them, an app password's for PLAIN) checks the account's `ipAllowed` (SEC-COM-11).
+    fn call(
+        &self,
+        caller: Caller,
+        client: IpAddr,
+        service: &str,
+        parameters: Json,
+    ) -> BoxFuture<'_, Result<Json, CallError>> {
         let service = service.to_string();
         Box::pin(async move {
-            let result =
-                crate::worker::on_pool(&self.factory, move |_| run_service(&caller, &service, &parameters)).await;
+            let result = crate::worker::on_pool(&self.factory, move |_| {
+                moqui_core::user::with_client_ip(&client.to_canonical().to_string(), || {
+                    run_service(&caller, &service, &parameters)
+                })
+            })
+            .await;
             match result {
                 Ok(Ok(out)) => Ok(out),
                 Ok(Err(message)) => Err(CallError(message)),
                 Err(err) => Err(CallError(err.message().to_string())),
             }
+        })
+    }
+
+    /// A SCRAM or FAST sign-in: the login of an app password the session verified, from the session's peer
+    /// ([`moqui_core::user::login_verified_app_password`]), which checks `ipAllowed` and records the sign-in; this
+    /// worker's login then ends with its context.
+    fn sign_in(
+        &self,
+        username: &str,
+        client: IpAddr,
+        credential: Option<&str>,
+    ) -> BoxFuture<'_, Result<(), CallError>> {
+        let (username, credential) = (username.to_string(), credential.map(str::to_string));
+        Box::pin(async move {
+            let result = crate::worker::on_pool(&self.factory, move |_| {
+                moqui_core::user::with_client_ip(&client.to_canonical().to_string(), || {
+                    moqui_core::user::login_verified_app_password(&username, credential.as_deref())
+                })
+            })
+            .await;
+            result.map_err(|err| CallError(err.message().to_string()))
         })
     }
 }
