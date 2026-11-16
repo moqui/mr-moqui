@@ -42,6 +42,12 @@ along with this software (see the LICENSE.md file). If not, see
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="REPORT_CONTACT_ADMIN" artifactGroupId="REPORT_CONTACT_ADMIN" userGroupId="ADMIN"
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
+    <!-- the data load wrap (bulk load with the foreign keys dropped, component://tools/data/ToolsDatabaseData.xml), and which
+        projects' artifact index may be read (framework DevToolsSecurityData.xml), which a visitor does not change -->
+    <moqui.security.ArtifactAuthz artifactAuthzId="TOOLS_DATABASE_LOAD_ADMIN" artifactGroupId="TOOLS_DATABASE_LOAD" userGroupId="ADMIN"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AIDE_PROJECTS_ADMIN" artifactGroupId="AIDE_PROJECTS" userGroupId="ADMIN"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
 
     <!-- ADMIN permissions ended: the search store and OpenSearch Dashboards proxies
         (component://framework/data/MoquiSetupData.xml), another user's password without the old one, SFTP and git over
@@ -57,4 +63,27 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_RECOVER" fromDate="0" thruDate="1265184000000"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_RECOVER_ADMIN" fromDate="0" thruDate="1265184000000"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_SETTINGS" fromDate="0" thruDate="1265184000000"/>
+    <!-- Admin's writes (framework SecurityTypeData.xml, AgentTypeData.xml): group grants and memberships, which would undo this
+        lock-down, accounts across organizations, backups and their downloads, connections and their credentials, imports and
+        exports, instance settings, jobs and recovery actions, and the agents' instance Constitution -->
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_ACCESS_MANAGE" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_IDENTITY_MANAGE" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_IDENTITY_GLOBAL" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_BACKUP_RUN" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_BACKUP_DOWNLOAD" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_CONNECTION_MANAGE" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_TRANSFER_RUN" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_SETTINGS_MANAGE" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_OPERATION_MANAGE" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_CONSTITUTION_GLOBAL" fromDate="0" thruDate="1265184000000"/>
+    <!-- the agents' models, endpoints and keys, and saving skills; chat bridges and phone trunks (outside services); CI runner pools
+        and their tokens; eval runs, which cost money; other visitors' browser session replays; and mail accounts hosted here -->
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="AgentAdmin" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="AgentSkillAuthor" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ChatBridgeAdmin" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="VoiceAdmin" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="GIT_CI_ADMIN" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_EVAL_RUN" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_REPLAY" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="EMAIL_ACCOUNT_HOSTED" fromDate="0" thruDate="1265184000000"/>
 </entity-facade-xml>
