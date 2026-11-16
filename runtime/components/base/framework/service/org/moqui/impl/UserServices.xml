@@ -564,7 +564,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ====== User Authentication Factor Services ====== -->
     <!-- ================================================= -->
 
-    <service verb="check" noun="AccountAction" allow-remote="false">
+    <service verb="check" noun="AccountAction" authenticate="anonymous-all" allow-remote="false">
         <description>Who may act on an account's sign-in (its factors and codes, its sign-in fields): its own user, for an
             action that makes or ends a factor or codes (recentAuth) only after signing in, or confirming who they are, in
             the last five minutes (org.moqui.sso.RecentAuthServices.require#RecentAuth; SEC-ADM-03); another user only with
@@ -573,7 +573,8 @@ along with this software (see the LICENSE.md file). If not, see
             sealed permission the caller does not hold; SEC-ADM-04, SEC-ADM-05). With nobody signed in (the sign-in
             services, which act for a pre-authenticated user before the login and check that user themselves) and for a
             caller that disabled authorization (a job, a setup service) the caller answers for it. A refusal is an error
-            and allowed false.</description>
+            and allowed false. anonymous-all because those sign-in services call it with nobody signed in; it grants
+            nothing.</description>
         <in-parameters>
             <parameter name="userId" required="true"/>
             <parameter name="recentAuth" type="Boolean" default="false"/>
