@@ -165,10 +165,8 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 2. **What each slice did not reach.** The coverage table names it, each report's "Read" section has the detail, and
    each map file ends with its open questions. The thinnest: the BOSS business apps other than Commerce and order
    approval, parsers of untrusted input, the mobile app's native code, and the helper-read parts of the PASS services.
-3. **Fixes.** The High findings are fixed (2026-11-15); the Medium, Low and Info ones are not. Left of the High fixes:
-   a CI runner token has no expiry or bound source, and a registered runner's step that runs as the runner's user
-   can read the token file (SEC-GIT-02); `DataDocument.documentTitle` is still a template, an administrator's
-   (SEC-SCR-05).
+3. **Fixes.** The High findings are fixed (2026-11-15, what they left on 2026-11-16); the Medium, Low and Info ones
+   are not.
 
 ## Counts
 
@@ -742,7 +740,7 @@ High; reported (confirmed in code); fixed.
 
 High; reported (confirmed in code); fixed.
 
-- **Fix:** Fixed 2026-11-15: a registered runner's steps start from a cleared environment (`PATH`, `HOME`, `LANG` and the like, the `LC_` variables, `--pass-env` names, then the job's own), no runner, pool or job token is passed in any mode (`runner::step_base_env`), and `poll` reads its token from `--token-file` or `MOQUI_CI_RUNNER_TOKEN_FILE` (the variable still works, with a warning). Left: runner tokens have no expiry or bound source; a step run as the runner's user can still read the token file (docs/interfaces/Pipelines.md says to run steps as another user). Test: `ci/runner/tests.rs`.
+- **Fix:** Fixed 2026-11-15: a registered runner's steps start from a cleared environment (`PATH`, `HOME`, `LANG` and the like, the `LC_` variables, `--pass-env` names, then the job's own), no runner, pool or job token is passed in any mode (`runner::step_base_env`), and `poll` reads its token from `--token-file` or `MOQUI_CI_RUNNER_TOKEN_FILE` (the variable still works, with a warning). On 2026-11-16: a runner token expires (`git-ci` `runner-token-days`, 90) and the runner rotates it halfway (`POST /ci/runner/rotate`, the token file rewritten); a pool's `allowedAddresses` refuses a register, claim or rotate from another address; and `poll --step-user USER` (a root runner) runs each step as another user, who owns the checkout but cannot read the token file. Tests: `ci/runner/tests.rs`, `server/ci_tests.rs` `a_runner_token_expires_rotates_and_comes_only_from_the_pools_addresses`, `ci_run.rs` `a_rotated_token_replaces_the_token_file`.
 - **Where:** `crates/moqui-host/src/ci_run.rs:134`, `:151`; `crates/moqui-git/src/ci/runner/mod.rs:332-344`; `crates/moqui-git/src/ci/registered.rs:206-322`; `crates/moqui-git/src/ci/runner_http.rs:253`
 - **Reached by:** any account whose push or merge request runs a job in a pool of registered runners: with no `run-check-service`, an account with the update right on any repository that names the pool; a step of its `ci.xml` reads the variable.
 - **What happens:** `moqui ci-run poll` reads `MOQUI_CI_RUNNER_TOKEN` from its environment and runs each step with that environment; only `MOQUI_CI_TOKEN` is taken out. A step sends the runner token elsewhere. The token has no expiry. With it, `POST /ci/runner/claim` from any address takes the next queued job of the pool whenever the runner is idle, and the job token it answers reads that job's repository at its commit and, through `GET jobs/<id>/job`, its secrets. A developer who pushes to an unprotected branch so gets the secrets scoped to protected branches and environments, and those of the other repositories the pool serves. The documentation says nothing isolates a job from the machine; it does not say the runner's token is in a step's environment.
@@ -802,7 +800,7 @@ High; reported (confirmed in code); fixed.
 
 High; reported (likely); fixed.
 
-- **Fix:** Fixed 2026-11-15: the Smithy deployment and push mirror notices pass a fixed title template and put the values in the message; a caller's `link()` is a URL taken as written, no longer expanded (`notify/message.rs`), which also covers the wiki review, chat, event and record links built from caller values. `DataDocument.documentTitle` (`PartyServices.xml`) is an administrator's configured template, as in Java, and stays. Tests: `notify/tests.rs` `a_callers_link_is_not_expanded`, `SmithyDeployments.spec.js`.
+- **Fix:** Fixed 2026-11-15: the Smithy deployment and push mirror notices pass a fixed title template and put the values in the message; a caller's `link()` is a URL taken as written, no longer expanded (`notify/message.rs`), which also covers the wiki review, chat, event and record links built from caller values. `DataDocument.documentTitle` (`PartyServices.xml`, and search hits) is a configured template, as in Java; on 2026-11-16 writing one with `${`, or a `DataDocumentLink` `linkUrl` or `label` with `${` or a `linkCondition`, came to need `DATABASE_ADMIN`, as a field expression does (`Security.eecas.xml` `DataDocumentTitleTemplate`, `DataDocumentLinkTemplate`). Tests: `notify/tests.rs` `a_callers_link_is_not_expanded`, `SmithyDeployments.spec.js`, `DocumentExpression.spec.js`.
 - **Where:** crates/moqui-core/src/notify/message.rs:322 and :899-911; runtime/components/addon/mr-mantle/service/mantle/smithy/SmithyPipelines.js:1279; mantle/smithy/SmithyImport.js:2052; mantle/party/PartyServices.xml:1609
 - **Reached by:** a user who can set a deployment environment's name, a repository path, a push mirror URL or a data document's title (a repository maintainer or lower), then waits for the notification to be sent.
 - **What happens:** The text given to `.title()` is a template: `${...}` in it runs on the script runtime when the message is sent. These callers concatenate record values into it, so a value such as an environment name holding `${...}` runs as a server script in the sending service's context. Other callers (`Voice.js`, `PurchaseApprovals.js`) pass a fixed template and say why in a comment.
