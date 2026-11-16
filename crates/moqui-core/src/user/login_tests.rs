@@ -953,3 +953,13 @@ fn now_millis() -> i64 {
         .and_then(|duration| i64::try_from(duration.as_millis()).ok())
         .unwrap_or(0)
 }
+
+/// A login key's thruDate is an exclusive end, as every effective-dated row's: one ended at this millisecond is ended.
+/// revoke#UserHeldKey sets it to now, and a login in the same millisecond took the revoked key (seen as an
+/// order-dependent failure of a_scoped_key_opens_only_its_scope_and_its_holder_ends_it).
+#[test]
+fn a_key_ended_this_millisecond_is_ended() {
+    assert!(super::key_ended(1_000, 1_000));
+    assert!(super::key_ended(1_000, 1_001));
+    assert!(!super::key_ended(1_001, 1_000));
+}
