@@ -248,7 +248,7 @@ impl Session {
         self.reload_parents();
         // every message the transition sent, as errors are: a summary's details follow it (each 1099 vendor that
         // failed, after the count; ACC-UI-024), and the line and its history keep them all
-        let text = Some(outcome.messages.info.join("; "))
+        let text = Some(super::distinct_join(&outcome.messages.info))
             .filter(|text| !text.is_empty())
             .or_else(|| submitted.as_ref().map(|done| done.submit_message.clone()))
             .filter(|text| !text.is_empty())

@@ -624,6 +624,8 @@ fn a_transition_that_sends_several_messages_shows_them_all() {
                 info: vec![
                     "1099 data made for 1 vendors; 1 failed, 2 not reported".to_string(),
                     "Demo Consultant: no taxpayer identification number".to_string(),
+                    // the same message again (ACC-UI-028) is shown once
+                    "Demo Consultant: no taxpayer identification number".to_string(),
                 ],
                 ..Messages::default()
             },
