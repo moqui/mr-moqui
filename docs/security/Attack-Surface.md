@@ -25,6 +25,8 @@ To report an issue that should stay private until it is fixed, write to [moqui-b
 | [Attack-Surface-Data.md](Attack-Surface-Data.md) | Data and stored secrets | The database, field encryption, generated secrets, the threat model for stored secrets |
 | [Attack-Surface-Outbound.md](Attack-Surface-Outbound.md) | Outbound requests | Requests the server itself makes |
 | [Attack-Surface-Process.md](Attack-Surface-Process.md) | Processes and build | Child processes, the startup port check, build features |
+| [Attack-Surface-Scripts.md](Attack-Surface-Scripts.md) | Scripts, templates and parsers | What a server script can reach, who can author code that runs, rendering and escaping, parsers of untrusted input |
+| [Attack-Surface-Dev.md](Attack-Surface-Dev.md) | Development tools | What loads the dev components, Dev AIDE, the `aide` REST, the demo lock-down, test-only hooks |
 | [Attack-Surface-Apps-BOSS.md](Attack-Surface-Apps-BOSS.md) | Staff applications | mr-boss and the Mantle services it reaches |
 | [Attack-Surface-Apps-PASS.md](Attack-Surface-Apps-PASS.md) | Public applications | mr-pass and the Mantle services its operations reach |
 
@@ -66,7 +68,9 @@ that login reaches:
   `DATABASE_ADMIN`.
 - `ADMIN` is VIEW-only on Tools, System (Monitor with it), `/moqui`, EntitySync and SystemMessage receive, `/resources` (so refused: `run` is not a view verb), git repositories,
   report git sync and report webhooks. It loses `SearchRemote`, `DashboardRemote`, `ADMIN_PASSWORD`, `SSH_SFTP`,
-  `SSH_GIT`, `MONITOR_INGEST` and `REPORT_SAVE_LOCATION`. `john.doe` leaves `ADMIN_ADV`.
+  `SSH_GIT`, `MONITOR_INGEST`, `MONITOR_RECOVER`, `MONITOR_RECOVER_ADMIN`, `MONITOR_SETTINGS` and
+  `REPORT_SAVE_LOCATION`. `john.doe` leaves `ADMIN_ADV`. What the lock-down leaves in place is in
+  [Attack-Surface-Dev](Attack-Surface-Dev.md).
 - SSH (`ssh-server enabled="false"`), DAV, the MCP server and client, A2A both ways and the gateway are off, and mail
   connects only to `localhost`.
 - Password changes and resets, sign-in factors, and username, disabled and require-password-change changes are refused

@@ -1,9 +1,9 @@
 # Security review
 
-Status 2026-11-15: first pass, stopped part way on a usage limit. The attack surface map was split by area, fifteen
-slices of the code were read by reviewers (four of them cut short), and their suspected weaknesses are listed here. Most are as their reviewer
-reported them and have not been read a second time; the Status column says which. Nothing is fixed. Six slices were
-not started. What is left is under [What is left](#what-is-left).
+Status 2026-11-15: first pass done, in two rounds. The attack surface map was split by area and every slice of the
+code has been read at least in part by a reviewer; the suspected weaknesses are listed here. Most are as their
+reviewer reported them and have not been read a second time; the Status column says which. Nothing is fixed. What is
+left is under [What is left](#what-is-left).
 
 This is the findings register of the security review that the pre-0.1.0 notice in the [README](../README.md) names:
 until 0.1.0, findings are recorded openly in this repository. The map of what can be reached is
@@ -44,7 +44,7 @@ anonymous write or read of private data, or a low-privilege user reaching anothe
 action. Medium, needs a signed-in victim's click, an administrator's mistake, or leaks limited data. Low, hardening.
 Info, worth writing down. A reviewer's severity is kept unless a second check changed it.
 
-The reports, the briefs the reviewers and writers worked from, the prompts of the slices not started, and the script
+The reports, the briefs the reviewers and writers worked from, the prompts each slice was given, and the script
 that builds this document are in `plans/security-review-evidence/`, which is not in the repository's history
 (`.gitignore`): a working record on the machine that ran the review.
 
@@ -56,7 +56,7 @@ No finding is rated Critical. These are the ones to look at first; each High one
 - **A disabled account comes back** (SEC-WEB-01, SEC-ADM-01; High; confirmed by the lead). An account disabled for
   good becomes a five-minute lock after four failed sign-in attempts, and a password change writes `disabled=N`. An
   offboarded user who still knows the password signs in again.
-- **A link runs script as a Tools administrator** (SEC-TLS-01; High; confirmed by the lead). `Tools/Data/Export`'s
+- **A link runs script as a Tools administrator** (SEC-TLS-01, and SEC-SCR-01 from the scripts slice; High; confirmed by the lead). `Tools/Data/Export`'s
   `EntityExport` is a `read-only` transition, so it runs on a GET with URL parameters and no session token, and it
   evaluates its `filterMap` parameter as script with the full `ec`, which can start a process on the host.
 - **State changes on GET** (SEC-WEB-04, SEC-TLS-04, SEC-RTE-04, SEC-RTE-05, and the same rule behind several others;
@@ -75,6 +75,9 @@ No finding is rated Critical. These are the ones to look at first; each High one
 - **A request's file name is expanded as script when a screen is mailed** (SEC-MAIL-61; High; reported, not run),
   and **mr-marble's party mail screen returns any stored message's body by its id** as inline HTML (SEC-MAIL-63;
   High; reported).
+- **Text from records is expanded as script** in more places than the two above (SEC-SCR-05; High; reported): a
+  notification's title is expanded, and Mantle builds some titles from record values. `System.getProperty` gives any
+  server script every property, the secret ones included (SEC-SCR-03).
 - **Stored credentials are readable** by an administrator through REST and exports, where the map said write-only
   (SEC-DAT-03, confirmed by the lead; SEC-TLS-05), and a find by request parameters takes conditions on password-hash
   and encrypted fields (SEC-DAT-01).
@@ -98,17 +101,17 @@ No finding is rated Critical. These are the ones to look at first; each High one
 | 8 Files, DAV, SSH, terminal | `moqui-dav`, `moqui-host/src/ssh`, `term` | Read in two rounds; not reached: the shell's interactive prompt, the host session environment, parts of `ssh/server.rs`, the SFTP drives backend and the SFTP client, DAV locks and free-busy, the `pim` parser bodies | Files, SSH: written by their reviewer |
 | 9 Calls, chat, SIP, XMPP | `components/base/basic-comms`, `moqui-rtc`, `moqui-sip`, `moqui-xmpp`, `moqui-channels` | Partial: chat bridges and SMS, Web Push and FCM, recording and captions only sampled | Comms: not yet |
 | 10 Cluster and edge node | `moqui-host/src/cluster*`, `edge*`, `grpc_listen` | Read; pools, takeover, the front node and the bodies of the delegated call and SIP services not checked | Cluster-Edge: not yet |
-| 11 Clients | `moqui-desktop`, `moqui-mobile`, `moqui-client*`, `moqui-browser`, the browser shell | Not started | Clients: moved text only |
+| 11 Clients | `moqui-desktop`, `moqui-mobile`, `moqui-client*`, `moqui-browser`, the browser shell | Read in the second round, on a small budget; not reached: `moqui-browser`, `moqui-embedded`, the terminal client, parts of `moqui-client`, the mobile Kotlin code, the updater's signature check, the rich text editor | Clients: written by its reviewer |
 | 12 Data layer | `moqui-entity`, `moqui-db`, `moqui-drivers` | Read; `moqui-core/src/search`, the cache and the load parsers not read | Data: written |
-| 13 Script engine, templates, parsers | `moqui-core/src/script`, `resource` | Not started | Scripts: not created |
-| 13a Outbound requests, processes, packaging | `moqui-lib/src/net.rs`, `http.rs`, `podman/`, `systemd/` | Not started | Outbound, Process: moved text only |
-| 13b Development tools | `components/dev`, `moqui-devkit` | Not started | Dev: not created |
+| 13 Script engine, templates, parsers | `moqui-core/src/script`, `resource` | Read in the second round, on a small budget; not reached: the locked template runtime, report and formula expressions, CSV and XLSX output, multipart and JSON limits; parsers and the second half of rendering are the thinnest | Scripts: written by its reviewer |
+| 13a Outbound requests, processes, packaging (report `slice-21.md`) | `moqui-lib/src/net.rs`, `http.rs`, `podman/`, `systemd/` | Read in the second round, on a small budget; not reached: the IMAP, SIP, ACME, cluster, edge and PASS clients, SFTP, external databases, log contents, the `moq` downloads in full | Outbound, Process: written by their reviewer |
+| 13b Development tools (report `slice-22.md`) | `components/dev`, `moqui-devkit` | Read in the second round, on a small budget; not reached: the LSP, the test client, lint and typegen, the agent tool bodies, how `/devstatic` maps a path, the example services | Dev: written by its reviewer |
 | 14 PASS frontend | `mr-pass` | Read; the HTML-injection sweep of the apps other than Smithy not finished | Apps-PASS: the frontend as a whole written by slice 16's reviewer; the rest of this report not yet |
 | 15 PASS authority and public accounts | `mr-mantle/script/Pass*`, `org/moqui/public` | Read; 47 operations sampled, first caller check only | Apps-PASS: the authority as a whole written by slice 16's reviewer; the rest of this report not yet |
 | 16 PASS application services | `mr-mantle/service/mantle` portal services | Read in two rounds; the first round's helper readers' items were read again only where they went into the map; not reached: several relay and result pages, the gateway's setup services, parts of the theme code | Apps-PASS: written by its reviewer (the authority, Shop, Billing, Supplier, Support, Sites) |
 | 17 Forum and Smithy | `mr-mantle/service/mantle/forum`, `smithy` | Read in two rounds; not reached: the delivery worker, the Forum import and integrations, repository transfer, branch rules, releases, the templates (how cleaned HTML reaches a page), the git authorization hook | Apps-PASS: written by its reviewer (Forum, Smithy) |
-| 18 BOSS access model; Admin, Commons, People, Accounting | `mr-boss` | Not started | Apps-BOSS: moved text only |
-| 19 BOSS business apps; the Mantle REST root | `mr-boss`, `mr-mantle` | Not started | Apps-BOSS: moved text only |
+| 18 BOSS access model; Admin, Commons, People, Accounting | `mr-boss` | Read in the second round, on a small budget; not reached: the report-data grants, most of the authorization-disabled reads, the share, calendar and intake services, most of Commons, People and Accounting beyond sampled gates, the skills beyond their front matter | Apps-BOSS: written by its reviewer (access model, row isolation, external and device users, token-route screens, Admin, Commons, People, Accounting, skills) |
+| 19 BOSS business apps; the Mantle REST root | `mr-boss`, `mr-mantle` | Read in the second round, on a small budget; not reached: Customer Service, Marketing sends and imports, Warehouse, Manufacturing, Products, Maintenance, Insights, the 360 screens; the price, discount, credit and refund services; the existing Sales and Marketing paragraphs were not checked | Apps-BOSS: written by its reviewer (the Mantle REST root, integrations and stored credentials, Commerce, order approval, Projects, shared record panels) |
 | 20 The two secrets plans | `plans/Sealed-Secrets.md`, `plans/Vault-Instances.md` | Read whole against the code | the plans: edited in place |
 
 A reviewer's report says under "Read" what it read whole, what it sampled and what it did not reach. The partial
@@ -150,17 +153,18 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 
 ## What is left
 
-1. **Second check of the reported findings**, High and Medium first. Each needs someone to read the cited lines and
-   look for the guard the reviewer may have missed, then a fix or a refutation.
-2. **Map files not yet written from their reports.** The reviewers' lists of what the map lacks and what is stale
-   are in the evidence directory for Routes, Admin, Tools, AI, Git, Mail, Files, SSH, Comms, Cluster-Edge and
-   Apps-PASS. `WRITER.md` there is the brief a writer follows, one writer for each map file.
-3. **Slices not started**, with their prompts in `security-review-evidence/prompts/`: clients (desktop, mobile, the
-   browser shell), the script engine with templates and parsers, outbound requests with processes and packaging, the
-   development tools, the BOSS access model with Admin, Commons, People and Accounting, and the BOSS business apps
-   with the Mantle REST root. The map files Clients, Outbound and Process hold only the text moved into them; Scripts
-   and Dev do not exist yet; Apps-BOSS holds only the Sales and Marketing paragraphs that were already written.
-4. **The `allow-remote` sentences** in the map files other than Web.
+1. **A second check of the reported findings**, High and Medium first: someone reads the cited lines and looks for
+   the guard the reviewer may have missed, then a fix or a refutation. Put off by the owner's decision of 2026-11-15
+   until it is needed.
+2. **Map files not yet written from their first-round reports**: Routes, Admin, Tools, AI, Git, Comms and
+   Cluster-Edge, and the parts of the PASS frontend and authority reports (slices 14 and 15) beyond the summary in
+   Apps-PASS. Their reviewers' lists of what the map lacks and what is stale are in the evidence directory;
+   `WRITER.md` there is the brief a writer follows. Apps-PASS is near 100 KB and would be split first.
+3. **What each slice did not reach.** The coverage table names it, each report's "Read" section has the detail, and
+   each map file ends with its open questions. The thinnest: the BOSS business apps other than Commerce and order
+   approval, parsers of untrusted input, the mobile app's native code, and the helper-read parts of the PASS services.
+4. **The `allow-remote` sentences** in map text that predates this review (Admin, Tools, Comms, Cluster-Edge, and
+   the Sales and Marketing paragraphs of the two application files).
 5. **Fixes.** None was made in this pass.
 
 ## Counts
@@ -182,7 +186,13 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 | PASS authority and public accounts (`PSA`) | 0 | 0 | 1 | 10 | 2 | 0 | 13 |
 | PASS application services (Mantle) (`PSS`) | 0 | 0 | 5 | 20 | 4 | 0 | 29 |
 | Forum and Smithy (`PFS`) | 0 | 0 | 1 | 5 | 2 | 0 | 8 |
-| **All** | 0 | 10 | 59 | 139 | 35 | 0 | 243 |
+| BOSS access model; Admin, Commons, People, Accounting (`BOS`) | 0 | 0 | 3 | 5 | 1 | 0 | 9 |
+| BOSS business apps and the Mantle REST root (`BAP`) | 0 | 0 | 2 | 5 | 2 | 0 | 9 |
+| Clients (`CLI`) | 0 | 0 | 1 | 4 | 4 | 0 | 9 |
+| Script engine, templates and parsers (`SCR`) | 0 | 2 | 4 | 4 | 1 | 0 | 11 |
+| Outbound requests, processes and packaging (`OUT`) | 0 | 0 | 5 | 8 | 1 | 0 | 14 |
+| Development tools (`DEV`) | 0 | 0 | 3 | 3 | 2 | 0 | 8 |
+| **All** | 0 | 12 | 77 | 168 | 46 | 0 | 303 |
 
 ## Findings by area
 
@@ -534,6 +544,108 @@ Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PAS
 | SEC-PFS-03 | `mr-mantle/service/mantle/smithy/SmithyGitServices.xml:9, 39, 53, 72, 89, 102, 117` | Hook and worker services are `anonymous-all` with the user named in a parameter | Info | reported (to check) |
 | SEC-PFS-65 | `runtime/components/addon/mr-mantle/service/mantle/smithy/SmithyGit.js:185-200, 216` | `findWebhooks` answers a webhook's whole URL, which may hold a credential | Info | reported (confirmed in code) |
 
+### BOSS access model; Admin, Commons, People, Accounting
+
+Map file: [Attack-Surface-Apps-BOSS.md](../docs/security/Attack-Surface-Apps-BOSS.md). Reviewer report: `security-review-evidence/slice-18.md` (and `slice-18b.md` where the slice was continued).
+
+| ID | Location | Finding | Severity | Status |
+| --- | --- | --- | --- | --- |
+| SEC-BOS-01 | crates/moqui-core/src/user/filter.rs:144 and runtime/components/addon/mr-boss/data/BossAccountingSetupData.xml:209 | Organization row filters do not apply below a sub-area ALWAYS grant | Medium | reported (confirmed in code) |
+| SEC-BOS-02 | runtime/components/addon/mr-mantle/service/mantle/ledger/AccountingPolicy.js:83 and runtime/components/addon/mr-mantle/service/mantle/party/PartyServices.xml:626 | App administrators and ACCOUNTING_ADMIN are not bound to an organization | Medium | reported (confirmed in code) |
+| SEC-BOS-03 | runtime/components/addon/mr-boss/screen/AcceptInvitation.xml:35 | An invitation is accepted by a bare GET for a signed-in user | Medium | reported (likely) |
+| SEC-BOS-04 | runtime/components/addon/mr-boss/screen/Unsubscribe.xml:53 | Unsubscribe and public-share changes run on a bare GET | Low | reported (confirmed in code) |
+| SEC-BOS-05 | runtime/components/addon/mr-boss/screen/PublishedCalendar.xml:27 and PublishedCalendar.qvue:120 | A published calendar's password travels in the query string | Low | reported (confirmed in code) |
+| SEC-BOS-06 | runtime/components/addon/mr-mantle/service/mantle/account/PaymentRuns.js:354 and InvoiceWorkflow.js:142 | Accounting separation of duties is a preference, and two bundles hold both sides | Low | reported (to check) |
+| SEC-BOS-07 | runtime/components/addon/mr-boss/skill/reset-factor.md:8 | The reset-factor skill is declared reversible | Low | reported (confirmed in code) |
+| SEC-BOS-08 | runtime/components/addon/mr-boss/data/BossSetupData.xml:5274 and runtime/components/addon/mr-boss/service/ironstone/admin/Provisioning.js:85 | request#Provisioning is authorized for ALL_USERS and checks no permission itself | Low | reported (to check) |
+| SEC-BOS-09 | runtime/components/addon/mr-boss/data/BossUsersDemoData.xml:47 | Demo accounts share one password hash and 47 demo loaders are anonymous-all | Info | reported (to check) |
+
+### BOSS business apps and the Mantle REST root
+
+Map file: [Attack-Surface-Apps-BOSS.md](../docs/security/Attack-Surface-Apps-BOSS.md). Reviewer report: `security-review-evidence/slice-19.md` (and `slice-19b.md` where the slice was continued).
+
+| ID | Location | Finding | Severity | Status |
+| --- | --- | --- | --- | --- |
+| SEC-BAP-01 | runtime/components/addon/mr-mantle/service/mantle/work/CalendarServices.xml:785-822 and 898-925 | Calendar subscription makes the server fetch any URL, private addresses included | Medium | reported (confirmed in code) |
+| SEC-BAP-02 | runtime/components/addon/mr-mantle/service/mantle/account/PaymentMethodServices.xml:509 and :555 | A bank account number is copied whole into the payment method description | Medium | reported (confirmed in code) |
+| SEC-BAP-03 | runtime/components/addon/mr-mantle/service/mantle/account/GatewayConnections.js:112-124 | A gateway's address is checked against its provider's hosts only on a production instance, and private addresses are refused only when `allowPrivateNetwork` is `N` | Low | reported (likely) |
+| SEC-BAP-04 | runtime/components/addon/mr-mantle/service/mantle/account/PaymentMethodServices.xml:17-70 | `get#PartyPaymentMethodInfo` returns the whole card and bank account records and ignores its `partyId` | Low | reported (to check) |
+| SEC-BAP-05 | runtime/components/addon/mr-mantle/service/mantle/account/PaymentServices.xml:1891-1895 | A card security code stays stored until an authorization succeeds | Low | reported (to check) |
+| SEC-BAP-06 | runtime/components/addon/mr-mantle/service/mantle/shipment/ShipmentServices.xml:1981 | Label fetches GET a stored URL with no internal-address guard | Low | reported (to check) |
+| SEC-BAP-08 | runtime/components/addon/mr-mantle/service/mantle/ext/account/NachaServices.xml:19, OfxServices.xml:16-53, BaiServices.xml:16-53 | The bank file services hold no permission or organization check | Low | reported (to check) |
+| SEC-BAP-07 | runtime/components/addon/mr-mantle/data/MantleSetupData.xml:17-20 | Under `/rest/s1/mantle` an administrator's calls run with no row filter set and past every BOSS sub-area DENY | Info | reported (confirmed in code) |
+| SEC-BAP-09 | runtime/components/addon/mr-boss/screen/Commerce.xml:32 | The Commerce store limit is one entity filter set by one screen | Info | reported (to check) |
+
+### Clients
+
+Map file: [Attack-Surface-Clients.md](../docs/security/Attack-Surface-Clients.md). Reviewer report: `security-review-evidence/slice-11.md` (and `slice-11b.md` where the slice was continued).
+
+| ID | Location | Finding | Severity | Status |
+| --- | --- | --- | --- | --- |
+| SEC-CLI-01 | crates/moqui-desktop/src/node/mod.rs:271, crates/moqui-core/src/web/origin.rs:127, runtime/components/base/webroot/screen/webroot/Login.xml:116 | The sidecar's loopback web listener is open to every local user and has no Host check seen | Medium | reported (to check) |
+| SEC-CLI-02 | runtime/components/base/webroot/screen/webroot/sw.js:28 | The service worker keeps any same-origin GET that has a `v` parameter, cache first, with no expiry | Low | reported (to check) |
+| SEC-CLI-03 | crates/moqui-desktop/src/lib.rs:234 | The main window's navigation check in node modes passes every scheme but five | Low | reported (confirmed in code) |
+| SEC-CLI-04 | crates/moqui-client-tauri/src/scheme.rs:319, crates/moqui-desktop/src/node/scheme.rs:195, crates/moqui-core/src/context/factory.rs:93 | In the apps the server's default CSP is dropped whole, `form-action` and `frame-ancestors` with it | Low | reported (confirmed in code) |
+| SEC-CLI-05 | crates/moqui-desktop/src/bridge.rs:288, crates/moqui-desktop/src/os/mod.rs:214 | A node page can set where OS mail and call links open, and it is kept across runs | Low | reported (confirmed in code) |
+| SEC-CLI-06 | crates/moqui-mobile/src/scheme.rs:173 | On mobile `scheme_fetch` trusts the webview's URL and the caller's own headers | Info | reported (confirmed in code) |
+| SEC-CLI-07 | crates/moqui-client-tauri/src/lib.rs:96, crates/moqui-desktop/src/client/windows.rs:95 | The shell's commands in the desktop client are not bound to an account | Info | reported (confirmed in code) |
+| SEC-CLI-08 | crates/moqui-client/src/store/mod.rs:21, crates/moqui-client-tauri/src/commands.rs:575 | A personal account's mail and chat stay on disk in plain SQLite after sign-out | Info | reported (confirmed in code) |
+| SEC-CLI-09 | crates/moqui-desktop/src/os/instance.rs:137 | The single-instance socket is restricted only after it is bound | Info | reported (confirmed in code) |
+
+### Script engine, templates and parsers
+
+Map file: [Attack-Surface-Scripts.md](../docs/security/Attack-Surface-Scripts.md). Reviewer report: `security-review-evidence/slice-13.md` (and `slice-13b.md` where the slice was continued).
+
+| ID | Location | Finding | Severity | Status |
+| --- | --- | --- | --- | --- |
+| SEC-SCR-01 | runtime/components/base/tools/screen/Tools/Data/Export.xml:18 and :56 | Data Export `filterMap` runs any server script, on a GET, without the script permission | High | reported (confirmed in code) |
+| SEC-SCR-05 | crates/moqui-core/src/notify/message.rs:322 and :899-911 | Notification titles are expanded as script, and three callers build them from record values | High | reported (likely) |
+| SEC-SCR-02 | crates/moqui-core/src/service/tools.rs:204-208 | `print#ScreenDocument` evaluates its `screenParametersStr` parameter as a script | Medium | reported (confirmed in code) |
+| SEC-SCR-03 | crates/moqui-core/src/script/host/globals.rs:562-565 | `System.getProperty` returns secret properties and the whole environment to any script | Medium | reported (confirmed in code) |
+| SEC-SCR-04 | crates/moqui-core/src/script/host/tools.rs:721 and :2603-2620 | `ec.resource.runTokenCommand` starts a host program from any server script | Medium | reported (confirmed in code) |
+| SEC-SCR-06 | crates/moqui-core/src/script/oxide/resource.rs:227-237 (localized text expanded) | Records whose text is evaluated as script are writable without the script permission | Medium | reported (to check) |
+| SEC-SCR-07 | crates/moqui-core/src/script/host/tools.rs:2720-2726 and the `RestClient` shim near :903 | `ec.service.rest()` reaches internal addresses unless the script opts out | Low | reported (confirmed in code) |
+| SEC-SCR-08 | runtime/components/base/framework/template/screen/ScreenHtml.js:849 | The `editable` widget writes its text unescaped by default | Low | reported (to check) |
+| SEC-SCR-09 | crates/moqui-core/src/script/host/files.rs:455 | A thumbnail decodes an image with no limits of its own | Low | reported (to check) |
+| SEC-SCR-10 | crates/moqui-host/src/chromium.rs:312-327 | Chromium's DevTools port has no authentication on loopback | Low | reported (to check) |
+| SEC-SCR-11 | crates/moqui-core/src/screen/definition.rs:910 | A screen definition loads from any resource scheme, `http` and `dbresource` included | Info | reported (to check) |
+
+### Outbound requests, processes and packaging
+
+Map file: [Attack-Surface-Outbound.md](../docs/security/Attack-Surface-Outbound.md). Reviewer report: `security-review-evidence/slice-21.md` (and `slice-21b.md` where the slice was continued).
+
+| ID | Location | Finding | Severity | Status |
+| --- | --- | --- | --- | --- |
+| SEC-OUT-01 | crates/moqui-mail/src/implementation.rs:1916 | SMTP credentials go out without TLS when the server offers no STARTTLS, or when neither TLS flag is set | Medium | reported (confirmed in code) |
+| SEC-OUT-02 | crates/moqui-core/src/service/sso.rs:237 | The address guard fails open on stored rows: it applies only when `allowPrivateNetwork` is exactly `N` | Medium | reported (confirmed in code) |
+| SEC-OUT-03 | crates/moqui-core/src/telemetry/scrape.rs:557 | Scrape targets, synthetic checks, EntitySync, `remote-rest` and resource locations never use the guard | Medium | reported (likely) |
+| SEC-OUT-07 | podman/moqui-postgres-compose.yml:32 | Compose files default the database password to `moqui` with TLS off and the port published on the host | Medium | reported (confirmed in code) |
+| SEC-OUT-08 | runtime/components/base/framework/service/org/moqui/dev/InstanceServices.xml:447 | A stored field is run as a program: `runTokenCommand(instanceImage.authTokenCmd)`; the Docker API defaults to plain HTTP on 2375 | Medium | reported (to check) |
+| SEC-OUT-04 | crates/moqui-mail/src/mx.rs:978 | MX delivery connects to any address a recipient domain's DNS names, internal ones included | Low | reported (confirmed in code) |
+| SEC-OUT-05 | crates/moqui-devkit/src/deploy/git.rs:1506 | The deploy token is in the `git` child's argument list | Low | reported (confirmed in code) |
+| SEC-OUT-06 | crates/moqui-drivers/src/embedded.rs:596 | The embedded Postgres socket directory under the temp directory is used without checking its owner or mode | Low | reported (confirmed in code) |
+| SEC-OUT-09 | crates/moqui-host/src/pdf.rs:684 | Child processes inherit the server's whole environment | Low | reported (confirmed in code) |
+| SEC-OUT-10 | crates/moqui-core/src/service/mail_capture.rs:86 | Mail capture has no test-run gate | Low | reported (confirmed in code) |
+| SEC-OUT-11 | crates/moqui-llm/src/provider/mod.rs:1669 | The LLM endpoint check reads only an address written in the URL | Low | reported (confirmed in code) |
+| SEC-OUT-12 | crates/moqui-lib/src/net.rs:42 | `internal_address` leaves out some non-public ranges; proxy variables may take names past the guard | Low | reported (to check) |
+| SEC-OUT-13 | systemd/moqui.service:23 | The systemd unit and the image leave the binary and confs writable by the service user | Low | reported (confirmed in code) |
+| SEC-OUT-14 | moq:1476 | The default release build carries `devtools`; `moq` downloads Chromium and add-on zips with no checksum | Info | reported (to check) |
+
+### Development tools
+
+Map file: [Attack-Surface-Dev.md](../docs/security/Attack-Surface-Dev.md). Reviewer report: `security-review-evidence/slice-22.md` (and `slice-22b.md` where the slice was continued).
+
+| ID | Location | Finding | Severity | Status |
+| --- | --- | --- | --- | --- |
+| SEC-DEV-01 | runtime/components/dev/dev-aide/src/entities.rs:98-131 | export#Records returns any entity's records to every Dev AIDE tier, including the stored tokens get#Credentials keeps for ADMIN | Medium | reported (likely) |
+| SEC-DEV-05 | crates/moqui-core/src/service/mail_capture.rs:176-232 | MailCapture.enable() has no test-run gate, unlike HttpFixtures | Medium | reported (to check) |
+| SEC-DEV-06 | runtime/components/dev/demo/data/DemoSecurityData.xml:21-59 | The demo lock-down leaves many ADMIN grants and permissions in place that were added after it | Medium | reported (to check) |
+| SEC-DEV-02 | runtime/components/dev/dev-aide/src/services.rs:87-117 and 58-82 | eval#Condition runs a caller-supplied expression at the view tier | Low | reported (to check) |
+| SEC-DEV-03 | runtime/components/dev/dev-aide/screen/DevAide/Workspace.xml (transition `restart`, last transition of the file) | State-changing Dev AIDE transitions have no method attribute, so a parameterless GET runs them | Low | reported (to check) |
+| SEC-DEV-04 | runtime/components/dev/dev-aide/src/confine.rs:28 | The file deny list covers six runtime names; conf, save, sftp and install are readable at the view tier, and store#Root accepts any other host directory | Low | reported (confirmed in code) |
+| SEC-DEV-07 | runtime/components/dev/dev-aide/src/services.rs:338-447 | The extend tier is code execution as the server, wider than its description | Info | reported (confirmed in code) |
+| SEC-DEV-08 | moq:5206-5208 | A demo archive needs --with-dev, which ships Dev AIDE beside the demo component | Info | reported (confirmed in code) |
+
 ## Critical and High findings
 
 Each as its reviewer wrote it. "Not confirmed" is what the reviewer did not trace; "Re-check" is the second reading, where there was one.
@@ -659,4 +771,26 @@ High; reported (confirmed in code).
 - **Evidence:** `<transition name="EmailMessage" read-only="true"><parameter name="emailMessageId"/><actions>` `<entity-find-one entity-name="moqui.basic.email.EmailMessage" value-field="emailMessage"/>` `<script>ec.web.sendTextResponse(emailMessage?.body, "text/html", null)</script>`; mod.rs `None => headers.push(("Content-Disposition".to_string(), "inline".to_string()))`, `send_bytes_with_headers(200, headers, text.as_bytes().to_vec())`
 - **Not confirmed:** whether a response-wide content security policy or `nosniff` header is added in `send_bytes_with_headers` (not read); whether the entity find is refused for a non-admin by an artifact authorization on `moqui.basic.email.EmailMessage` (the screen's own list reads the same entity, and `moqui.*` entities have no row filter); who is granted the SimpleScreens Party screens.
 - **Suggested fix:** Remove the transition, or find the message with the screen's own party condition and show it through the `html-view` widget (sandboxed frame, cleaned) instead of as a document.
+
+#### SEC-SCR-01. Data Export `filterMap` runs any server script, on a GET, without the script permission
+
+High; reported (confirmed in code).
+
+- **Where:** runtime/components/base/tools/screen/Tools/Data/Export.xml:18 and :56
+- **Reached by:** any user of the Tools app (the `ADMIN` group by default), with `GET .../Tools/Data/Export/EntityExport?entityNames=<a defined entity>&filterMap=<script>`; also a third-party page that makes a signed-in admin's browser follow that link.
+- **What happens:** The `filterMap` parameter is evaluated with `ec.resource.expression`, which runs it as a server script with `ec` in scope: `ec.resource.runTokenCommand` (a host process), `System.getProperty` (secrets), `ec.artifactExecution.disableAuthz()`, `ec.service.rest()`. The transition is `read-only="true"` with no `method`, so it runs on a GET with URL parameters and no session token, and the cookie is `SameSite=Lax`. The sealed `GROOVY_SHELL_WEB` permission, which ETL expressions require, is not checked here.
+- **Evidence:** `<transition name="EntityExport" begin-transaction="false" read-only="true" authz-action="update">` ... `const filter = ec.resource.expression('(' + filterText + ')', null)`
+- **Not confirmed:** Nothing between lines 18 and 56 checks a permission; a parent screen of `Tools/Data` with a stricter check than the `TOOLS_APP` grant was not looked for; the effect fence is not entered for a normal request (enter sites listed in the map).
+- **Suggested fix:** Parse `filterMap` as JSON, not as an expression (or require `GROOVY_SHELL_WEB`), and give the transition `method="post"`.
+
+#### SEC-SCR-05. Notification titles are expanded as script, and three callers build them from record values
+
+High; reported (likely).
+
+- **Where:** crates/moqui-core/src/notify/message.rs:322 and :899-911; runtime/components/addon/mr-mantle/service/mantle/smithy/SmithyPipelines.js:1279; mantle/smithy/SmithyImport.js:2052; mantle/party/PartyServices.xml:1609
+- **Reached by:** a user who can set a deployment environment's name, a repository path, a push mirror URL or a data document's title (a repository maintainer or lower), then waits for the notification to be sent.
+- **What happens:** The text given to `.title()` is a template: `${...}` in it runs on the script runtime when the message is sent. These callers concatenate record values into it, so a value such as an environment name holding `${...}` runs as a server script in the sending service's context. Other callers (`Voice.js`, `PurchaseApprovals.js`) pass a fixed template and say why in a comment.
+- **Evidence:** `.title("The deployment of " + where + " " + text(deployment.commitId).slice(0, 12) + " to " + environmentName + " waits for approval")` and `self.title_text = Some(expand_template(title_template.as_deref().unwrap_or(""), &message)?);`
+- **Not confirmed:** Whether the environment name, repository path and mirror URL are validated to a character set without `$` or `{` where they are stored; who may create a `GitCiEnvironment`.
+- **Suggested fix:** Pass a fixed template with `${names}` and put the values in the message map in these three callers; consider a separate `titleText()` that is never expanded.
 

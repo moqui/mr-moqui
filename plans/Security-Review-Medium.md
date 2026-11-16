@@ -734,3 +734,213 @@ Medium; reported (confirmed in code).
 - **Not confirmed:** what else the framework refuses to a key of kind `token` (only the authority's `run()` was read); whether a write on a local-mode PASS page by header key passes the session token check (another slice reports the header login there).
 - **Suggested fix:** Give an access token a scope (git over HTTP and the git REST) that every other login path refuses, as `create#UserScopedKey` does for `gateway`; or refuse to make one for an account with a staff group.
 
+## BOSS access model; Admin, Commons, People, Accounting
+
+#### SEC-BOS-01. Organization row filters do not apply below a sub-area ALWAYS grant
+
+Medium; reported (confirmed in code).
+
+- **Where:** crates/moqui-core/src/user/filter.rs:144 and runtime/components/addon/mr-boss/data/BossAccountingSetupData.xml:209
+- **Reached by:** a member of a role group (for example `BOSS_ACCOUNTING_AR`, `BOSS_PEOPLE_PAYROLL`, `BOSS_PEOPLE_HR`) on any request under that group's area screen
+- **What happens:** Entity filters come only from the record that authorized the top frame. A role group's `AUTHZT_ALWAYS` row on an area screen becomes that record for the area and everything below it, and those rows carry no filter set, so `MANTLE_USER_ORG` and `MANTLE_PRIVATE_CONTACT` stop applying exactly where the money and payroll screens are. Organization isolation there rests on each service's own check alone; the seed comment says role users carry `MANTLE_USER_ORG`.
+- **Evidence:** `// The filters come from the record that authorized this find, the frame on top of the stack.` and `<authz artifactAuthzId="BOSS_ACCT_Receivables_AR" userGroupId="BOSS_ACCOUNTING_AR" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>` and `<authz artifactAuthzId="BOSS_PPL_PAYROLL_OPERATOR" userGroupId="BOSS_PEOPLE_PAYROLL" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>`
+- **Not confirmed:** no read that returns another organization's rows was found; the few direct finds sampled under `screen/Accounting` and `screen/People/Payroll` go through services that check the organization. The other apps' sub-area rows and the multi-line Accounting rows were not read.
+- **Suggested fix:** Put the organization and private-contact filter sets on every sub-area ALWAYS row (or make them ALLOW rows that keep the root's record), and add a test that a role user's direct find under an area is filtered.
+
+#### SEC-BOS-02. App administrators and ACCOUNTING_ADMIN are not bound to an organization
+
+Medium; reported (confirmed in code).
+
+- **Where:** runtime/components/addon/mr-mantle/service/mantle/ledger/AccountingPolicy.js:83 and runtime/components/addon/mr-mantle/service/mantle/party/PartyServices.xml:626
+- **Reached by:** a holder of `ACCOUNTING_ADMIN` (group `BOSS_ACCOUNTING_ADMIN`), and at the entity level any `BOSS_<APP>_ADMIN` or `ADMIN` member, on any Accounting or app request
+- **What happens:** An Accounting administrator's scope is every party with the role `OrgInternal`, and they may select any internal organization as active, whatever organization they work for. The `ADMIN` and app-administrator ALWAYS rows carry only `MANTLE_ACTIVE_ORG`, which does not apply when no active organization is selected, so their finds are unfiltered by organization. One organization's Accounting administrator therefore reads and posts in every organization of the instance.
+- **Evidence:** `if (c.admin) { ids = Array.from(find("mantle.party.PartyRole", {roleTypeId: "OrgInternal"})...` and `<if condition="activeOrgId &amp;&amp; partyId == ec.user.userAccount?.partyId &amp;&amp; (ec.user.isInGroup('ADMIN') || ec.user.hasPermission('ACCOUNTING_ADMIN'))">`
+- **Not confirmed:** a code comment says this is intended ("Finance administrators may select another internal organization"); whether an organization-scoped access administrator can grant `BOSS_ACCOUNTING_ADMIN` (its delegable permission) was not read. People and Sales have separate `*_ALL_ORGANIZATIONS` permissions; Accounting has none.
+- **Suggested fix:** Add an `ACCOUNTING_ALL_ORGANIZATIONS` permission as People and Sales have, and bind `ACCOUNTING_ADMIN` without it to the caller's own organizations; state the instance-wide reach of the administrator bundles where they are granted.
+
+#### SEC-BOS-03. An invitation is accepted by a bare GET for a signed-in user
+
+Medium; reported (likely).
+
+- **Where:** runtime/components/addon/mr-boss/screen/AcceptInvitation.xml:35
+- **Reached by:** an identity operator (`ADMIN_IDENTITY_MANAGE`) who issued the invitation and knows its link, through a signed-in victim's click or page load of `/i/<token>/acceptExisting`
+- **What happens:** `acceptExisting` has no `method`, so a GET with no query string runs `accept#Invitation`. A signed-in user whose address is the invited one gets an organization relationship and group memberships without pressing Accept, and becomes an identity of the inviter's organization.
+- **Evidence:** `<transition name="acceptExisting"><actions><service-call name="mantle.party.IdentityServices.accept#Invitation" in-map="{token:(token || '')}" out-map="accepted"/>`
+- **Not confirmed:** that the token-route dispatch applies the same GET rule as an ordinary screen was taken from the brief's confirmed facts, not re-read; what the inviter can then do to that account (`Identity.js` scope rules) was not traced. `identityRefusal` blocks an account that already works for an organization outside the inviter's scope.
+- **Suggested fix:** Set `method="post"` on `acceptExisting`, `createAccount` and `confirmFactor`.
+
+## BOSS business apps and the Mantle REST root
+
+#### SEC-BAP-01. Calendar subscription makes the server fetch any URL, private addresses included
+
+Medium; reported (confirmed in code).
+
+- **Where:** runtime/components/addon/mr-mantle/service/mantle/work/CalendarServices.xml:785-822 and 898-925; runtime/components/addon/mr-boss/screen/Commons/Settings/Calendars.xml:64
+- **Reached by:** any signed-in member of `BOSS_USERS`, the subscribe transition of Commons/Settings/Calendars
+- **What happens:** `subscribe#Calendar` accepts any `http`, `https` or `webcal` URL with no host check and starts a background fetch at once; `fetch#CalendarSubscription` GETs it without `denyInternal`, every 5 minutes at the least. The status line of a failed fetch is stored in `lastFetchError` and a body that parses as iCalendar becomes the user's calendar events, so a staff user can probe loopback and LAN services from the server.
+- **Evidence:** `const match = /^(https?|webcal):\/\/([^\/?#:]+)/i.exec(text)` ... `ec.service.rest().method('GET').uri(uri).contentType('text/calendar').timeout(60).call()`; Attack-Surface-Outbound.md: `ec.service.rest()` internal-address guard "Off unless the request has `denyInternal: true`"
+- **Not confirmed:** whether the client follows redirects, whether `lastFetchError` is shown to the subscriber, and whether a guard outside the script (a fence, a conf default) refuses private addresses.
+- **Suggested fix:** call `.denyInternal()` on the subscription fetch (and on redirects), require https, and store a generic error instead of the status text.
+
+#### SEC-BAP-02. A bank account number is copied whole into the payment method description
+
+Medium; reported (confirmed in code).
+
+- **Where:** runtime/components/addon/mr-mantle/service/mantle/account/PaymentMethodServices.xml:509 and :555; runtime/components/addon/mr-mantle/entity/AccountingAccountEntities.xml:1144-1145
+- **Reached by:** whoever creates or replaces a bank account payment method without a description (BOSS Accounting, the Mantle REST root); read by anyone who sees a payment method's description
+- **What happens:** `BankAccount.routingNumber` and `accountNumber` are stored in plain text, and the default `PaymentMethod.description` is the bank name plus the full account number. The description is the label of a payment method in lists and pickers, so the number reaches users and logs that have no need for it; the card path masks to the last four digits.
+- **Evidence:** `<if condition="!description"><set field="description" value="${bankName || 'Bank Account'} ${accountNumber || ''}"/></if>`; `<field name="accountNumber" type="text-medium"/>`
+- **Not confirmed:** which screens, exports and notifications show the description, and to which groups.
+- **Suggested fix:** build the description from the last four digits, and set `encrypt="true"` on `accountNumber` (and consider `routingNumber`).
+
+## Clients
+
+#### SEC-CLI-01. The sidecar's loopback web listener is open to every local user and has no Host check seen
+
+Medium; reported (to check).
+
+- **Where:** crates/moqui-desktop/src/node/mod.rs:271, crates/moqui-core/src/web/origin.rs:127, runtime/components/base/webroot/screen/webroot/Login.xml:116
+- **Reached by:** another local user or process of the machine (any request to `127.0.0.1:<port>`), and possibly a web page in the user's browser through DNS rebinding; sidecar mode, or the node in process with the tray's ports item on
+- **What happens:** The node's ordinary web listener is bound on loopback with plain HTTP, so every local account reaches the sign-in and, while no user exists, the anonymous first-administrator form. The server's Origin check counts the request's own `Host` header as its own origin, so a rebinding page's `Origin` matches its `Host` and passes; a new session needs no session token.
+- **Evidence:** `("webapp_http_bind", "127.0.0.1".to_string()), ("webapp_http_port", port.to_string())`; `let site = request_site(request.https, believed, request.header("host"), ...); own_origins(factory, site)`; `<transition name="createInitialAdminAccount"><service-call name="org.moqui.impl.UserServices.create#InitialAdminAccount"/>`
+- **Not confirmed:** whether a Host allow-list exists elsewhere in the listener; whether a desktop node ever runs with no user account; the rebinding path was not tested. The node in process with ports off has no listener and is not affected.
+- **Suggested fix:** Refuse a request on the desktop node's listener whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>`, and have the app create the first administrator (or hold a one-time setup secret) so the form is never open on the port.
+
+## Script engine, templates and parsers
+
+#### SEC-SCR-02. `print#ScreenDocument` evaluates its `screenParametersStr` parameter as a script
+
+Medium; reported (confirmed in code).
+
+- **Where:** crates/moqui-core/src/service/tools.rs:204-208; runtime/components/base/tools/service/moqui.rest.xml:147-148
+- **Reached by:** a user granted the `/moqui` REST path (the `ADMIN` group by default), `POST` to the `moqui` API resource `print/printers/{networkPrinterId}/print/screen`; and any other caller that passes request text to the service.
+- **What happens:** The text is evaluated with `eval_map` on the script runtime, so it is a server script with the full host table. An `ADMIN` who does not hold `GROOVY_SHELL_WEB` gets script execution, and so a host process and the secret properties.
+- **Evidence:** `let expression = param_text(parameters, "screenParametersStr"); if !expression.is_empty() { let evaluated = crate::script::eval_map(&expression)`
+- **Not confirmed:** The callers in mr-mantle (`mantle/facility/Printing.js`, `PrintServices.xml`) were not read; whether a screen transition also passes this parameter from a request was not traced.
+- **Suggested fix:** Drop `screenParametersStr` (the `screenParameters` map already carries the values) or parse it as JSON.
+
+#### SEC-SCR-03. `System.getProperty` returns secret properties and the whole environment to any script
+
+Medium; reported (confirmed in code).
+
+- **Where:** crates/moqui-core/src/script/host/globals.rs:562-565; crates/moqui-lib/src/env.rs:62-80, 281-295
+- **Reached by:** any server script, and so any expression of C1, C2 and C5.
+- **What happens:** The lookup reads the property map, then the process environment, then `.env`, with no filter. `entity_ds_crypt_pass` (field encryption) and `session_cookie_key` are `default-property` elements marked `is-secret="true"`, and no Rust code outside tests reads that attribute. An expression injection therefore yields the keys that decrypt stored fields and sign sessions.
+- **Evidence:** `fn get_property(call: &mut Call<'_>) ... let found = moqui_lib::env::get_prop_or_env(&call.text_or_empty(0));`
+- **Not confirmed:** Whether secret default properties are kept out of the property map at load was not read; they can still arrive through the environment, which is read next.
+- **Suggested fix:** Refuse names marked `is-secret` (and a deny-list of environment names) in `System.getProperty`; give the few scripts that need a secret a named host function.
+
+#### SEC-SCR-04. `ec.resource.runTokenCommand` starts a host program from any server script
+
+Medium; reported (confirmed in code).
+
+- **Where:** crates/moqui-core/src/script/host/tools.rs:721 and :2603-2620
+- **Reached by:** any server script; with C1, C2 or C5, an admin without the script permission or whoever controls the injected text.
+- **What happens:** The function takes any command line, splits it on whitespace and starts it with `std::process::Command`. The only check is the effect fence, which a normal request does not enter. It is meant for one caller (a registry token command of an instance image), yet it is on `ec.resource` for every script.
+- **Evidence:** `ec.resource.runTokenCommand = (command) => host.runTokenCommand(String(command));` and `crate::entity::fence::check_effect(crate::entity::fence::Effect::Process, program)?; let mut child = Command::new(program).args(words)`
+- **Not confirmed:** Whether the thread's `restrict_host_calls` list or another wrapper limits it for some script classes beyond the load runner.
+- **Suggested fix:** Move it off `ec.resource` into the one Rust service that needs it, or take a record id (`InstanceImage`) and read the command from the record under a permission check.
+
+#### SEC-SCR-06. Records whose text is evaluated as script are writable without the script permission
+
+Medium; reported (to check).
+
+- **Where:** crates/moqui-core/src/script/oxide/resource.rs:227-237 (localized text expanded); crates/moqui-mail/src/implementation.rs:558-562, 1118, 1136; crates/moqui-core/src/service/system_sync/message.rs:104; system_sync/entity_sync.rs:344; service/sso.rs:634; user/authz.rs:626; service/rule_actions.rs:50
+- **Reached by:** a user who may write `LocalizedMessage`, `EmailTemplate`, `EmailTemplateAttachment`, a system message remote, an entity sync detail, an identity provider mapping or an authorization filter (administration screens, the entity REST API, a data import).
+- **What happens:** Each of these fields is evaluated as an expression or a `${}` template on the script runtime. Writing one is equal to holding `GROOVY_SHELL_WEB`, but the sealed-permission rule guards only the `UserGroupPermission` rows. A translation editor is the weakest case: a `LocalizedMessage` whose text holds `${...}` runs wherever its original is expanded.
+- **Evidence:** `let text = if localize { crate::script::runtime::localized(&template)... }` then `run_here(scope, &literal, hash, ...)`
+- **Not confirmed:** Who may write each record and whether any write path checks a permission was not traced; a delegated SSO mapping is described in a comment as stored as a plain claim name.
+- **Suggested fix:** Do not expand localized text as a template (substitute named values only), and require the script permission to write the expression-bearing fields.
+
+## Outbound requests, processes and packaging
+
+#### SEC-OUT-01. SMTP credentials go out without TLS when the server offers no STARTTLS, or when neither TLS flag is set
+
+Medium; reported (confirmed in code).
+
+- **Where:** crates/moqui-mail/src/implementation.rs:1916
+- **Reached by:** a network attacker between the server and an `EmailServer` whose `smtpStartTls` is `Y` (strips STARTTLS), or any observer when both flags are empty
+- **What happens:** `smtpStartTls` builds `Tls::Opportunistic`, so the session continues in cleartext when the EHLO answer has no STARTTLS, and the password or XOAUTH2 token is then sent. With neither flag `builder_dangerous` keeps no TLS at all.
+- **Evidence:** `builder = builder.tls(Tls::Opportunistic(smtp_tls(&host)?));` ... `SmtpAuth::Password(user, password) => builder.credentials(Credentials::new(user.clone(), password.clone()))`
+- **Not confirmed:** whether lettre refuses AUTH on a cleartext session (not read); whether the UI forces one of the flags.
+- **Suggested fix:** Use `Tls::Required` when the row has credentials (keep opportunistic only for unauthenticated relays), and refuse credentials on a session without TLS unless the host is loopback.
+
+#### SEC-OUT-02. The address guard fails open on stored rows: it applies only when `allowPrivateNetwork` is exactly `N`
+
+Medium; reported (confirmed in code).
+
+- **Where:** crates/moqui-core/src/service/sso.rs:237
+- **Reached by:** whoever can create or edit an `AuthFlow`, `SystemMessageRemote`, printer or `EmailServer` row by a path other than the admin Configuration services (a data file, an entity REST write, an older row)
+- **What happens:** A row with an empty `allowPrivateNetwork` is sent to loopback, private addresses and `169.254.169.254`. Only `ConfigurationProviders.js`/`ConfigurationConnections.js` set `N`, and only when `instance_purpose` is `production`. Remote agent and MCP rows fail closed (guard on unless `Y`), so the two families disagree.
+- **Evidence:** `let deny_internal = field(&flow, "allowPrivateNetwork") == "N";` and `deny_internal: field(&remote, "allowPrivateNetwork") == "N",` (system_sync/message.rs:173); `deny_internal: map_text(printer, "allowPrivateNetwork") == "N",` (service/tools.rs:295)
+- **Not confirmed:** which other services write these rows and with what authorization; whether an entity default sets `N`.
+- **Suggested fix:** Treat anything but `Y` as deny on a production instance, as `moqui-llm/src/remote.rs` does.
+
+#### SEC-OUT-03. Scrape targets, synthetic checks, EntitySync, `remote-rest` and resource locations never use the guard
+
+Medium; reported (likely).
+
+- **Where:** crates/moqui-core/src/telemetry/scrape.rs:557
+- **Reached by:** a user who can create a scrape target or synthetic check row (a monitoring administrator per the comment), or who can supply a resource location or `remote-rest` parameter
+- **What happens:** The request goes to any address, internal included. A scrape stores the body's metrics and sends the row's bearer token; a synthetic check reports status and whether the body contains `expectBodyContains`, which reads an internal page one guess at a time.
+- **Evidence:** `// Targets are set by a monitoring administrator, and an exporter on this host or network is the usual case.` `deny_internal: false,` (scrape.rs:557 and :712); `deny_internal: false,` (remote.rs:70, resource.rs:82, entity_sync.rs:502)
+- **Not confirmed:** who is authorized to write the target and check rows; whether any request path passes a caller's text as a resource location.
+- **Suggested fix:** Give these rows the same `allowPrivateNetwork` field, default deny on production, and refuse `169.254.0.0/16` always.
+
+#### SEC-OUT-07. Compose files default the database password to `moqui` with TLS off and the port published on the host
+
+Medium; reported (confirmed in code).
+
+- **Where:** podman/moqui-postgres-compose.yml:32
+- **Reached by:** a local user of the container host, or anything that can reach `127.0.0.1:5432`/`3306` there, when the administrator did not write `podman/.env`
+- **What happens:** `${MOQUI_DB_PASSWORD:-moqui}` gives the server and the database the password `moqui` (root `moquiroot` for MySQL) on an instance marked `instance_purpose: production`, with `entity_ds_sslmode: disable`. The OpenSearch containers run as `0:0` with the security plugin off.
+- **Evidence:** `entity_ds_password: ${MOQUI_DB_PASSWORD:-moqui}`, `POSTGRES_PASSWORD: ${MOQUI_DB_PASSWORD:-moqui}`, `- "127.0.0.1:5432:5432"`, `DISABLE_SECURITY_PLUGIN: "true"`
+- **Not confirmed:** whether port 9200 is published; `podman/README.md` warnings were not read.
+- **Suggested fix:** Use `${MOQUI_DB_PASSWORD:?set it in .env}` so a start without a password fails, and do not publish the database port by default.
+
+#### SEC-OUT-08. A stored field is run as a program: `runTokenCommand(instanceImage.authTokenCmd)`; the Docker API defaults to plain HTTP on 2375
+
+Medium; reported (to check).
+
+- **Where:** runtime/components/base/framework/service/org/moqui/dev/InstanceServices.xml:447
+- **Reached by:** whoever can write an `InstanceImage` or instance host row and call `init#InstanceDocker`
+- **What happens:** The field's text is split on whitespace and run as the server user with the server's environment; only the fence effect `Process` stands in front. The same services call `hostProtocol || "http"` on port 2375 and send `X-Registry-Auth` there, so the registry token and full control of that Docker host cross the network in cleartext.
+- **Evidence:** `authTokenPass = ec.resource.runTokenCommand(instanceImage.authTokenCmd)`; `restClient.uri().protocol(instanceHost.hostProtocol || "http").host(String(instanceHost.hostAddress)).port(instanceHost.adminPort ? parseInt(instanceHost.adminPort, 10) : 2375)`
+- **Not confirmed:** who is authorized for these services and for writes to `InstanceImage`; whether the fence refuses `Process` outside a sandboxed context only.
+- **Suggested fix:** Take the token command from the conf, not a row, and require `https` or `unix` for a host that is not loopback.
+
+## Development tools
+
+#### SEC-DEV-01. export#Records returns any entity's records to every Dev AIDE tier, including the stored tokens get#Credentials keeps for ADMIN
+
+Medium; reported (likely).
+
+- **Where:** runtime/components/dev/dev-aide/src/entities.rs:98-131; runtime/components/dev/dev-aide/data/DevAideSecurityData.xml:29-39
+- **Reached by:** a member of DEV_AIDE_EXTENDERS or DEV_AIDE_USERS (not ADMIN) on a dev instance, GET /apps/dev/Workspace/exportRecords with an entity name (read-only transition, URL parameters).
+- **What happens:** The service needs only the view tier and finds on whatever entity the request names, with no list of refused entities. The DEV_AIDE_APP group is an inheritable ALWAYS/ALL grant for all three groups, so the find below it is permitted for any entity: UserAccount, UserLoginKey, moqui.dev.DevAideCredential, DevAideServer. get#Credentials and store#Credential deliberately require ADMIN and never return the token; this path goes round that.
+- **Evidence:** `let context = Context::of(ec, Tier::View)?; let name = entity_name_in(parameters); ... let mut find = context.facade.find(&name)?;` and `<authz artifactAuthzId="DEV_AIDE_APP_EXTENDERS" userGroupId="DEV_AIDE_EXTENDERS" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>`
+- **Not confirmed:** whether EntityDataWriter emits `encrypt="true"` fields decrypted; whether MAX_EXPORT or the writer excludes any entity. The extend tier can also read the same rows with try#Snippet, so the fix has to cover both.
+- **Suggested fix:** Refuse `moqui.security.*`, `moqui.dev.DevAideCredential`, `DevAideServer` and `DevAideTaskSource` (or any entity with an encrypted field) in export#Records below the full tier with ADMIN, and omit encrypted fields from the text.
+
+#### SEC-DEV-05. MailCapture.enable() has no test-run gate, unlike HttpFixtures
+
+Medium; reported (to check).
+
+- **Where:** crates/moqui-core/src/service/mail_capture.rs:176-232; runtime/components/base/framework/conf/MoquiDefaultConf.xml:619
+- **Reached by:** any script that can call `ec.factory.getTool('MailCapture')` on any instance purpose, or an operator who sets `mail_capture_sends=true`.
+- **What happens:** The tool factory is declared in the default conf and `enable()` sets capture for the whole factory with no check of a test run or of the instance purpose. From then on every send is recorded as sent but kept in memory, and `getMessages()` returns the bodies: password reset links and sign-in codes of any user go to the script instead of the mailbox. HttpFixtures has the gate (`allowed()`, set only by `moqui test`); this tool does not.
+- **Evidence:** `"enable" => { capture.set_enabled(Some(true)); Ok(Value::Null) }` and `fn get_instance(&self, _parameters: &[Value]) -> Result<Arc<dyn Tool>, Error> { Ok(Arc::new(MailCaptureTool)) }`
+- **Not confirmed:** which script surfaces reach `ec.factory.getTool` for a user who is not already a code author (Dev AIDE try#Snippet on dev does; report, CalcGrid and agent tool scripts were not traced).
+- **Suggested fix:** Gate `enable()` and the `mail_capture_sends` property on the same process flag the test runner sets for HttpFixtures.
+
+#### SEC-DEV-06. The demo lock-down leaves many ADMIN grants and permissions in place that were added after it
+
+Medium; reported (to check).
+
+- **Where:** runtime/components/dev/demo/data/DemoSecurityData.xml:21-59
+- **Reached by:** anyone signed in as the shared `john.doe` ADMIN on a public demo server.
+- **What happens:** The demo data makes ADMIN view-only on nine artifact groups and ends ten permissions. The base seed also gives ADMIN ALL on DASHBOARDS_APP, CALC_GRID, CALC_GRID_AUTHOR, BASIC_COMMS, four REPORT_* groups, TOOLS_DATABASE_LOAD (`run#LoadWrap`) and AIDE_PROJECTS, and the permissions ADMIN_BACKUP_RUN, ADMIN_BACKUP_DOWNLOAD, ADMIN_CONNECTION_MANAGE, ADMIN_TRANSFER_RUN, ADMIN_SETTINGS_MANAGE, ADMIN_IDENTITY_MANAGE, ADMIN_ACCESS_MANAGE, AgentAdmin, AgentSkillAuthor, GIT_CI_ADMIN, ChatBridgeAdmin, VoiceAdmin, MONITOR_EVAL_RUN, MONITOR_REPLAY, REST_SCHEMA, which the demo data does not touch. Any screen outside Tools and System that reaches the services behind them is open to every visitor.
+- **Evidence:** demo data ends only `SearchRemote, DashboardRemote, ADMIN_PASSWORD, SSH_SFTP, SSH_GIT, MONITOR_INGEST, REPORT_SAVE_LOCATION, MONITOR_RECOVER, MONITOR_RECOVER_ADMIN, MONITOR_SETTINGS`; base seed has `<moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_BACKUP_DOWNLOAD" fromDate="0"/>` and `TOOLS_DATABASE_LOAD_ADMIN ... AUTHZT_ALWAYS ... AUTHZA_ALL`.
+- **Not confirmed:** the screens that call these services were not traced; the `org.moqui.admin` backup, connection and transfer services are called from `tools/screen/System/` screens, which the view-only SYSTEM_APP row covers for transitions that are not read-only. BasicComms chat bridges and voice screens are under `basic-comms/screen/System/` and BasicComms; CalcGrid authoring and the Assist agent were not read.
+- **Suggested fix:** Walk each remaining grant on a demo server and end what a visitor does not need; add a spec in the demo component that fails when the base seed gains an ADMIN grant the demo data does not name.
+
