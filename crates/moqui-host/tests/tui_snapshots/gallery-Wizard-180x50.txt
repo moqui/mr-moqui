@@ -1,4 +1,4 @@
- gallery ▸ Wizard ▸ Customer                                                                                                                                    john.doe  Tue 14:32
+ Gallery ▸ Wizard ▸ Customer                                                                                                                                    john.doe  Tue 14:32
 ─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▾ Gallery               │ ┌─ Archetype 3.10 Wizard ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
      Landing             │ ┃ Multi-step creation: subscreens-panel type="wizard" is a stepper with one step per subscreen (the menu titles, in menu order), so the URL holds the  │

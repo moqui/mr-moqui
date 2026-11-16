@@ -1257,6 +1257,7 @@ pub(super) fn json_envelope(
         0
     };
     let path_list: Vec<String> = info.full_path.iter().map(|name| strip(name)).collect();
+    let path_titles = path_titles(info);
     let render_modes: Vec<String> = target.render_modes.iter().map(|mode| strip(mode)).collect();
     // `json!` would serialize the rendered nodes, the parameters and the messages again by reference, a deep copy of
     // the document; they are moved in.
@@ -1267,6 +1268,7 @@ pub(super) fn json_envelope(
         serde_json::json!({
             "path": strip(&screen_path(info)),
             "pathList": path_list,
+            "pathTitles": path_titles,
             "extraPathCount": extra_path_count,
             "title": strip(title),
             "renderModes": render_modes,
@@ -1278,6 +1280,42 @@ pub(super) fn json_envelope(
     envelope.insert("focus".to_string(), strip(focus).into());
     envelope.insert("c".to_string(), nodes);
     serde_json::Value::Object(envelope)
+}
+
+/// The menu title of each name of `pathList`, for the breadcrumb: the parent's `subscreens-item` menu-title, else the
+/// screen's default-menu-title, localized and expanded as the menus title them (menu.rs). A name with no screen (a wiki
+/// page, a transition), or whose title is empty or does not expand, keeps its name.
+fn path_titles(info: &ScreenUrlInfo) -> Vec<String> {
+    let strip = super::sri::strip_controls;
+    info.full_path
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            // path_defs starts with the root, so the screen of name `index` is `index + 1`
+            let title = match (info.path_defs.get(index), info.path_defs.get(index + 1)) {
+                (Some(parent), Some(def)) => {
+                    let own = parent.subscreens.get(name).map_or("", |item| item.menu_title.as_str());
+                    level_title(own, &def.default_menu_title)
+                }
+                _ => None,
+            };
+            strip(title.as_deref().unwrap_or(name))
+        })
+        .collect()
+}
+
+/// A level's menu title: the item's own, else the screen's; None when it is empty or fails to localize or expand.
+fn level_title(own: &str, default: &str) -> Option<String> {
+    let localized = match crate::l10n::localize(own).ok()? {
+        title if title.trim().is_empty() => crate::l10n::localize(default).ok()?,
+        title => title,
+    };
+    let title = if localized.contains("${") {
+        script::expand(&localized).ok()?
+    } else {
+        localized
+    };
+    (!title.trim().is_empty()).then_some(title)
 }
 
 fn screen_path(info: &ScreenUrlInfo) -> String {

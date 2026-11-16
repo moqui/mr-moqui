@@ -135,9 +135,9 @@ along with this software (see the LICENSE.md file). If not, see
             <field name="findButton"><header-field title="Find"><submit/></header-field></field>
         </form-list>
 
-        <container-box type="info" style="q-mt-lg"><box-header title="Section 3.15 Tree list"/><box-body>
+        <container style="q-mt-lg"><container-box type="info"><box-header title="Section 3.15 Tree list"/><box-body>
             <label type="p" text="A work breakdown as a tree (view-tree): the top-level items, each opened to its children as the tree asks the screen's form request for them; the totals of each branch (Total est., Total act., Done) come with the rows, and the totals row adds the top-level items. Expand opens to a level or all of it; past six levels a row shows its level. A find on the item shows every match under its ancestors, which are muted. Drag a row onto another's upper or lower edge to move it there, or onto its middle to put it under it; Tab and Shift+Tab indent and outdent the focused row. The estimate is edited in place."/>
-        </box-body></container-box>
+        </box-body></container-box></container>
         <form-list name="WorkTree" list="workItemList" views="tree,list" skip-form="true" paginate="false">
             <view-tree parent-field="parentItemId" rollup-fields="totalEstimate,totalActual,doneOfTotal" child-count-field="childCount"
                     ancestor-transition="workItemAncestors" transition="moveWorkItem" confirm-move="true"/>

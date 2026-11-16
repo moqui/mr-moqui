@@ -75,12 +75,12 @@ along with this software (see the LICENSE.md file). If not, see
             <form-list name="ToolList" list="toolList" transition="storeTool">
                 <field name="mcpServerId"><default-field><hidden/></default-field></field>
                 <field name="toolName"><header-field title="Tool"/><default-field><display/></default-field></field>
-                <field name="classificationEnumId"><header-field title="Class" tooltip="Empty is EXTERNAL: each call asks for approval"/>
-                    <default-field><drop-down allow-empty="true">
+                <field name="classificationEnumId"><header-field title="Class"/>
+                    <default-field tooltip="Empty is EXTERNAL: each call asks for approval"><drop-down allow-empty="true">
                         <entity-options key="${enumId}" text="${description}"><entity-find entity-name="moqui.basic.Enumeration">
                             <econdition field-name="enumTypeId" value="AgentClassification"/></entity-find></entity-options>
                     </drop-down></default-field></field>
-                <field name="description"><header-field title="Description" tooltip="Replaces the server's own"/><default-field><text-line size="50"/></default-field></field>
+                <field name="description"><header-field title="Description"/><default-field tooltip="Replaces the server's own"><text-line size="50"/></default-field></field>
                 <field name="disabled"><default-field><drop-down allow-empty="true"><option key="Y"/><option key="N"/></drop-down></default-field></field>
                 <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
             </form-list>

@@ -359,7 +359,10 @@
             <section name="PatternsSection" condition="showPatterns === 'Y'">
                 <widgets>
                     <form-list name="Patterns" list="patternList" skip-form="true" paginate="false">
-                        <field name="pattern"><default-field><link url="." text="${pattern}" link-type="anchor" condition="query" parameter-map="{datasetId:datasetId,from:from,thru:thru,filtersJson:filtersJson,showPatterns:'Y',queryString:(queryString ? '('+queryString+') AND ' : '')+query}"/><display condition="!query"/></default-field></field>
+                        <field name="pattern">
+                            <conditional-field condition="query"><link url="." text="${pattern}" link-type="anchor" parameter-map="{datasetId:datasetId,from:from,thru:thru,filtersJson:filtersJson,showPatterns:'Y',queryString:(queryString ? '('+queryString+') AND ' : '')+query}"/></conditional-field>
+                            <default-field><display/></default-field>
+                        </field>
                         <field name="count"><default-field><display/></default-field></field>
                         <field name="share"><default-field title="Share"><display text="${share}%"/></default-field></field>
                         <field name="severity"><default-field title="Level"><display/></default-field></field>

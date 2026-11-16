@@ -842,15 +842,25 @@ impl<L: ScreenLink> Agent<L> {
     }
 
     /// What an element says: a field's title, a link's or button's text, a dialog's title, a menu's text, else the text
-    /// of its node.
+    /// of its node. A check or radio with a blank title (`title=" "`) and one option says that option's text, as it is
+    /// drawn.
     fn label(&self, item: &FocusItem) -> String {
         let index = self.session().index();
         let part = item.key.split_once('#').map(|(_, part)| part);
         let found = match item.kind {
             FocusKind::Text | FocusKind::DropDown | FocusKind::Check | FocusKind::Radio => {
-                index.fields.get(&item.node).map(|field| match part {
-                    Some(part) => format!("{} ({part})", field.title),
-                    None => field.title.clone(),
+                index.fields.get(&item.node).map(|field| {
+                    let title = match (field.title.trim(), &field.widget) {
+                        ("", Widget::Check { options, .. } | Widget::Radio { options, .. }) if options.len() == 1 => {
+                            options[0].label.trim()
+                        }
+                        (title, _) => title,
+                    };
+                    match part {
+                        Some(part) if title.is_empty() => part.to_string(),
+                        Some(part) => format!("{title} ({part})"),
+                        None => title.to_string(),
+                    }
                 })
             }
             FocusKind::Link | FocusKind::Button => index.links.get(&item.key).map(|link| link.text.clone()).or_else(|| {
@@ -865,7 +875,7 @@ impl<L: ScreenLink> Agent<L> {
             _ => None,
         };
         found
-            .filter(|label| !label.is_empty())
+            .filter(|label| !label.trim().is_empty())
             .or_else(|| self.node_text(&item.node))
             .unwrap_or_else(|| item.key.clone())
     }

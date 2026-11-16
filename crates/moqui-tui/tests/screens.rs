@@ -826,3 +826,31 @@ fn only_the_first_nine_tabs_are_numbered() {
     assert!(text.contains("9:Tab9"), "{text}");
     assert!(text.contains("Tab10") && !text.contains("10:Tab10"), "{text}");
 }
+
+/// A form field whose widget is a link draws its title as the label, with the link where a value goes, and Enter on
+/// it follows the link.
+#[test]
+fn a_fields_link_is_drawn_after_its_label() {
+    let json = r#"{"v":1,"screen":{"path":"/request","title":"Request"},"c":[{"t":"form","id":"Facts","name":"Facts","c":[
+        {"t":"link","id":"Facts.target","text":"Lathe 3","url":"/asset","kind":"anchor","label":"Equipment or facility"},
+        {"t":"field","id":"Facts.by","name":"by","title":"Reported by","w":{"kind":"display","text":"Joe"}}]}]}"#;
+    let asset = r#"{"v":1,"screen":{"path":"/asset","title":"Asset"},"c":[]}"#;
+    let link = FakeLink::from_json(&[json, asset]).unwrap();
+    let mut view = view_of(ScreenModel::from_json(json).unwrap(), link);
+    let text = view.screen_text(100, 30);
+    let line = text
+        .lines()
+        .find(|line| line.contains("Lathe 3"))
+        .unwrap_or_else(|| panic!("{text}"));
+    assert!(line.contains("Equipment or fa") && line.contains(": "), "{text}");
+    assert!(text.lines().any(|line| line.contains("Reported by") && line.contains("Joe")), "{text}");
+    for _ in 0..5 {
+        if view.session().focus_id() == "Facts.target" {
+            break;
+        }
+        press(&mut view, Key::Tab);
+    }
+    assert_eq!(view.session().focus_id(), "Facts.target", "{text}");
+    press(&mut view, Key::Enter);
+    assert_eq!(view.session().path(), "/asset");
+}

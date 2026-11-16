@@ -636,6 +636,8 @@ along with this software (see the LICENSE.md file). If not, see
     </xs:annotation><xs:complexType>
         <xs:sequence><xs:element minOccurs="0" maxOccurs="unbounded" ref="field-ref"/></xs:sequence>
         <xs:attribute name="title" type="xs:string"/>
+        <xs:attribute name="justify" type="xs:string"><xs:annotation><xs:documentation>How the fields sit on the
+            row: a CSS justify-content value (center, flex-end, space-between).</xs:documentation></xs:annotation></xs:attribute>
     </xs:complexType></xs:element>
     <xs:element name="field-ref"><xs:complexType>
         <xs:attribute name="name" type="name-parameter" use="required"/></xs:complexType></xs:element>
@@ -897,6 +899,14 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:element minOccurs="0" ref="default-field"/>
             <!-- tabled, not to be part of 1.0: <xs:element minOccurs="0" maxOccurs="unbounded" ref="visible-when"/> -->
         </xs:sequence>
+        <xs:attribute name="align" default="left"><xs:annotation><xs:documentation>The alignment of the field's
+            value, as on a form-list field.</xs:documentation></xs:annotation>
+            <xs:simpleType><xs:restriction base="xs:token">
+                <xs:enumeration value="left"/>
+                <xs:enumeration value="center"/>
+                <xs:enumeration value="right"/>
+            </xs:restriction></xs:simpleType>
+        </xs:attribute>
     </xs:extension></xs:complexContent></xs:complexType>
     <xs:complexType name="form-field-list"><xs:complexContent><xs:extension base="form-field-base">
         <xs:sequence>
@@ -989,6 +999,8 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:attribute>
         <xs:attribute name="container-style" type="xs:string"><xs:annotation><xs:documentation>A style (HTML class)
             for the container around the field (table cell, etc).</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="tooltip" type="xs:string"><xs:annotation><xs:documentation>A hint shown with the
+            header's find widget, as a default-field's tooltip is with its widget.</xs:documentation></xs:annotation></xs:attribute>
     </xs:complexType></xs:element>
     <xs:element name="conditional-field" type="form-list-conditional-field"/>
     <xs:element name="default-field" type="form-list-default-field"/>
@@ -1118,6 +1130,8 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="no-current-selected-key" type="xs:string"/>
         <xs:attribute name="all-checked" type="xs:string"/>
         <xs:attribute name="container-style" type="xs:string"/>
+        <xs:attribute name="no-wrapper" type="boolean" default="false"><xs:annotation><xs:documentation>The check boxes
+            alone, without the field's wrapper and label (a row's selection box).</xs:documentation></xs:annotation></xs:attribute>
     </xs:complexType></xs:element>
     <xs:element name="date-find" substitutionGroup="SubFields"><xs:complexType>
         <xs:attribute name="type" default="timestamp">
@@ -1255,7 +1269,8 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:annotation><xs:documentation>If true submit the form when an option is selected (qvt only as of 2022-02-23)</xs:documentation></xs:annotation>
         </xs:attribute>
         <xs:attribute name="current-description" type="xs:string"/>
-        <!-- currently not supported (allow text entry or select option): <xs:attribute name="combo-box" type="boolean" default="false"/> -->
+        <xs:attribute name="combo-box" type="boolean" default="false"><xs:annotation><xs:documentation>Text may be
+            entered as well as an option selected: a value that is not an option is kept as typed.</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="show-not" type="xs:string" default="false"/>
         <xs:attribute name="style" type="xs:string"/>
     </xs:complexType></xs:element>

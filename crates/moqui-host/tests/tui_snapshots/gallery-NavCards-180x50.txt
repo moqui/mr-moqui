@@ -1,4 +1,4 @@
- gallery ▸ Nav cards                                                                                                                                            john.doe  Tue 14:32
+ Gallery ▸ Nav cards                                                                                                                                            john.doe  Tue 14:32
 ─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▾ Gallery               │ ┌─ The nav-card element ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
      Landing             │ ┃ A navigation tile: an icon in a tonal avatar, a title and one line saying what is there. The whole card is one link, and up to three child links     │

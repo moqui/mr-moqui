@@ -1,4 +1,4 @@
- gallery ▸ Panel                                                                                                                                                john.doe  Tue 14:32
+ Gallery ▸ Panel                                                                                                                                                john.doe  Tue 14:32
 ─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▾ Gallery               │ ┌─ Archetype 3.14 Panel ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
      Landing             │ ┃ The Today tab of the tray panel as a normal screen: groups Overdue, Due today and Later today as captions over dense lists, an icon by kind, two     │

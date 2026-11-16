@@ -596,7 +596,7 @@ fn an_lfs_upload_asks_the_service_the_conf_names() {
         moqui_core::context::framework_dir(),
         r#"<git-server lfs-upload-check-service="test.GitQuota.check#LfsUpload"/>"#,
     );
-    moqui_lib::env::set_property("git_lfs_token_key", "the key of the lfs check test".to_string());
+    let _lfs_key = super::tests::lfs_key("the key of the lfs check test");
     {
         let _entered = fixture.context.enter();
         std::fs::create_dir_all(fixture.dir.join("service/test")).unwrap();

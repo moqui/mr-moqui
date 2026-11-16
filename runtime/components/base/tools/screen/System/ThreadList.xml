@@ -114,7 +114,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <display text="${workText}"/>
                     <label text="${runningText}" type="div" style="m-muted" condition="runningText"/>
                 </default-field></field>
-                <field name="workSeconds"><header-field title="For" show-order-by="true"/><default-field align="right">
+                <field name="workSeconds" align="right"><header-field title="For" show-order-by="true"/><default-field>
                     <display text="${workTimeText}"/></default-field></field>
                 <field name="userId"><header-field title="User" show-order-by="true"/><default-field>
                     <display-entity entity-name="moqui.security.UserAccount" text="${username}" key-field-name="userId"/></default-field></field>

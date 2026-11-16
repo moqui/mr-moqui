@@ -1,4 +1,4 @@
- gallery ▸ Settings                                                                                                                                             john.doe  Tue 14:32
+ Gallery ▸ Settings                                                                                                                                             john.doe  Tue 14:32
 ─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▾ Gallery               │ ┌─ Archetype 3.9 Settings ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
      Landing             │ ┃ An app's settings index as a row of cards, one per group with a line of description and the links into its pages, then one settings page: a form     │

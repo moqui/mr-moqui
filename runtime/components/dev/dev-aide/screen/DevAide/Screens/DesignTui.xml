@@ -200,7 +200,7 @@ along with this software (see the LICENSE.md file). If not, see
             <label text="Not available: ${readError || 'name a screen file or an app page'}" type="p" style="text-negative"/>
             <link url="../Tree" text="Back to the screen tree" link-type="anchor"/>
         </widgets><fail-widgets>
-            <container name="ScreenHeader">
+            <container id="ScreenHeader">
                 <label text="${screenName}" type="h5"/>
                 <label text="${headerText}" type="p" style="m-muted"/>
                 <label text="${editsGo}" type="p" style="${hasEditTarget ? '' : 'text-warning'}"/>
@@ -243,14 +243,14 @@ along with this software (see the LICENSE.md file). If not, see
             </render-mode>
 
             <section name="DesignTab" condition="tab == 'design'"><widgets>
-                <container-row name="DesignColumns">
-                    <row-col md="4" name="OutlineColumn">
+                <container-row id="DesignColumns">
+                    <row-col md="4" id="OutlineColumn">
                         <render-mode>
                             <text type="tui"><![CDATA[${JSON.stringify({t: 'component', id: 'ScreenOutline', name: 'tree', props: {rows: treeRows, columns: ['Outline']}})}]]></text>
                             <text type="html,qvt"><![CDATA[<h6>Outline</h6><div class="m-dev-mono">${treeRows.map((row) => '<div style="padding-left: ' + (row.key.split('.').length - 1) + 'em"><a href="' + html(row._open) + '">' + html(row.label) + '</a></div>').join('')}</div>]]></text>
                         </render-mode>
                     </row-col>
-                    <row-col md="8" name="NodeColumn">
+                    <row-col md="8" id="NodeColumn">
                         <label text="${selectedText}" type="h6"/>
                         <link url="${selectedUrl}" url-type="plain" text="Open at its line in the Workspace" link-type="anchor" condition="selectedUrl"/>
                         <label text="${anchorNote}" type="p" style="m-muted" condition="anchorNote"/>

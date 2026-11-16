@@ -1105,6 +1105,24 @@ pub(crate) fn http(
     (status, headers, response[split + 4..].to_vec())
 }
 
+/// The LFS token key for one test at a time. The tests that sign and check LFS tokens run in one process: one that set
+/// its own key, or cleared it, while another ran broke the other's tokens ("git_lfs_token_key is not set"). The guard
+/// holds the lock while the test runs and clears the key when it is dropped.
+pub(crate) struct LfsKey(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
+pub(crate) fn lfs_key(value: &str) -> LfsKey {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let guard = LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    moqui_lib::env::set_property("git_lfs_token_key", value.to_string());
+    LfsKey(guard)
+}
+
+impl Drop for LfsKey {
+    fn drop(&mut self) {
+        moqui_lib::env::clear_property("git_lfs_token_key");
+    }
+}
+
 fn json_of(body: &[u8]) -> serde_json::Value {
     serde_json::from_slice(body).unwrap_or_else(|err| panic!("{err}: {}", String::from_utf8_lossy(body)))
 }
@@ -1112,7 +1130,7 @@ fn json_of(body: &[u8]) -> serde_json::Value {
 #[test]
 fn lfs_objects_are_uploaded_downloaded_and_locked_over_the_batch_api() {
     let fixture = fixture("lfs");
-    moqui_lib::env::set_property("git_lfs_token_key", "the key of the lfs test".to_string());
+    let _lfs_key = lfs_key("the key of the lfs test");
     define(&fixture, "art", "db");
     define(&fixture, "other", "db");
     let base = http_server(fixture.context.factory());
@@ -1367,7 +1385,6 @@ fn lfs_objects_are_uploaded_downloaded_and_locked_over_the_batch_api() {
         );
         assert_ne!(status, 0);
     }
-    moqui_lib::env::clear_property("git_lfs_token_key");
 }
 
 #[test]

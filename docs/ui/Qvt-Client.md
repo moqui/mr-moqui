@@ -1406,8 +1406,8 @@ not for this shell: it answers one JSON document per screen level for the termin
 types (`src/model.rs`) are the schema. It is always standalone: `<path>?renderMode=tui` renders the last level, and `<path>.tui` renders the
 level at the path itself (no walk down the default subscreens), which is how the client asks for the parents above the leaf.
 
-- **The envelope.** `{v: 1, screen: {path, pathList, title, renderModes, standalone}, parameters, messages: {info, errors,
-  validationErrors: [{form, field, message}]}, focus, c}`. `parameters` are the request's, credential names stripped; `messages` the flash of
+- **The envelope.** `{v: 1, screen: {path, pathList, pathTitles, title, renderModes, standalone}, parameters, messages: {info, errors,
+  validationErrors: [{form, field, message}]}, focus, c}`. `pathTitles` is each name's menu title (the name itself where there is none); `parameters` are the request's, credential names stripped; `messages` the flash of
   the last transition; `focus` the first `focus-field` as `form.field`; `c` the level's nodes. A client refuses a `v` it does not know.
 - **Nodes** carry `t` and an `id`. Ids are stable across renders and unique in the document: an element's own id or name, else its element
   path, with `~2`, `~3` for a repeat (an iterated section, a section included twice). Structure: `section`, `container`, `box` (`title`, `type`,
@@ -1426,7 +1426,7 @@ level at the path itself (no walk down the default subscreens), which is how the
   `text type="tui"`, and a `component` (`name`, `props`, `base`: the screen path the server sets) names a client component (the framework's are listed in docs/ui/TUI.md, Components). A
   client draws a `t` it does not know as a placeholder.
 - **Actions.** `link`: `text`, `url` with its parameters, `kind` (the `link-type`), `method`, `confirm`, `btnType`, `icon` (a Material Symbols
-  name), `badge`, `tooltip`, `disabled`. A hidden-form link posts.
+  name), `badge`, `tooltip`, `disabled`, and `label`, the title of the form-single field it is the widget of. A hidden-form link posts.
 - **Forms.** `form`: `name`, `kind`, `transitionUrl` (empty for a find form, which asks for the screen again with its fields), `method` (`post` to a transition; `get` when the form goes to a screen, which the client opens with the fields as parameters), `hidden`
   `[{name, value}]` (credential names left out), `submitMessage`, `backgroundReloadId`, `backgroundHideId`, its fields and layout rows in `c`.
   A form with a file field has `multipart`.

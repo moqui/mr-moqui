@@ -599,7 +599,7 @@ ${kind === "check" ? "" : `        if ($value && !$options.some(($opt) => $opt.v
         const o = opts || {};
         const when = child(sub, "visible-when");
         const requireWhen = child(sub, "require-when");
-        const required = attr(field, "required") === "true" || attr(sub, "required") === "true";
+        const required = attr(sub, "required") === "true";
         const nullable = widget.name === "editable";
         const idExpr = o.idExpr || `$uid(${jsString(fieldIdOf(field))})`;
         const nameExpr = o.nameExpr || jsString(attr(field, "name") || "field");
@@ -633,7 +633,12 @@ ${kind === "check" ? "" : `        if ($value && !$options.some(($opt) => $opt.v
     const placeholderEmit = (id, text, url) =>
         `$emit({t:"placeholder",id:$uid(${jsString(id)}),text:${jsString(text)}${url ? `,url:${url}` : ""}});\n`;
     const emitWidget = (field, sub, widget) => {
-        if (widget.name === "link") return linkStatement(widget, false);
+        // a link whose field has a title is the field's value: the title goes with it, drawn as its label, as a display's
+        // is (MaintenanceRequestParts' "Equipment or facility"); a link in an untitled field stays one of the form's buttons
+        if (widget.name === "link") {
+            if (!(attr(sub, "title") || "").trim()) return linkStatement(widget, false);
+            return guarded(widget, `{\n    const $l = ${linkExpr(widget, false)};\n    $l.label = String(${S.localizedTitle(sub)} || "");\n    if ($l.text || $l.icon || $l.tooltip) $emit($l);\n}\n`);
+        }
         // a section-iterate, section or container in a field (MoveAsset's Pick Location(s)) draws its widgets in place
         if (["section-iterate", "section", "container"].includes(widget.name) && widget.source) {
             const title = attr(sub, "title") ? `$emit({t:"text",id:$uid(${jsString(fieldIdOf(field) + ".title")}),text:String(${S.localizedTitle(sub)} || "") + ":"});\n` : "";
@@ -649,6 +654,11 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
 `;
         }
         if (widget.name === "editable") return `{\n    const $node = ${expr};\n    if ($node) $emit($node);\n}\n`;
+        // a label whose condition fails beside another widget of its field (the link it stands in for) is not a second,
+        // empty line of the field
+        if (widget.name === "label" && sub.children.some((other) => other !== widget && !notWidget(other))) {
+            return guarded(widget, `$emit(${expr});\n`);
+        }
         return `$emit(${expr});\n`;
     };
     const emitSub = (field, sub) => {
@@ -1361,14 +1371,22 @@ try {
         ${bySet(titles)}const $headerFields = [];
         ${headerFields(node)}const $rows = [];
         ${selectOn}${hasViews ? `const $viewRows = [];
-        const $firstLink = ($cells) => {
+        // a card opens its first navigation link to another screen, else its first back to this one, as the client's
+        // row_link_target: a link to the screen shown is often a filter or a toggle
+        const $here = String(sri.getScreenUrlInstance().path || "").replace(/\\/+$/, "");
+        const $links = ($cells, $out) => {
             for (const $cell of $cells || []) {
-                if (Array.isArray($cell)) { const $in = $firstLink($cell); if ($in) return $in; }
+                if (Array.isArray($cell)) $links($cell, $out);
                 else if ($cell && typeof $cell === "object" && $cell.t === "link" && $cell.url && !$cell.disabled
                     && !$cell.writes && $cell.kind !== "hidden-form" && $cell.kind !== "hidden-form-link"
-                    && String($cell.method || "").toLowerCase() !== "post") return String($cell.url);
+                    && String($cell.method || "").toLowerCase() !== "post") $out.push(String($cell.url));
             }
-            return "";
+            return $out;
+        };
+        const $firstLink = ($cells) => {
+            const $all = $links($cells, []);
+            const $path = ($url) => $url.split(/[?#]/)[0];
+            return $all.find(($url) => $path($url) !== "." && $path($url).replace(/\\/+$/, "") !== $here) || $all[0] || "";
         };
         ` : ""}for (let $index = 0; $index < $info.count; $index++) {
             sri.startFormListRow($info, $index);

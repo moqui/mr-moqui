@@ -261,7 +261,7 @@ fn a_request_with_no_credentials_reads_what_anyone_may_view() {
         return;
     }
     let fixture = public_fixture("anonymous");
-    moqui_lib::env::set_property("git_lfs_token_key", "the key of the anonymous test".to_string());
+    let _lfs_key = super::tests::lfs_key("the key of the anonymous test");
     define(&fixture, "pub-code", "db");
     define(&fixture, "guarded", "db");
     let base = http_server(fixture.context.factory());
@@ -431,7 +431,7 @@ fn no_record_lets_a_request_with_no_credentials_push() {
 #[test]
 fn lfs_with_no_credentials_downloads_and_nothing_else() {
     let fixture = public_fixture("anonymous-lfs");
-    moqui_lib::env::set_property("git_lfs_token_key", "the key of the anonymous lfs test".to_string());
+    let _lfs_key = super::tests::lfs_key("the key of the anonymous lfs test");
     define(&fixture, "pub-code", "db");
     define(&fixture, "guarded", "db");
     let base = http_server(fixture.context.factory());
@@ -535,7 +535,7 @@ fn a_repository_is_reached_by_its_path_its_id_and_a_path_it_had() {
         return;
     }
     let fixture = public_fixture("paths");
-    moqui_lib::env::set_property("git_lfs_token_key", "the key of the paths test".to_string());
+    let _lfs_key = super::tests::lfs_key("the key of the paths test");
     define(&fixture, "p1", "db");
     define(&fixture, "p2", "db");
     let base = http_server(fixture.context.factory());

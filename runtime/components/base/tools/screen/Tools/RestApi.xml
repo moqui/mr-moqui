@@ -90,7 +90,7 @@ along with this software (see the LICENSE.md file). If not, see
                                 <link url="${documentUrl}" text="${resourceText}" url-type="plain" link-type="anchor" target-window="_blank"/>
                             </default-field></field>
                             <field name="description"><default-field title="Description"><display/></default-field></field>
-                            <field name="methods"><default-field title="Methods" align="right"><display/></default-field></field>
+                            <field name="methods" align="right"><default-field title="Methods"><display/></default-field></field>
                             <columns type="mobile">
                                 <column><field-ref name="resourceText"/><field-ref name="description"/></column>
                                 <column><field-ref name="methods"/></column>

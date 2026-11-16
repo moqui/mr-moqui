@@ -153,16 +153,26 @@ col x=77 w=76
   text Col3
 "
     );
-    // A 2-of-12 column at 154 is 25 wide, under the 40 minimum: the others stay a row, and it follows on its own line.
+    // A 2-of-12 column at 154 is 25 wide, under the 40 minimum: it takes a line of its own where it stands, between the
+    // others.
     let narrow = screen(
         r#"{"t":"row","id":"r","c":[
             {"t":"col","id":"a","md":"5","c":[{"t":"text","id":"a1","text":"A"}]},
             {"t":"col","id":"b","md":"2","c":[{"t":"text","id":"b1","text":"B"}]},
             {"t":"col","id":"c","md":"5","c":[{"t":"text","id":"c1","text":"C"}]}]}"#,
     );
+    assert_eq!(outline(&narrow, 154), "class=md canvas=154\ntext A\ntext B\ntext C\n");
+    // A label column before its value column (FindSupplier's "Current Search String") stays above the value, and the
+    // wide columns after a narrow one stay a row.
+    let label_first = screen(
+        r#"{"t":"row","id":"r","c":[
+            {"t":"col","id":"a","md":"2","c":[{"t":"text","id":"a1","text":"Label"}]},
+            {"t":"col","id":"b","md":"5","c":[{"t":"text","id":"b1","text":"Value"}]},
+            {"t":"col","id":"c","md":"5","c":[{"t":"text","id":"c1","text":"More"}]}]}"#,
+    );
     assert_eq!(
-        outline(&narrow, 154),
-        "class=md canvas=154\nrow\ncol x=0 w=63\n  text A\ncol x=64 w=63\n  text C\ntext B\n"
+        outline(&label_first, 154),
+        "class=md canvas=154\ntext Label\nrow\ncol x=0 w=63\n  text Value\ncol x=64 w=63\n  text More\n"
     );
 }
 
@@ -252,4 +262,20 @@ fn a_row_of_buttons_wraps() {
     let narrow = outline(&model, 120);
     assert_eq!(narrow.matches("inline ").count(), 2, "{narrow}");
     assert!(narrow.contains("inline app0 app1 app2 app3\ninline app4"), "{narrow}");
+}
+
+/// A form field whose widget is a link carries the field's title (`label`): it is a line of the form with that label in
+/// the label column and the link as its value, not one of the buttons under the form.
+#[test]
+fn a_fields_link_keeps_the_fields_label() {
+    let form = screen(
+        r#"{"t":"form","id":"F","name":"F","c":[
+            {"t":"link","id":"F.target","text":"Lathe 3","url":"/asset?id=L3","kind":"anchor","label":"Equipment or facility"},
+            {"t":"field","id":"F.by","name":"by","title":"Reported by","w":{"kind":"display","text":"Joe"}},
+            {"t":"link","id":"F.other","text":"Other","url":"/other"}]}"#,
+    );
+    assert_eq!(
+        outline(&form, 100),
+        "class=sm canvas=100\nform F\n  link Equipment or facility beside label=18 -> F.target\n  field Reported by beside label=18 value=3\n  buttons F.other\n"
+    );
 }

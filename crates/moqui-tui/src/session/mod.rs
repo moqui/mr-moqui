@@ -597,10 +597,15 @@ impl Session {
         }
     }
 
-    /// The screen's place, `Gallery ▸ Detail`, with the leaf's title in place of its name (`JobRuns ▸ Job Run Detail`,
-    /// not `JobRunDetail ▸ Job Run Detail`): the title line's breadcrumb before it is cut to the width.
+    /// The screen's place, `Gallery ▸ Detail`, each level by its menu title (`Bills of Materials ▸ Find BOM`, not
+    /// `BillsOfMaterials ▸ FindBom`): the title line's breadcrumb before it is cut to the width. A server that sends no
+    /// titles gives the names, with the leaf's title in place of its name.
     pub fn crumbs(&self) -> Vec<String> {
-        let mut names: Vec<String> = self.model().screen.path_list.iter().skip(1).cloned().collect();
+        let screen = &self.model().screen;
+        if !screen.path_titles.is_empty() && screen.path_titles.len() == screen.path_list.len() {
+            return screen.path_titles.iter().skip(1).cloned().collect();
+        }
+        let mut names: Vec<String> = screen.path_list.iter().skip(1).cloned().collect();
         if names.is_empty() {
             names = self
                 .path()
@@ -2330,6 +2335,41 @@ pub fn drawer_rows(menu: &[MenuItem]) -> Vec<DrawerRow> {
     let mut rows = Vec::new();
     level(menu, 0, &mut rows);
     rows
+}
+
+/// Which drawer rows are the screen shown (`•`): a row whose path is a level shown (`paths`), or above one. Where rows
+/// share a path, a saved find (`?formListFindId=`) beside its Find screen, the query decides too: a row whose query the
+/// shown screen's `parameters` hold is the one shown, and the rows without one are when none does. Home is never shown.
+pub fn drawer_active(rows: &[DrawerRow], paths: &[&str], parameters: &BTreeMap<String, String>) -> Vec<bool> {
+    let split = |url: &str| -> (String, String) {
+        let (path, query) = url.split_once('?').unwrap_or((url, ""));
+        (path.to_string(), query.to_string())
+    };
+    let parts: Vec<(String, String)> = rows.iter().map(|row| split(&row.url)).collect();
+    let holds = |query: &str| {
+        crate::nav::query_parameters(query)
+            .iter()
+            .all(|(name, value)| parameters.get(name) == Some(value))
+    };
+    rows.iter()
+        .zip(&parts)
+        .map(|(row, (path, query))| {
+            if row.url.is_empty() || (row.depth == 0 && path == "/apps") {
+                return false;
+            }
+            let on_path = paths
+                .iter()
+                .any(|shown| shown == path || shown.starts_with(&format!("{path}/")));
+            let mut sharing = parts.iter().filter(|(other, _)| other == path);
+            if !on_path || sharing.clone().count() < 2 {
+                return on_path;
+            }
+            if !query.is_empty() {
+                return holds(query);
+            }
+            !sharing.any(|(_, other)| !other.is_empty() && holds(other))
+        })
+        .collect()
 }
 
 fn app_root(path: &str) -> String {

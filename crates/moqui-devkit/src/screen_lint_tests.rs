@@ -375,3 +375,42 @@ fn javascript_in_a_screen_passes_and_template_bodies_compile() {
     assert!(report.files[0].ftl.is_empty());
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// The screen parts under a `template` directory (a section-include's target) and a screen-extend's widgets are
+/// scanned: an attribute the XSD does not define there is listed too, a template lists no anchors of its own, and an
+/// XML file there that is not a screen, or does not parse, is passed over.
+#[test]
+fn templates_and_screen_extends_are_scanned() {
+    let dir = std::env::temp_dir().join(format!("moqui-screen-lint-{}-templates", std::process::id()));
+    std::fs::create_dir_all(dir.join("template")).unwrap();
+    std::fs::create_dir_all(dir.join("screen-extend/other/screen")).unwrap();
+    std::fs::write(
+        dir.join("template/Parts.xml"),
+        r#"<screen><widgets><section name="Rows"><widgets>
+    <container><form-list name="Rows" list="rows" condition="rows"><field name="a"><default-field><display/></default-field></field></form-list></container>
+</widgets></section></widgets></screen>"#,
+    )
+    .unwrap();
+    std::fs::write(dir.join("template/Data.xml"), "<entity-facade-xml/>").unwrap();
+    std::fs::write(dir.join("template/Broken.xml"), "<screen><widgets>").unwrap();
+    std::fs::write(
+        dir.join("screen-extend/other/screen/Home.xml"),
+        r#"<screen-extend><widgets-extend name="Main"><container><display text="x" align="right"/></container></widgets-extend></screen-extend>"#,
+    )
+    .unwrap();
+    let report = lint_screens(&[dir.clone()]).unwrap();
+    let of = |suffix: &str| report.files.iter().find(|file| file.path.ends_with(suffix));
+    let parts = of("template/Parts.xml").expect("the template was not scanned");
+    assert_eq!(
+        parts.unknown_attributes,
+        [(2, "<form-list> has no attribute condition".to_string())]
+    );
+    assert!(parts.unnamed_anchors.is_empty(), "{:?}", parts.unnamed_anchors);
+    assert!(of("template/Data.xml").is_none() && of("template/Broken.xml").is_none());
+    let extend = of("screen-extend/other/screen/Home.xml").expect("the screen-extend was not scanned");
+    assert_eq!(
+        extend.unknown_attributes,
+        [(1, "<display> has no attribute align".to_string())]
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

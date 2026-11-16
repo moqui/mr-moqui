@@ -409,6 +409,26 @@ pub enum FormLine {
     /// A `field-group` title.
     Group(String),
     Text(LaidText),
+    /// A form field whose widget is a link: its label as a field's, the link as the value.
+    Link(LaidLink),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LaidLink {
+    pub title: String,
+    pub label_width: usize,
+    pub mode: LabelMode,
+    pub link: Inline,
+}
+
+impl LaidLink {
+    /// Rows: the label's above, and the link's.
+    pub fn height(&self) -> usize {
+        match self.mode {
+            LabelMode::Above => 2,
+            LabelMode::Beside => 1,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -659,6 +679,7 @@ fn form_line_height(line: &FormLine) -> usize {
         FormLine::Cells(cells) => cells.iter().map(|(_, field)| field.height()).max().unwrap_or(1),
         FormLine::Buttons(_) | FormLine::Group(_) => 1,
         FormLine::Text(text) => text.lines.len(),
+        FormLine::Link(link) => link.height(),
     }
 }
 
@@ -1300,38 +1321,47 @@ fn span_lines(spans: &[Option<u16>]) -> Vec<std::ops::Range<usize>> {
 /// A column and its width.
 type Sized<'a> = (&'a Node, u16);
 
-/// One line of columns. Below md they stack. A column narrower than 40 is not squeezed: the others stay a row, and it
-/// follows on a line of its own at full width.
+/// One line of columns. Below md they stack. A column narrower than 40 is not squeezed: it takes a line of its own at
+/// full width, where it stands in the source, and the wide columns on each side of it stay rows (a label column before
+/// its value column stays above it).
 fn place_line(spans: &[Option<u16>], columns: &[&Node], ctx: &Ctx<'_>, width: u16) -> Vec<Piece> {
     let body = |node: &Node, w: u16| place_nodes(node.children(), ctx, w);
     if ctx.class.stacks_boxes() || columns.len() == 1 {
         return columns.iter().flat_map(|node| body(node, width)).collect();
     }
     let widths = span_widths(spans, width);
-    let (wide, narrow): (Vec<Sized<'_>>, Vec<Sized<'_>>) =
-        columns.iter().copied().zip(widths).partition(|(_, w)| *w >= BOX_MIN);
     let mut pieces = Vec::new();
-    if let [(node, _)] = wide.as_slice() {
-        pieces.extend(body(node, width));
-    } else if !wide.is_empty() {
-        let mut x = 0u16;
-        let row = wide
-            .into_iter()
-            .map(|(node, w)| {
-                let placed = Placed {
-                    x,
-                    w,
-                    piece: Piece::Stack(body(node, w)),
-                };
-                x = x.saturating_add(w).saturating_add(1);
-                placed
-            })
-            .collect();
-        pieces.push(Piece::Row(row));
+    let mut wide: Vec<Sized<'_>> = Vec::new();
+    let flush = |wide: &mut Vec<Sized<'_>>, pieces: &mut Vec<Piece>| {
+        if let [(node, _)] = wide.as_slice() {
+            pieces.extend(body(node, width));
+        } else if !wide.is_empty() {
+            let mut x = 0u16;
+            let row = wide
+                .iter()
+                .map(|(node, w)| {
+                    let placed = Placed {
+                        x,
+                        w: *w,
+                        piece: Piece::Stack(body(node, *w)),
+                    };
+                    x = x.saturating_add(*w).saturating_add(1);
+                    placed
+                })
+                .collect();
+            pieces.push(Piece::Row(row));
+        }
+        wide.clear();
+    };
+    for (node, w) in columns.iter().copied().zip(widths) {
+        if w >= BOX_MIN {
+            wide.push((node, w));
+        } else {
+            flush(&mut wide, &mut pieces);
+            pieces.extend(body(node, width));
+        }
     }
-    for (node, _) in narrow {
-        pieces.extend(body(node, width));
-    }
+    flush(&mut wide, &mut pieces);
     pieces
 }
 
@@ -1496,6 +1526,11 @@ fn form_lines(nodes: &[Node], ctx: &Ctx<'_>, width: u16) -> Vec<FormLine> {
                 titles.push(if *required { format!("* {title}") } else { title.clone() });
             }
         }
+        if let Node::Link { label, .. } = node {
+            if !label.is_empty() {
+                titles.push(label.clone());
+            }
+        }
     });
     let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
     let label_width = label_column_in(&refs, ctx.class, width);
@@ -1575,6 +1610,17 @@ fn collect_form(
             }
             Node::Text { id, text, style } => {
                 lines.push(FormLine::Text(text_piece(id, text, style, width, ctx.in_dialog)));
+            }
+            // a field's link is the field's value, under its label; another goes with the buttons
+            Node::Link { label, .. } if !label.is_empty() => {
+                if let Some(link) = inline_of(node) {
+                    lines.push(FormLine::Link(LaidLink {
+                        title: label.clone(),
+                        label_width,
+                        mode: ctx.mode,
+                        link,
+                    }));
+                }
             }
             Node::Link { .. } | Node::Dialog { .. } => buttons.extend(inline_of(node)),
             other => collect_form(other.children(), ctx, width, label_width, lines, buttons),
@@ -1911,7 +1957,8 @@ pub fn break_width(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
-/// Words to lines of at most `width` columns. A word longer than a line is cut.
+/// Words to lines of at most `width` columns. A word longer than a line (a URL, a path) is broken across lines at the
+/// column, so none of it is lost.
 pub fn wrap(text: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return vec![String::new()];
@@ -1920,15 +1967,20 @@ pub fn wrap(text: &str, width: usize) -> Vec<String> {
     let mut line = String::new();
     for word in text.split_whitespace() {
         let word_w = display_width(word);
-        let line_w = display_width(&line);
-        if line.is_empty() {
-            line = truncate_width(word, width);
-        } else if line_w + 1 + word_w <= width {
+        if !line.is_empty() && display_width(&line) + 1 + word_w <= width {
             line.push(' ');
             line.push_str(word);
-        } else {
+            continue;
+        }
+        if !line.is_empty() {
             lines.push(std::mem::take(&mut line));
-            line = truncate_width(word, width);
+        }
+        if word_w <= width {
+            line = word.to_string();
+        } else {
+            let mut parts = break_width(word, width);
+            line = parts.pop().unwrap_or_default();
+            lines.extend(parts);
         }
     }
     if !line.is_empty() || lines.is_empty() {
@@ -1997,6 +2049,13 @@ fn write_piece(out: &mut String, piece: &Piece, indent: &str) {
                     }
                     FormLine::Group(title) => out.push_str(&format!("{nested}group {title}\n")),
                     FormLine::Text(text) => out.push_str(&format!("{nested}text {}\n", text.lines.join(" / "))),
+                    FormLine::Link(link) => out.push_str(&format!(
+                        "{nested}link {} {} label={} -> {}\n",
+                        link.title,
+                        link.mode.name(),
+                        link.label_width,
+                        link.link.id()
+                    )),
                 }
             }
         }
@@ -2049,10 +2108,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn words_wrap_and_a_long_word_is_cut() {
+    fn words_wrap_and_a_long_word_is_broken_across_lines() {
         assert_eq!(wrap("one two three", 7), ["one two", "three"]);
-        assert_eq!(wrap("abcdefghij", 4), ["abc…"]);
+        assert_eq!(wrap("abcdefghij", 4), ["abcd", "efgh", "ij"]);
         assert_eq!(wrap("", 4), [""]);
+        // a clone URL keeps its tail, and the words around it wrap as before
+        assert_eq!(
+            wrap("Clone ssh://john.doe@127.0.0.1:12222/DRIVE_BOSS_ here", 20),
+            ["Clone", "ssh://john.doe@127.0", ".0.1:12222/DRIVE_BOS", "S_ here"]
+        );
     }
 
     #[test]

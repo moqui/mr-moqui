@@ -290,7 +290,7 @@ along with this software (see the LICENSE.md file). If not, see
             <label text="Not available: ${readError || 'no service named'}" type="p" style="text-negative"/>
             <link url="../List" text="Back to the services" link-type="anchor"/>
         </widgets><fail-widgets>
-            <container name="ServiceHeader">
+            <container id="ServiceHeader">
                 <label text="${definition.verb || ''}#${definition.noun || ''}" type="h5"/>
                 <label text="${serviceName}" type="p" style="m-muted"/>
                 <label text="${headerText}" type="p"/>
@@ -365,7 +365,7 @@ along with this software (see the LICENSE.md file). If not, see
                         </form-list>
                     </widgets></section>
                     <section name="TryLogSection" condition="tryLog"><widgets>
-                        <container-box name="TryLog" initial="closed"><box-header title="Log ${(tryResult.log || []).length}${tryResult.moreLog ? ' (and ' + tryResult.moreLog + ' more)' : ''}"/><box-body>
+                        <container-box id="TryLog" initial="closed"><box-header title="Log ${(tryResult.log || []).length}${tryResult.moreLog ? ' (and ' + tryResult.moreLog + ' more)' : ''}"/><box-body>
                             <label text="${tryLog}" type="pre" encode="true"/>
                         </box-body></container-box>
                     </widgets></section>
@@ -381,7 +381,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <field name="message"><default-field title="Message"><display/></default-field></field>
                     </form-list>
                 </widgets></section>
-                <container-box name="Snippet" initial="closed"><box-header title="Snippet"/><box-body>
+                <container-box id="Snippet" initial="closed"><box-header title="Snippet"/><box-body>
                     <form-single name="SnippetForm" transition="runSnippet" map="snippetValues" body-parameters="snippetBody">
                         <field name="artifact" from="'service:' + serviceName"><default-field><hidden/></default-field></field>
                         <field name="snippetLanguage"><default-field title="Language"><drop-down allow-empty="false">

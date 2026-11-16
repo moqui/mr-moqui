@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
-    <parameter name="title" default-value="Dashboard report"/>
+    <parameter name="title"/>
     <parameter name="reportLink"/><parameter name="reportImageCid"/>
-    <actions><script><![CDATA[
+    <actions>
+        <set field="title" from="title" default-value="Dashboard report"/>
+        <script><![CDATA[
         if (reportLink && String(reportLink).startsWith('/') && typeof webHostName !== 'undefined' && webHostName) {
             reportLink = 'https://' + String(webHostName).replace(/^https?:\/\//,'').replace(/\/$/,'') + reportLink
         }

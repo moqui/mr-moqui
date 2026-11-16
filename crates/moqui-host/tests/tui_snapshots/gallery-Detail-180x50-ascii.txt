@@ -1,4 +1,4 @@
- gallery > Detail                                                                                                                                               john.doe  Tue 14:32
+ Gallery > Detail                                                                                                                                               john.doe  Tue 14:32
 -------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------
  v Gallery               | +- Archetype 3.3 Detail -------------------------------------------------------------------------------------------------------------------------------+
      Landing             | # One record with its parts and actions: a title row with the identifier, the status flow, one primary action and a menu of secondary actions; the     |
