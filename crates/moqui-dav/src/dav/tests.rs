@@ -609,6 +609,46 @@ fn head_answers_without_reading_the_file_and_get_streams_it() {
     );
 }
 
+/// SEC-FIL-03: a user's file is sent as the screen download sends one: never sniffed and sandboxed, and an HTML file
+/// (which could run script on the application's origin, where the same browser's session cookie applies) an attachment.
+#[test]
+fn a_users_html_file_is_an_attachment_and_every_file_is_sandboxed() {
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    user(&facade, "alice");
+    let (_, password) = app_password("alice", "Laptop");
+    let alice = Client {
+        factory: context.factory(),
+        authorization: Some(basic("alice", &password)),
+    };
+    let page = "/dav/files/alice/My%20files/page.html";
+    let put = alice.send(
+        "PUT",
+        page,
+        &[("Content-Type", "text/html")],
+        "<script>alert(1)</script>",
+    );
+    assert_eq!(put.status, 201, "{put:?}");
+    let got = alice.send("GET", page, &[], "");
+    assert_eq!(got.status, 200, "{got:?}");
+    assert!(
+        header(&got, "Content-Disposition").is_some_and(|value| value.starts_with("attachment")),
+        "{got:?}"
+    );
+    assert_eq!(header(&got, "X-Content-Type-Options"), Some("nosniff"));
+    assert_eq!(header(&got, "Content-Security-Policy"), Some("sandbox"));
+    let text = "/dav/files/alice/My%20files/note.txt";
+    assert_eq!(alice.send("PUT", text, &[], "a note").status, 201);
+    let got = alice.send("GET", text, &[], "");
+    assert_eq!(
+        header(&got, "Content-Disposition"),
+        None,
+        "a passive file is shown: {got:?}"
+    );
+    assert_eq!(header(&got, "X-Content-Type-Options"), Some("nosniff"));
+    assert_eq!(header(&got, "Content-Security-Policy"), Some("sandbox"));
+}
+
 /// The SFTP view of the drives (`files::tree`), as the SSH server's `sftp-drives` serves it: a write is an upload that
 /// makes a new version, and a user reaches only what the drive lets them, reading a view-only drive and writing none
 /// of it, and not seeing another user's drive at all (HL-010).

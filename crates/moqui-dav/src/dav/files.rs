@@ -456,6 +456,8 @@ fn get(context: &Context<'_>, drive: &Drive, path: &str, head: bool) -> DavRespo
     } else {
         entry.content_type.clone()
     };
+    // a user's file: never sniffed, sandboxed, and an HTML or SVG file an attachment (SEC-FIL-03)
+    let guard = moqui_core::web::user_file_guard_headers(&entry.name, &content_type);
     let mut response = DavResponse {
         status: 200,
         headers: vec![
@@ -466,6 +468,7 @@ fn get(context: &Context<'_>, drive: &Drive, path: &str, head: bool) -> DavRespo
         body: Vec::new(),
         stream: None,
     };
+    response.headers.extend(guard);
     if let Some(modified) = entry.modified {
         response.headers.push(("Last-Modified".into(), http_date(modified)));
     }

@@ -1546,6 +1546,24 @@ pub fn user_file_inline(content_type: &str, asked_inline: bool) -> (bool, bool) 
     (inline, inline && !base.eq_ignore_ascii_case("application/pdf"))
 }
 
+/// The headers a user's file sent by a transport that sets its own type and caching (the DAV server) adds to them, by
+/// the rule of [`user_file_inline`] and [`file_headers`]: never sniffed (`nosniff`), sandboxed
+/// (`Content-Security-Policy: sandbox`) unless it is a PDF shown inline, and an attachment named `file_name` when its
+/// type can run script, so an HTML or SVG file another user wrote does not run on the application's origin
+/// (SEC-FIL-03).
+#[must_use]
+pub fn user_file_guard_headers(file_name: &str, content_type: &str) -> Vec<(String, String)> {
+    let (inline, sandboxed) = user_file_inline(content_type, true);
+    let mut headers = vec![("X-Content-Type-Options".to_string(), "nosniff".to_string())];
+    if !inline {
+        headers.push(("Content-Disposition".to_string(), attachment_disposition(file_name)));
+    }
+    if sandboxed || !inline {
+        headers.push(("Content-Security-Policy".to_string(), "sandbox".to_string()));
+    }
+    headers
+}
+
 /// Send `opened` as this request's response, a file named `file_name` as `disposition` says, streamed a window at a
 /// time with `Range`, `ETag` and `If-Range` as `sendResourceResponse` sends a resource: for content a service reads
 /// from its own storage (a CI artifact's content blob, `send#RunArtifact`) with its own access check, so it is not

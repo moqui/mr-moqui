@@ -545,16 +545,17 @@ fn object(context: &Context<'_>, adapter: &Adapter, method: &str, collection_id:
                 return DavResponse::status(304).with_header("ETag", etag);
             }
             let data = text_of(&object, "data").into_bytes();
+            let content_type = content_type(adapter.kind, &text_of(&object, "componentType"));
+            let mut headers = vec![
+                ("Content-Type".into(), content_type.clone()),
+                ("ETag".into(), etag),
+                ("Content-Length".into(), data.len().to_string()),
+            ];
+            // as a drive's file: never sniffed, and sandboxed (SEC-FIL-03)
+            headers.extend(moqui_core::web::user_file_guard_headers(name, &content_type));
             DavResponse {
                 status: 200,
-                headers: vec![
-                    (
-                        "Content-Type".into(),
-                        content_type(adapter.kind, &text_of(&object, "componentType")),
-                    ),
-                    ("ETag".into(), etag),
-                    ("Content-Length".into(), data.len().to_string()),
-                ],
+                headers,
                 body: if method == "HEAD" { Vec::new() } else { data },
                 stream: None,
             }
