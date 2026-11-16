@@ -188,6 +188,7 @@ activities. Dialogs, templates and non-XML surfaces follow the route tables.
 | --- | --- |
 | Inbox/Mail QVue: accounts/folders/labels/views, threads/search/saved searches, trust/block/unsubscribe/invite, record/file actions | COM-01/03; no BOSS-only records assumed |
 | Compose QVue: recipient chips, identities/text blocks, rich body, attachment upload/Files picker, draft/schedule/cancel/send | COM-04; chunked upload and pending send are separate states |
+| [UploadTransitions.xml](../runtime/components/base/basic-comms/template/UploadTransitions.xml) and [FilePickerTransitions.xml](../runtime/components/base/basic-comms/template/FilePickerTransitions.xml) | COM-04/08/18; upload status/chunks and provider folder/search/selection in the current account/room; interrupted and refused helper requests |
 | MessageDetail body/attachments/resend/downloadEml and Mail/Compose TUI helpers | COM-03/04/18; actual bytes and truthful terminal content/edit limits |
 | MailAccounts wizard, sign-in dialog/status, sync progress, Account server/options/folder/member forms, Removed list | COM-02/06; hosted delivery versus remote sync distinctions |
 | Identities, Rules QVue/test/reorder/run and RulesTui, OutOfOffice and TextBlocks | COM-05; stored user policy and delayed job behavior |
@@ -195,7 +196,8 @@ activities. Dialogs, templates and non-XML surfaces follow the route tables.
 | [ChatPanel.qvue](../runtime/components/base/basic-comms/screen/BasicComms/Panel/ChatPanel.qvue), served by Panel/Chat: unread/mention ordering, New message people picker, Mark all read, compact room, Back/Open in Chat | COM-07; inspect tray and quick-create mounts, reopen persistence and push refresh without losing the open room |
 | Devices QVue/TUI, recent-auth dialog, key backup/settings, ChatApps/XMPP app password | COM-09/10; no key/secret evidence leaks |
 | Chat preferences, DND hours/presets/default application and unread notifications | COM-10; date-sensitive job and per-room settings |
-| Calls root signaling transitions and Call QVue/TUI, ring bar, hold/transfer/add/merge, captions and consent | COM-11/12/16; actual supported controls/capabilities only |
+| Calls root signaling transitions and Call QVue/TUI, ring bar, encryption/device notices, hold/transfer/add/merge, captions and consent | COM-11/12/16; actual supported controls/capabilities only |
+| [DialerTransitions.xml](../runtime/components/base/basic-comms/template/DialerTransitions.xml) shared search/data/dial | COM-12/18; full page and tray act on the intended identity/number with the same refusal boundary |
 | Settings/Calls browser-local microphone/camera/speaker, Test/Cancel/Stop, ringtone and startup choices | COM-11; these settings belong to this browser, unlike server-side phone routing and SIP devices |
 | Dialer and Panel/Dialer, Panel/Chat, call-history filters/links | COM-07/12; shared shell owns mounting/focus, this plan owns content/actions |
 | Guest public page/lobby/admission, Phone/PhoneDevices, CallHandling rules/lists | COM-13/14; System owns trunks/numbers/fraud/emergency settings |
@@ -350,6 +352,12 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
 
 ### COM-11 — Answer and manage a direct media call
 
+- **Encrypted-call branch:** History → New call → End-to-end encrypted → select local participants → answer in
+  their browsers → inspect encryption/unverified-device indicators → join with the selected third participant → leave
+  and verify remaining media after key rotation → callback from History. Compare the verified-only device setting
+  from COM-09 and an unsupported browser/missing-key failure. Calls must not downgrade to plain media; recording,
+  captions, phones and anonymous guests are unavailable for this call type. Observe actual received media, not only
+  the encrypted badge or rendered call controls.
 - **Device-settings branch:** first open Settings/Calls, select microphone/camera/speaker and startup choices,
   start/cancel/stop the device test, then reload and compare a second browser. Choices persist only in their browser;
   denied permission, an unplugged device, leaving during the permission prompt and late media completion release
@@ -428,6 +436,10 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
   preserve accurate state and access boundaries.
 - **Screens/modes:** Call recording/caption controls, Recordings/RecordingsTui; actual media bytes, browser
   success and terminal truthful fallback.
+- **Playback branch:** In Recordings, switch between periods created by pause/resume, seek and synchronize audio,
+  camera and screen tracks; inspect a gap/missing segment and each offered segment download. Changing the selected
+  recording must stop the previous media. Repeat read/delete as the recorder, call host and unrelated participant:
+  playback rights and recorder-only deletion are distinct. Include a guest consent notice via COM-13 where enabled.
 
 ### COM-17 — Recover host-only queued work and conflicts
 
@@ -537,8 +549,8 @@ No execution batches have been started.
 - Conditional desktop/media/provider branches stay visible in the ledger. Unsupported terminal operations must
   explain delegation, not pretend to complete in a rendered placeholder.
 
-- This is a planning record only. No application/API change, test run, runtime walk, fixture creation or commit is
-  part of the document-writing task. Review/refinement execution is separate.
+- Preparing or auditing these plans changes documentation only. Application/API changes, test runs, runtime walks
+  and fixture creation belong to separate review/refinement execution.
 - Current code, mounts and grants take precedence over older plans. Historical outcomes, permissions and exceptions
   are not inherited. Preserve routes, stored preferences and public contracts in any later refinement.
 - Finish a review with explicit branch outcomes and a candid unresolved ledger; missing prerequisites do not become

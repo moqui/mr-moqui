@@ -10,7 +10,9 @@ Design, status and review documents for MR Moqui. User guides for built features
 **UI review plans**
 
 Full screen inventories, user workflows, verification maps and running records for the framework apps, without
-addons. The [shared review protocol](ui-review-shared-gallery.md#common-review-protocol) applies to the whole set.
+addons, including shared helpers and generated email/report outputs. All review activities start pending; source
+audits and historical tests do not complete a walk. The
+[shared review protocol](ui-review-shared-gallery.md#common-review-protocol) applies to the whole set.
 
 - [Shared shell and Gallery](ui-review-shared-gallery.md): authentication, navigation, preferences, shared controls,
   Assist, tray, terminal and the screen archetypes.

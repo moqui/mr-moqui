@@ -271,9 +271,11 @@ activities. Dialogs, templates and non-XML surfaces follow the route tables.
 | Supporting surface | Activity / inspection |
 | --- | --- |
 | Home identity/counters, Needs attention, resource meters and report embed | SYS-01/09; monitoring owns chart diagnostics |
+| BasicComms [System Home extension](../runtime/components/base/basic-comms/screen-extend/tools/screen/System/Home.xml) | SYS-01/20; Voice/Chat Bridges entries supplement the base Home catalog when basic-comms is loaded; AI-16–18 own their destinations |
 | UserAccountDetail factors, preferences, memberships, audit, tarpit and login-as controls; VerifyEmail/Sms/Totp children | SYS-02/04/15; factors verify the selected user/context, not the lifecycle owner's |
 | GroupDetail registered grants versus raw permission/authz/tarpit forms; Capabilities preview/apply; RowRules binding | SYS-03; evidence in AccessReview and AuditChanges |
 | IdentityProviderDetail OIDC/OAuth/SAML configuration, mapping, test/enable; policy preview/confirm and session revoke | SYS-04; local provider required for success |
+| [UserChoiceTransitions.xml](../runtime/components/base/tools/template/UserChoiceTransitions.xml): getUserList | SYS-03/10/20; selected users outside the choice page retain their identity/label; consuming administration and report forms keep their own access checks |
 | Conf View/Edit QVue, EditTui, validation/diff, Changes pending/restart; Logging include of Monitor/Settings | SYS-06; MON-10 owns diagnostic settings behavior |
 | Components preview/refusals, staged deploy/load/data/update/remove/restart controls | SYS-07; source/edit fixture separate from linked components |
 | Instance environment/volume/link forms and lifecycle controls | SYS-08; inspect the implemented hosting backend, not an unbuilt fleet design |
@@ -346,6 +348,9 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
   unavailable provider preserve a usable administration path.
 - **Screens/modes:** SignInPolicy, IdentityProviders/Detail, Sessions and account verification handoff; SH-01
   authentication, no external provider calls.
+- **New-device handoff:** Use the captured AccountSignInEmail owned by SH-01 to enter the eligible session view,
+  compare its bounded client/network summary, revoke that session and verify its next request. A notice is neither
+  proof of unauthorized access nor evidence that revocation already occurred; preserve the other session.
 
 ### SYS-05 — Change a registered setting and localize its consumer
 
@@ -437,6 +442,9 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
   without subscribing everyone.
 - **Screens/modes:** Topics/TopicDetail and account topic controls; shared notification UI owns
   focus/navigation, TUI/Standard form branch.
+- **Output handoff:** SH-12 owns the NotificationEmail/NotificationDigestEmail rendering and return links. Record
+  the subscription/channel/digest settings that produced each captured message here, without counting a configured
+  topic or queued event as delivered mail.
 
 ### SYS-12 — Inspect an import and retry only failed rows
 
@@ -637,8 +645,8 @@ No execution batches have been started.
 - System import lists inspect registered runs; staging belongs to the registered consumer or a disposable fixture.
   Do not invent a System import wizard, backup restore screen or future fleet-management workflow.
 
-- This is a planning record only. No application/API change, test run, runtime walk, fixture creation or commit is
-  part of the document-writing task. Review/refinement execution is separate.
+- Preparing or auditing these plans changes documentation only. Application/API changes, test runs, runtime walks
+  and fixture creation belong to separate review/refinement execution.
 - Current code, mounts and grants take precedence over older plans. Historical outcomes, permissions and exceptions
   are not inherited. Preserve routes, stored preferences and public contracts in any later refinement.
 - Finish a review with explicit branch outcomes and a candid unresolved ledger; missing prerequisites do not become

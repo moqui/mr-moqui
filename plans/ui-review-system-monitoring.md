@@ -43,6 +43,9 @@ area's fixtures, dependencies and judgment criteria.
   from a view-only System grant and specialized holders of `MONITOR_REPLAY`, `MONITOR_INCIDENT`, `MONITOR_RECOVER`,
   `MONITOR_RECOVER_ADMIN`, `MONITOR_SETTINGS`, `MONITOR_INGEST` and `MONITOR_PRIVATE_NETWORK` as needed. Keep the
   missing-permission counterpart otherwise identical. The policy administrator and action approver are distinct.
+  Both recovery operators also need `MONITOR_INCIDENT` to read Recovery/IncidentDetail; granting
+  `MONITOR_RECOVER` or `MONITOR_RECOVER_ADMIN` alone does not make their starting page available. Record that
+  read prerequisite separately from the action permission when pairing successful and refused operations.
 - Seed local telemetry with related logs/spans/errors, a multi-service trace, resource metrics, one browser session,
   a synthetic business operation, two releases and a regression. Keep empty/disabled telemetry available as a separate
   startup/configuration case. Record source IDs, event times and trace links, not assumed “recent” demo dates.
@@ -228,6 +231,10 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
   canceled action retain clear state without revealing tokens.
 - **Screens/modes:** Sources and relevant log/metric destination; supporting local HTTP injection is fixture
   setup, visible source lifecycle is the reviewed activity.
+- **Partition branch:** Inspect the Move telemetry tables into day partitions confirmation, its table/row counts,
+  retained-old-table message and independent failures. Successful execution needs a separate disposable PostgreSQL
+  fixture with an eligible unpartitioned table; otherwise record this as supporting inspection with execution
+  blocked. Recheck the same telemetry query afterward, and keep the no-table-needed outcome distinct from a move.
 
 ### MON-08 — Run a synthetic check and follow its result
 
@@ -285,7 +292,9 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
 ### MON-12 — Reconcile alternate mounts and restricted diagnostics
 
 - **Actor/start:** Specialized holders, ordinary Monitor reader and outsider with earlier known-good records.
-- **Objective/steps:** Open Llm/Traces → AgentTraces → TraceDetail → AI run; open Conf/Logging → settings →
+- **Objective/steps:** Open Llm/Traces (the AgentTraces include) → filter provider/model/agent/errors/time →
+  TraceDetail → return → Usage and cost or AI dashboard; correlate the fixture's AI run where its links/IDs allow.
+  Open Conf/Logging → settings →
   return; inspect remaining helper routes/output bytes and selected denial counterparts.
 - **Expected:** Wrappers retain the same identity/range/permissions as their owned diagnostics; no access comes
   solely from hiding a tab or a supplied mount map.
@@ -293,6 +302,9 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
   explicitly unresolved rather than inferred passing coverage.
 - **Screens/modes:** AgentTraces, aliases, helpers and every remaining inventory entry; cross-plan handoff with
   AI-03 and SYS-06.
+- **Sampling branch:** Compare calls/tokens and the slowest-call duration with the known fixture spans; inspect
+  the newest-call/trace limits and sampling/loss notices. These summaries cover the displayed traces, not a full
+  billing ledger, and contain no prompts/replies. Missing telemetry is not proof that no provider call occurred.
 
 ## 5. Existing checks and future verification
 
@@ -369,8 +381,8 @@ No execution batches have been started.
 - Recovery remains bounded to local disposable targets. Unavailable actual replay or backend behavior is reported
   separately from a successful page render.
 
-- This is a planning record only. No application/API change, test run, runtime walk, fixture creation or commit is
-  part of the document-writing task. Review/refinement execution is separate.
+- Preparing or auditing these plans changes documentation only. Application/API changes, test runs, runtime walks
+  and fixture creation belong to separate review/refinement execution.
 - Current code, mounts and grants take precedence over older plans. Historical outcomes, permissions and exceptions
   are not inherited. Preserve routes, stored preferences and public contracts in any later refinement.
 - Finish a review with explicit branch outcomes and a candid unresolved ledger; missing prerequisites do not become

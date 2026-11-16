@@ -48,11 +48,14 @@ area's fixtures, dependencies and judgment criteria.
 | `review.report.distributor` | Explicit group-delivery/share authority as required by `REPORT_DELIVERY_ADMIN` / `REPORT_SHARE_ADMIN`; do not assume DASHBOARDS_APP alone grants them |
 | `review.admin` | Setup, unrestricted dataset administration, local Git/contact configuration; not the restricted-reader counterpart |
 
-Prepare a copied shipped dashboard, owned library panel, framework data document with several groups/units, a
-multi-page dataset, two shared Calc documents, equivalent and non-equivalent audiences, a failed and an uncertain
+Prepare a copied shipped dashboard, owned library panel, registered framework DataDocument/data feed with several
+groups/units, a multi-page dataset, two shared Calc documents, equivalent and non-equivalent audiences, a failed and an uncertain
 delivery, and a playlist with an inaccessible item. Names/IDs belong to this review only. Use local mail/webhook
 capture and a disposable Git remote; PDF requires local Chromium. Record scheduler state and restore schedules,
 shares, alerts and server resource locations. `REPORT_SAVE_LOCATION` is separate from delivery permission.
+Include a two-dashboard report definition and separate recipient-checked and owner-mode schedules. A later
+`ownReportFile` download is a fresh render under the recipient's current access; retain captured sent bytes to
+assess the original delivery. It is not a retained copy of the attachment.
 
 ### Area-specific criteria
 
@@ -80,7 +83,7 @@ Schedule/alert tests consume distinct synthetic occurrences so a repeated delive
 
 ## 3. Screen and surface inventory
 
-This inventory accounts for **27 XML definitions** assigned to this file; screen containers and helper
+This inventory accounts for **29 XML definitions** assigned to this file; screen containers and helper
 definitions are included. Routes below are Material paths unless labelled otherwise; app routes have Standard
 `/apps` counterparts. A file's physical presence does not prove access or a supported interaction in every mode.
 Each row maps to §4; helper inspection does not replace its parent workflow. Counts describe definitions, not user
@@ -123,6 +126,16 @@ activities. Dialogs, templates and non-XML surfaces follow the route tables.
 | --- | --- | --- | --- |
 | `/qapps/dashboards` | [Dashboards.xml](../runtime/components/base/tools/screen/Dashboards.xml) | Default: `Home`. | DASH-01, DASH-13 |
 
+### Framework report email outputs
+
+| Output | XML source | Activity / inspection |
+| --- | --- | --- |
+| Scheduled report message | [DashboardReportEmail.xml](../runtime/components/base/framework/screen/DashboardReportEmail.xml) | DASH-09; HTML/text, report link, optional CID image and captured attachment |
+| Business alert message | [ReportAlertEmail.xml](../runtime/components/base/framework/screen/ReportAlertEmail.xml) | DASH-10; per-recipient state/labels, no-data/error wording and alert link |
+
+[ReportEmailData.xml](../runtime/components/base/framework/data/ReportEmailData.xml) registers these templates.
+They have no independent navigation route; read their actual output after the owning delivery activity.
+
 ### Embedded surfaces, dialogs, outputs and reconciliation
 
 | Surface | Activity / inspection |
@@ -133,6 +146,7 @@ activities. Dialogs, templates and non-XML surfaces follow the route tables.
 | Dataset fields/conditions, admission/retire/index rebuild and permitted record outputs | DASH-04; current registered datasets rather than older all-dataset assumptions |
 | CalcGrid QVue: document/source/profile chooser, sheets/formula bar/formatting, presence, undo/discard, share, panel, Excel export | DASH-07–08; Tools Grid source behavior belongs to TOOL-02/03 |
 | Schedule audience preview, delivery recipient results/retry/reconcile and ownReportFile | DASH-09; inspect final captured attachment bytes and per-recipient access |
+| Definition's report composer and Reports' owner-mode schedule form | DASH-09; multiple dashboard references/ranges/variables, output layout, email/file destination and distinction from Schedules' recipient-checked delivery |
 | Alert basis/audience/contact/silence/mute forms, shared references, copy/pause/test/evaluate | DASH-10; technical contact-point versus business-audience variants |
 | Playlists sharing, normal playback and WallDisplay public-style page | DASH-11; inaccessible items keep their original selection identity |
 | Annotations, GitSync and local definition folder | DASH-12; writes stay in disposable resource/repository locations |
@@ -252,6 +266,13 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
 
 ### DASH-09 — Schedule a report and resolve individual delivery outcomes
 
+- **Composition and owner-mode branch:** Reports → Compose a multi-dashboard report → Definition with type
+  `report` → add two dashboard references with distinct variables/ranges → set layout/paper/orientation/appendix →
+  save/reopen → preview each offered output. Inspect CSV/ZIP constituents and PDF/PNG/XLSX where supported; record
+  unavailable renderers. Separately create a Reports owner-mode schedule with local email/file destinations, then
+  open it in ScheduledReportDetail. Confirm its explanatory owner-mode text and retained recipients/location;
+  do not expect that editor to convert it to recipient-checked mode. Cancel one creation and reject an ungranted
+  save location before completing valid fixture delivery.
 - **Actor/start:** Distributor, equivalent-scope recipient and non-equivalent recipient; local mail capture,
   scheduler and PDF/XLSX renderer as required.
 - **Objective/steps:** Reports → preview → Schedules create → ScheduledReportDetail edit/audience preview → Send
@@ -259,6 +280,10 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
   pause/reopen.
 - **Expected:** Audience validation names exclusions; outputs retain scope/range; delivered attachment bytes are
   inspected; repeating an occurrence does not resend successful recipients.
+- **Output branch:** Read the captured DashboardReportEmail HTML/text and optional inline image, then open the
+  report link as the recipient. Compare captured attachment bytes with Open my report before and after a fixture
+  data/access change: the latter renders again with current rights and does not retrieve the original sent file.
+  Export status is delivery metadata, not report content. Include received versus owned/shared schedule views.
 - **Recovery:** Invalid audience, disabled owner, unavailable renderer, failed send, unknown outcome and
   permission loss retain evidence and a bounded recovery action.
 - **Screens/modes:** Reports, Schedules, ScheduledReportDetail, ReportDelivery, ownReportFile/exportAudit;
@@ -277,6 +302,9 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
   canceled delete show the affected rule without disturbing unrelated rules.
 - **Screens/modes:** Alerts, AlertRule, AlertShared and state/delivery tables; long configuration forms at 390,
   actual TUI/Standard edits.
+- **Message branch:** Capture REPORT_ALERT for firing, recovered and no-data/error fixtures; inspect HTML/text,
+  labels and per-recipient link. Opening the alert shows current state, which may differ from the notification's
+  state at send time. Keep a technical contact-point notification separate from the checked business audience.
 
 ### DASH-11 — Share and play a playlist unattended
 
@@ -385,14 +413,14 @@ No execution batches have been started.
 
 ## 7. Decisions
 
-- All 27 Dashboards XML definitions, including LogContext and Split helpers, belong here. Monitor wrappers retain
-  their own context checks in the Monitor plan.
+- All 27 Dashboards XML definitions, including LogContext and Split helpers, plus two framework report email
+  outputs belong here. Monitor wrappers retain their own context checks in the Monitor plan.
 - Technical reporting and framework-only scoped fixtures are sufficient; no addon application is loaded.
 - IDs are `DASH`; definition/dataset mutation, distribution and reader workflows are separate activities, so a render
   of Reports or Alerts cannot stand in for delivery or evaluation.
 
-- This is a planning record only. No application/API change, test run, runtime walk, fixture creation or commit is
-  part of the document-writing task. Review/refinement execution is separate.
+- Preparing or auditing these plans changes documentation only. Application/API changes, test runs, runtime walks
+  and fixture creation belong to separate review/refinement execution.
 - Current code, mounts and grants take precedence over older plans. Historical outcomes, permissions and exceptions
   are not inherited. Preserve routes, stored preferences and public contracts in any later refinement.
 - Finish a review with explicit branch outcomes and a candid unresolved ledger; missing prerequisites do not become

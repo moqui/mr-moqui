@@ -47,8 +47,10 @@ area's fixtures, dependencies and judgment criteria.
 - Include one broken extension, missing artifact, stale disk edit, invalid field/type, harmless table difference,
   invalid service input and buffered screen error. Record fixture names and locations; comparisons check both site
   output and the untouched upstream fixture. Keep a separate database for destructive DDL planning/execution.
-- Guided edits stage per-user/per-artifact buffers (two-hour idle lifetime in the current README). Record created
-  buffers and discard/save them deliberately. A live preview uses that buffer, not a silently saved file.
+- Terminal guided edits use server-side per-user/per-artifact buffers with a two-hour idle lifetime. Browser
+  guided views edit the Workspace tab and companion buffers, with local draft recovery; they do not share that
+  terminal buffer lifecycle. Canvas preview tokens are a third, temporary server-side buffer. Record each kind
+  separately and discard/save deliberately. A live preview uses submitted unsaved text, not a silently saved file.
 - Service simulation must leave fixture business rows unchanged while returning proposed rows/results/logs; some
   file/Git/Dev AIDE writes are intentionally refused in sim. Save-as-spec writes only the fixture repository and Run
   spec remains the editor's local simulation action, not authorization for repository-wide test execution.
@@ -149,6 +151,7 @@ activities. Dialogs, templates and non-XML surfaces follow the route tables.
 | Eca filters for SECA, EECA, EmECA and gitECA, priority/condition/source and replaced-rule rows | DEVA-09; active count and run order must distinguish a replaced definition from the effective rule |
 | Try inputs/result/rows/log, snippet, Save as spec/Run spec and artifact Doc tab | DEVA-10; writes remain simulation and spec output is a fixture file |
 | Screens Tree settings/create/move/remove, Design outline/properties/extension points/canvas/preview parameters/doc | DEVA-11/12; unsaved buffer preview and stamped source identity |
+| Workspace `.qvue` Design/Preview, element outline/overlay, opening-tag edit, snippet insertion/move/remove, Text and terminal-twin display | DEVA-12; [DevAideQvue.js](../runtime/components/dev/dev-aide/screen/devstatic/DevAideQvue.js) implements a separate editor from XML screen design, using the same Workspace buffer and undo history |
 | DesignTui outline/properties/intents/extension tree, add field/filter/action/widget/section/button, preview | DEVA-12/13; server-search service choices and JSON-safe native output |
 | Workspace entityView/screenView/serviceView/xmlOp/schema/outline/refs, planDdl/runDdl, tryService/saveTrySpec/runSpec, canvasBuffer/stamps | These consumer interactions belong here; endpoint source inventory is DEVW-13 |
 | `devstatic` entity/service/screen modeler modules | Static support, not extra app pages; loaded version must match source before diagnosing stale UI |
@@ -310,6 +313,12 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
 
 ### DEVA-12 — Design and preview a screen before saving
 
+- **QVue branch:** Open a disposable same-name XML/`.qvue` pair in Workspace → Design → select a rendered
+  element or outline row → edit its opening tag → insert a snippet before/after/inside → move/remove a sibling →
+  undo/redo → Open in Text → Preview → Save/reopen. Verify selected source line, shared undo history and preview
+  cleanup after switching files. Inspect the `.tui.json` companion display and a missing-twin placeholder; this is
+  not a terminal visual designer. Use an invalid tag, failed frame and canceled edit to check retained source and
+  truthful errors. DEVA-12 owns this editor even though DEVW-02 owns the surrounding Workspace tab.
 - **Actor/start:** Author/extender with own screen and upstream fixture containing named anchors/forms.
 - **Objective/steps:** Design → outline select widget → edit properties → add field/column/filter/row
   action/section/button → inspect extension points → preview unsaved buffer/parameters → inspect stamped source
@@ -323,6 +332,11 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
 
 ### DEVA-13 — Resolve buffered edits and a competing disk change
 
+- **Browser/terminal distinction:** Run terminal pending/expiry/Save mine/Take disk on server edit buffers. In
+  the browser, restore/discard an earlier local draft and save a visual view with dirty companion files. If one
+  companion conflicts, inspect which earlier files saved, which remain dirty and the offered reopen/recovery;
+  do not assume the tab's comparison dialog resolves every companion conflict. Preview-token expiry must not
+  discard the browser's editable source. Coordinate tab persistence with DEVW-02/03.
 - **Actor/start:** Two sessions on separate entity/service/screen fixture buffers; author, viewer and
   expired-buffer case.
 - **Objective/steps:** Stage several edits → inspect pending count → navigate/reopen → change disk in other
@@ -359,6 +373,7 @@ shape checks, offline component fixtures, live browser walks and service rules p
 | dev-aide / server | [EntityModeler](../runtime/components/dev/dev-aide/test/EntityModeler.spec.js), [GuidedOps](../runtime/components/dev/dev-aide/test/GuidedOps.spec.js) | Merged origins/views, DDL planning/typed confirmation, export boundaries and operation generation; not live authoring completion. |
 | dev-aide / server | [EntityEditTui](../runtime/components/dev/dev-aide/test/EntityEditTui.spec.js), [ServiceEditTui](../runtime/components/dev/dev-aide/test/ServiceEditTui.spec.js), [ScreenDesignTui](../runtime/components/dev/dev-aide/test/ScreenDesignTui.spec.js) | Buffered edits, seed load, nested parameters, conflicts and extension operations on throw-away roots; terminal interaction still needs execution. |
 | dev-aide / server | [ServiceWriter](../runtime/components/dev/dev-aide/test/ServiceWriter.spec.js) | Simulation/result/logs, snippets/generated JS, rule condition and viewer-scope behavior. |
+| dev-aide / client (within existing spec) | [DevAideScreen](../runtime/components/dev/dev-aide/test/client/DevAideScreen.spec.js), [DevAideQvue page assertions](../runtime/components/dev/dev-aide/test/client/pages/DevAideQvue.page.js) | The Screen spec also runs QVue template scanning/edit assertions; there is no separate current DevAideQvue spec. These offline checks do not establish live canvas, save or terminal-twin behavior. |
 | dev-aide / client | [DevAideEntity](../runtime/components/dev/dev-aide/test/client/DevAideEntity.spec.js), [DevAideService](../runtime/components/dev/dev-aide/test/client/DevAideService.spec.js), [DevAideScreen](../runtime/components/dev/dev-aide/test/client/DevAideScreen.spec.js) | Offline editor fixtures; real source writes/reload/browser canvas need separate journeys. |
 
 The [component README](../runtime/components/dev/dev-aide/README.md) identifies existing opt-in modeler/service/
@@ -428,8 +443,8 @@ No execution batches have been started.
   merged result. Destructive DDL uses a separate fixture database.
 - Browser/terminal asymmetries are documented and exercised where supported, not converted into new-feature scope.
 
-- This is a planning record only. No application/API change, test run, runtime walk, fixture creation or commit is
-  part of the document-writing task. Review/refinement execution is separate.
+- Preparing or auditing these plans changes documentation only. Application/API changes, test runs, runtime walks
+  and fixture creation belong to separate review/refinement execution.
 - Current code, mounts and grants take precedence over older plans. Historical outcomes, permissions and exceptions
   are not inherited. Preserve routes, stored preferences and public contracts in any later refinement.
 - Finish a review with explicit branch outcomes and a candid unresolved ledger; missing prerequisites do not become

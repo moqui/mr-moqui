@@ -44,7 +44,9 @@ area's fixtures, dependencies and judgment criteria.
   positive grant for `SQL_RUNNER_WEB`, `DATABASE_ADMIN`, `DATABASE_EXTERNAL` or `LOAD_RUNNER`; all are distinct from
   basic app visibility. Use missing-permission counterparts with the same valid parameters.
 - Select a disposable `group:<groupName>` database and, for external connection coverage, a local disposable
-  `ext:<connectionId>` on a dev instance. Check selected database persistence across Data, SQL, Schema, ETL and Database.
+  `ext:<connectionId>` on a dev instance. Check selected database persistence across Data, SQL, Schema, ETL and
+  Database, including the deliberate boundary: Schema, entity sources and ETL targets offer entity-group databases,
+  not external ones. Returning there from an external SQL source must show the actual supported selection.
 - Data fixtures: small parent/child framework entities, multiple pages, lookup labels outside page one, saved grid
   views, a DbViewEntity, DataDocument and feed, valid/mixed/invalid CSV/XLSX/XML files, snapshot archive, SQL query,
   schema difference, harmless maintenance job and ETL mapping/value map. Each has a review-specific identity.
@@ -228,7 +230,8 @@ activities. Dialogs, templates and non-XML surfaces follow the route tables.
 | Grid QVue source chooser, lookup, paste/range edits, undo, pending changes, saved views, export; Calc and file Load into… | TOOL-02/03/14; dialogs are within Grid, not invented routes |
 | Browse dynamic AutoFind/AutoEdit master/detail and getFormXml helpers | TOOL-04; `aen`/`den` and record keys must follow the correct master/detail |
 | Views field selection/CSV; DataDocument edit fields/conditions/groups/feeds/links and indexed document viewer | TOOL-05/06; include nested hidden routes and actual output |
-| Data Load options/background wrapper, entity/document Export, snapshot upload/import/download/delete | TOOL-07–09; configured job and local archive evidence |
+| Data Load Check Data/difference selection, synchronous create-only/create-or-update and optional background wrapper; entity/document Export; snapshot upload/import/download/delete | TOOL-07–09; distinguish selected field writes, normal loads and each job's actual outcome |
+| [DatabaseParts.xml](../runtime/components/base/tools/template/DatabaseParts.xml): DatabasePicker/selectDatabase and DroppedKeys sections | TOOL-01/07/09/11–13/17; shared database context and unresolved foreign-key restoration evidence |
 | SQL QVue catalog, classify/confirm, result grid/explain, history/saved dialogs, SqlTui and SqlDownload | TOOL-10; saved query opens without executing |
 | Schema Check Tables and IndexesKeys plan/download DDL; Database JobDetail QVue/twin | TOOL-11/13; proposed SQL, progress, cancel and outcome |
 | ETL Mapping QVue source/target/field match/sample/error/value map/schedule controls; root JSON transitions | TOOL-14; file upload and parent transition context |
@@ -323,10 +326,17 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
 ### TOOL-07 — Load data and inspect per-file outcomes
 
 - **Actor/start:** Load operator with safe XML/CSV files, one invalid independent file/row and copied database.
-- **Objective/steps:** Data/Load → choose files/options → review selected targets → start → follow Database/Jobs
-  → inspect completion/errors → read resulting records; correct and retry only applicable failures.
-- **Expected:** Source/destination and destructive options are clear; background request is not completion;
-  valid independent data remains loaded when another item fails.
+- **Objective/steps:** Data/Load → select data types/components, a local resource location, or XML/JSON/CSV text →
+  Check Data → inspect differences and complete/incomplete keys → apply selected field updates/missing records →
+  compare database values. Separately exercise Import Data — Create Only versus Create or Update, cancel one
+  confirmation, then inspect the inline per-file messages and record readback. This screen has no file-upload
+  chooser; use the named local resource or text inputs.
+- **Worker branch:** Select Drop foreign keys first only on the scratch database with DATABASE_ADMIN. Follow the
+  returned ServiceJob run and the separate database drop/restore jobs, including a failed load and restoration
+  outcome. A normal import is synchronous; only the foreign-key wrapper takes this background path here.
+- **Expected:** Check Data does not silently apply its differences; selected operations affect only the intended
+  keys/fields. Create Only preserves existing rows. Source/destination and destructive options are clear;
+  background request is not completion and independent failures retain named results.
 - **Recovery:** Unreadable file, invalid record, failed DDL/foreign-key restoration, denied load and canceled
   confirmation retain precise failure evidence.
 - **Screens/modes:** Data/Load, DatabaseLoadWrap job detail and Grid readback; no shared database,
@@ -355,6 +365,12 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
   the original archive and name unresolved results.
 - **Screens/modes:** Data/Snapshots and background jobs/record readback; not System backup restore, local files
   and supported modes.
+- **Archive branch:** Wait for ExportEntityDataSnapshot before inspecting the archive. Upload a same-named
+  disposable ZIP and check replacement feedback; distinguish Upload from Import. Normal import uses
+  ImportEntityDataSnapshot; the optional DATABASE_ADMIN foreign-key wrapper uses DatabaseLoadWrap and separate
+  database jobs. Inspect import flags for ECAs, audit, feeds and foreign-key creation, plus the warning for a
+  single-file snapshot whose wrapper cannot narrow the entity list. No ordinary snapshot import implies whole
+  database replacement or a selectable external-database restore.
 
 ### TOOL-10 — Run, explain and recover a SQL query
 
@@ -543,8 +559,8 @@ No execution batches have been started.
 - Load testing is reviewed through short bounded local runs. Production maintenance and comparative benchmarking
   are outside scope.
 
-- This is a planning record only. No application/API change, test run, runtime walk, fixture creation or commit is
-  part of the document-writing task. Review/refinement execution is separate.
+- Preparing or auditing these plans changes documentation only. Application/API changes, test runs, runtime walks
+  and fixture creation belong to separate review/refinement execution.
 - Current code, mounts and grants take precedence over older plans. Historical outcomes, permissions and exceptions
   are not inherited. Preserve routes, stored preferences and public contracts in any later refinement.
 - Finish a review with explicit branch outcomes and a candid unresolved ledger; missing prerequisites do not become

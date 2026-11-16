@@ -122,6 +122,7 @@ activities. Dialogs, templates and non-XML surfaces follow the route tables.
 | Sessions worktrees, change-set review/completeReview and Dev Assist page actions | DEVW-12; fence/sim refusal and ordinary user-controlled writes remain distinct |
 | WorkspaceTui file/tree/search/problems/artifact links, change/commit/Git dialogs | DEVW-02–08/13; branches/tags/stashes/reviews/blame can delegate to browser rather than fabricate parity |
 | Workspace guided endpoints and `devstatic` authoring modules | Owned source here; interactions inventoried in [authoring](ui-review-dev-aide-authoring.md), not duplicated |
+| Browser tab/local-draft persistence and `.qvue` Design entry | DEVW-02/03 own tab recovery and disk conflicts; DEVA-12 owns QVue element editing/preview; DEVA-13 owns multi-file guided save and terminal buffer expiry |
 
 Home's restart/new component and Repositories' get/clone/load controls are part of the review. Older statements that
 group-server support is merely proposed do not override current Settings/Workspace controls. The archive's eight
@@ -160,6 +161,10 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
   preserve recoverable buffer and correct selection.
 - **Screens/modes:** Workspace editor/search/problem/file dialogs and WorkspaceTui; authoring owns guided edit;
   keyboard and narrow/two-pane focus.
+- **Persistence branch:** Leave a dirty browser tab and companion buffer, reload/reopen, then accept or discard
+  the Unsaved changes offer on separate fixtures. Repeat after the disk base changes and under a different
+  user/root; drafts must identify their origin and cannot silently overwrite the newer file. Browser local drafts
+  are distinct from the server-side terminal buffers reviewed in DEVA-13.
 
 ### DEVW-03 — Resolve a disk conflict without losing either edit
 
@@ -379,8 +384,8 @@ No execution batches have been started.
   No real repository merge, contributor agreement or remote message is part of this planning task.
 - Live reload and session worktrees are distinct: unloaded worktrees are checked/committed there, not run live.
 
-- This is a planning record only. No application/API change, test run, runtime walk, fixture creation or commit is
-  part of the document-writing task. Review/refinement execution is separate.
+- Preparing or auditing these plans changes documentation only. Application/API changes, test runs, runtime walks
+  and fixture creation belong to separate review/refinement execution.
 - Current code, mounts and grants take precedence over older plans. Historical outcomes, permissions and exceptions
   are not inherited. Preserve routes, stored preferences and public contracts in any later refinement.
 - Finish a review with explicit branch outcomes and a candid unresolved ledger; missing prerequisites do not become

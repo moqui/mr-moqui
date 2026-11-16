@@ -63,6 +63,7 @@ service's record/owner checks are additional requirements, not replaced by these
 | Proposed identity | Explicit capability / boundary |
 | --- | --- |
 | `review.ai.user` | `AgentUse`; own Assist/chat-agent runs |
+| `review.ai.skill.author` | `AgentSkillAuthor` with AgentUse; SH-18's personal Save as skill flow, distinct from AgentAdmin's shared-skill management |
 | `review.ai.admin` | `AgentAdmin`; model/agent/skill/quota configuration. This does not imply `AgentAudit` |
 | `review.ai.auditor` | `AgentAudit`; logged reads of other users' conversations/runs/approvals |
 | `review.ai.gateway` | `LlmGatewayUse`; separately configured gateway client and key |
@@ -338,10 +339,10 @@ activities. Dialogs, templates and non-XML surfaces follow the route tables.
 | Trigger event/breaker/run controls, Inbox, Lessons review | AI-08; eligible actor and proposed/accepted state |
 | Eval dataset/items/scorers/live attachment/experiment result review/compare | AI-09; dataset version at start, partial/canceled result and human score |
 | Gateway clients/key/aliases and Usage quota/rollup | AI-10; gateway credentials distinct from upstream endpoint secrets |
-| Constitution Rules/Edit/Json/Origins/Preview; trusted reference viewer in Assist | AI-11; shipped/custom/revision/locale and exact trusted origins |
-| Connections shared ConnectionParts; message type registration/raw forms; payload download/edit, per-item and bulk recovery | AI-12/13; owner semantics and staged incoming message lifecycle |
+| Constitution Rules/Edit/Json/Origins/Preview and [ConstitutionParts.xml](../runtime/components/base/tools/template/ConstitutionParts.xml) source/language sections; trusted reference viewer in Assist | AI-11; shipped/custom/revision/locale and exact trusted origins |
+| [ConnectionParts.xml](../runtime/components/base/tools/template/ConnectionParts.xml) forms, checks and save/test/enable transitions; message type registration/raw forms; payload download/edit, per-item and bulk recovery | AI-12/13; owner semantics and staged incoming message lifecycle |
 | Protocol readiness, MailRelayDetail included forms, MailQueue settle/retry | AI-14/15; hosted account SMTP ownership is not a general relay |
-| Voice row dialogs: trunks/numbers/caller IDs, fraud, emergency, devices, ring groups/schedules/IVR/queues and audio | AI-16/17; each child screen explicitly inventoried below |
+| Voice row dialogs and [VoiceTransitions.xml](../runtime/components/base/basic-comms/template/VoiceTransitions.xml) user/route lookups: trunks/numbers/caller IDs, fraud, emergency, devices, ring groups/schedules/IVR/queues and audio | AI-16/17; each child screen explicitly inventoried above |
 | ChatBridges status/disable/retry and room bridge settings in BasicComms | AI-18 and COM-08; admin/room ownership boundary |
 | Edge Pair wizard's five steps, Apply confirmation, route/domain/port/cluster/queue controls | AI-19/20; System certificates/protection linked, not duplicated |
 | EntitySync selection/artifacts/history/reset | AI-21; explicit fixture records, not production resynchronization |
@@ -420,6 +421,10 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
   the other skills usable.
 - **Screens/modes:** Skills containers, SkillList/Detail/RetrievalTest and RunDetail; browser/TUI/Standard, long
   section content.
+- **Personal-skill handoff:** SH-18 owns Assist's My skills and Save as skill interaction. Inspect its Share for
+  review site copy here, compare ownership/status/source with the personal original, apply the eligible admin
+  review/edit/lock controls, and verify retrieval/use. Retiring a personal skill and reviewing a shared copy must
+  not be confused with one another.
 
 ### AI-06 — Connect a remote agent or MCP server locally
 
@@ -512,6 +517,11 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
   non-secret values and a useful return path.
 - **Screens/modes:** Connections/ConnectionDetail, MessageTypes/MessageTypeDetail, included ConnectionParts;
   System/Comms consumer handoffs, TUI/Standard.
+- **Readiness branch:** On a native registered connection, save configuration → try enabling before a passing
+  test → Test → inspect whether the test enabled it → enable/disable as offered → change a connection-relevant
+  field → recheck required testing and its consumer. Exercise stale revisions and blank-secret preservation.
+  Follow the owning editor for kinds that delegate configuration; a raw message-remote enum mapping is a separate
+  branch. The shared forms/transitions are [ConnectionParts.xml](../runtime/components/base/tools/template/ConnectionParts.xml).
 
 ### AI-13 — Recover a message without repeating completed work
 
@@ -539,6 +549,10 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
   startup remain visible without contacting unrelated endpoints.
 - **Screens/modes:** Home, ServerConfiguration, MailRelays/Detail and System readiness/BasicComms handoff;
   browser/TUI/Standard.
+- **Check boundary:** ServerConfiguration is read-only configuration plus explicit checks: Configuration sends
+  nothing, Listener connects to the configured bind address, and Public address checks the advertised target after
+  confirmation. Use a local advertised-target fixture, cancel once, then inspect the recorded result/time. There is
+  no editable arbitrary check URL or restart action here; copied configuration changes/reload belong to SYS-06.
 
 ### AI-15 — Resolve failed and uncertain mail outcomes
 
@@ -581,6 +595,10 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
   closed schedule are intelligible without silently dropping the caller.
 - **Screens/modes:** Schedules, RingGroups, IvrMenus, Queues, Numbers and COM-14/15; local media only, browser
   admin/TUI/Standard and captured outcomes.
+- **Choice-helper branch:** Exercise a selected user/route outside the first search page through the shared
+  [VoiceTransitions.xml](../runtime/components/base/basic-comms/template/VoiceTransitions.xml), then reopen the
+  saved number/IVR/queue. Check labels and target kind through user, group, queue, menu and voicemail choices;
+  a late lookup must not change the selected routing target.
 
 ### AI-18 — Diagnose and retry a chat bridge
 
@@ -735,8 +753,8 @@ No execution batches have been started.
 - External prerequisites remain explicit blocked branches; no paid provider, real call, public pairing or external
   message is authorized by this plan.
 
-- This is a planning record only. No application/API change, test run, runtime walk, fixture creation or commit is
-  part of the document-writing task. Review/refinement execution is separate.
+- Preparing or auditing these plans changes documentation only. Application/API changes, test runs, runtime walks
+  and fixture creation belong to separate review/refinement execution.
 - Current code, mounts and grants take precedence over older plans. Historical outcomes, permissions and exceptions
   are not inherited. Preserve routes, stored preferences and public contracts in any later refinement.
 - Finish a review with explicit branch outcomes and a candid unresolved ledger; missing prerequisites do not become

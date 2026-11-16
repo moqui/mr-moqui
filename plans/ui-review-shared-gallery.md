@@ -43,8 +43,8 @@ surfaces and reuse the owning app's planned branch when a suitable local host is
 This protocol applies to all nine companion plans. The [UI review guide](../docs/dev/UI-Review.md) supplies the
 activity/evidence method; [application practices](../docs/dev/Practices-App-Dev.md), the
 [building skill](../.agents/skills/building/SKILL.md) and [testing skill](../.agents/skills/testing/SKILL.md) govern later
-changes. The current task writes plans only. It starts no runtime, writes no fixture, executes no activity, runs no
-test and grants no permission to contact a real provider or modify a working repository.
+changes. Preparing or auditing these plans starts no runtime, writes no fixture, executes no activity, runs no
+test and grants no permission to contact a real provider or modify application source.
 
 - **Environment:** use the existing suitable binary, a fresh disposable database and copied configuration. Load only
   tracked base/dev components individually; leave `components/addon/` empty. Record build features, component list,
@@ -52,6 +52,10 @@ test and grants no permission to contact a real provider or modify a working rep
   Source component links are read-only review inputs; all Dev AIDE edits go to disposable copies/site repositories.
   Use separate hostnames for different browser identities because ports do not isolate cookies. One lifecycle owner
   sequences shared settings, jobs, fixture consumption and cleanup; separate runtimes where those activities conflict.
+  Load the named review components, not every directory under `dev`: keep the `demo` lockdown disabled and the
+  component `template` unloaded. Demo replaces several Tools routes and changes grants/protocols; its Disabled
+  screen is a supporting variant below, not evidence that the full runtime lacks those features. Generated template
+  screens are covered only after DEVW-01 creates a disposable component with real names.
 - **Fixtures:** use `framework/ClientFixtures` only when a later review explicitly selects that fixture setup.
   It defines `sec.view.only` (view grants to Tools/System) and `sec.none.only` (no such grants); it does not prepare
   every app's specialized roles. Each plan names additional proposed review identities and the actual grant sources.
@@ -128,7 +132,7 @@ build, renderer, runtime, lint of screens or application tests.
 | --- | --- | --- |
 | 1. Enter and orient | SH-01–03 | Establish identity, navigation and appearance baselines |
 | 2. Work with records and forms | SH-04–09 | List → detail/edit; wizard; alternative views; handheld task |
-| 3. Content and shell work | SH-10–14 | Editor/files → notifications/Assist → persistent terminal |
+| 3. Content and shell work | SH-10–14, SH-18 | Editor/files → notifications/Assist → personal memory/skills → persistent terminal |
 | 4. Outputs and boundaries | SH-15–17 | Print/public states, companion handoffs and remaining variants |
 
 Complete each wave's fixture-producing activity before consuming its record. Finish cross-app retests after the
@@ -136,7 +140,7 @@ companion activities that supply their records; do not repeat those whole walks 
 
 ## 3. Screen and surface inventory
 
-This inventory accounts for **61 XML definitions** assigned to this file; screen containers and helper
+This inventory accounts for **70 XML definitions** assigned to this file; screen containers and helper
 definitions are included. Routes below are Material paths unless labelled otherwise; app routes have Standard
 `/apps` counterparts. A file's physical presence does not prove access or a supported interaction in every mode.
 Each row maps to §4; helper inspection does not replace its parent workflow. Counts describe definitions, not user
@@ -209,7 +213,7 @@ activities. Dialogs, templates and non-XML surfaces follow the route tables.
 | `/SecondFactor` | [SecondFactor.xml](../runtime/components/base/webroot/screen/webroot/SecondFactor.xml) | Companions: [SecondFactor.html.fancy](../runtime/components/base/webroot/screen/webroot/SecondFactor.html.fancy). Authored text: `html`. Hidden/helper entry; enter through its parent action and inspect direct access. | SH-01 |
 | `/WebPush` | [WebPush.xml](../runtime/components/base/webroot/screen/webroot/WebPush.xml) | Supporting endpoint/shell surface; inspect via its owner, not as an ordinary app page. | SH-12, SH-17 |
 | `/apps` | [apps.xml](../runtime/components/base/webroot/screen/webroot/apps.xml) | Default: `AppList`. Authored text: `html`. | SH-02, SH-03, SH-17 |
-| `/assist` | [assist.xml](../runtime/components/base/webroot/screen/webroot/assist.xml) | Supporting endpoint/shell surface; inspect via its owner, not as an ordinary app page. | SH-13 |
+| `/assist` | [assist.xml](../runtime/components/base/webroot/screen/webroot/assist.xml) | Supporting endpoint/shell surface; inspect via its owner, not as an ordinary app page. | SH-13, SH-18 |
 | `/echopath` | [echopath.xml](../runtime/components/base/webroot/screen/webroot/echopath.xml) | Supporting endpoint/shell surface; inspect via its owner, not as an ordinary app page. | SH-17 |
 | `/emailOAuth` | [emailOAuth.xml](../runtime/components/base/webroot/screen/webroot/emailOAuth.xml) | Supporting endpoint/shell surface; inspect via its owner, not as an ordinary app page. | SH-01, SH-17 |
 | `/error` | [error.xml](../runtime/components/base/webroot/screen/webroot/error.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. | SH-02, SH-16 |
@@ -243,6 +247,28 @@ activities. Dialogs, templates and non-XML surfaces follow the route tables.
 | `/error/TooMany` | [TooMany.xml](../runtime/components/base/webroot/screen/webroot/error/TooMany.xml) | Authored text: `html`. | SH-02 |
 | `/error/Unauthorized` | [Unauthorized.xml](../runtime/components/base/webroot/screen/webroot/error/Unauthorized.xml) | Authored text: `html`. | SH-01, SH-02 |
 
+### Framework email outputs and conditional demo variant
+
+These are rendered outputs or configuration replacements, not new launcher routes. Inspect the captured message
+through the activity that produces it, including its HTML and plain-text alternatives, link destination and recipient.
+Template registrations come from [MoquiSetupData.xml](../runtime/components/base/framework/data/MoquiSetupData.xml).
+
+| Output / variant | XML source | Boundary / activity |
+| --- | --- | --- |
+| Password reset message | [PasswordReset.xml](../runtime/components/base/framework/screen/PasswordReset.xml) | SH-01; reset details and return to sign-in, including expired/reused credentials |
+| Single-use code message | [SingleUseCode.xml](../runtime/components/base/framework/screen/SingleUseCode.xml) | SH-01; captured code and eligible sign-in path, no secret in review evidence |
+| Email factor added notice | [AddedEmailAuthcFactor.xml](../runtime/components/base/framework/screen/AddedEmailAuthcFactor.xml) | SH-01 with SYS-02 factor setup; recipient and factor explanation |
+| Email factor code message | [EmailAuthcFactorSent.xml](../runtime/components/base/framework/screen/EmailAuthcFactorSent.xml) | SH-01; verify the loaded template actually resolves this file. The seed registration spells it `EmailAuthcFActorSent.xml`; do not silently correct fixture data and count the unmodified path as reviewed |
+| New-device sign-in notice | [AccountSignInEmail.xml](../runtime/components/base/framework/screen/AccountSignInEmail.xml) | SH-01; bounded device/network summary and session link; SYS-04 owns revocation |
+| Individual notification | [NotificationEmail.xml](../runtime/components/base/framework/screen/NotificationEmail.xml) | SH-12; subject/body, recipient and originating-record link |
+| Notification digest | [NotificationDigestEmail.xml](../runtime/components/base/framework/screen/NotificationDigestEmail.xml) | SH-12; multiple items, summaries and individual links; SYS-11 owns topic defaults |
+| Rendered-screen attachment message | [ScreenRenderEmail.xml](../runtime/components/base/framework/screen/ScreenRenderEmail.xml) | SH-15; selected parameters, attachment and Material return URL; no session token in the message |
+| Demo replacement screen | [Disabled.xml](../runtime/components/dev/demo/screen/Disabled.xml) | SH-17 supporting inspection of [demo mounts](../runtime/components/dev/demo/MoquiConf.xml) and [policy](../runtime/components/dev/demo/README.md); demo is disabled in the primary review runtime |
+
+Dashboard report and alert email templates have their sole inventory owner in [Dashboards](ui-review-dashboards.md).
+The template-registration spelling above is a source reconciliation item, not an observed runtime finding; record
+its actual outcome when SH-01 runs, without advancing the pending ledger now.
+
 ### Embedded surfaces, dialogs, outputs and reconciliation
 
 | Supporting surface | Inspection / activity |
@@ -252,12 +278,14 @@ activities. Dialogs, templates and non-XML surfaces follow the route tables.
 | Gallery dialog forms and nested widgets, record headers/More menus, validation and confirmation stack | SH-05–07; Cancel/Escape/backdrop, focus restoration, refused submit and reopen |
 | `Board.qvue`, `Calendar.qvue`, `QuickTask.qvue` and their authored terminal counterparts | SH-08, 12; all significant controls, drag/keyboard alternative and honest supported actions |
 | Editor history/compare/restore/publish; RecordFiles preview/upload/version/share; Chatter mentions/cards | SH-10–11; inspect actual stored bytes/audience, not only a notification |
-| Assist conversations, attachments/context, tool consent, stop/retry and reference viewer | SH-13; configuration and run diagnostics delegated to AI/integrations |
+| Assist conversations/history/tasks, attachments/dictation, queued messages, follow/context meter, tool consent, canvas, stop/retry and reference viewer | SH-13; configuration and run diagnostics delegated to AI/integrations |
+| Assist Memory, My skills, Markdown/front-matter skill editor and Save as skill | SH-18; personal memory/skill ownership here, shared skill administration and lessons handed to AI-05/08 |
 | Terminal tabs/splits/floats, reconnect, host-session controls and session attention | SH-14; terminal content remains when changing app; System owns administrative termination |
 | PublicShell, Device, WebPush, ReAuth, ChatKeys, sso/emailOAuth callbacks, rum and find endpoints | SH-01, 12–13, 16–17; supporting surfaces, not ordinary launcher screens. Comms owns crypto and email OAuth completion; Monitor owns replay data |
 | `rest` and `echopath` | SH-17 supporting navigation/error boundaries only; no generic REST/API audit |
 | `example/screen/PublicLink.xml` | SH-11/16: no default mount; use a disposable configured token route, record it, or leave this branch blocked |
 | Shell/layout templates and client modules under webroot | Inspect through the above activities; templates are not extra routable pages |
+| [BasicTransitions.xml](../runtime/components/base/webroot/template/screen/BasicTransitions.xml), [BasicWidgetTemplates.xml](../runtime/components/base/webroot/template/screen/BasicWidgetTemplates.xml) and [HomeParts.xml](../runtime/components/base/tools/template/HomeParts.xml) | Supporting inspection for SH-02/04/06/15/17: inherited list/form/output helpers and shared home navigation sections; consuming apps retain context checks |
 
 The old review's shell/Gallery recovery, narrow/access and actual TUI gaps remain useful prompts. Its pending browser
 zoom work is not imported into this set's agreed viewport matrix. Current `Terminal` functionality and declared
@@ -284,6 +312,9 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
   unavailable identity provider retain a clear next step without leaking account information.
 - **Screens/modes:** Login, SecondFactor, ChangePassword, sso and ReAuth; browser/Standard and the TUI login
   dialog, with keyboard and narrow forms. Account policy administration is SYS-02/04.
+- **Message branch:** Capture reset/single-use/factor messages and the new-device notice with their real template
+  registrations. Compare HTML/text, address, expiry instructions and destination; follow the eligible session link
+  into SYS-04. A template-render failure remains a blocked branch with its source spelling recorded.
 
 ### SH-02 — Find work and keep a reliable navigation history
 
@@ -423,9 +454,17 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
   response leave the shell usable and do not act on a newly selected record.
 - **Screens/modes:** Gallery Panel, QuickNote, QuickTask; palette, tray, notifications, shell providers and
   WebPush permission state. Comms panel content is COM-07/12.
+- **Notification branch:** Use SYS-11's fixture topic to receive one notification and a multi-item digest through
+  local capture. Read both message alternatives and follow each offered link as its recipient; a removed/forbidden
+  destination must not expose the original record. Compare unread/read state in the shell after the return.
 
 ### SH-13 — Ask for help, inspect a proposed action and recover
 
+- **Pane/context branches:** Open History and Tasks, continue a waiting question/handoff in its conversation and
+  stop a running fixture. Queue another message during a run, edit/remove it, and retry a failed send without a
+  duplicate turn. Attach/remove a local file and, with a local transcription fixture, dictate/cancel; denial must
+  preserve typed input. In two tabs switch Follow here, navigate while a response is pending, inspect the context
+  meter and open/hide/reopen an offered canvas. Stale navigation/fill events must not act on a newer page or tab.
 - **Actor/start:** Local model/tool fixture with a harmless read and a disposable proposed write; user with the
   required Assist access.
 - **Objective/steps:** Open Assist on a record → inspect attached context → ask/read a response and references →
@@ -461,6 +500,9 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
   recorded separately; no download event alone counts as inspected bytes.
 - **Screens/modes:** Report, Split, generic list export/print and shared viewers; actual output files, narrow
   split layout, TUI/Standard.
+- **Email-output branch:** Where the shared screen-email action is offered, send only to capture and inspect the
+  ScreenRenderEmail body, selected attachment, parameter summary and link back to `/qapps`. Separate a rendered
+  attachment from the later live page, and check that private/session parameters are not disclosed.
 
 ### SH-16 — Use a bounded public or shared-device entry
 
@@ -490,6 +532,24 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
 - **Screens/modes:** qapps/apps roots, error handling, find/rum/WebPush/ReAuth/ChatKeys support, rest/echopath
   boundary inspection; no duplicate full app walks.
 
+### SH-18 — Maintain personal Assist memory and reusable skills
+
+- **Actor/start:** Ordinary AgentUse user, AgentSkillAuthor holder and non-holder; harmless completed run,
+  personal memory/lesson fixtures and a separate administrator for the AI-05 handoff.
+- **Objective/steps:** Assist → Memory → add/edit a short memory with expiry → cancel another edit → switch
+  always versus Only for this conversation → reopen another conversation → Forget; inspect/delete an eligible
+  proposed lesson. Completed run → Save as skill → edit Markdown/front matter → validate/save → My skills →
+  reopen/revise → Share for review → administrator inspects the site copy in AI-05 → retire the personal skill.
+- **Expected:** Turning remembering off stops new automatic memories; the UI explains that existing memories
+  may still be used until forgotten. Personal, conversation and shared-review scope are distinct; sharing for
+  review does not silently activate a global skill. Stored version/status and next retrieval agree.
+- **Recovery:** Invalid expiry/front matter, canceled draft/back navigation, denied authoring, failed save/share,
+  expired memory and another user's skill ID leave recoverable input and no foreign content. Restore preferences
+  and retire/remove only the review's fixture records.
+- **Screens/modes:** Assist Memory/My skills/editor and their `/assist` helpers; browser light/dark, keyboard and
+  narrow panes. Record actual terminal availability without assuming drawer parity. AI-05 owns administrative
+  skill controls and AI-08 owns global lesson review.
+
 ## 5. Existing checks and future verification
 
 This is an available-test map, not a results ledger. Read assertions and suite setup before selecting a run; static
@@ -508,7 +568,9 @@ shape checks, offline component fixtures, live browser walks and service rules p
 | framework / client | [SecurityAuthn](../runtime/components/base/framework/test/client/SecurityAuthn.spec.js) | Existing HTTP authentication checks; not all visible login/recovery states. |
 
 Future acceptance candidates: **SharedNavigationWalk** (SH-01–03, 12, 16–17), **GalleryActivitiesWalk**
-(SH-04–11, 15) and **AssistInteractionWalk** (SH-13); extend **TerminalWalk** for uncovered SH-14 branches.
+(SH-04–11, 15) and **AssistInteractionWalk** (SH-13/18); extend **TerminalWalk** for uncovered SH-14 branches.
+WebrootAssist's existing offline page fixtures cover queued/follow/context, memory/skill and canvas controller
+behavior, including its merged canvas and Constitution fixtures; they do not complete the local-provider journeys.
 Extend Gallery/GallerySmoke only for a missing supporting surface, not another full sweep. Read their assertions and
 registrations before placing a new scenario; ThemeLayout owns shared theme/geometry automation.
 
@@ -543,6 +605,7 @@ execution records it; “exercised” never implies that all modes and recovery 
 | SH-15 — Read, compare and export without losing the selection | pending | All steps, modes and recovery branches pending. | — |
 | SH-16 — Use a bounded public or shared-device entry | pending | All steps, modes and recovery branches pending. | — |
 | SH-17 — Reconcile cross-app shell behavior and remaining modes | pending | All steps, modes and recovery branches pending. | — |
+| SH-18 — Maintain personal Assist memory and reusable skills | pending | All steps, modes and recovery branches pending. | — |
 
 ### Findings register
 
@@ -572,8 +635,8 @@ No execution batches have been started.
 - Gallery and common-shell coverage were explicitly added to the original five-app scope. All current Gallery
   screens are included; backend-only endpoints have bounded supporting inspections.
 
-- This is a planning record only. No application/API change, test run, runtime walk, fixture creation or commit is
-  part of the document-writing task. Review/refinement execution is separate.
+- Preparing or auditing these plans changes documentation only. Application/API changes, test runs, runtime walks
+  and fixture creation belong to separate review/refinement execution.
 - Current code, mounts and grants take precedence over older plans. Historical outcomes, permissions and exceptions
   are not inherited. Preserve routes, stored preferences and public contracts in any later refinement.
 - Finish a review with explicit branch outcomes and a candid unresolved ledger; missing prerequisites do not become
