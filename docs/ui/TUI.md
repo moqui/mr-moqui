@@ -276,8 +276,9 @@ new line. On a list row:
 
 The row's link is its first link to another screen. A link back to the screen shown (a filter on a value, or a toggle
 that stages a change, as on Access Capabilities) opens the row only when it has no link to another screen, as a list
-beside its detail selects a row with one. A link that posts or writes never opens the row; it stays on F10 and on
-numbered links. A row with no link to open says "Nothing to open on this row" (and points to F10 when it
+beside its detail selects a row with one. A card of a board, an event of a calendar and a row of a tree open the
+same way: the link the server gives each (`_open`) is its first link to another screen, else its first back to this one.
+A link that posts or writes never opens the row; it stays on F10 and on numbered links. A row with no link to open says "Nothing to open on this row" (and points to F10 when it
 has other links). The show-total row opens nothing. In both schemes `e` edits the row.
 
 **Lists and trees.** In both schemes:
@@ -366,7 +367,9 @@ notification comes for the user (in process, and over `--server` through `/notws
 line, and are read again every ten minutes besides; a client that cannot be told reads them each minute. Below the md
 width, or when the long form would cut the breadcrumb, the middle form with three-letter words (`Tdy 3 Cht 1 Ntf 2`: a
 word's first letter and the two consonants after it) takes over, then the short form `T3 C1 N2`, then the user and the
-clock give way. The breadcrumb ends with the screen's title in place of its name.
+clock give way. The breadcrumb names each level by its menu title (`Bills of Materials`, not `BillsOfMaterials`), the
+envelope's `pathTitles` beside `pathList`; a level whose title is empty or does not expand, and an extra path's name (a
+wiki page), keeps its name.
 
 A list with `views` (`view-board`, `view-calendar`, `view-tree`; style guide §8.2) opens in the view the user chose last
 (the `LIST_VIEW_` preference the browser keeps), else the first the form names. The board shows the page's rows as cards in
@@ -439,7 +442,10 @@ The client measures the canvas: the terminal less a docked drawer. The width cla
 
 The 26-column drawer docks while the canvas left beside it is still md, from a terminal of 146 columns; F9 shows or
 hides it at any width. In it `▾` marks an app with its screens under it, `•` the screen shown (bold), and `◂ Home`, the
-last row, is the link to all the apps. A box narrower than 40 columns goes on a line of its own rather than squeeze. A list's page size
+last row, is the link to all the apps. Where rows share a screen, as a saved find (`?formListFindId=`) does its Find
+screen, the one whose parameters the screen shown holds is marked, and the plain row only when none is. A box narrower
+than 40 columns goes on a line of its own rather than squeeze, where it stands among the others (a label column stays
+above its value). A word too long for its line, a URL, is broken across lines rather than cut. A list's page size
 follows the rows of the terminal (10 to 100).
 
 ## Themes
@@ -476,6 +482,10 @@ A screen needs nothing extra for the terminal: forms, lists, boxes, rows, dialog
 they are. Where a screen has gone custom for the browser (a `.qvue` screen, or a `render-mode` text of type `qvt`), it
 needs a `tui` text of its own beside it to show in the terminal; until it has one, the terminal shows a placeholder with
 the browser address. `moqui lint --screens` lists those parts under "TUI worklist".
+
+In a `form-single`, a link in a field with a `title` is the field's value, with the title as its label; a link in an
+untitled field is one of the buttons under the form. A label with a `condition` beside such a link (the text shown when
+there is nothing to link to) adds no line when its condition fails.
 
 A screen's `menu-group` (or its `default-menu-group`) is a heading in the drawer above the first of each run of menu
 items that share it, as the caption in the browser's drawer ([Qvt-Client](Qvt-Client.md), Menu groups).

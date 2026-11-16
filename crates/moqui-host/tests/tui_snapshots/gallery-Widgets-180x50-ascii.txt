@@ -1,4 +1,4 @@
- gallery > Widgets                                                                                                                                              john.doe  Tue 14:32
+ Gallery > Widgets                                                                                                                                              john.doe  Tue 14:32
 -------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------
  v Gallery               | +- Archetype 4 Widget guide ---------------------------------------------------------------------------------------------------------------------------+
      Landing             | # The fixture for style changes: every field widget of section 4.5 in one form, every button role of 4.6, the label types and text classes of 4.7, a   |

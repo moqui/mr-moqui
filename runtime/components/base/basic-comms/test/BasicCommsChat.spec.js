@@ -36,6 +36,12 @@ function request(rootLocation, path, parameters, method) {
     return {status: str.status, errors: str.errorMessages.join(" | "), json, output}
 }
 const post = (path, parameters) => request(root, "Chat/" + path, parameters, "post")
+// the terminal's room page (ChatTui.xml), as the tui client asks for it
+function tuiPage(parameters) {
+    const str = ec.screen.makeTest().rootScreen(root).renderMode("tui").render("ChatTui", Object.assign({lastStandalone: "-2"}, parameters), null)
+    ec.message.clearErrors()
+    return String(str.output || "")
+}
 const get = path => request(root, "Chat/" + path, {}, null)
 function makeUser(userId, username, groupId) {
     sys(() => {
@@ -93,9 +99,10 @@ feature("a user with no party makes a room with john.doe and they talk in it", {
         const view = request(root, "Chat/roomView", {chatRoomId: roomId}, null)
         const forwardRooms = post("forwardRooms", {term: "Basic chat"})
         const records = post("searchRecords", {term: "ui093-no-record-match"})
-        return {made, sent, rail, view, people, peopleGet, selfSearch, forwardRooms, records}
+        const terminal = tuiPage({chatRoomId: roomId})
+        return {made, sent, rail, view, people, peopleGet, selfSearch, forwardRooms, records, terminal}
     },
-    then({made, sent, rail, view, people, peopleGet, selfSearch, forwardRooms, records}) {
+    then({made, sent, rail, view, people, peopleGet, selfSearch, forwardRooms, records, terminal}) {
         people.status == 200
         people.errors == ""
         Array.isArray(people.json) && people.json.some(person => person.value === "EX_JOHN_DOE" && person.label)
@@ -118,6 +125,10 @@ feature("a user with no party makes a room with john.doe and they talk in it", {
         Array.from(rail.json.roomList).some(room => room.chatRoomId === roomId && room.url.endsWith("/Chat?chatRoomId=" + roomId))
         view.status == 200
         JSON.stringify(view.json).includes("Hello from the framework")
+        // the terminal says a room's events in words, as the browser does, not by their type
+        terminal.includes("Hello from the framework")
+        terminal.includes("Chat basic.comms.chat created the room")
+        !terminal.includes("(system")
     }
 })
 

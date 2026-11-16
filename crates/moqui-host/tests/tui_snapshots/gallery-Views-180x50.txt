@@ -1,4 +1,4 @@
- gallery ▸ Views                                                                                                                                                john.doe  Tue 14:32
+ Gallery ▸ Views                                                                                                                                                john.doe  Tue 14:32
 ─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▾ Gallery               │ ┌─ Section 8.2 List views: board and calendar ─────────────────────────────────────────────────────────────────────────────────────────────────────────┐
      Landing             │ ┃ One form-list of example records with views="board,list,calendar": the switch at the right above the list keeps the choice per form (the LIST_VIEW_  │

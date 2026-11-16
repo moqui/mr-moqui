@@ -888,3 +888,48 @@ fn a_validation_error_from_the_render_is_on_the_message_line() {
     session.run_now(&link);
     assert_eq!(session.message(), "Sent Date: 'zz' is not a valid date and time");
 }
+
+/// The breadcrumb names each level by its menu title when the server sends them (`pathTitles`), else by its name with
+/// the leaf's title.
+#[test]
+fn the_breadcrumb_uses_each_levels_menu_title() {
+    let titled = r#"{"v":1,"screen":{"path":"/apps/mfg/BillsOfMaterials/FindBom",
+        "pathList":["apps","mfg","BillsOfMaterials","FindBom"],
+        "pathTitles":["Applications","Manufacturing","Bills of Materials","Find BOM"],"title":"FindBom"},"c":[]}"#;
+    let session = Session::new(moqui_tui::ScreenModel::from_json(titled).unwrap());
+    assert_eq!(session.crumbs(), ["Manufacturing", "Bills of Materials", "Find BOM"]);
+    let plain = r#"{"v":1,"screen":{"path":"/apps/mfg/BillsOfMaterials/FindBom",
+        "pathList":["apps","mfg","BillsOfMaterials","FindBom"],"title":"Find BOM"},"c":[]}"#;
+    let session = Session::new(moqui_tui::ScreenModel::from_json(plain).unwrap());
+    assert_eq!(session.crumbs(), ["mfg", "BillsOfMaterials", "Find BOM"]);
+}
+
+/// A saved find is a drawer row on its Find screen's path: the one the screen's parameters hold is marked as shown, not
+/// the plain Find row nor the other finds; on the plain Find screen, only the Find row is.
+#[test]
+fn a_drawer_row_with_a_query_is_shown_only_when_the_screen_holds_it() {
+    let row = |title: &str, url: &str, depth: usize| moqui_tui::DrawerRow {
+        title: title.to_string(),
+        url: url.to_string(),
+        depth,
+        disabled: false,
+    };
+    let rows = vec![
+        row("Accounting", "/apps/acct", 0),
+        row("Find Invoice", "/apps/acct/Invoice/FindInvoice", 1),
+        row("AR Customer Statement", "/apps/acct/Invoice/FindInvoice?formListFindId=AR_STMT", 1),
+        row("AP Due", "/apps/acct/Invoice/FindInvoice?formListFindId=AP_DUE", 1),
+        row("Payments", "/apps/acct/Payment", 1),
+        row("Home", "/apps", 0),
+    ];
+    let paths = ["/apps/acct", "/apps/acct/Invoice", "/apps/acct/Invoice/FindInvoice"];
+    let saved = BTreeMap::from([("formListFindId".to_string(), "AR_STMT".to_string())]);
+    assert_eq!(
+        moqui_tui::drawer_active(&rows, &paths, &saved),
+        [true, false, true, false, false, false]
+    );
+    assert_eq!(
+        moqui_tui::drawer_active(&rows, &paths, &BTreeMap::new()),
+        [true, true, false, false, false, false]
+    );
+}

@@ -207,6 +207,10 @@ pub struct ScreenMeta {
     pub path: String,
     #[serde(default)]
     pub path_list: Vec<String>,
+    /// The menu title of each name of `path_list`, for the breadcrumb; an extra path's name (a wiki page) is itself.
+    /// Empty from a server that does not send them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path_titles: Vec<String>,
     /// How many of `path_list`'s last names are an extra path (a wiki space and page), drawn in the breadcrumb but not
     /// levels with tabs of their own.
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -394,6 +398,10 @@ pub enum Node {
         /// The author explicitly opens this GET link in a browser window.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         browser: bool,
+        /// The title of the form-single field the link is the widget of: drawn as the field's label, the link as its
+        /// value.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        label: String,
         #[serde(default)]
         kind: String,
         #[serde(default)]

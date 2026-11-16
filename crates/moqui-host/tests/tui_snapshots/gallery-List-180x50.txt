@@ -1,4 +1,4 @@
- gallery ▸ List                                                                                                                                                 john.doe  Tue 14:32
+ Gallery ▸ List                                                                                                                                                 john.doe  Tue 14:32
 ─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▾ Gallery               │ ┌─ Archetype 3.2 List ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
      Landing             │ ┃ Find and inspect enumerations, choose columns, save searches and export results. New, clone and bulk-tag actions are demonstrations; saved finds and │

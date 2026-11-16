@@ -1,4 +1,4 @@
- gallery ▸ Editor                                                                                                                                               john.doe  Tue 14:32
+ Gallery ▸ Editor                                                                                                                                               john.doe  Tue 14:32
 ─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▾ Gallery               │ ┌─ Archetype 3.13 Editor ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
      Landing             │ ┃ Browse pages, edit Markdown, and inspect versions from History. Compare changes before restoring or publishing a version. Editing, restoring and     │

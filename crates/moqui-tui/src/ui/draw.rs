@@ -365,7 +365,7 @@ fn drawer(paint: &mut Painter, session: &Session, framed: &Frame, top: u16, bott
         let side = if paint.theme.ascii { "|" } else { "│" };
         paint.fixed(width.saturating_sub(1), row, side, Look::role(Role::Border), 1);
     }
-    let paths = session.paths();
+    let marks = crate::session::drawer_active(&rows, &session.paths(), session.parameters());
     for (at, row) in rows.iter().enumerate() {
         let DrawerRow {
             title,
@@ -382,10 +382,7 @@ fn drawer(paint: &mut Painter, session: &Session, framed: &Frame, top: u16, bott
         let path = url.split('?').next().unwrap_or(url);
         // Home is the link to all the apps, not a group, and is never the screen shown
         let home = *depth == 0 && path == "/apps";
-        let active = !home
-            && paths
-                .iter()
-                .any(|shown| *shown == path || shown.starts_with(&format!("{path}/")));
+        let active = marks.get(at).copied().unwrap_or(false);
         // a disabled item has no url either: dimmed, not bold, and no click target
         let heading = url.is_empty() && !disabled;
         // ▾ only on a row whose items follow it
@@ -607,11 +604,13 @@ fn find_in(piece: &Piece, id: &str, session: &Session, y: usize) -> Option<(usiz
                     FormLine::Cells(cells) => cells.iter().map(|(_, f)| f.height()).max().unwrap_or(1),
                     FormLine::Text(text) => text.lines.len(),
                     FormLine::Buttons(_) | FormLine::Group(_) => 1,
+                    FormLine::Link(link) => link.height(),
                 };
                 let found = match line {
                     FormLine::Field(field) => field.id == id,
                     FormLine::Cells(cells) => cells.iter().any(|(_, field)| field.id == id),
                     FormLine::Buttons(items) => items.iter().any(|item| item.id() == id),
+                    FormLine::Link(link) => link.link.id() == id,
                     FormLine::Text(_) | FormLine::Group(_) => false,
                 };
                 if found {
@@ -845,6 +844,30 @@ fn draw_form_line(paint: &mut Painter, session: &Session, line: &FormLine, x: u1
                 usize::from(paint.right.saturating_sub(x)),
             );
             1
+        }
+        FormLine::Link(link) => {
+            let (value_x, value_y) = match link.mode {
+                LabelMode::Beside => {
+                    let focused = session.focus_id() == link.link.id();
+                    let label = dotted_label(&link.title, link.label_width + 2);
+                    let look = if focused {
+                        Look::role(Role::Text).bold()
+                    } else {
+                        Look::role(Role::Text)
+                    };
+                    paint.text(x, y, &label, look, link.label_width + 2);
+                    let colon_x = x + u16::try_from(link.label_width + 2).unwrap_or(0);
+                    paint.text(colon_x, y, ":", Look::role(Role::Muted), 1);
+                    (x + u16::try_from(link.label_width + 4).unwrap_or(0), y)
+                }
+                LabelMode::Above => {
+                    let room = usize::from(paint.right.saturating_sub(x));
+                    paint.text(x, y, &link.title, Look::role(Role::Text).bold(), room);
+                    (x + 2, y + 1)
+                }
+            };
+            draw_inline(paint, session, std::slice::from_ref(&link.link), value_x, value_y);
+            link.height()
         }
         FormLine::Text(text) => {
             for (at, row) in text.lines.iter().enumerate() {

@@ -641,13 +641,14 @@ fn a_name_is_whole_words_of_one_label_and_a_choice_is_never_pressed() {
             .iter()
             .any(|call| matches!(call, LinkCall::Transition { url, .. } if url == "/event/cancel"))
     };
-    // `No` is part of the word Notify, not a word of any label: it names nothing, and nothing is sent.
+    // `No` is part of the word Note, not a word of any label: it names nothing, and nothing is sent.
     let no = agent.run("do No");
     assert!(!no.ok, "{}", no.text);
     assert!(no.text.contains("no element named \"No\""), "{}", no.text);
     assert!(!posted(&link));
-    // A check or radio named whole is a choice to set, not a control to press.
-    let notify = agent.run("do notify");
+    // A check or radio named whole is a choice to set, not a control to press. The check has no title, so its one
+    // option's text names it.
+    let notify = agent.run("do Tell the attendees it is cancelled");
     assert!(!notify.ok, "{}", notify.text);
     assert!(notify.text.contains("is a choice"), "{}", notify.text);
     assert!(!posted(&link));
@@ -771,4 +772,22 @@ fn a_code_editors_check_runs_before_the_agent_answers() {
         .iter()
         .any(|call| matches!(call, LinkCall::Json { url, .. } if url.ends_with("check")));
     assert!(checked, "{:?}", link.calls());
+}
+
+/// A check whose title is a blank (`title=" "`) and whose text is its one option (mr-boss Stages, TypesAndReasons) is
+/// listed by that text, and found by it.
+#[test]
+fn a_check_with_a_blank_title_is_named_by_its_one_option() {
+    let model = r#"{"v":1,"screen":{"path":"/stages"},"c":[{"t":"form","id":"Stages","name":"Stages","transitionUrl":"/stages/save","c":[
+        {"t":"field","id":"Stages.closed","name":"closed","title":" ",
+         "w":{"kind":"check","value":"","options":[{"value":"Y","label":"Closes the opportunity"}]}}]}]}"#;
+    let mut agent = Agent::open(FakeLink::from_json(&[model]).unwrap(), "/stages", 100, 30);
+    let listed = agent.run("elements");
+    let line = listed
+        .text
+        .lines()
+        .find(|line| line.contains("Stages.closed"))
+        .unwrap_or_else(|| panic!("{}", listed.text));
+    assert!(line.contains("Closes the opportunity"), "{line}");
+    assert!(agent.run("focus closes the opportunity").ok, "{}", listed.text);
 }

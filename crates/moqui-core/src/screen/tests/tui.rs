@@ -1890,6 +1890,94 @@ fn a_separate_subscreen_menu_keeps_nested_navigation_and_renders_content_once() 
     client_model(&output.body_text());
 }
 
+/// A form-single field whose widget is a link carries the field's title, so the client draws it as the field's label
+/// (MaintenanceRequestParts' "Equipment or facility"); the label that stands in for the link when it is not shown is
+/// not a second, empty line; a link in a field with no title stays a plain link.
+#[test]
+fn a_form_fields_link_carries_the_fields_title() {
+    let output = render(
+        "field-link-title",
+        r#"<screen require-authentication="false"><actions><set field="fault" from="({targetId:'L3', targetName:'Lathe 3'})"/></actions>
+            <widgets><form-single name="Facts" map="fault">
+                <field name="targetName"><default-field title="Equipment or facility">
+                    <link url="/asset" url-type="plain" text="${fault.targetName}" link-type="anchor" condition="fault.targetId"/>
+                    <label text="None named yet" condition="!fault.targetId"/>
+                </default-field></field>
+                <field name="other"><default-field><link url="/other" url-type="plain" text="Other"/></default-field></field>
+                <field name="note"><default-field title="Note"><label text="Hidden note" condition="false"/></default-field></field>
+            </form-single></widgets>
+        </screen>"#,
+        BTreeMap::new(),
+    );
+    let doc = document(&output);
+    let all = nodes(&doc);
+    let link = all
+        .iter()
+        .find(|node| node.get("text") == Some(&json!("Lathe 3")))
+        .unwrap_or_else(|| panic!("{doc}"));
+    assert_eq!(link["t"], json!("link"));
+    assert_eq!(link["label"], json!("Equipment or facility"), "{doc}");
+    let other = all
+        .iter()
+        .find(|node| node.get("text") == Some(&json!("Other")))
+        .unwrap_or_else(|| panic!("{doc}"));
+    assert!(other.get("label").is_none(), "{doc}");
+    let titles: Vec<&Json> = all
+        .iter()
+        .filter(|node| node.get("t") == Some(&json!("field")))
+        .map(|node| &node["title"])
+        .collect();
+    // the target's label is left out beside its link; a label alone in its field keeps the field's line
+    assert_eq!(titles, [&json!("Note")], "{doc}");
+    client_model(&output.body_text());
+}
+
+/// The envelope gives each level's menu title beside its name, for the breadcrumb: the parent's item menu-title, else the
+/// screen's default-menu-title (expanded), else the pretty name of its file.
+#[test]
+fn the_envelope_gives_each_levels_menu_title() {
+    let dir = std::env::temp_dir().join(format!("moqui-tui-path-titles-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("Root.xml"),
+        format!(
+            r#"<screen require-authentication="false"><subscreens>
+            <subscreens-item name="BillsOfMaterials" location="{}"/>
+        </subscreens><widgets><subscreens-active/></widgets></screen>"#,
+            dir.join("BillsOfMaterials.xml").display()
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("BillsOfMaterials.xml"),
+        format!(
+            r#"<screen require-authentication="false" default-menu-title="Bills of ${{'Materials'}}"><subscreens>
+            <subscreens-item name="FindBom" location="{}" menu-title="Find BOM"/>
+        </subscreens><widgets><subscreens-active/></widgets></screen>"#,
+            dir.join("FindBom.xml").display()
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("FindBom.xml"),
+        r#"<screen require-authentication="false"><widgets><label text="Content"/></widgets></screen>"#,
+    )
+    .unwrap();
+    let context = ExecutionContextFactory::test_context();
+    let output = make_render(context.factory())
+        .root_screen(dir.join("Root.xml").to_string_lossy().into_owned())
+        .screen_path("BillsOfMaterials/FindBom")
+        .render_mode("tui")
+        .render()
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let doc = document(&output);
+    assert_eq!(doc["screen"]["pathList"], json!(["BillsOfMaterials", "FindBom"]), "{doc}");
+    assert_eq!(doc["screen"]["pathTitles"], json!(["Bills of Materials", "Find BOM"]), "{doc}");
+    let model = client_model(&output.body_text());
+    assert_eq!(model.screen.path_titles, ["Bills of Materials", "Find BOM"]);
+}
+
 /// A wizard or stack panel is a subscreens node like the tabs: the steps, the active one, a wizard's finish text, and the
 /// active level inside.
 #[test]
@@ -2155,6 +2243,7 @@ fn list_views_open_the_first_navigation_link_instead_of_a_leading_row_action() {
                     <link url="" url-type="plain" text="Empty"/>
                 </default-field></field>
                 <field name="name"><conditional-field condition="details">
+                    <link url="." text="Here"><parameter name="id"/></link>
                     <link url="/detail" url-type="plain" text="${name}"><parameter name="id"/></link>
                     <link url="/related" url-type="plain" text="Related"/>
                 </conditional-field><default-field><display/></default-field></field>
@@ -2164,8 +2253,14 @@ fn list_views_open_the_first_navigation_link_instead_of_a_leading_row_action() {
     );
     let doc = document(&output);
     let list = list_named(&doc, "Tasks");
+    let here = nodes(&doc)
+        .into_iter()
+        .find(|node| node.get("text") == Some(&json!("Here")))
+        .unwrap_or_else(|| panic!("the link back: {doc}"));
+    assert!(here["url"].as_str().is_some_and(|url| url.starts_with("/?id=R1")), "{doc}");
     for view in ["board", "calendar"] {
         let rows = &list["views"][view][if view == "calendar" { "events" } else { "rows" }];
+        // the link back to this screen comes first, but a card opens the one to another screen
         assert_eq!(rows[0]["_open"], json!("/detail?id=R1"), "{doc}");
         assert_eq!(rows[1]["_open"], json!(""), "{doc}");
     }

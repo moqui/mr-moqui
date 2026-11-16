@@ -1,4 +1,4 @@
- gallery ▸ Files                                                                                                                                                john.doe  Tue 14:32
+ Gallery ▸ Files                                                                                                                                                john.doe  Tue 14:32
 ─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▾ Gallery               │ ┌─ Files ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
    • Files               │ │ The files of null null: the gallery's stand-in for an app's shared RecordFiles screen, loaded by the record-files element under null.                │

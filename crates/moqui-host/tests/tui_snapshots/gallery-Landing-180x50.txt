@@ -1,4 +1,4 @@
- gallery ▸ Landing                                                                                                                                              john.doe  Tue 14:32
+ Gallery ▸ Landing                                                                                                                                              john.doe  Tue 14:32
 ─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▾ Gallery               │ ┌─ Archetype 3.1 Landing ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
    • Landing             │ ┃ The home of an app: a row of counters, the lists of my work, shortcuts and a chart, each a link into the List screen with its filter. Framework data │

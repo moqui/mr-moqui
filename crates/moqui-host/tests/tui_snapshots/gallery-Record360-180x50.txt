@@ -1,4 +1,4 @@
- gallery ▸ Record360                                                                                                                                            john.doe  Tue 14:32
+ Gallery ▸ 360                                                                                                                                                  john.doe  Tue 14:32
 ─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▾ Gallery               │ ┌─ Archetype 3.4 360 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
      Landing             │ ┃ A detail for a party seen through the app's role, here a user account: a header card with the avatar, identity, classification chips and key numbers │

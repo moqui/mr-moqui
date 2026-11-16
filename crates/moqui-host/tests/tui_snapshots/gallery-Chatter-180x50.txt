@@ -1,4 +1,4 @@
- gallery ▸ Chatter                                                                                                                                              john.doe  Tue 14:32
+ Gallery ▸ Chatter                                                                                                                                              john.doe  Tue 14:32
 ─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▾ Gallery               │ ┌─ Chatter ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
    • Chatter             │ │ On null null · opens on log. The gallery's stand-in for an app's shared Chatter screen, loaded by the chatter element.                               │
