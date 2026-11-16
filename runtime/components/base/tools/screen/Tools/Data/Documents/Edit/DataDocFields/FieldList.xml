@@ -24,7 +24,8 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="deleteDataDocumentCondition"><service-call name="delete#moqui.entity.document.DataDocumentCondition"/>
         <default-response url=".."/></transition>
 
-    <transition name="createFieldDynamic" read-only="true"><service-call name="org.moqui.impl.EntityServices.create#DataDocumentField"/>
+    <!-- not read-only (SEC-RTE-08): the field tree sends it as a POST with the session token (screen/tree.rs loadMethod) -->
+    <transition name="createFieldDynamic"><service-call name="org.moqui.impl.EntityServices.create#DataDocumentField"/>
         <default-response url="."/></transition>
     <transition name="createDataDocumentField"><service-call name="org.moqui.impl.EntityServices.create#DataDocumentField"/>
         <default-response url=".."/></transition>

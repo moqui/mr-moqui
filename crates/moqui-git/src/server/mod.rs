@@ -924,8 +924,13 @@ pub fn serve_ssh(
         client: String::new(),
     };
     let v2 = wants_v2(git_protocol) && service == GitService::UploadPack;
-    // the whole conversation's input is held to what one HTTP request of the service may send
-    let mut input = BufReader::new(limited::Capped::new(input, limited::request_limit(service)));
+    // a push's whole input is held to what one HTTP request of it may send, an upload-pack conversation to that round by
+    // round (upload.rs), so a long negotiation is not refused for its total
+    let limit = match service {
+        GitService::ReceivePack => limited::request_limit(service),
+        GitService::UploadPack => u64::MAX,
+    };
+    let mut input = BufReader::new(limited::Capped::new(input, limit));
     let outcome = (|| -> Result<(), Error> {
         match service {
             GitService::UploadPack if v2 => {

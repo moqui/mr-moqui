@@ -234,6 +234,12 @@ pub fn rest(
             ErrorKind::Unauthorized,
             format!("Entity {full_name} is not writable through generic entity REST"),
         ));
+    } else if verb != Verb::Find && sensitive::account_owned_email_server(facade, &full_name, &parameters)? {
+        // a mail account's own server is changed through the account, an ADMIN's write included
+        return Err(kinded(
+            ErrorKind::Unauthorized,
+            "This mail server belongs to a mail account: it is changed in the account's own settings",
+        ));
     }
     // Java's generic entity REST never reads without a limit: with `pageNoLimit` it still takes 100.
     parameters.remove("pageNoLimit");

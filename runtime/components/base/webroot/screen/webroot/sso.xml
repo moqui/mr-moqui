@@ -37,7 +37,8 @@ along with this software (see the LICENSE.md file). If not, see
         </conditional-response>
         <default-response type="screen-last"/>
     </transition>
-    <transition name="logout" read-only="true" require-session-token="false">
+    <!-- not read-only (SEC-RTE-08): a GET another site started is refused, as Login/logout; the app's own link runs -->
+    <transition name="logout">
         <parameter name="returnTo"/>
         <actions>
             <service-call name="org.moqui.sso.AuthServices.logout#User" in-map="context"/>

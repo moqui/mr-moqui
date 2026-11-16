@@ -1430,10 +1430,11 @@
     /* ========== inline components ========== */
 
     // A screen link: setUrl in the shell. An external href (another scheme or host, as a ${} url of a server-static screen can give)
-    // is a plain anchor the browser follows.
+    // is a plain anchor the browser follows. With loadId it loads that container instead; loadMethod "post" (a tree link through a
+    // transition that changes data) sends it as a POST first.
     component("m-link", {
         name: "mLink",
-        props: { href: { type: String, required: true }, loadId: String, confirmation: String, disable: Boolean },
+        props: { href: { type: String, required: true }, loadId: String, loadMethod: String, confirmation: String, disable: Boolean },
         template: '<a :href="disable ? undefined : linkHref" :aria-disabled="disable || undefined" :tabindex="disable ? -1 : undefined" @click="go" class="q-link"><slot></slot></a>',
         methods: {
             go(event) {
@@ -1445,7 +1446,7 @@
                 if (this.external) return;
                 event.preventDefault();
                 if (event.button !== 0) return;
-                if (this.loadId && this.loadId.length > 0) this.$root.loadContainer(this.loadId, this.href);
+                if (this.loadId && this.loadId.length > 0) this.$root.loadContainer(this.loadId, this.href, this.loadMethod);
                 else if (event.ctrlKey || event.metaKey) root.open(this.linkHref, "_blank");
                 else this.$root.setUrl(this.linkHref);
             }
@@ -1630,7 +1631,17 @@
                     this.$nextTick(() => { this.curComponent = comp; });
                 }, this.id);
             },
-            load(url) { if (this.curUrl === url) this.reload(); else this.curUrl = url; }
+            // method "post": url names a transition that changes data, sent as a POST with the session token and its query as the body
+            // (a GET of it is refused); then its messages are shown and the container's own screen loads again
+            load(url, method) {
+                if (method !== "post") { if (this.curUrl === url) this.reload(); else this.curUrl = url; return; }
+                const at = url.indexOf("?");
+                moqui.request(at > 0 ? url.slice(0, at) : url, { method: "POST", params: at > 0 ? url.slice(at + 1) : "" }).then((result) => {
+                    const json = result.json;
+                    if (moqui.isPlainObject(json)) moqui.notifyMessages(json.messageInfos, json.errors, json.validationErrors);
+                    this.reload();
+                }, moqui.handleAjaxError);
+            }
         },
         watch: {
             curUrl(newUrl) {
@@ -1712,7 +1723,7 @@
                 '<i v-if="isFolder" @click="toggle" class="fa" :class="{\'fa-chevron-right\':!open, \'fa-chevron-down\':open}"></i>' +
                 '<i v-else class="fa fa-square-o"></i>' +
                 ' <span @click="setSelected">' +
-                    '<m-link v-if="linkHref" :href="linkHref" :load-id="model.a_attr.loadId" :class="{\'text-success\':selected}">{{model.text}}</m-link>' +
+                    '<m-link v-if="linkHref" :href="linkHref" :load-id="model.a_attr.loadId" :load-method="model.a_attr.loadMethod" :class="{\'text-success\':selected}">{{model.text}}</m-link>' +
                     '<span v-else :class="{\'text-success\':selected}">{{model.text}}</span>' +
                 '</span>' +
                 '<ul v-show="open" v-if="hasChildren"><m-tree-item v-for="child in children" :key="child.id" :model="child" :top="top"></m-tree-item></ul>' +
@@ -9804,7 +9815,7 @@
             // an unmounted container takes its registration back, unless another has the id since
             removeContainer(contId, comp) { if (this.activeContainers[contId] === comp) delete this.activeContainers[contId]; },
             reloadContainer(contId) { const comp = this.activeContainers[contId]; if (comp) comp.reload(); else console.error("Container with ID " + contId + " not found, not reloading"); },
-            loadContainer(contId, url) { const comp = this.activeContainers[contId]; if (comp) comp.load(url); else console.error("Container with ID " + contId + " not found, not loading url " + url); },
+            loadContainer(contId, url, method) { const comp = this.activeContainers[contId]; if (comp) comp.load(url, method); else console.error("Container with ID " + contId + " not found, not loading url " + url); },
             hideContainer(contId) { const comp = this.activeContainers[contId]; if (comp && comp.hide) comp.hide(); else console.error("Container with ID " + contId + " not found, not hiding"); },
 
             // The context of a screen, from its m-screen-context: a new key is the latest registration, a known one keeps its place.

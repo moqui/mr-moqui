@@ -23,9 +23,10 @@ use std::io::{Read, Write};
 
 use gix::ObjectId;
 
+use super::limited::{request_limit, Capped};
 use super::pktline::{self, PackWriter, Packet, MAX_BAND_64K, MAX_BAND_SMALL};
 use super::plan::{self, Deepen};
-use super::{io_error, Advertised};
+use super::{io_error, Advertised, GitService};
 use crate::ops;
 use crate::revwalk::peel_to_commit;
 use crate::store::GitStore;
@@ -403,8 +404,8 @@ enum MultiAck {
 
 /// How much of a fetch's request is kept: its want, have, shallow, deepen and argument lines and the capabilities on
 /// them, which a client sends as many of as it likes (`git-server` `fetch-max-lines`, 1,000,000, each capability on a
-/// want line counted as a line, and `fetch-max-request-bytes`, 64 MiB of them). A v0 conversation has one budget, a v2
-/// command one of its own.
+/// want line counted as a line, and `fetch-max-request-bytes`, 64 MiB of them). Each round has one of its own: a v0 want
+/// phase and each round of haves, a v2 command.
 pub(crate) struct LineBudget {
     most_lines: usize,
     most_bytes: usize,
@@ -454,7 +455,9 @@ fn read_line(input: &mut dyn Read, budget: &mut LineBudget) -> Result<Option<Pac
 }
 
 /// A v0/v1 upload-pack after the advertisement: wants, shallow lines, negotiation, then the pack. `stateless` for HTTP,
-/// where each request is a whole round and is answered alone.
+/// where each request is a whole round and is answered alone. Over a stateful connection (SSH) each round, the want
+/// phase and each flush of haves, is held to what one HTTP request may send (`max-request` bytes and a [`LineBudget`]),
+/// so a long negotiation is not refused for its total and no round is larger than a request.
 pub(crate) fn upload_v0(
     store: &dyn GitStore,
     advertised: &Advertised,
@@ -465,9 +468,10 @@ pub(crate) fn upload_v0(
     threads: Option<usize>,
 ) -> Result<(), Error> {
     let mut request = Request::default();
+    let mut input = Capped::new(input, request_limit(GitService::UploadPack));
     let mut budget = LineBudget::of_conf();
     loop {
-        match read_line(input, &mut budget)? {
+        match read_line(&mut input, &mut budget)? {
             None | Some(Packet::Flush) => break,
             Some(packet) => {
                 let line = packet.text().unwrap_or_default();
@@ -511,8 +515,13 @@ pub(crate) fn upload_v0(
     let mut negotiation = Negotiation::new(store, wanted, &request.wants);
     let (mut got_common, mut got_other, mut sent_ready) = (false, false, false);
     let mut last: Option<ObjectId> = None;
+    if !stateless {
+        // the haves come in rounds of their own
+        input.renew();
+        budget = LineBudget::of_conf();
+    }
     loop {
-        match read_line(input, &mut budget)? {
+        match read_line(&mut input, &mut budget)? {
             // the end of a stateless request that only asked for the shallow list, or a client that went away: git's
             // upload-pack writes nothing more
             None => return Ok(()),
@@ -538,6 +547,8 @@ pub(crate) fn upload_v0(
                 }
                 got_common = false;
                 got_other = false;
+                input.renew();
+                budget = LineBudget::of_conf();
             }
             Some(packet) => {
                 let line = packet.text().unwrap_or_default();
@@ -611,7 +622,7 @@ fn read_command(input: &mut dyn Read) -> Result<Option<(String, Vec<String>)>, E
 }
 
 /// A protocol v2 conversation after the capability advertisement: each command answered in turn (one per request
-/// over HTTP).
+/// over HTTP), each held to what one HTTP request may send (`max-request` bytes and [`read_command`]'s line budget).
 pub(crate) fn serve_v2(
     store: &dyn GitStore,
     advertised: &Advertised,
@@ -621,7 +632,8 @@ pub(crate) fn serve_v2(
     stateless: bool,
     threads: Option<usize>,
 ) -> Result<(), Error> {
-    while let Some((command, arguments)) = read_command(input)? {
+    let mut input = Capped::new(input, request_limit(GitService::UploadPack));
+    while let Some((command, arguments)) = read_command(&mut input)? {
         match command.as_str() {
             "ls-refs" => ls_refs(advertised, &arguments, out)?,
             "fetch" => fetch_v2(store, advertised, wanted, &arguments, out, threads)?,
@@ -631,6 +643,7 @@ pub(crate) fn serve_v2(
         if stateless {
             break;
         }
+        input.renew();
     }
     Ok(())
 }

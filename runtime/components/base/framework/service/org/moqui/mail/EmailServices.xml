@@ -227,6 +227,49 @@ along with this software (see the LICENSE.md file). If not, see
             for (const name of SECRETS) emailServer[name + 'IsSet'] = row[name] != null && String(row[name]) !== ''
         ]]></script></actions>
     </service>
+    <service verb="update" noun="RelayServer">
+        <description>The Service REST PATCH email/servers/{emailServerId}: an ADMIN changes the given fields of a mail
+            server that no mail client account owns (a caller not in ADMIN is refused, Unauthorized); a server an account
+            owns is answered as one that does not exist, as get#RelayServer does. As Admin's Connections, a relay whose mail
+            goes out through the edge node (smtpHost edge:) or that signs in with OAuth (EatOAuth2) is not changed here, and
+            neither is set here: the edge setup and the OAuth sign-in do that. Nothing is answered, a secret least of all.</description>
+        <in-parameters>
+            <parameter name="emailServerId" required="true"/>
+            <parameter name="smtpHost"/><parameter name="smtpPort"/><parameter name="smtpStartTls"/><parameter name="smtpSsl"/>
+            <parameter name="storeHost"/><parameter name="storePort"/><parameter name="storeProtocol"/><parameter name="storeFolder"/>
+            <parameter name="storeDelete"/><parameter name="storeMarkSeen"/><parameter name="storeSkipSeen"/>
+            <parameter name="storeAllowPlain"/>
+            <parameter name="mailUsername"/><parameter name="mailPassword"/><parameter name="smtpUsername"/>
+            <parameter name="smtpPassword"/>
+            <parameter name="webBaseUrl"/><parameter name="allowedToDomains"/><parameter name="authTypeEnumId"/>
+            <parameter name="disabled"/><parameter name="allowPrivateNetwork"/>
+        </in-parameters>
+        <actions><script><![CDATA[
+            const refuse = (kind, text) => { const e = new Error(text); e.moquiErrorKind = kind; throw e }
+            if (!ec.user.isInGroup('ADMIN')) refuse('Unauthorized', 'Only an administrator changes a mail server here')
+            const owned = ec.entity.find('moqui.basic.email.EmailAccount').condition('ownsEmailServer', 'Y')
+                    .condition('emailServerId', emailServerId).disableAuthz().count() > 0
+            const row = owned ? null : ec.entity.find('moqui.basic.email.EmailServer').condition('emailServerId', emailServerId)
+                    .useCache(false).forUpdate(true).one()
+            if (!row) { ec.message.addError(`Email server ${emailServerId} not found`); return }
+            if (String(row.smtpHost ?? '').trim().toLowerCase() === 'edge:') {
+                ec.message.addError('Mail goes out through the edge node: its setup changes this relay'); return }
+            if (row.authTypeEnumId === 'EatOAuth2') {
+                ec.message.addError('This server signs in with OAuth: it is set up where its account signs in'); return }
+            const FIELDS = ['smtpHost', 'smtpPort', 'smtpStartTls', 'smtpSsl', 'storeHost', 'storePort', 'storeProtocol',
+                'storeFolder', 'storeDelete', 'storeMarkSeen', 'storeSkipSeen', 'storeAllowPlain', 'mailUsername', 'mailPassword',
+                'smtpUsername', 'smtpPassword', 'webBaseUrl', 'allowedToDomains', 'authTypeEnumId', 'disabled',
+                'allowPrivateNetwork']
+            const given = FIELDS.filter((name) => context.containsKey(name))
+            if (given.includes('smtpHost') && String(smtpHost ?? '').trim().toLowerCase() === 'edge:') {
+                ec.message.addError('Mail goes out through the edge node only by its setup'); return }
+            if (given.includes('authTypeEnumId') && authTypeEnumId === 'EatOAuth2') {
+                ec.message.addError('A server signs in with OAuth only through its account sign-in'); return }
+            if (!given.length) return
+            for (const name of given) row.set(name, context.get(name))
+            row.update()
+        ]]></script></actions>
+    </service>
 
     <service verb="poll" noun="EmailServer" type="rust" location="moqui_mail::poll_server"
             authenticate="anonymous-all" transaction-timeout="600"

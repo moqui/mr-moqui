@@ -14,7 +14,8 @@
 
 //! The shipped `ProxyServlet.js` as a conf servlet on a real server (docs/interfaces/Web-Scripts.md): the request's method, path,
 //! query and body go to a local upstream, and an answer larger than a script's 64 MiB heap, sent in chunks, streams back
-//! whole, so it never passed through the script.
+//! whole, so it never passed through the script. The server runs as production, where `ec.service.rest()` refuses an
+//! internal address unless the script allows it (SEC-SCR-07): the proxy's upstream is the conf's, so it does.
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum"))]
 
@@ -103,7 +104,8 @@ fn the_proxy_servlet_passes_requests_on_and_streams_a_large_answer() {
             </servlet>
         </webapp></webapp-list>"#
     );
-    let gate = start_with_conf("web-scripts", &conf, &[]);
+    // production: the upstream on loopback is reached only because ProxyServlet.js says allowInternal()
+    let gate = start_with_conf("web-scripts", &conf, &[("instance_purpose", "production")]);
     let address = gate.server.address();
 
     let (status, headers, body) = exchange_bytes(

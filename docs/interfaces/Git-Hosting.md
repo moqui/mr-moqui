@@ -248,10 +248,11 @@ fetches, edit pushes new refs and fast-forwards on a drive that is not read only
 - Clones and pushes run on a pool of their own (`git-server` `max-concurrent`, 4, and `git-server` `max-queued` waiting), not on the
   request workers of the screens, and are exempt from `webapp_request_timeout`; `git-server` `idle-timeout` (120 seconds) of
   silence in a request body ends it. Limits: `git-server` `max-request` (64 MB) for a fetch request, `git-server` `max-push-size` (2 GB),
-  each counted as sent and, for a `Content-Encoding: gzip` body, as inflated, and over SSH for the whole conversation's input
+  each counted as sent and, for a `Content-Encoding: gzip` body, as inflated, and over SSH for a push's whole input and for
+  each round of a fetch (the want phase and each flush of haves in v0, each command in v2), as each HTTP request is
   (more is refused, not cut short); `git-server` `fetch-max-lines` (1,000,000 want, have, shallow, deepen and argument lines,
-  each capability on a want line counted as one) in `fetch-max-request-bytes` (64 MB) of a fetch request (a v0 conversation,
-  a v2 command), else `GitFetchRequestTooLarge`; `git-server` `max-object-size` (512 MB) for one pushed object, `max-delta-depth` (4095, the deepest git writes) deltas
+  each capability on a want line counted as one) in `fetch-max-request-bytes` (64 MB) of a fetch request (a round over SSH),
+  else `GitFetchRequestTooLarge`; `git-server` `max-object-size` (512 MB) for one pushed object, `max-delta-depth` (4095, the deepest git writes) deltas
   from a pushed object to a whole one (`GitDeltaTooDeep`); `git-server` `pack-threads` (2) compress and index one pack.
 
 ## gitECA rules
