@@ -255,6 +255,9 @@ pub(super) fn send_template(
 /// back the caller, and its Sent status is written in the caller's transaction, where a template's message is written
 /// in a new one as Java does. With `markSent` false a client message's status is left to the caller: the mail client's
 /// deliver#DraftMessage records it after the session, in a transaction of its own.
+///
+/// A caller with authorization on sends only a message it may send ([`may_send`], SEC-MAIL-64); any other is answered as
+/// one that does not exist.
 pub(super) fn send_message(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -267,6 +270,9 @@ pub(super) fn send_message(
     let Some(message) = find_one(facade, MESSAGE, "emailMessageId", &email_message_id)? else {
         return fail(format!("No EmailMessage record found for ID {email_message_id}"));
     };
+    if !may_send(&message)? {
+        return fail(format!("No EmailMessage record found for ID {email_message_id}"));
+    }
     let status = field_text(&message, "statusId");
     if status == "ES_DRAFT" {
         return fail(format!("Email Message {email_message_id} is in Draft status"));
@@ -2507,6 +2513,36 @@ fn smtp_tls(host: &str) -> Result<lettre::transport::smtp::client::TlsParameters
         builder = builder.add_root_certificate(certificate);
     }
     builder.build().map_err(|err| Error::new(err.to_string()))
+}
+
+/// Whether the caller may send a stored message (SEC-MAIL-64): internal work (authorization disabled: the queue, its
+/// retries, the mail client's delivery) sends any; a user sends system mail (no `emailAccountId`) that is Ready or
+/// Bounced, or any as an administrator (ADMIN, the message page's Resend), and a mail client account's message that is
+/// Ready or Bounced only with send level on that account (`get#EmailAccountAccess` `canSend`, as the mail client's own
+/// send asks). So another user's Sent mail, a received message, or old system mail is not sent again by a caller.
+fn may_send(message: &EntityValue) -> Result<bool, LibError> {
+    if ExecutionContext::with_current(ExecutionContext::authz_disabled).unwrap_or(false) {
+        return Ok(true);
+    }
+    let status = field_text(message, "statusId");
+    let ready = status == "ES_READY" || status == "ES_BOUNCED";
+    let account_id = field_text(message, "emailAccountId");
+    if account_id.is_empty() {
+        return Ok(ready || moqui_core::user::is_in_group("ADMIN").unwrap_or(false));
+    }
+    if !ready {
+        return Ok(false);
+    }
+    let access_in = BTreeMap::from([("emailAccountId".to_string(), Value::string(&account_id))]);
+    let access = moqui_core::service::sync("org.moqui.mail.EmailClientServices.get#EmailAccountAccess", &access_in)
+        .map_err(|err| LibError::new(err.message()))?;
+    if moqui_core::service::util::has_error() {
+        return Ok(false);
+    }
+    Ok(match access.get("account") {
+        Some(Value::Map(account)) => account.get("canSend").is_some_and(|value| to_plain_string(value) == "true"),
+        _ => false,
+    })
 }
 
 pub(super) fn find_one(
