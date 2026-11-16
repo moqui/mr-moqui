@@ -185,7 +185,10 @@ pub fn account_owned_email_server(
     if simple_entity_key(entity_name) != "emailserver" {
         return Ok(false);
     }
-    let server_id = row.get("emailServerId").map(moqui_lib::object::to_plain_string).unwrap_or_default();
+    let server_id = row
+        .get("emailServerId")
+        .map(moqui_lib::object::to_plain_string)
+        .unwrap_or_default();
     if server_id.is_empty() {
         return Ok(false);
     }

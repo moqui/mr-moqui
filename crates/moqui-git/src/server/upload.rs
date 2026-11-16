@@ -23,9 +23,9 @@ use std::io::{Read, Write};
 
 use gix::ObjectId;
 
+use super::limited::{request_limit, Capped};
 use super::pktline::{self, PackWriter, Packet, MAX_BAND_64K, MAX_BAND_SMALL};
 use super::plan::{self, Deepen};
-use super::limited::{request_limit, Capped};
 use super::{io_error, Advertised, GitService};
 use crate::ops;
 use crate::revwalk::peel_to_commit;

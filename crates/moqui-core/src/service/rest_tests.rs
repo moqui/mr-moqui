@@ -245,19 +245,34 @@ fn an_account_owned_email_server_is_not_written_by_generic_rest_even_by_admin() 
     ctx.factory().set_entity(facade.clone());
     let _entered = ctx.enter();
     let _authz = ctx.disable_authz();
-    create(&facade, "moqui.security.UserAccount", &[("userId", "OWNADMIN"), ("username", "ownadmin")]);
+    create(
+        &facade,
+        "moqui.security.UserAccount",
+        &[("userId", "OWNADMIN"), ("username", "ownadmin")],
+    );
     let mut member = facade.make_value("moqui.security.UserGroupMember").unwrap();
     member.set("userId", Value::string("OWNADMIN"));
     member.set("userGroupId", Value::string("ADMIN"));
-    member.set("fromDate", moqui_lib::object::basic_convert(&Value::I64(1_000), "Timestamp").value);
+    member.set(
+        "fromDate",
+        moqui_lib::object::basic_convert(&Value::I64(1_000), "Timestamp").value,
+    );
     member.create(&facade).unwrap();
     for id in ["OWNED", "RELAY"] {
-        create(&facade, "moqui.basic.email.EmailServer", &[("emailServerId", id), ("storeHost", "imap.example.com")]);
+        create(
+            &facade,
+            "moqui.basic.email.EmailServer",
+            &[("emailServerId", id), ("storeHost", "imap.example.com")],
+        );
     }
     create(
         &facade,
         "moqui.basic.email.EmailAccount",
-        &[("emailAccountId", "ACCT"), ("emailServerId", "OWNED"), ("ownsEmailServer", "Y")],
+        &[
+            ("emailAccountId", "ACCT"),
+            ("emailServerId", "OWNED"),
+            ("ownsEmailServer", "Y"),
+        ],
     );
     crate::user::internal_login_user("ownadmin").unwrap();
     assert!(crate::user::is_in_group("ADMIN").unwrap());
@@ -282,7 +297,9 @@ fn an_account_owned_email_server_is_not_written_by_generic_rest_even_by_admin() 
 
     // /rest/e1
     for verb in ["patch", "delete"] {
-        let err = facade.rest(verb, "moqui.basic.email.EmailServer", &repoint("OWNED")).unwrap_err();
+        let err = facade
+            .rest(verb, "moqui.basic.email.EmailServer", &repoint("OWNED"))
+            .unwrap_err();
         assert_eq!(
             crate::context::ErrorKind::of(&err),
             crate::context::ErrorKind::Unauthorized,
@@ -296,7 +313,9 @@ fn an_account_owned_email_server_is_not_written_by_generic_rest_even_by_admin() 
     assert!(unauthorized(&err), "{err}");
     assert_eq!(store_host("OWNED").as_deref(), Some("imap.example.com"));
 
-    facade.rest("patch", "moqui.basic.email.EmailServer", &repoint("RELAY")).unwrap();
+    facade
+        .rest("patch", "moqui.basic.email.EmailServer", &repoint("RELAY"))
+        .unwrap();
     assert_eq!(store_host("RELAY").as_deref(), Some("127.0.0.1"));
     crate::user::logout().unwrap();
 }

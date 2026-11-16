@@ -317,14 +317,22 @@ fn on_production_rest_refuses_an_internal_address_unless_the_script_allows_it() 
     production.unwrap();
     other.unwrap();
     let requests = server.join().unwrap();
-    let value = |name: &str| crate::script::context_value(name).map(|value| to_plain_string(&value)).unwrap_or_default();
+    let value = |name: &str| {
+        crate::script::context_value(name)
+            .map(|value| to_plain_string(&value))
+            .unwrap_or_default()
+    };
     for name in ["prodCall", "prodSend", "bothCall", "bothSend"] {
         assert!(value(name).contains("internal address"), "{name}: {}", value(name));
     }
     for name in ["allowedCall", "allowedSend", "devCall"] {
         assert_eq!(value(name), "200", "{name}");
     }
-    assert!(value("metadata").contains("link-local address"), "{}", value("metadata"));
+    assert!(
+        value("metadata").contains("link-local address"),
+        "{}",
+        value("metadata")
+    );
     assert_eq!(requests.len(), 3, "{requests:?}");
 }
 
