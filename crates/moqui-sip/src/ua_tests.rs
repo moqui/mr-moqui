@@ -154,7 +154,7 @@ impl FakeTrunk {
     }
 
     fn challenge(&self, header: &str) -> String {
-        let value = &self.nonces.challenges(now_secs(), &[Algorithm::Sha256], false)[0];
+        let value = &self.nonces.challenges(now_secs(), &[Algorithm::Sha256], false, None)[0];
         format!("{header}: {value}\r\n")
     }
 
@@ -162,7 +162,7 @@ impl FakeTrunk {
         let value = header_values(&req.headers, header).pop().expect("credentials");
         let auth = Authorization::parse(&value).unwrap();
         self.nonces
-            .verify(&auth, &req.method.to_string(), Some(password), now_secs())
+            .verify(&auth, &req.method.to_string(), Some(password), now_secs(), None)
     }
 
     /// A new request to the UA at `ua`, as the provider sends an inbound call.
@@ -717,22 +717,27 @@ async fn failed_digests_block_the_source_and_never_the_trunk() {
         ("moqui.test", Some(Algorithm::Sha256))
     );
     // wrong passwords for a real username: 403, 403, then blocked and unanswered
-    let guess = |n: usize, password: &str| {
+    let request_uri = format!("sip:+15551230000@{}", h.addr);
+    let guess = |n: usize, password: &str, uri: &str| {
         let credentials = Credentials {
             username: "acct".to_string(),
             password: password.to_string(),
             ..Default::default()
         };
-        let auth = digest::answer(
-            &credentials,
-            &parsed,
-            "INVITE",
-            "sip:+15551230000@moqui",
-            &format!("c{n}"),
-        )
-        .unwrap();
+        let auth = digest::answer(&credentials, &parsed, "INVITE", uri, &format!("c{n}")).unwrap();
         format!("Proxy-Authorization: {auth}\r\n")
     };
+    // SEC-COM-28: an answer for another Request-URI (a valid one moved onto this request) is refused, and not counted
+    let moved = format!(
+        "INVITE {request_uri} SIP/2.0\r\nVia: SIP/2.0/UDP {};branch=z9hG4bK-moved\r\nMax-Forwards: 70\r\n\
+         From: <sip:100@{}>;tag=moved\r\nTo: <{request_uri}>\r\nCall-ID: moved\r\nCSeq: 1 INVITE\r\n\
+         {}Content-Length: 0\r\n\r\n",
+        scanner.addr,
+        scanner.addr,
+        guess(0, "pw-of-acct", "sip:+15559990000@moqui")
+    );
+    scanner.send(&moved, h.addr).await;
+    scanner.response(403).await;
     for n in 1..=3 {
         let call_id = format!("scan-{n}");
         let text = format!(
@@ -743,7 +748,7 @@ async fn failed_digests_block_the_source_and_never_the_trunk() {
             scanner.addr,
             scanner.addr,
             h.addr,
-            guess(n, "letmein")
+            guess(n, "letmein", &request_uri)
         );
         scanner.send(&text, h.addr).await;
         match h.main_event().await {

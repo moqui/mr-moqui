@@ -205,4 +205,35 @@ fn large_files_stream_with_ranges_and_validators() {
     let spool = gate.runtime.join("tmp/upload");
     let left = std::fs::read_dir(&spool).map(|entries| entries.count()).unwrap_or(0);
     assert_eq!(left, 0, "no spool file is left");
+
+    // SEC-RTE-07: the same upload with no user (a wrong password is none) stops at webapp_max_body, before it is read
+    for authorization in ["", "Authorization: Basic am9obi5kb2U6d3Jvbmc=\r\n"] {
+        let head = format!(
+            "POST {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n{authorization}\
+             Content-Type: multipart/form-data; boundary={boundary}\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        );
+        let mut stream = TcpStream::connect(address).unwrap();
+        stream.write_all(head.as_bytes()).unwrap();
+        let mut response = Vec::new();
+        std::io::Read::read_to_end(&mut stream, &mut response).unwrap();
+        let text = String::from_utf8_lossy(&response);
+        assert!(text.starts_with("HTTP/1.1 413"), "{authorization:?}: {text}");
+    }
+    // a signed-in browser session's upload is read (its screen then asks for the session token)
+    let cookie = crate::common::sign_in(address, "john.doe", "moqui");
+    let head = format!(
+        "POST {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nCookie: {cookie}\r\n\
+         Content-Type: multipart/form-data; boundary={boundary}\r\nContent-Length: {}\r\n\r\n",
+        body.len()
+    );
+    let mut stream = TcpStream::connect(address).unwrap();
+    stream.write_all(head.as_bytes()).unwrap();
+    for piece in body.chunks(256 * 1024) {
+        stream.write_all(piece).unwrap();
+    }
+    let mut response = Vec::new();
+    std::io::Read::read_to_end(&mut stream, &mut response).unwrap();
+    let text = String::from_utf8_lossy(&response);
+    assert!(!text.starts_with("HTTP/1.1 413"), "a session's upload: {text}");
 }

@@ -15,7 +15,21 @@
 use indexmap::IndexMap;
 use moqui_lib::object::Value;
 
-use super::{asked_hrefs, ical_utc_millis, multiget_matches, text_of, xml};
+use super::{asked_hrefs, ical_utc_millis, multiget_matches, object_text, text_of, xml, MAX_OBJECT};
+
+/// SEC-FIL-67: a calendar or contact object past its own limit is refused before the adapter parses it.
+#[test]
+fn an_object_past_its_limit_is_refused_before_it_is_parsed() {
+    let put = |body: Vec<u8>| crate::dav::DavRequest {
+        method: "PUT".into(),
+        body,
+        ..crate::dav::DavRequest::default()
+    };
+    let card = "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:A\r\nEND:VCARD\r\n";
+    assert_eq!(object_text(&put(card.as_bytes().to_vec())).unwrap(), card);
+    assert_eq!(object_text(&put(vec![b'x'; MAX_OBJECT + 1])).unwrap_err().status, 413);
+    assert_eq!(object_text(&put(vec![0xff, 0xfe])).unwrap_err().status, 415);
+}
 
 #[test]
 fn a_time_range_is_read_in_utc() {

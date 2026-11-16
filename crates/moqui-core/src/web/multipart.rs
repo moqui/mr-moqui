@@ -72,13 +72,16 @@ enum Content {
 #[derive(Debug)]
 struct SpoolFile {
     path: PathBuf,
+    /// Its bytes, counted in [`SPOOLED`] until it is removed.
+    bytes: u64,
     released: AtomicBool,
 }
 
 impl SpoolFile {
-    fn new(path: PathBuf) -> Self {
+    fn new(path: PathBuf, bytes: u64) -> Self {
         Self {
             path,
+            bytes,
             released: AtomicBool::new(false),
         }
     }
@@ -87,6 +90,7 @@ impl SpoolFile {
     fn release(&self) {
         if !self.released.swap(true, Ordering::AcqRel) {
             let _ = std::fs::remove_file(&self.path);
+            SPOOLED.fetch_sub(self.bytes, Ordering::AcqRel);
         }
     }
 
@@ -303,6 +307,8 @@ pub enum MultipartError {
     FieldTooLarge(String),
     /// A spool file could not be written.
     Io(String),
+    /// The spool files of the uploads being read already hold [`Spool::max_total`] bytes.
+    SpoolFull,
 }
 
 impl std::fmt::Display for MultipartError {
@@ -312,6 +318,7 @@ impl std::fmt::Display for MultipartError {
             Self::TooManyParts => write!(f, "multipart body has more than {MAX_PARTS} parts"),
             Self::FieldTooLarge(name) => write!(f, "multipart field {name} is too large"),
             Self::Io(why) => write!(f, "multipart body could not be stored: {why}"),
+            Self::SpoolFull => write!(f, "uploads in progress fill the upload spool; try again later"),
         }
     }
 }
@@ -349,17 +356,46 @@ pub struct Spool {
     pub memory_limit: usize,
     /// Bytes of a text field.
     pub field_limit: usize,
+    /// Bytes all spool files may hold at once, over every request of the process; a write past it fails the upload
+    /// with [`MultipartError::SpoolFull`], so uploads at once cannot fill the runtime disk (SEC-RTE-07).
+    pub max_total: u64,
 }
 
+/// The default of `webapp_max_spool`: twice the default largest upload.
+const DEFAULT_MAX_SPOOL: u64 = 4 * 1024 * 1024 * 1024;
+
+/// The bytes in spool files now, over every request of the process ([`Spool::max_total`]).
+static SPOOLED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 impl Spool {
-    /// `runtime/tmp/upload` of `runtime_dir`: 256 KiB of a file in memory, fields of up to 1 MiB.
+    /// `runtime/tmp/upload` of `runtime_dir`: 256 KiB of a file in memory, fields of up to 1 MiB, and all spool files
+    /// together at most `webapp_max_spool` (bytes, or with a `k`, `m` or `g` suffix; 4 GiB by default).
     #[must_use]
     pub fn under(runtime_dir: &Path) -> Self {
+        let max_total = super::parse_size(&moqui_lib::env::get_prop_or_env("webapp_max_spool"))
+            .map_or(DEFAULT_MAX_SPOOL, |size| size as u64);
         Self {
             dir: runtime_dir.join("tmp").join("upload"),
             memory_limit: 256 * 1024,
             field_limit: 1024 * 1024,
+            max_total,
         }
+    }
+
+    /// The bytes all spool files of the process hold now.
+    #[must_use]
+    pub fn spooled_bytes() -> u64 {
+        SPOOLED.load(Ordering::Acquire)
+    }
+
+    /// Count `bytes` more in the spool files, or refuse when that passes [`Spool::max_total`].
+    fn reserve(&self, bytes: u64) -> Result<(), MultipartError> {
+        let before = SPOOLED.fetch_add(bytes, Ordering::AcqRel);
+        if before.saturating_add(bytes) > self.max_total {
+            SPOOLED.fetch_sub(bytes, Ordering::AcqRel);
+            return Err(MultipartError::SpoolFull);
+        }
+        Ok(())
     }
 
     /// Remove what earlier runs left in the spool directory.
@@ -387,16 +423,151 @@ enum State {
     Done,
 }
 
+/// A spool file being written: removed, and its bytes no longer counted, unless it is kept for its request
+/// ([`SpoolWriting::keep`]), so a body cut short or refused leaves nothing behind.
+struct SpoolWriting {
+    file: std::fs::File,
+    path: PathBuf,
+    bytes: u64,
+    kept: bool,
+}
+
+impl SpoolWriting {
+    /// Make a spool file under `spool` with `first` in it.
+    fn start(spool: &Spool, first: &[&[u8]]) -> Result<Self, MultipartError> {
+        let io = |err: std::io::Error| MultipartError::Io(err.to_string());
+        let bytes: u64 = first.iter().map(|chunk| chunk.len() as u64).sum();
+        spool.reserve(bytes)?;
+        let (file, path) = match Self::create(spool) {
+            Ok(created) => created,
+            Err(err) => {
+                SPOOLED.fetch_sub(bytes, Ordering::AcqRel);
+                return Err(err);
+            }
+        };
+        let mut writing = Self {
+            file,
+            path,
+            bytes,
+            kept: false,
+        };
+        for chunk in first {
+            writing.file.write_all(chunk).map_err(io)?;
+        }
+        Ok(writing)
+    }
+
+    fn create(spool: &Spool) -> Result<(std::fs::File, PathBuf), MultipartError> {
+        let io = |err: std::io::Error| MultipartError::Io(err.to_string());
+        std::fs::create_dir_all(&spool.dir).map_err(io)?;
+        let path = spool.dir.join(format!(
+            "upload-{}-{}",
+            std::process::id(),
+            SPOOL_FILES.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        Ok((options.open(&path).map_err(io)?, path))
+    }
+
+    fn write(&mut self, spool: &Spool, data: &[u8]) -> Result<(), MultipartError> {
+        spool.reserve(data.len() as u64)?;
+        self.bytes += data.len() as u64;
+        self.file
+            .write_all(data)
+            .map_err(|err| MultipartError::Io(err.to_string()))
+    }
+
+    /// The file, kept until its request ends.
+    fn keep(&mut self) -> Result<SpoolFile, MultipartError> {
+        self.file.flush().map_err(|err| MultipartError::Io(err.to_string()))?;
+        self.kept = true;
+        Ok(SpoolFile::new(self.path.clone(), self.bytes))
+    }
+}
+
+impl Drop for SpoolWriting {
+    fn drop(&mut self) {
+        if !self.kept {
+            let _ = std::fs::remove_file(&self.path);
+            SPOOLED.fetch_sub(self.bytes, Ordering::AcqRel);
+        }
+    }
+}
+
 /// A part being read.
 struct Part {
     name: String,
     /// `Some` for a file part, with its file name and type.
     file: Option<(String, String)>,
     memory: Vec<u8>,
-    spooled: Option<(std::fs::File, PathBuf)>,
+    spooled: Option<SpoolWriting>,
     size: u64,
     hasher: Sha256,
     head: Vec<u8>,
+}
+
+impl Part {
+    fn new(name: String, file: Option<(String, String)>) -> Self {
+        Self {
+            name,
+            file,
+            memory: Vec::new(),
+            spooled: None,
+            size: 0,
+            hasher: Sha256::new(),
+            head: Vec::new(),
+        }
+    }
+
+    /// Take the next bytes of a file part: in memory up to `spool`'s memory limit, then in a spool file.
+    fn write_file(&mut self, spool: Option<&Spool>, data: &[u8]) -> Result<(), MultipartError> {
+        self.size += data.len() as u64;
+        if self.head.len() < HEAD_BYTES {
+            let take = (HEAD_BYTES - self.head.len()).min(data.len());
+            self.head.extend_from_slice(&data[..take]);
+        }
+        self.hasher.update(data);
+        if let (Some(writing), Some(spool)) = (self.spooled.as_mut(), spool) {
+            return writing.write(spool, data);
+        }
+        match spool {
+            Some(spool) if self.memory.len() + data.len() > spool.memory_limit => {
+                self.spooled = Some(SpoolWriting::start(spool, &[&self.memory, data])?);
+                self.memory = Vec::new();
+                Ok(())
+            }
+            _ => {
+                self.memory.extend_from_slice(data);
+                Ok(())
+            }
+        }
+    }
+
+    /// The file the part's bytes make, named `file_name` of `content_type`.
+    fn into_file(mut self, file_name: String, content_type: String) -> Result<UploadedFile, MultipartError> {
+        let sha256: String = std::mem::take(&mut self.hasher)
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let content = match self.spooled.as_mut() {
+            // the file is removed when its request ends or with the last reference, from here on
+            Some(writing) => Content::Spooled(Arc::new(writing.keep()?)),
+            None => Content::Memory(std::mem::take(&mut self.memory).into()),
+        };
+        Ok(UploadedFile {
+            field_name: std::mem::take(&mut self.name),
+            file_name: base_name(&file_name),
+            content_type,
+            content,
+            size: self.size,
+            head: std::mem::take(&mut self.head),
+            sha256: Some(sha256),
+        })
+    }
 }
 
 /// A `multipart/form-data` body read a chunk at a time ([`MultipartReader::feed`]), then [`MultipartReader::finish`].
@@ -570,115 +741,51 @@ impl MultipartReader {
             }
         }
         let name = name.ok_or_else(|| MultipartError::Malformed("a part has no name".into()))?;
-        Ok(Part {
-            name,
-            file: file_name.map(|file_name| {
-                let content_type = if content_type.is_empty() {
-                    "application/octet-stream".to_string()
-                } else {
-                    content_type
-                };
-                (file_name, content_type)
-            }),
-            memory: Vec::new(),
-            spooled: None,
-            size: 0,
-            hasher: Sha256::new(),
-            head: Vec::new(),
-        })
+        let file = file_name.map(|file_name| {
+            let content_type = if content_type.is_empty() {
+                "application/octet-stream".to_string()
+            } else {
+                content_type
+            };
+            (file_name, content_type)
+        });
+        Ok(Part::new(name, file))
     }
 
     fn write_data(&mut self, data: &[u8]) -> Result<(), MultipartError> {
-        let spool = self.spool.clone();
         let Some(part) = self.part.as_mut() else {
             return Ok(());
         };
         if data.is_empty() {
             return Ok(());
         }
+        if part.file.is_some() {
+            return part.write_file(self.spool.as_ref(), data);
+        }
         part.size += data.len() as u64;
-        if part.file.is_none() {
-            if spool
-                .as_ref()
-                .is_some_and(|spool| part.memory.len() + data.len() > spool.field_limit)
-            {
-                return Err(MultipartError::FieldTooLarge(part.name.clone()));
-            }
-            part.memory.extend_from_slice(data);
-            return Ok(());
+        if self
+            .spool
+            .as_ref()
+            .is_some_and(|spool| part.memory.len() + data.len() > spool.field_limit)
+        {
+            return Err(MultipartError::FieldTooLarge(part.name.clone()));
         }
-        if part.head.len() < HEAD_BYTES {
-            let take = (HEAD_BYTES - part.head.len()).min(data.len());
-            part.head.extend_from_slice(&data[..take]);
-        }
-        part.hasher.update(data);
-        let io = |err: std::io::Error| MultipartError::Io(err.to_string());
-        if let Some((file, _)) = part.spooled.as_mut() {
-            return file.write_all(data).map_err(io);
-        }
-        match spool {
-            Some(spool) if part.memory.len() + data.len() > spool.memory_limit => {
-                std::fs::create_dir_all(&spool.dir).map_err(io)?;
-                let path = spool.dir.join(format!(
-                    "upload-{}-{}",
-                    std::process::id(),
-                    SPOOL_FILES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                ));
-                let mut options = std::fs::OpenOptions::new();
-                options.write(true).create_new(true);
-                #[cfg(unix)]
-                std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-                let mut file = options.open(&path).map_err(io)?;
-                file.write_all(&part.memory).map_err(io)?;
-                file.write_all(data).map_err(io)?;
-                part.memory = Vec::new();
-                part.spooled = Some((file, path));
-                Ok(())
-            }
-            _ => {
-                part.memory.extend_from_slice(data);
-                Ok(())
-            }
-        }
+        part.memory.extend_from_slice(data);
+        Ok(())
     }
 
     fn end_part(&mut self) -> Result<(), MultipartError> {
-        let Some(part) = self.part.take() else {
+        let Some(mut part) = self.part.take() else {
             return Ok(());
         };
-        match part.file {
-            None => self
-                .parsed
-                .fields
-                .push((part.name, String::from_utf8_lossy(&part.memory).into_owned())),
+        match part.file.take() {
+            None => self.parsed.fields.push((
+                std::mem::take(&mut part.name),
+                String::from_utf8_lossy(&part.memory).into_owned(),
+            )),
             // a file input left empty posts a part with an empty file name
             Some((file_name, _)) if file_name.is_empty() && part.size == 0 => {}
-            Some((file_name, content_type)) => {
-                let sha256: String = part
-                    .hasher
-                    .finalize()
-                    .iter()
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect();
-                let content = match part.spooled {
-                    Some((mut file, path)) => {
-                        // the file is removed when its request ends or with the last reference, from here on
-                        let spooled = Arc::new(SpoolFile::new(path));
-                        file.flush().map_err(|err| MultipartError::Io(err.to_string()))?;
-                        Content::Spooled(spooled)
-                    }
-                    None => Content::Memory(part.memory.into()),
-                };
-                self.parsed.files.push(UploadedFile {
-                    field_name: part.name,
-                    file_name: base_name(&file_name),
-                    content_type,
-                    content,
-                    size: part.size,
-                    head: part.head,
-                    sha256: Some(sha256),
-                });
-            }
+            Some((file_name, content_type)) => self.parsed.files.push(part.into_file(file_name, content_type)?),
         }
         Ok(())
     }
@@ -699,12 +806,48 @@ impl MultipartReader {
     }
 }
 
-impl Drop for MultipartReader {
-    fn drop(&mut self) {
-        // a part cut short leaves no spool file behind
-        if let Some((_, path)) = self.part.take().and_then(|part| part.spooled) {
-            let _ = std::fs::remove_file(path);
+/// A request body that is one file (a DAV `PUT`), taken as it arrives as a multipart file part is: in memory up to the
+/// spool's memory limit, then in a spool file of the request, never held whole (SEC-FIL-04). A body cut short leaves
+/// no file behind.
+pub struct BodySpool {
+    spool: Spool,
+    part: Part,
+}
+
+impl BodySpool {
+    #[must_use]
+    pub fn new(spool: Spool) -> Self {
+        Self {
+            spool,
+            part: Part::new("file".to_string(), None),
         }
+    }
+
+    /// Take the next bytes of the body.
+    ///
+    /// # Errors
+    ///
+    /// When the spool file cannot be written, or the spool directory is full ([`MultipartError::SpoolFull`]).
+    pub fn write(&mut self, data: &[u8]) -> Result<(), MultipartError> {
+        if data.is_empty() {
+            return Ok(());
+        }
+        self.part.write_file(Some(&self.spool), data)
+    }
+
+    /// The body read so far.
+    #[must_use]
+    pub fn size(&self) -> u64 {
+        self.part.size
+    }
+
+    /// The body as a file, named `file_name` of `content_type`, removed when its request ends.
+    ///
+    /// # Errors
+    ///
+    /// When the spool file cannot be flushed.
+    pub fn finish(self, file_name: &str, content_type: &str) -> Result<UploadedFile, MultipartError> {
+        self.part.into_file(file_name.to_string(), content_type.to_string())
     }
 }
 

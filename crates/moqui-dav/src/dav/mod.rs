@@ -44,6 +44,7 @@ use std::collections::BTreeMap;
 use moqui_lib::object::{is_empty, to_plain_string, Value};
 
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
+use moqui_core::web::multipart::UploadedFile;
 use xml::{Element, CALDAV, CARDDAV, DAV};
 
 /// The path prefix the server is mounted at.
@@ -58,12 +59,40 @@ pub struct DavRequest {
     /// Header names in lower case; a repeated header joined with commas.
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+    /// A `PUT`'s body as the host spooled it, in place of `body`, so a large file is not held in memory (SEC-FIL-04).
+    pub upload: Option<UploadedFile>,
     /// Credentials may be taken: HTTPS, a trusted proxy's HTTPS, loopback, or `dav-server` `allow-http`.
     pub secure: bool,
     pub client_ip: String,
 }
 
 impl DavRequest {
+    /// The bytes of a `PUT`'s body.
+    pub(crate) fn put_size(&self) -> u64 {
+        self.upload.as_ref().map_or(self.body.len() as u64, UploadedFile::size)
+    }
+
+    /// A `PUT`'s body as the file `name` of `content_type`: the spooled upload, not copied, or the body.
+    pub(crate) fn put_file(&self, name: &str, content_type: &str) -> UploadedFile {
+        match &self.upload {
+            Some(upload) => {
+                let mut file = upload.clone();
+                file.file_name = name.to_string();
+                file.content_type = content_type.to_string();
+                file
+            }
+            None => UploadedFile::in_memory("file", name, content_type, self.body.clone()),
+        }
+    }
+
+    /// A `PUT`'s body as bytes, read from its spool file when the host spooled it.
+    pub(crate) fn put_bytes(&self) -> Result<Vec<u8>, String> {
+        match &self.upload {
+            Some(upload) => upload.read_bytes().map_err(|err| err.message().to_string()),
+            None => Ok(self.body.clone()),
+        }
+    }
+
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
@@ -180,29 +209,74 @@ pub(crate) struct Context<'a> {
     pub body: Option<Element>,
 }
 
-/// Serve one request. The caller runs it in a fresh execution context on a request worker.
-pub fn serve(factory: &ExecutionContextFactory, request: &DavRequest) -> DavResponse {
+/// The largest body of a request other than `PUT` (an XML body: PROPFIND, PROPPATCH, REPORT, LOCK...).
+pub const MAX_XML_BODY: usize = 1024 * 1024;
+
+/// The answer to a request that needs no body to give: a discovery redirect, a path outside the server, `OPTIONS`,
+/// the server off, no credentials, or credentials over plain HTTP. The host asks it before it reads the body, and
+/// [`serve`] asks it again (SEC-FIL-04). Reads only the conf; nothing is looked up.
+pub fn answer_before_body(factory: &ExecutionContextFactory, request: &DavRequest) -> Option<DavResponse> {
     let path = request.path.split('?').next().unwrap_or_default();
     if path == "/.well-known/caldav" || path == "/.well-known/carddav" {
-        return DavResponse::status(301).with_header("Location", format!("{BASE}/"));
+        return Some(DavResponse::status(301).with_header("Location", format!("{BASE}/")));
     }
-    let Some(rest) = path
+    if path
         .strip_prefix(BASE)
         .filter(|rest| rest.is_empty() || rest.starts_with('/'))
-    else {
-        return DavResponse::status(404);
-    };
-    let method = request.method.to_ascii_uppercase();
-    if method == "OPTIONS" {
-        return options();
+        .is_none()
+    {
+        return Some(DavResponse::status(404));
+    }
+    if request.method.eq_ignore_ascii_case("OPTIONS") {
+        return Some(options());
     }
     if !factory.conf_flag("dav-server", "enabled", true) {
-        return DavResponse::text(404, "the DAV server is off");
+        return Some(DavResponse::text(404, "the DAV server is off"));
     }
-    match login(factory, request) {
-        Ok(true) => {}
-        Ok(false) => return unauthorized("log in with your username and an app password"),
-        Err(response) => return response,
+    credentials(factory, request).err()
+}
+
+/// Whether the request's credentials hold, checked without logging in or writing history, before a `PUT`'s body is
+/// read (SEC-FIL-04): an app password, or with `dav-server` `account-password="true"` the account password too. The
+/// refusal is the one [`serve`] would give.
+///
+/// # Errors
+///
+/// The answer to send in place of reading the body.
+pub fn credentials_hold(factory: &ExecutionContextFactory, request: &DavRequest) -> Result<(), DavResponse> {
+    let (username, password) = credentials(factory, request)?;
+    let account_password = factory.conf_flag("dav-server", "account-password", false);
+    if !account_password && !moqui_core::user::looks_like_app_password(&password) {
+        moqui_core::web::note_auth_failure();
+        return Err(unauthorized("the username or app password is not valid"));
+    }
+    let authorization = request.header("authorization");
+    let user = moqui_core::user::with_client_ip(&request.client_ip, || {
+        moqui_core::user::credential_user(None, None, authorization, account_password)
+    });
+    match user {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => {
+            if !account_password {
+                moqui_core::web::note_auth_failure();
+            }
+            tracing::debug!("DAV PUT of {username}: the credentials do not hold");
+            Err(unauthorized("the username or app password is not valid"))
+        }
+        Err(err) => Err(DavResponse::text(503, err.message())),
+    }
+}
+
+/// Serve one request. The caller runs it in a fresh execution context on a request worker.
+pub fn serve(factory: &ExecutionContextFactory, request: &DavRequest) -> DavResponse {
+    if let Some(answer) = answer_before_body(factory, request) {
+        return answer;
+    }
+    let path = request.path.split('?').next().unwrap_or_default();
+    let rest = path.strip_prefix(BASE).unwrap_or_default();
+    let method = request.method.to_ascii_uppercase();
+    if !login(factory, request) {
+        return unauthorized("the username or app password is not valid");
     }
     let username = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
     let user_id = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
@@ -267,13 +341,13 @@ fn unauthorized(text: &str) -> DavResponse {
     DavResponse::text(401, text).with_header("WWW-Authenticate", r#"Basic realm="Moqui", charset="UTF-8""#)
 }
 
-/// Log the request's user in: false when it carries no credentials, the refusal when they are not taken.
-fn login(factory: &ExecutionContextFactory, request: &DavRequest) -> Result<bool, DavResponse> {
+/// The request's Basic credentials, or the refusal: none given, or given over plain HTTP.
+fn credentials(factory: &ExecutionContextFactory, request: &DavRequest) -> Result<(String, String), DavResponse> {
     let Some((username, password)) = request
         .header("authorization")
         .and_then(moqui_core::web::basic_credentials)
     else {
-        return Ok(false);
+        return Err(unauthorized("log in with your username and an app password"));
     };
     if !(request.secure || factory.conf_flag("dav-server", "allow-http", false)) {
         return Err(DavResponse::text(
@@ -281,8 +355,16 @@ fn login(factory: &ExecutionContextFactory, request: &DavRequest) -> Result<bool
             "credentials over plain HTTP are refused; use HTTPS",
         ));
     }
+    Ok((username, password))
+}
+
+/// Log the request's user in: false when the credentials ([`credentials`], present by now) are not taken.
+fn login(factory: &ExecutionContextFactory, request: &DavRequest) -> bool {
+    let Ok((username, password)) = credentials(factory, request) else {
+        return false;
+    };
     let account_password = factory.conf_flag("dav-server", "account-password", false);
-    let logged_in = moqui_core::user::with_client_ip(&request.client_ip, || {
+    moqui_core::user::with_client_ip(&request.client_ip, || {
         if moqui_core::user::looks_like_app_password(&password) || !account_password {
             if moqui_core::user::login_app_password(&username, &password).is_ok() {
                 return true;
@@ -298,12 +380,7 @@ fn login(factory: &ExecutionContextFactory, request: &DavRequest) -> Result<bool
                 .ok()
                 .flatten()
                 .is_some_and(|id| !id.is_empty())
-    });
-    if logged_in {
-        Ok(true)
-    } else {
-        Err(unauthorized("the username or app password is not valid"))
-    }
+    })
 }
 
 // ---------- the root and the principal ----------

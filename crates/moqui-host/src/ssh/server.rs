@@ -56,7 +56,7 @@ use russh::{MethodKind, MethodSet};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
-use super::sftp_fs::{Backend, SftpFs};
+use super::sftp_fs::{Backend, Held, OpenChannel, SftpFs};
 use crate::command::{interactive, run_apps, shell, with_newlines, AppsAccess};
 use crate::worker::on_pool;
 
@@ -67,6 +67,8 @@ const DEFAULT_MAX_PER_USER: usize = 4;
 /// `ssh-server` `max-sessions-per-source`: the sessions one address (an IPv6 /64) holds at once.
 const DEFAULT_MAX_PER_SOURCE: usize = 8;
 const DEFAULT_MAX_FILE: usize = 256 * 1024 * 1024;
+/// Session channels of one connection waiting for their request or running `sftp`; one more is refused (SEC-FIL-61).
+const MAX_SESSION_CHANNELS: usize = 8;
 /// The connection's inactivity timeout; `apps` ends after as long without input (`crate::term::IDLE`).
 pub(super) const IDLE: Duration = Duration::from_secs(600);
 /// How long a connection has from accept to a successful login.
@@ -581,11 +583,13 @@ impl Intake {
             login_name: None,
             dialog_used: false,
             by_password: false,
+            by_app_password: false,
             cluster: false,
             can_sftp: false,
             can_shell: false,
             can_git: false,
             channels: HashMap::new(),
+            sftp_open: Arc::new(AtomicUsize::new(0)),
             ptys: HashMap::new(),
             terminal_env: HashMap::new(),
             git_protocol: HashMap::new(),
@@ -643,6 +647,10 @@ struct Connection {
     /// The user logged in by password, not a key: git is refused unless `ssh-server` `git-password-auth`.
     #[cfg_attr(not(feature = "git"), allow(dead_code))]
     by_password: bool,
+    /// The user logged in with an app password: a device's credential, which no second factor guards, so the login
+    /// gets the drives over SFTP and nothing else (no admin shell, no `sftp-root`, no git, no `apps` or `agent-apps`;
+    /// SEC-FIL-02).
+    by_app_password: bool,
     /// A cluster peer logged in with the cluster key: it may open `cluster <topic>` channels and nothing else.
     cluster: bool,
     can_sftp: bool,
@@ -652,6 +660,8 @@ struct Connection {
     #[cfg_attr(not(feature = "git"), allow(dead_code))]
     can_git: bool,
     channels: HashMap<ChannelId, Channel<Msg>>,
+    /// The `sftp` subsystems running on the connection ([`MAX_SESSION_CHANNELS`]).
+    sftp_open: Arc<AtomicUsize>,
     /// The channels that asked for a pty, with its terminal and window size.
     ptys: HashMap<ChannelId, Pty>,
     /// The `env` variables of each channel that say how a terminal draws (`crate::term::is_terminal_variable`).
@@ -682,6 +692,18 @@ struct Permissions {
     shell: bool,
     git: bool,
 }
+
+/// How a user logged in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LoginBy {
+    Key,
+    Password,
+    /// An app password ([`Connection::by_app_password`]).
+    AppPassword,
+}
+
+/// What a login by app password is told when it asks for anything but SFTP to the drives.
+const DRIVES_ONLY: &str = "an app password opens the drives over SFTP only; log in with a key or the account password";
 
 fn ssh_permissions() -> Result<Permissions, CoreError> {
     Ok(Permissions {
@@ -742,9 +764,19 @@ fn window(columns: u32, rows: u32) -> (u16, u16) {
 }
 
 impl Connection {
-    /// Let the user in, with what the permissions allow; every user gets `apps`.
-    fn accept(&mut self, username: &str, permissions: Permissions, by_password: bool) -> Auth {
-        let Permissions { sftp, shell, git } = permissions;
+    /// Let the user in, with what the permissions allow; every user gets `apps`, but for a login by app password, which
+    /// gets the drives over SFTP only.
+    fn accept(&mut self, username: &str, permissions: Permissions, by: LoginBy) -> Auth {
+        let by_app_password = by == LoginBy::AppPassword;
+        let Permissions { sftp, shell, git } = if by_app_password {
+            Permissions {
+                sftp: false,
+                shell: false,
+                git: false,
+            }
+        } else {
+            permissions
+        };
         if let Err(refused) = self.slot.log_in(Who::User(username)) {
             tracing::warn!(
                 "SSH login of {username} from {} refused: ssh-server {} sessions are open",
@@ -755,7 +787,8 @@ impl Connection {
         }
         tracing::info!("SSH login of {username} from {}", self.peer);
         self.username = Some(username.to_string());
-        self.by_password = by_password;
+        self.by_password = by != LoginBy::Key;
+        self.by_app_password = by_app_password;
         self.can_sftp = sftp;
         self.can_shell = shell;
         self.can_git = git;
@@ -772,6 +805,9 @@ impl Connection {
     fn agent_access(&self) -> AgentAccess {
         if self.username.is_none() {
             return Err(DIALOG_ONLY);
+        }
+        if self.by_app_password {
+            return Err(DRIVES_ONLY);
         }
         #[cfg(feature = "tui")]
         {
@@ -810,6 +846,9 @@ impl Connection {
     /// `apps` on `channel`: a pty, and a build with the client. It runs as the user logged in, or with the login
     /// dialog first, once per connection.
     fn apps_access(&mut self, channel: ChannelId) -> AppsAccess {
+        if self.by_app_password {
+            return Err(DRIVES_ONLY);
+        }
         let Some(pty) = self.ptys.get(&channel) else {
             return Err("apps needs a terminal: connect with ssh -t");
         };
@@ -918,11 +957,16 @@ impl russh::server::Handler for Connection {
             if moqui_core::user::current_user_id()?.is_none_or(|id| id.is_empty()) {
                 return Err(CoreError::new("a second factor is required, which SSH does not take"));
             }
-            ssh_permissions()
+            let by = if by_app_password {
+                LoginBy::AppPassword
+            } else {
+                LoginBy::Password
+            };
+            Ok((ssh_permissions()?, by))
         })
         .await;
         match checked {
-            Ok(permissions) => Ok(self.accept(user, permissions, true)),
+            Ok((permissions, by)) => Ok(self.accept(user, permissions, by)),
             Err(err) => {
                 tracing::warn!(
                     "SSH password login of {user} from {} failed: {}",
@@ -971,7 +1015,7 @@ impl russh::server::Handler for Connection {
         })
         .await;
         match checked {
-            Ok(permissions) => Ok(self.accept(user, permissions, false)),
+            Ok(permissions) => Ok(self.accept(user, permissions, LoginBy::Key)),
             Err(err) => {
                 tracing::warn!("SSH key login of {user} from {} failed: {}", self.peer, err.message());
                 Ok(Auth::reject())
@@ -1015,6 +1059,15 @@ impl russh::server::Handler for Connection {
     ) -> Result<(), Self::Error> {
         if !self.let_in() {
             reply.reject(ChannelOpenFailure::AdministrativelyProhibited).await;
+            return Ok(());
+        }
+        // channels not yet given a request and running `sftp` subsystems, which hold files open (SEC-FIL-61)
+        if self.channels.len() + self.sftp_open.load(Ordering::Acquire) >= MAX_SESSION_CHANNELS {
+            tracing::warn!(
+                "SSH session channel from {} refused: {MAX_SESSION_CHANNELS} are open on the connection",
+                self.peer
+            );
+            reply.reject(ChannelOpenFailure::ResourceShortage).await;
             return Ok(());
         }
         self.channels.insert(channel.id(), channel);
@@ -1070,6 +1123,7 @@ impl russh::server::Handler for Connection {
         let Some(username) = self.username.clone().filter(|_| name == "sftp" && !self.cluster) else {
             return session.channel_failure(channel);
         };
+        let held = Held::new(&username);
         let backend = if self.can_sftp {
             Backend::Root(self.shared.root.clone())
         } else if self.shared.sftp_drives {
@@ -1085,7 +1139,9 @@ impl russh::server::Handler for Connection {
             std::sync::Weak::clone(&self.shared.factory),
             backend,
             self.shared.max_file,
-        );
+            held,
+        )
+        .counted(OpenChannel::new(&self.sftp_open));
         russh_sftp::server::run(open.into_stream(), fs).await;
         Ok(())
     }

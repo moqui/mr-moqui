@@ -369,7 +369,7 @@ pub(crate) fn key_login(key: &str) -> Result<(Option<String>, bool), CoreError> 
     Ok((user, failed))
 }
 
-fn user_of(factory: &ExecutionContextFactory, session_id: &str) -> Result<Option<String>, CoreError> {
+pub(crate) fn user_of(factory: &ExecutionContextFactory, session_id: &str) -> Result<Option<String>, CoreError> {
     // a login the eventual flush has not written yet is in the live session of this node
     if let Some(user_id) = moqui_core::user::live_session_user_id(factory, session_id) {
         return Ok(user_id);

@@ -88,11 +88,14 @@ fn adapters() -> Vec<(&'static str, Handler)> {
             Box::pin(crate::http::dispatch_screen(State(state), peer(), request("GET", "/")))
         }),
         ("dav", |state| {
-            Box::pin(crate::dav_http::handle(
-                State(state),
-                peer(),
-                request("OPTIONS", "/dav/"),
-            ))
+            // a request the head does not answer (OPTIONS or one with no credentials is answered before the queue,
+            // SEC-FIL-04): credentials, from loopback, so the request waits for a worker
+            let mut dav = request("PROPFIND", "/dav/");
+            dav.headers_mut().insert(
+                axum::http::header::AUTHORIZATION,
+                axum::http::HeaderValue::from_static("Basic dXNlcjpwYXNz"),
+            );
+            Box::pin(crate::dav_http::handle(State(state), peer(), dav))
         }),
         #[cfg(feature = "llm")]
         ("mcp", |state| {

@@ -128,6 +128,8 @@ pub struct ServletDef {
     init_params: BTreeMap<String, String>,
     /// `max-body`: the largest request body, over the webapp's own limit.
     pub max_body: Option<usize>,
+    /// `max-upload`: the largest `multipart/form-data` body, in place of the webapp's `max-upload` (SEC-PSA-07).
+    pub max_upload: Option<usize>,
 }
 
 /// A `filter` element with a script.
@@ -252,6 +254,7 @@ impl WebappScripts {
                     patterns: vec![Pattern::Prefix(String::new())],
                     init_params: BTreeMap::new(),
                     max_body: None,
+                    max_upload: None,
                 }),
                 Arc::new(ServletDef {
                     name: "MoquiFopServlet".to_string(),
@@ -259,6 +262,7 @@ impl WebappScripts {
                     patterns: vec![Pattern::Prefix("/fop".to_string())],
                     init_params: BTreeMap::new(),
                     max_body: None,
+                    max_upload: None,
                 }),
             ];
         }
@@ -375,20 +379,24 @@ impl WebappScripts {
                     continue;
                 }
             };
-            let max_body = node.attribute("max-body").and_then(|text| {
-                let text = moqui_lib::env::expand(&text).unwrap_or(text);
-                let size = super::parse_size(&text);
-                if size.is_none() && !text.trim().is_empty() {
-                    tracing::error!("Ignoring the max-body {text} of {label}: not a size");
-                }
-                size
-            });
+            let size_of = |attribute: &str| {
+                node.attribute(attribute).and_then(|text| {
+                    let text = moqui_lib::env::expand(&text).unwrap_or(text);
+                    let size = super::parse_size(&text);
+                    if size.is_none() && !text.trim().is_empty() {
+                        tracing::error!("Ignoring the {attribute} {text} of {label}: not a size");
+                    }
+                    size
+                })
+            };
+            let (max_body, max_upload) = (size_of("max-body"), size_of("max-upload"));
             self.servlets.push(Arc::new(ServletDef {
                 name,
                 handler,
                 patterns: patterns(&node, &label),
                 init_params: init_params(&node),
                 max_body,
+                max_upload,
             }));
         }
     }
@@ -505,6 +513,11 @@ impl WebappScripts {
     /// The largest body a request for `path` may have when its servlet says (`max-body`).
     pub fn max_body_for(&self, path: &str) -> Option<usize> {
         self.match_servlet(path).and_then(|found| found.servlet.max_body)
+    }
+
+    /// The largest `multipart/form-data` body a request for `path` may have when its servlet says (`max-upload`).
+    pub fn max_upload_for(&self, path: &str) -> Option<usize> {
+        self.match_servlet(path).and_then(|found| found.servlet.max_upload)
     }
 
     /// Run a lifecycle element's actions, in a context frame of their own that holds `values`. Nothing when the
@@ -686,7 +699,7 @@ mod tests {
         let scripts = scripts(
             r#"<servlet name="Screens" class="org.moqui.impl.webapp.MoquiServlet"><url-pattern>/*</url-pattern></servlet>
             <servlet name="Fop" class="org.moqui.impl.webapp.MoquiFopServlet"><url-pattern>/fop/*</url-pattern></servlet>
-            <servlet name="Search" location="component://webroot/script/ProxyServlet.js" max-body="100m">
+            <servlet name="Search" location="component://webroot/script/ProxyServlet.js" max-body="100m" max-upload="10m">
                 <init-param name="prefix" value="/search"/><url-pattern>/search/*</url-pattern></servlet>
             <servlet name="Deep" location="component://x/Deep.js"><url-pattern>/search/deep/*</url-pattern></servlet>
             <servlet name="Exact" location="component://x/Exact.js"><url-pattern>/search/exact</url-pattern></servlet>
@@ -712,6 +725,9 @@ mod tests {
         assert_eq!(at("/java/x").0, "Screens", "an unknown class is left out");
         assert_eq!(scripts.max_body_for("/search/x"), Some(100 * 1024 * 1024));
         assert_eq!(scripts.max_body_for("/apps"), None);
+        // SEC-PSA-07: a servlet that takes smaller uploads says so
+        assert_eq!(scripts.max_upload_for("/search/x"), Some(10 * 1024 * 1024));
+        assert_eq!(scripts.max_upload_for("/apps"), None);
 
         let other = scripts_of_extensions();
         assert_eq!(other.match_servlet("/a/b.csv").unwrap().servlet.name, "Csv");

@@ -21,7 +21,7 @@ use std::path::PathBuf;
 
 use moqui_lib::object::{to_plain_string, Value};
 
-use super::{parent_location, safe_entry_name, unhash, writes_restricted, Connector, RUN_COMMAND};
+use super::{parent_location, root_refused, safe_entry_name, unhash, Connector, RUN_COMMAND};
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 use moqui_core::entity::EntityFacade;
 use moqui_core::service::ServicePools;
@@ -466,13 +466,17 @@ fn removing_a_directory_removes_a_link_in_it_not_what_the_link_points_to() {
     assert_eq!(std::fs::read_to_string(outside.join("keep.txt")).unwrap(), "keep");
 }
 
+/// SEC-FIL-08: in production a file or code root is not served at all, a read (`get`, `file`) as well as a write, so
+/// `/resources` cannot hand `runtime/.env` to an ADMIN user; a data root is served.
 #[test]
-fn writes_are_refused_in_production_except_for_a_dbresource_root() {
-    assert!(writes_restricted(true, "file:runtime"));
-    assert!(writes_restricted(true, "component://webroot"));
-    assert!(!writes_restricted(true, "dbresource://mantle/content"));
-    assert!(!writes_restricted(true, "content://main"));
-    assert!(!writes_restricted(false, "file:runtime"));
+fn a_file_root_is_not_served_in_production_and_a_data_root_is() {
+    assert!(root_refused(true, "file:runtime"));
+    assert!(root_refused(true, "runtime://.env"));
+    assert!(root_refused(true, "component://webroot"));
+    assert!(!root_refused(true, "dbresource://mantle/content"));
+    assert!(!root_refused(true, "content://main"));
+    assert!(!root_refused(true, "git://repo"));
+    assert!(!root_refused(false, "file:runtime"));
 
     // A boot of the default conf leaves instance_purpose production for the process; the connector
     // reads it through the thread's override, so the other tests here are not production.
@@ -482,6 +486,7 @@ fn writes_are_refused_in_production_except_for_a_dbresource_root() {
     install();
     let dir = temp_dir("production");
     std::fs::create_dir_all(dir.0.join("sub")).unwrap();
+    std::fs::write(dir.0.join(".env"), "MOQUI_SECRET=x").unwrap();
     let root = format!("file:{}", dir.0.display());
     let mkdir = || {
         response(&command(
@@ -491,13 +496,18 @@ fn writes_are_refused_in_production_except_for_a_dbresource_root() {
             vec![("name", Value::string("made"))],
         ))
     };
+    let get = || response(&command(&root, "get", &hash(".env"), vec![]));
     moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(Some(true)));
     let refused = mkdir();
+    let read = get();
+    let file = command(&root, "file", &hash(".env"), vec![]);
     moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(Some(false)));
-    assert_eq!(
-        refused["error"], "Write not allowed for this resource root",
-        "{refused}"
-    );
+    let refusal = "This resource root is not served on a production instance";
+    assert_eq!(refused["error"], refusal, "{refused}");
+    assert_eq!(read["error"], refusal, "{read}");
+    assert!(read.get("content").is_none(), "{read}");
+    assert!(!file.contains_key("fileLocation"), "{file:?}");
+    assert_eq!(get()["content"], "MOQUI_SECRET=x", "served on a dev instance");
     let made = mkdir();
     assert!(made.get("error").is_none(), "{made}");
     assert!(dir.0.join("sub/made").is_dir());

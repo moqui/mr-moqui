@@ -22,7 +22,7 @@ SHA-256 of the password without its dashes, in lower case, is stored, as for a l
 | Taken by | |
 |---|---|
 | The DAV server | always; the account password only with `dav-server` `account-password="true"`, and never for an account with a second factor |
-| SFTP and the other SSH channels | as the SSH password, tried first when it has the form of an app password |
+| SFTP to the drives | as the SSH password, tried first when it has the form of an app password; such a login gets the drives over SFTP and nothing else (no admin shell, `sftp-root`, git, `apps` or `agent-apps`) |
 | git over HTTPS | as the password, as an access token is |
 | The web login | never |
 
@@ -41,8 +41,11 @@ A refused app password counts for web protection; it is not an account failure, 
 
 Every request logs in by HTTP Basic (devices send it each time). Credentials are taken over HTTPS, from the trusted proxy's
 `X-Forwarded-Proto: https`, from loopback, or with `dav-server` `allow-http="true"`. A path under another user's name is
-not found. OPTIONS answers without a login, with `DAV: 1, 2, 3, calendar-access, addressbook`. The body is read whole, up to
-`dav-server` `max-file` (256 MiB), and the request runs on a request worker in a fresh context, as the user with
+not found. OPTIONS answers without a login, with `DAV: 1, 2, 3, calendar-access, addressbook`. What the head answers is
+answered before the body is read (the server off, no credentials, credentials over plain HTTP, and for a PUT
+credentials that do not hold). A PUT's body is spooled to `runtime/tmp/upload` up to `dav-server` `max-file` (256 MiB; a
+calendar or contact object at most 1 MiB); any other body is read whole, up to 1 MiB. A file's content is sent as a
+screen download sends a user's file: never sniffed, sandboxed, and an HTML or SVG file as an attachment. The request runs on a request worker in a fresh context, as the user with
 authorization on: the drive services are granted to all users through the seed group `DriveDeviceServices`, and each checks
 the drive's members and shares itself, as for the Files screens.
 
@@ -53,7 +56,7 @@ the drive's members and shares itself, as for the Files screens.
 | `calendar-services`, `contact-services` | empty | the adapter classes; Mantle's `MoquiConf.xml` sets `mantle.work.CalendarDavServices` and `mantle.party.ContactDavServices` |
 | `account-password` | false | take the account password too |
 | `allow-http` | false | take credentials over plain HTTP |
-| `max-file` | 268435456 | bytes of a request body |
+| `max-file` | 268435456 | bytes of a PUT's body |
 | `sftp-drives` | true | SFTP to the drives for a user without `SSH_SFTP` |
 
 `org.moqui.resource.DavServices.get#SyncAddresses` gives a user's addresses (with `driveId`, that drive's WebDAV folder and SFTP
@@ -113,8 +116,10 @@ tags hash the rows each text is made of; the ctag the tags.
 
 ## SFTP to the drives
 
-A user with `SSH_SFTP` gets `ssh-server` `sftp-root` as before. Any other user who logs in to the SSH server (an app password,
-a key, or the password of an account with no second factor) gets the drives they may open, one folder each, named as in
-WebDAV (`moqui_dav::dav::files::tree`): a write is an upload and a new version, a removal goes to the trash, a rename across
-folders or drives is a move. Each call logs the user in on a request worker. `dav-server` `sftp-drives="false"` gives such a
-user no SFTP.
+A user with `SSH_SFTP` who logs in with a key or the account password gets `ssh-server` `sftp-root` as before. Any other
+login to the SSH server (an app password whoever the user, a key, or the password of an account with no second factor)
+gets the drives they may open, one folder each, named as in WebDAV (`moqui_dav::dav::files::tree`): a write is an upload
+and a new version, a removal goes to the trash, a rename across folders or drives is a move. Each call logs the user in on
+a request worker. `dav-server` `sftp-drives="false"` gives such a user no SFTP. A file open for writing is held in memory
+until it is closed; the open files of one user hold at most `ssh-server` `sftp-max-file` over all of the user's channels,
+and a connection has at most 8 session channels open.

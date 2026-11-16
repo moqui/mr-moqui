@@ -628,6 +628,57 @@ pub fn login_key_user_by_hash(hashed: &str) -> Result<Option<String>, Error> {
     Ok((!user_id.is_empty() && !still_disabled(&account, now) && !terminated(&account, now)).then_some(user_id))
 }
 
+/// The user a request's own credentials name, checked before its body is read, without logging in, writing history
+/// or changing a session: the `api_key` or `login_key` header ([`login_key_user_by_hash`]), else `Authorization:
+/// Basic` with an app password or, when `account_password`, the account password. The host asks it of an upload larger
+/// than an anonymous request may send (SEC-RTE-07) and of a DAV `PUT` (SEC-FIL-04). A wrong account password counts
+/// as a failed login, as the login of the same request would; none when there are no credentials or they do not hold.
+///
+/// # Errors
+///
+/// Returns a storage error when the credential cannot be checked.
+pub fn credential_user(
+    api_key: Option<&str>,
+    login_key: Option<&str>,
+    authorization: Option<&str>,
+    account_password: bool,
+) -> Result<Option<String>, Error> {
+    if let Some(key) = present_key(api_key).or_else(|| present_key(login_key)) {
+        return login_key_user_by_hash(&password::hash_login_key(key)?);
+    }
+    let Some((username, secret)) = authorization.and_then(crate::web::basic_credentials) else {
+        return Ok(None);
+    };
+    if username.trim().is_empty() || secret.is_empty() {
+        return Ok(None);
+    }
+    let _authz = without_authz();
+    let facade = entity_facade()?;
+    if looks_like_app_password(&secret) {
+        let hashed = password::hash_login_key(&app_password_key(&secret))?;
+        if let Some(row) = facade
+            .find(USER_APP_PASSWORD)?
+            .eq("passwordHash", Value::string(&hashed))
+            .one()?
+            .filter(|row| field_millis(row, "revokedDate").is_none())
+        {
+            let user_id = text_field(&row, "userId");
+            let owner = find_user_id(&facade, &user_id)?;
+            if owner.is_some_and(|account| text_field(&account, "username").eq_ignore_ascii_case(username.trim())) {
+                return Ok(Some(user_id));
+            }
+        }
+    }
+    if !account_password {
+        return Ok(None);
+    }
+    let Some(account) = find_username(&facade, username.trim())? else {
+        return Ok(None);
+    };
+    let user_id = text_field(&account, "userId");
+    Ok(check_old_password(&user_id, &secret)?.then_some(user_id))
+}
+
 /// The kind of `UserLoginKey` a login by key used (`ec.user.loginKeyKind`), read from its row: what an application
 /// asks of a request signed in by the `api_key` or `login_key` header, so it need not hash the key itself.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

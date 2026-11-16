@@ -600,6 +600,13 @@ fn user_of(uri: &Uri) -> String {
     uri.auth.as_ref().map(|a| a.user.clone()).unwrap_or_default()
 }
 
+/// Whether a digest answer's `uri` is the request's Request-URI (RFC 7616 §3.4.6): the same text in any case, or the
+/// same URI once parsed, so how a client writes it does not matter.
+pub(crate) fn uri_matches(answer: &str, request: &Uri) -> bool {
+    let answer = answer.trim();
+    answer.eq_ignore_ascii_case(&request.to_string()) || Uri::try_from(answer).is_ok_and(|parsed| parsed == *request)
+}
+
 fn status_code(code: u16) -> StatusCode {
     StatusCode::from(code)
 }
@@ -1785,8 +1792,9 @@ impl Inner {
     }
 
     /// A request from an address that is not a trunk's: its digest answer must name a PBX trunk's username (`trunks`),
-    /// or, with the registrar on, a phone's (its verifiers). A missing or stale answer is challenged; a failed one
-    /// counts against the source.
+    /// or, with the registrar on, a phone's (its verifiers). A missing or stale answer, or one with a nonce not issued
+    /// to its source, is challenged; a failed one counts against the source, unless the source is a trunk's address
+    /// (SEC-COM-25). An answer for another Request-URI is refused (SEC-COM-28).
     async fn authenticate(&self, tx: &mut Transaction, source: Option<SocketAddr>, trunks: bool) -> Option<Caller> {
         let proxy = tx.original.method == Method::Invite;
         let header_name = if proxy { "Proxy-Authorization" } else { "Authorization" };
@@ -1794,6 +1802,20 @@ impl Inner {
             .into_iter()
             .find_map(|v| Authorization::parse(&v));
         let method = tx.original.method.to_string();
+        let ip = source.map(|source| source.ip());
+        // the answer's response covers its own uri: one for another Request-URI may be a valid answer moved onto this
+        // request (RFC 7616 §3.4.6). Not counted, since a client that writes the URI another way is no attacker.
+        if given
+            .as_ref()
+            .is_some_and(|auth| !uri_matches(&auth.uri, &tx.original.uri))
+        {
+            tracing::debug!(
+                "SIP {method}: the digest uri is not the Request-URI {}",
+                tx.original.uri
+            );
+            let _ = tx.reply(StatusCode::Forbidden).await;
+            return None;
+        }
         // a device domain of its own (set_device_realms): its nonces and its directory's realm
         let realm = self.realm_of(tx, given.as_ref());
         let verdict = match given.as_ref() {
@@ -1817,14 +1839,14 @@ impl Inner {
                 match trunk {
                     Some(trunk) => {
                         let password = trunk.credentials.password.clone();
-                        let verdict = lock(&self.nonces).verify(auth, &method, Some(&password), now_secs());
+                        let verdict = lock(&self.nonces).verify(auth, &method, Some(&password), now_secs(), ip);
                         Some((verdict, Some(Caller::Trunk(trunk))))
                     }
                     None if self.phones.is_some() => {
-                        let (verdict, device) = self.check_device(auth, &method, realm.as_deref()).await;
+                        let (verdict, device) = self.check_device(auth, &method, realm.as_deref(), ip).await;
                         Some((verdict, device.map(|device| Caller::Device(device, realm.clone()))))
                     }
-                    None => Some((lock(&self.nonces).verify(auth, &method, None, now_secs()), None)),
+                    None => Some((lock(&self.nonces).verify(auth, &method, None, now_secs(), ip), None)),
                 }
             }
         };
@@ -1835,15 +1857,17 @@ impl Inner {
                 }
                 Some(caller)
             }
-            None | Some((Verdict::Stale, _)) => {
-                let stale = verdict.is_some();
+            // no answer, a stale one, or one to a challenge this source was not sent (its source may be forged): a
+            // challenge to the source, and no failed attempt
+            None | Some((Verdict::Stale | Verdict::Foreign, _)) => {
+                let stale = matches!(verdict, Some((Verdict::Stale, _)));
                 let algorithms = [Algorithm::Sha256, Algorithm::Md5];
                 let challenges = match realm.as_deref() {
                     Some(realm) => lock(&self.device_realms)
                         .get(realm)
-                        .map(|book| book.challenges(now_secs(), &algorithms, stale))
+                        .map(|book| book.challenges(now_secs(), &algorithms, stale, ip))
                         .unwrap_or_default(),
-                    None => lock(&self.nonces).challenges(now_secs(), &algorithms, stale),
+                    None => lock(&self.nonces).challenges(now_secs(), &algorithms, stale, ip),
                 };
                 let headers = challenges
                     .into_iter()
@@ -1870,7 +1894,8 @@ impl Inner {
             }
             Some(_) => {
                 let username = given.map(|a| a.username).unwrap_or_default();
-                let blocked = match source {
+                // a trunk's address is never blocked: its calls are taken by address, and a block would drop them
+                let blocked = match source.filter(|source| self.trunk_by_address(source.ip()).is_none()) {
                     Some(source) => {
                         let failure = lock(&self.guard).failure(source.ip(), Instant::now());
                         self.emit(UaEvent::AuthFailure {

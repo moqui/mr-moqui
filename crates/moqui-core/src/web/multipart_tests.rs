@@ -144,6 +144,7 @@ fn large_files_are_spooled_with_their_hash_and_removed_when_dropped() {
         dir: dir.clone(),
         memory_limit: 1000,
         field_limit: 100,
+        max_total: u64::MAX,
     };
     let large: Vec<u8> = (0..50_000u32).map(|n| (n * 31 % 253) as u8).collect();
     let data = body(&[
@@ -199,6 +200,7 @@ fn a_request_end_removes_its_spool_files_while_copies_are_held() {
         dir: dir.clone(),
         memory_limit: 100,
         field_limit: 100,
+        max_total: u64::MAX,
     };
     let large = vec![b'z'; 5000];
     let data = body(&[(
@@ -283,4 +285,56 @@ fn programs_are_recognised_by_their_first_bytes() {
     assert!(!is_executable(b"PK\x03\x04"));
     assert!(!is_executable(b"plain text"));
     assert!(!is_executable(b""));
+}
+
+/// SEC-RTE-07, SEC-FIL-04: the spool files of the process hold at most `max_total` bytes; an upload that would pass it
+/// is refused and leaves no file. A body that is one file (a DAV PUT) is spooled past the memory limit as a part is,
+/// and its file goes with the upload.
+#[test]
+fn the_spool_holds_at_most_its_total_and_a_body_spools_as_a_part_does() {
+    let dir = std::env::temp_dir().join(format!("moqui-spool-total-{}", std::process::id()));
+    let full = Spool {
+        dir: dir.clone(),
+        memory_limit: 100,
+        field_limit: 100,
+        max_total: 1000,
+    };
+    let large = vec![b'q'; 3000];
+    let data = body(&[(
+        "Content-Disposition: form-data; name=\"large\"; filename=\"l.bin\"",
+        &large,
+    )]);
+    assert_eq!(
+        fed(&data, 500, Some(full.clone())).unwrap_err(),
+        MultipartError::SpoolFull
+    );
+    let mut put = BodySpool::new(full);
+    assert_eq!(put.write(&large).unwrap_err(), MultipartError::SpoolFull);
+    drop(put);
+    assert_eq!(std::fs::read_dir(&dir).map_or(0, Iterator::count), 0, "nothing left");
+
+    let open = Spool {
+        dir: dir.clone(),
+        memory_limit: 100,
+        field_limit: 100,
+        max_total: u64::MAX,
+    };
+    let mut put = BodySpool::new(open.clone());
+    put.write(&large[..50]).unwrap();
+    put.write(&large[50..]).unwrap();
+    let file = put.finish("page.html", "text/html").unwrap();
+    assert!(!file.is_in_memory());
+    assert_eq!((file.size(), file.file_name.as_str()), (3000, "page.html"));
+    assert_eq!(file.read_bytes().unwrap(), large);
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+    drop(file);
+    assert_eq!(
+        std::fs::read_dir(&dir).unwrap().count(),
+        0,
+        "the file goes with the upload"
+    );
+    let mut small = BodySpool::new(open);
+    small.write(b"tiny").unwrap();
+    assert!(small.finish("t.txt", "text/plain").unwrap().is_in_memory());
+    let _ = std::fs::remove_dir_all(&dir);
 }

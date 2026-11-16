@@ -35,7 +35,8 @@
 //!   [`Turn::set_pairings`] is taken, with its secret then: revoking one, or pairing it again, refuses its usernames
 //!   from then on and closes its
 //!   relays, with no new `turn_auth_secret`. A leg of a pairing is never an XMPP user's own.
-//! - **Quotas:** allocations per username and in all, and a bandwidth per allocation, past which data is dropped.
+//! - **Quotas:** allocations per leg (whatever username of it asks) and in all, and a bandwidth per allocation, past
+//!   which data is dropped. The servers are given a username only for a request whose MESSAGE-INTEGRITY holds for it.
 //! - **Revocation** ([`Turn::revoke_leg`]): the leg's username is refused from then on, its allocations' relay sockets
 //!   close, and nothing more is relayed for them.
 //!
@@ -58,7 +59,9 @@ use turn_server_proto::server::TurnServer;
 use turn_server_proto::types::attribute::XorPeerAddress;
 use turn_server_proto::types::message::{ALLOCATE, CHANNEL_BIND, CREATE_PERMISSION, REFRESH};
 use turn_server_proto::types::stun::attribute::Username;
-use turn_server_proto::types::stun::message::{Message, MessageClass};
+use turn_server_proto::types::stun::message::{
+    LongTermKeyCredentials, Message, MessageClass, MessageIntegrityCredentials,
+};
 use turn_server_proto::types::{AddressFamily, TransportType};
 
 use crate::sfu::Proto;
@@ -171,6 +174,7 @@ pub struct TurnConfig {
     /// alone, RFC 8656) is taken for any of their addresses; a channel and the data need the port too.
     pub allowed_peers: Vec<SocketAddr>,
     pub max_allocations: usize,
+    /// Allocations of one leg at once, over all of its usernames.
     pub max_per_user: usize,
     /// A node that takes links: a username may name a pairing (`<leg>@<pairing>`), checked with that pairing's
     /// secret. Off, every username is the server's own, `@` and all.
@@ -470,21 +474,29 @@ impl Turn {
             return true;
         }
         let username = message.attribute::<Username>().ok().map(|u| u.username().to_string());
+        let mut request_leg = None;
         if let Some(username) = &username {
             // a username the server has never been given gets its 401 from it; one it has (it expired or its leg was
             // revoked since) is dropped, since the server would still take it
-            let good = leg_of(username, unix_now()).filter(|leg| !self.is_revoked(leg));
-            if good.is_none() {
+            let Some(leg) = leg_of(username, unix_now()).filter(|leg| !self.is_revoked(leg)) else {
                 return !self.users.contains(username);
-            }
+            };
+            request_leg = Some(leg.to_string());
             if !self.users.contains(username) {
-                let pass = good.map(|leg| self.password_of(username, leg)).unwrap_or_default();
+                let pass = self.password_of(username, leg);
+                // the server is given a name only for a request that proves it knows the name's password (its
+                // MESSAGE-INTEGRITY holds), as the client's answer to the 401 does: the server cannot forget a name,
+                // so one from a request anyone could send would be kept for the life of the process (SEC-COM-13). A
+                // request that does not prove it gets the server's 401, as for a name it does not know.
+                let key: MessageIntegrityCredentials =
+                    LongTermKeyCredentials::new(username.clone(), pass.clone(), self.config.realm.clone()).into();
+                if message.validate_integrity(&key).is_err() {
+                    return true;
+                }
                 for server in &mut self.servers {
                     server.add_user(username.clone(), pass.clone());
                 }
-                let salt = good
-                    .and_then(|leg| self.pairing(leg))
-                    .and_then(|pairing| self.pairings.get(pairing));
+                let salt = self.pairing(leg).and_then(|pairing| self.pairings.get(pairing));
                 if let Some(salt) = salt.cloned() {
                     self.user_salts.insert(username.clone(), salt);
                 }
@@ -493,8 +505,9 @@ impl Turn {
         }
         let method = message.method();
         if method == ALLOCATE {
-            if let Some(username) = username {
-                let mine = self.allocations.values().filter(|a| a.username == username).count();
+            if let (Some(username), Some(leg)) = (username, request_leg) {
+                // by leg, not by username: each request for ICE servers gives the leg a new username (SEC-COM-17)
+                let mine = self.allocations.values().filter(|a| *a.leg == *leg).count();
                 if !self.allocations.contains_key(&(listen, from))
                     && (mine >= self.config.max_per_user || self.allocations.len() >= self.config.max_allocations)
                 {
