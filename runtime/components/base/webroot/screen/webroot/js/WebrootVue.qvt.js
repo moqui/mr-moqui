@@ -98,6 +98,35 @@
         const message = control.getAttribute("data-confirm");
         qvt.confirmClick(event, control, message, () => control.getAttribute("data-confirm") === message);
     };
+    // The shell address of a plain anchor in server-rendered content (a wiki page's markdown, an HTML text) that goes to a
+    // screen under the screens' base path ("/apps/..."), or null. An m-link maps its path so (getLinkPath); a plain anchor
+    // followed as it is left the shell for the classic render (issue #200). Not an anchor with a target or download, one to
+    // another origin, or a path outside the base.
+    qvt.screenAnchorPath = (anchor, vm, location) => {
+        if (!anchor || !vm || !vm.basePath || typeof vm.getLinkPath !== "function" || !location) return null;
+        const target = anchor.getAttribute("target");
+        if (anchor.hasAttribute("download") || (target && target !== "_self")) return null;
+        const raw = anchor.getAttribute("href") || "";
+        if (!raw || raw.charAt(0) === "#") return null;
+        let url;
+        try { url = new URL(raw, location.href); } catch (err) { return null; }
+        if (url.origin !== location.origin) return null;
+        const base = (vm.appRootPath || "") + vm.basePath;
+        if (url.pathname !== base && url.pathname.indexOf(base + "/") !== 0) return null;
+        return vm.getLinkPath(url.pathname + url.search + url.hash);
+    };
+    // A click on such an anchor goes through the shell, as an m-link's does (Ctrl or Cmd opens the shell address in a new
+    // tab); one a component already handled is left alone.
+    qvt.onScreenAnchorClick = (event) => {
+        if (event.defaultPrevented || event.button !== 0 || event.shiftKey || event.altKey) return;
+        const anchor = event.target && event.target.closest ? event.target.closest("a[href]") : null;
+        const vm = rootVm();
+        const path = qvt.screenAnchorPath(anchor, vm, root.location);
+        if (!path || typeof vm.setUrl !== "function") return;
+        event.preventDefault();
+        if (event.ctrlKey || event.metaKey) root.open(path, "_blank");
+        else vm.setUrl(path);
+    };
 
     /* ========== user preferences ========== */
 
@@ -10584,6 +10613,8 @@
         }
         // Both qvt renderers put confirmations on the control; approval resumes its existing click/submit behavior.
         doc.addEventListener("click", qvt.onConfirmClick, true);
+        // bubbling, after the components: a plain anchor to a screen in rendered content stays in the shell
+        doc.addEventListener("click", qvt.onScreenAnchorClick);
         const options = rootOptions(config);
         Object.assign(options.methods, qvt.rootMethods);
         // the shell's render function when it is precompiled, else its template for the compiler build

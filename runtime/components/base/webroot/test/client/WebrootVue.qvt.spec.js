@@ -471,3 +471,48 @@ feature("chart text follows the rendered theme without replacing chart state or 
         }
     },
 })
+
+// Issue #200: a plain anchor in server-rendered content (a wiki page's markdown) to a screen under /apps is followed in the
+// shell as its /qapps address, as an m-link is; an anchor with a target or download, to another origin, outside the screens'
+// base, or one a component already handled, is left to the browser.
+feature("a plain anchor to a screen in rendered content stays in the shell", {
+    expect() {
+        const page = browser.newPage()
+        page.setContent(`<!doctype html><html><head></head><body><div id="app"></div>
+            <div id="content">
+                <a id="wiki" href="/apps/marble/Wiki/wiki/EXAMPLE/Other?x=1#part">Other</a>
+                <a id="blank" href="/apps/marble/Wiki/wiki/EXAMPLE/Other" target="_blank">New tab</a>
+                <a id="file" href="/apps/marble/Wiki/wiki/EXAMPLE/file.pdf" download>File</a>
+                <a id="away" href="https://example.com/apps/x">Away</a>
+                <a id="static" href="/libs/readme.txt">Static</a>
+                <a id="handled" href="/apps/marble/Wiki">Handled</a>
+            </div><script src="/libs/vue/vue.global.prod.js"></script><script src="/libs/quasar/quasar.umd.prod.js"></script>
+            <script src="/js/MoquiLib.js"></script><script src="/js/WebrootVue.qvt.js"></script><script>
+            window.routes=[];window.opened=[];window.open=(url,target)=>{opened.push([url,target]);return null;};
+            const app=Vue.createApp({data(){return {appRootPath:'',basePath:'/apps',linkBasePath:'/qapps'};},
+                methods:{getLinkPath(path){return path.replace(/^\\/apps/,'/qapps');},setUrl(url){routes.push(url);}}});
+            window.vm=moqui.webrootVue=app.mount('#app');
+            document.getElementById('handled').addEventListener('click',(event)=>event.preventDefault());
+            document.addEventListener('click',moqui.qvt.onScreenAnchorClick);
+            // the browser's own navigation is not followed: only whether the shell took the click
+            document.addEventListener('click',(event)=>{window.lastDefaultPrevented=event.defaultPrevented;event.preventDefault();});
+            </script></body></html>`)
+        const click = id => page.evaluate(target => {
+            window.lastDefaultPrevented = null
+            document.getElementById(target).click()
+            return { routes: routes.slice(), shellTook: window.lastDefaultPrevented }
+        }, id)
+        assert.deepEqual(click("wiki"), { routes: ["/qapps/marble/Wiki/wiki/EXAMPLE/Other?x=1#part"], shellTook: true })
+        for (const id of ["blank", "file", "away", "static"]) {
+            const before = page.evaluate(() => routes.length)
+            const result = click(id)
+            assert.equal(result.routes.length, before, id + " is left to the browser")
+            assert.equal(result.shellTook, false, id + " is not prevented")
+        }
+        const before = page.evaluate(() => routes.length)
+        assert.equal(click("handled").routes.length, before, "a click a component handled is left alone")
+        // Ctrl opens the shell address in a new tab, as an m-link does
+        page.evaluate(() => { document.getElementById("wiki").dispatchEvent(new MouseEvent("click", {bubbles: true, cancelable: true, ctrlKey: true, button: 0})); return true })
+        assert.deepEqual(page.evaluate(() => opened), [["/qapps/marble/Wiki/wiki/EXAMPLE/Other?x=1#part", "_blank"]])
+    },
+})
