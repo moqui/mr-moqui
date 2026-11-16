@@ -1432,3 +1432,27 @@ fn an_edge_node_keys_a_webhook_by_its_event_and_their_number() {
     bad.body = b"not json".to_vec();
     assert!(crate::webhook::event_key(&bad).is_none());
 }
+
+/// SEC-COM-10: the API base is https, unless `allowInternalAddresses` (a test's fake) allows http; that setting is
+/// ignored on a production instance.
+#[test]
+fn a_bridge_sends_its_key_over_https_and_reaches_no_internal_address_on_production() {
+    use moqui_core::service::chat_bridge::ChatBridgeAdapter as _;
+    let bridge = |config: Json| moqui_core::service::chat_bridge::BridgeInfo {
+        chat_bridge_id: "B".to_string(),
+        type_enum_id: String::new(),
+        adapter_name: "sms".to_string(),
+        name: "B".to_string(),
+        config,
+    };
+    let adapter = crate::telnyx::TelnyxSms::new();
+    let plain = json!({"apiKey": "K", "apiBaseUrl": "http://api.example.test"});
+    assert!(adapter.start(&bridge(plain)).is_err());
+    let fake = json!({"apiKey": "K", "apiBaseUrl": "http://127.0.0.1:9", "allowInternalAddresses": true});
+    assert!(adapter.start(&bridge(fake.clone())).is_ok());
+    assert!(crate::telnyx::Config::of(&fake).allow_internal);
+    moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(Some(true)));
+    let on_production = (crate::telnyx::Config::of(&fake).allow_internal, adapter.start(&bridge(fake)).is_err());
+    moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(None));
+    assert_eq!(on_production, (false, true));
+}

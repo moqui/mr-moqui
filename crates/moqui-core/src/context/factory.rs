@@ -956,6 +956,17 @@ impl ExecutionContextFactory {
         self.conf.load().generation
     }
 
+    /// Whether the process property `name` is a secret as the merged conf declares it: its `default-property` has
+    /// `is-secret="true"`, or its name has `pass`, `pw` or `key` in it and no `is-secret="false"` (the masking of the
+    /// conf view). A name the conf does not declare is judged by its name.
+    pub fn conf_property_is_secret(&self, name: &str) -> bool {
+        let flag = MNode::parse_shared("moqui-conf", &self.conf_text())
+            .ok()
+            .and_then(|conf| conf.first_named_attrs("default-property", &[("name", name)]))
+            .and_then(|node| node.attribute("is-secret"));
+        is_secret(name, flag.as_deref())
+    }
+
     /// Put `text` in place of the merged conf and answer its generation, one past the one before. A read in flight
     /// keeps the conf it took; [`Self::conf_derived`] state is built again on next use. The conf reload calls this with
     /// the conf it found live (plans/archive/Component-Deploy.md, Phase 1).

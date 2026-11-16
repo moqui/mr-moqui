@@ -860,6 +860,9 @@ fn bad_tool_arguments_are_reported_and_a_cut_stream_with_calls_is_a_failure() {
 
 #[test]
 fn a_private_address_needs_allow_private_network_and_loopback_is_allowed() {
+    // a host name is looked up, so its addresses are checked too (SEC-OUT-11)
+    assert!(super::resolved("http://localhost:1234").iter().all(std::net::IpAddr::is_loopback));
+    assert!(!super::resolved("http://localhost:1234").is_empty());
     let mut target = target("lan", ProtocolId::ChatCompletions, "http://192.168.1.20:1234");
     let reply = call(&target, &simple_request(), &mut fast(CallSource::Test));
     let error = reply.finish.error().unwrap();
@@ -889,6 +892,10 @@ fn a_private_address_needs_allow_private_network_and_loopback_is_allowed() {
         "http://0xa9.0xfe.0xa9.0xfe/",
         // an IPv4-mapped IPv6 address is the IPv4 one
         "http://[::ffff:10.0.0.1]:8080",
+        // the ranges of the shared guard: shared (CGNAT), benchmarking, a 6to4 address of a private one
+        "http://100.64.0.1/",
+        "http://198.18.0.1/",
+        "http://[2002:a00:1::1]/",
     ] {
         assert!(
             check_address(&self::target("no", ProtocolId::ChatCompletions, url)).is_err(),

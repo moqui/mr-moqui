@@ -79,8 +79,9 @@ const MAX_LEG: usize = 192;
 
 /// A public unicast address: not unspecified, loopback, private, shared (100.64/10), link-local, multicast, broadcast,
 /// documentation, benchmarking or unique-local; an IPv4-mapped IPv6 address and a 6to4 one (2002::/16) as the IPv4
-/// address they carry; no IPv4-compatible (::/96), NAT64 (64:ff9b::/96 and /48) or Teredo (2001::/32) address, which
-/// carry an IPv4 address that may be inside.
+/// address they carry; for IPv6 otherwise only global unicast `2000::/3`, with no Teredo, benchmarking or documentation
+/// address, and no IPv4-compatible (::/96) or NAT64 (64:ff9b::/96 and /48) address, which carry an IPv4 address that
+/// may be inside.
 pub fn is_public(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
@@ -109,15 +110,14 @@ pub fn is_public(ip: IpAddr) -> bool {
                 let [c, d] = segments[2].to_be_bytes();
                 return is_public(IpAddr::V4(std::net::Ipv4Addr::new(a, b, c, d)));
             }
-            !(v6.is_unspecified()
-                || v6.is_loopback()
-                || v6.is_multicast()
-                || segments[..6].iter().all(|segment| *segment == 0)
-                || (first & 0xfe00) == 0xfc00
-                || (first & 0xffc0) == 0xfe80
-                || first == 0x2001 && segments[1] == 0x0db8
-                || first == 0x2001 && segments[1] == 0
-                || first == 0x0064)
+            // global unicast 2000::/3 only (so no loopback, unique local, link-local, site-local fec0::/10,
+            // multicast, IPv4-compatible, IPv4-translated ::ffff:0:0:0/96 or NAT64), less the IETF protocol range
+            // 2001::/23 (Teredo, benchmarking, ORCHID) and documentation 2001:db8::/32 and 3fff::/20: the ranges
+            // moqui_lib::net::internal_address refuses, which also takes NAT64 by the address inside
+            (first & 0xe000) == 0x2000
+                && !(first == 0x2001 && segments[1] < 0x0200)
+                && !(first == 0x2001 && segments[1] == 0x0db8)
+                && (first & 0xfff0) != 0x3ff0
         }
     }
 }

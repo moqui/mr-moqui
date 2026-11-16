@@ -210,7 +210,7 @@ impl std::fmt::Debug for OpenResponse {
 #[derive(Debug)]
 pub struct RestClient {
     timeout: Duration,
-    deny_internal: bool,
+    guard: AddressGuard,
     max_response_bytes: u64,
     truncate_body: bool,
     max_redirects: usize,
@@ -241,7 +241,7 @@ impl RestClient {
     pub const fn new() -> Self {
         Self {
             timeout: DEFAULT_TIMEOUT,
-            deny_internal: false,
+            guard: AddressGuard::Off,
             max_response_bytes: MAX_RESPONSE_BYTES,
             truncate_body: false,
             max_redirects: MAX_REDIRECTS,
@@ -293,9 +293,32 @@ impl RestClient {
     /// The check is in the client's resolver, so the addresses checked are the ones connected to: a name that
     /// resolves to a public address for the check and an internal one for the connect cannot get past it. A
     /// redirect is resolved the same way.
+    ///
+    /// A guarded client goes direct, never through a proxy named in the environment: the proxy would resolve the name
+    /// and the check would see only the proxy's.
     #[must_use]
     pub fn deny_internal_addresses(mut self, deny: bool) -> Self {
-        self.deny_internal = deny;
+        if deny {
+            self.guard = AddressGuard::Internal;
+        } else if self.guard == AddressGuard::Internal {
+            self.guard = AddressGuard::Off;
+        }
+        // The resolver is part of the transport, so one built before this is not kept.
+        self.transport = OnceLock::new();
+        self
+    }
+
+    /// Refuse only link-local and cloud metadata addresses (`moqui_lib::net::link_local_address`), checked as
+    /// [`deny_internal_addresses`](Self::deny_internal_addresses) checks: for a request that may go to the private
+    /// network, such as a monitoring scrape of an exporter beside the server. `deny_internal_addresses(true)` refuses
+    /// these too. Unlike that guard this one keeps a proxy named in the environment, which then resolves the name.
+    #[must_use]
+    pub fn deny_link_local_addresses(mut self, deny: bool) -> Self {
+        if deny && self.guard == AddressGuard::Off {
+            self.guard = AddressGuard::LinkLocal;
+        } else if !deny && self.guard == AddressGuard::LinkLocal {
+            self.guard = AddressGuard::Off;
+        }
         // The resolver is part of the transport, so one built before this is not kept.
         self.transport = OnceLock::new();
         self
@@ -369,10 +392,8 @@ impl RestClient {
         let method = request.method;
         let url = request.url;
         let shown = redacted(&url);
-        if self.deny_internal {
-            // An address in the URL is not resolved, so the resolver does not see it.
-            deny_internal_literal(&url)?;
-        }
+        // An address in the URL is not resolved, so the resolver does not see it.
+        deny_literal(self.guard, &url)?;
         let mut builder = client.request(method.as_reqwest(), &url);
         for (name, value) in &request.headers {
             builder = builder.header(name.as_str(), value.as_str());
@@ -437,9 +458,7 @@ impl RestClient {
         for (name, value) in &request.headers {
             check_header(name, value)?;
         }
-        if self.deny_internal {
-            deny_internal_literal(&request.url)?;
-        }
+        deny_literal(self.guard, &request.url)?;
         let client = self.transport()?;
         let method = request.method;
         let shown = redacted(&request.url);
@@ -494,9 +513,7 @@ impl RestClient {
         for (name, value) in &request.headers {
             check_header(name, value)?;
         }
-        if self.deny_internal {
-            deny_internal_literal(&request.url)?;
-        }
+        deny_literal(self.guard, &request.url)?;
         let client = self.transport()?;
         let method = request.method;
         let shown = redacted(&request.url);
@@ -550,10 +567,14 @@ impl RestClient {
             .redirect(redirect_policy(
                 self.max_redirects,
                 self.redirect_any_host,
-                self.deny_internal,
+                self.guard,
             ));
-        if self.deny_internal {
-            builder = builder.dns_resolver(std::sync::Arc::new(PublicOnly));
+        match self.guard {
+            AddressGuard::Off => {}
+            // A proxy named in the environment stays in use here: the name is then the proxy's to resolve, and only an
+            // address written out is checked.
+            AddressGuard::LinkLocal => builder = builder.dns_resolver(std::sync::Arc::new(NotLinkLocal)),
+            AddressGuard::Internal => builder = builder.no_proxy().dns_resolver(std::sync::Arc::new(PublicOnly)),
         }
         if let Some(path) = &self.unix_socket {
             #[cfg(unix)]
@@ -709,16 +730,15 @@ impl Call<'_> {
 
 /// Follow up to `max` redirects over the same or a safer scheme, and only to the same host unless `any_host`. A
 /// redirect anywhere else comes back as the 3xx response, so a header meant for one server never goes to another.
-/// With `deny_internal` a hop to an internal address written out is an error; the resolver checks a name.
-fn redirect_policy(max: usize, any_host: bool, deny_internal: bool) -> reqwest::redirect::Policy {
+/// With a guard a hop to an address it refuses, written out, is an error; the resolver checks a name.
+fn redirect_policy(max: usize, any_host: bool, guard: AddressGuard) -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(move |attempt| {
         if attempt.previous().len() >= max {
             return attempt.stop();
         }
         let next = attempt.url();
-        if deny_internal && internal_literal(next) {
-            let shown = redacted(next.as_str());
-            return attempt.error(format!("{shown} is an internal address and is not allowed here"));
+        if let Err(err) = guard.check_literal(next) {
+            return attempt.error(err.message().to_string());
         }
         let origin = attempt.previous().first().cloned();
         let same_host = any_host
@@ -748,20 +768,52 @@ pub fn redacted(url: &str) -> String {
     }
 }
 
-/// Refuse a URL whose host is an internal IP address written out. A name is left to [`PublicOnly`].
-fn deny_internal_literal(url: &str) -> Result<(), Error> {
+/// Which addresses a client refuses: none, link-local and metadata only, or every internal one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AddressGuard {
+    Off,
+    LinkLocal,
+    Internal,
+}
+
+impl AddressGuard {
+    /// Refuse a URL whose host is an address this guard refuses, written out. A name is left to the resolver.
+    fn check_literal(self, url: &reqwest::Url) -> Result<(), Error> {
+        let refused = match self {
+            Self::Off => return Ok(()),
+            Self::LinkLocal => host_ip(url).is_some_and(crate::net::link_local_address),
+            Self::Internal => internal_literal(url),
+        };
+        if refused {
+            let what = if self == Self::LinkLocal { "a link-local" } else { "an internal" };
+            return Err(Error::new(format!(
+                "{} is {what} address and is not allowed here",
+                redacted(url.as_str())
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Refuse a URL whose host is an address `guard` refuses, written out; with a guard, also one with no host.
+fn deny_literal(guard: AddressGuard, url: &str) -> Result<(), Error> {
+    if guard == AddressGuard::Off {
+        return Ok(());
+    }
     let parsed = reqwest::Url::parse(url)
         .map_err(|err| Error::new(format!("invalid URL {}", redacted(url))).with_source(err))?;
     if parsed.host_str().is_none() {
         return Err(Error::new(format!("URL {} has no host", redacted(url))));
     }
-    if internal_literal(&parsed) {
-        return Err(Error::new(format!(
-            "{} is an internal address and is not allowed here",
-            redacted(url)
-        )));
-    }
-    Ok(())
+    guard.check_literal(&parsed)
+}
+
+fn host_ip(url: &reqwest::Url) -> Option<std::net::IpAddr> {
+    url.host_str()?
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse()
+        .ok()
 }
 
 /// The IP address written as the host of `url`, read as the URL parser reads it (`http://2852039166/` and
@@ -776,32 +828,51 @@ pub fn host_address(url: &str) -> Option<std::net::IpAddr> {
         .ok()
 }
 
+/// The host of `url` as the URL parser reads it (no brackets on an IPv6 address) and its port, or the scheme's
+/// default; `None` for a URL that does not parse or has no host. No lookup.
+pub fn host_and_port(url: &str) -> Option<(String, u16)> {
+    let parsed = reqwest::Url::parse(url).ok()?;
+    let host = parsed.host_str().filter(|host| !host.is_empty())?;
+    let port = parsed.port_or_known_default()?;
+    Some((host.trim_start_matches('[').trim_end_matches(']').to_string(), port))
+}
+
 /// Whether the host of `url` is an internal IP address written out (a name is not: only a lookup tells). The URL
 /// parser has already put an IPv4 host in dotted form, however it was written.
 pub fn internal_literal(url: &reqwest::Url) -> bool {
-    url.host_str()
-        .and_then(|host| {
-            host.trim_start_matches('[')
-                .trim_end_matches(']')
-                .parse::<std::net::IpAddr>()
-                .ok()
-        })
-        .is_some_and(internal_address)
+    host_ip(url).is_some_and(internal_address)
 }
 
 /// The resolver of a client that denies internal addresses: the system lookup, failing when any address is
 /// internal. The lookup runs on its own thread, as reqwest's own resolver does, so it does not hold up the client's
 /// runtime. Public for a client built outside [`RestClient`] (the SSO client's); such a client checks an address
-/// written out itself ([`internal_literal`]), which no resolver sees.
+/// written out itself ([`internal_literal`]), which no resolver sees, and calls `no_proxy()`, since a proxy resolves
+/// the name itself.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PublicOnly;
 
 impl reqwest::dns::Resolve for PublicOnly {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let host = name.as_str().to_string();
-        Box::pin(Lookup::start(host))
+        Box::pin(Lookup::start(host, crate::net::public_addresses))
     }
 }
+
+/// The resolver of a client that refuses only link-local and metadata addresses, as [`PublicOnly`] refuses every
+/// internal one.
+#[derive(Debug, Clone, Copy, Default)]
+struct NotLinkLocal;
+
+impl reqwest::dns::Resolve for NotLinkLocal {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().to_string();
+        Box::pin(Lookup::start(host, crate::net::non_link_local_addresses))
+    }
+}
+
+/// A lookup that checks the addresses it finds: [`crate::net::public_addresses`] or
+/// [`crate::net::non_link_local_addresses`].
+type CheckedLookup = fn(&str, u16) -> Result<Vec<std::net::SocketAddr>, Box<dyn std::error::Error + Send + Sync>>;
 
 type LookupResult = Result<reqwest::dns::Addrs, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -817,7 +888,7 @@ struct LookupState {
 }
 
 impl Lookup {
-    fn start(host: String) -> Self {
+    fn start(host: String, lookup: CheckedLookup) -> Self {
         let shared = std::sync::Arc::new(std::sync::Mutex::new(LookupState::default()));
         let filled = std::sync::Arc::clone(&shared);
         let finish = move |result: LookupResult| {
@@ -829,7 +900,7 @@ impl Lookup {
         };
         let spawned = std::thread::Builder::new().name("moqui-http-dns".to_string()).spawn({
             let finish = finish.clone();
-            move || finish(resolve_public(&host))
+            move || finish(lookup(&host, 0).map(|found| Box::new(found.into_iter()) as reqwest::dns::Addrs))
         });
         if let Err(err) = spawned {
             finish(Err(Box::new(err)));
@@ -851,12 +922,6 @@ impl std::future::Future for Lookup {
             }
         }
     }
-}
-
-/// The addresses of `host`, or an error when any is internal: one internal address among public ones could still be
-/// the one connected to.
-fn resolve_public(host: &str) -> LookupResult {
-    Ok(Box::new(crate::net::public_addresses(host, 0)?.into_iter()))
 }
 
 pub use crate::net::internal_address;

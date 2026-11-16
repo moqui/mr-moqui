@@ -891,8 +891,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="testedByUserId" type="id"/>
         <field name="allowPrivateNetwork" type="text-indicator" enable-audit-log="true"><description>N: no request the
             server makes for this flow (discovery document, token, keys, user info) goes to a loopback, private or
-            link-local address, by name or written out (crates/moqui-host/src/sso.rs). Empty or Y: such an address is
-            allowed, as for a provider on the instance's own network. A provider started through
+            link-local address, by name or written out (crates/moqui-host/src/sso.rs). Y: such an address is allowed,
+            as for a provider on the instance's own network. Empty: as N on a production instance, as Y on another. A provider started through
             org.moqui.admin.ConfigurationServices.store#IdentityProvider on a production instance is saved N, and that
             service never changes it: an instance administrator does.</description></field>
 

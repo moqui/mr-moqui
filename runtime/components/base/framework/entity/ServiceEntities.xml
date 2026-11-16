@@ -447,7 +447,9 @@ along with this software (see the LICENSE.md file). If not, see
             send#SystemMessageRest sends nothing to a loopback, private or link-local address for this remote, redirects
             included. store#Connection saves N for a remote a delegated administrator started or repointed on a
             production instance and never changes it back: an instance administrator allows a remote on the instance's
-            own network. Empty or Y: as before. A send service of its own reads the flag itself.</description></field>
+            own network. Y: allowed. Empty: as N on a production instance, as Y on another
+            (moqui_core::outbound::deny_private_network). A link-local or metadata address is refused always. A send
+            service of its own reads the flag itself.</description></field>
 
         <relationship type="one" title="SystemMessageAuthType" related="moqui.basic.Enumeration" short-alias="messageAuthEnum">
             <key-map field-name="messageAuthEnumId"/></relationship>

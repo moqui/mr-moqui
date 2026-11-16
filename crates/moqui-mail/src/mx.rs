@@ -974,7 +974,10 @@ fn override_for(domain: &str) -> Option<(String, u16)> {
 /// The hosts to try for `domain`, by preference: (host name, its addresses, port).
 type Hosts = Vec<(String, Vec<IpAddr>, u16)>;
 
-/// The MX hosts of `domain` and their addresses, or the answer every recipient gets when there is none to try.
+/// The MX hosts of `domain` and their addresses, or the answer every recipient gets when there is none to try. An
+/// address that is not public (loopback, private, link-local, `moqui_lib::net::internal_address`) is never tried: a
+/// recipient domain's DNS would otherwise make the node deliver to, and report the replies of, a server inside its own
+/// network (SEC-OUT-04, SEC-MAIL-66). `mail_mx_override` may name one.
 fn hosts(domain: &str, policy: Option<&sts::Policy>) -> Result<Hosts, Answer> {
     if let Some((host, port)) = override_for(domain) {
         let ips = match host.parse::<IpAddr>() {
@@ -1008,15 +1011,24 @@ fn hosts(domain: &str, policy: Option<&sts::Policy>) -> Result<Hosts, Answer> {
     let mut failed = Vec::new();
     for (_, host) in mx {
         match super::dns::ips(&host) {
-            Ok(ips) if !ips.is_empty() => hosts.push((host, ips, SMTP_PORT)),
+            Ok(ips) if !ips.is_empty() => {
+                let public: Vec<IpAddr> = ips.into_iter().filter(|ip| !moqui_lib::net::internal_address(*ip)).collect();
+                if public.is_empty() {
+                    failed.push(format!("{host} {NO_PUBLIC_ADDRESS}"));
+                } else {
+                    hosts.push((host, public, SMTP_PORT));
+                }
+            }
             Ok(_) => failed.push(format!("{host} has no address")),
             Err(err) => failed.push(err),
         }
     }
     if hosts.is_empty() {
         let text = failed.join("; ");
-        // a domain whose only host does not exist is refused; a lookup that failed is tried again
-        return Err(if failed.iter().all(|reason| reason.ends_with("has no address")) {
+        // a domain whose only host does not exist, or is not on the internet, is refused; a lookup that failed is
+        // tried again
+        let permanent = |reason: &String| reason.ends_with("has no address") || reason.ends_with(NO_PUBLIC_ADDRESS);
+        return Err(if failed.iter().all(permanent) {
             Answer::Refused(format!("550 5.1.2 {domain} has no mail server: {text}"))
         } else {
             Answer::Later(text)
@@ -1024,6 +1036,9 @@ fn hosts(domain: &str, policy: Option<&sts::Policy>) -> Result<Hosts, Answer> {
     }
     Ok(hosts)
 }
+
+/// Why an MX host with only internal addresses is not tried.
+const NO_PUBLIC_ADDRESS: &str = "has no public address";
 
 /// Deliver `raw` from `mail_from` to `recipients` of `domain` by `deadline`: each recipient's answer.
 #[must_use]
@@ -1312,9 +1327,12 @@ pub mod sts {
     /// The policy file of `domain`.
     fn fetch(domain: &str) -> Result<String, String> {
         let url = format!("https://mta-sts.{domain}/.well-known/mta-sts.txt");
+        // the policy host is the recipient domain's to name: only a public address is fetched from (SEC-MAIL-66)
         let client = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .dns_resolver(std::sync::Arc::new(moqui_lib::http::PublicOnly))
             .build()
             .map_err(|err| err.to_string())?;
         let response = client.get(&url).send().map_err(|err| format!("{url}: {err}"))?;

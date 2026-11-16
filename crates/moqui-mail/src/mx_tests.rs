@@ -194,6 +194,23 @@ fn a_session_answers_each_recipient_and_a_host_not_reached_waits() {
     );
 }
 
+/// SEC-OUT-04, SEC-MAIL-66: an MX host's internal addresses are never tried, and a domain whose hosts have only
+/// internal ones is refused, so a recipient domain's DNS cannot point the node at its own network.
+#[test]
+fn an_mx_host_with_only_internal_addresses_is_not_tried() {
+    let records = crate::dns::records();
+    records.fix_mx("inside.test", &[(10, "mx.inside.test")]);
+    records.fix_ips("mx.inside.test", &["127.0.0.1".parse().unwrap(), "169.254.169.254".parse().unwrap()]);
+    assert!(
+        matches!(hosts("inside.test", None), Err(Answer::Refused(reply)) if reply.contains("has no public address")),
+        "an internal MX"
+    );
+    records.fix_mx("mixed.test", &[(10, "mx.mixed.test")]);
+    records.fix_ips("mx.mixed.test", &["10.0.0.5".parse().unwrap(), "93.184.216.34".parse().unwrap()]);
+    let found = hosts("mixed.test", None).unwrap_or_else(|_| panic!("a public address"));
+    assert_eq!(found[0].1, vec!["93.184.216.34".parse::<IpAddr>().unwrap()]);
+}
+
 #[test]
 fn a_null_mx_refuses_and_enforce_needs_the_policys_hosts_and_starttls() {
     let records = crate::dns::records();

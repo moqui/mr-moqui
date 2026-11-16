@@ -30,4 +30,27 @@
         <in-parameters><parameter name="checkId"/></in-parameters>
         <out-parameters><parameter name="run" type="Long"/><parameter name="failed" type="Long"/><parameter name="traceId"/></out-parameters>
     </service>
+    <service verb="store" noun="ScrapeTarget">
+        <description>Create or update a moqui.monitor.ScrapeTarget (System › Monitor › Checks). allowPrivateNetwork Y lets it
+            reach loopback and private addresses; setting Y, or changing the URL of a target that has it, needs
+            MONITOR_PRIVATE_NETWORK.</description>
+        <in-parameters>
+            <parameter name="targetId" required="true"/><parameter name="url"/><parameter name="serviceName"/>
+            <parameter name="intervalSeconds" type="Integer"/><parameter name="timeoutSeconds" type="Integer"/>
+            <parameter name="bearerToken"/><parameter name="enabled"/><parameter name="allowPrivateNetwork"/>
+        </in-parameters>
+        <out-parameters><parameter name="targetId"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/monitor/TelemetryTargets.js').execute('storeTarget', context))</script></actions>
+    </service>
+    <service verb="store" noun="SyntheticCheck">
+        <description>Create or update a moqui.monitor.SyntheticCheck, with the allowPrivateNetwork rule of store#ScrapeTarget.</description>
+        <in-parameters>
+            <parameter name="checkId" required="true"/><parameter name="name"/><parameter name="url"/><parameter name="method"/>
+            <parameter name="expectStatus" type="Integer"/><parameter name="expectBodyContains"/>
+            <parameter name="intervalSeconds" type="Integer"/><parameter name="timeoutSeconds" type="Integer"/>
+            <parameter name="enabled"/><parameter name="allowPrivateNetwork"/>
+        </in-parameters>
+        <out-parameters><parameter name="checkId"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/monitor/TelemetryTargets.js').execute('storeCheck', context))</script></actions>
+    </service>
 </services>

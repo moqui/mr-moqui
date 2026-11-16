@@ -204,7 +204,11 @@ holding up the others.
   page of this same server, that page's request span, unless sampled, decides the trace first and the CLIENT child is
   left out; the check span and the page's span are still kept.)
 - The shipped `monitor-checks` dashboard shows runs and mean duration per check, failures, runs by status over time,
-  and scrape targets' `up`. Targets and checks are set by a `SYSTEM_APP` user and may be internal addresses.
+  and scrape targets' `up`. Targets and checks are set by a `SYSTEM_APP` user (`store#ScrapeTarget`,
+  `store#SyntheticCheck`). They reach loopback and private addresses only with Private network Yes
+  (`allowPrivateNetwork` Y; on an instance that is not production also when it is empty), which only a holder of
+  `MONITOR_PRIVATE_NETWORK` sets or keeps while changing the URL; a link-local or cloud metadata address is never
+  reached.
 
 ## Deploy markers and annotations
 
@@ -1219,7 +1223,9 @@ changing needs `MONITOR_SETTINGS`, which ADMIN holds and the public demo ends. T
   `moqui.report.audit` target, so they show in Monitor Logs.
 - Regressions and incidents need `MONITOR_INCIDENT`; approving, refusing, completing, cancelling and reverting
   recovery actions `MONITOR_RECOVER`; policies, adapters and the emergency stop `MONITOR_RECOVER_ADMIN`. ADMIN holds
-  all three. Changing runtime settings needs `MONITOR_SETTINGS`. Editing eval datasets and scorers and scoring runs
+  all three. Changing runtime settings needs `MONITOR_SETTINGS`; letting a check or scrape target reach the private
+  network, `MONITOR_PRIVATE_NETWORK`. A recovery webhook adapter reads only `recovery_` properties, or the ones the
+  conf property `monitor_recovery_properties` lists, and sends no property the conf marks secret unless it is listed. Editing eval datasets and scorers and scoring runs
   needs `MONITOR_EVAL`; starting and cancelling experiments, which start agent runs that cost money,
   `MONITOR_EVAL_RUN`. Their views and changes are logged on the `moqui.monitor.audit` target.
 

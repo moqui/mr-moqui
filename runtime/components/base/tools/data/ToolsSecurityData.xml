@@ -44,6 +44,8 @@ along with this software (see the LICENSE.md file). If not, see
         <artifacts artifactName="org.moqui.monitor.MonitorServices.*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y"/>
         <artifacts artifactName="org.moqui.monitor.TelemetryServices.scrape#Targets" artifactTypeEnumId="AT_SERVICE"/>
         <artifacts artifactName="org.moqui.monitor.TelemetryServices.run#Checks" artifactTypeEnumId="AT_SERVICE"/>
+        <artifacts artifactName="org.moqui.monitor.TelemetryServices.store#ScrapeTarget" artifactTypeEnumId="AT_SERVICE"/>
+        <artifacts artifactName="org.moqui.monitor.TelemetryServices.store#SyntheticCheck" artifactTypeEnumId="AT_SERVICE"/>
         <artifacts artifactName="moqui.monitor.ScrapeTarget" artifactTypeEnumId="AT_ENTITY"/>
         <artifacts artifactName="moqui.monitor.SyntheticCheck" artifactTypeEnumId="AT_ENTITY"/>
         <!-- LLM and Agents › Evals; MONITOR_EVAL and MONITOR_EVAL_RUN are checked by AgentEval.js -->

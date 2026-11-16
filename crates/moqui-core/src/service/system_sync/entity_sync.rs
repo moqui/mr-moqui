@@ -516,7 +516,9 @@ fn call_remote(
         headers,
         body: Some(body.to_string()),
         timeout: None,
-        deny_internal: false,
+        // the row's address: a push to another server on the private network needs its allowPrivateNetwork Y on a
+        // production instance
+        deny_internal: crate::outbound::deny_private_network(&map_text(sync, "allowPrivateNetwork")),
     })?;
     let status = response.status;
     let reply = crate::service::parse_json(&response.body).ok();

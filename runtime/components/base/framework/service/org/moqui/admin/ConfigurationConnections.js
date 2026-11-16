@@ -38,6 +38,9 @@ const has = permission => ec.user.hasPermission(permission)
 const yes = value => value === true || value === "true" || value === "Y"
 const no = value => value === false || value === "false" || value === "N"
 const production = () => text(System.getProperty("instance_purpose")) === "production"
+// whether the sender reaches internal addresses for a row: Y, or not N on an instance that is not production (the
+// senders' rule, moqui_core::outbound::deny_private_network)
+const privateAllowed = row => row?.allowPrivateNetwork === "Y" || (row?.allowPrivateNetwork !== "N" && !production())
 const ownNames = value => {
     const found = value == null ? {} : map(value)
     return Object.fromEntries(Object.keys(found).map(name => [name, found[name]]))
@@ -206,7 +209,7 @@ function engine(def) {
             enabled: enabledOf(parts) && state !== "incomplete",
             state,
             stateText: stateTexts[state],
-            privateNetwork: !def.statePart || def.privateNetwork === false ? null : stateRow(parts)?.allowPrivateNetwork !== "N",
+            privateNetwork: !def.statePart || def.privateNetwork === false ? null : privateAllowed(stateRow(parts)),
             lastCheckDate: iso(check?.lastCheckDate),
             lastCheckPassed: check?.lastCheckDate ? check.lastCheckPassed === "Y" : null
         }
@@ -539,7 +542,7 @@ function engine(def) {
         if (go) {
             const state = stateRow(parts)
             const context = {
-                denyInternal: !!state && state.allowPrivateNetwork === "N",
+                denyInternal: !!state && !privateAllowed(state),
                 testKind: text(p.testKind),
                 connectionKey
             }

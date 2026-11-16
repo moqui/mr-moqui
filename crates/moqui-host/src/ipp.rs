@@ -104,7 +104,7 @@ fn client(deny_internal: bool) -> Result<&'static reqwest::Client, String> {
             .timeout(TIMEOUT)
             .redirect(reqwest::redirect::Policy::none());
         if deny_internal {
-            builder = builder.dns_resolver(Arc::new(moqui_lib::http::PublicOnly));
+            builder = builder.no_proxy().dns_resolver(Arc::new(moqui_lib::http::PublicOnly));
         }
         builder.build().map_err(|err| err.to_string())
     })

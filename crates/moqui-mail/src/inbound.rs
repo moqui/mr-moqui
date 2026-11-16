@@ -28,7 +28,8 @@ use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{basic_convert, to_plain_string, Value};
 
 use super::implementation::{
-    extra_ca_certificates, fail, find_one, force_new, note_error, parse_port, require_host, TestStep, SERVER,
+    extra_ca_certificates, fail, find_one, force_new, note_error, parse_port, private_network_denied, require_host,
+    TestStep, SERVER,
 };
 use moqui_core::context::{Error, ExecutionContext};
 use moqui_core::entity::{EntityFacade, EntityValue};
@@ -104,6 +105,7 @@ pub(super) fn poll_server(
         mark_seen: field_text(&server, "storeMarkSeen") == "Y",
         delete: field_text(&server, "storeDelete") == "Y",
         allow_plain: field_text(&server, "storeAllowPlain") == "Y",
+        deny_internal: private_network_denied(&server),
     };
     let mut store = match open_store(&settings) {
         Ok(store) => store,
@@ -273,6 +275,7 @@ pub(super) fn store_steps(
         mark_seen: false,
         delete: false,
         allow_plain: field_text(server, "storeAllowPlain") == "Y",
+        deny_internal: private_network_denied(server),
     };
     // the connection the sync makes: TLS from the start on imaps or port 993, else STARTTLS when the server offers it
     // (without it, refused unless the server allows plain text or is on this machine)
@@ -286,8 +289,11 @@ pub(super) fn store_steps(
         auth_type: field_text(server, "authTypeEnumId"),
         store_delete: false,
         allow_plain: settings.allow_plain,
+        deny_internal: settings.deny_internal,
         access_token: None,
     };
+    // this server's own refusal of a store with no TLS is shown as it is; any other failure as its kind only
+    let own = [plain_refused("POP3", &host, "STLS"), plain_refused("IMAP", &host, "STARTTLS")];
     if pop {
         // as the sync signs in: USER and PASS, or AUTH XOAUTH2 for a provider sign-in
         let how = if oauth { " with XOAUTH2" } else { "" };
@@ -300,13 +306,8 @@ pub(super) fn store_steps(
                 format!("Signed in to POP3 {place}{how}"),
             )),
             Err(err) => {
-                let text = err.to_string();
-                let text = if text.starts_with("POP3 ") {
-                    text
-                } else {
-                    format!("POP3 {place}: {text}")
-                };
-                steps.push(TestStep::failed("storeLogin", text));
+                let kind = super::implementation::test_failure("storeLogin", &place, &err.to_string(), &own);
+                steps.push(TestStep::failed("storeLogin", format!("POP3 {place}: {kind}")));
             }
         }
         return;
@@ -324,7 +325,8 @@ pub(super) fn store_steps(
             conn.session
         }
         Err(err) => {
-            steps.push(TestStep::failed("storeLogin", format!("IMAP {place}: {err}")));
+            let kind = super::implementation::test_failure("storeLogin", &place, &err.to_string(), &own);
+            steps.push(TestStep::failed("storeLogin", format!("IMAP {place}: {kind}")));
             return;
         }
     };
@@ -355,7 +357,10 @@ pub(super) fn store_steps(
                 format!("Found {} folders", folders.len()),
             ));
         }
-        Err(err) => steps.push(TestStep::failed("storeList", format!("IMAP LIST on {place}: {err}"))),
+        Err(err) => {
+            let kind = super::implementation::test_failure("storeList", &place, &err.to_string(), &[]);
+            steps.push(TestStep::failed("storeList", format!("IMAP LIST on {place}: {kind}")));
+        }
     }
     let _ = session.logout();
 }
@@ -403,6 +408,8 @@ pub(super) struct StoreSettings {
     pub(super) delete: bool,
     /// storeAllowPlain: a plain imap or pop3 store may sign in without TLS when the server offers no STARTTLS or STLS.
     pub(super) allow_plain: bool,
+    /// The server may reach no internal address (`implementation::private_network_denied`).
+    pub(super) deny_internal: bool,
 }
 
 fn eca_fields(message: &Inbound, server_id: &str) -> BTreeMap<String, Value> {
@@ -644,6 +651,7 @@ impl ImapBox {
             auth_type: String::new(),
             store_delete: settings.delete,
             allow_plain: settings.allow_plain,
+            deny_internal: settings.deny_internal,
             access_token: None,
         };
         let mut session = super::sync::open_imap(&info)
@@ -812,7 +820,7 @@ impl Pop3 {
             return Err(Error::new("the POP3 username or password has a line break"));
         }
         let tls = use_tls(&settings.protocol, settings.port);
-        let net = connect_net(&settings.host, settings.port, tls)?;
+        let net = connect_net(&settings.host, settings.port, tls, settings.deny_internal)?;
         let mut reader = BufReader::new(net);
         let greeting = read_line(&mut reader)?;
         expect_ok(&greeting)?;
@@ -1006,26 +1014,51 @@ impl Write for Net {
     }
 }
 
-fn connect_net(host: &str, port: u16, tls: bool) -> Result<Net, Error> {
-    let tcp = connect_tcp(host, port)?;
+fn connect_net(host: &str, port: u16, tls: bool, deny_internal: bool) -> Result<Net, Error> {
+    let tcp = connect_tcp(host, port, deny_internal)?;
     if !tls {
         return Ok(Net::Plain(tcp));
     }
     wrap_tls(tcp, host)
 }
 
-/// A TCP connection to a mail server, with read and write timeouts of a minute.
-pub(super) fn connect_tcp(host: &str, port: u16) -> Result<TcpStream, Error> {
+/// A TCP connection to a mail server, with read and write timeouts of a minute. The name is looked up once and the
+/// addresses found are checked and connected to, so a second lookup cannot answer another: with `deny_internal` none
+/// may be internal (`moqui_lib::net::public_addresses`), and none is ever link-local or a metadata address.
+pub(super) fn connect_tcp(host: &str, port: u16, deny_internal: bool) -> Result<TcpStream, Error> {
     // every mail service checks the fence; this is the one place each mail connection goes through
     moqui_core::entity::fence::check_effect(moqui_core::entity::fence::Effect::Mail, &format!("{host}:{port}"))
         .map_err(|err| Error::new(err.message()))?;
+    let found = if deny_internal {
+        moqui_lib::net::public_addresses(host, port)
+    } else {
+        moqui_lib::net::non_link_local_addresses(host, port)
+    };
+    let addresses = found.map_err(|err| {
+        let text = err.to_string();
+        if text.contains("address and is") {
+            Error::new(format!("{host} {}", super::implementation::INTERNAL_SERVER))
+        } else {
+            Error::new(format!("could not resolve {host}:{port}: {text}"))
+        }
+    })?;
     // A blackholed host fails in 30 seconds instead of the system default of minutes.
-    let address = std::net::ToSocketAddrs::to_socket_addrs(&(host, port))
-        .map_err(|err| Error::new(format!("could not resolve {host}:{port}: {err}")))?
-        .next()
-        .ok_or_else(|| Error::new(format!("could not resolve {host}:{port}")))?;
-    let tcp = TcpStream::connect_timeout(&address, Duration::from_secs(30))
-        .map_err(|err| Error::new(format!("could not connect to {host}:{port}: {err}")))?;
+    let mut last = None;
+    let mut connected = None;
+    for address in &addresses {
+        match TcpStream::connect_timeout(address, Duration::from_secs(30)) {
+            Ok(tcp) => {
+                connected = Some(tcp);
+                break;
+            }
+            Err(err) => last = Some(err),
+        }
+    }
+    let tcp = match (connected, last) {
+        (Some(tcp), _) => tcp,
+        (None, Some(err)) => return Err(Error::new(format!("could not connect to {host}:{port}: {err}"))),
+        (None, None) => return Err(Error::new(format!("could not resolve {host}:{port}"))),
+    };
     let _ = tcp.set_read_timeout(Some(Duration::from_secs(60)));
     let _ = tcp.set_write_timeout(Some(Duration::from_secs(60)));
     Ok(tcp)

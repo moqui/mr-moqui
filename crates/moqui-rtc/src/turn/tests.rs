@@ -324,6 +324,11 @@ fn an_xmpp_users_credential_relays_to_public_addresses_only() {
         "::10.0.0.1",
         "64:ff9b::a00:1",
         "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+        "fec0::1",
+        "::ffff:0:a00:1",
+        "2001:10::1",
+        "2001:2::1",
+        "3fff::1",
     ] {
         assert!(!super::is_public(ip.parse().unwrap()), "{ip}");
     }

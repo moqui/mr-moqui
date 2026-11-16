@@ -553,8 +553,9 @@ fn scrape_one(ec: &ExecutionContext, row: &crate::entity::EntityValue) -> Result
         headers,
         body: None,
         timeout: Some(seconds(row, "timeoutSeconds", 10, 60)),
-        // Targets are set by a monitoring administrator, and an exporter on this host or network is the usual case.
-        deny_internal: false,
+        // An exporter on this host or network needs the row's allowPrivateNetwork Y, which only a holder of
+        // MONITOR_PRIVATE_NETWORK sets (Monitor/Checks); a link-local or metadata address is refused always.
+        deny_internal: crate::outbound::deny_private_network(&text(row, "allowPrivateNetwork")),
     });
     let elapsed = started.elapsed().as_secs_f64();
     let (mut exposition, failure) = match &response {
@@ -709,7 +710,8 @@ fn check_one(ec: &ExecutionContext, row: &crate::entity::EntityValue) -> (Result
             headers: Vec::new(),
             body: None,
             timeout: Some(seconds(row, "timeoutSeconds", 10, 60)),
-            deny_internal: false,
+            // as a scrape target's
+            deny_internal: crate::outbound::deny_private_network(&text(row, "allowPrivateNetwork")),
         })
     };
     let millis = started.elapsed().as_millis();

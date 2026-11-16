@@ -79,7 +79,9 @@ fn http_get(url: &str, sim: bool) -> Result<String, String> {
         headers: Vec::new(),
         body: None,
         timeout: None,
-        deny_internal: false,
+        // a location may be a record's text (a content location); on a production instance it reaches public addresses
+        // only
+        deny_internal: crate::web::is_production(),
     };
     match crate::outbound::send(request) {
         Ok(response) if (200..300).contains(&response.status) => Ok(response.body),

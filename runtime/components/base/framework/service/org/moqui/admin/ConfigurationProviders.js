@@ -187,7 +187,10 @@ function described(flow, context) {
         readinessText: readinessTexts[state],
         callbackUrl: flow.inbound === "Y" ? "" : context.root ? context.root + "/sso/callback" : "/sso/callback",
         // whether the server may reach the provider at an internal address (an instance administrator's choice)
-        privateNetwork: flow.allowPrivateNetwork !== "N",
+        // (Y, or not N on an instance that is not production: the sign-in's rule, outbound::deny_private_network)
+        privateNetwork:
+            flow.allowPrivateNetwork === "Y" ||
+            (flow.allowPrivateNetwork !== "N" && text(System.getProperty("instance_purpose")) !== "production"),
         sequenceNum: flow.sequenceNum ?? null,
         testedDate: iso(flow.testedDate),
         roleMapCount: context.roleCounts.get(flow.authFlowId) || 0

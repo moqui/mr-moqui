@@ -103,7 +103,8 @@ const HOST_CONFIG_ENTITY_KEYS: &[&str] = &[
 /// (`EntityAuditLog`), the evidence of every audited change, which the framework and the services that record their own
 /// changes write (SEC-RTE-03); and Monitor's recovery actions, adapters, policies and emergency stop, its instance drains
 /// and its ingest keys, whose `MONITOR_*` permissions only their own services check, so a generic write of a row would
-/// run a recovery action, plant a working ingest key or lift the stop without them (SEC-TLS-11).
+/// run a recovery action, plant a working ingest key or lift the stop without them (SEC-TLS-11); and the scrape targets
+/// and synthetic checks, whose `allowPrivateNetwork` only a holder of `MONITOR_PRIVATE_NETWORK` sets (SEC-OUT-03).
 const SERVICE_WRITTEN_ENTITY_KEYS: &[&str] = &[
     "entityauditlog",
     "recoveryaction",
@@ -112,6 +113,9 @@ const SERVICE_WRITTEN_ENTITY_KEYS: &[&str] = &[
     "recoverycontrol",
     "instancedrain",
     "ingestkey",
+    // the allowPrivateNetwork flag of a scrape target or synthetic check is set in Monitor/Checks, with its permission
+    "scrapetarget",
+    "syntheticcheck",
 ];
 
 /// The text after the last `.`, in lower case.
@@ -521,6 +525,8 @@ mod tests {
             "moqui.monitor.RecoveryControl",
             "moqui.monitor.InstanceDrain",
             "moqui.monitor.IngestKey",
+            "moqui.monitor.ScrapeTarget",
+            "moqui.monitor.SyntheticCheck",
         ] {
             assert!(!is_restricted_generic_entity(name), "{name}");
             assert!(is_service_written_entity(name) && is_generic_write_refused(name), "{name}");

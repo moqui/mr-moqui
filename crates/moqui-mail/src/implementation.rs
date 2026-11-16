@@ -1806,13 +1806,21 @@ fn delivery_outcome(server: &EntityValue, error: &Error) -> &'static str {
 fn refused_before_connecting(server: &EntityValue, error: &Error) -> bool {
     let text = error.to_string();
     (field_text(server, "disabled") == "Y" && text.contains(DISABLED_SERVER))
-        || (field_text(server, "allowPrivateNetwork") == "N"
-            && (text.contains(INTERNAL_SERVER) || text.contains(SERVER_NOT_FOUND)))
+        || text.contains(INTERNAL_SERVER)
+        || (private_network_denied(server) && text.contains(SERVER_NOT_FOUND))
 }
 
 const DISABLED_SERVER: &str = "is disabled until a test of it passes";
-const INTERNAL_SERVER: &str = "is an internal address, which this server may not use";
+pub(super) const INTERNAL_SERVER: &str = "is an internal address, which this server may not use";
 const SERVER_NOT_FOUND: &str = "could not be looked up";
+
+/// Whether a server row's connections reach public addresses only: its `allowPrivateNetwork` N, or anything but Y on a
+/// production instance (`moqui_core::outbound::deny_private_network`): SMTP, IMAP and POP alike. A mail account's
+/// server is never given Y by the account's own services, so on production it reaches no internal address unless an
+/// administrator allows it (SEC-MAIL-02).
+pub(super) fn private_network_denied(server: &EntityValue) -> bool {
+    moqui_core::outbound::deny_private_network(&field_text(server, "allowPrivateNetwork"))
+}
 
 /// An explicit SMTP rejection may be retried or treated as permanent, and so may a server that was not reached
 /// (refused, not resolved, the connect timed out): nothing was sent. A connection lost after
@@ -1918,24 +1926,29 @@ fn smtp_transport(
             field_text(server, "emailServerId")
         )));
     }
-    // A server that may not use the private network (allowPrivateNetwork N: a delegated administrator's on a production
-    // instance) is looked up once here, refused when any of its addresses is internal, and connected to at the address
-    // found, so a second lookup cannot answer another; TLS still verifies the host's name.
-    let connect_host = if field_text(server, "allowPrivateNetwork") == "N" {
+    // A server that may not use the private network (allowPrivateNetwork N, or not Y on a production instance) is
+    // looked up once here, refused when any of its addresses is internal, and connected to at the address found, so a
+    // second lookup cannot answer another; TLS still verifies the host's name. Any other server is refused a link-local
+    // or metadata address.
+    let connect_host = if private_network_denied(server) {
         public_address(&host, port)?
     } else {
+        not_link_local(&host, port)?;
         host.clone()
     };
-    // smtpSsl is TLS from the start. smtpStartTls upgrades when the server offers it, as Java's setStartTLSEnabled
-    // (not required), so a server without STARTTLS still takes the mail. Both trust `email-client` `tls-ca-file` too.
+    // smtpSsl is TLS from the start. Without credentials smtpStartTls upgrades when the server offers it, as Java's
+    // setStartTLSEnabled (not required), so a relay without STARTTLS still takes the mail. With credentials (a
+    // password or an OAuth token) STARTTLS is required whatever smtpStartTls says, so they never go out in clear text,
+    // except to a server on this machine (smtp_tls_mode). All trust `email-client` `tls-ca-file` too.
     use lettre::transport::smtp::authentication::{Credentials, Mechanism};
     use lettre::transport::smtp::client::Tls;
     let mut builder = lettre::SmtpTransport::builder_dangerous(connect_host.as_str()).port(port);
-    if field_text(server, "smtpSsl") == "Y" {
-        builder = builder.tls(Tls::Wrapper(smtp_tls(&host)?));
-    } else if field_text(server, "smtpStartTls") == "Y" {
-        builder = builder.tls(Tls::Opportunistic(smtp_tls(&host)?));
-    }
+    builder = match smtp_tls_mode(server, !matches!(auth, SmtpAuth::None)) {
+        SmtpTlsMode::Wrapper => builder.tls(Tls::Wrapper(smtp_tls(&host)?)),
+        SmtpTlsMode::Required => builder.tls(Tls::Required(smtp_tls(&host)?)),
+        SmtpTlsMode::Opportunistic => builder.tls(Tls::Opportunistic(smtp_tls(&host)?)),
+        SmtpTlsMode::None => builder,
+    };
     if timeout.is_some() {
         builder = builder.timeout(timeout);
     }
@@ -1947,6 +1960,51 @@ fn smtp_transport(
             .authentication(vec![Mechanism::Xoauth2]),
     };
     Ok(builder.build())
+}
+
+/// How an SMTP session of a server row uses TLS ([`smtp_transport`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SmtpTlsMode {
+    /// TLS from the start (smtpSsl).
+    Wrapper,
+    /// STARTTLS, and no session without it.
+    Required,
+    /// STARTTLS when the server offers it.
+    Opportunistic,
+    None,
+}
+
+/// smtpSsl is TLS from the start. A session that signs in (`signs_in`: a password or an OAuth token) requires STARTTLS
+/// unless the server is on this machine; one that does not upgrades with smtpStartTls when the server offers it, and
+/// stays in clear text without it (SEC-OUT-01).
+fn smtp_tls_mode(server: &EntityValue, signs_in: bool) -> SmtpTlsMode {
+    if field_text(server, "smtpSsl") == "Y" {
+        SmtpTlsMode::Wrapper
+    } else if signs_in && !loopback_host(&field_text(server, "smtpHost")) {
+        SmtpTlsMode::Required
+    } else if field_text(server, "smtpStartTls") == "Y" {
+        SmtpTlsMode::Opportunistic
+    } else {
+        SmtpTlsMode::None
+    }
+}
+
+/// Whether `host` is this machine: `localhost` or a loopback address, where credentials may go without TLS.
+fn loopback_host(host: &str) -> bool {
+    let name = host.trim().trim_start_matches('[').trim_end_matches(']');
+    name.eq_ignore_ascii_case("localhost")
+        || name.parse::<std::net::IpAddr>().is_ok_and(|address| address.is_loopback())
+}
+
+/// An error when `host` resolves to a link-local or cloud metadata address, which no mail server connection reaches.
+/// A name that does not resolve is left to the connect, which reports it.
+fn not_link_local(host: &str, port: u16) -> Result<(), Error> {
+    match moqui_lib::net::non_link_local_addresses(host, port) {
+        Err(err) if err.to_string().contains("link-local address") => {
+            Err(Error::new(format!("{host} {INTERNAL_SERVER}")))
+        }
+        _ => Ok(()),
+    }
 }
 
 /// The address to connect to for `host`, a server that may not use the private network: an error when the name does
@@ -2384,7 +2442,45 @@ fn smtp_step(facade: &EntityFacade, server: &EntityValue) -> TestStep {
         }
         Ok(true) => TestStep::passed("smtp", format!("Connected to {place}")),
         Ok(false) => TestStep::failed("smtp", format!("{place} closed the connection")),
-        Err(err) => TestStep::failed("smtp", format!("SMTP {place}: {err}")),
+        Err(err) => {
+            let kind = test_failure("smtp", &place, &err.to_string(), &[]);
+            TestStep::failed("smtp", format!("SMTP {place}: {kind}"))
+        }
+    }
+}
+
+/// What a failed step of `test#EmailServer` tells its caller: this server's own refusals as they are (an address or
+/// host it may not use, a sign-in it does not send in clear text), and anything the peer answered or the network did as
+/// one of a fixed list of kinds, so the test does not map the network or read another service's banner (SEC-MAIL-02).
+/// The whole text goes to the log.
+pub(super) fn test_failure(step: &str, place: &str, text: &str, own: &[String]) -> String {
+    tracing::info!(step, place, error = text, "email server test step failed");
+    // a refusal of this server's own, such as a store with no TLS it will not sign in to, with how to allow it
+    if let Some(own) = own.iter().find(|own| text.contains(own.as_str())) {
+        return own.clone();
+    }
+    test_failure_kind(text).to_string()
+}
+
+pub(super) fn test_failure_kind(text: &str) -> &'static str {
+    let lower = text.to_ascii_lowercase();
+    let has = |words: &[&str]| words.iter().any(|word| lower.contains(word));
+    if has(&["allowed-hosts"]) {
+        "the host is not in email-client allowed-hosts"
+    } else if lower.contains(INTERNAL_SERVER) || has(&["link-local address", "internal address"]) {
+        "the host is an internal address, which this server may not use"
+    } else if has(&["resolve", "looked up", "lookup", "not known", "no address"]) {
+        "the host name was not found"
+    } else if has(&["tls", "certificate", "handshake", "ssl"]) {
+        "TLS failed"
+    } else if has(&["refused", "unreachable", "reset by peer"]) {
+        "the connection was refused"
+    } else if has(&["timed out", "timeout", "would block"]) {
+        "the connection timed out"
+    } else if has(&["auth", "login", "credential", "password", "535", "534", "530", "454", "no [", "invalid"]) {
+        "the sign-in was refused"
+    } else {
+        "the server did not answer as a mail server"
     }
 }
 

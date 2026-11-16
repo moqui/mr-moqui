@@ -1012,6 +1012,26 @@ fn store_adapter(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -> 
             ));
         }
     }
+    // the properties an adapter reads are the operator's for recovery, never any other the process holds
+    for (name, sent) in [("urlProperty", true), ("secretProperty", false)] {
+        if let Some(property) = options[name].as_str().filter(|property| !property.is_empty()) {
+            if let Err(why) = execute::property_allowed(property, sent) {
+                return Err(fail(format!("{name}: {why}")));
+            }
+        }
+    }
+    if let Some(text) = options["headerPropertiesJson"].as_str().filter(|text| !text.trim().is_empty()) {
+        let headers = serde_json::from_str::<serde_json::Map<String, Json>>(text)
+            .map_err(|_| fail("headerPropertiesJson is a JSON object of header names to property names"))?;
+        for property in headers.values() {
+            let property = property
+                .as_str()
+                .ok_or_else(|| fail("headerPropertiesJson is a JSON object of header names to property names"))?;
+            if let Err(why) = execute::property_allowed(property, true) {
+                return Err(fail(format!("headerPropertiesJson: {why}")));
+            }
+        }
+    }
     let entity = entity_of(ec)?;
     let _authz = ec.disable_authz();
     let existing = entity
