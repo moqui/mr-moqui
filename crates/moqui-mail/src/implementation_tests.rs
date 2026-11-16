@@ -739,8 +739,10 @@ fn screen_body_renders_html_and_text_and_sends_with_attachments() {
     );
     params.insert(
         "attachments".into(),
+        // a call's file name is taken as written, `${}` and all: it can come from a request (SEC-MAIL-61); a template
+        // row's (report-${rowName}.csv) is still a template
         Value::List(vec![map(vec![
-            ("fileName", Value::string("inline.html")),
+            ("fileName", Value::string("inline-${name}.html")),
             ("attachmentLocation", Value::string(&report)),
             ("screenRenderMode", Value::string("html")),
         ])]),
@@ -792,7 +794,7 @@ fn screen_body_renders_html_and_text_and_sends_with_attachments() {
     assert_eq!(
         names,
         [
-            "inline.html",
+            "inline-${name}.html",
             "report-one.csv",
             "report-two.csv",
             "report.txt",
@@ -800,8 +802,8 @@ fn screen_body_renders_html_and_text_and_sends_with_attachments() {
         ]
     );
     let part = |name: &str| mail.attachments.iter().find(|(file, _, _)| file == name).unwrap();
-    assert_eq!(part("inline.html").1, "text/html");
-    assert!(String::from_utf8_lossy(&part("inline.html").2).contains("<p>Report all</p>"));
+    assert_eq!(part("inline-${name}.html").1, "text/html");
+    assert!(String::from_utf8_lossy(&part("inline-${name}.html").2).contains("<p>Report all</p>"));
     assert_eq!(part("report-one.csv").1, "text/csv");
     assert_eq!(
         String::from_utf8_lossy(&part("report-one.csv").2).trim(),

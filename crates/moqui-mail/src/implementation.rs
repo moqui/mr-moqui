@@ -1061,7 +1061,10 @@ fn push_parameter_attachment(
     map: &moqui_lib::object::ValueMap,
     env: &RenderEnv,
 ) -> Result<(), Error> {
-    let filename = expand_text(&map_text(map, "fileName"))?;
+    // A call's file name is taken as written, never expanded: it can come from a request (emailScreenAsync passes the
+    // request's fileName on), and `${}` runs as script (plans/Security-Review.md SEC-MAIL-61). Only an
+    // EmailTemplateAttachment row's own name, configured with the template, is a template.
+    let filename = map_text(map, "fileName");
     let mode = map_text(map, "screenRenderMode");
     let location = map_text(map, "attachmentLocation");
     let screen_path = map_text(map, "screenPath");
@@ -1090,6 +1093,7 @@ fn push_parameter_attachment(
             location: &location,
             screen_path: &screen_path,
             content_type: &map_text(map, "contentType"),
+            expand_name: false,
         };
         return render_attachment(out, &screen, env);
     }
@@ -1133,6 +1137,7 @@ fn push_stored_attachment(out: &mut Vec<AttachmentBytes>, row: &EntityValue, env
             location: &location,
             screen_path: &field_text(row, "screenPath"),
             content_type: "",
+            expand_name: true,
         };
         let for_each_in = field_text(row, "forEachIn");
         if for_each_in.is_empty() {
@@ -1183,10 +1188,12 @@ struct ScreenAttachment<'a> {
     location: &'a str,
     screen_path: &'a str,
     content_type: &'a str,
+    /// Whether the file name is a template: a template row's is; a call's is taken as written.
+    expand_name: bool,
 }
 
-/// `renderScreenAttachment`: the file name defaults to the screen's name with the mode as extension and
-/// is expanded in the context; the content type is the caller's or the mode's; blank output is no
+/// `renderScreenAttachment`: the file name defaults to the screen's name with the mode as extension and, for a
+/// template row's attachment, is expanded in the context; the content type is the caller's or the mode's; blank output is no
 /// attachment. `xsl-fo` renders `html-print` and attaches its PDF; when PDF fails it is logged and skipped, as in Java.
 /// A binary mode such as `xlsx` attaches the document it renders.
 fn render_attachment(
@@ -1208,7 +1215,11 @@ fn render_attachment(
         let stem = base.rsplit_once('.').map_or(base, |(stem, _)| stem);
         filename = format!("{stem}.{extension}");
     }
-    let filename = expand_text(&filename)?;
+    let filename = if screen.expand_name {
+        expand_text(&filename)?
+    } else {
+        filename
+    };
     if env.is_binary(screen.mode) {
         // A binary mode (xlsx) is the document as rendered.
         let bytes = env.render_bytes(screen.location, screen.screen_path, screen.mode)?;

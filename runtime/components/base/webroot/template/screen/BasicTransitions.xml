@@ -17,18 +17,24 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- NOTE: this screen is not meant to be rendered, it is just a library of transitions and sections to include -->
 
-    <transition name="emailScreenAsync" read-only="true">
+    <!-- The email transitions send mail, so they take a POST with the session token (not read-only), and pass the
+        service only the form's own fields: the whole context let a request choose the template, Cc and Bcc, and a
+        fileName that was expanded as script (plans/Security-Review.md SEC-MAIL-61). The report's own parameters go
+        as bodyParameters, the data the screen renders with. -->
+    <transition name="emailScreenAsync">
         <service-call name="org.moqui.mail.EmailServices.send#ScreenRenderEmail" async="true"
-                in-map="Object.assign({}, context, {screenLocation: sri.getActiveScreenDef().location, bodyParameters: ec.web.requestParameters})"/>
+                in-map="{screenLocation: sri.getActiveScreenDef().location, screenRenderMode: screenRenderMode, toAddresses: toAddresses,
+                    title: title, fileName: fileName, bodyParameters: ec.web.requestParameters}"/>
         <actions>
             <if condition="!ec.message.hasError()">
                 <set field="reportTo" from="toAddresses"/><message type="success">Your report is being generated and will be sent to ${reportTo} when ready.</message></if>
         </actions>
         <default-response url="." parameter-map="ec.web.requestParameters"/>
     </transition>
-    <transition name="emailScreenUserAsync" read-only="true">
+    <transition name="emailScreenUserAsync">
         <service-call name="org.moqui.mail.EmailServices.send#ScreenRenderEmail" async="true"
-                in-map="Object.assign({}, context, {screenLocation: sri.getActiveScreenDef().location, bodyParameters: ec.web.requestParameters, toAddresses: ec.user.userAccount?.emailAddress})"/>
+                in-map="{screenLocation: sri.getActiveScreenDef().location, screenRenderMode: screenRenderMode,
+                    toAddresses: ec.user.userAccount?.emailAddress, title: title, fileName: fileName, bodyParameters: ec.web.requestParameters}"/>
         <actions>
             <if condition="!ec.message.hasError()">
                 <set field="reportTo" from="ec.user.userAccount?.emailAddress"/><message type="success">Your report is being generated and will be sent to ${reportTo} when ready.</message></if>
