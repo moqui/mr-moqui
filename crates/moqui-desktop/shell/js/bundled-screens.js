@@ -30,10 +30,13 @@ const MAX_SHOWN = 30;
 
 module.exports = {
     name: 'ChatPanel',
+    // home: the phone shell's start screen (Root.qvue): the whole screen, every room, a search, Start chat and bubbles
+    props: { home: Boolean },
+    emits: ['room'],
     inject: { mScreen: { default: null } },
     data() {
         return { loaded: !!memo.rooms, rooms: memo.rooms || [], me: memo.me || {}, prefs: memo.prefs || {}, roomId: null, componentVersion: 0,
-            height: 520, newOpen: false, newUserIds: [], busy: false };
+            height: 520, newOpen: false, newUserIds: [], busy: false, filter: '' };
     },
     computed: {
         // Qvue screens have no container ID wrapper; the loader supplies its identity before mount or measurement.
@@ -42,14 +45,18 @@ module.exports = {
         base() { const path = (this.mScreen && this.mScreen.path) || (this.$root.basePath + '/BasicComms/Panel/Chat'); return path.replace(/\/Panel\/Chat$/, '/Chat'); },
         linkBase() { const base = this.base; const root = this.$root; return base.indexOf(root.basePath + '/') === 0 ? root.linkBasePath + base.slice(root.basePath.length) : base; },
         roomComponent() { void this.componentVersion; return memo.roomComponent; },
-        // mentions and unread first, then the latest
+        avatarSize() { return this.home ? '48px' : '32px'; },
+        // mentions and unread first, then the latest (the tray: a glance at the first 30; the home: all, by the filter)
         shownRooms() {
+            const words = this.home && this.filter ? String(this.filter).toLowerCase().split(/\s+/).filter(Boolean) : [];
             const rank = (room) => (this.countsOf(room).mentions ? 2 : (this.countsOf(room).unread ? 1 : 0));
-            return this.rooms.filter((room) => room.isMember).slice().sort((left, right) => {
+            const matches = (room) => { const text = (room.displayName + ' ' + this.snippetOf(room)).toLowerCase(); return words.every((word) => text.indexOf(word) >= 0); };
+            const list = this.rooms.filter((room) => room.isMember && (!words.length || matches(room))).sort((left, right) => {
                 const byRank = rank(right) - rank(left);
                 if (byRank !== 0) return byRank;
                 return (right.lastEventDate || 0) - (left.lastEventDate || 0);
-            }).slice(0, MAX_SHOWN);
+            });
+            return this.home ? list : list.slice(0, MAX_SHOWN);
         },
         unreadTotal() { return this.rooms.reduce((sum, room) => sum + (this.countsOf(room).unread || 0), 0); }
     },
@@ -85,7 +92,7 @@ module.exports = {
         },
         // the rooms, few and light: the panel is a glance (Open in Comms has them all)
         refresh() {
-            return moqui.request(this.url('chatData'), { params: { limit: 40 } }).then((result) => {
+            return moqui.request(this.url('chatData'), { params: { limit: this.home ? 200 : 40 } }).then((result) => {
                 const json = result.json || {};
                 this.me = memo.me = json.me || {};
                 this.prefs = memo.prefs = json.prefs || {};
@@ -117,12 +124,13 @@ module.exports = {
             if (!id) return;
             if (this.inDialog) { this.go(this.linkBase + '?chatRoomId=' + encodeURIComponent(id)); return; }
             this.roomId = memo.roomId = id;
+            this.$emit('room', id);
             this.roomView().then((comp) => {
                 if (!comp) { this.closeRoom(); this.go(this.linkBase + '?chatRoomId=' + encodeURIComponent(id)); return; }
                 this.componentVersion++;
             });
         },
-        closeRoom() { this.roomId = memo.roomId = null; this.refresh(); },
+        closeRoom() { this.roomId = memo.roomId = null; this.$emit('room', null); this.refresh(); },
         onLeft(id) { if (this.roomId === id) this.closeRoom(); else this.scheduleRooms(); },
         onRoomRead(id) {
             if (moqui.chat) moqui.chat.state.unread[id] = { unread: 0, mentions: 0 };
@@ -130,6 +138,7 @@ module.exports = {
             if (room) { room.unreadCount = 0; room.mentionCount = 0; }
         },
         toggleNew() { this.newOpen = !this.newOpen; this.newUserIds = []; },
+        openNew() { this.newUserIds = []; this.newOpen = true; },
         startDirect() {
             const ids = this.newUserIds || [];
             if (!ids.length) return;
@@ -170,6 +179,7 @@ module.exports = {
             const padding = style ? (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0) : 16;
             const available = parent.clientHeight - padding;
             if (available > 200) this.height = available;
+            else if (this.home) this.height = Math.max(360, window.innerHeight - (this.$el.getBoundingClientRect().top || 0));
         }
     },
     mounted() {
@@ -198,11 +208,13 @@ module.exports = {
         {
             const target = component;
             target.render = (function () {
-                const { toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createTextVNode: _createTextVNode, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, renderList: _renderList, Fragment: _Fragment, createBlock: _createBlock, normalizeClass: _normalizeClass, resolveDynamicComponent: _resolveDynamicComponent, normalizeStyle: _normalizeStyle } = Vue
+                const { toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createTextVNode: _createTextVNode, normalizeClass: _normalizeClass, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, normalizeStyle: _normalizeStyle, resolveDirective: _resolveDirective, withDirectives: _withDirectives, resolveDynamicComponent: _resolveDynamicComponent } = Vue
 
                 return function render(_ctx, _cache) {
                   const _component_q_tooltip = _resolveComponent("q-tooltip")
                   const _component_q_btn = _resolveComponent("q-btn")
+                  const _component_q_icon = _resolveComponent("q-icon")
+                  const _component_q_input = _resolveComponent("q-input")
                   const _component_m_drop_down = _resolveComponent("m-drop-down")
                   const _component_q_separator = _resolveComponent("q-separator")
                   const _component_q_skeleton = _resolveComponent("q-skeleton")
@@ -214,16 +226,20 @@ module.exports = {
                   const _component_q_badge = _resolveComponent("q-badge")
                   const _component_q_item = _resolveComponent("q-item")
                   const _component_q_list = _resolveComponent("q-list")
-                  const _component_q_icon = _resolveComponent("q-icon")
+                  const _component_q_card = _resolveComponent("q-card")
+                  const _component_q_dialog = _resolveComponent("q-dialog")
+                  const _directive_close_popup = _resolveDirective("close-popup")
 
                   return (_openBlock(), _createElementBlock("div", {
-                    class: "m-chat-panel column no-wrap",
+                    class: _normalizeClass(["m-chat-panel column no-wrap relative-position", _ctx.home ? 'm-chat-home' : '']),
                     style: _normalizeStyle({height: _ctx.height + 'px'})
                   }, [
                     (!_ctx.roomId)
                       ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
                           _createElementVNode("div", { class: "row items-center no-wrap q-pb-xs" }, [
-                            _createElementVNode("div", { class: "text-subtitle2 col ellipsis" }, [
+                            _createElementVNode("div", {
+                              class: _normalizeClass(["col ellipsis", _ctx.home ? 'text-h6 q-pl-sm' : 'text-subtitle2'])
+                            }, [
                               _createTextVNode(_toDisplayString(_ctx.t('Chat')), 1),
                               (_ctx.unreadTotal)
                                 ? (_openBlock(), _createElementBlock("span", {
@@ -231,26 +247,29 @@ module.exports = {
                                     class: "text-caption m-muted"
                                   }, " · " + _toDisplayString(_ctx.fill(_ctx.t('{count} unread'), {count: _ctx.unreadTotal})), 1))
                                 : _createCommentVNode("", true)
-                            ]),
-                            _createVNode(_component_q_btn, {
-                              flat: "",
-                              round: "",
-                              dense: "",
-                              icon: "sym_o_edit_square",
-                              color: "primary",
-                              "aria-label": _ctx.t('New message'),
-                              onClick: _ctx.toggleNew
-                            }, {
-                              default: _withCtx(() => [
-                                _createVNode(_component_q_tooltip, null, {
+                            ], 2),
+                            (!_ctx.home)
+                              ? (_openBlock(), _createBlock(_component_q_btn, {
+                                  key: 0,
+                                  flat: "",
+                                  round: "",
+                                  dense: "",
+                                  icon: "sym_o_edit_square",
+                                  color: "primary",
+                                  "aria-label": _ctx.t('New message'),
+                                  onClick: _ctx.toggleNew
+                                }, {
                                   default: _withCtx(() => [
-                                    _createTextVNode(_toDisplayString(_ctx.t('New message')), 1)
+                                    _createVNode(_component_q_tooltip, null, {
+                                      default: _withCtx(() => [
+                                        _createTextVNode(_toDisplayString(_ctx.t('New message')), 1)
+                                      ]),
+                                      _: 1
+                                    })
                                   ]),
                                   _: 1
-                                })
-                              ]),
-                              _: 1
-                            }, 8, ["aria-label", "onClick"]),
+                                }, 8, ["aria-label", "onClick"]))
+                              : _createCommentVNode("", true),
                             _createVNode(_component_q_btn, {
                               flat: "",
                               round: "",
@@ -277,13 +296,44 @@ module.exports = {
                               size: "sm",
                               color: "primary",
                               icon: "sym_o_open_in_new",
-                              label: _ctx.t('Open in Comms'),
+                              label: _ctx.home ? undefined : _ctx.t('Open in Comms'),
+                              "aria-label": _ctx.t('Open in Comms'),
                               onClick: $event => (_ctx.go(_ctx.linkBase))
-                            }, null, 8, ["label", "onClick"])
+                            }, {
+                              default: _withCtx(() => [
+                                (_ctx.home)
+                                  ? (_openBlock(), _createBlock(_component_q_tooltip, { key: 0 }, {
+                                      default: _withCtx(() => [
+                                        _createTextVNode(_toDisplayString(_ctx.t('Open in Comms')), 1)
+                                      ]),
+                                      _: 1
+                                    }))
+                                  : _createCommentVNode("", true)
+                              ]),
+                              _: 1
+                            }, 8, ["label", "aria-label", "onClick"])
                           ]),
-                          (_ctx.newOpen)
-                            ? (_openBlock(), _createElementBlock("div", {
+                          (_ctx.home && _ctx.rooms.length > 6)
+                            ? (_openBlock(), _createBlock(_component_q_input, {
                                 key: 0,
+                                modelValue: _ctx.filter,
+                                "onUpdate:modelValue": $event => ((_ctx.filter) = $event),
+                                dense: "",
+                                outlined: "",
+                                rounded: "",
+                                clearable: "",
+                                class: "q-px-sm q-pb-sm m-chat-home-search",
+                                placeholder: _ctx.t('Search conversations')
+                              }, {
+                                prepend: _withCtx(() => [
+                                  _createVNode(_component_q_icon, { name: "sym_o_search" })
+                                ]),
+                                _: 1
+                              }, 8, ["modelValue", "onUpdate:modelValue", "placeholder"]))
+                            : _createCommentVNode("", true),
+                          (_ctx.newOpen && !_ctx.home)
+                            ? (_openBlock(), _createElementBlock("div", {
+                                key: 1,
                                 class: "q-pb-sm"
                               }, [
                                 _createVNode(_component_m_drop_down, {
@@ -348,21 +398,21 @@ module.exports = {
                                 ]))
                               : (_openBlock(), _createBlock(_component_q_list, {
                                   key: 1,
-                                  dense: ""
+                                  dense: !_ctx.home
                                 }, {
                                   default: _withCtx(() => [
                                     (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.shownRooms, (room) => {
                                       return (_openBlock(), _createBlock(_component_q_item, {
                                         key: room.chatRoomId,
                                         clickable: "",
-                                        class: "q-px-xs q-py-xs",
+                                        class: _normalizeClass(_ctx.home ? 'q-px-sm q-py-sm m-chat-home-row' : 'q-px-xs q-py-xs'),
                                         "data-room": room.chatRoomId,
                                         onClick: $event => (_ctx.openRoom(room.chatRoomId))
                                       }, {
                                         default: _withCtx(() => [
                                           _createVNode(_component_q_item_section, {
                                             avatar: "",
-                                            style: {"min-width":"40px"}
+                                            style: _normalizeStyle({minWidth: _ctx.home ? '56px' : '40px'})
                                           }, {
                                             default: _withCtx(() => [
                                               (room.roomTypeEnumId === 'CrtDirect' && room.otherUserId)
@@ -370,18 +420,18 @@ module.exports = {
                                                     key: 0,
                                                     name: room.displayName,
                                                     "user-id": room.otherUserId,
-                                                    size: "32px"
-                                                  }, null, 8, ["name", "user-id"]))
+                                                    size: _ctx.avatarSize
+                                                  }, null, 8, ["name", "user-id", "size"]))
                                                 : (_openBlock(), _createBlock(_component_q_avatar, {
                                                     key: 1,
-                                                    size: "32px",
+                                                    size: _ctx.avatarSize,
                                                     rounded: "",
                                                     class: "m-tonal text-primary",
                                                     icon: _ctx.roomIcon(room)
-                                                  }, null, 8, ["icon"]))
+                                                  }, null, 8, ["size", "icon"]))
                                             ]),
                                             _: 2
-                                          }, 1024),
+                                          }, 1032, ["style"]),
                                           _createVNode(_component_q_item_section, { style: {"min-width":"0"} }, {
                                             default: _withCtx(() => [
                                               _createVNode(_component_q_item_label, { class: "row no-wrap items-center" }, {
@@ -433,14 +483,20 @@ module.exports = {
                                           }, 1024)
                                         ]),
                                         _: 2
-                                      }, 1032, ["data-room", "onClick"]))
+                                      }, 1032, ["class", "data-room", "onClick"]))
                                     }), 128))
                                   ]),
                                   _: 1
-                                })),
-                            (_ctx.loaded && !_ctx.rooms.length)
+                                }, 8, ["dense"])),
+                            (_ctx.loaded && _ctx.filter && _ctx.rooms.length && !_ctx.shownRooms.length)
                               ? (_openBlock(), _createElementBlock("div", {
                                   key: 2,
+                                  class: "text-center m-muted q-pa-lg"
+                                }, _toDisplayString(_ctx.t('No conversation matches')), 1))
+                              : _createCommentVNode("", true),
+                            (_ctx.loaded && !_ctx.rooms.length)
+                              ? (_openBlock(), _createElementBlock("div", {
+                                  key: 3,
                                   class: "column items-center q-pa-lg text-center"
                                 }, [
                                   _createVNode(_component_q_icon, {
@@ -450,19 +506,22 @@ module.exports = {
                                   }),
                                   _createElementVNode("div", { class: "text-subtitle2 q-mt-sm" }, _toDisplayString(_ctx.t('No conversations yet')), 1),
                                   _createElementVNode("div", { class: "text-caption m-muted q-mb-sm" }, _toDisplayString(_ctx.t('Message a colleague: one person, or several for a group.')), 1),
-                                  _createVNode(_component_q_btn, {
-                                    unelevated: "",
-                                    "no-caps": "",
-                                    color: "primary",
-                                    icon: "sym_o_person_add",
-                                    label: _ctx.t('New message'),
-                                    onClick: $event => (_ctx.newOpen = true)
-                                  }, null, 8, ["label", "onClick"])
+                                  (!_ctx.home)
+                                    ? (_openBlock(), _createBlock(_component_q_btn, {
+                                        key: 0,
+                                        unelevated: "",
+                                        "no-caps": "",
+                                        color: "primary",
+                                        icon: "sym_o_person_add",
+                                        label: _ctx.t('New message'),
+                                        onClick: _ctx.openNew
+                                      }, null, 8, ["label", "onClick"]))
+                                    : _createCommentVNode("", true)
                                 ]))
                               : _createCommentVNode("", true),
-                            (_ctx.loaded && _ctx.rooms.length > _ctx.shownRooms.length)
+                            (_ctx.loaded && !_ctx.home && _ctx.rooms.length > _ctx.shownRooms.length)
                               ? (_openBlock(), _createElementBlock("div", {
-                                  key: 3,
+                                  key: 4,
                                   class: "text-center q-py-sm"
                                 }, [
                                   _createVNode(_component_q_btn, {
@@ -476,7 +535,77 @@ module.exports = {
                                   }, null, 8, ["label", "onClick"])
                                 ]))
                               : _createCommentVNode("", true)
-                          ])
+                          ]),
+                          (_ctx.home)
+                            ? (_openBlock(), _createBlock(_component_q_btn, {
+                                key: 2,
+                                fab: "",
+                                "no-caps": "",
+                                color: "primary",
+                                icon: "sym_o_edit_square",
+                                label: _ctx.t('Start chat'),
+                                class: "m-chat-start",
+                                onClick: _ctx.openNew
+                              }, null, 8, ["label", "onClick"]))
+                            : _createCommentVNode("", true),
+                          (_ctx.home)
+                            ? (_openBlock(), _createBlock(_component_q_dialog, {
+                                key: 3,
+                                modelValue: _ctx.newOpen,
+                                "onUpdate:modelValue": $event => ((_ctx.newOpen) = $event),
+                                maximized: "",
+                                "transition-show": "slide-up",
+                                "transition-hide": "slide-down"
+                              }, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_card, { class: "column no-wrap m-chat-new" }, {
+                                    default: _withCtx(() => [
+                                      _createElementVNode("div", { class: "row items-center no-wrap q-pa-sm" }, [
+                                        _withDirectives(_createVNode(_component_q_btn, {
+                                          flat: "",
+                                          round: "",
+                                          dense: "",
+                                          icon: "sym_o_arrow_back",
+                                          "aria-label": _ctx.t('Back')
+                                        }, null, 8, ["aria-label"]), [
+                                          [_directive_close_popup]
+                                        ]),
+                                        _createElementVNode("div", { class: "text-h6 q-ml-sm col" }, _toDisplayString(_ctx.t('New conversation')), 1)
+                                      ]),
+                                      _createElementVNode("div", { class: "q-px-md" }, [
+                                        _createVNode(_component_m_drop_down, {
+                                          modelValue: _ctx.newUserIds,
+                                          "onUpdate:modelValue": $event => ((_ctx.newUserIds) = $event),
+                                          name: "panelDirectUserIds",
+                                          multiple: "",
+                                          "server-search": "",
+                                          "options-url": _ctx.url('searchUsers'),
+                                          label: _ctx.t('To: one person or several')
+                                        }, null, 8, ["modelValue", "onUpdate:modelValue", "options-url", "label"]),
+                                        _createElementVNode("div", { class: "text-caption m-muted q-mt-sm" }, _toDisplayString(_ctx.t('Pick one person for a direct chat, or several for a group.')), 1)
+                                      ]),
+                                      _createVNode(_component_q_space),
+                                      _createElementVNode("div", { class: "q-pa-md" }, [
+                                        _createVNode(_component_q_btn, {
+                                          unelevated: "",
+                                          "no-caps": "",
+                                          color: "primary",
+                                          class: "full-width",
+                                          size: "lg",
+                                          icon: "sym_o_chat",
+                                          label: _ctx.t('Start'),
+                                          disable: !(_ctx.newUserIds || []).length,
+                                          loading: _ctx.busy,
+                                          onClick: _ctx.startDirect
+                                        }, null, 8, ["label", "disable", "loading", "onClick"])
+                                      ])
+                                    ]),
+                                    _: 1
+                                  })
+                                ]),
+                                _: 1
+                              }, 8, ["modelValue", "onUpdate:modelValue"]))
+                            : _createCommentVNode("", true)
                         ], 64))
                       : (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
                           (_ctx.roomComponent)
@@ -488,12 +617,13 @@ module.exports = {
                                 prefs: _ctx.prefs,
                                 compact: "",
                                 "can-go-back": "",
+                                bubbles: _ctx.home,
                                 "link-base": _ctx.linkBase,
                                 onBack: _ctx.closeRoom,
                                 onLeft: _ctx.onLeft,
                                 onChanged: _ctx.scheduleRooms,
                                 onRead: _ctx.onRoomRead
-                              }, null, 40, ["base", "room-id", "me", "prefs", "link-base", "onBack", "onLeft", "onChanged", "onRead"]))
+                              }, null, 40, ["base", "room-id", "me", "prefs", "bubbles", "link-base", "onBack", "onLeft", "onChanged", "onRead"]))
                             : (_openBlock(), _createElementBlock("div", {
                                 key: 1,
                                 class: "q-pa-sm"
@@ -533,7 +663,7 @@ module.exports = {
                                 }), 64))
                               ]))
                         ], 64))
-                  ], 4))
+                  ], 6))
                 }
             })();
             delete target.template;
@@ -595,6 +725,8 @@ module.exports = {
     data() {
         const data = this.shellData || {};
         return {
+            // the room open on the home (ChatPanel's room event): on a phone the room's own header replaces the shell's
+            homeRoom: null,
             drawer: false,
             // as m-qapps-root: what the client's components read of their $root
             appRootPath: '', basePath: '/apps', linkBasePath: '/qapps',
@@ -861,7 +993,7 @@ module.exports = {
         {
             const target = component;
             target.render = (function () {
-                const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, renderList: _renderList, Fragment: _Fragment, createElementBlock: _createElementBlock, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeClass: _normalizeClass, resolveDynamicComponent: _resolveDynamicComponent } = Vue
+                const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementVNode: _createElementVNode, renderList: _renderList, Fragment: _Fragment, createElementBlock: _createElementBlock, resolveDirective: _resolveDirective, withDirectives: _withDirectives, vShow: _vShow, normalizeClass: _normalizeClass, resolveDynamicComponent: _resolveDynamicComponent } = Vue
 
                 return function render(_ctx, _cache) {
                   const _component_q_btn = _resolveComponent("q-btn")
@@ -892,7 +1024,7 @@ module.exports = {
 
                   return (_openBlock(), _createBlock(_component_q_layout, { view: "hHh lpR fFf" }, {
                     default: _withCtx(() => [
-                      _createVNode(_component_q_header, {
+                      _withDirectives(_createVNode(_component_q_header, {
                         elevated: "",
                         class: "bg-primary text-white"
                       }, {
@@ -980,7 +1112,13 @@ module.exports = {
                                       icon: "sym_o_sync_problem"
                                     }, {
                                       default: _withCtx(() => [
-                                        _createTextVNode(_toDisplayString(_ctx.t('Reconnecting')), 1)
+                                        _createElementVNode("span", { class: "gt-xs" }, _toDisplayString(_ctx.t('Reconnecting')), 1),
+                                        _createVNode(_component_q_tooltip, null, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(_ctx.t('Reconnecting')), 1)
+                                          ]),
+                                          _: 1
+                                        })
                                       ]),
                                       _: 1
                                     }))
@@ -1024,7 +1162,8 @@ module.exports = {
                                 "no-caps": "",
                                 class: "q-ml-sm",
                                 icon: "sym_o_account_circle",
-                                label: _ctx.userName
+                                label: _ctx.$q.screen.lt.sm ? undefined : _ctx.userName,
+                                "aria-label": _ctx.userName
                               }, {
                                 default: _withCtx(() => [
                                   _createVNode(_component_q_menu, {
@@ -1181,13 +1320,15 @@ module.exports = {
                                   })
                                 ]),
                                 _: 1
-                              }, 8, ["label"])
+                              }, 8, ["label", "aria-label"])
                             ]),
                             _: 1
                           })
                         ]),
                         _: 1
-                      }),
+                      }, 512), [
+                        [_vShow, !(_ctx.homeRoom && !_ctx.view && _ctx.$q.screen.lt.md)]
+                      ]),
                       _createVNode(_component_q_drawer, {
                         modelValue: _ctx.drawer,
                         "onUpdate:modelValue": $event => ((_ctx.drawer) = $event),
@@ -1589,24 +1730,21 @@ module.exports = {
                               }))
                             : (_openBlock(), _createBlock(_component_q_page, {
                                 key: 1,
-                                padding: ""
+                                class: "m-shell-home"
                               }, {
                                 default: _withCtx(() => [
-                                  _createVNode(_component_q_card, {
-                                    flat: "",
-                                    bordered: "",
-                                    class: "m-shell-chat q-pa-sm"
-                                  }, {
-                                    default: _withCtx(() => [
-                                      (_ctx.chatPanel)
-                                        ? (_openBlock(), _createBlock(_resolveDynamicComponent(_ctx.chatPanel), { key: 0 }))
-                                        : (_openBlock(), _createElementBlock("div", {
-                                            key: 1,
-                                            class: "q-pa-md m-muted"
-                                          }, _toDisplayString(_ctx.t('Chat is not available on this server.')), 1))
-                                    ]),
-                                    _: 1
-                                  })
+                                  _createElementVNode("div", { class: "m-shell-chat" }, [
+                                    (_ctx.chatPanel)
+                                      ? (_openBlock(), _createBlock(_resolveDynamicComponent(_ctx.chatPanel), {
+                                          key: 0,
+                                          home: "",
+                                          onRoom: $event => (_ctx.homeRoom = $event)
+                                        }, null, 40, ["onRoom"]))
+                                      : (_openBlock(), _createElementBlock("div", {
+                                          key: 1,
+                                          class: "q-pa-md m-muted"
+                                        }, _toDisplayString(_ctx.t('Chat is not available on this server.')), 1))
+                                  ])
                                 ]),
                                 _: 1
                               }))
@@ -2189,18 +2327,19 @@ const chime = () => {
 
 // ---- a message of the timeline or of a thread (room is the chat-room component) ----
 const messageTemplate = `
-<div class="row no-wrap relative-position q-pl-xs q-pr-sm m-chat-msg" :class="item.grouped ? '' : 'q-mt-sm'" :id="room.domId(item.eventSeq, inThread)"
+<div class="row no-wrap relative-position q-pl-xs q-pr-sm m-chat-msg" :class="[item.grouped ? 'm-chat-grouped' : 'q-mt-sm', room.useBubbles ? 'm-chat-bubble' : '',
+            room.useBubbles && item.mine ? 'm-chat-mine' : '', room.useBubbles && room.isDirect ? 'm-chat-in-direct' : '']" :id="room.domId(item.eventSeq, inThread)"
         :data-seq="item.eventSeq" role="article" :tabindex="actionsAvailable ? 0 : -1" :aria-label="messageLabel"
         @focusin="actionFocus = true" @focusout="actionFocus = $event.currentTarget.contains($event.relatedTarget)"
         @mouseenter="room.hover(item, inThread)" @mouseleave="room.unhover(item, inThread)" @click="room.tap(item, inThread)">
     <div class="self-stretch" :class="item.highlight ? 'bg-primary' : ''" style="width:3px;margin-right:3px;border-radius:2px"></div>
-    <div style="width:40px;min-width:40px" class="q-pr-sm">
+    <div style="width:40px;min-width:40px" class="q-pr-sm m-chat-avatar">
         <m-avatar v-if="!item.grouped" :name="item.senderName" :user-id="item.senderUserId || undefined" size="32px" class="q-mt-xs"></m-avatar>
         <div v-else-if="room.isHovered(item, inThread)" class="text-caption m-muted text-right text-no-wrap" style="font-size:10px;line-height:20px">{{item.timeShort}}</div>
     </div>
-    <div class="col" style="min-width:0">
-        <div v-if="!item.grouped" class="row items-baseline no-wrap">
-            <span class="text-weight-medium ellipsis">{{item.senderName}}</span>
+    <div class="col m-chat-body" style="min-width:0">
+        <div v-if="!item.grouped" class="row items-baseline no-wrap m-chat-head">
+            <span class="text-weight-medium ellipsis m-chat-name">{{item.senderName}}</span>
             <q-chip v-if="item.event.senderExternal" dense square size="sm" icon="sym_o_hub" class="m-tonal text-info q-my-none q-ml-xs m-chat-external">
                 {{item.event.senderExternal.networkName || room.t('Outside')}}</q-chip>
             <span class="text-caption m-muted text-no-wrap q-ml-sm">{{item.timeText}}<q-tooltip>{{item.fullTime}}</q-tooltip></span>
@@ -2298,6 +2437,7 @@ const messageTemplate = `
                 <q-btn flat dense no-caps size="sm" :label="room.t('Discard')" @click="room.discardChange(change)"></q-btn>
             </template>
         </div>
+        <div class="m-chat-stamp text-caption m-muted">{{item.timeShort}}<span v-if="item.edited"> {{room.t('(edited)')}}</span></div>
         <div v-if="item.readers && item.readers.length" class="row justify-end items-center no-wrap q-mt-xs">
             <m-avatar v-for="reader in item.readers.slice(0, 6)" :key="reader.userId" :name="reader.name" :user-id="reader.userId" size="16px" class="q-ml-xs" tooltip></m-avatar>
             <span v-if="item.readers.length > 6" class="text-caption m-muted q-ml-xs">+{{item.readers.length - 6}}</span>
@@ -2398,7 +2538,7 @@ const composerTemplate = `
     </div>
     <m-rich-text ref="editor" v-model="body" :name="'chatBody' + uid" light rows="1" :enter="room.prefs.enterSends === false ? 'newline' : 'submit'"
             :label="editorLabel" :placeholder="placeholder" :mention-url="room.url('mentionUsers')" :mention-parameters="{chatRoomId: room.roomId}" @submit="send"></m-rich-text>
-    <div class="row items-center no-wrap q-mt-xs">
+    <div class="row items-center no-wrap q-mt-xs m-chat-composer-actions">
         <q-btn flat round dense size="sm" icon="sym_o_attach_file" :aria-label="room.t('Attach files')" :disable="room.offline" @click="pickFiles">
             <q-tooltip>{{room.offline ? room.t('Files go up when you are back online') : room.t('Attach files')}}</q-tooltip></q-btn>
         <q-btn flat round dense size="sm" icon="sym_o_mood" :aria-label="room.t('Emoji')"><q-tooltip>{{room.t('Emoji')}}</q-tooltip>
@@ -2406,12 +2546,12 @@ const composerTemplate = `
                 <q-btn v-for="key in room.emoji" :key="key" flat dense size="sm" class="q-px-xs" :label="key" v-close-popup @click="insert(key)"></q-btn>
             </div></q-menu>
         </q-btn>
-        <q-btn flat round dense size="sm" icon="sym_o_alternate_email" :aria-label="room.t('Mention someone')" @click="insert('@')"><q-tooltip>{{room.t('Mention someone')}}</q-tooltip></q-btn>
+        <q-btn flat round dense size="sm" icon="sym_o_alternate_email" class="m-chat-mention-btn" :aria-label="room.t('Mention someone')" @click="insert('@')"><q-tooltip>{{room.t('Mention someone')}}</q-tooltip></q-btn>
         <q-btn v-if="!room.sealed" flat round dense size="sm" icon="sym_o_ballot" :aria-label="room.t('Make a poll')" :disable="room.offline" @click="room.openPoll(threadRoot || null, '')">
             <q-tooltip>{{room.t('Make a poll')}}</q-tooltip></q-btn>
         <span class="text-caption m-muted q-ml-sm ellipsis gt-xs" v-if="!room.compact && !threadRoot">{{hint}}</span>
         <q-space></q-space>
-        <q-btn dense unelevated no-caps color="primary" icon="sym_o_send" :label="room.compact ? undefined : room.t('Send')" :aria-label="room.t('Send')"
+        <q-btn dense unelevated no-caps color="primary" icon="sym_o_send" class="m-chat-send" :label="room.compact ? undefined : room.t('Send')" :aria-label="room.t('Send')"
                 :disable="!canSend" :loading="sending" @click="send"></q-btn>
     </div>
     <div class="hidden"><m-file ref="picker" v-model="picked" :name="'chatFile' + uid" multiple @update:model-value="onPicked"></m-file></div>
@@ -2607,7 +2747,7 @@ const chatMessage = {
 // ---- the room view: header, timeline, composer and the side pane (thread, members, pinned, search, record); the Chat screen
 // and the tray's Chat tab (compact) both show it ----
 const roomTemplate = `
-<div class="column no-wrap relative-position" style="height:100%;min-height:0" @dragover.prevent="onDragOver" @dragleave.self="dragOver = false" @drop.prevent="onDrop">
+<div class="column no-wrap relative-position" :class="useBubbles ? 'm-chat-phone' : ''" style="height:100%;min-height:0" @dragover.prevent="onDragOver" @dragleave.self="dragOver = false" @drop.prevent="onDrop">
     <div class="row items-center no-wrap q-px-sm q-py-xs" style="min-height:52px">
         <q-btn v-if="canGoBack" flat round dense icon="sym_o_arrow_back" :aria-label="t('Back')" class="q-mr-xs" @click="$emit('back')"><q-tooltip>{{t('Back')}}</q-tooltip></q-btn>
         <template v-if="room">
@@ -2643,7 +2783,7 @@ const roomTemplate = `
             <q-btn v-if="!narrow" flat round dense icon="sym_o_keep" :aria-label="t('Pinned messages')" @click="openSide('pinned')"><q-tooltip>{{t('Pinned messages')}}</q-tooltip></q-btn>
             <q-btn v-if="!narrow" flat round dense icon="sym_o_forum" :aria-label="t('Threads')" @click="openSide('threads')"><q-tooltip>{{t('Threads')}}</q-tooltip></q-btn>
             <q-btn v-if="!narrow" flat round dense icon="sym_o_folder" :aria-label="t('Files')" @click="openSide('files')"><q-tooltip>{{t('Files')}}</q-tooltip></q-btn>
-            <q-btn v-if="compact" flat round dense icon="sym_o_open_in_new" :aria-label="t('Open in Chat')" @click="openInChat"><q-tooltip>{{t('Open in Chat')}}</q-tooltip></q-btn>
+            <q-btn v-if="compact && !bubbles" flat round dense icon="sym_o_open_in_new" :aria-label="t('Open in Chat')" @click="openInChat"><q-tooltip>{{t('Open in Chat')}}</q-tooltip></q-btn>
             <q-btn flat round dense icon="sym_o_more_vert" :aria-label="t('Room')"><q-tooltip>{{t('Room')}}</q-tooltip>
                 <q-menu anchor="bottom right" self="top right"><q-list dense style="min-width:250px">
                     <template v-if="isMember">
@@ -3029,7 +3169,7 @@ let roomCount = 0;
 const chatRoom = {
     name: 'ChatRoom',
     props: { base: String, roomId: String, me: Object, prefs: { type: Object, default: () => ({}) }, seq: [Number, String], thread: [Number, String],
-        compact: Boolean, canGoBack: Boolean, linkBase: { type: String, default: '/qapps/BasicComms/Chat' } },
+        compact: Boolean, canGoBack: Boolean, bubbles: Boolean, linkBase: { type: String, default: '/qapps/BasicComms/Chat' } },
     emits: ['back', 'thread', 'changed', 'left', 'open-room', 'read'],
     components: { 'chat-message': chatMessage, 'chat-composer': chatComposer, 'chat-pending': chatPending },
     data() {
@@ -3093,6 +3233,8 @@ const chatRoom = {
             return fill(t('This is the start of {name}.'), { name: this.displayName }) + (this.room.topic ? ' ' + this.room.topic : '');
         },
         narrow() { return this.compact || (this.width > 0 && this.width < 640); },
+        // a phone messaging layout: mine on the right, the others on the left, each in a bubble (the phone home, the stacked Chat, a narrow room)
+        useBubbles() { return this.bubbles || this.narrow; },
         sideOverlay() { return this.compact || (this.width > 0 && this.width < 900); },
         sideTitle() {
             return { thread: t('Thread'), members: fill(t('Members ({count})'), { count: this.members.length }), pinned: t('Pinned messages'),
@@ -5342,6 +5484,7 @@ module.exports = {
                           ? (_openBlock(), _createBlock(_component_chat_room, {
                               key: _ctx.roomId,
                               ref: "room",
+                              bubbles: _ctx.stacked,
                               base: _ctx.base,
                               "room-id": _ctx.roomId,
                               me: _ctx.me,
@@ -5357,7 +5500,7 @@ module.exports = {
                               onOpenRoom: _ctx.openRoom,
                               onCreateFrom: _ctx.openQuickCreate,
                               onRead: _ctx.onRoomRead
-                            }, null, 8, ["base", "room-id", "me", "prefs", "seq", "thread", "can-go-back", "link-base", "onBack", "onThread", "onChanged", "onLeft", "onOpenRoom", "onCreateFrom", "onRead"]))
+                            }, null, 8, ["bubbles", "base", "room-id", "me", "prefs", "seq", "thread", "can-go-back", "link-base", "onBack", "onThread", "onChanged", "onLeft", "onOpenRoom", "onCreateFrom", "onRead"]))
                           : (_openBlock(), _createElementBlock("div", {
                               key: 1,
                               class: "col column items-center justify-center q-pa-lg text-center m-muted"
@@ -5677,7 +5820,7 @@ module.exports = {
                   const _directive_close_popup = _resolveDirective("close-popup")
 
                   return (_openBlock(), _createElementBlock("div", {
-                    class: "column no-wrap relative-position",
+                    class: _normalizeClass(["column no-wrap relative-position", _ctx.useBubbles ? 'm-chat-phone' : '']),
                     style: {"height":"100%","min-height":"0"},
                     onDragover: _withModifiers(_ctx.onDragOver, ["prevent"]),
                     onDragleave: _withModifiers($event => (_ctx.dragOver = false), ["self"]),
@@ -6013,7 +6156,7 @@ module.exports = {
                                   _: 1
                                 }, 8, ["aria-label", "onClick"]))
                               : _createCommentVNode("", true),
-                            (_ctx.compact)
+                            (_ctx.compact && !_ctx.bubbles)
                               ? (_openBlock(), _createBlock(_component_q_btn, {
                                   key: 9,
                                   flat: "",
@@ -8198,7 +8341,7 @@ module.exports = {
                       ]),
                       _: 1
                     }, 8, ["modelValue", "onUpdate:modelValue", "title"])
-                  ], 40, ["onDragover", "onDragleave", "onDrop"]))
+                  ], 42, ["onDragover", "onDragleave", "onDrop"]))
                 }
             })();
             delete target.template;
@@ -8302,7 +8445,7 @@ module.exports = {
                       "mention-parameters": {chatRoomId: _ctx.room.roomId},
                       onSubmit: _ctx.send
                     }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "enter", "label", "placeholder", "mention-url", "mention-parameters", "onSubmit"]),
-                    _createElementVNode("div", { class: "row items-center no-wrap q-mt-xs" }, [
+                    _createElementVNode("div", { class: "row items-center no-wrap q-mt-xs m-chat-composer-actions" }, [
                       _createVNode(_component_q_btn, {
                         flat: "",
                         round: "",
@@ -8373,6 +8516,7 @@ module.exports = {
                         dense: "",
                         size: "sm",
                         icon: "sym_o_alternate_email",
+                        class: "m-chat-mention-btn",
                         "aria-label": _ctx.room.t('Mention someone'),
                         onClick: $event => (_ctx.insert('@'))
                       }, {
@@ -8422,6 +8566,7 @@ module.exports = {
                         "no-caps": "",
                         color: "primary",
                         icon: "sym_o_send",
+                        class: "m-chat-send",
                         label: _ctx.room.compact ? undefined : _ctx.room.t('Send'),
                         "aria-label": _ctx.room.t('Send'),
                         disable: !_ctx.canSend,
@@ -8470,7 +8615,8 @@ module.exports = {
                   const _directive_close_popup = _resolveDirective("close-popup")
 
                   return (_openBlock(), _createElementBlock("div", {
-                    class: _normalizeClass(["row no-wrap relative-position q-pl-xs q-pr-sm m-chat-msg", _ctx.item.grouped ? '' : 'q-mt-sm']),
+                    class: _normalizeClass(["row no-wrap relative-position q-pl-xs q-pr-sm m-chat-msg", [_ctx.item.grouped ? 'm-chat-grouped' : 'q-mt-sm', _ctx.room.useBubbles ? 'm-chat-bubble' : '',
+                            _ctx.room.useBubbles && _ctx.item.mine ? 'm-chat-mine' : '', _ctx.room.useBubbles && _ctx.room.isDirect ? 'm-chat-in-direct' : '']]),
                     id: _ctx.room.domId(_ctx.item.eventSeq, _ctx.inThread),
                     "data-seq": _ctx.item.eventSeq,
                     role: "article",
@@ -8488,7 +8634,7 @@ module.exports = {
                     }, null, 2),
                     _createElementVNode("div", {
                       style: {"width":"40px","min-width":"40px"},
-                      class: "q-pr-sm"
+                      class: "q-pr-sm m-chat-avatar"
                     }, [
                       (!_ctx.item.grouped)
                         ? (_openBlock(), _createBlock(_component_m_avatar, {
@@ -8507,15 +8653,15 @@ module.exports = {
                           : _createCommentVNode("", true)
                     ]),
                     _createElementVNode("div", {
-                      class: "col",
+                      class: "col m-chat-body",
                       style: {"min-width":"0"}
                     }, [
                       (!_ctx.item.grouped)
                         ? (_openBlock(), _createElementBlock("div", {
                             key: 0,
-                            class: "row items-baseline no-wrap"
+                            class: "row items-baseline no-wrap m-chat-head"
                           }, [
-                            _createElementVNode("span", { class: "text-weight-medium ellipsis" }, _toDisplayString(_ctx.item.senderName), 1),
+                            _createElementVNode("span", { class: "text-weight-medium ellipsis m-chat-name" }, _toDisplayString(_ctx.item.senderName), 1),
                             (_ctx.item.event.senderExternal)
                               ? (_openBlock(), _createBlock(_component_q_chip, {
                                   key: 0,
@@ -9014,6 +9160,12 @@ module.exports = {
                             : _createCommentVNode("", true)
                         ], 10, ["data-change", "data-pending", "onClick"]))
                       }), 128)),
+                      _createElementVNode("div", { class: "m-chat-stamp text-caption m-muted" }, [
+                        _createTextVNode(_toDisplayString(_ctx.item.timeShort), 1),
+                        (_ctx.item.edited)
+                          ? (_openBlock(), _createElementBlock("span", { key: 0 }, _toDisplayString(_ctx.room.t('(edited)')), 1))
+                          : _createCommentVNode("", true)
+                      ]),
                       (_ctx.item.readers && _ctx.item.readers.length)
                         ? (_openBlock(), _createElementBlock("div", {
                             key: 5,

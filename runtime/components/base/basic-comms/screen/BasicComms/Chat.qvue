@@ -157,7 +157,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- the room -->
     <div v-show="!stacked || roomId" class="col column no-wrap" style="min-width:0">
-        <chat-room v-if="roomId && loaded" :key="roomId" ref="room" :base="base" :room-id="roomId" :me="me" :prefs="prefs" :seq="seq" :thread="thread"
+        <chat-room v-if="roomId && loaded" :key="roomId" ref="room" :bubbles="stacked" :base="base" :room-id="roomId" :me="me" :prefs="prefs" :seq="seq" :thread="thread"
                 :can-go-back="stacked" :link-base="linkBase" @back="closeRoom" @thread="setThread" @changed="scheduleRooms" @left="onLeft"
                 @open-room="openRoom" @create-from="openQuickCreate" @read="onRoomRead"></chat-room>
         <div v-else class="col column items-center justify-center q-pa-lg text-center m-muted">
@@ -351,18 +351,19 @@ const chime = () => {
 
 // ---- a message of the timeline or of a thread (room is the chat-room component) ----
 const messageTemplate = `
-<div class="row no-wrap relative-position q-pl-xs q-pr-sm m-chat-msg" :class="item.grouped ? '' : 'q-mt-sm'" :id="room.domId(item.eventSeq, inThread)"
+<div class="row no-wrap relative-position q-pl-xs q-pr-sm m-chat-msg" :class="[item.grouped ? 'm-chat-grouped' : 'q-mt-sm', room.useBubbles ? 'm-chat-bubble' : '',
+            room.useBubbles && item.mine ? 'm-chat-mine' : '', room.useBubbles && room.isDirect ? 'm-chat-in-direct' : '']" :id="room.domId(item.eventSeq, inThread)"
         :data-seq="item.eventSeq" role="article" :tabindex="actionsAvailable ? 0 : -1" :aria-label="messageLabel"
         @focusin="actionFocus = true" @focusout="actionFocus = $event.currentTarget.contains($event.relatedTarget)"
         @mouseenter="room.hover(item, inThread)" @mouseleave="room.unhover(item, inThread)" @click="room.tap(item, inThread)">
     <div class="self-stretch" :class="item.highlight ? 'bg-primary' : ''" style="width:3px;margin-right:3px;border-radius:2px"></div>
-    <div style="width:40px;min-width:40px" class="q-pr-sm">
+    <div style="width:40px;min-width:40px" class="q-pr-sm m-chat-avatar">
         <m-avatar v-if="!item.grouped" :name="item.senderName" :user-id="item.senderUserId || undefined" size="32px" class="q-mt-xs"></m-avatar>
         <div v-else-if="room.isHovered(item, inThread)" class="text-caption m-muted text-right text-no-wrap" style="font-size:10px;line-height:20px">{{item.timeShort}}</div>
     </div>
-    <div class="col" style="min-width:0">
-        <div v-if="!item.grouped" class="row items-baseline no-wrap">
-            <span class="text-weight-medium ellipsis">{{item.senderName}}</span>
+    <div class="col m-chat-body" style="min-width:0">
+        <div v-if="!item.grouped" class="row items-baseline no-wrap m-chat-head">
+            <span class="text-weight-medium ellipsis m-chat-name">{{item.senderName}}</span>
             <q-chip v-if="item.event.senderExternal" dense square size="sm" icon="sym_o_hub" class="m-tonal text-info q-my-none q-ml-xs m-chat-external">
                 {{item.event.senderExternal.networkName || room.t('Outside')}}</q-chip>
             <span class="text-caption m-muted text-no-wrap q-ml-sm">{{item.timeText}}<q-tooltip>{{item.fullTime}}</q-tooltip></span>
@@ -460,6 +461,7 @@ const messageTemplate = `
                 <q-btn flat dense no-caps size="sm" :label="room.t('Discard')" @click="room.discardChange(change)"></q-btn>
             </template>
         </div>
+        <div class="m-chat-stamp text-caption m-muted">{{item.timeShort}}<span v-if="item.edited"> {{room.t('(edited)')}}</span></div>
         <div v-if="item.readers && item.readers.length" class="row justify-end items-center no-wrap q-mt-xs">
             <m-avatar v-for="reader in item.readers.slice(0, 6)" :key="reader.userId" :name="reader.name" :user-id="reader.userId" size="16px" class="q-ml-xs" tooltip></m-avatar>
             <span v-if="item.readers.length > 6" class="text-caption m-muted q-ml-xs">+{{item.readers.length - 6}}</span>
@@ -560,7 +562,7 @@ const composerTemplate = `
     </div>
     <m-rich-text ref="editor" v-model="body" :name="'chatBody' + uid" light rows="1" :enter="room.prefs.enterSends === false ? 'newline' : 'submit'"
             :label="editorLabel" :placeholder="placeholder" :mention-url="room.url('mentionUsers')" :mention-parameters="{chatRoomId: room.roomId}" @submit="send"></m-rich-text>
-    <div class="row items-center no-wrap q-mt-xs">
+    <div class="row items-center no-wrap q-mt-xs m-chat-composer-actions">
         <q-btn flat round dense size="sm" icon="sym_o_attach_file" :aria-label="room.t('Attach files')" :disable="room.offline" @click="pickFiles">
             <q-tooltip>{{room.offline ? room.t('Files go up when you are back online') : room.t('Attach files')}}</q-tooltip></q-btn>
         <q-btn flat round dense size="sm" icon="sym_o_mood" :aria-label="room.t('Emoji')"><q-tooltip>{{room.t('Emoji')}}</q-tooltip>
@@ -568,12 +570,12 @@ const composerTemplate = `
                 <q-btn v-for="key in room.emoji" :key="key" flat dense size="sm" class="q-px-xs" :label="key" v-close-popup @click="insert(key)"></q-btn>
             </div></q-menu>
         </q-btn>
-        <q-btn flat round dense size="sm" icon="sym_o_alternate_email" :aria-label="room.t('Mention someone')" @click="insert('@')"><q-tooltip>{{room.t('Mention someone')}}</q-tooltip></q-btn>
+        <q-btn flat round dense size="sm" icon="sym_o_alternate_email" class="m-chat-mention-btn" :aria-label="room.t('Mention someone')" @click="insert('@')"><q-tooltip>{{room.t('Mention someone')}}</q-tooltip></q-btn>
         <q-btn v-if="!room.sealed" flat round dense size="sm" icon="sym_o_ballot" :aria-label="room.t('Make a poll')" :disable="room.offline" @click="room.openPoll(threadRoot || null, '')">
             <q-tooltip>{{room.t('Make a poll')}}</q-tooltip></q-btn>
         <span class="text-caption m-muted q-ml-sm ellipsis gt-xs" v-if="!room.compact && !threadRoot">{{hint}}</span>
         <q-space></q-space>
-        <q-btn dense unelevated no-caps color="primary" icon="sym_o_send" :label="room.compact ? undefined : room.t('Send')" :aria-label="room.t('Send')"
+        <q-btn dense unelevated no-caps color="primary" icon="sym_o_send" class="m-chat-send" :label="room.compact ? undefined : room.t('Send')" :aria-label="room.t('Send')"
                 :disable="!canSend" :loading="sending" @click="send"></q-btn>
     </div>
     <div class="hidden"><m-file ref="picker" v-model="picked" :name="'chatFile' + uid" multiple @update:model-value="onPicked"></m-file></div>
@@ -769,7 +771,7 @@ const chatMessage = {
 // ---- the room view: header, timeline, composer and the side pane (thread, members, pinned, search, record); the Chat screen
 // and the tray's Chat tab (compact) both show it ----
 const roomTemplate = `
-<div class="column no-wrap relative-position" style="height:100%;min-height:0" @dragover.prevent="onDragOver" @dragleave.self="dragOver = false" @drop.prevent="onDrop">
+<div class="column no-wrap relative-position" :class="useBubbles ? 'm-chat-phone' : ''" style="height:100%;min-height:0" @dragover.prevent="onDragOver" @dragleave.self="dragOver = false" @drop.prevent="onDrop">
     <div class="row items-center no-wrap q-px-sm q-py-xs" style="min-height:52px">
         <q-btn v-if="canGoBack" flat round dense icon="sym_o_arrow_back" :aria-label="t('Back')" class="q-mr-xs" @click="$emit('back')"><q-tooltip>{{t('Back')}}</q-tooltip></q-btn>
         <template v-if="room">
@@ -805,7 +807,7 @@ const roomTemplate = `
             <q-btn v-if="!narrow" flat round dense icon="sym_o_keep" :aria-label="t('Pinned messages')" @click="openSide('pinned')"><q-tooltip>{{t('Pinned messages')}}</q-tooltip></q-btn>
             <q-btn v-if="!narrow" flat round dense icon="sym_o_forum" :aria-label="t('Threads')" @click="openSide('threads')"><q-tooltip>{{t('Threads')}}</q-tooltip></q-btn>
             <q-btn v-if="!narrow" flat round dense icon="sym_o_folder" :aria-label="t('Files')" @click="openSide('files')"><q-tooltip>{{t('Files')}}</q-tooltip></q-btn>
-            <q-btn v-if="compact" flat round dense icon="sym_o_open_in_new" :aria-label="t('Open in Chat')" @click="openInChat"><q-tooltip>{{t('Open in Chat')}}</q-tooltip></q-btn>
+            <q-btn v-if="compact && !bubbles" flat round dense icon="sym_o_open_in_new" :aria-label="t('Open in Chat')" @click="openInChat"><q-tooltip>{{t('Open in Chat')}}</q-tooltip></q-btn>
             <q-btn flat round dense icon="sym_o_more_vert" :aria-label="t('Room')"><q-tooltip>{{t('Room')}}</q-tooltip>
                 <q-menu anchor="bottom right" self="top right"><q-list dense style="min-width:250px">
                     <template v-if="isMember">
@@ -1191,7 +1193,7 @@ let roomCount = 0;
 const chatRoom = {
     name: 'ChatRoom',
     props: { base: String, roomId: String, me: Object, prefs: { type: Object, default: () => ({}) }, seq: [Number, String], thread: [Number, String],
-        compact: Boolean, canGoBack: Boolean, linkBase: { type: String, default: '/qapps/BasicComms/Chat' } },
+        compact: Boolean, canGoBack: Boolean, bubbles: Boolean, linkBase: { type: String, default: '/qapps/BasicComms/Chat' } },
     emits: ['back', 'thread', 'changed', 'left', 'open-room', 'read'],
     components: { 'chat-message': chatMessage, 'chat-composer': chatComposer, 'chat-pending': chatPending },
     data() {
@@ -1255,6 +1257,8 @@ const chatRoom = {
             return fill(t('This is the start of {name}.'), { name: this.displayName }) + (this.room.topic ? ' ' + this.room.topic : '');
         },
         narrow() { return this.compact || (this.width > 0 && this.width < 640); },
+        // a phone messaging layout: mine on the right, the others on the left, each in a bubble (the phone home, the stacked Chat, a narrow room)
+        useBubbles() { return this.bubbles || this.narrow; },
         sideOverlay() { return this.compact || (this.width > 0 && this.width < 900); },
         sideTitle() {
             return { thread: t('Thread'), members: fill(t('Members ({count})'), { count: this.members.length }), pinned: t('Pinned messages'),

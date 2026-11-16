@@ -698,6 +698,35 @@ form.q-form.m-status-form, .m-status-form { display: inline-flex; width: auto; }
 /* Message actions are available from the keyboard as well as pointer hover. Keep the focus ring inside the timeline. */
 .m-chat-msg:focus-visible { outline:2px solid var(--m-link); outline-offset:-2px; }
 
+/* Bubbles (ChatRoom useBubbles: the phone home, the stacked Chat, a narrow room): mine on the right in the primary tone, the
+   others on the left; a direct room shows no avatars or names, a group shows them on the first message of a run. */
+.m-chat-bubble .m-chat-body { flex:0 1 auto; max-width:min(80%, 560px); padding:6px 12px; border-radius:18px; background:rgba(127,127,127,0.13); }
+.m-chat-bubble.m-chat-grouped { margin-top:2px; }
+.m-chat-bubble.m-chat-mine { flex-direction:row-reverse; }
+.m-chat-bubble.m-chat-mine .m-chat-body { background:color-mix(in srgb, var(--q-primary) 20%, transparent); }
+.m-chat-bubble.m-chat-mine .m-chat-avatar, .m-chat-bubble.m-chat-mine .m-chat-name,
+.m-chat-bubble.m-chat-in-direct .m-chat-avatar, .m-chat-bubble.m-chat-in-direct .m-chat-name { display:none; }
+.m-chat-bubble.m-chat-mine .m-chat-head, .m-chat-bubble.m-chat-in-direct .m-chat-head { justify-content:flex-end; }
+.m-chat-bubble .m-chat-body .m-rich-text-content p:last-child { margin-bottom:0; }
+.m-chat-bubble .m-chat-body img { max-width:100%; }
+.m-chat-stamp { display:none; }
+.m-chat-bubble .m-chat-stamp { display:block; text-align:right; font-size:11px; line-height:14px; margin-top:2px; }
+.m-chat-bubble .m-chat-head .text-caption, .m-chat-bubble .m-chat-body > span.text-caption { display:none; }
+.m-chat-bubble.m-chat-mine .m-chat-head, .m-chat-bubble.m-chat-in-direct .m-chat-head { display:none; }
+/* the phone composer: one row of attach, emoji and poll, a round text box, and a round send button */
+.m-chat-phone .m-chat-composer { display:flex; flex-wrap:wrap; align-items:flex-end; gap:2px; }
+.m-chat-phone .m-chat-composer > :not(.m-rich-text):not(.m-chat-composer-actions) { flex-basis:100%; }
+.m-chat-phone .m-chat-composer-actions { display:contents; }
+.m-chat-phone .m-chat-composer-actions > .q-btn { order:1; margin-bottom:6px; }
+.m-chat-phone .m-chat-composer > .m-rich-text { order:2; flex:1 1 0; min-width:0; }
+.m-chat-phone .m-chat-composer-actions > .m-chat-send { order:3; border-radius:50%; width:40px; height:40px; margin:0 0 2px 4px; }
+.m-chat-phone .m-chat-composer-actions > .q-space, .m-chat-phone .m-chat-mention-btn { display:none; }
+.m-chat-phone .m-chat-composer .m-rich-text-toolbar, .m-chat-phone .m-chat-composer .m-rich-text-label { display:none; }
+.m-chat-phone .m-chat-composer .m-rich-text-box { border-radius:20px; }
+/* the phone home's room list and Start chat */
+.m-chat-home-row { min-height:68px; }
+.m-chat-home .m-chat-start { position:absolute; right:16px; bottom:16px; z-index:3; }
+
 /* the record panels, avatars and record cards: an m-chatter or m-record-files fills its column; an avatar's presence dot
    sits on its lower right (Comms chat sets it, M10); a record card is one dense line or two */
 .m-record-panel { min-width:0; }
