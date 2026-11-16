@@ -15,8 +15,8 @@
 //! The Rust body of `org.moqui.resource.ElFinderServices.run#Command`, a port of `ElFinderConnector.groovy`: the elFinder
 //! 2.0 client-server commands over one volume rooted at `resourceRoot`. A `dbresource://` root, or a provider's such as
 //! `git://`, reads and writes through the resource facade. A `file`, `runtime`, `component` or `classpath` root is the
-//! directory the resource facade resolves it to. Any other scheme, `content://` included, is an error that names the
-//! location.
+//! directory the resource facade resolves it to, and is served only on an instance that is not production (SEC-FIL-08).
+//! Any other scheme, `content://` included, is an error that names the location.
 //!
 //! A target is the path under the root in URL-safe Base64 with no padding, after a 3 character volume ID, as Java
 //! hashes it, so the client's hashes stay valid. A hash that does not decode, or a path with a `..` segment, a backslash
@@ -123,10 +123,10 @@ struct Connector {
 }
 
 impl Connector {
-    /// In production, only `dbresource://` (and `content://`) roots accept write commands. Component and file roots
-    /// stay browsable.
-    fn writes_restricted(&self) -> bool {
-        writes_restricted(moqui_core::web::is_production(), &self.resource_root)
+    /// In production only a data root (`dbresource://`, `content://`, `git://`) is served, for every command
+    /// ([`root_refused`]).
+    fn root_refused(&self) -> bool {
+        root_refused(moqui_core::web::is_production(), &self.resource_root)
     }
 
     fn hash(&self, path: &str) -> String {
@@ -327,10 +327,7 @@ impl Connector {
         info.insert("dirs".to_string(), Value::I64(dirs));
         info.insert("read".to_string(), Value::I64(1));
         // Java also asks `supportsWrite()`, which is true for every location an entry can be: a `DbResource` or a file.
-        info.insert(
-            "write".to_string(),
-            Value::I64(if self.writes_restricted() { 0 } else { 1 }),
-        );
+        info.insert("write".to_string(), Value::I64(1));
         info.insert("locked".to_string(), Value::I64(0));
         Ok(Value::Map(info))
     }
@@ -399,7 +396,7 @@ impl Connector {
         let mut options = IndexMap::default();
         options.insert("seperator".to_string(), Value::string("/"));
         options.insert("path".to_string(), Value::string(location));
-        let mut disabled = vec![
+        let disabled = vec![
             "tmb",
             "size",
             "dim",
@@ -411,9 +408,6 @@ impl Connector {
             "resize",
             "netmount",
         ];
-        if self.writes_restricted() {
-            disabled.extend(["rm", "rename", "mkdir", "mkfile", "upload", "edit"]);
-        }
         options.insert(
             "disabled".to_string(),
             Value::List(disabled.into_iter().map(Value::string).collect()),
@@ -585,15 +579,24 @@ impl Connector {
             .is_some_and(|request| moqui_core::web::started_by_another_site(&request));
         let write_refused = |response: &mut moqui_lib::object::ValueMap| {
             if cross_site {
-                fail(response, "A file change does not run from a request another site started");
-                true
-            } else if self.writes_restricted() {
-                fail(response, "Write not allowed for this resource root");
-                true
-            } else {
-                false
+                fail(
+                    response,
+                    "A file change does not run from a request another site started",
+                );
             }
+            cross_site
         };
+        // In production a code or file root is not served at all, reads included: a `file:` or `runtime://` root
+        // would give an ADMIN user `runtime/.env` (the host key, the encryption keys, database passwords), which the
+        // conf screens keep behind the sealed CONF_EDIT (SEC-FIL-08)
+        if self.root_refused() {
+            fail(
+                &mut response,
+                "This resource root is not served on a production instance",
+            );
+            out.insert("responseMap".to_string(), Value::Map(response));
+            return Ok(out);
+        }
         // An empty target is the root. rm reads only targets[], each resolved below.
         let location = match self.location(&target) {
             Some(location) => location,
@@ -785,9 +788,9 @@ impl Connector {
     }
 }
 
-/// In production only roots that hold data, not code, take writes: `dbresource://`, `content://`, and `git://`
-/// repositories.
-fn writes_restricted(production: bool, resource_root: &str) -> bool {
+/// In production only roots that hold data, not code or the server's files, are served: `dbresource://`,
+/// `content://`, and `git://` repositories (SEC-FIL-08).
+fn root_refused(production: bool, resource_root: &str) -> bool {
     production
         && !(resource_root.starts_with("dbresource://")
             || resource_root.starts_with("content://")
