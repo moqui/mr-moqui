@@ -157,7 +157,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- the room -->
     <div v-show="!stacked || roomId" class="col column no-wrap" style="min-width:0">
-        <chat-room v-if="roomId && loaded" :key="roomId" ref="room" :base="base" :room-id="roomId" :me="me" :prefs="prefs" :seq="seq" :thread="thread"
+        <chat-room v-if="roomId && loaded" :key="roomId" ref="room" :bubbles="stacked" :base="base" :room-id="roomId" :me="me" :prefs="prefs" :seq="seq" :thread="thread"
                 :can-go-back="stacked" :link-base="linkBase" @back="closeRoom" @thread="setThread" @changed="scheduleRooms" @left="onLeft"
                 @open-room="openRoom" @create-from="openQuickCreate" @read="onRoomRead"></chat-room>
         <div v-else class="col column items-center justify-center q-pa-lg text-center m-muted">
@@ -351,18 +351,21 @@ const chime = () => {
 
 // ---- a message of the timeline or of a thread (room is the chat-room component) ----
 const messageTemplate = `
-<div class="row no-wrap relative-position q-pl-xs q-pr-sm m-chat-msg" :class="item.grouped ? '' : 'q-mt-sm'" :id="room.domId(item.eventSeq, inThread)"
+<div class="row no-wrap relative-position q-pl-xs q-pr-sm m-chat-msg" :class="[item.grouped ? 'm-chat-grouped' : 'q-mt-sm', room.useBubbles ? 'm-chat-bubble' : '',
+            room.useBubbles && item.mine ? 'm-chat-mine' : '', room.useBubbles && room.isDirect ? 'm-chat-in-direct' : '']" :id="room.domId(item.eventSeq, inThread)"
         :data-seq="item.eventSeq" role="article" :tabindex="actionsAvailable ? 0 : -1" :aria-label="messageLabel"
         @focusin="actionFocus = true" @focusout="actionFocus = $event.currentTarget.contains($event.relatedTarget)"
-        @mouseenter="room.hover(item, inThread)" @mouseleave="room.unhover(item, inThread)" @click="room.tap(item, inThread)">
+        @mouseenter="room.hover(item, inThread)" @mouseleave="room.unhover(item, inThread)" @click="room.tap(item, inThread)"
+        @touchstart.passive="room.holdStart(item, inThread, $event)" @touchmove.passive="room.holdCancel()" @touchend="room.holdEnd($event)"
+        @contextmenu="room.contextMenu(item, inThread, $event)">
     <div class="self-stretch" :class="item.highlight ? 'bg-primary' : ''" style="width:3px;margin-right:3px;border-radius:2px"></div>
-    <div style="width:40px;min-width:40px" class="q-pr-sm">
+    <div style="width:40px;min-width:40px" class="q-pr-sm m-chat-avatar">
         <m-avatar v-if="!item.grouped" :name="item.senderName" :user-id="item.senderUserId || undefined" size="32px" class="q-mt-xs"></m-avatar>
         <div v-else-if="room.isHovered(item, inThread)" class="text-caption m-muted text-right text-no-wrap" style="font-size:10px;line-height:20px">{{item.timeShort}}</div>
     </div>
-    <div class="col" style="min-width:0">
-        <div v-if="!item.grouped" class="row items-baseline no-wrap">
-            <span class="text-weight-medium ellipsis">{{item.senderName}}</span>
+    <div class="col m-chat-body" style="min-width:0">
+        <div v-if="!item.grouped" class="row items-baseline no-wrap m-chat-head">
+            <span class="text-weight-medium ellipsis m-chat-name">{{item.senderName}}</span>
             <q-chip v-if="item.event.senderExternal" dense square size="sm" icon="sym_o_hub" class="m-tonal text-info q-my-none q-ml-xs m-chat-external">
                 {{item.event.senderExternal.networkName || room.t('Outside')}}</q-chip>
             <span class="text-caption m-muted text-no-wrap q-ml-sm">{{item.timeText}}<q-tooltip>{{item.fullTime}}</q-tooltip></span>
@@ -460,7 +463,8 @@ const messageTemplate = `
                 <q-btn flat dense no-caps size="sm" :label="room.t('Discard')" @click="room.discardChange(change)"></q-btn>
             </template>
         </div>
-        <div v-if="item.readers && item.readers.length" class="row justify-end items-center no-wrap q-mt-xs">
+        <div class="m-chat-stamp text-caption m-muted">{{item.timeShort}}<span v-if="item.edited"> {{room.t('(edited)')}}</span></div>
+        <div v-if="item.readers && item.readers.length && (item.mine || !room.useBubbles)" class="row justify-end items-center no-wrap q-mt-xs">
             <m-avatar v-for="reader in item.readers.slice(0, 6)" :key="reader.userId" :name="reader.name" :user-id="reader.userId" size="16px" class="q-ml-xs" tooltip></m-avatar>
             <span v-if="item.readers.length > 6" class="text-caption m-muted q-ml-xs">+{{item.readers.length - 6}}</span>
         </div>
@@ -560,7 +564,7 @@ const composerTemplate = `
     </div>
     <m-rich-text ref="editor" v-model="body" :name="'chatBody' + uid" light rows="1" :enter="room.prefs.enterSends === false ? 'newline' : 'submit'"
             :label="editorLabel" :placeholder="placeholder" :mention-url="room.url('mentionUsers')" :mention-parameters="{chatRoomId: room.roomId}" @submit="send"></m-rich-text>
-    <div class="row items-center no-wrap q-mt-xs">
+    <div class="row items-center no-wrap q-mt-xs m-chat-composer-actions">
         <q-btn flat round dense size="sm" icon="sym_o_attach_file" :aria-label="room.t('Attach files')" :disable="room.offline" @click="pickFiles">
             <q-tooltip>{{room.offline ? room.t('Files go up when you are back online') : room.t('Attach files')}}</q-tooltip></q-btn>
         <q-btn flat round dense size="sm" icon="sym_o_mood" :aria-label="room.t('Emoji')"><q-tooltip>{{room.t('Emoji')}}</q-tooltip>
@@ -568,12 +572,12 @@ const composerTemplate = `
                 <q-btn v-for="key in room.emoji" :key="key" flat dense size="sm" class="q-px-xs" :label="key" v-close-popup @click="insert(key)"></q-btn>
             </div></q-menu>
         </q-btn>
-        <q-btn flat round dense size="sm" icon="sym_o_alternate_email" :aria-label="room.t('Mention someone')" @click="insert('@')"><q-tooltip>{{room.t('Mention someone')}}</q-tooltip></q-btn>
+        <q-btn flat round dense size="sm" icon="sym_o_alternate_email" class="m-chat-mention-btn" :aria-label="room.t('Mention someone')" @click="insert('@')"><q-tooltip>{{room.t('Mention someone')}}</q-tooltip></q-btn>
         <q-btn v-if="!room.sealed" flat round dense size="sm" icon="sym_o_ballot" :aria-label="room.t('Make a poll')" :disable="room.offline" @click="room.openPoll(threadRoot || null, '')">
             <q-tooltip>{{room.t('Make a poll')}}</q-tooltip></q-btn>
         <span class="text-caption m-muted q-ml-sm ellipsis gt-xs" v-if="!room.compact && !threadRoot">{{hint}}</span>
         <q-space></q-space>
-        <q-btn dense unelevated no-caps color="primary" icon="sym_o_send" :label="room.compact ? undefined : room.t('Send')" :aria-label="room.t('Send')"
+        <q-btn dense unelevated no-caps color="primary" icon="sym_o_send" class="m-chat-send" :label="room.compact ? undefined : room.t('Send')" :aria-label="room.t('Send')"
                 :disable="!canSend" :loading="sending" @click="send"></q-btn>
     </div>
     <div class="hidden"><m-file ref="picker" v-model="picked" :name="'chatFile' + uid" multiple @update:model-value="onPicked"></m-file></div>
@@ -769,7 +773,7 @@ const chatMessage = {
 // ---- the room view: header, timeline, composer and the side pane (thread, members, pinned, search, record); the Chat screen
 // and the tray's Chat tab (compact) both show it ----
 const roomTemplate = `
-<div class="column no-wrap relative-position" style="height:100%;min-height:0" @dragover.prevent="onDragOver" @dragleave.self="dragOver = false" @drop.prevent="onDrop">
+<div class="column no-wrap relative-position" :class="useBubbles ? 'm-chat-phone' : ''" style="height:100%;min-height:0" @dragover.prevent="onDragOver" @dragleave.self="dragOver = false" @drop.prevent="onDrop">
     <div class="row items-center no-wrap q-px-sm q-py-xs" style="min-height:52px">
         <q-btn v-if="canGoBack" flat round dense icon="sym_o_arrow_back" :aria-label="t('Back')" class="q-mr-xs" @click="$emit('back')"><q-tooltip>{{t('Back')}}</q-tooltip></q-btn>
         <template v-if="room">
@@ -805,7 +809,7 @@ const roomTemplate = `
             <q-btn v-if="!narrow" flat round dense icon="sym_o_keep" :aria-label="t('Pinned messages')" @click="openSide('pinned')"><q-tooltip>{{t('Pinned messages')}}</q-tooltip></q-btn>
             <q-btn v-if="!narrow" flat round dense icon="sym_o_forum" :aria-label="t('Threads')" @click="openSide('threads')"><q-tooltip>{{t('Threads')}}</q-tooltip></q-btn>
             <q-btn v-if="!narrow" flat round dense icon="sym_o_folder" :aria-label="t('Files')" @click="openSide('files')"><q-tooltip>{{t('Files')}}</q-tooltip></q-btn>
-            <q-btn v-if="compact" flat round dense icon="sym_o_open_in_new" :aria-label="t('Open in Chat')" @click="openInChat"><q-tooltip>{{t('Open in Chat')}}</q-tooltip></q-btn>
+            <q-btn v-if="compact && !bubbles" flat round dense icon="sym_o_open_in_new" :aria-label="t('Open in Chat')" @click="openInChat"><q-tooltip>{{t('Open in Chat')}}</q-tooltip></q-btn>
             <q-btn flat round dense icon="sym_o_more_vert" :aria-label="t('Room')"><q-tooltip>{{t('Room')}}</q-tooltip>
                 <q-menu anchor="bottom right" self="top right"><q-list dense style="min-width:250px">
                     <template v-if="isMember">
@@ -818,6 +822,9 @@ const roomTemplate = `
                         <q-item clickable v-close-popup @click="togglePin">
                             <q-item-section avatar><q-icon name="sym_o_keep"></q-icon></q-item-section>
                             <q-item-section>{{member && member.isPinned ? t('Unpin from my rooms') : t('Pin to the top of my rooms')}}</q-item-section></q-item>
+                        <q-item clickable v-close-popup @click="toggleArchive">
+                            <q-item-section avatar><q-icon :name="archivedByMe ? 'sym_o_unarchive' : 'sym_o_archive'"></q-icon></q-item-section>
+                            <q-item-section>{{archivedByMe ? t('Unarchive') : t('Archive')}}</q-item-section></q-item>
                         <q-item clickable v-close-popup @click="markRead(true)">
                             <q-item-section avatar><q-icon name="sym_o_done_all"></q-icon></q-item-section><q-item-section>{{t('Mark as read')}}</q-item-section></q-item>
                         <q-separator></q-separator>
@@ -1185,13 +1192,42 @@ const roomTemplate = `
             <q-btn flat no-caps :label="t('Cancel')" v-close-popup></q-btn>
         </div>
     </m-dialog>
+    <!-- a message's actions on a phone: a long press (or a right click) opens them as a sheet from the bottom -->
+    <q-dialog v-model="sheet.open" position="bottom" @hide="sheet.item = null">
+        <q-card v-if="sheet.item" class="m-chat-sheet" style="width:100%;max-width:560px;border-radius:16px 16px 0 0">
+            <div v-if="canPost && bridgeCaps.reaction" class="row no-wrap items-center justify-between q-px-sm q-pt-sm">
+                <q-btn v-for="key in (sheet.allEmoji ? [] : quickReactions)" :key="key" flat dense class="m-chat-sheet-emoji" style="flex:1 1 0;min-width:0;font-size:22px;padding:6px 0" :label="key"
+                        :aria-label="t('React with') + ' ' + key" @click="sheetDo(() => react(sheet.item, key))"></q-btn>
+                <q-btn v-if="!sheet.allEmoji" flat dense icon="sym_o_add_reaction" style="flex:1 1 0;min-width:0;padding:6px 0" :aria-label="t('More reactions')" @click="sheet.allEmoji = true"></q-btn>
+            </div>
+            <div v-if="sheet.allEmoji" class="row q-pa-sm justify-center">
+                <q-btn v-for="key in emoji" :key="key" flat dense size="md" class="q-px-xs" :label="key" :aria-label="t('React with') + ' ' + key"
+                        @click="sheetDo(() => react(sheet.item, key))"></q-btn>
+            </div>
+            <q-list v-else class="q-pb-sm">
+                <template v-if="canPost && !sheet.inThread">
+                    <q-item clickable @click="sheetDo(() => startReply(sheet.item))"><q-item-section avatar><q-icon name="sym_o_reply"></q-icon></q-item-section><q-item-section>{{t('Reply')}}</q-item-section></q-item>
+                    <q-item clickable @click="sheetDo(() => openThread(sheet.item.eventSeq))"><q-item-section avatar><q-icon name="sym_o_forum"></q-icon></q-item-section><q-item-section>{{t('Reply in thread')}}</q-item-section></q-item>
+                </template>
+                <q-item clickable @click="sheetDo(() => copyText(sheet.item))"><q-item-section avatar><q-icon name="sym_o_content_copy"></q-icon></q-item-section><q-item-section>{{t('Copy text')}}</q-item-section></q-item>
+                <q-item v-if="isMember && !sealed" clickable @click="sheetDo(() => openForward(sheet.item))"><q-item-section avatar><q-icon name="sym_o_forward"></q-icon></q-item-section><q-item-section>{{t('Forward…')}}</q-item-section></q-item>
+                <q-item v-if="canEdit(sheet.item)" clickable @click="sheetDo(() => startEdit(sheet.item))"><q-item-section avatar><q-icon name="sym_o_edit"></q-icon></q-item-section><q-item-section>{{t('Edit')}}</q-item-section></q-item>
+                <q-item v-if="canPost" clickable @click="sheetDo(() => pin(sheet.item, !sheet.item.pinned))"><q-item-section avatar><q-icon name="sym_o_keep"></q-icon></q-item-section>
+                    <q-item-section>{{sheet.item.pinned ? t('Unpin') : t('Pin to the room')}}</q-item-section></q-item>
+                <q-item v-if="isMember && !sheet.inThread" clickable @click="sheetDo(() => markUnreadFrom(sheet.item))"><q-item-section avatar><q-icon name="sym_o_mark_chat_unread"></q-icon></q-item-section><q-item-section>{{t('Mark unread from here')}}</q-item-section></q-item>
+                <q-item clickable @click="sheetDo(() => copyLink(sheet.item))"><q-item-section avatar><q-icon name="sym_o_link"></q-icon></q-item-section><q-item-section>{{t('Copy link')}}</q-item-section></q-item>
+                <q-item v-if="canRedact(sheet.item)" clickable @click="sheetDo(() => redact(sheet.item))"><q-item-section avatar><q-icon name="sym_o_delete" color="negative"></q-icon></q-item-section>
+                    <q-item-section class="text-negative">{{t('Delete message')}}</q-item-section></q-item>
+            </q-list>
+        </q-card>
+    </q-dialog>
 </div>`;
 
 let roomCount = 0;
 const chatRoom = {
     name: 'ChatRoom',
     props: { base: String, roomId: String, me: Object, prefs: { type: Object, default: () => ({}) }, seq: [Number, String], thread: [Number, String],
-        compact: Boolean, canGoBack: Boolean, linkBase: { type: String, default: '/qapps/BasicComms/Chat' } },
+        compact: Boolean, canGoBack: Boolean, bubbles: Boolean, linkBase: { type: String, default: '/qapps/BasicComms/Chat' } },
     emits: ['back', 'thread', 'changed', 'left', 'open-room', 'read'],
     components: { 'chat-message': chatMessage, 'chat-composer': chatComposer, 'chat-pending': chatPending },
     data() {
@@ -1200,7 +1236,7 @@ const chatRoom = {
             uid: roomCount, state: 'loading', room: null, member: null, access: {}, members: [], names: {},
             events: [], hasMoreBefore: false, hasMoreAfter: false, gapBefore: false, gapAfter: false, loadingOlder: false, loadingNewer: false,
             myLastRead: 0, dividerSeq: null, highlightSeq: null, atBottom: true, newBelow: 0, holdRead: false,
-            hoverKey: null, tapKey: null, editing: null, replyTo: null, side: null,
+            hoverKey: null, tapKey: null, sheet: { open: false, item: null, inThread: false, allEmoji: false }, editing: null, replyTo: null, side: null,
             threadView: { rootSeq: null, events: [], loading: false }, pinned: { list: [], loading: false },
             threadsPane: { list: [], loading: false, hasMore: false, mine: false }, filesPane: { list: [], loading: false, next: null, kind: 'all' },
             forward: { open: false, item: null, roomId: null, comment: '', busy: false },
@@ -1216,6 +1252,13 @@ const chatRoom = {
     },
     computed: {
         self() { return this; },
+        // archived by me until a message after the archive
+        archivedByMe() {
+            const seq = this.member && this.member.archivedEventSeq;
+            if (seq == null) return false;
+            const last = this.events.reduce((max, event) => (event.type === 'message' ? Math.max(max, Number(event.eventSeq) || 0) : max), 0);
+            return last <= Number(seq);
+        },
         isDirect() { return !!this.room && this.room.roomTypeEnumId === 'CrtDirect'; },
         // an end-to-end encrypted room (C7): its messages are encrypted and decrypted in this browser
         sealed() { return !!this.room && !!this.room.encrypted; },
@@ -1255,6 +1298,8 @@ const chatRoom = {
             return fill(t('This is the start of {name}.'), { name: this.displayName }) + (this.room.topic ? ' ' + this.room.topic : '');
         },
         narrow() { return this.compact || (this.width > 0 && this.width < 640); },
+        // a phone messaging layout: mine on the right, the others on the left, each in a bubble (the phone home, the stacked Chat, a narrow room)
+        useBubbles() { return this.bubbles || this.narrow; },
         sideOverlay() { return this.compact || (this.width > 0 && this.width < 900); },
         sideTitle() {
             return { thread: t('Thread'), members: fill(t('Members ({count})'), { count: this.members.length }), pinned: t('Pinned messages'),
@@ -1873,10 +1918,35 @@ const chatRoom = {
         unhover(item, inThread) { const key = (inThread ? 't' : 'm') + item.eventSeq; if (this.hoverKey === key) this.hoverKey = null; },
         isHovered(item, inThread) { return this.hoverKey === (inThread ? 't' : 'm') + item.eventSeq; },
         tap(item, inThread) {
-            if (!this.isTouch()) return;
+            if (!this.isTouch() || this.useBubbles) return;
             const key = (inThread ? 't' : 'm') + item.eventSeq;
             this.tapKey = this.tapKey === key ? null : key;
         },
+        // a long press on a message (in bubbles, as on a phone) opens its actions as a sheet; a move or a short tap does not
+        holdStart(item, inThread, event) {
+            this.holdCancel();
+            if (!this.useBubbles || (event.touches && event.touches.length > 1)) return;
+            if (event.target && event.target.closest && event.target.closest('input, textarea, [contenteditable="true"], .q-btn')) return;
+            this.holdTimer = setTimeout(() => { this.holdTimer = null; this.held = true; this.openSheet(item, inThread); }, 450);
+        },
+        holdCancel() { if (this.holdTimer) { clearTimeout(this.holdTimer); this.holdTimer = null; } },
+        holdEnd(event) {
+            this.holdCancel();
+            // the press that opened the sheet is not also a click on what is under it
+            if (this.held) { this.held = false; if (event.cancelable) event.preventDefault(); }
+        },
+        contextMenu(item, inThread, event) {
+            if (!this.useBubbles) return;
+            event.preventDefault();
+            if (!this.sheet.open) this.openSheet(item, inThread);
+        },
+        openSheet(item, inThread) {
+            if (item.redacted || this.isEditing(item) || this.state !== 'ready') return;
+            this.tapKey = null;
+            this.sheet = { open: true, item, inThread: !!inThread, allEmoji: false };
+            if (navigator.vibrate) { try { navigator.vibrate(10); } catch (e) { /* no vibration here */ } }
+        },
+        sheetDo(action) { this.sheet.open = false; action(); },
         isTouch() { return !!(this.$q.platform && this.$q.platform.has && this.$q.platform.has.touch) && this.$q.screen.lt.md; },
         showActions(item, inThread) {
             if (item.redacted || this.isEditing(item) || this.state !== 'ready') return false;
@@ -2366,6 +2436,14 @@ const chatRoom = {
                 this.$emit('changed');
             }, () => {});
         },
+        // my own archive: the room leaves my list until a newer message (ChatRoomMember.archivedEventSeq)
+        toggleArchive() {
+            const archived = !this.archivedByMe;
+            this.post('setNotification', { chatRoomId: this.roomId, archived: archived ? 'true' : 'false' }).then(() => {
+                if (this.member) this.member.archivedEventSeq = archived ? this.events.reduce((max, event) => Math.max(max, Number(event.eventSeq) || 0), Number((this.room && this.room.lastEventSeq) || 0)) : null;
+                this.$emit('changed');
+            }, () => {});
+        },
         togglePin() {
             const pinned = !(this.member && this.member.isPinned);
             this.post('setNotification', { chatRoomId: this.roomId, isPinned: pinned ? 'true' : 'false' }).then(() => {
@@ -2504,6 +2582,7 @@ const chatRoom = {
         this.load();
     },
     beforeUnmount() {
+        this.holdCancel();
         (this.unsubscribe || []).forEach((off) => off());
         document.removeEventListener('visibilitychange', this.onVisibleBound);
         clearInterval(this.ticker);
@@ -2548,13 +2627,17 @@ module.exports = {
         filterItems() {
             const unread = this.memberRooms.filter((room) => this.countsOf(room).unread || this.countsOf(room).mentions).length;
             const mentions = this.memberRooms.filter((room) => this.countsOf(room).mentions).length;
+            const archived = this.memberRooms.filter((room) => this.archivedByMe(room)).length;
             return [{ value: 'all', label: t('All') }, { value: 'unread', label: t('Unread'), count: unread }, { value: 'mentions', label: t('Mentions'), count: mentions },
-                { value: 'direct', label: t('Direct') }, { value: 'rooms', label: t('Rooms') }, { value: 'records', label: t('Records') }];
+                { value: 'direct', label: t('Direct') }, { value: 'rooms', label: t('Rooms') }, { value: 'records', label: t('Records') }]
+                .concat(archived || this.filter === 'archived' ? [{ value: 'archived', label: t('Archived'), count: archived }] : []);
         },
         shownRooms() {
             const text = String(this.search || '').trim().toLowerCase();
             return this.rooms.filter((room) => {
                 const counts = this.countsOf(room);
+                // my own archive (ChatRoomMember.archivedEventSeq): only under Archived, or found by a search
+                if (this.filter === 'archived' ? !this.archivedByMe(room) : (!text && this.archivedByMe(room))) return false;
                 if (this.filter === 'unread' && !(counts.unread || counts.mentions)) return false;
                 if (this.filter === 'mentions' && !counts.mentions) return false;
                 if (this.filter === 'direct' && room.roomTypeEnumId !== 'CrtDirect') return false;
@@ -2615,6 +2698,7 @@ module.exports = {
             const names = (room.bridgeNetworkNames || []).join(', ');
             return room.notConnected ? fill(t('Not connected to {names}: messages wait here'), { names }) : fill(t('Also on {names}'), { names });
         },
+        archivedByMe(room) { return room.isMember && room.archivedEventSeq != null && Number(room.lastMessage ? room.lastMessage.eventSeq : 0) <= Number(room.archivedEventSeq); },
         countsOf(room) {
             if (!room.isMember) return { unread: 0, mentions: 0 };
             if (moqui.chat && moqui.chat.state.unread[room.chatRoomId]) return moqui.chat.unreadOf(moqui.chat.state, room.chatRoomId);

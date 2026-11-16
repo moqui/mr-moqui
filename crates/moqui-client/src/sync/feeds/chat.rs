@@ -19,7 +19,8 @@
 //! - `membership` with `member` false: the room is forgotten, with its events and its cached answers. A membership of
 //!   a room not held is a new room: the room list is read again (its row). Another (a role) reads the room again.
 //! - `room` (details or members changed): the room list and the room are read again.
-//! - `settings`: the room's row takes `notificationLevelEnumId`, `isMuted`, `isPinned`.
+//! - `settings`: the room's row takes `notificationLevelEnumId`, `isMuted`, `isPinned` and `archivedEventSeq` (the
+//!   user's own archive; `archivedByMe` follows it, until a newer message).
 //! - `read`: the read marker, and no unread or mentions when it reaches the room's last message (else the list is
 //!   read again for the counts).
 //! - `retention`: the room's events up to `eventSeq` go with the ranges below them, and its cached timeline answers.
@@ -219,10 +220,14 @@ fn fold_change(store: &Store, base: &str, change: &Value) -> Result<(), String> 
             let Ok(mut row) = serde_json::from_str::<Value>(&kept.row) else {
                 return Ok(());
             };
-            for name in ["notificationLevelEnumId", "isMuted", "isPinned"] {
+            for name in ["notificationLevelEnumId", "isMuted", "isPinned", "archivedEventSeq"] {
                 if let Some(value) = data.get(name) {
                     row[name] = value.clone();
                 }
+            }
+            if data.get("archivedEventSeq").is_some() {
+                let last = row["lastMessage"]["eventSeq"].as_i64().unwrap_or(0);
+                row["archivedByMe"] = Value::Bool(row["archivedEventSeq"].as_i64().is_some_and(|seq| last <= seq));
             }
             kept.row = row.to_string();
             store.put_chat_room(&kept).map_err(|err| err.to_string())

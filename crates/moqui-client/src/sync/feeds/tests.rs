@@ -183,7 +183,7 @@ fn the_user_feed_folds_membership_settings_read_and_retention() {
         changes(
             json!([
                 { "changeSeq": 11, "kind": "membership", "chatRoomId": "R2", "data": { "member": false, "action": "left" } },
-                { "changeSeq": 12, "kind": "settings", "chatRoomId": "R1", "data": { "isMuted": true } },
+                { "changeSeq": 12, "kind": "settings", "chatRoomId": "R1", "data": { "isMuted": true, "archivedEventSeq": 9 } },
                 { "changeSeq": 13, "kind": "read", "chatRoomId": "R1", "data": { "lastReadEventSeq": 5 } },
                 { "changeSeq": 14, "kind": "retention", "chatRoomId": "R1", "eventSeq": 2, "data": { "deletedCount": 2 } },
                 { "changeSeq": 16, "kind": "bogus", "chatRoomId": "R1", "data": {} }
@@ -206,6 +206,8 @@ fn the_user_feed_folds_membership_settings_read_and_retention() {
         .is_none());
     let row: Value = serde_json::from_str(&kept.chat_room("R1").unwrap().row).unwrap();
     assert_eq!(row["isMuted"], true);
+    assert_eq!(row["archivedEventSeq"], 9);
+    assert_eq!(row["archivedByMe"], true);
     assert_eq!(row["unreadCount"], 0);
     assert_eq!(row["lastReadEventSeq"], 5);
     // retention: events up to 2 gone, and the stretch left starts the timeline
