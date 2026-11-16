@@ -1564,6 +1564,22 @@ fn files_go_with_their_message_and_go_away_with_it() {
     assert_eq!(out_number(&stored, "fileSize"), 8);
     let bytes = ctx.factory().resource().get(&location).unwrap().read_bytes().unwrap();
     assert_eq!(bytes, b"the plan");
+    // a file over the size limit, or over the user's bytes of the day, is refused (SEC-COM-03); the properties are the
+    // process's, read under this test's attachment root lock
+    moqui_lib::env::set_property("chat_attachment_max_bytes", "4");
+    refused(
+        "upload#Attachment",
+        &[("chatRoomId", text(&chat)), ("file", upload("big.txt", b"too large"))],
+        "larger than",
+    );
+    moqui_lib::env::clear_property("chat_attachment_max_bytes");
+    moqui_lib::env::set_property("chat_attachment_daily_bytes", "12");
+    refused(
+        "upload#Attachment",
+        &[("chatRoomId", text(&chat)), ("file", upload("more.txt", b"8 more!!"))],
+        "Too many files today",
+    );
+    moqui_lib::env::clear_property("chat_attachment_daily_bytes");
 
     // another member may not send it; the uploader sends it alone, with no text
     login("flb");

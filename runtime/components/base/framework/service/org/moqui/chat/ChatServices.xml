@@ -3229,7 +3229,9 @@ along with this software (see the LICENSE.md file). If not, see
             chatAttachmentId; a file never sent goes after a day (clean#PendingAttachments). In an encrypted room (C7) the file
             is the browser's ciphertext and is kept as an opaque blob: named encrypted, application/octet-stream, whatever
             was uploaded (its name and type travel in the encrypted message). uploadId in place of file is a file the user sent
-            in chunks (ClientSyncServices.upload#Chunk), complete.</description>
+            in chunks (ClientSyncServices.upload#Chunk), complete. A file is at most chat_attachment_max_bytes (25 MB by
+            default, as a chunked upload), and a user uploads at most chat_attachment_daily_bytes (1 GB by default) to chat in
+            a day (SEC-COM-03).</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="file" type="FileItem"/>
@@ -3265,6 +3267,15 @@ along with this software (see the LICENSE.md file). If not, see
             fileName = name
             contentType = sealed ? 'application/octet-stream' : (sent ? sent.contentType : file.getContentType()) || 'application/octet-stream'
             fileSize = Number((sent ? sent.fileSize : file.getSize()) || 0)
+            // a file's size, and a user's bytes in a day, are bounded (SEC-COM-03): one user does not fill the store
+            const most = Number(System.getProperty('chat_attachment_max_bytes') || 26214400)
+            if (fileSize > most) { chatAttachmentId = null; location = null; ec.message.addError(`The file is larger than ${Math.floor(most / 1048576) || most + ' bytes'}${most >= 1048576 ? ' MB' : ''}`); return }
+            const daily = Number(System.getProperty('chat_attachment_daily_bytes') || 1073741824)
+            const dayAgo = new Date(Number(ec.user.nowTimestamp) - 86400000)
+            const today = Array.from(ec.entity.find('moqui.chat.ChatAttachment').condition('uploadedByUserId', me)
+                    .condition('uploadedDate', '>=', dayAgo).selectField('fileSize').disableAuthz().list())
+                    .reduce((sum, one) => sum + Number(one.fileSize || 0), 0)
+            if (today + fileSize > daily) { chatAttachmentId = null; location = null; ec.message.addError(ec.l10n.localize('Too many files today; try again later')); return }
             if (sent) ec.resource.getLocationReference(location).copyFrom(sent.location)
             else file.write(location)
             row.setFields({chatRoomId: chatRoomId, location: location, fileName: fileName, contentType: contentType, fileSize: fileSize,
