@@ -28,7 +28,9 @@ To report an issue that should stay private until it is fixed, write to [moqui-b
 | [Attack-Surface-Scripts.md](Attack-Surface-Scripts.md) | Scripts, templates and parsers | What a server script can reach, who can author code that runs, rendering and escaping, parsers of untrusted input |
 | [Attack-Surface-Dev.md](Attack-Surface-Dev.md) | Development tools | What loads the dev components, Dev AIDE, the `aide` REST, the demo lock-down, test-only hooks |
 | [Attack-Surface-Apps-BOSS.md](Attack-Surface-Apps-BOSS.md) | Staff applications | mr-boss and the Mantle services it reaches |
-| [Attack-Surface-Apps-PASS.md](Attack-Surface-Apps-PASS.md) | Public applications | mr-pass and the Mantle services its operations reach |
+| [Attack-Surface-Apps-PASS.md](Attack-Surface-Apps-PASS.md) | Public applications | mr-pass: how its pages reach the authority, public accounts, sites and members |
+| [Attack-Surface-Apps-PASS-Commerce.md](Attack-Surface-Apps-PASS-Commerce.md) | PASS commerce and portals | Shop, Billing, Supplier, Support, PASS Sales and PASS Marketing, and the Mantle services behind them |
+| [Attack-Surface-Apps-PASS-Forum-Smithy.md](Attack-Surface-Apps-PASS-Forum-Smithy.md) | PASS Forum and Smithy | The Forum and public git hosting, and the Mantle services behind them |
 
 ## How to read this
 

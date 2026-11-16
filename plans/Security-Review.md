@@ -30,8 +30,8 @@ in [Security-Review-Low](Security-Review-Low.md).
 5. In a second round, on a smaller budget, one reader for each remaining slice read the code and wrote what is
    reachable straight into the slice's map file, with the suspected weaknesses in a short report. Those map files and
    findings have had no second reading.
-6. The seven map files whose first-round reports had not been applied (Routes, Admin, Tools, AI, Git, Comms,
-   Cluster-Edge) were then written from those reports by one writer each, who trusted an item whose quoted code was
+6. The map files whose first-round reports had not been applied (Routes, Admin, Tools, AI, Git, Comms,
+   Cluster-Edge, and the PASS frontend and authority) were then written from those reports by one writer each, who trusted an item whose quoted code was
    specific and read the code only where it was not.
 
 Status values:
@@ -110,10 +110,10 @@ No finding is rated Critical. These are the ones to look at first; each High one
 | 13 Script engine, templates, parsers | `moqui-core/src/script`, `resource` | Read in the second round, on a small budget; not reached: the locked template runtime, report and formula expressions, CSV and XLSX output, multipart and JSON limits; parsers and the second half of rendering are the thinnest | Scripts: written by its reviewer |
 | 13a Outbound requests, processes, packaging (report `slice-21.md`) | `moqui-lib/src/net.rs`, `http.rs`, `podman/`, `systemd/` | Read in the second round, on a small budget; not reached: the IMAP, SIP, ACME, cluster, edge and PASS clients, SFTP, external databases, log contents, the `moq` downloads in full | Outbound, Process: written by their reviewer |
 | 13b Development tools (report `slice-22.md`) | `components/dev`, `moqui-devkit` | Read in the second round, on a small budget; not reached: the LSP, the test client, lint and typegen, the agent tool bodies, how `/devstatic` maps a path, the example services | Dev: written by its reviewer |
-| 14 PASS frontend | `mr-pass` | Read; the HTML-injection sweep of the apps other than Smithy not finished | Apps-PASS: the frontend as a whole written by slice 16's reviewer; the rest of this report not yet |
-| 15 PASS authority and public accounts | `mr-mantle/script/Pass*`, `org/moqui/public` | Read; 47 operations sampled, first caller check only | Apps-PASS: the authority as a whole written by slice 16's reviewer; the rest of this report not yet |
-| 16 PASS application services | `mr-mantle/service/mantle` portal services | Read in two rounds; the first round's helper readers' items were read again only where they went into the map; not reached: several relay and result pages, the gateway's setup services, parts of the theme code | Apps-PASS: written by its reviewer (the authority, Shop, Billing, Supplier, Support, Sites) |
-| 17 Forum and Smithy | `mr-mantle/service/mantle/forum`, `smithy` | Read in two rounds; not reached: the delivery worker, the Forum import and integrations, repository transfer, branch rules, releases, the templates (how cleaned HTML reaches a page), the git authorization hook | Apps-PASS: written by its reviewer (Forum, Smithy) |
+| 14 PASS frontend | `mr-pass` | Read; the HTML-injection sweep of the apps other than Smithy not finished | Apps-PASS: written from the report, no second check |
+| 15 PASS authority and public accounts | `mr-mantle/script/Pass*`, `org/moqui/public` | Read; 47 operations sampled, first caller check only | Apps-PASS: written from the report, no second check |
+| 16 PASS application services | `mr-mantle/service/mantle` portal services | Read in two rounds; the first round's helper readers' items were read again only where they went into the map; not reached: several relay and result pages, the gateway's setup services, parts of the theme code | Apps-PASS-Commerce: written by its reviewer |
+| 17 Forum and Smithy | `mr-mantle/service/mantle/forum`, `smithy` | Read in two rounds; not reached: the delivery worker, the Forum import and integrations, repository transfer, branch rules, releases, the templates (how cleaned HTML reaches a page), the git authorization hook | Apps-PASS-Forum-Smithy: written by its reviewer |
 | 18 BOSS access model; Admin, Commons, People, Accounting | `mr-boss` | Read in the second round, on a small budget; not reached: the report-data grants, most of the authorization-disabled reads, the share, calendar and intake services, most of Commons, People and Accounting beyond sampled gates, the skills beyond their front matter | Apps-BOSS: written by its reviewer (access model, row isolation, external and device users, token-route screens, Admin, Commons, People, Accounting, skills) |
 | 19 BOSS business apps; the Mantle REST root | `mr-boss`, `mr-mantle` | Read in the second round, on a small budget; not reached: Customer Service, Marketing sends and imports, Warehouse, Manufacturing, Products, Maintenance, Insights, the 360 screens; the price, discount, credit and refund services; the existing Sales and Marketing paragraphs were not checked | Apps-BOSS: written by its reviewer (the Mantle REST root, integrations and stored credentials, Commerce, order approval, Projects, shared record panels) |
 | 20 The two secrets plans | `plans/Sealed-Secrets.md`, `plans/Vault-Instances.md` | Read whole against the code | the plans: edited in place |
@@ -160,12 +160,10 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 1. **A second check of the reported findings**, High and Medium first: someone reads the cited lines and looks for
    the guard the reviewer may have missed, then a fix or a refutation. Put off by the owner's decision of 2026-11-15
    until it is needed.
-2. **The rest of the PASS frontend and authority reports** (slices 14 and 15) beyond the summary in Apps-PASS. That
-   file is near 100 KB and would be split first. Every other map file is written from its report.
-3. **What each slice did not reach.** The coverage table names it, each report's "Read" section has the detail, and
+2. **What each slice did not reach.** The coverage table names it, each report's "Read" section has the detail, and
    each map file ends with its open questions. The thinnest: the BOSS business apps other than Commerce and order
    approval, parsers of untrusted input, the mobile app's native code, and the helper-read parts of the PASS services.
-4. **Fixes.** None was made in this pass.
+3. **Fixes.** None was made in this pass.
 
 ## Counts
 
@@ -495,7 +493,7 @@ Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PAS
 
 ### PASS application services (Mantle)
 
-Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PASS.md). Reviewer report: `security-review-evidence/slice-16.md` (and `slice-16b.md` where the slice was continued).
+Map file: [Attack-Surface-Apps-PASS-Commerce.md](../docs/security/Attack-Surface-Apps-PASS-Commerce.md). Reviewer report: `security-review-evidence/slice-16.md` (and `slice-16b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -531,7 +529,7 @@ Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PAS
 
 ### Forum and Smithy
 
-Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PASS.md). Reviewer report: `security-review-evidence/slice-17.md` (and `slice-17b.md` where the slice was continued).
+Map file: [Attack-Surface-Apps-PASS-Forum-Smithy.md](../docs/security/Attack-Surface-Apps-PASS-Forum-Smithy.md). Reviewer report: `security-review-evidence/slice-17.md` (and `slice-17b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
