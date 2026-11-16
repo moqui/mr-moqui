@@ -381,6 +381,47 @@ fn a_username_holds_its_quota() {
     let _ = net.start;
 }
 
+/// SEC-COM-17: the quota is the leg's, whatever username of it asks: each request for ICE servers gives the leg a new
+/// username, which must not bring a fresh quota.
+#[test]
+fn a_leg_holds_its_quota_over_all_of_its_usernames() {
+    let mut net = Net::new(1);
+    let (user, pass) = credential(SECRET, "LEG1", unix_now() + 600);
+    let (later, later_pass) = credential(SECRET, "LEG1", unix_now() + 900);
+    let (other, other_pass) = credential(SECRET, "LEG2", unix_now() + 600);
+    let mut first = net.client(5000, &user, &pass);
+    let mut second = net.client(5001, &later, &later_pass);
+    let mut third = net.client(5002, &other, &other_pass);
+    net.run(&mut [&mut first], Duration::from_secs(1));
+    net.run(&mut [&mut first, &mut second, &mut third], Duration::from_secs(45));
+    assert!(first.allocated().is_some());
+    assert!(
+        second.allocated().is_none(),
+        "the leg's second username: {:?}",
+        second.events
+    );
+    assert!(third.allocated().is_some(), "another leg");
+    assert_eq!(net.turn.allocation_count(), 2);
+}
+
+/// SEC-COM-13: the server cannot forget a username it was given, so it is given one only for a request whose
+/// MESSAGE-INTEGRITY holds: a name of the right form from a request anyone could send (here with the wrong password)
+/// is not kept, and a client that knows the password is.
+#[test]
+fn a_username_is_kept_only_for_a_request_that_proves_its_password() {
+    let mut net = Net::new(2);
+    let (user, _) = credential(SECRET, "LEG2", unix_now() + 600);
+    let mut forged = net.client(5002, &user, "not-the-password");
+    net.run(&mut [&mut forged], Duration::from_secs(45));
+    assert!(forged.allocated().is_none());
+    assert!(!net.turn.users.contains(&user), "a forged name is not kept");
+    let (honest, pass) = credential(SECRET, "LEG3", unix_now() + 600);
+    let mut client = net.client(5003, &honest, &pass);
+    net.run(&mut [&mut client], Duration::from_secs(1));
+    assert!(client.allocated().is_some());
+    assert!(net.turn.users.contains(&honest));
+}
+
 #[test]
 fn a_stream_is_split_into_stun_messages_and_channel_data() {
     // a STUN header of a 12-byte body, and a ChannelData of 5 bytes padded to 8
