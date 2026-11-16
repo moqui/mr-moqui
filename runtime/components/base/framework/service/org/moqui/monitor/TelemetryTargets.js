@@ -53,5 +53,14 @@ function store(kind, p) {
     return out
 }
 
-function storeTarget(p) { return store('target', p) }
-function storeCheck(p) { return store('check', p) }
+const operations = {
+    storeTarget: (p) => store('target', p),
+    storeCheck: (p) => store('check', p),
+}
+
+function execute(op, parameters) {
+    if (!operations[op]) throw new Error('Unknown telemetry target operation ' + op)
+    return operations[op](parameters) || {}
+}
+
+;({ execute })
