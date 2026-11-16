@@ -112,6 +112,8 @@ pub(super) struct ServerInfo {
     pub(super) store_delete: bool,
     /// storeAllowPlain: a plain imap or pop3 store may sign in without TLS when the server offers no STARTTLS or STLS.
     pub(super) allow_plain: bool,
+    /// The server may reach no internal address (`implementation::private_network_denied`).
+    pub(super) deny_internal: bool,
     /// For an EatOAuth2 server, the access token [`connect_imap`] signs in with (XOAUTH2).
     pub(super) access_token: Option<AccessToken>,
 }
@@ -204,6 +206,7 @@ fn server_info(row: &EntityValue) -> Option<ServerInfo> {
         auth_type: field_text(row, "authTypeEnumId"),
         store_delete: field_text(row, "storeDelete") == "Y",
         allow_plain: field_text(row, "storeAllowPlain") == "Y",
+        deny_internal: super::implementation::private_network_denied(row),
         access_token: None,
     })
 }
@@ -461,7 +464,8 @@ fn raw_command(stream: &mut TcpStream, tag: &str, command: &str) -> Result<Vec<S
 /// ([`plain_allowed`]).
 pub(super) fn open_imap(server: &ServerInfo) -> Result<ImapConn, SyncFailure> {
     require_host(&server.host).map_err(|err| SyncFailure::Connect(err.to_string()))?;
-    let tcp = connect_tcp(&server.host, server.port).map_err(|err| SyncFailure::Connect(err.to_string()))?;
+    let tcp = connect_tcp(&server.host, server.port, server.deny_internal)
+        .map_err(|err| SyncFailure::Connect(err.to_string()))?;
     let socket = tcp.try_clone().ok();
     let client = if use_tls(&server.protocol, server.port) {
         let net = wrap_tls(tcp, &server.host).map_err(|err| SyncFailure::Connect(err.to_string()))?;
@@ -3086,6 +3090,7 @@ fn pop_sync(
         mark_seen: false,
         delete: server.store_delete,
         allow_plain: server.allow_plain,
+        deny_internal: server.deny_internal,
     };
     let mut pop = open_pop(facade, server, &settings)?;
     let total_folders = 1;

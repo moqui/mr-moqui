@@ -319,6 +319,72 @@ fn a_disabled_server_and_an_internal_address_are_refused_before_a_connection() {
     transport("OUTER").unwrap();
 }
 
+/// SEC-OUT-02, SEC-MAIL-02: a server whose `allowPrivateNetwork` is not Y reaches no internal address on a production
+/// instance (a mail account's server among them, which its own services never give Y), and none reaches a link-local
+/// or metadata address. SEC-OUT-01: a session that signs in requires TLS unless the server is on this machine.
+#[test]
+fn a_server_not_allowed_the_private_network_is_refused_on_production_and_credentials_need_tls() {
+    let _lock = lock_tests();
+    let (facade, context) = entered();
+    for (id, host, allow) in [
+        ("EMPTY", "127.0.0.1", ""),
+        ("ALLOWED", "127.0.0.1", "Y"),
+        ("METADATA", "169.254.169.254", "Y"),
+    ] {
+        let mut fields = vec![("emailServerId", id), ("smtpHost", host), ("smtpPort", "25")];
+        if !allow.is_empty() {
+            fields.push(("allowPrivateNetwork", allow));
+        }
+        seed(&facade, &context, "moqui.basic.email.EmailServer", &fields);
+    }
+    let server = |id: &str| {
+        super::find_one(&facade, super::SERVER, "emailServerId", id)
+            .unwrap()
+            .unwrap()
+    };
+    let transport = |id: &str| super::smtp_transport(&server(id), &super::SmtpAuth::None, None).map(|_| ());
+    let on = |production: bool, id: &str| {
+        moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(Some(production)));
+        let result = transport(id);
+        moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(None));
+        result
+    };
+    let empty = on(true, "EMPTY").unwrap_err();
+    assert!(empty.to_string().contains("is an internal address"), "{empty}");
+    assert_eq!(super::delivery_outcome(&server("EMPTY"), &empty), "retryable");
+    on(false, "EMPTY").unwrap();
+    on(true, "ALLOWED").unwrap();
+    let metadata = on(false, "METADATA").unwrap_err();
+    assert!(metadata.to_string().contains("is an internal address"), "{metadata}");
+
+    let row = |host: &str, ssl: &str, start_tls: &str| {
+        let mut row = server("ALLOWED");
+        row.set("smtpHost", Value::string(host));
+        row.set("smtpSsl", Value::string(ssl));
+        row.set("smtpStartTls", Value::string(start_tls));
+        row
+    };
+    use super::SmtpTlsMode::{None as Plain, Opportunistic, Required, Wrapper};
+    assert_eq!(super::smtp_tls_mode(&row("smtp.example.com", "", ""), true), Required);
+    assert_eq!(super::smtp_tls_mode(&row("smtp.example.com", "", "Y"), true), Required);
+    assert_eq!(super::smtp_tls_mode(&row("smtp.example.com", "Y", ""), true), Wrapper);
+    assert_eq!(super::smtp_tls_mode(&row("smtp.example.com", "", "Y"), false), Opportunistic);
+    assert_eq!(super::smtp_tls_mode(&row("smtp.example.com", "", ""), false), Plain);
+    assert_eq!(super::smtp_tls_mode(&row("localhost", "", ""), true), Plain);
+    assert_eq!(super::smtp_tls_mode(&row("127.0.0.1", "", "Y"), true), Opportunistic);
+
+    // a server test answers a kind, never the peer's text
+    assert_eq!(super::test_failure_kind("Connection refused (os error 111)"), "the connection was refused");
+    assert_eq!(
+        super::test_failure_kind("permanent error (535): 5.7.8 Username and Password not accepted"),
+        "the sign-in was refused"
+    );
+    assert_eq!(
+        super::test_failure_kind("* OK [CAPABILITY IMAP4rev1] internal-admin ready"),
+        "the server did not answer as a mail server"
+    );
+}
+
 #[test]
 fn host_suffix_matches_on_a_dot_boundary() {
     assert!(host_in("", "smtp.example.com"));
