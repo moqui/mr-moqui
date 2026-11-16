@@ -154,8 +154,10 @@ along with this software (see the LICENSE.md file). If not, see
             <script>userAccount.set("successiveFailedLogins", userAccount.get("successiveFailedLogins") ? userAccount.get("successiveFailedLogins") + 1 : 1)</script>
             <set field="maxFailures" from="ec.user.loginRules.maxFailures"/>
             <!-- if successiveFailedLogins is greater than max in conf then disable account;
-                 refresh disabledDateTime even when already disabled so the window restarts -->
-            <if condition="userAccount.get('successiveFailedLogins') > maxFailures">
+                 refresh disabledDateTime even when already disabled so the window restarts. An account disabled for
+                 good (disabled with no disabledDateTime) stays so: a lock time would end by itself (SEC-WEB-01). -->
+            <set field="disabledForGood" from="userAccount.get('disabled') == 'Y' &amp;&amp; !userAccount.get('disabledDateTime')"/>
+            <if condition="userAccount.get('successiveFailedLogins') > maxFailures &amp;&amp; !disabledForGood">
                 <script>userAccount.set("disabled", "Y"); userAccount.set("disabledDateTime", ec.user.nowTimestamp)</script>
             </if>
             <log level="warn" message="User ${userId} failed logins [${userAccount.get('successiveFailedLogins')}], maxFailures [${maxFailures}], disabled [${userAccount.get('disabled')}]"/>
@@ -198,6 +200,12 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="userAccount == null"><return message="${passwordUpdatePublicMsg}" public="true" type="danger"/></if>
             <set field="userId" from="userAccount.get('userId')"/>
             <set field="username" from="userAccount.get('username')"/>
+            <!-- An account disabled for good or past its terminateDate is closed: its password is changed only by a
+                password administrator, so a known or mailed password does not open it again (SEC-ADM-01). -->
+            <if condition="!hasPwAdminPermission &amp;&amp; ((userAccount.get('disabled') == 'Y' &amp;&amp; !userAccount.get('disabledDateTime')) ||
+                    (userAccount.get('terminateDate') &amp;&amp; ec.user.timestampMillis(userAccount.get('terminateDate')) &lt; ec.user.timestampMillis(ec.user.nowTimestamp)))">
+                <log level="warn" message="Password change refused for closed account ${userId}"/>
+                <return message="${passwordUpdatePublicMsg}" public="true" type="danger"/></if>
 
             <if condition="!hasPwAdminPermission">
                 <if condition="ec.user.userId &amp;&amp; userId != ec.user.userId">
@@ -287,7 +295,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="newPassword" required="true"/>
             <parameter name="newPasswordVerify" required="true"/>
             <parameter name="requirePasswordChange" default-value="N"/>
-            <parameter name="disabled" default-value="N"/>
+            <parameter name="disabled"><description>Written when given. Not given, a tarpit lock (disabled with a
+                disabledDateTime) ends and an account disabled for good stays disabled (SEC-ADM-01).</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="passwordIssues" type="Boolean"/>
@@ -368,6 +377,8 @@ along with this software (see the LICENSE.md file). If not, see
                     existingUserPasswordHistoryList.get(i).delete()
             </script>
 
+            <if condition="!disabled">
+                <set field="disabled" from="userAccount.get('disabled') == 'Y' &amp;&amp; !userAccount.get('disabledDateTime') ? 'Y' : 'N'"/></if>
             <!-- hash the password with argon2, which carries its own salt, and save -->
             <service-call name="update#moqui.security.UserAccount">
                 <field-map field-name="userId"/>
@@ -422,6 +433,13 @@ along with this software (see the LICENSE.md file). If not, see
             <set field="resetPublicMsg" value="If an account exists for that username or email, a reset password was sent. It may only be used to change your password. Your current password is still valid."/>
             <if condition="userAccount == null">
                 <log level="warn" message="Password reset requested for unknown username [${username}]"/>
+                <message public="true" type="success">${resetPublicMsg}</message>
+                <return/>
+            </if>
+            <!-- a closed account (disabled for good, or past its terminateDate) gets no reset password (SEC-ADM-01) -->
+            <if condition="(userAccount.get('disabled') == 'Y' &amp;&amp; !userAccount.get('disabledDateTime')) ||
+                    (userAccount.get('terminateDate') &amp;&amp; ec.user.timestampMillis(userAccount.get('terminateDate')) &lt; ec.user.timestampMillis(ec.user.nowTimestamp))">
+                <log level="warn" message="Password reset requested for closed account [${userAccount.get('username')}]"/>
                 <message public="true" type="success">${resetPublicMsg}</message>
                 <return/>
             </if>

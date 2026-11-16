@@ -1224,7 +1224,8 @@ A notification to users, by topic. Each setter returns the builder.
 | `userId(userId)`, `userIds(userIds)`, `userGroupId(userGroupId)` | Who is notified: a user, an array or `Set` of users, the members of a group |
 | `directOnly(flag)` | Only the named users and group receive it: a user subscribed to every message of the topic (`NotificationTopicUser.allNotifications`, set in Tools) does not. For a notice whose content is its recipients' alone, such as a confidential record's; no argument is `true` |
 | `message(message)` | The message, a map or its JSON text |
-| `title(title)`, `link(link)` | The title and link, expanded with the message map |
+| `title(title)` | The title, a template expanded with the message map when sent: `${...}` in it runs as script, so put values in the message and name them (`"Order ${orderId} approved"`), never concatenate a value into the text |
+| `link(link)` | The link, a URL taken as written (not expanded, unlike the topic's `linkTemplate`): build it from encoded values |
 | `type(type)` | `info`, `success`, `warning` or `danger` |
 | `showAlert(flag)`, `alertNoAutoHide(flag)` | Whether the client shows an alert, and one that stays |
 | `persistOnSend(flag)` | Whether the send saves the notification |
@@ -1242,7 +1243,7 @@ A notification to users, by topic. Each setter returns the builder.
 
 ```js
 ec.makeNotificationMessage().topic("OrderApproved").userIds([salesRepUserId])
-    .message({ orderId, customerName }).title("Order ${orderId} approved").link("/apps/order/OrderDetail?orderId=${orderId}")
+    .message({ orderId, customerName }).title("Order ${orderId} approved").link("/apps/order/OrderDetail?orderId=" + encodeURIComponent(orderId))
     .type("success").send()
 ```
 

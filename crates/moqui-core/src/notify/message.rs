@@ -153,6 +153,9 @@ impl NotificationMessage {
         self
     }
 
+    /// The link, a URL taken as written: unlike the title and the topic's `linkTemplate`, a caller's link is not
+    /// expanded, since callers build it from request and record values, where `${...}` would run as script
+    /// (plans/Security-Review.md SEC-SCR-05). No caller passed a template here.
     pub fn link(&mut self, link: impl Into<String>) -> &mut Self {
         self.link_template = Some(link.into());
         self
@@ -314,13 +317,13 @@ impl NotificationMessage {
             .clone()
             .filter(|text| !text.is_empty())
             .or_else(|| topic_title(topic.as_ref(), &type_name));
-        let link_template = self
-            .link_template
-            .clone()
-            .filter(|text| !text.is_empty())
-            .or_else(|| topic.as_ref().and_then(|row| field_str(row, "linkTemplate")));
+        let given_link = self.link_template.clone().filter(|text| !text.is_empty());
+        let link_template = topic.as_ref().and_then(|row| field_str(row, "linkTemplate"));
         self.title_text = Some(expand_template(title_template.as_deref().unwrap_or(""), &message)?);
-        self.link_text = Some(expand_template(link_template.as_deref().unwrap_or(""), &message)?);
+        self.link_text = Some(match given_link {
+            Some(link) => link,
+            None => expand_template(link_template.as_deref().unwrap_or(""), &message)?,
+        });
         let resolved = resolve_users(
             &facade,
             &self.topic,

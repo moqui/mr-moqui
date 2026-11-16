@@ -87,15 +87,62 @@ fn workspace_of(args: &[String], default: PathBuf) -> Result<PathBuf, Error> {
     Ok(workspace)
 }
 
-fn run_one(server: &str, job_run_id: &str, token: &str, workspace: PathBuf, shell: Option<String>) -> i32 {
+/// Run one job. `registered`: a registered runner's, whose steps get only the base environment and `pass_env`, not the
+/// machine's; else a job's container, whose image sets the environment up.
+fn run_one(
+    server: &str,
+    job_run_id: &str,
+    token: &str,
+    workspace: PathBuf,
+    shell: Option<String>,
+    registered: Option<Vec<String>>,
+) -> i32 {
     let transport = HttpTransport::new(server, job_run_id, token);
     let options = Options {
         env: step_home(&workspace),
         workspace,
         shell: shell.unwrap_or_else(|| "sh".to_string()),
+        inherit_env: registered.is_none(),
+        pass_env: registered.unwrap_or_default(),
         ..Options::default()
     };
     runner::run(&transport, &options)
+}
+
+/// A registered runner's token: from the file `--token-file` or `MOQUI_CI_RUNNER_TOKEN_FILE` names, which only the
+/// runner's user should read; else `MOQUI_CI_RUNNER_TOKEN`, with a warning, since a process's starting environment can
+/// be read by any process of its user (`/proc/<pid>/environ`), the steps it runs included (plans/Security-Review.md
+/// SEC-GIT-02).
+fn runner_token(args: &[String]) -> Result<String, Error> {
+    let file = option(args, "--token-file").or_else(|| env("MOQUI_CI_RUNNER_TOKEN_FILE").ok());
+    if let Some(file) = file {
+        let text = std::fs::read_to_string(&file)
+            .map_err(|err| Error::new(format!("moqui ci-run poll: cannot read the runner token file {file}: {err}")))?;
+        let token = text.trim().to_string();
+        if token.is_empty() {
+            return Err(Error::new(format!("moqui ci-run poll: the runner token file {file} is empty")));
+        }
+        return Ok(token);
+    }
+    let token = env("MOQUI_CI_RUNNER_TOKEN")?;
+    eprintln!(
+        "moqui ci-run poll: the runner token is in MOQUI_CI_RUNNER_TOKEN, which a step can read from this process's \
+         environment; keep it in a file only the runner's user reads and give --token-file or MOQUI_CI_RUNNER_TOKEN_FILE"
+    );
+    Ok(token)
+}
+
+/// The names `--pass-env NAME,...` lets through to a registered runner's steps (repeatable).
+fn pass_env(args: &[String]) -> Vec<String> {
+    args.iter()
+        .enumerate()
+        .filter(|(_, arg)| *arg == "--pass-env")
+        .filter_map(|(at, _)| args.get(at + 1))
+        .flat_map(|names| names.split(','))
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 /// `moqui ci-run [register | poll] [options]`. The exit code: 0 the job succeeded, 1 it failed, 2 an error, 3 the
@@ -121,7 +168,7 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
                     answer["error"].as_str().unwrap_or_default()
                 )));
             };
-            // the runner token, to keep as MOQUI_CI_RUNNER_TOKEN: shown this once
+            // the runner token, shown this once: to keep in a file only the runner's user reads, for poll --token-file
             println!("{token}");
             eprintln!(
                 "registered runner {} ({name}, {platform})",
@@ -131,7 +178,8 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
         }
         Some("poll") => {
             let server = env("MOQUI_CI_SERVER_URL")?;
-            let runner_token = env("MOQUI_CI_RUNNER_TOKEN")?;
+            let runner_token = runner_token(args)?;
+            let passed = pass_env(args);
             let once = args.iter().any(|arg| arg == "--once");
             let interval = option(args, "--interval")
                 .and_then(|seconds| seconds.parse::<u64>().ok())
@@ -148,7 +196,8 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
                             let dir = work.join(job);
                             let _ = std::fs::remove_dir_all(&dir);
                             let began = std::time::Instant::now();
-                            let code = run_one(&server, job, token, dir.join("src"), shell.clone());
+                            let code =
+                                run_one(&server, job, token, dir.join("src"), shell.clone(), Some(passed.clone()));
                             eprintln!("job run {job} ended with exit code {code}");
                             let _ = std::fs::remove_dir_all(&dir);
                             // a registered runner is not cleaned between jobs but for this: what the job left
@@ -195,6 +244,7 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
                 &token,
                 workspace,
                 option(args, "--shell"),
+                None,
             ))
         }
     }

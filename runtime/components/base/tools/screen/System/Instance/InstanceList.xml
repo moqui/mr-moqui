@@ -42,7 +42,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions>
         <!-- <set field="checkAllBool" from="checkAll == 'true'"/> -->
-        <set field="checkAllBool" from="true"/>
+        <!-- the checks reach the instance's hosts: only with INSTANCE_ADMIN, which the services ask (SEC-TLS-02) -->
+        <set field="checkAllBool" from="ec.user.hasPermission('INSTANCE_ADMIN')"/>
 
         <entity-find entity-name="moqui.server.instance.AppInstance" list="instanceList">
             <search-form-inputs default-order-by="instanceName"/>

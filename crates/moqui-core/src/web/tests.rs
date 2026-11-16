@@ -358,10 +358,11 @@ fn a_production_500_names_only_an_error_id() {
     assert_eq!(not_production, "SELECT * FROM SECRET_TABLE failed");
 }
 
-/// Java's tracking pixel: the PNG for every id, a known message marked `ES_VIEWED` once, a suffix dropped only when
-/// the dot is not first, and a status change the flow refuses logged with the image left in place.
+/// The tracking image: the PNG for every request; a message marked `ES_VIEWED` once, and only by its view key, a keyed
+/// MAC of its id (SEC-RTE-01); only a sent message, never one queued in the Outbox or received; a refused status change
+/// logged with the image left in place.
 #[test]
-fn view_email_message_sends_the_png_and_marks_a_known_message() {
+fn view_email_message_sends_the_png_and_marks_a_sent_message_by_its_key() {
     use moqui_lib::object::to_plain_string;
 
     use crate::context::ExecutionContext;
@@ -372,9 +373,15 @@ fn view_email_message_sends_the_png_and_marks_a_known_message() {
     impl Drop for ClearStack {
         fn drop(&mut self) {
             crate::script::clear_context_stack();
+            moqui_lib::env::clear_property("session_cookie_key");
         }
     }
 
+    let _key_lock = crate::user::session::cookie_property_lock();
+    moqui_lib::env::set_property(
+        "session_cookie_key",
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, [0x0b_u8; 32]),
+    );
     let ctx = crate::context::ExecutionContextFactory::test_context_with_conf(
         "<moqui-conf><artifact-execution-facade><artifact-execution type=\"AT_ENTITY\" authz-enabled=\"true\"/>\
              <artifact-execution type=\"AT_SERVICE\" authz-enabled=\"true\"/></artifact-execution-facade></moqui-conf>",
@@ -387,12 +394,18 @@ fn view_email_message_sends_the_png_and_marks_a_known_message() {
         let _authz = ctx.disable_authz();
         crate::testing::seed_status_flows(&facade);
         email_row(&facade, "PIXEL1", "ES_SENT");
-        email_row(&facade, "A", "ES_SENT");
-        email_row(&facade, "DRAFT1", "ES_DRAFT");
+        email_row(&facade, "QUEUED1", "ES_READY");
+        email_row(&facade, "INBOX1", "ES_RECEIVED");
     }
     ctx.set_effective_time(Some(1_700_000_000_000));
+    let key = |id: &str| super::email_view_key(id).unwrap();
 
+    // The bare id, as Java's pixel had it, and a key of another message change nothing.
     show("PIXEL1.png");
+    show(&format!("PIXEL1.{}.png", key("QUEUED1").split_once('.').unwrap().1));
+    assert_eq!(status_of(&facade, "PIXEL1"), "ES_SENT");
+
+    show(&format!("{}.png", key("PIXEL1")));
     let errors = ExecutionContext::with_current(|ec| ec.message().errors_string()).unwrap_or_default();
     assert!(errors.is_empty(), "{errors}");
     assert_eq!(status_of(&facade, "PIXEL1"), "ES_VIEWED");
@@ -401,22 +414,21 @@ fn view_email_message_sends_the_png_and_marks_a_known_message() {
 
     // Already viewed: a later effective time does not write `receivedDate` again.
     ctx.set_effective_time(Some(1_800_000_000_000));
-    show("PIXEL1.png");
+    show(&format!("{}.png", key("PIXEL1")));
     assert_eq!(received_of(&facade, "PIXEL1"), received);
     assert_eq!(status_of(&facade, "PIXEL1"), "ES_VIEWED");
 
-    // `a.b.c.png` keeps only the text before the first dot.
-    show("A.b.c.png");
-    assert_eq!(status_of(&facade, "A"), "ES_VIEWED", "{}", message_errors());
-    assert!(email_row_missing(&facade, "A.b"));
+    // Even with its key, mail in the Outbox stays queued and received mail keeps its status and date.
+    show(&format!("{}.png", key("QUEUED1")));
+    assert_eq!(status_of(&facade, "QUEUED1"), "ES_READY");
+    show(&format!("{}.png", key("INBOX1")));
+    assert_eq!(status_of(&facade, "INBOX1"), "ES_RECEIVED");
+    assert!(received_of(&facade, "INBOX1").is_empty());
 
-    show("NOTAREALID.png");
+    show(&format!("{}.png", key("NOTAREALID")));
     assert!(email_row_missing(&facade, "NOTAREALID"));
-
-    // A leading dot is not a suffix (`dotIndex > 0` in Java).
     show(".png");
     assert!(email_row_missing(&facade, ".png"));
-    assert_eq!(received_of(&facade, "PIXEL1"), received);
 
     {
         let _hidden = IsolatedContext::push();
@@ -424,12 +436,7 @@ fn view_email_message_sends_the_png_and_marks_a_known_message() {
     }
     assert_eq!(status_of(&facade, "PIXEL1"), "ES_VIEWED");
     assert_eq!(received_of(&facade, "PIXEL1"), received);
-
-    // No `ES_DRAFT` to `ES_VIEWED` transition. The image is still the response and the row stays a draft.
-    show("DRAFT1.png");
-    assert_eq!(status_of(&facade, "DRAFT1"), "ES_DRAFT");
-    assert!(received_of(&facade, "DRAFT1").is_empty());
-    assert!(!message_errors().is_empty());
+    let _ = message_errors();
 
     fn email_row(facade: &EntityFacade, id: &str, status: &str) {
         let mut row = facade.make_value("moqui.basic.email.EmailMessage").unwrap();

@@ -114,3 +114,45 @@ fn only_processes_started_during_the_job_are_leftovers() {
     // the job ran 45 seconds; 400 is the runner itself
     assert_eq!(super::started_within(listing, 45, &[400]), [300, 301]);
 }
+
+/// SEC-GIT-02: a registered runner's step gets the base variables, the `LC_` ones and `--pass-env` names, never the
+/// machine's others nor a runner token; a job's container passes its image's environment on, still without a token.
+#[test]
+fn a_step_gets_no_runner_token_and_on_a_registered_runner_only_the_base_environment() {
+    use std::ffi::OsString;
+
+    use super::{step_base_env, Options};
+
+    let vars = || {
+        [
+            ("PATH", "/usr/bin"),
+            ("HOME", "/home/runner"),
+            ("LC_ALL", "C.UTF-8"),
+            ("CARGO_HOME", "/opt/cargo"),
+            ("AWS_SECRET_ACCESS_KEY", "machine-secret"),
+            ("MOQUI_CI_RUNNER_TOKEN", "mqcr_x"),
+            ("MOQUI_CI_RUNNER_TOKEN_FILE", "/home/runner/.token"),
+            ("MOQUI_CI_POOL_TOKEN", "mqcp_x"),
+            ("MOQUI_CI_TOKEN", "job"),
+            ("MOQUI_CI_SERVER_URL", "https://moqui.example.com"),
+        ]
+        .map(|(name, value)| (OsString::from(name), OsString::from(value)))
+    };
+    let names = |options: &Options| -> Vec<String> {
+        step_base_env(vars(), options)
+            .into_iter()
+            .map(|(name, _)| name.into_string().unwrap())
+            .collect()
+    };
+    let registered = Options {
+        inherit_env: false,
+        pass_env: vec!["CARGO_HOME".to_string(), "MOQUI_CI_SERVER_URL".to_string()],
+        ..Options::default()
+    };
+    assert_eq!(names(&registered), ["PATH", "HOME", "LC_ALL", "CARGO_HOME"]);
+    let container = Options::default();
+    assert_eq!(
+        names(&container),
+        ["PATH", "HOME", "LC_ALL", "CARGO_HOME", "AWS_SECRET_ACCESS_KEY", "MOQUI_CI_SERVER_URL"]
+    );
+}

@@ -61,9 +61,13 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="linkList" from="appInstance.links"/>
         <set field="volumeList" from="appInstance.vols"/>
 
-        <service-call name="org.moqui.dev.InstanceServices.check#AppInstance" in-map="{appInstanceId:appInstanceId}" out-map="context"/>
-        <service-call name="org.moqui.dev.InstanceServices.check#AppDatabase" in-map="{appInstanceId:appInstanceId}" out-map="context"/>
-        <service-call name="org.moqui.dev.InstanceServices.check#MoquiServer" in-map="{appInstanceId:appInstanceId}" out-map="context"/>
+        <!-- the checks reach the instance's hosts: only with INSTANCE_ADMIN, which the services ask (SEC-TLS-02) -->
+        <set field="instanceAdmin" from="ec.user.hasPermission('INSTANCE_ADMIN')"/>
+        <if condition="instanceAdmin">
+            <service-call name="org.moqui.dev.InstanceServices.check#AppInstance" in-map="{appInstanceId:appInstanceId}" out-map="context"/>
+            <service-call name="org.moqui.dev.InstanceServices.check#AppDatabase" in-map="{appInstanceId:appInstanceId}" out-map="context"/>
+            <service-call name="org.moqui.dev.InstanceServices.check#MoquiServer" in-map="{appInstanceId:appInstanceId}" out-map="context"/>
+        </if>
 
         <set field="gotMoquiStatus" from="false"/>
         <if condition="moquiStatusMap &amp;&amp; Object.keys(moquiStatusMap).length">

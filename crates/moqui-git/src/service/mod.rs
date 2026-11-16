@@ -41,6 +41,8 @@ mod gate_tests;
 pub mod hosting;
 #[cfg(test)]
 mod images_tests;
+#[cfg(test)]
+mod import_source_tests;
 mod repository;
 pub(crate) mod mirror;
 pub(crate) mod rest;
@@ -324,7 +326,12 @@ fn import_repository(
     let Some((provider, id)) = provider_and_id(parameters, true) else {
         return Ok(BTreeMap::new());
     };
-    match provider.import(&id, text(parameters, "source").as_deref()) {
+    let source = text(parameters, "source");
+    if let Err(why) = import_source_allowed(&id, source.as_deref()) {
+        add_error(why);
+        return Ok(BTreeMap::new());
+    }
+    match provider.import(&id, source.as_deref()) {
         Ok((head, copied)) => {
             add_message(format!(
                 "Imported {copied} objects into git repository {id}, head {head}"
@@ -339,6 +346,50 @@ fn import_repository(
             Ok(BTreeMap::new())
         }
     }
+}
+
+/// The sealed permission a caller needs to import from a directory on the server or a URL that is not http(s): reading
+/// the host's files is host access, as a terminal on the host is.
+const IMPORT_HOST_PERMISSION: &str = "TERMINAL_HOST";
+
+/// Whether the caller may import repository `id` from `source` (plans/Security-Review.md SEC-GIT-01). No source is the
+/// repository's own `remoteUrl`, which whoever configured it chose. A URL is fetched only over https (http with
+/// `webhook-private-network`), with no credential in it, from a host whose addresses are all public unless private
+/// networks are allowed, whoever calls. With authorization on, another repository (`git://<id>`) needs the view right
+/// on it, and a directory or another scheme the sealed `TERMINAL_HOST`.
+fn import_source_allowed(id: &str, source: Option<&str>) -> Result<(), String> {
+    let Some(source) = source.map(str::trim).filter(|source| !source.is_empty()) else {
+        return Ok(());
+    };
+    let authz_off = ExecutionContext::with_current(ExecutionContext::authz_disabled).unwrap_or(false);
+    if let Some(other) = source.strip_prefix("git://") {
+        let other = other.trim_matches('/');
+        if authz_off || crate::server::permitted(other, "view") {
+            return Ok(());
+        }
+        return Err(format!("Repository {other} not found"));
+    }
+    if source.starts_with("https://") || source.starts_with("http://") {
+        let private = crate::mirror::private_network();
+        crate::server::smart_http::check_url(source, private)
+            .map_err(|why| format!("cannot import {id} from {}: {why}", moqui_core::outbound::redacted(source)))?;
+        if !private {
+            let rest = source.split_once("://").map_or("", |(_, rest)| rest);
+            let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+            let default_port = if source.starts_with("https://") { 443 } else { 80 };
+            let (host, port) = moqui_core::sftp::split_host_port(authority, default_port).map_err(|err| err.message().to_string())?;
+            moqui_lib::net::public_addresses(&host, port)
+                .map_err(|err| format!("cannot import {id} from {}: {err}", moqui_core::outbound::redacted(source)))?;
+        }
+        return Ok(());
+    }
+    if authz_off || moqui_core::user::has_permission(IMPORT_HOST_PERMISSION).unwrap_or(false) {
+        return Ok(());
+    }
+    Err(format!(
+        "cannot import {id} from {}: only an https URL or another repository, unless you have {IMPORT_HOST_PERMISSION}",
+        moqui_core::outbound::redacted(source)
+    ))
 }
 
 // ---- reading a repository: refs, log, commits, diffs, files ----

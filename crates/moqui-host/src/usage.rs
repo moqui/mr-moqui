@@ -585,7 +585,8 @@ Options:
 const CI_RUN: &str = "\
 moqui ci-run [--workspace DIR] [--shell SHELL]
 moqui ci-run register [--name NAME] [--platform TEXT]
-moqui ci-run poll [--once] [--interval SECONDS] [--work DIR] [--shell SHELL] [--keep-processes]
+moqui ci-run poll [--token-file FILE] [--pass-env NAME,...] [--once] [--interval SECONDS] [--work DIR] [--shell SHELL]
+                  [--keep-processes]
     The runner of a pipeline job (docs/interfaces/Pipelines.md). With no command it runs the one job
     its environment names, as the server starts it in the job's container: it gets the job, checks
     the commit out shallow with git, restores the caches, runs each step with the shell in the
@@ -593,11 +594,14 @@ moqui ci-run poll [--once] [--interval SECONDS] [--work DIR] [--shell SHELL] [--
     caches, and posts the result. It reads no runtime, conf or database; it needs git and a shell.
 
     register and poll are a registered runner's, a long-lived machine that asks for jobs: register
-    once with the pool's token (the runner token is printed, once), then poll with the runner token.
+    once with the pool's token (the runner token is printed, once), then poll with the runner token,
+    kept in a file only the runner's user reads. A registered runner's steps do not get its
+    environment: only PATH, HOME, USER, LOGNAME, LANG, LANGUAGE, TZ, TMPDIR, SHELL, TERM, the LC_
+    variables and those --pass-env names, then the job's own variables; never a runner token.
 
   MOQUI_CI_SERVER_URL=https://moqui.example.com MOQUI_CI_TOKEN=... MOQUI_CI_JOB_RUN_ID=100123 moqui ci-run
-  MOQUI_CI_SERVER_URL=... MOQUI_CI_POOL_TOKEN=... moqui ci-run register --name mac-mini-1
-  MOQUI_CI_SERVER_URL=... MOQUI_CI_RUNNER_TOKEN=... moqui ci-run poll
+  MOQUI_CI_SERVER_URL=... MOQUI_CI_POOL_TOKEN=... moqui ci-run register --name mac-mini-1 > ~/.moqui-ci-token
+  MOQUI_CI_SERVER_URL=... moqui ci-run poll --token-file ~/.moqui-ci-token --pass-env CARGO_HOME
 
 Exit codes: 0 the job succeeded, 1 a step failed, 2 an error (no checkout, the server not reached),
 3 the server no longer takes the job's calls (cancelled, or past its time).
@@ -608,7 +612,9 @@ Environment
                                   passed on to the steps.
   MOQUI_CI_JOB_RUN_ID             The job run.
   MOQUI_CI_POOL_TOKEN             register: the pool's registration token.
-  MOQUI_CI_RUNNER_TOKEN           poll: the runner's token.
+  MOQUI_CI_RUNNER_TOKEN_FILE      poll: the file that holds the runner's token (or --token-file).
+  MOQUI_CI_RUNNER_TOKEN           poll: the runner's token itself; works, with a warning, since a
+                                  process's environment can be read by the steps it runs.
 
 Options
   --workspace DIR                 The empty directory the commit is checked out into and the steps
@@ -616,6 +622,9 @@ Options
   --shell SHELL                   The shell of the steps (sh), run as SHELL -c <command>.
   --name NAME, --platform TEXT    register: what the runner is called, and what it says it is
                                   (the OS and architecture).
+  --token-file FILE               poll: the file that holds the runner's token.
+  --pass-env NAME,...             poll: the runner's variables the steps get besides the base ones
+                                  (repeatable).
   --once                          poll: ask once, run the job if there is one, and exit with its code.
   --interval SECONDS              poll: the wait between asks with no job (10).
   --work DIR                      poll: where each job gets a directory, removed after it

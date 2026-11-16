@@ -326,11 +326,23 @@ container that runs until it is removed), `fail` (it does not start), `lost` (th
 the machine:
 
 ```sh
-MOQUI_CI_SERVER_URL=https://moqui.example.com MOQUI_CI_POOL_TOKEN=mqcp_... moqui ci-run register --name mac-mini-1
-MOQUI_CI_SERVER_URL=https://moqui.example.com MOQUI_CI_RUNNER_TOKEN=mqcr_... moqui ci-run poll
+MOQUI_CI_SERVER_URL=https://moqui.example.com MOQUI_CI_POOL_TOKEN=mqcp_... moqui ci-run register --name mac-mini-1 > ~/.moqui-ci-token
+chmod 600 ~/.moqui-ci-token
+MOQUI_CI_SERVER_URL=https://moqui.example.com moqui ci-run poll --token-file ~/.moqui-ci-token --pass-env CARGO_HOME
 ```
 
-`register` prints the runner token, once. `poll` asks for a job every few seconds; when its pool has room it is given
+`register` prints the runner token, once. `poll` reads it from `--token-file` or the file
+`MOQUI_CI_RUNNER_TOKEN_FILE` names; `MOQUI_CI_RUNNER_TOKEN` itself still works, with a warning, since a process's
+starting environment can be read by any process of its user (`/proc/<pid>/environ`), a job's steps included. The
+runner token takes any job of the pool and, through that job's token, its secrets, so it is kept out of the steps
+(plans/Security-Review.md SEC-GIT-02): a registered runner's step does not inherit the machine's environment, only
+`PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LANGUAGE`, `TZ`, `TMPDIR`, `SHELL`, `TERM`, the `LC_` variables and the names
+`--pass-env NAME,...` gives, and then the job's own variables; no runner, pool or job token is passed on in any
+case. A step that can read the runner's files can still read the token file: run the steps as another user than the
+runner (a `--shell` that switches user), or keep such a pool for one owner's trusted runs. A runner token has no
+expiry yet; revoke a runner (`revoke#Runner`) whose machine was shared.
+
+`poll` asks for a job every few seconds; when its pool has room it is given
 the oldest queued job of the pool with a job token, runs it in a directory of its own, and asks again. A runner runs
 one job at a time, and nothing isolates a job from the machine: use such a pool for trusted runs, of one owner. Each
 step's process group is killed when the step ends (before the step's process is reaped, so a reused group id is
@@ -389,7 +401,7 @@ cluster member) is answered **410 Gone**, which `moqui ci-run` takes as "the job
 sign-in for web protection; a token that is malformed or not this server's is 401. It is no user's
 and reaches no service, screen or other REST. `moqui ci-run` does not pass it to the steps' environment; a step runs
 as the runner's user, though, and so could read it from the runner's process, which gives it nothing the job did not
-have.
+have. A registered runner's own token is another matter: see [Runners and drivers](#runners-and-drivers).
 
 ## The runner REST
 

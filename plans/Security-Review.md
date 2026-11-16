@@ -2,8 +2,9 @@
 
 Status 2026-11-15: first pass done, in two rounds. The attack surface map was split by area and every slice of the
 code has been read at least in part by a reviewer; the suspected weaknesses are listed here. Most are as their
-reviewer reported them and have not been read a second time; the Status column says which. Nothing is fixed. What is
-left is under [What is left](#what-is-left).
+reviewer reported them and have not been read a second time; the Status column says which. The twelve High findings
+(ten fixes: two pairs are one weakness) are fixed, each with its regression test; its section's **Fix** says how. The
+Medium and lower ones are not. What is left is under [What is left](#what-is-left).
 
 This is the findings register of the security review that the pre-0.1.0 notice in the [README](../README.md) names:
 until 0.1.0, findings are recorded openly in this repository. The map of what can be reached is
@@ -54,7 +55,8 @@ that builds this document are in `plans/security-review-evidence/`, which is not
 ## The findings that matter most
 
 No finding is rated Critical. These are the ones to look at first; each High one has its section below, each Medium one in
-[Security-Review-Medium](Security-Review-Medium.md).
+[Security-Review-Medium](Security-Review-Medium.md). Every High one below is fixed (2026-11-15); the Medium ones are
+not.
 
 - **A disabled account comes back** (SEC-WEB-01, SEC-ADM-01; High; confirmed by the lead). An account disabled for
   good becomes a five-minute lock after four failed sign-in attempts, and a password change writes `disabled=N`. An
@@ -163,7 +165,10 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 2. **What each slice did not reach.** The coverage table names it, each report's "Read" section has the detail, and
    each map file ends with its open questions. The thinnest: the BOSS business apps other than Commerce and order
    approval, parsers of untrusted input, the mobile app's native code, and the helper-read parts of the PASS services.
-3. **Fixes.** None was made in this pass.
+3. **Fixes.** The High findings are fixed (2026-11-15); the Medium, Low and Info ones are not. Left of the High fixes:
+   a CI runner token has no expiry or bound source, and a registered runner's step that runs as the runner's user
+   can read the token file (SEC-GIT-02); `DataDocument.documentTitle` is still a template, an administrator's
+   (SEC-SCR-05).
 
 ## Counts
 
@@ -200,7 +205,7 @@ Map file: [Attack-Surface-Web.md](../docs/security/Attack-Surface-Web.md). Revie
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
-| SEC-WEB-01 | `crates/moqui-core/src/user/login.rs:1303-1310`, `:1511-1520`, `:1736-1746` | An account disabled for good comes back by itself: four failed logins and a wait, or a password change | High | confirmed (lead) |
+| SEC-WEB-01 | `crates/moqui-core/src/user/login.rs:1303-1310`, `:1511-1520`, `:1736-1746` | An account disabled for good comes back by itself: four failed logins and a wait, or a password change | High | fixed |
 | SEC-WEB-02 | `runtime/components/base/framework/service/org/moqui/impl/UserServices.xml:166-283` | The password change form checks `oldPassword` with no lockout | Medium | confirmed (second check) |
 | SEC-WEB-03 | `crates/moqui-core/src/user/login.rs:1303-1310`, `:449-470`, `:1736-1746` | A locked account stays locked while anything keeps trying, its own API key included | Medium | confirmed (second check) |
 | SEC-WEB-04 | `crates/moqui-core/src/screen/render.rs:2667-2672`, `:2070-2098` | Transitions with the default method run their actions on a GET with no token | Medium | confirmed (lead) |
@@ -221,7 +226,7 @@ Map file: [Attack-Surface-Routes.md](../docs/security/Attack-Surface-Routes.md).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
-| SEC-RTE-01 | `crates/moqui-core/src/web/mod.rs:1306` (`mark_email_message_viewed`) | `GET /email/{id}` lets anyone move mail to Viewed | High | reported (likely) |
+| SEC-RTE-01 | `crates/moqui-core/src/web/mod.rs:1306` (`mark_email_message_viewed`) | `GET /email/{id}` lets anyone move mail to Viewed | High | fixed |
 | SEC-RTE-02 | `crates/moqui-core/src/screen/statics.rs:767` (`screen_package`), `:545` (`unwrap_context`) | `GET <screen>/actions` answers the screen's whole context | Medium | reported (confirmed in code) |
 | SEC-RTE-03 | `crates/moqui-entity/src/entity/query_rest.rs:214` | Any signed-in user can write `EntityAuditLog` rows through entity REST | Medium | reported (confirmed in code) |
 | SEC-RTE-04 | `runtime/components/base/webroot/template/screen/BasicTransitions.xml:20` | `emailScreenAsync` mails a full report to a request-given address by `GET` | Medium | reported (confirmed in code) |
@@ -246,7 +251,7 @@ Map file: [Attack-Surface-Admin.md](../docs/security/Attack-Surface-Admin.md). R
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
-| SEC-ADM-01 | `UserServices.xml:166-282` (`update#Password`), `:284-385` (`update#PasswordInternal`) | A disabled account re-enables itself with a password change | High | confirmed (lead) |
+| SEC-ADM-01 | `UserServices.xml:166-282` (`update#Password`), `:284-385` (`update#PasswordInternal`) | A disabled account re-enables itself with a password change | High | fixed |
 | SEC-ADM-02 | `UserServices.xml:233-271` | `update#Password` tests passwords with no lockout and tells right from wrong | Medium | reported (confirmed in code) |
 | SEC-ADM-03 | `UserServices.xml:210-229` with `:704-738` (`create#SingleUseAuthcCodes`) | A signed-in session changes the password without the old one | Medium | reported (confirmed in code) |
 | SEC-ADM-04 | `UserServices.xml:532, 637, 704, 741, 815, 932, 963, 990, 1008, 1052` | Factor services act on any `userId` | Medium | reported (to check) |
@@ -266,8 +271,8 @@ Map file: [Attack-Surface-Tools.md](../docs/security/Attack-Surface-Tools.md). R
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
-| SEC-TLS-01 | `runtime/components/base/tools/screen/Tools/Data/Export.xml:18` and `:54-61` | Export's `filterMap` runs a caller's script, by GET, with no script permission | High | confirmed (lead) |
-| SEC-TLS-02 | `runtime/components/base/framework/service/org/moqui/dev/InstanceServices.xml:444-447`, `:195`, `:206`, `:295` | Hosted-instance rows give host command execution and script execution to a Tools and System holder | High | reported (likely) |
+| SEC-TLS-01 | `runtime/components/base/tools/screen/Tools/Data/Export.xml:18` and `:54-61` | Export's `filterMap` runs a caller's script, by GET, with no script permission | High | fixed |
+| SEC-TLS-02 | `runtime/components/base/framework/service/org/moqui/dev/InstanceServices.xml:444-447`, `:195`, `:206`, `:295` | Hosted-instance rows give host command execution and script execution to a Tools and System holder | High | fixed |
 | SEC-TLS-03 | `crates/moqui-core/src/script/host/tools.rs:721`, `:1272`, `:2602-2621` | `runTokenCommand` is on `ec.resource` for every script | Medium | reported (confirmed in code) |
 | SEC-TLS-04 | `crates/moqui-core/src/screen/definition.rs:387`, `render.rs:2076-2099`, `:2668-2673` | State-changing transitions that run on a cross-site GET | Medium | confirmed (lead) |
 | SEC-TLS-05 | `runtime/components/base/tools/screen/Tools/Data/Export.xml:26-45` | Export and Snapshots read the entities the other generic tools refuse | Medium | reported (likely) |
@@ -312,8 +317,8 @@ Map file: [Attack-Surface-Git.md](../docs/security/Attack-Surface-Git.md). Revie
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
-| SEC-GIT-01 | `crates/moqui-git/src/lib.rs:1470-1530` | `import#GitRepository` reads another repository or a server directory with no check of the source | High | reported (confirmed in code) |
-| SEC-GIT-02 | `crates/moqui-host/src/ci_run.rs:134`, `:151` | A registered runner gives its runner token to every step | High | reported (confirmed in code) |
+| SEC-GIT-01 | `crates/moqui-git/src/lib.rs:1470-1530` | `import#GitRepository` reads another repository or a server directory with no check of the source | High | fixed |
+| SEC-GIT-02 | `crates/moqui-host/src/ci_run.rs:134`, `:151` | A registered runner gives its runner token to every step | High | fixed |
 | SEC-GIT-03 | `crates/moqui-git/src/server/mod.rs:771-777` | A gzip request body is inflated without limit, and SSH has no request limit | Medium | reported (confirmed in code) |
 | SEC-GIT-04 | `crates/moqui-git/src/service/mod.rs:605` | A viewer reads a whole blob or LFS object into server memory through REST | Medium | reported (confirmed in code) |
 | SEC-GIT-05 | `crates/moqui-git/src/server/pack_in.rs:158-171`, `:249`, `:327-344` | A small pack of large or deeply chained objects costs far more than its bytes | Medium | reported (likely) |
@@ -340,9 +345,9 @@ Map file: [Attack-Surface-Mail.md](../docs/security/Attack-Surface-Mail.md). Rev
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
-| SEC-MAIL-01 | `runtime/components/base/framework/service/org/moqui/mail/EmailClientServices.xml` `create#EmailAccount` (207-306), `update#EmailAccount` (308-452) | Any mail user can take the inbound mail of an address nobody has claimed | High | reported (confirmed in code) |
-| SEC-MAIL-61 | runtime/components/base/webroot/template/screen/BasicTransitions.xml:20-22 | A request's fileName runs as a server-side expression through emailScreenAsync | High | reported (likely) |
-| SEC-MAIL-63 | runtime/components/addon/mr-marble/screen/SimpleScreens/Party/PartyEmails.xml:23-26 | mr-marble PartyEmails serves any EmailMessage body as inline text/html | High | reported (confirmed in code) |
+| SEC-MAIL-01 | `runtime/components/base/framework/service/org/moqui/mail/EmailClientServices.xml` `create#EmailAccount` (207-306), `update#EmailAccount` (308-452) | Any mail user can take the inbound mail of an address nobody has claimed | High | fixed |
+| SEC-MAIL-61 | runtime/components/base/webroot/template/screen/BasicTransitions.xml:20-22 | A request's fileName runs as a server-side expression through emailScreenAsync | High | fixed |
+| SEC-MAIL-63 | runtime/components/addon/mr-marble/screen/SimpleScreens/Party/PartyEmails.xml:23-26 | mr-marble PartyEmails serves any EmailMessage body as inline text/html | High | fixed |
 | SEC-MAIL-02 | `crates/moqui-mail/src/inbound.rs:1018-1031` (`connect_tcp`), `crates/moqui-mail/src/sync.rs:462-530` (`open_imap`), `crates/moqui-mail/src/implementation.rs` `smtp_transport` (1888-1934), `require_host` (979-998) | A mail account's server settings make the server connect to internal addresses | Medium | reported (confirmed in code) |
 | SEC-MAIL-03 | `crates/moqui-core/src/web/mod.rs:1289-1340` (`view_email_message`, `mark_email_message_viewed`) | An anonymous GET changes the status of any mailbox or Outbox message | Medium | reported (confirmed in code) |
 | SEC-MAIL-04 | `runtime/components/base/tools/service/moqui.rest.xml:122-131` | The tools REST resource returns mailbox passwords and OAuth refresh tokens | Medium | reported (confirmed in code) |
@@ -596,8 +601,8 @@ Map file: [Attack-Surface-Scripts.md](../docs/security/Attack-Surface-Scripts.md
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
-| SEC-SCR-01 | runtime/components/base/tools/screen/Tools/Data/Export.xml:18 and :56 | Data Export `filterMap` runs any server script, on a GET, without the script permission | High | reported (confirmed in code) |
-| SEC-SCR-05 | crates/moqui-core/src/notify/message.rs:322 and :899-911 | Notification titles are expanded as script, and three callers build them from record values | High | reported (likely) |
+| SEC-SCR-01 | runtime/components/base/tools/screen/Tools/Data/Export.xml:18 and :56 | Data Export `filterMap` runs any server script, on a GET, without the script permission | High | fixed |
+| SEC-SCR-05 | crates/moqui-core/src/notify/message.rs:322 and :899-911 | Notification titles are expanded as script, and three callers build them from record values | High | fixed |
 | SEC-SCR-02 | crates/moqui-core/src/service/tools.rs:204-208 | `print#ScreenDocument` evaluates its `screenParametersStr` parameter as a script | Medium | reported (confirmed in code) |
 | SEC-SCR-03 | crates/moqui-core/src/script/host/globals.rs:562-565 | `System.getProperty` returns secret properties and the whole environment to any script | Medium | reported (confirmed in code) |
 | SEC-SCR-04 | crates/moqui-core/src/script/host/tools.rs:721 and :2603-2620 | `ec.resource.runTokenCommand` starts a host program from any server script | Medium | reported (confirmed in code) |
@@ -651,8 +656,9 @@ Each as its reviewer wrote it. "Not confirmed" is what the reviewer did not trac
 
 #### SEC-WEB-01. An account disabled for good comes back by itself: four failed logins and a wait, or a password change
 
-High; confirmed (lead).
+High; confirmed (lead); fixed.
 
+- **Fix:** Fixed 2026-11-15: a failed login never gives an account disabled for good a lock time (`write_failed_increment`, `increment#UserAccountFailedLogins`), and a password change ends only a tarpit lock (`update_password_fields`, `update#PasswordInternal`, whose `disabled` has no default now). Tests: `user/login_tests.rs`, `framework/test/ClosedAccounts.spec.js`.
 - **Where:** `crates/moqui-core/src/user/login.rs:1303-1310`, `:1511-1520`, `:1736-1746`; `runtime/components/base/framework/service/org/moqui/impl/UserServices.xml:150-164`, `:166-283`, `:290`, `:382`; `runtime/components/base/webroot/screen/webroot/Login.xml:105-114`
 - **Reached by:** anonymous, `POST /Login/login` (or any request with Basic credentials or the account's login key) four times, then a sign-in five minutes later with the account's own password or key; or anonymous `POST /Login/changePassword` or `/ChangePassword/changePassword` with the account's `username`, `oldPassword` and a new password.
 - **What happens:** `disable#UserAccount` leaves `disabled = Y` and `disabledDateTime` null, which the login gate, the per-request session refresh and the map (old line 51) treat as closed for good. Route 1: each attempt on the disabled account is counted; the fourth sets `disabledDateTime = now`, which turns the permanent state into the five-minute lock, and after the window `still_disabled` is false, so the right password or key signs in and `finish_login` writes `disabled = N`. Route 2: `update#Password` never reads `disabled`, and `update#PasswordInternal` writes `disabled` from its parameter, whose default is `N`; `Login/changePassword` then signs the user in. `reset#Password` does not read `disabled` either, so the reset password works as `oldPassword` for route 2.
@@ -664,8 +670,9 @@ High; confirmed (lead).
 
 #### SEC-RTE-01. `GET /email/{id}` lets anyone move mail to Viewed
 
-High; reported (likely).
+High; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-15: the tracking image's path is the message's view key, `{id}.{tag}`, the tag an HMAC of the id under a key derived from `session_cookie_key` (`web::email_view_key`, `emailViewKey` in the mail render context, mr-marble's `EmailLayout.html.fancy`); a bare id or a wrong tag changes nothing, and only an `ES_SENT` message becomes `ES_VIEWED`. Test: `web/tests.rs` `view_email_message_sends_the_png_and_marks_a_sent_message_by_its_key`.
 - **Where:** `crates/moqui-core/src/web/mod.rs:1306` (`mark_email_message_viewed`); `runtime/components/base/webroot/screen/webroot.xml:277`
 - **Reached by:** anonymous, `GET /email/<emailMessageId>` (or `<id>.png`), one request per id.
 - **What happens:** The id is the only check, and `emailMessageId` is a plain `type="id"` key (a sequenced id). Any `EmailMessage` not already `ES_VIEWED` is updated to `ES_VIEWED` with `receivedDate` set to now, with authorization disabled. The entity-auto status check allows it from `ES_READY` (the Outbox), `ES_SENT` and `ES_RECEIVED`, so a caller who walks the id range takes queued mail out of `ES_READY` and rewrites the status and received date of received mail.
@@ -677,8 +684,9 @@ High; reported (likely).
 
 #### SEC-ADM-01. A disabled account re-enables itself with a password change
 
-High; confirmed (lead).
+High; confirmed (lead); fixed.
 
+- **Fix:** Fixed 2026-11-15: `update#Password` refuses an account disabled for good or past `terminateDate` unless the caller has `ADMIN_PASSWORD`, `reset#Password` makes no reset password for one, and the password path writes `disabled` only to end a tarpit lock. Tests: `framework/test/ClosedAccounts.spec.js`, `user/login_tests.rs`.
 - **Where:** `UserServices.xml:166-282` (`update#Password`), `:284-385` (`update#PasswordInternal`)
 - **Reached by:** anonymous, `POST /ChangePassword/changePassword` or `/Login/changePassword` with the account's `username`, its current (or unexpired reset) password and a new password; a second factor code too when the account needs one.
 - **What happens:** `update#Password` never reads `disabled` or `terminateDate`. It calls `update#PasswordInternal` with three parameters, whose `disabled` parameter defaults to `N` and is written to the account. An account disabled for good (`disable#UserAccount`: `disabled` Y, no `disabledDateTime`, the state the map says ends sessions and refuses logins) becomes enabled, and `/Login/changePassword` then signs it in. `reset#Password` does not read `disabled` either, so the reset mail is sent for a disabled account and its reset password works as the old one. `terminateDate` still refuses the login.
@@ -689,8 +697,9 @@ High; confirmed (lead).
 
 #### SEC-TLS-01. Export's `filterMap` runs a caller's script, by GET, with no script permission
 
-High; confirmed (lead).
+High; confirmed (lead); fixed.
 
+- **Fix:** Fixed 2026-11-15: `filterMap` is parsed with `JSON.parse`, never evaluated, and `EntityExport`, `exportDocuments` and `AutoEditMaster` `export` are no longer `read-only`, so they take a POST with the session token and refuse URL parameters. Tests: `tools/test/EntityExport.spec.js`, `framework/test/client/SecurityScreens.spec.js`.
 - **Where:** `runtime/components/base/tools/screen/Tools/Data/Export.xml:18` and `:54-61`; `crates/moqui-core/src/script/oxide/resource.rs:246-272`
 - **Reached by:** a user with update on the Tools app (`ADMIN` by seed, whether or not in `ADMIN_ADV`) who requests, or is sent to, `GET /apps/tools/Data/Export/EntityExport?entityNames=<any entity>&filterMap=<script>`. A link on another site is enough: the request is a top-level GET, the cookie is `SameSite=Lax`, and no token is asked.
 - **What happens:** `filterMap` is passed to `ec.resource.expression`, which compiles and runs it in the running engine with the transition's own `ec`. The script can call `ec.artifactExecution.disableAuthz()` and then any service or entity operation, and `ec.resource.runTokenCommand('<program> <args>')`, which starts a process on the server. The sealed `GROOVY_SHELL_WEB` permission, which ETL asks for an expression and which no seed group holds, is not asked here. By the guide's click rule this is Medium; it is rated High because it is also a step for an `ADMIN` outside `ADMIN_ADV` from the Tools grant to script and process execution on the host.
@@ -704,8 +713,9 @@ High; confirmed (lead).
 
 #### SEC-TLS-02. Hosted-instance rows give host command execution and script execution to a Tools and System holder
 
-High; reported (likely).
+High; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-15: every `InstanceServices` service asks the new sealed permission `INSTANCE_ADMIN` (`ADMIN_ADV`), a host type's or database type's service must be one of `org.moqui.dev.InstanceServices`, and the `moqui.server.instance` configuration entities that hold a command, a script or a service name are restricted for the generic tools, REST and request loads (`sensitive.rs` `is_host_config_entity`). Test: `tools/test/HostedInstances.spec.js`, `sensitive.rs`.
 - **Where:** `runtime/components/base/framework/service/org/moqui/dev/InstanceServices.xml:444-447`, `:195`, `:206`, `:295`; `crates/moqui-core/src/script/host/tools.rs:2602-2621`
 - **Reached by:** an `ADMIN` (update on Tools and System, no sealed permission). Step one: write `moqui.server.instance.InstanceImage.authTokenCmd` (or `InstanceImageTypeEnv.envValue`, `InstanceHostType.initService`) through Tools › Data › Record or Browse (`update#${entity}`), a data load or entity REST. Step two: System › Instance, create an `AppInstance` on that image and press Init (`initAppInstance`).
 - **What happens:** `init#InstanceDocker` runs the text of `authTokenCmd` as a process on the server, before any Docker call is made. `create#AppInstance` expands `envValue` and `volumeName` as `${}` templates, which are script. `init#AppInstance` calls whatever service `initService` names, on a worker. The sealed permissions that guard the other ways to a host process or a script (`TERMINAL_HOST`, `SSH_SHELL`, `GROOVY_SHELL_WEB`, `COMPONENT_DEPLOY`, `CONF_EDIT`) are not asked on this path, and the same Docker API reach lets the holder start a container with any bind mount on whatever Docker host a row names.
@@ -718,8 +728,9 @@ High; reported (likely).
 
 #### SEC-GIT-01. `import#GitRepository` reads another repository or a server directory with no check of the source
 
-High; reported (confirmed in code).
+High; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-15: `import#GitRepository` checks its `source` for the caller (`service/mod.rs` `import_source_allowed`): another repository needs the view right on it, a directory or another scheme `TERMINAL_HOST` or authorization disabled, and a URL is https (http with `webhook-private-network`) with no credential, to public addresses only, whoever calls. mr-boss `create#Repository` takes only an http(s) `importUrl`. Test: `service/import_source_tests.rs`.
 - **Where:** `crates/moqui-git/src/lib.rs:1470-1530`; `crates/moqui-git/src/service/mod.rs:320-327`; caller `runtime/components/addon/mr-boss/service/ironstone/projects/CodeServices.xml:241-244`
 - **Reached by:** a user who manages a project in mr-boss: `ironstone.projects.CodeServices.create#Repository` checks `get#ProjectAccess need: 'manage'` (not ADMIN) when `workEffortId` is given, then passes the caller's `importUrl` on. Also any other caller of `import#GitRepository`.
 - **What happens:** `source` is taken as `git://<otherRepositoryId>`, a directory on the server, or a URL for gix. The default branch of the source is copied into the caller's `db` repository. No view right on the other repository is asked, no path rule on the directory, no scheme or address rule on the URL. A project manager can copy another project's private repository into their own, or any git repository directory the server user reads; an internal URL is fetched.
@@ -729,8 +740,9 @@ High; reported (confirmed in code).
 
 #### SEC-GIT-02. A registered runner gives its runner token to every step
 
-High; reported (confirmed in code).
+High; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-15: a registered runner's steps start from a cleared environment (`PATH`, `HOME`, `LANG` and the like, the `LC_` variables, `--pass-env` names, then the job's own), no runner, pool or job token is passed in any mode (`runner::step_base_env`), and `poll` reads its token from `--token-file` or `MOQUI_CI_RUNNER_TOKEN_FILE` (the variable still works, with a warning). Left: runner tokens have no expiry or bound source; a step run as the runner's user can still read the token file (docs/interfaces/Pipelines.md says to run steps as another user). Test: `ci/runner/tests.rs`.
 - **Where:** `crates/moqui-host/src/ci_run.rs:134`, `:151`; `crates/moqui-git/src/ci/runner/mod.rs:332-344`; `crates/moqui-git/src/ci/registered.rs:206-322`; `crates/moqui-git/src/ci/runner_http.rs:253`
 - **Reached by:** any account whose push or merge request runs a job in a pool of registered runners: with no `run-check-service`, an account with the update right on any repository that names the pool; a step of its `ci.xml` reads the variable.
 - **What happens:** `moqui ci-run poll` reads `MOQUI_CI_RUNNER_TOKEN` from its environment and runs each step with that environment; only `MOQUI_CI_TOKEN` is taken out. A step sends the runner token elsewhere. The token has no expiry. With it, `POST /ci/runner/claim` from any address takes the next queued job of the pool whenever the runner is idle, and the job token it answers reads that job's repository at its commit and, through `GET jobs/<id>/job`, its secrets. A developer who pushes to an unprotected branch so gets the secrets scoped to protected branches and environments, and those of the other repositories the pool serves. The documentation says nothing isolates a job from the machine; it does not say the runner's token is in a step's environment.
@@ -740,8 +752,9 @@ High; reported (confirmed in code).
 
 #### SEC-MAIL-01. Any mail user can take the inbound mail of an address nobody has claimed
 
-High; reported (confirmed in code).
+High; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-15: making a hosted or shared account with no store server, giving one another address, or making an account one needs the new permission `EMAIL_ACCOUNT_HOSTED` (`ADMIN`) or authorization disabled (`create#EmailAccount`, `update#EmailAccount`). The own-address exception was left out: a user changes their own `UserAccount.emailAddress` with no verification. Test: `basic-comms/test/HostedMailAddress.spec.js`.
 - **Where:** `runtime/components/base/framework/service/org/moqui/mail/EmailClientServices.xml` `create#EmailAccount` (207-306), `update#EmailAccount` (308-452); `runtime/components/base/basic-comms/service/org/moqui/comms/MailSettingsServices.xml` (the `gateway` branch near 717); `crates/moqui-mail/src/delivery.rs:73-135, 310-360`
 - **Reached by:** any signed-in member of `BASIC_COMMS_USERS`, through the MailAccounts wizard (`Settings/MailAccounts/Add`, kind "Hosted here" or "Shared, delivered here"), on a server whose inbound listener or edge node takes mail for the domain.
 - **What happens:** The user makes a hosted or shared account with any `emailAddress` and no server; nothing checks the domain, the address or a permission. From then on `RCPT TO` for that address (and its plus-tagged forms) resolves to the user's account and the mail is stored in their Inbox. An address no account has yet (`postmaster@`, `abuse@`, `hr@`, a colleague not yet set up, an application's intake or `bounces@` address) is theirs to read; `update#EmailAccount` also changes `emailAddress` with only the manage check on the account. An address that already has an older account stays with it (lowest id wins), so this takes unclaimed addresses only.
@@ -751,8 +764,9 @@ High; reported (confirmed in code).
 
 #### SEC-MAIL-61. A request's fileName runs as a server-side expression through emailScreenAsync
 
-High; reported (likely).
+High; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-15: an attachment's file name from a call is taken as written; only an `EmailTemplateAttachment` row's is expanded (`implementation.rs` `ScreenAttachment.expand_name`). `emailScreenAsync` and `emailScreenUserAsync` pass a fixed set of fields, not the context, and are no longer `read-only`. Test: `implementation_tests.rs` `screen_body_renders_html_and_text_and_sends_with_attachments`.
 - **Where:** runtime/components/base/webroot/template/screen/BasicTransitions.xml:20-22; runtime/components/base/framework/service/org/moqui/mail/EmailServices.xml:242-264; crates/moqui-mail/src/implementation.rs:1059, 1206, 1265; crates/moqui-core/src/script/runtime.rs:401-410
 - **Reached by:** any signed-in user authorized for a screen that includes `emailScreenAsync` (five mr-marble accounting screens: AssetOnHand, AssetOnHandSummary, AssetStatusByReceipt, ShipmentPackageSummary, FindTransactionEntry), with `GET .../emailScreenAsync?toAddresses=a@b.c&screenRenderMode=csv&fileName=${...}`; also a cross-site link such a user opens, since the transition is `read-only` and a GET is not token-checked.
 - **What happens:** Every request parameter is a context name and the transition passes the whole context to `send#ScreenRenderEmail`, which declares `fileName` and puts it in the attachment map it hands to `send#EmailTemplate`. `send_template` expands the attachment's file name with `moqui_core::script::expand`, which runs each `${expression}` in the script runtime, so text the request wrote is evaluated as JavaScript on the server with `ec` in scope, in an async service call.
@@ -762,8 +776,9 @@ High; reported (likely).
 
 #### SEC-MAIL-63. mr-marble PartyEmails serves any EmailMessage body as inline text/html
 
-High; reported (confirmed in code).
+High; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-15: the transition finds the message by the party's users and addresses, as the list does, and sends the body with `Content-Security-Policy: sandbox` and `nosniff`. Test: `mr-marble/test/PartyEmailBody.spec.js`.
 - **Where:** runtime/components/addon/mr-marble/screen/SimpleScreens/Party/PartyEmails.xml:23-26; crates/moqui-core/src/web/mod.rs:1253-1277
 - **Reached by:** any signed-in user authorized for the mr-marble Party screens, `GET .../PartyEmails/EmailMessage?partyId=x&emailMessageId=N` (ids are sequenced); for the script part, anyone who can mail any mailbox on the server and get such a user to open the link.
 - **What happens:** The transition finds the message by the request's id alone, with no party or account check, and answers its `body`. That is every user's mailbox mail and system mail: a password reset mail's stored body holds the reset password in clear (C65), so a party-screen user can ask for an administrator's reset anonymously and read it. The answer is `text/html` with `Content-Disposition: inline` on the application's origin, so HTML mail from outside (stored as received, not cleaned on the server) runs its script in the victim's session.
@@ -773,8 +788,9 @@ High; reported (confirmed in code).
 
 #### SEC-SCR-01. Data Export `filterMap` runs any server script, on a GET, without the script permission
 
-High; reported (confirmed in code).
+High; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-15 with SEC-TLS-01 (the same finding).
 - **Where:** runtime/components/base/tools/screen/Tools/Data/Export.xml:18 and :56
 - **Reached by:** any user of the Tools app (the `ADMIN` group by default), with `GET .../Tools/Data/Export/EntityExport?entityNames=<a defined entity>&filterMap=<script>`; also a third-party page that makes a signed-in admin's browser follow that link.
 - **What happens:** The `filterMap` parameter is evaluated with `ec.resource.expression`, which runs it as a server script with `ec` in scope: `ec.resource.runTokenCommand` (a host process), `System.getProperty` (secrets), `ec.artifactExecution.disableAuthz()`, `ec.service.rest()`. The transition is `read-only="true"` with no `method`, so it runs on a GET with URL parameters and no session token, and the cookie is `SameSite=Lax`. The sealed `GROOVY_SHELL_WEB` permission, which ETL expressions require, is not checked here.
@@ -784,8 +800,9 @@ High; reported (confirmed in code).
 
 #### SEC-SCR-05. Notification titles are expanded as script, and three callers build them from record values
 
-High; reported (likely).
+High; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-15: the Smithy deployment and push mirror notices pass a fixed title template and put the values in the message; a caller's `link()` is a URL taken as written, no longer expanded (`notify/message.rs`), which also covers the wiki review, chat, event and record links built from caller values. `DataDocument.documentTitle` (`PartyServices.xml`) is an administrator's configured template, as in Java, and stays. Tests: `notify/tests.rs` `a_callers_link_is_not_expanded`, `SmithyDeployments.spec.js`.
 - **Where:** crates/moqui-core/src/notify/message.rs:322 and :899-911; runtime/components/addon/mr-mantle/service/mantle/smithy/SmithyPipelines.js:1279; mantle/smithy/SmithyImport.js:2052; mantle/party/PartyServices.xml:1609
 - **Reached by:** a user who can set a deployment environment's name, a repository path, a push mirror URL or a data document's title (a repository maintainer or lower), then waits for the notification to be sent.
 - **What happens:** The text given to `.title()` is a template: `${...}` in it runs on the script runtime when the message is sent. These callers concatenate record values into it, so a value such as an environment name holding `${...}` runs as a server script in the sending service's context. Other callers (`Voice.js`, `PurchaseApprovals.js`) pass a fixed template and say why in a comment.

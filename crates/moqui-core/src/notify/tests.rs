@@ -275,6 +275,35 @@ fn a_stored_message_keeps_its_own_show_alert() {
     assert_eq!(stored(Some(false)), "N");
 }
 
+/// SEC-SCR-05: a caller's link is a URL taken as written, never a template, where `${...}` from a request or a record
+/// would run as script; the topic's `linkTemplate` and the title still are templates.
+#[test]
+fn a_callers_link_is_not_expanded() {
+    let (ctx, facade) = open();
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    topic_row(&facade, "LinkTopic", &[("linkTemplate", "go/${label}")]);
+    let message = || {
+        let mut map = IndexMap::default();
+        map.insert("label".to_string(), Value::string("L1"));
+        map
+    };
+    let mut given = NotificationMessage::new();
+    given
+        .topic("LinkTopic")
+        .title("Hello ${label}")
+        .link("/apps/x?q=${label}")
+        .message_map(message())
+        .persist(false)
+        .send()
+        .unwrap();
+    assert_eq!(given.link_text(), Some("/apps/x?q=${label}"));
+    assert_eq!(given.title_text(), Some("Hello L1"));
+    let mut topic = NotificationMessage::new();
+    topic.topic("LinkTopic").message_map(message()).persist(false).send().unwrap();
+    assert_eq!(topic.link_text(), Some("go/L1"));
+}
+
 #[test]
 fn subscriber_receives_one_message() {
     let (ctx, facade) = open();

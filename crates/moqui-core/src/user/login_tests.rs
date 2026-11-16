@@ -281,6 +281,47 @@ fn disabled_without_a_timestamp_stays_disabled_and_terminate_does_not_increment(
     session::reset_session();
 }
 
+/// SEC-WEB-01: failed logins on an account disabled for good never give it a lock time, which would end by itself.
+#[test]
+fn failed_logins_do_not_turn_a_permanent_disable_into_a_timed_lock() {
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    create_user(&facade, "stuck", "Secret1!", |value| {
+        value.set("disabled", Value::string("Y"));
+    });
+    for _ in 0..6 {
+        assert_eq!(login_user("stuck", "wrong").unwrap_err().to_string(), INVALID_LOGIN);
+    }
+    let stuck = load_user(&facade, "stuck");
+    assert_eq!(text(&stuck, "disabled"), "Y");
+    assert!(stuck.get("disabledDateTime").is_none_or(Value::is_null));
+    assert_eq!(i64_field(&stuck, "successiveFailedLogins"), 6);
+    assert_eq!(login_user("stuck", "Secret1!").unwrap_err().to_string(), INVALID_LOGIN);
+    session::reset_session();
+}
+
+/// SEC-ADM-01: a password change ends a tarpit lock but leaves an account disabled for good disabled.
+#[test]
+fn a_password_change_keeps_a_permanent_disable_and_ends_a_timed_lock() {
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    create_user(&facade, "stuck", "Secret1!", |value| {
+        value.set("disabled", Value::string("Y"));
+    });
+    change_password("stuck", "Secret2!").unwrap();
+    let stuck = load_user(&facade, "stuck");
+    assert_eq!(text(&stuck, "disabled"), "Y");
+    assert_eq!(login_user("stuck", "Secret2!").unwrap_err().to_string(), INVALID_LOGIN);
+
+    create_user(&facade, "locked", "Secret1!", |value| {
+        value.set("disabled", Value::string("Y"));
+        value.set("disabledDateTime", stamp(now_millis()));
+    });
+    change_password("locked", "Secret2!").unwrap();
+    assert_eq!(text(&load_user(&facade, "locked"), "disabled"), "N");
+    session::reset_session();
+}
+
 #[test]
 fn a_correct_password_logs_in_after_the_disable_window() {
     let (ctx, facade) = open_ctx();
