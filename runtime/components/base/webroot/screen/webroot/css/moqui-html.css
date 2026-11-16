@@ -156,6 +156,10 @@ details.menu > ul { position: absolute; z-index: 40; top: 100%; left: 0; min-wid
 .navbar #history-menu > ul, .navbar .spacer ~ details.menu > ul { left: auto; right: 0; }
 details.menu li > a, details.menu li > form { display: block; padding: 5px 14px; color: var(--fg); white-space: nowrap; }
 details.menu li > a:hover { background: var(--hover); text-decoration: none; }
+/* a menu choice that posts (a form with one button) looks and behaves as a link row */
+details.menu li > form { padding: 0; }
+details.menu li > form > button { all: unset; box-sizing: border-box; display: block; width: 100%; padding: 5px 14px; color: var(--fg); white-space: nowrap; cursor: pointer; }
+details.menu li > form > button:hover, details.menu li > form > button:focus-visible { background: var(--hover); }
 details.menu li.active > a { font-weight: 600; }
 
 /* ---------- containers ---------- */
