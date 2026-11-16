@@ -8,10 +8,10 @@ The routes are always registered. There is no `<dav-server>` element in `MoquiDe
 
 | Flag | Default | Effect |
 | --- | --- | --- |
-| `enabled` | true | `false` is 404 `the DAV server is off` for every method but OPTIONS; OPTIONS and the `/.well-known/` redirects still answer, and the request body is still read up to `max-file` |
+| `enabled` | true | `false` is 404 `the DAV server is off` for every method but OPTIONS; OPTIONS and the `/.well-known/` redirects still answer; the answer comes before the body is read |
 | `allow-http` | false | otherwise credentials need a secure request: HTTPS, a believed proxy's https, or loopback |
 | `account-password` | false | app password only. `true` also accepts the account password |
-| `max-file` | 268435456 (256 MiB) | 413 over that body |
+| `max-file` | 268435456 (256 MiB) | 413 over a PUT's body; any other method's body is at most 1 MiB (`MAX_XML_BODY`) |
 | `sftp-drives` | true | SFTP to drives for a user without `SSH_SFTP` |
 
 OPTIONS is answered with no login: `DAV: 1, 2, 3, calendar-access, addressbook, extended-mkcol`, and `Allow` lists `OPTIONS, GET, HEAD, PUT, DELETE, PROPFIND, PROPPATCH, MKCOL, COPY, MOVE, LOCK, UNLOCK, REPORT`.
@@ -26,9 +26,9 @@ copied.
 
 ### Request handling
 
-The host reads the whole request body into memory, up to `max-file`, within `webapp_body_timeout`, before `moqui_dav::dav::serve` checks credentials (`crates/moqui-host/src/dav_http.rs`). A declared `Content-Length` over the limit is 413 before the body is read. A failed login is recorded for web protection (`Event::AuthFailure`). After login, a path segment that decodes to `.`, `..` or holds `/` is 400 (`crates/moqui-dav/src/dav/mod.rs`). The request body is parsed as XML for every method but PUT.
+What the head decides is answered before the body is read (`moqui_dav::dav::answer_before_body`, which `serve` calls too): a path outside the server, OPTIONS, `enabled="false"`, no credentials, credentials over plain HTTP. A PUT's credentials are checked first without a login (`credentials_hold`: an app password, or the account password with `account-password="true"`). A PUT's body is then spooled to `runtime/tmp/upload` as an upload's file part, up to `max-file`, and handed to the drive without a copy (`BodySpool`, host `read_to_spool`, `DavRequest::upload`); any other method's body stops at 1 MiB (`crates/moqui-host/src/dav_http.rs`; plans/Security-Review.md SEC-FIL-04, fixed). A declared `Content-Length` over the limit is 413 before the body is read. A failed login is recorded for web protection (`Event::AuthFailure`). After login, a path segment that decodes to `.`, `..` or holds `/` is 400 (`crates/moqui-dav/src/dav/mod.rs`). The request body is parsed as XML for every method but PUT.
 
-A drive is named by its folder name (case ignored) or its `driveId`, from the list `FileServices.get#UserDrives` returns for the user. GET of a file sends `Content-Type` by the file's name with `ETag`, `Accept-Ranges` and `Last-Modified`, and no `Content-Disposition`. GET of a folder is an HTML list of escaped names. PUT calls `upload#Resource` with `conflictPolicy` `replace`. DELETE calls `trash#Resource`. COPY and MOVE take a `Destination` under `/dav/files/<the same user>/`, else 502, and call `copy#Resource` or `move#Resource`. File content is opened with authorization off after `get#ResourceInfo` admitted the path (`open_file` in `crates/moqui-dav/src/dav/files.rs`).
+A drive is named by its folder name (case ignored) or its `driveId`, from the list `FileServices.get#UserDrives` returns for the user. GET of a file sends `Content-Type` by the file's name with `ETag`, `Accept-Ranges` and `Last-Modified`, and the headers a screen download of a user's file gets (`web::user_file_guard_headers`): `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox` (not for a PDF shown inline) and `Content-Disposition: attachment` for a type that can run script (HTML, SVG, XML, JavaScript) (`dav/files.rs` `get`; SEC-FIL-03, fixed). A calendar or contact object's GET (`dav/pim.rs` `object`) gets the same headers. GET of a folder is an HTML list of escaped names. PUT calls `upload#Resource` with `conflictPolicy` `replace`. DELETE calls `trash#Resource`. COPY and MOVE take a `Destination` under `/dav/files/<the same user>/`, else 502, and call `copy#Resource` or `move#Resource`. File content is opened with authorization off after `get#ResourceInfo` admitted the path (`open_file` in `crates/moqui-dav/src/dav/files.rs`).
 
 ### Calendars and contacts
 
@@ -38,7 +38,7 @@ Calendars (`runtime/components/addon/mr-mantle/service/mantle/work/CalendarDavSe
 
 Contacts (`mantle/party/ContactDavServices.xml`): `get#DavObjects` calls `ContactBookServices.check#ContactBookAccess` with `CbpView`. `put#DavObject` and `delete#DavObject` answer 403 unless the user is the book's owner and the book is `CbvPersonal`. `get#ContactObjectTags` with a `partyIdList` (the projected books) finds those `mantle.party.Party` rows with authorization off.
 
-The parsers are in `crates/moqui-dav/src/pim`. A recurrence rule expands to at most 100000 instances (1000 for an open-ended rule) over at most 2000000 periods (`rrule.rs`). No other count or size constant was found in `ics.rs`, `vcard.rs` or `line.rs` by search; the request body limit (`max-file`) is the bound on an object's size.
+The parsers are in `crates/moqui-dav/src/pim`. A recurrence rule expands to at most 100000 instances (1000 for an open-ended rule) over at most 2000000 periods (`rrule.rs`). No other count or size constant was found in `ics.rs`, `vcard.rs` or `line.rs` by search; an object a client PUTs is at most 1 MiB (`dav/pim.rs` `MAX_OBJECT`), 413 before it is parsed.
 
 `login_user` does not call `finish_login` when a second factor is required. DAV requires that login to succeed and requires a non-empty current user id. The wrapper that maps a second-factor result onto the current user was not read.
 
@@ -46,7 +46,7 @@ The parsers are in `crates/moqui-dav/src/pim`. A recurrence rule expands to at m
 
 SFTP is the SSH `sftp` subsystem. Nothing listens for it unless the SSH server is up. `docs/interfaces/Sync.md` "SFTP to the drives" is this subsystem. The outbound SFTP client dials other hosts.
 
-`sftp-drives` defaults to true. `sftp-root` defaults to `runtime://sftp`. `sftp-max-file` defaults to 256 MiB. The user must already be logged in by key, password, or app password. A dialog login is refused. `SSH_SFTP` (seeded on `ADMIN`) selects the root: one resource location (`runtime://`, `file:`, `component://`, or `dbresource://`), paths normalized against `/`, and `..` that leaves the root is refused. Those calls run with authorization off. The permission checked at login is the gate. A user without `SSH_SFTP` gets the drives that user may open, when `sftp-drives` is true. `sftp-drives="false"` gives that user no SFTP. A write is an upload and a new version. A removal goes to the trash. At most 64 handles per channel.
+`sftp-drives` defaults to true. `sftp-root` defaults to `runtime://sftp`. `sftp-max-file` defaults to 256 MiB. The user must already be logged in by key, password, or app password. A dialog login is refused. A login by app password (`LoginBy::AppPassword`) gets the drives backend over SFTP and nothing else, whatever the user's permissions: no `sftp-root`, admin shell or git (plans/Security-Review.md SEC-FIL-02, fixed). `SSH_SFTP` (seeded on `ADMIN`) selects the root: one resource location (`runtime://`, `file:`, `component://`, or `dbresource://`), paths normalized against `/`, and `..` that leaves the root is refused. Those calls run with authorization off. The permission checked at login is the gate. A user without `SSH_SFTP` gets the drives that user may open, when `sftp-drives` is true. `sftp-drives="false"` gives that user no SFTP. A write is an upload and a new version. A removal goes to the trash. At most 64 handles per channel.
 
 ### The SFTP handler
 
@@ -54,7 +54,7 @@ SFTP is the SSH `sftp` subsystem. Nothing listens for it unless the SSH server i
 
 With `SSH_SFTP` the target is the `sftp-root` text followed by the normalized path, and each operation runs on a worker with authorization off through the resource facade (`stat`, `list`, `get`, `open`, `write_bytes`, `delete`, `make_directory`, `rename`). Which roots take writes is the facade's rule ([Resource facade schemes](#resource-facade-schemes)). Without `SSH_SFTP` each operation runs after `internal_login_user` of the channel's user through `moqui_dav::dav::files::tree`, the drive services as that user.
 
-A file opened for writing is held in memory until it is closed. The open files of one channel hold at most `sftp-max-file` bytes. The handler accepts every session channel a logged-in connection opens (`channel_open_session` in `ssh/server.rs` keeps no count), and each channel may start the `sftp` subsystem.
+A file opened for writing is held in memory until it is closed. The bytes open files hold (writes in memory, read windows) are counted per user over all of that user's channels and connections (`ssh/sftp_fs.rs` `Held`), so one user holds at most `sftp-max-file`. One connection holds at most 8 session channels waiting for a request or running `sftp` (`MAX_SESSION_CHANNELS`); one more is refused (SEC-FIL-61, fixed).
 
 ## Drives and public shares
 
@@ -76,7 +76,7 @@ A path with a `..` segment is "Not found", and a link to a whole drive does not 
 
 Each service calls `get#DriveAccess`. The owner is level 3. A current `ResourceDriveMember` row of the user or one of their groups gives its level. A `ResourceShare` to the user, a group or their party gives view or edit on its path and below. Another user's access is answered only with authorization off. A path with a `..` segment is level 0. A mirror and an archived drive are read only. On a records drive a user below manage level reaches only mapped folders of records the visibility hook admits, and a user with `EXTERNAL_USER` reaches none.
 
-`create#Drive` refuses `mirror` storage, a records drive and an explicit `rootLocation` unless the caller is in `ADMIN` or authorization is off. `transfer#DriveOwner` and `find#OwnedDrives` need the owner or `DRIVE_OWNER_CHANGE`. Three parameters name a server path and are not checked in the service: `create#Drive` `localPath` (stored on the `GitRepository` row), and `export#Drive` `targetLocation` and `targetPath`. The mr-boss wrappers (`DriveServices.create#SharedDrive`, `DriveSettings.xml`) do not pass them.
+`create#Drive` refuses `mirror` storage, a records drive and an explicit `rootLocation` unless the caller is in `ADMIN` or authorization is off. `transfer#DriveOwner` and `find#OwnedDrives` need the owner or `DRIVE_OWNER_CHANGE`. `create#Drive` `localPath` (stored on the `GitRepository` row) names a server path and is not checked in the service. With authorization on, `export#Drive` takes `targetLocation` only as a relative path of `[A-Za-z0-9._-]` segments (no `.` or `..`, no empty segment, so no scheme or leading `/`) and writes the zip at `runtime://drive-export/<path>`; anything else is refused. With no target the zip goes to `runtime://tmp/drive-export/<driveId>-<ms>.zip`, cleaned by `clean#DriveTempFiles`; with authorization disabled the location is taken as given. `targetPath` (a git drive) is `export#GitRepository`'s, a relative path under `runtime/git-export` that needs the delete right on the repository ([Git](Attack-Surface-Git.md)). The mr-boss wrappers (`DriveServices.create#SharedDrive`, `DriveSettings.xml`) do not pass them.
 
 ### Chunked uploads
 
@@ -90,7 +90,7 @@ Each service calls `get#DriveAccess`. The owner is level 3. A current `ResourceD
 
 The route is a row in [Attack-Surface-Routes.md](Attack-Surface-Routes.md). `ElFinderServices.run#Command` (`crates/moqui-dav/src/elfinder.rs`) implements `file`, `open`, `tree`, `parents`, `ls`, `get`, `mkdir`, `mkfile`, `rm`, `rename`, `upload` and `put`. `resourceRoot` and `volumeId` come from the request; with no `resourceRoot` the transition uses the `mantle.content.root` preference, else `dbresource://mantle/content`. A target is the volume id (3 characters) and the URL-safe Base64 of the path under the root. A path with a `..` segment or a segment holding `:` is `errFileNotFound`. `rm`, `rename` and `put` refuse the root. `rm` of a folder removes everything under it.
 
-In production (`instance_purpose` `production`) the write commands answer "Write not allowed for this resource root" unless the root starts with `dbresource://`, `content://` or `git://`; the read commands are not restricted by the root's scheme. A `content://` root is an error unless a component installs a provider for that scheme, so in production only `dbresource://` and `git://` roots take writes. The `resources` transition is `read-only="true"`, and it runs the same commands for GET and POST ([CSRF](Attack-Surface-Web.md#csrf)).
+In production (`instance_purpose` `production`) every command, the reads (`get`, `file`, `open`) included, answers "This resource root is not served on a production instance" unless the root starts with `dbresource://`, `content://` or `git://` (`Connector::root_refused`, before the command runs; SEC-FIL-08, fixed); `file:`, `runtime://`, `component://` and `classpath://` roots are served on a dev or test instance only. A `content://` root is an error unless a component installs a provider for that scheme. The `resources` transition is `read-only="true"`, and it runs the same commands for GET and POST ([CSRF](Attack-Surface-Web.md#csrf)).
 
 ## Resource facade schemes
 
@@ -108,7 +108,7 @@ These are gaps in this pass. A line that was read is stated above and is not rep
 
 - The DAV XML reader's refusal of a DOCTYPE is stated in the module comment of `crates/moqui-dav/src/dav/xml.rs`; `moqui_lib::node` was not read.
 - The bodies of `FileServices` `list#Folder`, `find#Resources`, `move#Resource`, `copy#Resource`, `trash#Resource`, the trash and version services, `download#Zip`, `get#Preview`, `clean#DriveTempFiles` and `index#DriveFiles` were not read past their `get#DriveAccess` calls.
-- Every caller of `create#Drive` with `localPath` and of `export#Drive` with `targetLocation` or `targetPath` was not traced, and the path checks of `GitServices.init#GitRepository` and `export#GitRepository` were not read.
+- Every caller of `create#Drive` with `localPath` was not traced, and the path check of `GitServices.init#GitRepository` was not read.
 - The SFTP client (`crates/moqui-core/src/sftp.rs`, host key pinning) was not read.
 - Whether the resource facade follows a symbolic link that is on disk under a `file:`, `runtime://` or `component://` SFTP root was not read.
 - The `image` crate's default allocation limit and the image services' concurrency slot (`image_slot`) were not read.

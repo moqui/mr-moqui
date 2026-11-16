@@ -6,8 +6,9 @@ The Medium findings of the [security review](Security-Review.md), by area. The r
 
 #### SEC-WEB-02. The password change form checks `oldPassword` with no lockout
 
-Medium; confirmed (second check).
+Medium; confirmed (second check); fixed.
 
+- **Fix:** Fixed 2026-11-16: `update#Password` compares the old password through `ec.user.checkOldPassword` (`login.rs` `check_old_password`) behind `gate_password`, the gate the password login uses: the lock window and `terminateDate` refuse any password, one check of a user runs at a time (`LoginCheck`), and an unknown or refused account gets an argon2 verify too. A wrong old password counts as a failed login and is noted as an auth failure; every refusal (wrong, locked, unknown, closed) answers "Password could not be updated with the information provided." after the same work, and the second factor's message answers only a caller who gave the right password. `/ChangePassword/**` is in the `login` rate limit. During a lock window a change by the old or a mailed reset password is refused, as a login is. Tests: `user/login_tests.rs` `the_old_password_of_a_change_is_behind_the_login_gate`, `framework/test/PasswordChangeGate.spec.js`.
 - **Where:** `runtime/components/base/framework/service/org/moqui/impl/UserServices.xml:166-283`; `Login.xml:105-114`; `ChangePassword.xml:19-23`
 - **Reached by:** anonymous, `POST /Login/changePassword` or `/ChangePassword/changePassword` with `username` (or `userId`), `oldPassword`, `newPassword`, `newPasswordVerify`; a request with no session cookie needs no session token.
 - **What happens:** The service counts a wrong `oldPassword` as a failed login but never reads `disabled` or `disabledDateTime`, so guessing goes on after the account locks, at the speed of argon2. A right guess changes the password and signs the caller in; for an account with a second factor the answer "Authentication code required for user" confirms the password. An unknown user returns before any hash is computed, so the response time tells whether a username exists (the same holds for `reset#Password`). The paths are also outside the `auth-failure` event (no `note_auth_failure`), and `/ChangePassword/**` is outside the `login` rate limit.
@@ -18,8 +19,9 @@ Medium; confirmed (second check).
 
 #### SEC-WEB-03. A locked account stays locked while anything keeps trying, its own API key included
 
-Medium; confirmed (second check).
+Medium; confirmed (second check); fixed.
 
+- **Fix:** Fixed 2026-11-16: a failed login counted during a lock window no longer rewrites `disabledDateTime` (`login.rs` `write_failed_increment`, `increment#UserAccountFailedLogins`), so the window ends after `disable-minutes` and the next failure after it starts a new one. `gate_account` counts a failure only where a password was tried (a password login, a re-authentication, a password change's old password); an internal login (jobs, queued work, XMPP service calls, a second factor's finish, the SSO device key) and a valid key or app password count nothing, and a valid key or app password the gate refuses is not noted as an auth failure (`refused_credential`). A locked account still refuses every login until the window ends. Test: `user/login_tests.rs` `attempts_during_a_lock_window_do_not_restart_it_and_internal_logins_do_not_count`.
 - **Where:** `crates/moqui-core/src/user/login.rs:1303-1310`, `:449-470`, `:1736-1746`
 - **Reached by:** anonymous who knows a username: four wrong passwords (`/Login/login`, `/rest/login`, Basic on any path), then one attempt in every five minutes; or four wrong passwords once, when the account's own integration sends its `api_key` more often than every five minutes.
 - **What happens:** An attempt on a locked account is counted without checking the credential and rewrites `disabledDateTime`, so the window never ends while attempts continue. Key and app password logins pass through the same gate, so a valid key is refused during the lock and each of its requests extends the lock. The owner's password login is refused too; live cookie sessions go on. With per-client rules off (the default) nothing else limits it.
@@ -43,8 +45,9 @@ Medium; confirmed (lead); fixed.
 
 #### SEC-WEB-08. The first caller creates the administrator
 
-Medium; confirmed (second check).
+Medium; confirmed (second check); fixed.
 
+- **Fix:** Fixed 2026-11-16: `create#InitialAdminAccount` takes the request only when `ec.user.initialAdminAllowed(setupSecret)` passes: the caller is on this machine (`user/setup.rs` `initial_admin_local`: a loopback peer straight to the listener, or the Desktop node in process, with no forwarding header), or it gives the one-time setup secret the server writes to its startup log while no account exists (`log_initial_admin_setup`, new at each start). The Login form, its tui form and the terminal's login dialog ask for the secret from another machine and say where it is. The create locks the seed `_NA_` row and asks `get#InitialAdminNeeded` again, so two requests at once make one administrator. Tests: `user/setup_tests.rs`, moqui-tui `keys.rs` `setup_from_another_machine_asks_for_the_setup_secret`.
 - **Where:** `Login.xml:116-120`; `UserServices.xml:487-505`
 - **Reached by:** anonymous, one `POST /Login/createInitialAdminAccount` from any address, from the moment the listener binds until an account exists.
 - **What happens:** The service checks only that no account exists but the seed ones. The listener binds `0.0.0.0` by default, so on a new install anyone who reaches the port before the operator does becomes a member of `ADMIN`. Two requests at once can both pass the check and both get an `ADMIN` account.
@@ -57,8 +60,9 @@ Medium; confirmed (second check).
 
 #### SEC-RTE-02. `GET <screen>/actions` answers the screen's whole context
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); partly fixed.
 
+- **Fix:** Fixed 2026-11-16 in part: `GET {screen}/actions` answers the screen package only for a screen eligible as a server-static template (`statics.rs` `sends_package`); another screen answers 404 and runs no actions, so `/Login/actions` no longer answers the `AuthFlow` rows or the demo account. Form-list rows and tree nodes (`{screen}/actions/{name}`) are unchanged. Left: a server-static screen's package still holds its whole context, not only the names its template reads; recording that set needs a design (the static generator's reads are not recorded, and a browser that cached the template may ask before this process built it). Test: `screen/tests/statics.rs` `only_a_server_static_screen_answers_its_actions_package`.
 - **Where:** `crates/moqui-core/src/screen/statics.rs:767` (`screen_package`), `:545` (`unwrap_context`); `crates/moqui-core/src/screen/definition.rs:1030`
 - **Reached by:** any caller who may run a transition of the screen: anonymous for a screen that does not require authentication (`GET /Login/actions`), a signed-in user for a screen they may view.
 - **What happens:** Every screen has an `actions` transition, whether or not it is a server-static qvt screen. It runs the screen's actions and sends every name in the context as JSON. Only thirteen credential names are removed. Anything a screen's actions put in the context for a check, and never show, is in the answer. For `/Login/actions` an anonymous caller gets the `AuthFlow` rows (`defaultUserGroupId`, `testedByUserId`, `systemMessageRemoteId`) and, where the demo row exists, the `EX_JOHN_DOE` `UserAccount` row without its password fields.
@@ -71,8 +75,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-RTE-03. Any signed-in user can write `EntityAuditLog` rows through entity REST
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `EntityAuditLog` loses `authorize-skip="create"` and is in `sensitive.rs` `SERVICE_WRITTEN_ENTITY_KEYS`, so entity REST, Service REST entity resources, the Tools record and auto-edit write transitions (`WebUtilities.isGenericWriteRefused`), the data grid, ETL targets and request loads refuse to write it; reads stay, and the framework's own audit write runs with authorization off. Test: moqui-entity `entity_rest_does_not_write_the_audit_log_or_the_monitor_rows`.
 - **Where:** `crates/moqui-entity/src/entity/query_rest.rs:214`; `runtime/components/base/framework/entity/EntityEntities.xml:21`
 - **Reached by:** any signed-in user (a session with its token, a key or Basic), `POST /rest/e1/moqui.entity.EntityAuditLog` with any field values.
 - **What happens:** The entity has `authorize-skip="create"`, the implicit `create#` service needs no service authorization, and the generic REST write refusal lists do not name the entity (a test asserts it is not an audit entity). A user with no grant at all can add rows saying any user changed any field of any record at any time. The audit log is the evidence the map's Admin section relies on.
@@ -114,8 +119,9 @@ Medium; reported (confirmed in code); fixed.
 
 #### SEC-RTE-06. Entity REST dependents read entities the restricted rule refuses
 
-Medium; reported (likely).
+Medium; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-16: `query_rest.rs` `push_related` skips a related entity the generic read rule refuses (`generic_access(..).read`: `UserLoginKey`, `UserAuthcFactor`, `UserPasswordHistory` below `UserAccount`), for dependents and masters, and each nested record is concealed as the top one is (`RecordGuard`). Test: moqui-entity `generic_reads_leave_out_restricted_related_rows_and_answer_encrypted_fields_as_set`.
 - **Where:** `crates/moqui-entity/src/entity/query_rest.rs:208`, `:962` (`related_rows`)
 - **Reached by:** a user with `AT_ENTITY` view on `UserAccount` and the related entities (in practice `ADMIN`, or a stolen admin key), `GET /rest/e1/moqui.security.UserAccount/<userId>?dependents=true`.
 - **What happens:** The rule that keeps `UserLoginKey`, `UserAuthcFactor`, `UserPasswordHistory`, `UserGroupMember` and the others out of generic REST, an administrator included, is applied to the entity the path names. The dependents and master expansions read every related entity with a plain find. `UserAccount` has automatic reverse relationships to those entities, so the answer nests their rows; only the five `UserAccount` password field names are stripped, so `loginKey`, `factorOption` (decrypted) and `UserPasswordHistory.password` stay.
@@ -128,8 +134,9 @@ Medium; reported (likely).
 
 #### SEC-RTE-07. A multipart body is spooled to disk before any check
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: an upload that may pass `webapp_max_body` (declared larger, or with no Content-Length) is held to `webapp_max_body` unless the request names a user before its body is read: a signed session cookie of a signed-in session, or an `api_key`, `login_key` or Basic credential that holds, checked without a login (`moqui_core::user::credential_user`; host `http.rs` `upload_has_user`); a wrong credential counts for web protection. Only the `anonymous-upload-paths` of `web-protection` (`webapp_anonymous_upload_paths`, default `/s/`, the public share's file drop) take `max-upload` with no user. The spool files of all requests hold at most `webapp_max_spool` (4 GiB), past which an upload is 503, and a refused or cut-short upload leaves no file (`SpoolWriting`). Tests: `web::tests::an_anonymous_upload_stops_at_the_body_limit_but_on_the_open_paths`, `web::multipart::tests::the_spool_holds_at_most_its_total_and_a_body_spools_as_a_part_does`, moqui-host it `web_streaming::large_files_stream_with_ranges_and_validators`.
 - **Where:** `crates/moqui-host/src/http.rs:1109`-`1124`, `:1203`
 - **Reached by:** anonymous, a `multipart/form-data` `POST` to any path.
 - **What happens:** The host reads and spools up to `webapp_max_upload` (2 GiB by default) under the runtime directory before the request is queued, signed in or matched to a screen. Several such requests at once fill the runtime disk and hold its I/O; only the 60 s idle timeout and the body limit bound each one.
@@ -142,8 +149,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-ADM-02. `update#Password` tests passwords with no lockout and tells right from wrong
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16 with SEC-WEB-02 (the same weakness): the old password is checked behind the login gate and counted, and every refusal has the one answer after the same work.
 - **Where:** `UserServices.xml:233-271`
 - **Reached by:** anonymous, `POST /ChangePassword/changePassword` (or `/Login/changePassword`) with any `username`.
 - **What happens:** The old password is compared whatever `disabled` and `successiveFailedLogins` say; a wrong one only increments the counter (and keeps the owner locked out). The answers differ: wrong is "Password could not be updated with the information provided."; right with a deliberately invalid new password is a policy message ("Password shorter than 8 characters") and nothing changes; right on an account with a second factor is "Authentication code required for user X". So the three-failure lockout of the login form does not bound guesses made here. `/ChangePassword/**` is not in the `login` rate limit, which is off anyway until per-client rules are on (old line 260).
@@ -153,8 +161,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-ADM-03. A signed-in session changes the password without the old one
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: a single use code stands in for the old password of `update#Password` only in a pre-authenticated session (`moquiPreAuthcUsername`), never a signed-in one, and a password administrator gives their own old password as anyone does. Issuing codes, adding a factor and ending one need a sign-in in the last five minutes (`check#AccountAction` with `recentAuth`, `require#RecentAuth`), as SSH keys, access tokens and app passwords do; a refused browser form asks the user to confirm (`X-Moqui-Reauth`) and sends again. Test: `framework/test/CredentialGuards.spec.js`.
 - **Where:** `UserServices.xml:210-229` with `:704-738` (`create#SingleUseAuthcCodes`); mr-boss `screen/Commons/Settings/Account.xml:110-124`
 - **Reached by:** whoever holds a signed-in session (a stolen cookie, an unlocked browser): post `createUserAuthcFactorSingleUse`, read the codes, post `changePassword` with one code and any text as `oldPassword`.
 - **What happens:** Issuing single-use codes needs no password and no recent sign-in. Having any factor in date makes `secondFactorRequired` true, and for the signed-in user (`codeUsername == username`) a valid code sets `codeVerified`, which skips the old password. The same session can also end the user's factors (`invalidate#UserAuthcFactorEntry`) and mint an access token (C7). The recent sign-in check (`check#RecentAuth`) guards none of these.
@@ -164,8 +173,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-ADM-04. Factor services act on any `userId`
 
-Medium; reported (to check).
+Medium; reported (to check); fixed.
 
+- **Fix:** Fixed 2026-11-16: every factor service (`get#UserAuthcFactorInfo`, `validate#UserAuthcFactorCode`, the `create#` services, `create#SingleUseAuthcFactor`, the three `send#AuthcCode*` services, `setup#UserAuthcFactorTotp`, `invalidate#UserAuthcFactorEntry`) calls `check#AccountAction`: another user's account needs `ADMIN_IDENTITY_MANAGE` (`ADMIN_IDENTITY_VIEW` to read its factors) and is refused when it holds access the caller lacks. `setup#UserAuthcFactorTotp` gives no secret of a verified factor, nor of one that is not an authenticator's. Test: `framework/test/CredentialGuards.spec.js`.
 - **Where:** `UserServices.xml:532, 637, 704, 741, 815, 932, 963, 990, 1008, 1052`
 - **Reached by:** a user of any screen whose transition passes request parameters to these services; mr-marble `screen/MyAccount/User/Account.xml:29-42` calls them with no `in-map` (the screen's always-actions set `userId` from `ec.user.userId`; which wins over a posted `userId` was not traced) and mounts the tools `Verify*` subscreens, whose `sendAuthcCodeEmail` takes a posted `factorId`.
 - **What happens:** None of the services compares `userId` or the factor's owner with the caller, so the wall is each screen's parameter handling. With another user's id a caller would issue recovery codes for them, end their factors, or read a TOTP secret (`setup#UserAuthcFactorTotp` with `factorId`).
@@ -175,8 +185,9 @@ Medium; reported (to check).
 
 #### SEC-ADM-05. `ADMIN` reaches the sealed permissions of `ADMIN_ADV` through another account
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `update#Password`'s administrator path, a change of another account's sign-in fields in `update#UserAccount` (anything but the name, locale, time zone and currency) and the factor services refuse an account that holds access the caller lacks (`Identity.js` `heldBeyond`: a privileged group the caller is not in, a sealed permission the caller does not hold). An `ADMIN` edit of `UserAccount.currentPassword` or a `UserLoginKey` row through the Tools entity screens was not traced. Test: `framework/test/CredentialGuards.spec.js`.
 - **Where:** `UserServices.xml:183-202`; `base/tools/screen/System/Security/UserAccount/UserAccountDetail.xml:23, 54-64`
 - **Reached by:** a member of `ADMIN` (holds `ADMIN_PASSWORD`, not `SSH_SHELL`, `SQL_RUNNER_WEB`, `TERMINAL_HOST`, `COMPONENT_DEPLOY`, `CONF_EDIT`, `ADMIN_LOGIN_AS`), on System › Security › User Accounts.
 - **What happens:** With `ADMIN_PASSWORD` `update#Password` sets any account's password with no further check, and the same screen issues single-use codes for, or ends the factors of, any account. So an `ADMIN` member sets the password of an `ADMIN_ADV` member, issues a code and signs in as them. The `heldBeyond` rule that `IdentityServices` applies to sessions and credentials is not applied here. The seal on those permissions holds against a grant, not against taking over a holder.
@@ -186,8 +197,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-ADM-06. `ADMIN_IDENTITY_MANAGE` assigns bundles though it is not sealed
 
-Medium; reported (likely).
+Medium; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-16: `apply#GrantProposal` (`Access.js` `applyGrantProposal`) refuses the caller's own account (`OWN_ACCOUNT`) unless the caller holds `ADMIN_ACCESS_MANAGE`, and in mr-boss `BOSS_ADMIN`, every `BOSS_ADMIN_*` bundle and the fifteen app administrator bundles name `delegablePermissionId="ADMIN_ACCESS_MANAGE"`, so an identity operator gives them to no account (`NOT_DELEGABLE`). The sub-area administrator bundles stay proposable by one. Tests: `framework/test/CredentialGuards.spec.js`, `mr-boss/test/Admin/AdminAccess.spec.js`.
 - **Where:** `admin/Access.js:1093-1120` (`applyGrantProposal`)
 - **Reached by:** a holder of `ADMIN_IDENTITY_MANAGE` without `ADMIN_ACCESS_MANAGE` (mr-boss `BOSS_ADMIN_IDENTITY`), through whatever screen or service calls `AccessServices.apply#GrantProposal` (Mantle's `Identity.js:631`, `SharedDevices.js:102`, `Lifecycle.js:454`).
 - **What happens:** `ADMIN_ACCESS_MANAGE` is sealed because it widens access, yet `apply#GrantProposal` writes the same memberships for a holder of the unsealed `ADMIN_IDENTITY_MANAGE`, for any `userId`, the caller's own included. The only bounds are `proposalBundles` (registered, not privileged for a non-member, no sealed permission carried, the bundle's `delegablePermissionId`), and none of the 150 `CapabilityBundle` rows under `runtime/components/addon` names a `delegablePermissionId`. An identity operator could so join `BOSS_ADMIN_CONFIGURE`, `BOSS_ADMIN_INTEGRATIONS`, `BOSS_ADMIN_OPERATIONS`, `BOSS_ADMIN_DATA` or any application's administrator bundle.
@@ -199,8 +211,9 @@ Medium; reported (likely).
 
 #### SEC-TLS-03. `runTokenCommand` is on `ec.resource` for every script
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `ec.resource.runTokenCommand` is gone from the script host. The registry token comes from the Rust service `InstanceServices.get#RegistryToken` (`service/registry_token.rs`), which needs the sealed `INSTANCE_ADMIN` and runs the conf's `instance-hosting` `token-command` whose `name` the image's `authTokenCmd` holds; a value that names no entry is refused, so a row's text is never run. The command is split on white space with no shell, stdin closed, a named environment and 30 seconds. Tests: `registry_token_tests.rs` `no_script_starts_a_process_and_the_registry_token_needs_the_conf_and_the_permission`, `a_token_command_is_named_by_the_conf_only`.
 - **Where:** `crates/moqui-core/src/script/host/tools.rs:721`, `:1272`, `:2602-2621`
 - **Reached by:** any place that runs script text a user supplies: C1's `filterMap`, C2's templates, an ETL `expression` (with `GROOVY_SHELL_WEB`), and whatever other slices find (stored filter maps, templates).
 - **What happens:** The function has one caller in the repository (`init#InstanceDocker`) but is installed on the shared tools shim, so a script-injection anywhere becomes process execution as the server's OS user. Its only check is the read fence. The argument is split on white space, so `sh -c` with a one-word script, or any program with plain arguments, runs.
@@ -228,8 +241,9 @@ Medium; confirmed (lead); fixed.
 
 #### SEC-TLS-05. Export and Snapshots read the entities the other generic tools refuse
 
-Medium; reported (likely).
+Medium; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-16: `EntityDataWriter` without `full(true)` skips the restricted entities (one message naming them) and writes no password or encrypted field, in dependents and masters too (`RecordGuard::File`); the script host's `makeDataWriter` sets `full` only for a holder of the sealed `ADMIN_BACKUP_DOWNLOAD`, and `AutoEditMaster` `export` refuses a restricted entity as `update` does. `ADMIN` holds that permission in the seed, so its exports stay whole; a snapshot taken without it carries no secrets. Tests: moqui-entity `generic_reads_leave_out_restricted_related_rows_and_answer_encrypted_fields_as_set`, `tools/test/EntityExport.spec.js`.
 - **Where:** `runtime/components/base/tools/screen/Tools/Data/Export.xml:26-45`; `Tools/Data/Browse/AutoEdit/AutoEditMaster.xml:31-34`; `crates/moqui-entity/src/entity/data_writer.rs:410-432`
 - **Reached by:** a user with update on the Tools app: `EntityExport` with `entityNames=moqui.security.UserAccount` (or `UserLoginKey`, `UserAuthcFactor`, `moqui.basic.email.EmailServer`, `moqui.database.DatabaseConnection`, `moqui.server.instance.DatabaseHost`), `output=browser`; or `AutoEditMaster/export?aen=<entity>&<pk>`.
 - **What happens:** The grid, Browse, Record, ETL and REST refuse the identity, secret-config and audit entities and strip the `UserAccount` password fields. The data writer does neither, so password hashes and salts, login-key hashes, sign-in factor rows and the stored credentials of mail servers and external databases leave in one download. The map accepts that Tools reads "every record whole" for business records; it says the audit entities are read only by their own services (B1), and external database passwords are "never returned".
@@ -241,8 +255,9 @@ Medium; reported (likely).
 
 #### SEC-TLS-06. A scheduled report writes to any server path
 
-Medium; reported (likely).
+Medium; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-16: a report's save location must be under a root of the conf's `report` `save-roots` (`report_save_roots`, default `dbresource://report/`), with no `..` segment, no encoded separator or backslash, not `component:`, no `conf` segment and no `.env` file (`context/save_location.rs` `report_save_location_problem`). `create#Schedule` refuses another (`schedule.rs` `check_save_location`), the delivery checks each file again, and the older `run#ScreenScheduled` checks it and no longer expands the location as a template. `REPORT_SAVE_LOCATION` is sealed. Test: `save_location_tests.rs` `a_report_is_saved_only_under_a_save_root`.
 - **Where:** `crates/moqui-report/src/schedule.rs:75-76`, `:1370-1392`; `crates/moqui-core/src/context/resource.rs:528-545`
 - **Reached by:** a holder of `REPORT_SAVE_LOCATION` (seeded on `ADMIN`; not a sealed permission) who saves a schedule with `saveToLocation` set, for example to `file:/…`, `runtime://conf/…` or `component://…`.
 - **What happens:** At each run the rendered file replaces whatever is at that location, with parent directories made. The content is a report the author composes (titles, a CSV's header and cells), so the write can destroy a file the server needs or place text where the server later reads it (a component's `data/`, a `.env`, a template). The conf edit is behind sealed `CONF_EDIT` "since the conf names the code the server runs"; this path is not.
@@ -253,8 +268,9 @@ Medium; reported (likely).
 
 #### SEC-TLS-11. (telemetry reader) Monitor's permissions are checked only in its services; a generic write to a `moqui.monitor` row goes around them
 
-Medium; reported (likely).
+Medium; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-16: `RecoveryAction`, `RecoveryAdapter`, `RecoveryPolicy`, `RecoveryControl`, `InstanceDrain` and `IngestKey` are in `SERVICE_WRITTEN_ENTITY_KEYS`, refused to every generic write, and `recovery/execute.rs` `advance` checks a persisted action again before each attempt (`refused_by_decision`): its decision must exist, match the action's incident, action, target and adapter, and be approved (or blocked, for an action that changes nothing); else the action fails without running. While the emergency stop is on, an action that changes the system waits. Test: moqui-host it `monitor_recovery::recovery_decides_waits_for_approval_acts_through_its_adapters_and_verifies`.
 - **Where:** `crates/moqui-report/src/recovery/mod.rs:485-492`, `crates/moqui-report/src/recovery/execute.rs:526` and `:176-199`, `crates/moqui-entity/src/entity/sensitive.rs:66-76`
 - **Reached by:** a user who can write entities generically but lacks the `MONITOR_*` permission: Tools › Data (Record, Grid, Browse: `update#${entity}` under `TOOLS_APP`'s inherited authorization), Data Load, or Tools' SQL with changes.
 - **What happens:** `run#Recovery` (each minute, authorization off) takes every `RecoveryAction` row whose status is `Persisted`, `Running` or `AwaitingOperator` and runs its adapter for the row's `action`, `target` and `adapterId`. It reads no decision, no approval, no emergency stop and no `allow-automatic` at that point, so a row created directly (with a `MonitorIncident` row for its `incidentId`) pauses a job, writes an `ALL_USERS` deny on an artifact group, drains an instance or posts a webhook within a minute. The same holds for `RecoveryAdapter` and `RecoveryPolicy` (gate `MONITOR_RECOVER_ADMIN`), `RecoveryControl` (the emergency stop), `InstanceDrain`, and `IngestKey`: a row with a chosen `keyId` (the SHA-256 of a chosen token) and the `userId` of a `MONITOR_INGEST` holder is a working ingest key. None of these entities is in the lists the generic tools refuse.
@@ -266,8 +282,9 @@ Medium; reported (likely).
 
 #### SEC-TLS-12. (telemetry reader) A recovery webhook adapter sends any process property to a URL its author chooses
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `store#RecoveryAdapter` refuses a `urlProperty`, `secretProperty` or header property that does not start with `recovery_` and is not listed in the conf property `monitor_recovery_properties`, and a URL or header property the conf marks secret needs the list too (the HMAC key may be secret: it is not sent). The run checks the same (`execute::property_allowed`), so an older row reads nothing it may not. Test: `recovery::execute::tests::an_adapter_reads_only_recovery_properties_and_sends_no_conf_secret`.
 - **Where:** `crates/moqui-report/src/recovery/execute.rs:44-52`, `:446-451`; `crates/moqui-report/src/recovery/mod.rs:998-1046`
 - **Reached by:** a holder of `MONITOR_RECOVER_ADMIN`, `MONITOR_RECOVER` and `MONITOR_INCIDENT` (all seeded on `ADMIN`): `Recovery/storeAdapter`, `Recovery/storePolicy`, `Incidents/createIncident`, `IncidentDetail/approveDecision`.
 - **What happens:** `headerPropertiesJson` maps header names to property names, `urlProperty` names a property used as the URL, and `secretProperty` one used as the HMAC key. `store#RecoveryAdapter` stores them without an allow list or a name prefix, and the webhook reads each with `moqui_lib::env::get_property` and sends it as a request header to the adapter's `url`. The same user sets `allowInternal`. An operator's own incident has confidence 1.0, so the user can open an incident, point a policy's ladder at the adapter, approve the decision and receive the values. The merged-conf view masks secret values and a conf edit needs the sealed `CONF_EDIT`; this path needs neither.
@@ -278,8 +295,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-TLS-13. (telemetry reader) Synthetic checks and scrape targets reach internal addresses and answer what they found
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16 with SEC-OUT-03: a scrape target or synthetic check reaches an internal address only when its row's `allowPrivateNetwork` is Y (on production; elsewhere also when empty), setting Y or moving such a row's URL needs `MONITOR_PRIVATE_NETWORK`, and a link-local or metadata address is refused always. Test: `tools/test/MonitorChecks.spec.js`.
 - **Where:** `crates/moqui-core/src/telemetry/scrape.rs:548-558`, `:705-727`; `runtime/components/base/tools/screen/System/Monitor/Checks.xml:24-43`
 - **Reached by:** a `SYSTEM_APP` holder with create or update: `Checks/createCheck` or `createTarget`, then `checkNow` or `scrapeNow` (or wait a minute for the job).
 - **What happens:** Both senders set `deny_internal: false`, so the server requests loopback, private and link-local addresses (a cloud metadata address, another service's admin port) with `GET`, `HEAD` or an empty `POST`. A check's row shows the status code and whether the body contains `expectBodyContains`, and Run now repeats it at once, so the body of an internal response can be read out a piece at a time. A scrape stores every line of the body that parses as a Prometheus sample and shows the transport error or status otherwise. No other permission than the group is asked, unlike the recovery webhook (`MONITOR_RECOVER_ADMIN` and `allowInternal`) or a deploy URL (private hosts refused on production).
@@ -292,8 +310,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-AI-01. A room member approves a write that runs as another user
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `approval::decide_in` lets a room member who is not the requester approve only a write that member may make, checked as the decider (`decider_may_write` under `user::as_user`: a screen write's path, a service's own permission); another system's tool, an add-on tool or a change set only its requester approves. A member's rejection is unchanged; the write runs as the requester, and the approval keeps both users. Tests: `approval::tests::a_member_approves_only_a_write_they_may_make_themselves`, `members_tests::an_agent_member_replies_in_the_thread_and_a_room_member_approves_its_card`.
 - **Where:** `crates/moqui-llm/src/approval/mod.rs:1129-1135`; `crates/moqui-llm/src/chat.rs:1085-1111`, `:1117-1170`
 - **Reached by:** any signed-in user who may post in a chat room that has an agent member, through `decide#ChatCard` (the `chatAssistCard` transition) on an approval card another member's run posted.
 - **What happens:** A run started from a room message runs as the sender. Its approval card is a room message. Any human member who may post can press Approve, and the write then runs with the sender's permissions. The earlier messages of the thread reach the model (wrapped as untrusted), so a member can also steer what gets proposed. A low-privilege member can thus approve a write an administrator's request produced, without the administrator seeing the card.
@@ -303,8 +322,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-AI-02. An OpenUI Button runs a model-written write on one click, showing only the transition's name
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: a canvas Mutation click (`assist/canvas.rs` `mutation`) holds the write and answers its method, path, transition, parameters and hash, running nothing; it runs only when a second click, with a new nonce, confirms that hash, so a write the model or the values changed has another hash. The client (`WebrootAssist.js` `canvasAction`, `confirmCanvasWrite`) shows the transition, the path and every parameter before the user confirms; a Vue SFC canvas posts through the same path. Test: moqui-host it `assist::the_canvas_over_http_on_postgres`.
 - **Where:** `crates/moqui-llm/src/assist/canvas.rs:316-371`; `crates/moqui-llm/src/ui/write.rs:157-240`; `js/WebrootAssistCanvas.js:740-750`
 - **Reached by:** a signed-in `AgentUse` user who clicks a Button on a canvas the seed `assist` agent drew (OpenUI is on by default on the drawer). The program is the model's, so text the model read (a record, a mail, a page) can shape it.
 - **What happens:** The model writes the Button's label and the Mutation behind it: a POST to any `/apps` transition with arguments that may be literals in the program. A click arms a nonce and the server runs the transition as the user, with no approval card. Beside the label the page shows "saves:" and the last path segment only; the parameters are not shown. A Button labelled "Show details" bound to a `delete...` or `update...` transition runs it.
@@ -316,8 +336,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-GIT-03. A gzip request body is inflated without limit, and SSH has no request limit
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `serve_http` caps a gzip body's decoder at `max-request` (upload-pack) or `max-push-size` (receive-pack) (`server::limited::Capped`, an error past it), `serve_ssh` holds the whole conversation's input to the same limits, and upload-pack counts its request lines (`upload::LineBudget`: `fetch-max-lines`, 1,000,000, in `fetch-max-request-bytes`, 64 MiB), else `GitFetchRequestTooLarge`. Tests: `server::limited::tests` `a_gzip_body_and_ssh_input_are_held_to_max_request`, `an_upload_pack_request_is_held_to_fetch_max_lines`.
 - **Where:** `crates/moqui-git/src/server/mod.rs:771-777`; `crates/moqui-host/src/git_http.rs:97-130`, `:221-224`; `crates/moqui-git/src/server/upload.rs:120-128`, `:538-560`, `:650-660`; `crates/moqui-host/src/ssh/git.rs:77-92`
 - **Reached by:** upload-pack: anyone who may read a repository (anonymous where a repository is public, any account with view), `POST /git/<repo>/git-upload-pack` with `Content-Encoding: gzip`, or over SSH. Receive-pack: an account with a push right, over HTTP with gzip or over SSH.
 - **What happens:** `max-request` (64 MiB) and `max-push-size` (2 GiB) count the body as sent. The server then wraps it in `GzDecoder` with no cap. Upload-pack keeps every `want`, `have`, `shallow` and unknown argument line in memory with no count, so a compressed body expands to many times the limit in memory. A push from an account with a push right writes the inflated pack to the quarantine directory with no total cap. Over SSH there is no byte limit on either service.
@@ -327,8 +348,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-GIT-04. A viewer reads a whole blob or LFS object into server memory through REST
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `get#GitBlob` reads the file's size first (`GitProvider::file_at`, an LFS file's content counted) and answers a file over `git-server` `blob-max-bytes` (16 MiB) with its size and `tooLarge` only; `commit_diffs` diffs the first `commit-max-diff-files` (300) and lists the rest as too large; `get#GitLog` with a path compares at most `log-max-commits` (10,000) commits a page. Test: `service::read_limits_tests` `a_viewers_reads_are_held_to_their_limits`.
 - **Where:** `crates/moqui-git/src/service/mod.rs:605`; `crates/moqui-git/src/browse.rs:290`; `crates/moqui-git/src/lfs_files.rs:134-141`; `crates/moqui-entity/src/resource/source.rs:246`; `crates/moqui-git/src/service/rest.rs:571-576`
 - **Reached by:** any signed-in user who may view a repository, `GET /rest/s1/moqui/git/{repositoryId}/blob?path=...`; also `.../commits/{commitId}/diff` and `.../commits?path=...`.
 - **What happens:** `get#GitBlob` reads the file whole, an LFS file as its content, and the REST base64-encodes it into the JSON answer. What can be stored is limited by `max-object-size` (512 MiB) and `lfs-max-object-size` (5 GiB), so one request holds up to that, plus the base64 copy, in memory. `get#GitCommitDiff` and `get#GitCommit` diff every file a commit changed with no file cap (compare has one, 300), and `get#GitLog` with `path` walks history until 500 matches with no commit or time budget.
@@ -338,8 +360,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-GIT-05. A small pack of large or deeply chained objects costs far more than its bytes
 
-Medium; reported (likely).
+Medium; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-16: `pack_in::read_entries` reads each entry's header once, keeping kinds and depths by offset (the quadratic work of `check_closure` and `store_entries` is gone), and refuses a chain deeper than `max-delta-depth` (4095) as `GitDeltaTooDeep`; an account with no push right is held to `review-max-object-size` (32 MiB) and `review-max-delta-depth` (250), and its push counts the larger of its pack and inflated bytes toward `review-max-push-bytes` and `review-max-account-bytes`. `pack-threads` defaults to 2. Tests: `server::pack_in::tests` `a_deep_delta_chain_is_refused_and_inflated_bytes_are_counted`, `a_push_for_review_counts_its_inflated_bytes`.
 - **Where:** `crates/moqui-git/src/server/pack_in.rs:158-171`, `:249`, `:327-344`; `crates/moqui-git/src/db.rs:822-833`; `crates/moqui-git/src/server/mod.rs:1155-1158`
 - **Reached by:** any account that may view a repository, through a push to `refs/for/<branch>` (`review-push` is `true` by default); and any account with a push right.
 - **What happens:** the caps on an account without a push right count pack bytes (`review-max-push-bytes` 50 MiB, `review-max-account-bytes` 200 MiB a day). Three costs are not bound by them. Memory: each object may inflate to `max-object-size` (512 MiB), and the indexer inflates on every core (`pack-threads` empty). CPU: there is no delta chain depth limit, and `check_closure` asks `kind_in_pack` for every object, which walks its chain to the base, so one chain of N small deltas costs about N²/2 entry reads on a git worker, with no time limit. Storage: in a `db` repository each object over 8 MiB is stored inflated as a content blob, so stored bytes can exceed pack bytes by the deflate ratio.
@@ -349,8 +372,9 @@ Medium; reported (likely).
 
 #### SEC-GIT-06. An SSH push mirror's server is read without size or total-time limits
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `push::push` reads an SSH mirror server's refs within `MAX_ADVERTISEMENT` (32 MiB) and its report within `MAX_REPORT` (1 MiB), as `smart_http` does (which now also refuses a report cut at its cap), and the host's `RusshExec` gives the whole command a 30-minute deadline and keeps at most 64 KiB of stderr. Test: `push_tests::a_servers_refs_and_report_are_read_within_their_caps`.
 - **Where:** `crates/moqui-git/src/mirror.rs:396-411`; `crates/moqui-git/src/server/push.rs:115-149`, `:310-334`; `crates/moqui-host/src/ssh/client.rs:321-348`
 - **Reached by:** a user with the delete right on a repository (on a hosting server, the owner of any repository): `store#GitRepositoryMirror` with an `ssh://` URL and the fingerprint of a server they run; the push starts after every change and from the queue.
 - **What happens:** the refs advertisement is read into a map until a flush packet arrives, stderr is appended to a buffer, and the report's lines are pushed to vectors, all with no byte cap. Each read has 120 seconds but the whole conversation has no limit. A server that streams refs without end grows the Moqui process's memory. One that sends a packet every minute holds a service-pool thread, and when run from the queue it holds the `run#GitRepositoryMirrors` pass, which pushes up to 500 due mirrors one after another.
@@ -360,8 +384,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-GIT-07. Git services that trust their caller
 
-Medium; reported (likely).
+Medium; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-16: `export#GitRepository`, `fetch#GitRepository` and `push#GitMirror` need the delete right (`hosting::allowed`), and with authorization on export's `targetPath` is a relative path of safe segments under `runtime/git-export`; `init#GitRepository` with `contentRepository` asks the update right; `queue#GitWebhookPush`, `run#GitRepositoryMirrors`, `clean#GitUpdates`, `check#MergeRequest`, `sync#MergeRequest` and `refresh#MergeRequests` refuse a caller unless authorization is disabled, as `queue#PushRuns` does. Test: `service::trust_tests::services_that_trusted_their_caller_check_it`.
 - **Where:** `crates/moqui-git/src/service/mod.rs:168-181` (`fetch#GitRepository`), `:185-198` (`push#GitMirror`), `:230-250` (`init#GitRepository`), `:296-316` (`export#GitRepository`); `crates/moqui-git/src/service/hosting.rs:1453-1544` (`queue#GitWebhookPush`), `:1737-1783` (`send#GitWebhookDelivery`); `crates/moqui-git/src/service/mirror.rs:357-378` (`run#GitRepositoryMirrors`); `GitReviewServices.xml:879-997` (`check#MergeRequest`, `sync#MergeRequest`, `refresh#MergeRequests`); `GitServices.xml:468`
 - **Reached by:** any caller that passes service authorization for them; the checks found are in screens only (the tools `System/Resource` screens, mr-boss `Settings.xml` with `ec.user.isInGroup('ADMIN')` in the transition script). `FileServices.export#Drive` forwards a drive manager's `targetPath` to `export#GitRepository`.
 - **What happens:** `export#GitRepository` writes a bare repository at any path the server process can write, and into a repository already there: its branch ref is set to the exported head, past that repository's branch rules. `init#GitRepository` with `contentRepository` commits `.gitattributes` without the update right `setup#GitLfs` asks. `queue#GitWebhookPush` takes `userId`, `source` and `refUpdates` from its parameters and queues events signed with each webhook's secret, where `queue#GitWebhookEvent` beside it needs the update right. `run#GitRepositoryMirrors` is `anonymous-all` and with a `mirrorId` pushes that mirror at once, past its back-off. `clean#GitUpdates` is `authenticate="false"` and deletes the push log older than the caller's `daysToKeep`. The three merge request services take any `mergeRequestId`, a hidden one's too, call the inner services with authorization disabled, move its head and status, dismiss approvals and queue a `synchronize` event; `check#MergeRequest` answers `mergeableEnumId`.
@@ -373,8 +398,9 @@ Medium; reported (likely).
 
 #### SEC-MAIL-02. A mail account's server settings make the server connect to internal addresses
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `inbound::connect_tcp` looks the host up once, checks every address and connects to one of them: none internal when the server is denied the private network (on production, every account-owned server, which is never given `allowPrivateNetwork` Y), and never a link-local or metadata address; SMTP takes the same rule. `test#EmailServer` answers a fixed kind of failure (`implementation::test_failure_kind`) and logs the server's text. Tests: moqui-mail `implementation::tests::a_server_not_allowed_the_private_network_is_refused_on_production_and_credentials_need_tls`, `client_tests::test_email_account_against_local_servers`.
 - **Where:** `crates/moqui-mail/src/inbound.rs:1018-1031` (`connect_tcp`), `crates/moqui-mail/src/sync.rs:462-530` (`open_imap`), `crates/moqui-mail/src/implementation.rs` `smtp_transport` (1888-1934), `require_host` (979-998)
 - **Reached by:** any signed-in member of `BASIC_COMMS_USERS`: the MailAccounts wizard's save and test (`MailSettingsServices` to `create#EmailAccount`, `test#EmailServer`), then "Sync now" and the sync job every minute.
 - **What happens:** The user sets `storeHost`, `storePort`, `smtpHost` and `smtpPort` to any name or IPv4 literal (the wizard's `hostOk` pattern takes `127.0.0.1`, `localhost`, `10.0.0.5`). `allowed-hosts` is empty by default, the IMAP and POP connection has no private-address check at all, and the SMTP one checks only servers with `allowPrivateNetwork` N, which account servers never get. The test's step message tells open from closed ports and can carry the first line the service answered, so a user can map the instance's network and loopback services and read a banner; the IMAP client also writes `s1 CAPABILITY` and a sign-in to that port.
@@ -396,8 +422,9 @@ Medium; reported (confirmed in code); fixed.
 
 #### SEC-MAIL-04. The tools REST resource returns mailbox passwords and OAuth refresh tokens
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: entity REST and Service REST entity resources answer no encrypted field, only `<field>IsSet` (SEC-DAT-03), and the tools `email/servers` GETs are services (`EmailServices.find#RelayServers`, `get#RelayServer`) that neither list nor answer a server a mail account owns (`EmailAccount.ownsEmailServer`). `PATCH email/servers/{id}` is still the entity update, `ADMIN` only, and does not refuse an account-owned server as the Admin screens do. Tests: `rest_tests.rs` `entity_resources_answer_encrypted_fields_as_set_and_read_a_page_at_most`, `framework/test/RelayServers.spec.js`.
 - **Where:** `runtime/components/base/tools/service/moqui.rest.xml:122-131`; `crates/moqui-core/src/service/rest.rs:659-695`; `crates/moqui-entity/src/entity/sensitive.rs:23-29, 62`
 - **Reached by:** a member of `ADMIN` (or a bearer of an ADMIN's API key), `GET /rest/s1/moqui/email/servers` and `/servers/{emailServerId}`.
 - **What happens:** The other slice's report is confirmed. `EmailServer` is in the secret-config list, which only gates writes; reads go to `find_entity`, and the answer is stripped only of `UserAccount` password fields. Each row carries `mailPassword`, `smtpPassword` and `oauthRefreshToken` as the entity facade returns them, for relays and for every user's own mail account server, so one request gives an administrator each user's mailbox password and a Google or Microsoft refresh token. The entity's own description says of the token "never answered by a service". `GET /rest/s1/moqui/email/messages` likewise answers the messages of every account.
@@ -419,8 +446,9 @@ Medium; reported (confirmed in code); fixed.
 
 #### SEC-MAIL-64. mr-marble sendEmailMessage transitions send any stored message again
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `send#EmailMessage` (`moqui_mail` `send_message`, `may_send`) answers a message the caller may not send as one that does not exist: with authorization on, system mail only when Ready or Bounced (any for an `ADMIN`), and an account's message only when Ready or Bounced and the caller has send level on that account (`get#EmailAccountAccess` `canSend`); internal work is unchanged. mr-marble's `sendEmailMessage` transitions of Party, Order, Shipment and Invoice find the message by the record shown and pass only its id. Tests: moqui-mail `implementation::tests::a_user_sends_again_only_a_message_they_may_send`, `mr-marble/test/PartyEmailBody.spec.js`.
 - **Where:** runtime/components/addon/mr-marble/screen/SimpleScreens/Party/PartyEmails.xml:20; Order/OrderDetail.xml:73; Shipment/ShipmentDetail.xml:63; Accounting/Invoice/EditInvoice.xml:70; crates/moqui-mail/src/implementation.rs:253-312
 - **Reached by:** any signed-in user authorized for one of those four screens, POST `.../sendEmailMessage` with `emailMessageId=N`.
 - **What happens:** The transition passes the request's parameters to `send#EmailMessage`, which checks no owner and refuses only `ES_DRAFT` and `ES_CANCELLED`. Any other message is sent through its own server or its mail account's server: another user's Sent mail goes to its recipients a second time from that user's account and credentials, a scheduled message goes now, a received message is sent out again from the account under the original sender's From, and old system mail (a reset, an invoice) is mailed again.
@@ -444,8 +472,9 @@ Medium; reported (confirmed in code); fixed.
 
 #### SEC-FIL-02. An app password opens the admin shell and the SFTP root over SSH, past the second factor
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `auth_password` records a login by app password (`LoginBy::AppPassword`), which gets the drives backend over SFTP (`sftp-drives`) and nothing else: the admin shell, `sftp-root` and git over SSH are not granted, and `apps` and `agent-apps` answer that an app password opens the drives over SFTP only. Test: moqui-host it `ssh::sftp_and_the_admin_shell_run_on_the_built_in_server`.
 - **Where:** `crates/moqui-host/src/ssh/server.rs:905-925`, `:746-763`
 - **Reached by:** anyone holding an app password of a user with `SSH_SHELL` (seeded on `ADMIN_ADV`) or `SSH_SFTP` (seeded on `ADMIN`), over the SSH listener.
 - **What happens:** `auth_password` tries the secret as an app password and, on success, reads the user's SSH permissions and accepts the login exactly as for the account password. An app password is described as a device credential for CalDAV, CardDAV, WebDAV and SFTP to the drives, has no scope field, and is not subject to the second factor. So a secret stored in a sync client opens `moqui>` (`service`, `entity`, `js`) and the `sftp-root` for an account whose own password SSH refuses because it needs a second factor.
@@ -455,8 +484,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-FIL-03. DAV sends a user's HTML or SVG file inline from the application's origin
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: the WebDAV file GET (`dav/files.rs` `get`) and the CalDAV and CardDAV object GET (`dav/pim.rs` `object`) add `web::user_file_guard_headers`, the rule a screen download of a user's file follows: `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox` (not for a PDF shown inline) and `Content-Disposition: attachment` for a type that can run script (HTML, SVG, XML, JavaScript). Test: moqui-dav `dav::tests::a_users_html_file_is_an_attachment_and_every_file_is_sandboxed`.
 - **Where:** `crates/moqui-dav/src/dav/files.rs:415-490`
 - **Reached by:** a user whose browser holds Basic credentials for `/dav` (the folder listing page exists "for a browser that opens a DAV address") and who opens a file another member put in a shared drive, at `/dav/files/<user>/<drive>/<name>.html`.
 - **What happens:** The file is sent with the content type of its name and no `Content-Disposition`, `X-Content-Type-Options` or `Content-Security-Policy: sandbox`. The screen download path applies all three to a user's file (`file_headers`), and sends active types as attachments; the DAV path does not share that rule. Script in the file runs in the application's origin, where the same browser's session cookie applies.
@@ -466,8 +496,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-FIL-04. DAV buffers up to 256 MiB per request before it checks credentials
 
-Medium; reported (likely).
+Medium; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-16: what the head answers is answered before the body is read (`moqui_dav::dav::answer_before_body`: a path outside the server, OPTIONS, `enabled="false"`, no credentials, credentials over plain HTTP), and a PUT's credentials are checked first without a login (`credentials_hold`). A PUT's body is spooled as an upload's file part up to `max-file` and handed to the drive without a copy (`BodySpool`, `DavRequest::upload`); any other method's body stops at 1 MiB (`MAX_XML_BODY`). Tests: moqui-dav `dav::tests::the_head_is_answered_before_the_body_and_a_put_takes_its_spooled_file`, moqui-host it `collab::dav_routes_and_coediting_over_the_socket`.
 - **Where:** `crates/moqui-host/src/dav_http.rs:47-59,79`; `crates/moqui-host/src/http.rs:1286`
 - **Reached by:** anyone who can reach the HTTP listener, with any method on `/dav/...` or `/.well-known/caldav` and a large body.
 - **What happens:** The handler reads the body whole into memory up to `max-file` (256 MiB), copies it into the `DavRequest` (`body.to_vec()`), and only then calls `serve`, which checks `enabled` and the login. A PUT clones it again into the uploaded file. A few concurrent anonymous requests hold gigabytes; `enabled="false"` does not stop the read.
@@ -477,8 +508,9 @@ Medium; reported (likely).
 
 #### SEC-FIL-08. `/resources` lets `ADMIN` read any file the server's user can read, in production too
 
-Medium; reported (to check).
+Medium; reported (to check); fixed.
 
+- **Fix:** Fixed 2026-11-16: on a production instance the elFinder connector refuses every command, reads (`get`, `file`, `open`) included, on a root other than `dbresource://`, `content://` and `git://` (`Connector::root_refused`, before the command runs); a dev or test instance is unchanged. Test: moqui-dav `elfinder::tests::a_file_root_is_not_served_in_production_and_a_data_root_is`.
 - **Where:** `webroot.xml:257-272`; `crates/moqui-dav/src/elfinder.rs:756-759`
 - **Reached by:** a member of `ADMIN`, `GET /resources?resourceRoot=file:/<dir>&cmd=get&target=<hash>` or `cmd=file`.
 - **What happens:** `resourceRoot` is a request parameter and the production rule restricts write commands only. With a `file:` or `runtime://` root, `get` and `file` return file content, which includes `runtime/.env` (the host key, cluster and encryption keys, database passwords). The map treats conf editing as needing the sealed `CONF_EDIT` because the conf is that sensitive; this route gives `ADMIN` the secrets without it.
@@ -488,8 +520,9 @@ Medium; reported (to check).
 
 #### SEC-FIL-61. SFTP holds up to `sftp-max-file` in memory per channel, and the handler does not count channels
 
-Medium; reported (likely).
+Medium; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-16: the bytes open SFTP files hold (writes in memory, read windows) are counted per user over all of the user's channels and connections (`ssh/sftp_fs.rs` `Held`), so one user holds at most `sftp-max-file`, and one connection holds at most 8 session channels waiting for a request or running `sftp` (`MAX_SESSION_CHANNELS`; one more is refused). A write is still held in memory, not spooled to a file. Tests: `ssh::sftp_fs::tests::the_bytes_held_are_capped_per_user_over_every_channel`, moqui-host it `ssh::sftp_and_the_admin_shell_run_on_the_built_in_server`.
 - **Where:** crates/moqui-host/src/ssh/server.rs:1010 ; crates/moqui-host/src/ssh/sftp_fs.rs:216
 - **Reached by:** any account that can log in over SSH (key, password or app password) while the SSH listener is on; `dav-server` `sftp-drives` is true by default, so no permission is needed.
 - **What happens:** A file opened for writing is kept in memory until it is closed, capped at `sftp-max-file` (256 MiB) per channel. `channel_open_session` accepts every session channel of a logged-in connection and each may start the `sftp` subsystem, so one connection can hold many times 256 MiB, and a user has 4 connections. The server's memory is the limit.
@@ -501,8 +534,9 @@ Medium; reported (likely).
 
 #### SEC-COM-01. Any Comms user lists every account and can message or add it; only calls ask the apps who may be reached
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: a new provider hook, `chat-target` (`ProviderInterfaces.chat#Target`), is asked by the internal `ChatServices.get#RefusedUsers`, which `CommsServices.search#Users`, `create#Room`, `add#Member` and a public room's mention of a non-member use; a refused user is answered as one that does not exist, and a provider that fails refuses them all. `search#Users` finds no `EXTERNAL_USER` account, and an external caller reaches only the people of their own rooms. The Calls pickers ask `call-target`. mr-boss registers `get#CallTarget` as its `chat-target`; its own `ChatterServices.search#Users` was not read. Test: `basic-comms/test/ChatReach.spec.js`.
 - **Where:** `runtime/components/base/basic-comms/service/org/moqui/comms/CommsServices.xml:17-45`; `runtime/components/base/framework/service/org/moqui/chat/ChatServices.xml:1334-1340` (`create#Room`), `:1625-1629` (`add#Member`)
 - **Reached by:** any signed-in user who may open the Comms screens (`BASIC_COMMS_USERS`, or an app's root that mounts them), `GET .../Chat/searchUsers?term=`, `.../Calls/searchUsers`, `.../Calls/History/searchUsers`; then `.../Chat/createDirect` or `.../Chat/addMembers` with any `userId`.
 - **What happens:** `search#Users` reads `UserAccount` with authorization disabled and answers the id and name of every enabled account (an empty term matches all, 50 a call, so a few letters walk the directory), with no organization, provider or `EXTERNAL_USER` check. `create#Room` and `add#Member` then take any enabled account as a member without that account's consent, which also puts the two in each other's `/ChatKeys` reach and presence pushes. Calls do ask the apps (`call-target`, IronStone: the user's organizations) and answer a refused callee "as a user that does not exist", but the Calls picker lists that same user, and chat has no such hook, so in a deployment with several organizations a user of one finds and messages the users of another. mr-boss overrides `searchUsers` only on `Inbox/Mail.xml`.
@@ -515,8 +549,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-COM-02. A chat message may carry an external image, so a sender learns each reader's address and when they read
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: chat bodies are cleaned with `moqui_lib::safe_html::clean_chat` (`StringUtilities.cleanChatHtml`) in `send#Message`, `edit#Message` and a forward's copy, so an image keeps its `src` only when it is `/richTextImage/<id>`; the client drops any other image source too (`moqui.chat.clean` for an encrypted room, `moqui.chat.ownImages` for a stored body), so a message stored before shows none. No `img-src` policy was added. Tests: `safe_html::tests::a_chat_message_keeps_only_this_servers_images`, `chat_tests::a_message_keeps_only_this_servers_images`, `WebrootChat.page.js`.
 - **Where:** `crates/moqui-lib/src/safe_html.rs:30-36`; `runtime/components/base/framework/service/org/moqui/chat/ChatServices.xml:2182,2296`; `runtime/components/base/basic-comms/screen/BasicComms/Chat.qvue:380-381`
 - **Reached by:** any member of a room, `POST .../Chat/send` with `body=<p><img src="https://host.example/x.png?u=1"></p>`; every other member's browser loads it when the room shows the message.
 - **What happens:** The body is cleaned with ammonia's defaults plus three `span` attributes, and the room renders it with `v-html`. `send#Message` treats a body with only an `<img>` as not empty, so images in bodies are expected, and nothing limits `src` to this server. The default `Content-Security-Policy` has no `img-src`. The link preview code avoids exactly this ("no picture is read, so no reader's address reaches a third party"), and read receipts are a user's choice (`CHAT_READ_RECEIPTS`), which a remote image gets around. The same holds for an encrypted room: the client's DOMPurify list allows `img` with `src`.
@@ -531,8 +566,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-COM-11. `ipAllowed` is not checked for XMPP sign-in or its service calls
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `Backend::call` carries the XMPP session's peer, and the host runs every call (the user's, and the internal sign-in lookups, PLAIN's app password login among them) inside `with_client_ip(peer)`, so its login checks `ipAllowed`; SCRAM and FAST ask `Backend::sign_in` before success, which applies the key login's gate and `ipAllowed` and writes the login history (`login_verified_app_password`). Tests: moqui-xmpp `a_verified_sign_in_is_checked_and_recorded_for_the_sessions_peer`, `user/login_tests.rs` `a_verified_app_password_sign_in_checks_ip_allowed_and_is_recorded`.
 - **Where:** `crates/moqui-host/src/xmpp/mod.rs:596-603`; `crates/moqui-core/src/user/login.rs:1451-1456`
 - **Reached by:** a user whose account or group has `ipAllowed` set, or anyone holding that user's app password, from any address, over `xmpp_port`, `xmpp_tls_port` or `/xmpp-websocket`.
 - **What happens:** The session's sign-in (SCRAM, FAST) never calls a login function, and each service call logs the user in with `internal_login_user(username)` on a worker that has no request and no `with_client_ip`. `check_ip_allowed` returns Ok for an empty address. The session reads and writes the user's chat from an address the account is not allowed to sign in from. DAV, SSH, the LLM gateway, A2A and the terminal pass the client address; XMPP does not.
@@ -542,8 +578,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-COM-12. A connected XMPP app keeps a locked account locked
 
-Medium; reported (likely).
+Medium; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-16 with SEC-WEB-03: an XMPP session's service calls log in internally, which counts no failure, and an attempt during a lock window does not restart it, so the lock ends after `disable-minutes` while the app stays connected.
 - **Where:** `crates/moqui-core/src/user/login.rs:1303-1310`, `1736-1746`; `crates/moqui-xmpp/src/session/mod.rs:505-517`; `XmppServices.xml:87`
 - **Reached by:** anyone who can make three failed web sign-ins for a username (the default `max-failures`), while that user has an XMPP app connected.
 - **What happens:** Three bad passwords lock the account for 5 minutes (`disable-minutes`). `check#Credential` passes a locked account (its `disabledDateTime` is in the past), so the XMPP session stays. Every service call of the session (the presence heartbeat each 60 seconds, each stanza, each push that looks a room up) runs `internal_login_user`, whose gate counts a failed login for an account that is still disabled, and a count over the maximum writes `disabledDateTime` to now. The lock starts again each minute and does not end while the app stays connected; the web sign-in stays refused.
@@ -553,8 +590,9 @@ Medium; reported (likely).
 
 #### SEC-COM-13. TURN: usernames from unauthenticated requests are kept without bound
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `admit_message` gives the TURN servers a username only when the request's MESSAGE-INTEGRITY holds for that name's password (`Message::validate_integrity`), which only a client that knows the password sends; any other request gets the server's 401, as an unknown name does. Names that proved their password still stay for the life of the process (turn-server-proto has no removal), bounded by the credentials the services issue. Test: moqui-rtc `turn::tests::a_username_is_kept_only_for_a_request_that_proves_its_password`.
 - **Where:** `crates/moqui-rtc/src/turn/mod.rs:473-492`
 - **Reached by:** anyone who can send a datagram to `turn_port` or open one of the TURN TCP or TLS connections (TURN is off by default; UDP sources can be forged).
 - **What happens:** `admit_message` runs before the server checks MESSAGE-INTEGRITY. For any request whose USERNAME has the form `<future expiry>:<text up to 192 bytes>`, it computes the password and calls `add_user` on every listener's `TurnServer`, and inserts the name in `self.users`. Nothing removes a name from `users` or from the servers (grep of `users.remove`, `users.retain`, `remove_user` in the file: none), so each distinct forged username grows memory for the life of the process. Honest credentials also stay after they expire.
@@ -564,8 +602,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-COM-14. A file uploaded over XMPP outlives the deletion and retention of its message
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `clear#MessageContent` and `clean#PendingAttachments` remove each chat file through the internal `ChatServices.remove#AttachmentFile`: a file under the XMPP upload root goes when no other `ChatAttachment` has its location, with its `XmppUpload` rows, and the `XmppUpload` rows made to serve the chat file to XMPP clients always go. Test: `chat_tests::a_file_put_over_xmpp_goes_with_the_last_message_that_has_it`.
 - **Where:** `ChatServices.xml:2807-2811`, `3235`; `XmppServices.xml:699`, `743`; `crates/moqui-host/src/xmpp/upload.rs:181-187`
 - **Reached by:** any holder of the upload URL (the uploader, every XMPP reader of the room, anyone it was passed to), after the message was deleted (`redact#Message`) or removed by room retention.
 - **What happens:** `attach#Upload` makes the chat file on the upload's own location, `dbresource://xmpp-upload/...`. `clear#MessageContent` deletes a stored file only when its location starts with the chat root (`dbresource://chat/`), so this file stays; the `XmppUpload` row stays too, since `clean#Uploads` removes only slots never put. The URL goes on serving the file with no expiry. A file uploaded in the web client is under the chat root and is deleted.
@@ -575,8 +614,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-COM-25. A forged-source digest failure blocks a trunk's or a phone's address
 
-Medium; reported (likely).
+Medium; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-16: the digest nonce's MAC covers the address the challenge was sent to (`NonceBook::nonce`, `verify`), so an answer with a nonce not issued to its own source is challenged again and not counted, and only a source that received the challenge counts failures against itself; a failed answer from a trunk's target or listed inbound address is refused (403) but never counted (`authenticate`, `trunk_by_address`). An operator's block or one reloaded from `VoiceAuthFailure` still applies. Tests: moqui-sip `digest::tests::a_nonce_answers_only_from_the_source_it_was_issued_to`, `ua::phones::tests::failed_answers_from_a_trunks_address_never_block_it`.
 - **Where:** `crates/moqui-sip/src/ua.rs:1871-1888` (failure counting), `ua.rs:469` (the block), `crates/moqui-lib/src/source_guard.rs:121-146`
 - **Reached by:** anonymous, over UDP (`sip_port` set), from a network that lets it forge source addresses. Five REGISTER datagrams (registrar on) or INVITE datagrams (source not a trunk's) that carry any `Authorization` / `Proxy-Authorization` header, sent with the victim's address as source.
 - **What happens:** A failed answer is counted against the datagram's source address with no proof the source sent it: the nonce need not be one this server issued, and a nonce is not bound to an address. After `authFailureLimit` (5) the address is blocked for `authBlockSeconds` (an hour), on every transport, since the block is by address. With the registrar on, the victim can be a provider trunk's signaling address (a REGISTER is authenticated whatever its source), which drops the trunk's inbound INVITEs and its responses to this server's REGISTER and INVITE, also over the trunk's TLS connection. A phone's NAT address or a PBX that signs in by digest can be blocked the same way with the registrar off (INVITE). The block is written to `VoiceAuthFailure` and reloaded after a restart.
@@ -588,8 +628,9 @@ Medium; reported (likely).
 
 #### SEC-DAT-01. A find by request parameters takes conditions and order on password-hash and encrypted fields
 
-Medium; confirmed (second check).
+Medium; confirmed (second check); fixed.
 
+- **Fix:** Fixed 2026-11-16: `search_form_map` takes no condition or order from request input on a password field, and no order, pattern, range or period on an encrypted field; an `equals` on an encrypted field stays for a screen's or script's own find and is refused on a generic find (`EntityFind::generic_input`: entity REST, Service REST, the data grid, `searchFormMap`'s `genericInput`, an `entity-find` whose entity name is expanded). Tests: `search_form_tests` `request_input_takes_no_condition_or_order_on_a_secret_or_encrypted_field`, `actions_tests` `a_generic_finds_search_form_takes_no_condition_on_an_encrypted_field`.
 - **Where:** `crates/moqui-entity/src/entity/search_form.rs:189-195`, `:86-92`; callers `crates/moqui-entity/src/entity/query_rest.rs:561-563`, `crates/moqui-core/src/service/rest.rs:708-711`, `:752-755`, `crates/moqui-core/src/script/host/entities.rs:193-197`
 - **Reached by:** a signed-in user with view authorization on `moqui.security.UserAccount`, on a view that aliases its fields (`UserAccountAndGroup`), or on any entity with an encrypted field, through `GET /rest/e1/<entity>?currentPassword_op=begins&currentPassword=<prefix>`, a Service REST entity `list` or `count`, or a screen with `<search-form-inputs>` (Tools `System/Security/UserAccount/UserAccountList.xml:39-40`).
 - **What happens:** The result omits the password fields, but the condition is applied, so the row count answers whether a user's stored hash starts with the given text. Repeating it reads the whole argon2 string, or a `resetPassword` or `passwordSalt`. `orderByField=currentPassword` sorts by the hash. On an encrypted field an `equals` condition is sealed with the constant IV, so it confirms a guessed value.
@@ -600,8 +641,9 @@ Medium; confirmed (second check).
 
 #### SEC-DAT-02. An encrypted field in a data document is indexed in plaintext
 
-Medium; likely (second check).
+Medium; likely (second check); fixed.
 
+- **Fix:** Fixed 2026-11-16: `document.rs` `document_info` leaves a `DataDocumentField` on an encrypted or `UserAccount` password field out of the document, its feed and the index, with a warning naming it, and Mantle's `MantleParty` no longer lists `identifications:idValue`. Documents indexed before keep the number until the `mantle` index is rebuilt. Tests: `document_tests.rs` `a_document_leaves_out_encrypted_fields_and_takes_only_the_listed_functions`, `mr-mantle/test/search/MantleSearch.spec.js`.
 - **Where:** `runtime/components/addon/mr-mantle/data/MantleDocumentData.xml:55`; `crates/moqui-entity/src/entity/query_rest.rs:1414`; `crates/moqui-db/src/model/view.rs:549`
 - **Reached by:** anyone who can search the `mantle` index for parties, and anyone who reads the search store or a dump that includes it.
 - **What happens:** `MantleParty` lists `identifications:idValue`, which is `PartyIdentification.idValue` (`encrypt="true"`, a party's identification number). The document's view alias inherits `encrypt`, the feed reads the view with authorization disabled, and each row is decrypted before the document is built. The `MantleSearch` feed pushes it to `index#DataDocuments` in real time. Nothing in `document.rs` or `sensitive.rs` leaves an encrypted or password field out of a document.
@@ -612,8 +654,9 @@ Medium; likely (second check).
 
 #### SEC-DAT-03. REST entity reads return stored credentials in plaintext
 
-Medium; confirmed (lead).
+Medium; confirmed (lead); fixed.
 
+- **Fix:** Fixed 2026-11-16: entity REST (`find_rest`, `RecordGuard::Answer`) and Service REST `find_entity` answer no encrypted field, only `<field>IsSet` (true or false), in nested records too. Tests: moqui-entity `generic_reads_leave_out_restricted_related_rows_and_answer_encrypted_fields_as_set`, `rest_tests.rs` `entity_resources_answer_encrypted_fields_as_set_and_read_a_page_at_most`.
 - **Where:** `runtime/components/base/tools/service/moqui.rest.xml:123-126`, `:179-183`; `crates/moqui-core/src/service/rest.rs:714-723`; `crates/moqui-entity/src/entity/query_rest.rs:499-544`
 - **Reached by:** a member of `ADMIN` (the `/moqui` REST path grant) with `GET /rest/s1/moqui/email/servers`, `GET /rest/s1/moqui/entity/syncs`; and any caller with `AT_ENTITY` view on an entity that has an encrypted field, with `GET /rest/e1/<entity>`.
 - **What happens:** The reply holds `EmailServer.mailPassword`, `.smtpPassword`, `.oauthRefreshToken` and `EntitySync.targetPassword` decrypted. Entity REST refuses the restricted entities (`EmailServer`, `SystemMessageRemote`, `DatabaseConnection`, `UserAuthcFactor`) but has no check of `encrypt`, so the other encrypted fields (`LlmEndpoint.apiKey`, `GitRepository.accessToken`, `OauthFlow.secret`, `InstanceHost.password`, `AcmeCertificate.privateKeyPem`, `CreditCard.cardNumber`) come back in plaintext. The map says an administrator reads only whether a secret is set.
@@ -624,8 +667,9 @@ Medium; confirmed (lead).
 
 #### SEC-DAT-04. A view alias function from a database row may be any SQL function name
 
-Medium; likely (second check).
+Medium; likely (second check); fixed.
 
+- **Fix:** Fixed 2026-11-16: a `DbViewEntityAlias` or `DataDocumentField` `functionName` must be one of `derived.rs` `ROW_VIEW_FUNCTIONS` (min, max, sum, avg, count, count-distinct, upper, lower); another refuses the view or the document (`check_row_function`), and the report engine's `FUNCTIONS` is that list. Views defined in XML keep `check_word`. Tests: moqui-entity `a_db_view_alias_takes_only_the_listed_functions`, `document_tests.rs`.
 - **Where:** `crates/moqui-db/src/sql/view.rs:1195-1209`; `crates/moqui-entity/src/entity/derived.rs:295-296`; `crates/moqui-entity/src/entity/document.rs:627`; `runtime/components/base/tools/screen/Tools/Data/Views/EditDbView.xml:61`, `:117`
 - **Reached by:** a user who can write `DbViewEntityAlias` or `DataDocumentField` rows (Tools Data Views and Data Documents; `Dashboards/DatasetFields.xml:20` also passes `functionName`), then any find of that view.
 - **What happens:** `functionName` is checked to be one word and is written as `<NAME>(<column>)`. On the embedded cluster the connection is the bootstrap superuser, so a function such as `pg_read_file` or `pg_ls_dir` runs on a column the same user can fill. The SQL runner has its own permission (`DATABASE_ADMIN`) and audit; this path has neither.
@@ -638,8 +682,9 @@ Medium; likely (second check).
 
 #### SEC-PSF-01. In local mode a login key in a header drives every PASS page, without the session token
 
-Medium; reported (likely).
+Medium; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-16: in local mode mr-pass `Facade.js` `checkLoginKey` applies the authority's login-key rule: a request with an `api_key` or `login_key` header, a user signed in by a login key (`ec.user.loginKeyKind`) or a session a header login started (`moquiHeaderLogin`) is refused unless the key is a device's and the operation is one of `PassAuthority.js` `APP_KEY_OPERATIONS`; an access token is scope `git` and signs in to no PASS page (SEC-PFS-61). Test: `mr-pass/test/Forum/ForumAccess.spec.js`.
 - **Where:** `service/pass/Facade.js:25-32`; `crates/moqui-core/src/screen/mod.rs:1123-1128`; `crates/moqui-core/src/screen/render.rs:1702`; the rule that is skipped is `mr-mantle/script/PassAuthority.js:379-386`.
 - **Reached by:** anyone holding an account's unscoped login key (a Smithy access token made for git, an installed app's device key, a session's key), with any POST to a PASS page transition on a site served in local mode, sending the key as `api_key` or `login_key`.
 - **What happens:** The authority's rule is that a login key calls only the installed app's operations and only as a device key, and an access token calls none (`APP_KEY_OPERATIONS`). That rule is in `run()`, which a local-mode page never calls: the page's transition calls the Mantle service directly as the key's user. A header login also skips the transition's session-token check. So a git access token can post in the forum, change the account's settings, read its invoices, orders and private messages, and run every Smithy form that asks for no password; in remote mode the same token is refused.
@@ -654,8 +699,9 @@ Medium; reported (likely).
 
 #### SEC-PSA-01. PASS sign-in has no rate limit on the authority
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `startSession` and `completeSession` of `public/Account.js` call `throttle('session', userName)`: 20 sign-ins a requester (a registered client's forwarded address, else the peer) and 10 a user name in ten minutes, refused with "Wait before signing in again" before any password is checked; the session and challenge paths are in the `login` rate limit. Test: `framework/test/PassSignInThrottle.spec.js`.
 - **Where:** `FW/service/org/moqui/public/Account.js:536-537`; `FW/conf/MoquiDefaultConf.xml:869`; `runtime/conf/pass/MoquiAuthorityConf.xml:30-37`
 - **Reached by:** anonymous, `POST /rest/s1/pass/v1/sites/{any}/account/session` (or `account/challenge`) with a business-host session and its `x-csrf-token`; or through a PASS frontend, whose calls carry no session token.
 - **What happens:** Registration, verification and recovery are counted per requester and per address; sign-in is not. The web protection's `login` rule names `/Login`, `/rest/login` and `/SecondFactor` only, and the example authority conf exempts the PASS servers' addresses from web protection, so their visitors' failed sign-ins meet neither the rate limit nor the `auth-failure` ban. What is left is the account's own failed-login count, which does not stop one guess each across many accounts, staff accounts included (one `UserAccount` table).
@@ -667,8 +713,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-PSS-01. A download product's file location is not restricted
 
-Medium; reported (likely).
+Medium; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-16: `ShopFulfillment.js` `servedDownload` applies `Content.js` `owned` (under the content root, in `product/<productId>/`, no `..`) to a download's file, so `get#Downloads`, `issue#Download` and `get#DownloadFile` answer NOT_AVAILABLE for any other location, and `create#ProductContent` and `Content.js` `update` refuse such a location for a download row. The entity-auto create (mr-marble `createContentWithLocation`) still stores any location, which nothing serves as a download. Test: `mr-mantle/test/product/StoreFulfillment.spec.js`.
 - **Where:** `M/product/ShopFulfillment.js:118`, `:525`, `:612`; `M/product/ProductServices.xml:937`, `:958`
 - **Reached by:** a staff user who may call `mantle.product.ProductServices.create#ProductContent` (or update the row), then any buyer of that product through `getShopDownload`.
 - **What happens:** The file a granted download streams is `ProductContent.contentLocation` of a `PcntDownload` row. `create#ProductContent` takes `contentLocation` as an input and stores it as given. The download path applies no scheme or path rule, and the frontend opens the location with authorization off, so a row naming `file:///...` or a `component://` path would stream a server file to the buyer. The product image path has exactly this guard and the download path does not.
@@ -682,8 +729,9 @@ Medium; reported (likely).
 
 #### SEC-PSS-21. `createCustomerCase` leaves the staged upload on disk when the operation is a repeat
 
-Medium; reported (confirmed in code; a helper reader's item, not checked by the slice's reviewer).
+Medium; reported (confirmed in code; a helper reader's item, not checked by the slice's reviewer); fixed.
 
+- **Fix:** Fixed 2026-11-16: `createCustomerCase` stages the file through a callback that `intakeCase` and `contactCase` call only after the form token or the asker is checked and after `lib.operation`'s repeat answer, and unstages it on any later error, so a repeat stages nothing and a caller with no credential stages nothing (SEC-PSS-22). Test: `mr-pass/test/Support/SupportAccess.spec.js`.
 - **Where:** `request/SupportPortal.js:758-765`, `:775`, `:833`
 - **Reached by:** anonymous, through a registered PASS frontend, with a queue's public form token (`CaseIntake`, the public NewCustomerCase link); also any signed-in customer account. Request: `createCustomerCase` (POST `support/cases`) with a `file`, repeating one `operationId` with the same name and email.
 - **What happens:** the file is staged and scanned before the operation key is looked up. When the key was used before with the same request hash (the hash does not include the file), `intakeCase` and `contactCase` return the first result and nothing removes the staged file; the `catch` in `createCustomerCase` unstages only on an error. Each repeat leaves up to 10 MiB under `pass_media_root/support`, 30 times in ten minutes per requester address, with no further limit (the form's hourly and address limits are in `create#IntakeRequest`, which a repeat never reaches).
@@ -693,8 +741,9 @@ Medium; reported (confirmed in code; a helper reader's item, not checked by the 
 
 #### SEC-PSS-41. An anonymous event reservation answers the directory name of the party that owns a typed email address
 
-Medium; reported (confirmed in code; a helper reader's item, not checked by the slice's reviewer).
+Medium; reported (confirmed in code; a helper reader's item, not checked by the slice's reviewer); fixed.
 
+- **Fix:** Fixed 2026-11-16: `EventRegistration.attendeeName` keeps the name typed (the buyer's on the first place, the attendee's at completion and in the staff correction), and `MarketingPortal.js` `registrationView`, the ticket and the notice name an attendee by it, never by `partyName(attendeePartyId)`. The reservation is still attached to the directory party of a known address (SEC-PSS-61). Test: `mr-pass/test/Marketing/MarketingRegistration.spec.js`.
 - **Where:** `service/mantle/marketing/MarketingPortal.js` reserveRegistration (starts 1058), registrationView (starts 961), subscriberOf (198-231); `service/mantle/work/EventRegistrationPlaces.js:76-81`, `:276-282`, `:394`, complete (starts 422)
 - **Reached by:** anonymous, the PASS operation `reserveRegistration` on any site with a published, open event offer (`buyerEmail` is the input); also `completeRegistration` with an attendee's `email`.
 - **What happens:** The buyer party is the first existing directory party with that current email address (not disabled, merged or private), else a new person. The first place's attendee is the buyer party, and the answer to the same request names each place's attendee with `partyName(attendeePartyId)`, the party's stored first and last name or organization name, not the name typed. A visitor learns whether an address is known to the organization's party directory and the name kept for it (a customer contact, a supplier contact, an employee). An attendee's address at completion is matched the same way.
@@ -707,8 +756,9 @@ Medium; reported (confirmed in code; a helper reader's item, not checked by the 
 
 #### SEC-PSS-42. A site owner can publish any wiki page of an unrestricted space as the site's public page
 
-Medium; reported (likely; a helper reader's item, not checked by the slice's reviewer).
+Medium; reported (likely; a helper reader's item, not checked by the slice's reviewer); fixed.
 
+- **Fix:** Fixed 2026-11-16: `Forum.js` `publishSitePage` takes a page only from the site's `publishingWikiSpaceId`, or from a space the caller administers (`get#WikiPageAccess` `canAdmin`), with one refusal for a missing page, another space, no update access or another revision; `updateSite` refuses a publishing space the caller does not administer. Test: `mr-pass/test/Forum/ForumAccess.spec.js`.
 - **Where:** `service/mantle/forum/Forum.js` publishSitePage (starts 3275), getSitePage (starts 1976); `runtime/components/base/framework/service/org/moqui/resource/WikiServices.xml:1802-1808`
 - **Reached by:** a signed-in public account that is an owner of a PASS site (an owner is named by an operator at create#Site and can make other members owners with set#SiteRole), the PASS operation `publishSitePage` (PATCH `pages/{pageRole}`) with a `wikiPageId` and `versionName`.
 - **What happens:** The only checks beyond site ownership are the wiki's `canUpdate` for the page and that `versionName` equals the page's published version. `canUpdate` is true for any user account when neither the space nor the page has `restrictView` or `restrictUpdate` set, so the wiki's own rule does not separate a public account from staff; the page need not be in the site's publishing space or related to the site at all. The bound page's published text is then served to anonymous visitors by `getSitePage` (`guidelines` or `about`). The two refusals differ (`Wiki publication access required`, `Select the exact currently published wiki revision`), so the operation also tells an owner whether a page id exists and has that published version.
@@ -719,8 +769,9 @@ Medium; reported (likely; a helper reader's item, not checked by the slice's rev
 
 #### SEC-PSS-61. An anonymous event reservation answers the stored name of the party that owns a typed email address
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); partly fixed.
 
+- **Fix:** Fixed 2026-11-16 with SEC-PSS-41 in part: the answer names the attendee as typed, never the stored party's name. Left: `subscriberOf` still attaches an unverified typed address's reservation, order and capability to the existing directory party (as PASS Marketing's subscriptions do); not attaching until the address is confirmed changes the registration flow, and the owner is to decide it.
 - **Where:** runtime/components/addon/mr-mantle/service/mantle/marketing/MarketingPortal.js:198 (subscriberOf), :1019, :1058; runtime/components/addon/mr-mantle/service/mantle/work/EventRegistrationPlaces.js:76, :394
 - **Reached by:** anonymous, the PASS operation `reserveRegistration` (a `TOKEN_WRITES` name) with `buyerEmail`, on any site with a published, open event offer.
 - **What happens:** The buyer is the first existing directory party with that current email address, else a new person; the first place's attendee is that party, and the answer to the same request names the attendee with `partyName(attendeePartyId)`, the stored first and last name or organization name (or the party id), not the name typed. A visitor learns whether an address is known to the organization and the name kept for it, and the reservation, its order and its capability are attached to that existing party. This confirms the first report's unchecked `SITES-C1`.
@@ -732,8 +783,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-PFS-61. A Smithy access token made for git is the account's whole login key, with no scope
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `create#UserAccessToken` writes `UserLoginKey.scope` `git` (`user::ACCESS_TOKEN_SCOPE`), and `check_login_key` reads a token made before as `git` too (`key_scope`); git over HTTP and the git REST (`/rest/s1/moqui/git/...`, `/rest/s1/moqui/hosting/...`) take it, and the web, the rest of REST, sockets, A2A and PASS pages refuse it. Making a token needs a sign-in in the last five minutes, and its `expireDays` is at most 366; Smithy's `SmithyGit.js` `reauthenticate` takes, for an account with no password, a sign-in within the same five minutes. Tests: `service::user_keys_tests` `credentials_need_a_recent_sign_in_and_an_access_token_is_for_git_alone`, `mr-mantle/test/smithy/SmithyGitAccess.spec.js`.
 - **Where:** `runtime/components/addon/mr-mantle/service/mantle/smithy/SmithyGit.js:385-415`; `crates/moqui-core/src/service/user_keys.rs:216-247`; `runtime/components/base/framework/entity/SecurityEntities.xml:430`
 - **Reached by:** whoever obtains a token an account made on `Account/GitAccess` (a CI variable, a git credential file, a remote URL), with a `login_key` header on any request the framework signs in.
 - **What happens:** `createAccessToken` calls the framework's `create#UserAccessToken`, which makes an ordinary `UserLoginKey` (a `description`, an empty `scope`) valid 90 days or up to 366. Nothing limits it to git: it is the account's key on the framework's REST of the business host, and in local mode on every PASS page, where the authority's login-key rule does not run. A staff or `ADMIN` account that makes one for git hands out all of its rights.
@@ -745,8 +797,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-BOS-01. Organization row filters do not apply below a sub-area ALWAYS grant
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: each of the 137 role-group `AUTHZT_ALWAYS` rows on mr-boss screen artifact groups, and the two of the Products import services, names the `MANTLE_USER_ORG` and `MANTLE_PRIVATE_CONTACT` filter sets as the app roots do, so a role user's direct finds under an area are filtered. The 47 ALWAYS rows left without them are on no screen (the report engine applies its own organization filter). Test: `mr-boss/test/AppOrganizationFilters.spec.js`.
 - **Where:** crates/moqui-core/src/user/filter.rs:144 and runtime/components/addon/mr-boss/data/BossAccountingSetupData.xml:209
 - **Reached by:** a member of a role group (for example `BOSS_ACCOUNTING_AR`, `BOSS_PEOPLE_PAYROLL`, `BOSS_PEOPLE_HR`) on any request under that group's area screen
 - **What happens:** Entity filters come only from the record that authorized the top frame. A role group's `AUTHZT_ALWAYS` row on an area screen becomes that record for the area and everything below it, and those rows carry no filter set, so `MANTLE_USER_ORG` and `MANTLE_PRIVATE_CONTACT` stop applying exactly where the money and payroll screens are. Organization isolation there rests on each service's own check alone; the seed comment says role users carry `MANTLE_USER_ORG`.
@@ -756,8 +809,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-BOS-02. App administrators and ACCOUNTING_ADMIN are not bound to an organization
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: Accounting's every-organization reach takes the new `ACCOUNTING_ALL_ORGANIZATIONS` (seeded on `ADMIN` only) in place of `ACCOUNTING_ADMIN` (`AccountingPolicy.js` `access`, `InvoiceWorkflowLib.js` `organization`, `get#PartyOrganizationInfo`, `ProductionCostClose.js`, `CostingRates.js`), so an `ACCOUNTING_ADMIN` holder without it works in their own organizations and cannot make another active. Exchange rates, a shared labor costing row and a new organization's Accounting setup now need `ADMIN` or that permission. Test: `mr-mantle/test/party/OrganizationRowFilter.spec.js`.
 - **Where:** runtime/components/addon/mr-mantle/service/mantle/ledger/AccountingPolicy.js:83 and runtime/components/addon/mr-mantle/service/mantle/party/PartyServices.xml:626
 - **Reached by:** a holder of `ACCOUNTING_ADMIN` (group `BOSS_ACCOUNTING_ADMIN`), and at the entity level any `BOSS_<APP>_ADMIN` or `ADMIN` member, on any Accounting or app request
 - **What happens:** An Accounting administrator's scope is every party with the role `OrgInternal`, and they may select any internal organization as active, whatever organization they work for. The `ADMIN` and app-administrator ALWAYS rows carry only `MANTLE_ACTIVE_ORG`, which does not apply when no active organization is selected, so their finds are unfiltered by organization. One organization's Accounting administrator therefore reads and posts in every organization of the instance.
@@ -781,8 +835,9 @@ Medium; reported (likely); fixed.
 
 #### SEC-BAP-01. Calendar subscription makes the server fetch any URL, private addresses included
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `subscribe#Calendar` takes an `https` or `webcal` URL only, and `fetch#CalendarSubscription` fetches over https with `.denyInternal()` (each redirect too) and stores a fixed error text, logging the answer's status or the connection error. A stored `http://` subscription fails each fetch until it is made again with https. Test: `mr-mantle/test/work/CalendarServices.spec.js`.
 - **Where:** runtime/components/addon/mr-mantle/service/mantle/work/CalendarServices.xml:785-822 and 898-925; runtime/components/addon/mr-boss/screen/Commons/Settings/Calendars.xml:64
 - **Reached by:** any signed-in member of `BOSS_USERS`, the subscribe transition of Commons/Settings/Calendars
 - **What happens:** `subscribe#Calendar` accepts any `http`, `https` or `webcal` URL with no host check and starts a background fetch at once; `fetch#CalendarSubscription` GETs it without `denyInternal`, every 5 minutes at the least. The status line of a failed fetch is stored in `lastFetchError` and a body that parses as iCalendar becomes the user's calendar events, so a staff user can probe loopback and LAN services from the server.
@@ -792,8 +847,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-BAP-02. A bank account number is copied whole into the payment method description
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `create#BankAccount` and `update#BankAccount` label a bank payment method with the bank name and `•••• ` and the last four digits, and `BankAccount.accountNumber` is `encrypt="true"`; `migrate#BankAccountNumbers` (a seed load) encrypts a plain number and masks a description holding it. No find compares by the number. Test: `mr-mantle/test/account/PaymentMethodServices.spec.js`.
 - **Where:** runtime/components/addon/mr-mantle/service/mantle/account/PaymentMethodServices.xml:509 and :555; runtime/components/addon/mr-mantle/entity/AccountingAccountEntities.xml:1144-1145
 - **Reached by:** whoever creates or replaces a bank account payment method without a description (BOSS Accounting, the Mantle REST root); read by anyone who sees a payment method's description
 - **What happens:** `BankAccount.routingNumber` and `accountNumber` are stored in plain text, and the default `PaymentMethod.description` is the bank name plus the full account number. The description is the label of a payment method in lists and pickers, so the number reaches users and logs that have no need for it; the card path masks to the last four digits.
@@ -805,8 +861,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-CLI-01. The sidecar's loopback web listener is open to every local user and has no Host check seen
 
-Medium; reported (to check).
+Medium; reported (to check); fixed.
 
+- **Fix:** Fixed 2026-11-16: a request straight to a listener whose `Host` is not in the new `webapp_allowed_hosts` is answered 421 (`serve.rs` `host_allowed`), and the Desktop node sets it to `127.0.0.1:<port>` and `localhost:<port>`; the first administrator comes only from this machine or with the startup log's setup secret (SEC-WEB-08). Test: `serve_tests.rs` `a_listener_with_allowed_hosts_answers_only_for_them`.
 - **Where:** crates/moqui-desktop/src/node/mod.rs:271, crates/moqui-core/src/web/origin.rs:127, runtime/components/base/webroot/screen/webroot/Login.xml:116
 - **Reached by:** another local user or process of the machine (any request to `127.0.0.1:<port>`), and possibly a web page in the user's browser through DNS rebinding; sidecar mode, or the node in process with the tray's ports item on
 - **What happens:** The node's ordinary web listener is bound on loopback with plain HTTP, so every local account reaches the sign-in and, while no user exists, the anonymous first-administrator form. The server's Origin check counts the request's own `Host` header as its own origin, so a rebinding page's `Origin` matches its `Host` and passes; a new session needs no session token.
@@ -818,8 +875,9 @@ Medium; reported (to check).
 
 #### SEC-SCR-02. `print#ScreenDocument` evaluates its `screenParametersStr` parameter as a script
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `print#ScreenDocument` (`service/tools.rs` `print_screen_document`) reads `screenParametersStr` as a JSON object and refuses any other text before the render; nothing is evaluated. Test: `service/tools/tests.rs` `screen_parameters_text_is_json_and_never_a_script`.
 - **Where:** crates/moqui-core/src/service/tools.rs:204-208; runtime/components/base/tools/service/moqui.rest.xml:147-148
 - **Reached by:** a user granted the `/moqui` REST path (the `ADMIN` group by default), `POST` to the `moqui` API resource `print/printers/{networkPrinterId}/print/screen`; and any other caller that passes request text to the service.
 - **What happens:** The text is evaluated with `eval_map` on the script runtime, so it is a server script with the full host table. An `ADMIN` who does not hold `GROOVY_SHELL_WEB` gets script execution, and so a host process and the secret properties.
@@ -829,8 +887,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-SCR-03. `System.getProperty` returns secret properties and the whole environment to any script
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `System.getProperty` answers null for a secret property (`context/identity.rs` `script_refused_property`): one the conf marks `is-secret`, a name `secret_parameter` calls a secret's, or one ending in `_pass` or `_pw` or holding `crypt`. New host functions say whether one is set or compare with it without returning it (`System.isPropertySet`, `System.propertyMatches`, `System.secretCodeHash`), and the framework's scripts use them. `pass_client_secret` stays readable (mr-pass sends it to the authority). Tests: `identity.rs` `scripts_read_no_secret_property`, `script/runtime_tests.rs` `a_script_reads_no_secret_property`.
 - **Where:** crates/moqui-core/src/script/host/globals.rs:562-565; crates/moqui-lib/src/env.rs:62-80, 281-295
 - **Reached by:** any server script, and so any expression of C1, C2 and C5.
 - **What happens:** The lookup reads the property map, then the process environment, then `.env`, with no filter. `entity_ds_crypt_pass` (field encryption) and `session_cookie_key` are `default-property` elements marked `is-secret="true"`, and no Rust code outside tests reads that attribute. An expression injection therefore yields the keys that decrypt stored fields and sign sessions.
@@ -840,8 +899,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-SCR-04. `ec.resource.runTokenCommand` starts a host program from any server script
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16 with SEC-TLS-03 (the same weakness): no script starts a host program; the registry token command is a conf entry run by one Rust service under `INSTANCE_ADMIN`.
 - **Where:** crates/moqui-core/src/script/host/tools.rs:721 and :2603-2620
 - **Reached by:** any server script; with C1, C2 or C5, an admin without the script permission or whoever controls the injected text.
 - **What happens:** The function takes any command line, splits it on whitespace and starts it with `std::process::Command`. The only check is the effect fence, which a normal request does not enter. It is meant for one caller (a registry token command of an instance image), yet it is on `ec.resource` for every script.
@@ -851,8 +911,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-SCR-06. Records whose text is evaluated as script are writable without the script permission
 
-Medium; reported (to check).
+Medium; reported (to check); fixed.
 
+- **Fix:** Fixed 2026-11-16: a translation of a text that is not a message key may add no `${}` expression to its original (`l10n.rs` `translation_adds_expression`; the original is used, with a warning), and `Security.eecas.xml` rules require `DATABASE_ADMIN` to write an expression into `LocalizedMessage`, the `EmailTemplate` sender and subject, an `EmailTemplateAttachment` file name, condition or loop, `SystemMessageRemote.sendUrl`, the `AuthFlowFieldMap` expressions, the `filterMap` and `applyCond` fields of artifact groups, entity filters and authz filters, and `SubscreensItem.menuTitle`; a data load with authorization off is not checked. Tests: `l10n_tests.rs` `a_translation_that_adds_an_expression_is_not_used`, `framework/test/StoredScript.spec.js`.
 - **Where:** crates/moqui-core/src/script/oxide/resource.rs:227-237 (localized text expanded); crates/moqui-mail/src/implementation.rs:558-562, 1118, 1136; crates/moqui-core/src/service/system_sync/message.rs:104; system_sync/entity_sync.rs:344; service/sso.rs:634; user/authz.rs:626; service/rule_actions.rs:50
 - **Reached by:** a user who may write `LocalizedMessage`, `EmailTemplate`, `EmailTemplateAttachment`, a system message remote, an entity sync detail, an identity provider mapping or an authorization filter (administration screens, the entity REST API, a data import).
 - **What happens:** Each of these fields is evaluated as an expression or a `${}` template on the script runtime. Writing one is equal to holding `GROOVY_SHELL_WEB`, but the sealed-permission rule guards only the `UserGroupPermission` rows. A translation editor is the weakest case: a `LocalizedMessage` whose text holds `${...}` runs wherever its original is expanded.
@@ -864,8 +925,9 @@ Medium; reported (to check).
 
 #### SEC-OUT-01. SMTP credentials go out without TLS when the server offers no STARTTLS, or when neither TLS flag is set
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `smtp_tls_mode` requires TLS for a session that signs in (a password or an OAuth token) unless `smtpSsl` is set or the host is loopback; an unauthenticated relay upgrades when STARTTLS is offered. Test: the `smtp_tls_mode` cases of moqui-mail `implementation::tests::a_server_not_allowed_the_private_network_is_refused_on_production_and_credentials_need_tls`.
 - **Where:** crates/moqui-mail/src/implementation.rs:1916
 - **Reached by:** a network attacker between the server and an `EmailServer` whose `smtpStartTls` is `Y` (strips STARTTLS), or any observer when both flags are empty
 - **What happens:** `smtpStartTls` builds `Tls::Opportunistic`, so the session continues in cleartext when the EHLO answer has no STARTTLS, and the password or XOAUTH2 token is then sent. With neither flag `builder_dangerous` keeps no TLS at all.
@@ -875,8 +937,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-OUT-02. The address guard fails open on stored rows: it applies only when `allowPrivateNetwork` is exactly `N`
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: `outbound::deny_private_network` denies an internal address unless the row's `allowPrivateNetwork` is Y on a production instance (N only, elsewhere), for `AuthFlow`, `SystemMessageRemote`, network printers, `EmailServer`, `ScrapeTarget`, `SyntheticCheck` and `EntitySync`; the Admin connection screens show and test with the same rule. On production a local relay, LAN printer or internal identity provider with the flag empty now needs Y. Tests: `outbound::http_tests::a_row_that_does_not_say_y_is_denied_on_production`, moqui-mail `implementation::tests::a_server_not_allowed_the_private_network_is_refused_on_production_and_credentials_need_tls`.
 - **Where:** crates/moqui-core/src/service/sso.rs:237
 - **Reached by:** whoever can create or edit an `AuthFlow`, `SystemMessageRemote`, printer or `EmailServer` row by a path other than the admin Configuration services (a data file, an entity REST write, an older row)
 - **What happens:** A row with an empty `allowPrivateNetwork` is sent to loopback, private addresses and `169.254.169.254`. Only `ConfigurationProviders.js`/`ConfigurationConnections.js` set `N`, and only when `instance_purpose` is `production`. Remote agent and MCP rows fail closed (guard on unless `Y`), so the two families disagree.
@@ -886,8 +949,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-OUT-03. Scrape targets, synthetic checks, EntitySync, `remote-rest` and resource locations never use the guard
 
-Medium; reported (likely).
+Medium; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-16: `ScrapeTarget`, `SyntheticCheck` and `EntitySync` have `allowPrivateNetwork` under the row rule of SEC-OUT-02; setting it Y on a target or check, or moving such a row's URL, needs the new `MONITOR_PRIVATE_NETWORK` (`TelemetryServices.store#ScrapeTarget`, `store#SyntheticCheck`; both entities are refused to generic writes). On production `remote-rest` refuses an internal host a call parameter fills (`remote.rs` `caller_names_host`), and an `http(s)://` resource location is public only. Every request through the shared client refuses link-local and metadata addresses. Tests: `tools/test/MonitorChecks.spec.js`, `remote::tests::on_production_a_host_from_a_parameter_is_refused_when_internal`, `outbound::http_tests::deny_internal_refuses_an_internal_address`.
 - **Where:** crates/moqui-core/src/telemetry/scrape.rs:557
 - **Reached by:** a user who can create a scrape target or synthetic check row (a monitoring administrator per the comment), or who can supply a resource location or `remote-rest` parameter
 - **What happens:** The request goes to any address, internal included. A scrape stores the body's metrics and sends the row's bearer token; a synthetic check reports status and whether the body contains `expectBodyContains`, which reads an internal page one guess at a time.
@@ -897,8 +961,9 @@ Medium; reported (likely).
 
 #### SEC-OUT-07. Compose files default the database password to `moqui` with TLS off and the port published on the host
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: the three external-database compose files take `${MOQUI_DB_PASSWORD:?...}` (and `MOQUI_DB_ROOT_PASSWORD` for MySQL), so a start with no password fails, `podman/env.example` leaves both empty, and the database `ports` lines are commented out. `entity_ds_sslmode: disable` is unchanged (the compose network only). Checked with `docker compose ... config`; no spec (packaging files).
 - **Where:** podman/moqui-postgres-compose.yml:32
 - **Reached by:** a local user of the container host, or anything that can reach `127.0.0.1:5432`/`3306` there, when the administrator did not write `podman/.env`
 - **What happens:** `${MOQUI_DB_PASSWORD:-moqui}` gives the server and the database the password `moqui` (root `moquiroot` for MySQL) on an instance marked `instance_purpose: production`, with `entity_ds_sslmode: disable`. The OpenSearch containers run as `0:0` with the security plugin off.
@@ -908,8 +973,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-OUT-08. A stored field is run as a program: `runTokenCommand(instanceImage.authTokenCmd)`; the Docker API defaults to plain HTTP on 2375
 
-Medium; reported (to check).
+Medium; reported (to check); partly fixed.
 
+- **Fix:** Fixed 2026-11-16 with SEC-TLS-03 in part: `authTokenCmd` names a conf `token-command` and is never run as a command line, and `init#InstanceDocker` sends a registry login only over https, a unix socket or loopback http. Left: the other Docker services of `InstanceServices.xml` (start, stop, remove, status, log) still default to plain http on 2375 to any host; they send no registry login, but the Docker API is full control of that host. Requiring https or a unix socket there would stop existing hosts: a product decision. Test: `script_ports_tests.rs` `a_registry_login_is_not_sent_over_plain_http_to_another_host`.
 - **Where:** runtime/components/base/framework/service/org/moqui/dev/InstanceServices.xml:447
 - **Reached by:** whoever can write an `InstanceImage` or instance host row and call `init#InstanceDocker`
 - **What happens:** The field's text is split on whitespace and run as the server user with the server's environment; only the fence effect `Process` stands in front. The same services call `hostProtocol || "http"` on port 2375 and send `X-Registry-Auth` there, so the registry token and full control of that Docker host cross the network in cleartext.
@@ -921,8 +987,9 @@ Medium; reported (to check).
 
 #### SEC-DEV-01. export#Records returns any entity's records to every Dev AIDE tier, including the stored tokens get#Credentials keeps for ADMIN
 
-Medium; reported (likely).
+Medium; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-16: dev-aide `export#Records` (`entities.rs` `export_refused`) refuses a restricted entity for everyone, and a `moqui.security` entity, `DevAideCredential`, `DevAideServer`, `DevAideTaskSource` or any entity with an encrypted field below the full tier with `ADMIN`; its writer is never full, so the text holds no password or encrypted field. `try#Snippet` at the extend tier is code execution by design. Test: `dev-aide/test/EntityModeler.spec.js`.
 - **Where:** runtime/components/dev/dev-aide/src/entities.rs:98-131; runtime/components/dev/dev-aide/data/DevAideSecurityData.xml:29-39
 - **Reached by:** a member of DEV_AIDE_EXTENDERS or DEV_AIDE_USERS (not ADMIN) on a dev instance, GET /apps/dev/Workspace/exportRecords with an entity name (read-only transition, URL parameters).
 - **What happens:** The service needs only the view tier and finds on whatever entity the request names, with no list of refused entities. The DEV_AIDE_APP group is an inheritable ALWAYS/ALL grant for all three groups, so the find below it is permitted for any entity: UserAccount, UserLoginKey, moqui.dev.DevAideCredential, DevAideServer. get#Credentials and store#Credential deliberately require ADMIN and never return the token; this path goes round that.
@@ -932,8 +999,9 @@ Medium; reported (likely).
 
 #### SEC-DEV-05. MailCapture.enable() has no test-run gate, unlike HttpFixtures
 
-Medium; reported (to check).
+Medium; reported (to check); fixed.
 
+- **Fix:** Fixed 2026-11-16: `MailCapture` (`service/mail_capture.rs`) captures only when `mail_capture::allowed()`, a process flag the `moqui test` runner sets and no server sets: `enable()` elsewhere returns an error, `is_enabled()` is false, and the `mail_capture_sends` property is ignored with a warning. Test: `mail_capture.rs` `the_capture_follows_its_switch_and_keeps_the_latest`.
 - **Where:** crates/moqui-core/src/service/mail_capture.rs:176-232; runtime/components/base/framework/conf/MoquiDefaultConf.xml:619
 - **Reached by:** any script that can call `ec.factory.getTool('MailCapture')` on any instance purpose, or an operator who sets `mail_capture_sends=true`.
 - **What happens:** The tool factory is declared in the default conf and `enable()` sets capture for the whole factory with no check of a test run or of the instance purpose. From then on every send is recorded as sent but kept in memory, and `getMessages()` returns the bodies: password reset links and sign-in codes of any user go to the script instead of the mailbox. HttpFixtures has the gate (`allowed()`, set only by `moqui test`); this tool does not.
@@ -943,8 +1011,9 @@ Medium; reported (to check).
 
 #### SEC-DEV-06. The demo lock-down leaves many ADMIN grants and permissions in place that were added after it
 
-Medium; reported (to check).
+Medium; reported (to check); fixed.
 
+- **Fix:** Fixed 2026-11-16: `DemoSecurityData.xml` ends ADMIN's `ADMIN_ACCESS_MANAGE`, `ADMIN_IDENTITY_MANAGE`, `ADMIN_IDENTITY_GLOBAL`, the backup, connection, transfer, settings, operation and constitution permissions, `AgentAdmin`, `AgentSkillAuthor`, `ChatBridgeAdmin`, `VoiceAdmin`, `GIT_CI_ADMIN`, `MONITOR_EVAL_RUN`, `MONITOR_REPLAY`, `MONITOR_PRIVATE_NETWORK` and `EMAIL_ACCOUNT_HOSTED`, and makes `TOOLS_DATABASE_LOAD_ADMIN` and `AIDE_PROJECTS_ADMIN` view-only; `Demo.spec.js` fails on any ADMIN grant or permission of the base seed that the demo neither ends nor allows. The app components' ADMIN grants are not checked by it. Test: `demo/test/Demo.spec.js`.
 - **Where:** runtime/components/dev/demo/data/DemoSecurityData.xml:21-59
 - **Reached by:** anyone signed in as the shared `john.doe` ADMIN on a public demo server.
 - **What happens:** The demo data makes ADMIN view-only on nine artifact groups and ends ten permissions. The base seed also gives ADMIN ALL on DASHBOARDS_APP, CALC_GRID, CALC_GRID_AUTHOR, BASIC_COMMS, four REPORT_* groups, TOOLS_DATABASE_LOAD (`run#LoadWrap`) and AIDE_PROJECTS, and the permissions ADMIN_BACKUP_RUN, ADMIN_BACKUP_DOWNLOAD, ADMIN_CONNECTION_MANAGE, ADMIN_TRANSFER_RUN, ADMIN_SETTINGS_MANAGE, ADMIN_IDENTITY_MANAGE, ADMIN_ACCESS_MANAGE, AgentAdmin, AgentSkillAuthor, GIT_CI_ADMIN, ChatBridgeAdmin, VoiceAdmin, MONITOR_EVAL_RUN, MONITOR_REPLAY, REST_SCHEMA, which the demo data does not touch. Any screen outside Tools and System that reaches the services behind them is open to every visitor.

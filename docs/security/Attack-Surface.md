@@ -71,8 +71,11 @@ that login reaches:
 - `ADMIN` is VIEW-only on Tools, System (Monitor with it), `/moqui`, EntitySync and SystemMessage receive, `/resources` (so refused: `run` is not a view verb), git repositories,
   report git sync and report webhooks. It loses `SearchRemote`, `DashboardRemote`, `ADMIN_PASSWORD`, `SSH_SFTP`,
   `SSH_GIT`, `MONITOR_INGEST`, `MONITOR_RECOVER`, `MONITOR_RECOVER_ADMIN`, `MONITOR_SETTINGS` and
-  `REPORT_SAVE_LOCATION`. `john.doe` leaves `ADMIN_ADV`. What the lock-down leaves in place is in
-  [Attack-Surface-Dev](Attack-Surface-Dev.md).
+  `REPORT_SAVE_LOCATION`, the managing Admin permissions (`ADMIN_ACCESS_MANAGE`, `ADMIN_IDENTITY_MANAGE`, backups,
+  connections, transfers, settings, operations), the agent, chat bridge, voice and CI administration, the monitor's
+  eval runs, replays and private-network setting, and `EMAIL_ACCOUNT_HOSTED`; Data Load and the Dev AIDE projects are
+  VIEW-only. `john.doe` leaves `ADMIN_ADV`. What the lock-down leaves in place is the allow-list of the demo's
+  `Demo.spec.js`, listed in [Attack-Surface-Dev](Attack-Surface-Dev.md#demo-component).
 - SSH (`ssh-server enabled="false"`), DAV, the MCP server and client, A2A both ways and the gateway are off, and mail
   connects only to `localhost`.
 - Password changes and resets, sign-in factors, and username, disabled and require-password-change changes are refused

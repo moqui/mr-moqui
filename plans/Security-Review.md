@@ -3,8 +3,11 @@
 Status 2026-11-15: first pass done, in two rounds. The attack surface map was split by area and every slice of the
 code has been read at least in part by a reviewer; the suspected weaknesses are listed here. Most are as their
 reviewer reported them and have not been read a second time; the Status column says which. The twelve High findings
-(ten fixes: two pairs are one weakness) are fixed, each with its regression test; its section's **Fix** says how. The
-Medium and lower ones are not. What is left is under [What is left](#what-is-left).
+(ten fixes: two pairs are one weakness) are fixed, each with its regression test; its section's **Fix** says how. On
+2026-11-16 the Medium findings were fixed in the same way: 74 of the 77 are fixed and three in part (SEC-RTE-02,
+SEC-OUT-08, SEC-PSS-61), each entry's **Fix** in [Security-Review-Medium](Security-Review-Medium.md) saying how and
+what is left; 44 Low and Info findings were fixed with them and five in part. What is left is under
+[What is left](#what-is-left).
 
 This is the findings register of the security review that the pre-0.1.0 notice in the [README](../README.md) names:
 until 0.1.0, findings are recorded openly in this repository. The map of what can be reached is
@@ -55,8 +58,8 @@ that builds this document are in `plans/security-review-evidence/`, which is not
 ## The findings that matter most
 
 No finding is rated Critical. These are the ones to look at first; each High one has its section below, each Medium one in
-[Security-Review-Medium](Security-Review-Medium.md). Every High one below is fixed (2026-11-15); the Medium ones are
-not.
+[Security-Review-Medium](Security-Review-Medium.md). Every High one below is fixed (2026-11-15), and every Medium one
+(2026-11-16), three of them in part.
 
 - **A disabled account comes back** (SEC-WEB-01, SEC-ADM-01; High; confirmed by the lead). An account disabled for
   good becomes a five-minute lock after four failed sign-in attempts, and a password change writes `disabled=N`. An
@@ -81,12 +84,15 @@ not.
   and **mr-marble's party mail screen returns any stored message's body by its id** as inline HTML (SEC-MAIL-63;
   High; reported).
 - **Text from records is expanded as script** in more places than the two above (SEC-SCR-05; High; reported): a
-  notification's title is expanded, and Mantle builds some titles from record values. `System.getProperty` gives any
-  server script every property, the secret ones included (SEC-SCR-03).
+  notification's title is expanded, and Mantle builds some titles from record values. `System.getProperty` gave any
+  server script every property, the secret ones included (SEC-SCR-03; fixed 2026-11-16: it answers null for a secret).
 - **Stored credentials are readable** by an administrator through REST and exports, where the map said write-only
   (SEC-DAT-03, confirmed by the lead; SEC-TLS-05), and a find by request parameters takes conditions on password-hash
-  and encrypted fields (SEC-DAT-01).
-- **PASS sign-in has no rate limit on the authority** (SEC-PSA-01; Medium; reported).
+  and encrypted fields (SEC-DAT-01). Fixed 2026-11-16: no REST answer or export without `ADMIN_BACKUP_DOWNLOAD` holds
+  an encrypted field's value (`<field>IsSet` in its place), and request input takes no condition or order on a password
+  field and no order or pattern on an encrypted one.
+- **PASS sign-in had no rate limit on the authority** (SEC-PSA-01; Medium; reported; fixed 2026-11-16: 20 sign-ins a
+  requester and 10 a user name in ten minutes).
 - **`allow-remote` is read by nothing.** The map cited `allow-remote="false"` on about 37 lines as if it kept a
   service unreachable. No Rust code reads the attribute (the service XSD says so). A service is reached from outside
   only through a screen transition, a REST resource, a web script, a token route, the PASS authority's route table or
@@ -165,8 +171,21 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 2. **What each slice did not reach.** The coverage table names it, each report's "Read" section has the detail, and
    each map file ends with its open questions. The thinnest: the BOSS business apps other than Commerce and order
    approval, parsers of untrusted input, the mobile app's native code, and the helper-read parts of the PASS services.
-3. **Fixes.** The High findings are fixed (2026-11-15, what they left on 2026-11-16); the Medium, Low and Info ones
-   are not.
+3. **Fixes.** The High findings are fixed (2026-11-15, what they left on 2026-11-16), and the Medium ones
+   (2026-11-16) with 44 of the Low and Info ones. Of the Medium findings none is open, none deferred and none refuted;
+   three are fixed in part, each for a decision or a design:
+   - SEC-RTE-02: a server-static screen's `actions` package still holds its whole context; sending only the names its
+     template reads needs the template's reads recorded (a design).
+   - SEC-OUT-08: the Docker services other than the registry login still default to plain http on 2375 to any host;
+     requiring https or a unix socket would stop existing hosts (a product decision).
+   - SEC-PSS-61: a public event reservation is still attached to the directory party of an unverified address; waiting
+     for the address to be confirmed changes the registration flow (the owner's decision).
+
+   The Low and Info findings fixed in part are SEC-TLS-08 (the deploy fetch resolves the host again), SEC-MAIL-66 (the
+   clear-text fall back), SEC-COM-21 (no protocol scope on an app password), SEC-DAT-09 (no page size cap on screens)
+   and SEC-BAP-06 (no carrier host list). Deferred: SEC-SCR-07 (`ec.service.rest()` refusing internal addresses on
+   production needs an opt-in for its two internal callers first), SEC-COM-19 and SEC-COM-26 (each a design of its
+   own). The other Low and Info findings are not fixed.
 
 ## Counts
 
@@ -204,19 +223,19 @@ Map file: [Attack-Surface-Web.md](../docs/security/Attack-Surface-Web.md). Revie
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
 | SEC-WEB-01 | `crates/moqui-core/src/user/login.rs:1303-1310`, `:1511-1520`, `:1736-1746` | An account disabled for good comes back by itself: four failed logins and a wait, or a password change | High | fixed |
-| SEC-WEB-02 | `runtime/components/base/framework/service/org/moqui/impl/UserServices.xml:166-283` | The password change form checks `oldPassword` with no lockout | Medium | confirmed (second check) |
-| SEC-WEB-03 | `crates/moqui-core/src/user/login.rs:1303-1310`, `:449-470`, `:1736-1746` | A locked account stays locked while anything keeps trying, its own API key included | Medium | confirmed (second check) |
+| SEC-WEB-02 | `runtime/components/base/framework/service/org/moqui/impl/UserServices.xml:166-283` | The password change form checks `oldPassword` with no lockout | Medium | fixed |
+| SEC-WEB-03 | `crates/moqui-core/src/user/login.rs:1303-1310`, `:449-470`, `:1736-1746` | A locked account stays locked while anything keeps trying, its own API key included | Medium | fixed |
 | SEC-WEB-04 | `crates/moqui-core/src/screen/render.rs:2667-2672`, `:2070-2098` | Transitions with the default method run their actions on a GET with no token | Medium | fixed |
-| SEC-WEB-08 | `Login.xml:116-120` | The first caller creates the administrator | Medium | confirmed (second check) |
+| SEC-WEB-08 | `Login.xml:116-120` | The first caller creates the administrator | Medium | fixed |
 | SEC-WEB-05 | `crates/moqui-core/src/user/login.rs:54-61`, `:403-416`, `:514-516` | Several sign-ins keep the session id; the forced password change flow never changes it | Low | reported (confirmed in code) |
 | SEC-WEB-06 | `crates/moqui-core/src/user/login.rs:1042-1071`, `:1227-1245` | Logout keeps the session and its attributes; a password change ends nothing | Low | reported (confirmed in code) |
-| SEC-WEB-07 | `crates/moqui-host/src/guard.rs:295-300`, `:1010-1035` | The `login` rate limit covers part of the password checks and is passed by a dot segment | Low | reported (confirmed in code) |
-| SEC-WEB-09 | `UserServices.xml:404-462` | `reset#Password` rewrites `requirePasswordChange` for any account | Low | reported (confirmed in code) |
+| SEC-WEB-07 | `crates/moqui-host/src/guard.rs:295-300`, `:1010-1035` | The `login` rate limit covers part of the password checks and is passed by a dot segment | Low | fixed |
+| SEC-WEB-09 | `UserServices.xml:404-462` | `reset#Password` rewrites `requirePasswordChange` for any account | Low | fixed |
 | SEC-WEB-10 | `runtime/conf/MoquiDevConf.xml:9` | Dev conf: every origin is allowed with credentials | Low | reported (confirmed in code) |
 | SEC-WEB-11 | `crates/moqui-host/src/http.rs:957-963`, `:1679-1684` | `/health` and `/metrics` trust a loopback TCP peer | Low | reported (confirmed in code) |
-| SEC-WEB-12 | `crates/moqui-core/src/user/totp.rs:89-106` | Second factor details: a TOTP code works more than once; code sends are not limited in the login flow | Low | reported (confirmed in code) |
+| SEC-WEB-12 | `crates/moqui-core/src/user/totp.rs:89-106` | Second factor details: a TOTP code works more than once; code sends are not limited in the login flow | Low | fixed |
 | SEC-WEB-13 | `crates/moqui-core/src/user/session.rs:3057-3065` | A `session_cookie_key` set by the operator is not checked | Low | reported (confirmed in code) |
-| SEC-WEB-14 | `crates/moqui-core/src/user/authz.rs:703-704`, `:753-758` | An anonymous tarpit lock is everyone's | Low | reported (confirmed in code) |
+| SEC-WEB-14 | `crates/moqui-core/src/user/authz.rs:703-704`, `:753-758` | An anonymous tarpit lock is everyone's | Low | fixed |
 
 ### Routes, screens and REST
 
@@ -225,19 +244,19 @@ Map file: [Attack-Surface-Routes.md](../docs/security/Attack-Surface-Routes.md).
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
 | SEC-RTE-01 | `crates/moqui-core/src/web/mod.rs:1306` (`mark_email_message_viewed`) | `GET /email/{id}` lets anyone move mail to Viewed | High | fixed |
-| SEC-RTE-02 | `crates/moqui-core/src/screen/statics.rs:767` (`screen_package`), `:545` (`unwrap_context`) | `GET <screen>/actions` answers the screen's whole context | Medium | reported (confirmed in code) |
-| SEC-RTE-03 | `crates/moqui-entity/src/entity/query_rest.rs:214` | Any signed-in user can write `EntityAuditLog` rows through entity REST | Medium | reported (confirmed in code) |
+| SEC-RTE-02 | `crates/moqui-core/src/screen/statics.rs:767` (`screen_package`), `:545` (`unwrap_context`) | `GET <screen>/actions` answers the screen's whole context | Medium | partly fixed |
+| SEC-RTE-03 | `crates/moqui-entity/src/entity/query_rest.rs:214` | Any signed-in user can write `EntityAuditLog` rows through entity REST | Medium | fixed |
 | SEC-RTE-04 | `runtime/components/base/webroot/template/screen/BasicTransitions.xml:20` | `emailScreenAsync` mails a full report to a request-given address by `GET` | Medium | fixed |
 | SEC-RTE-05 | `runtime/components/base/webroot/screen/webroot.xml:257` | `/resources` runs elFinder write commands on a `GET` | Medium | fixed |
-| SEC-RTE-06 | `crates/moqui-entity/src/entity/query_rest.rs:208`, `:962` (`related_rows`) | Entity REST dependents read entities the restricted rule refuses | Medium | reported (likely) |
-| SEC-RTE-07 | `crates/moqui-host/src/http.rs:1109`-`1124`, `:1203` | A multipart body is spooled to disk before any check | Medium | reported (confirmed in code) |
+| SEC-RTE-06 | `crates/moqui-entity/src/entity/query_rest.rs:208`, `:962` (`related_rows`) | Entity REST dependents read entities the restricted rule refuses | Medium | fixed |
+| SEC-RTE-07 | `crates/moqui-host/src/http.rs:1109`-`1124`, `:1203` | A multipart body is spooled to disk before any check | Medium | fixed |
 | SEC-RTE-08 | `crates/moqui-core/src/screen/render.rs:2667` (`csrf_rejected`), `:2070` (`insecure_transition`) | State changes on `GET` with no token | Low | reported (confirmed in code) |
 | SEC-RTE-09 | `crates/moqui-core/src/screen/url.rs:373` | `lastStandalone` takes the parents out of the user check | Low | reported (confirmed in code) |
 | SEC-RTE-10 | `crates/moqui-host/src/http.rs:957`, `:977`, `:1679` | `/health` and `/metrics` trust the TCP peer | Low | reported (to check) |
 | SEC-RTE-11 | `crates/moqui-core/src/screen/public_site.rs:96`-`102` | A restricted host still serves some framework paths | Low | reported (likely) |
 | SEC-RTE-12 | `runtime/components/base/webroot/screen/webroot.xml:83`, `:104` | Anonymous reads through `/listViewColumns` and `/statusBar` | Low | reported (confirmed in code) |
 | SEC-RTE-13 | `crates/moqui-core/src/screen/url.rs:499` | Answers that tell an anonymous caller what exists | Low | reported (confirmed in code) |
-| SEC-RTE-14 | `crates/moqui-core/src/service/rest.rs:731` | Service REST entity lists have no upper bound | Low | reported (confirmed in code) |
+| SEC-RTE-14 | `crates/moqui-core/src/service/rest.rs:731` | Service REST entity lists have no upper bound | Low | fixed |
 | SEC-RTE-15 | `crates/moqui-core/src/script/host/user.rs:120` | `getPreferences` builds a JavaScript regular expression from the request | Low | reported (to check) |
 | SEC-RTE-16 | `crates/moqui-core/src/screen/token_route.rs:300`-`365` | A refused token-route token is not counted | Low | reported (to check) |
 | SEC-RTE-17 | `runtime/components/base/webroot/screen/webroot/Login.xml:191`-`193`, `:249`-`256` | The Login page verifies a password on every render and offers a one-click admin sign-in | Low | reported (confirmed in code) |
@@ -250,18 +269,18 @@ Map file: [Attack-Surface-Admin.md](../docs/security/Attack-Surface-Admin.md). R
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
 | SEC-ADM-01 | `UserServices.xml:166-282` (`update#Password`), `:284-385` (`update#PasswordInternal`) | A disabled account re-enables itself with a password change | High | fixed |
-| SEC-ADM-02 | `UserServices.xml:233-271` | `update#Password` tests passwords with no lockout and tells right from wrong | Medium | reported (confirmed in code) |
-| SEC-ADM-03 | `UserServices.xml:210-229` with `:704-738` (`create#SingleUseAuthcCodes`) | A signed-in session changes the password without the old one | Medium | reported (confirmed in code) |
-| SEC-ADM-04 | `UserServices.xml:532, 637, 704, 741, 815, 932, 963, 990, 1008, 1052` | Factor services act on any `userId` | Medium | reported (to check) |
-| SEC-ADM-05 | `UserServices.xml:183-202` | `ADMIN` reaches the sealed permissions of `ADMIN_ADV` through another account | Medium | reported (confirmed in code) |
-| SEC-ADM-06 | `admin/Access.js:1093-1120` (`applyGrantProposal`) | `ADMIN_IDENTITY_MANAGE` assigns bundles though it is not sealed | Medium | reported (likely) |
-| SEC-ADM-07 | `crates/moqui-core/src/service/user_keys.rs:216-229, 382-401, 137-176` | Long-lived credentials are minted from a session with no recent sign-in | Low | reported (confirmed in code) |
-| SEC-ADM-08 | `base/tools/screen/System/Security/UserAccount/UserAccountDetail.xml:31-43` | Login-as leaves no evidence and has no bound | Low | reported (confirmed in code) |
+| SEC-ADM-02 | `UserServices.xml:233-271` | `update#Password` tests passwords with no lockout and tells right from wrong | Medium | fixed |
+| SEC-ADM-03 | `UserServices.xml:210-229` with `:704-738` (`create#SingleUseAuthcCodes`) | A signed-in session changes the password without the old one | Medium | fixed |
+| SEC-ADM-04 | `UserServices.xml:532, 637, 704, 741, 815, 932, 963, 990, 1008, 1052` | Factor services act on any `userId` | Medium | fixed |
+| SEC-ADM-05 | `UserServices.xml:183-202` | `ADMIN` reaches the sealed permissions of `ADMIN_ADV` through another account | Medium | fixed |
+| SEC-ADM-06 | `admin/Access.js:1093-1120` (`applyGrantProposal`) | `ADMIN_IDENTITY_MANAGE` assigns bundles though it is not sealed | Medium | fixed |
+| SEC-ADM-07 | `crates/moqui-core/src/service/user_keys.rs:216-229, 382-401, 137-176` | Long-lived credentials are minted from a session with no recent sign-in | Low | fixed |
+| SEC-ADM-08 | `base/tools/screen/System/Security/UserAccount/UserAccountDetail.xml:31-43` | Login-as leaves no evidence and has no bound | Low | fixed |
 | SEC-ADM-09 | `base/webroot/screen/webroot/sso.xml:40-45` | `/sso/logout` signs the browser out on a GET | Low | reported (confirmed in code) |
 | SEC-ADM-10 | `admin/OperationLib.js:59-72` | Owner services run below `OperationServices` with inherited authorization | Low | reported (confirmed in code) |
 | SEC-ADM-11 | `crates/moqui-core/src/service/sso.rs:601-650, 762-777` | The SSO sync writes an unverified `email` claim to `UserAccount.emailAddress` | Low | reported (likely) |
-| SEC-ADM-12 | `UserServices.xml:404-462` | An anonymous reset can force a password change | Low | reported (confirmed in code) |
-| SEC-ADM-13 | `UserServices.xml:464-505` | `create#InitialAdminAccount` on a fresh instance | Info | reported (confirmed in code) |
+| SEC-ADM-12 | `UserServices.xml:404-462` | An anonymous reset can force a password change | Low | fixed |
+| SEC-ADM-13 | `UserServices.xml:464-505` | `create#InitialAdminAccount` on a fresh instance | Info | fixed |
 
 ### Tools, System, Monitor and Dashboards
 
@@ -271,17 +290,17 @@ Map file: [Attack-Surface-Tools.md](../docs/security/Attack-Surface-Tools.md). R
 | --- | --- | --- | --- | --- |
 | SEC-TLS-01 | `runtime/components/base/tools/screen/Tools/Data/Export.xml:18` and `:54-61` | Export's `filterMap` runs a caller's script, by GET, with no script permission | High | fixed |
 | SEC-TLS-02 | `runtime/components/base/framework/service/org/moqui/dev/InstanceServices.xml:444-447`, `:195`, `:206`, `:295` | Hosted-instance rows give host command execution and script execution to a Tools and System holder | High | fixed |
-| SEC-TLS-03 | `crates/moqui-core/src/script/host/tools.rs:721`, `:1272`, `:2602-2621` | `runTokenCommand` is on `ec.resource` for every script | Medium | reported (confirmed in code) |
+| SEC-TLS-03 | `crates/moqui-core/src/script/host/tools.rs:721`, `:1272`, `:2602-2621` | `runTokenCommand` is on `ec.resource` for every script | Medium | fixed |
 | SEC-TLS-04 | `crates/moqui-core/src/screen/definition.rs:387`, `render.rs:2076-2099`, `:2668-2673` | State-changing transitions that run on a cross-site GET | Medium | fixed |
-| SEC-TLS-05 | `runtime/components/base/tools/screen/Tools/Data/Export.xml:26-45` | Export and Snapshots read the entities the other generic tools refuse | Medium | reported (likely) |
-| SEC-TLS-06 | `crates/moqui-report/src/schedule.rs:75-76`, `:1370-1392` | A scheduled report writes to any server path | Medium | reported (likely) |
-| SEC-TLS-11 | `crates/moqui-report/src/recovery/mod.rs:485-492`, `crates/moqui-report/src/recovery/execute.rs:526` and `:176-199`, `crates/moqui-entity/src/entity/sensitive.rs:66-76` | (telemetry reader) Monitor's permissions are checked only in its services; a generic write to a `moqui.monitor` row goes around them | Medium | reported (likely) |
-| SEC-TLS-12 | `crates/moqui-report/src/recovery/execute.rs:44-52`, `:446-451` | (telemetry reader) A recovery webhook adapter sends any process property to a URL its author chooses | Medium | reported (confirmed in code) |
-| SEC-TLS-13 | `crates/moqui-core/src/telemetry/scrape.rs:548-558`, `:705-727` | (telemetry reader) Synthetic checks and scrape targets reach internal addresses and answer what they found | Medium | reported (confirmed in code) |
-| SEC-TLS-07 | `runtime/components/base/framework/service/org/moqui/impl/EntityServices.xml:276-284` | `export#EntityDataSnapshot` joins `baseFilename` into a path | Low | reported (confirmed in code) |
-| SEC-TLS-08 | `crates/moqui-devkit/src/deploy/git.rs:210-234` | The production internal-address check of a deploy URL is bypassed by user info, and fails open | Low | reported (confirmed in code) |
-| SEC-TLS-09 | `runtime/components/base/tools/screen/Tools/Service/ServiceRun.xml:26-29` | Secrets written to the server log by Tools and Instance | Low | reported (confirmed in code) |
-| SEC-TLS-10 | `runtime/components/base/framework/service/org/moqui/dev/InstanceServices.xml:816`, `:842` | `create#DatabaseMySQL` quotes the password for standard SQL only | Low | reported (to check) |
+| SEC-TLS-05 | `runtime/components/base/tools/screen/Tools/Data/Export.xml:26-45` | Export and Snapshots read the entities the other generic tools refuse | Medium | fixed |
+| SEC-TLS-06 | `crates/moqui-report/src/schedule.rs:75-76`, `:1370-1392` | A scheduled report writes to any server path | Medium | fixed |
+| SEC-TLS-11 | `crates/moqui-report/src/recovery/mod.rs:485-492`, `crates/moqui-report/src/recovery/execute.rs:526` and `:176-199`, `crates/moqui-entity/src/entity/sensitive.rs:66-76` | (telemetry reader) Monitor's permissions are checked only in its services; a generic write to a `moqui.monitor` row goes around them | Medium | fixed |
+| SEC-TLS-12 | `crates/moqui-report/src/recovery/execute.rs:44-52`, `:446-451` | (telemetry reader) A recovery webhook adapter sends any process property to a URL its author chooses | Medium | fixed |
+| SEC-TLS-13 | `crates/moqui-core/src/telemetry/scrape.rs:548-558`, `:705-727` | (telemetry reader) Synthetic checks and scrape targets reach internal addresses and answer what they found | Medium | fixed |
+| SEC-TLS-07 | `runtime/components/base/framework/service/org/moqui/impl/EntityServices.xml:276-284` | `export#EntityDataSnapshot` joins `baseFilename` into a path | Low | fixed |
+| SEC-TLS-08 | `crates/moqui-devkit/src/deploy/git.rs:210-234` | The production internal-address check of a deploy URL is bypassed by user info, and fails open | Low | partly fixed |
+| SEC-TLS-09 | `runtime/components/base/tools/screen/Tools/Service/ServiceRun.xml:26-29` | Secrets written to the server log by Tools and Instance | Low | fixed |
+| SEC-TLS-10 | `runtime/components/base/framework/service/org/moqui/dev/InstanceServices.xml:816`, `:842` | `create#DatabaseMySQL` quotes the password for standard SQL only | Low | fixed |
 | SEC-TLS-14 | `crates/moqui-core/src/telemetry/ingest.rs:878-891`, `crates/moqui-report/src/regression/mod.rs:144-157`, `:276-281`, `crates/moqui-report/src/annotations.rs:60-75` | (telemetry reader) An ingest key's sender can pose as this server's own service and move the regression detector and recovery | Low | reported (likely) |
 | SEC-TLS-15 | `crates/moqui-report/src/annotations.rs:19-31`, `crates/moqui-host/src/monitor/receiver.rs:224-243` | (telemetry reader) An ingest key owned by an administrator writes business annotations for any organization | Low | reported (likely) |
 | SEC-TLS-16 | `runtime/components/base/tools/screen/System/Monitor/Settings.xml:17-20` | (telemetry reader) `Settings/revertAll` runs on a GET with no token | Low | reported (confirmed in code) |
@@ -295,18 +314,18 @@ Map file: [Attack-Surface-AI.md](../docs/security/Attack-Surface-AI.md). Reviewe
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
-| SEC-AI-01 | `crates/moqui-llm/src/approval/mod.rs:1129-1135` | A room member approves a write that runs as another user | Medium | reported (confirmed in code) |
-| SEC-AI-02 | `crates/moqui-llm/src/assist/canvas.rs:316-371` | An OpenUI Button runs a model-written write on one click, showing only the transition's name | Medium | reported (confirmed in code) |
-| SEC-AI-03 | `js/WebrootAssist.js:300-305`, `:326-329`, `:335` | Assistant Markdown keeps same-site image paths, which the browser fetches with the session | Low | reported (confirmed in code) |
+| SEC-AI-01 | `crates/moqui-llm/src/approval/mod.rs:1129-1135` | A room member approves a write that runs as another user | Medium | fixed |
+| SEC-AI-02 | `crates/moqui-llm/src/assist/canvas.rs:316-371` | An OpenUI Button runs a model-written write on one click, showing only the transition's name | Medium | fixed |
+| SEC-AI-03 | `js/WebrootAssist.js:300-305`, `:326-329`, `:335` | Assistant Markdown keeps same-site image paths, which the browser fetches with the session | Low | fixed |
 | SEC-AI-04 | `js/WebrootAssist.js:371-376`, `:351-353` | An external link in an answer carries whatever the model put in its URL | Low | reported (confirmed in code) |
 | SEC-AI-05 | `crates/moqui-host/src/llm/sandbox.rs:43-45` | With "other sites" on, a Vue SFC canvas can send data out in an image URL | Low | reported (likely) |
 | SEC-AI-06 | `crates/moqui-host/src/llm/sse.rs:47`, `:55-63`, `:169` | One user can hold every Assist event stream | Low | reported (confirmed in code) |
 | SEC-AI-07 | `runtime/components/base/webroot/screen/webroot/find.xml:9-20` | `/find/rank` sends caller text to the embedding model with no quota or external-user check | Low | reported (confirmed in code) |
-| SEC-AI-08 | `System/Llm/Calls/CallList.xml:27-30`, `Conversations/ConversationList.xml:26-28`, `Runs/RunList.xml:25-28`, `Approvals/ApprovalList.xml:25-28` | `search-form-inputs` on the audit lists lets an `AgentAdmin` test content without `AgentAudit` | Low | reported (likely) |
+| SEC-AI-08 | `System/Llm/Calls/CallList.xml:27-30`, `Conversations/ConversationList.xml:26-28`, `Runs/RunList.xml:25-28`, `Approvals/ApprovalList.xml:25-28` | `search-form-inputs` on the audit lists lets an `AgentAdmin` test content without `AgentAudit` | Low | fixed |
 | SEC-AI-09 | `crates/moqui-llm/src/services.rs:761-762`, `:802-810`, `:1285-1345` | Three agent services check nothing in their bodies | Low | reported (confirmed in code) |
 | SEC-AI-10 | `crates/moqui-llm/src/mcp/server.rs:596-615` | The MCP public documents are cacheable without `Vary: Host` though their URLs come from `Host` | Low | reported (confirmed in code) |
 | SEC-AI-11 | `crates/moqui-llm/src/a2a/mod.rs:106-108` | Loopback counts as a secure transport for credentials | Low | reported (confirmed in code) |
-| SEC-AI-12 | `crates/moqui-core/src/service/external_agent.rs:46-51` | The external agent adapter inherits the server's environment | Low | reported (confirmed in code) |
+| SEC-AI-12 | `crates/moqui-core/src/service/external_agent.rs:46-51` | The external agent adapter inherits the server's environment | Low | fixed |
 | SEC-AI-13 | `crates/moqui-llm/src/tools/catalog.rs:157-160` | Exposing a service that needs no authentication gives it to every agent user | Info | reported (confirmed in code) |
 
 ### Git hosting and pipelines
@@ -317,21 +336,21 @@ Map file: [Attack-Surface-Git.md](../docs/security/Attack-Surface-Git.md). Revie
 | --- | --- | --- | --- | --- |
 | SEC-GIT-01 | `crates/moqui-git/src/lib.rs:1470-1530` | `import#GitRepository` reads another repository or a server directory with no check of the source | High | fixed |
 | SEC-GIT-02 | `crates/moqui-host/src/ci_run.rs:134`, `:151` | A registered runner gives its runner token to every step | High | fixed |
-| SEC-GIT-03 | `crates/moqui-git/src/server/mod.rs:771-777` | A gzip request body is inflated without limit, and SSH has no request limit | Medium | reported (confirmed in code) |
-| SEC-GIT-04 | `crates/moqui-git/src/service/mod.rs:605` | A viewer reads a whole blob or LFS object into server memory through REST | Medium | reported (confirmed in code) |
-| SEC-GIT-05 | `crates/moqui-git/src/server/pack_in.rs:158-171`, `:249`, `:327-344` | A small pack of large or deeply chained objects costs far more than its bytes | Medium | reported (likely) |
-| SEC-GIT-06 | `crates/moqui-git/src/mirror.rs:396-411` | An SSH push mirror's server is read without size or total-time limits | Medium | reported (confirmed in code) |
-| SEC-GIT-07 | `crates/moqui-git/src/service/mod.rs:168-181` (`fetch#GitRepository`), `:185-198` (`push#GitMirror`), `:230-250` (`init#GitRepository`), `:296-316` (`export#GitRepository`) | Git services that trust their caller | Medium | reported (likely) |
+| SEC-GIT-03 | `crates/moqui-git/src/server/mod.rs:771-777` | A gzip request body is inflated without limit, and SSH has no request limit | Medium | fixed |
+| SEC-GIT-04 | `crates/moqui-git/src/service/mod.rs:605` | A viewer reads a whole blob or LFS object into server memory through REST | Medium | fixed |
+| SEC-GIT-05 | `crates/moqui-git/src/server/pack_in.rs:158-171`, `:249`, `:327-344` | A small pack of large or deeply chained objects costs far more than its bytes | Medium | fixed |
+| SEC-GIT-06 | `crates/moqui-git/src/mirror.rs:396-411` | An SSH push mirror's server is read without size or total-time limits | Medium | fixed |
+| SEC-GIT-07 | `crates/moqui-git/src/service/mod.rs:168-181` (`fetch#GitRepository`), `:185-198` (`push#GitMirror`), `:230-250` (`init#GitRepository`), `:296-316` (`export#GitRepository`) | Git services that trust their caller | Medium | fixed |
 | SEC-GIT-08 | `crates/moqui-git/src/ci/log.rs:98-121`, `:217` | Secret masking misses what is not one log batch | Low | reported (confirmed in code) |
 | SEC-GIT-09 | `crates/moqui-host/src/git_http.rs:293-298` | A loopback socket peer counts as a secure transport | Low | reported (confirmed in code) |
-| SEC-GIT-10 | `crates/moqui-git/src/service/review.rs:81-97` | `fork#GitRepository` uses the new `repositoryId` as a directory name without checking it | Low | reported (confirmed in code) |
-| SEC-GIT-11 | `crates/moqui-git/src/service/hosting.rs:631-665` | `delete#GitRef` deletes any ref, a merge request's head included | Low | reported (likely) |
+| SEC-GIT-10 | `crates/moqui-git/src/service/review.rs:81-97` | `fork#GitRepository` uses the new `repositoryId` as a directory name without checking it | Low | fixed |
+| SEC-GIT-11 | `crates/moqui-git/src/service/hosting.rs:631-665` | `delete#GitRef` deletes any ref, a merge request's head included | Low | fixed |
 | SEC-GIT-12 | `crates/moqui-git/src/browse.rs:140-150`, `:102-106` | A revision that is a full ref name reads any ref of the store but a hidden merge request's head | Low | reported (likely) |
 | SEC-GIT-13 | `GitReviewServices.xml:508`, `:520-535` | Approvals stay when a merge request's target changes | Low | reported (likely) |
-| SEC-GIT-14 | `crates/moqui-core/src/user/authz.rs:502-504` | The services' repository checks pass when `AT_GIT_REPOSITORY` authorization is off | Low | reported (confirmed in code) |
-| SEC-GIT-15 | `crates/moqui-git/src/storage.rs:160-171` | `delete#GitRepository` leaves the repository's push mirror rows | Low | reported (to check) |
+| SEC-GIT-14 | `crates/moqui-core/src/user/authz.rs:502-504` | The services' repository checks pass when `AT_GIT_REPOSITORY` authorization is off | Low | fixed |
+| SEC-GIT-15 | `crates/moqui-git/src/storage.rs:160-171` | `delete#GitRepository` leaves the repository's push mirror rows | Low | fixed |
 | SEC-GIT-16 | `GitServices.xml:1123` | A webhook URL may be plain http and carry a user and password; `remoteUrl` is shown to every viewer | Low | reported (confirmed in code) |
-| SEC-GIT-17 | `crates/moqui-git/src/ci/driver/docker.rs:732`, `:769-792`, `:273-279` | The run services put their parameters into the Docker API path and remove a container by any id | Low | reported (confirmed in code) |
+| SEC-GIT-17 | `crates/moqui-git/src/ci/driver/docker.rs:732`, `:769-792`, `:273-279` | The run services put their parameters into the Docker API path and remove a container by any id | Low | fixed |
 | SEC-GIT-18 | `crates/moqui-host/src/git_http.rs:251`, `:345`, `:432` | Unauthenticated requests take a git worker, and one call can walk every repository | Low | reported (confirmed in code) |
 | SEC-GIT-19 | `crates/moqui-git/src/ci/token.rs:150-160` | Runner tokens never expire, and a pool of registered runners may take untrusted runs | Low | reported (confirmed in code) |
 | SEC-GIT-20 | `crates/moqui-git/src/server/pack_in.rs:269-277` | Pushed trees are not checked for unsafe names, and `write_commit` has no limits | Info | reported (confirmed in code) |
@@ -346,18 +365,18 @@ Map file: [Attack-Surface-Mail.md](../docs/security/Attack-Surface-Mail.md). Rev
 | SEC-MAIL-01 | `runtime/components/base/framework/service/org/moqui/mail/EmailClientServices.xml` `create#EmailAccount` (207-306), `update#EmailAccount` (308-452) | Any mail user can take the inbound mail of an address nobody has claimed | High | fixed |
 | SEC-MAIL-61 | runtime/components/base/webroot/template/screen/BasicTransitions.xml:20-22 | A request's fileName runs as a server-side expression through emailScreenAsync | High | fixed |
 | SEC-MAIL-63 | runtime/components/addon/mr-marble/screen/SimpleScreens/Party/PartyEmails.xml:23-26 | mr-marble PartyEmails serves any EmailMessage body as inline text/html | High | fixed |
-| SEC-MAIL-02 | `crates/moqui-mail/src/inbound.rs:1018-1031` (`connect_tcp`), `crates/moqui-mail/src/sync.rs:462-530` (`open_imap`), `crates/moqui-mail/src/implementation.rs` `smtp_transport` (1888-1934), `require_host` (979-998) | A mail account's server settings make the server connect to internal addresses | Medium | reported (confirmed in code) |
+| SEC-MAIL-02 | `crates/moqui-mail/src/inbound.rs:1018-1031` (`connect_tcp`), `crates/moqui-mail/src/sync.rs:462-530` (`open_imap`), `crates/moqui-mail/src/implementation.rs` `smtp_transport` (1888-1934), `require_host` (979-998) | A mail account's server settings make the server connect to internal addresses | Medium | fixed |
 | SEC-MAIL-03 | `crates/moqui-core/src/web/mod.rs:1289-1340` (`view_email_message`, `mark_email_message_viewed`) | An anonymous GET changes the status of any mailbox or Outbox message | Medium | fixed |
-| SEC-MAIL-04 | `runtime/components/base/tools/service/moqui.rest.xml:122-131` | The tools REST resource returns mailbox passwords and OAuth refresh tokens | Medium | reported (confirmed in code) |
+| SEC-MAIL-04 | `runtime/components/base/tools/service/moqui.rest.xml:122-131` | The tools REST resource returns mailbox passwords and OAuth refresh tokens | Medium | fixed |
 | SEC-MAIL-62 | runtime/components/base/webroot/template/screen/BasicTransitions.xml:20-28 (and 29-37) | A GET mails a screen's full export to an address the request names | Medium | fixed |
-| SEC-MAIL-64 | runtime/components/addon/mr-marble/screen/SimpleScreens/Party/PartyEmails.xml:20 | mr-marble sendEmailMessage transitions send any stored message again | Medium | reported (confirmed in code) |
+| SEC-MAIL-64 | runtime/components/addon/mr-marble/screen/SimpleScreens/Party/PartyEmails.xml:20 | mr-marble sendEmailMessage transitions send any stored message again | Medium | fixed |
 | SEC-MAIL-05 | `EmailClientServices.xml` `send#OutOfOfficeReplies` (5197-5412), `run#EmailRules` `forward` (4532-4571) | Out-of-office replies and rule forwards have no total limit and trust the From header | Low | reported (likely) |
 | SEC-MAIL-06 | `crates/moqui-mail/src/delivery.rs:601-725` | The "delivered" notice is backscatter with the sender's headers | Low | reported (confirmed in code) |
 | SEC-MAIL-07 | `crates/moqui-host/src/smtp.rs` session loop (1169-1206), `rcpt` (1354-1450) | Internet mode has no cap on messages a session, refused recipients, or stored bytes | Low | reported (confirmed in code) |
 | SEC-MAIL-08 | `crates/moqui-mail/src/delivery.rs` `deliver_one` (753-772) | A message is dropped when its Message-ID is already in the account | Low | reported (confirmed in code) |
-| SEC-MAIL-09 | `crates/moqui-core/src/service/mail_capture.rs` (`decide`, `enabled`) | The mail capture can be on in production | Low | reported (confirmed in code) |
+| SEC-MAIL-09 | `crates/moqui-core/src/service/mail_capture.rs` (`decide`, `enabled`) | The mail capture can be on in production | Low | fixed |
 | SEC-MAIL-65 | runtime/components/base/framework/service/org/moqui/impl/UserServices.xml:441-459 | Reset passwords and verification tokens are kept in clear in EmailMessage.body | Low | reported (confirmed in code) |
-| SEC-MAIL-66 | crates/moqui-mail/src/mx.rs:977-1010 (`hosts`), 1053-1075, 1138-1160 (`session`), 1313-1326 (`sts::fetch`) | Edge MX delivery connects to whatever address a recipient domain's DNS names, and falls back to clear text | Low | reported (confirmed in code) |
+| SEC-MAIL-66 | crates/moqui-mail/src/mx.rs:977-1010 (`hosts`), 1053-1075, 1138-1160 (`session`), 1313-1326 (`sts::fetch`) | Edge MX delivery connects to whatever address a recipient domain's DNS names, and falls back to clear text | Low | partly fixed |
 | SEC-MAIL-67 | crates/moqui-mail/src/auth.rs:405-418 (`signing_domain`), 493-512 (`sign_for`), 763-790 (`verify_internal`) | A mail user's hosted domain is one the node signs for and then verifies as its own | Low | reported (to check) |
 | SEC-MAIL-10 | `runtime/components/base/basic-comms/screen/BasicComms/Inbox/Mail.qvue:1880` | Mail forged as from the reader loads remote images without asking | Info | reported (to check) |
 | SEC-MAIL-68 | runtime/components/base/framework/service/org/moqui/mail/EmailClientServices.xml:5002-5034 (`create#EmailIdentity`), 3357-3359 (`save#Draft`) | An identity's address is any text with an @ | Info | reported (confirmed in code) |
@@ -369,17 +388,17 @@ Map file: [Attack-Surface-Files.md](../docs/security/Attack-Surface-Files.md). R
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
 | SEC-FIL-01 | `runtime/components/base/webroot/screen/webroot.xml:257` | `/resources` runs elFinder write commands on a GET with no session token | Medium | fixed |
-| SEC-FIL-02 | `crates/moqui-host/src/ssh/server.rs:905-925`, `:746-763` | An app password opens the admin shell and the SFTP root over SSH, past the second factor | Medium | reported (confirmed in code) |
-| SEC-FIL-03 | `crates/moqui-dav/src/dav/files.rs:415-490` | DAV sends a user's HTML or SVG file inline from the application's origin | Medium | reported (confirmed in code) |
-| SEC-FIL-04 | `crates/moqui-host/src/dav_http.rs:47-59,79` | DAV buffers up to 256 MiB per request before it checks credentials | Medium | reported (likely) |
-| SEC-FIL-08 | `webroot.xml:257-272` | `/resources` lets `ADMIN` read any file the server's user can read, in production too | Medium | reported (to check) |
-| SEC-FIL-61 | crates/moqui-host/src/ssh/server.rs:1010 | SFTP holds up to `sftp-max-file` in memory per channel, and the handler does not count channels | Medium | reported (likely) |
+| SEC-FIL-02 | `crates/moqui-host/src/ssh/server.rs:905-925`, `:746-763` | An app password opens the admin shell and the SFTP root over SSH, past the second factor | Medium | fixed |
+| SEC-FIL-03 | `crates/moqui-dav/src/dav/files.rs:415-490` | DAV sends a user's HTML or SVG file inline from the application's origin | Medium | fixed |
+| SEC-FIL-04 | `crates/moqui-host/src/dav_http.rs:47-59,79` | DAV buffers up to 256 MiB per request before it checks credentials | Medium | fixed |
+| SEC-FIL-08 | `webroot.xml:257-272` | `/resources` lets `ADMIN` read any file the server's user can read, in production too | Medium | fixed |
+| SEC-FIL-61 | crates/moqui-host/src/ssh/server.rs:1010 | SFTP holds up to `sftp-max-file` in memory per channel, and the handler does not count channels | Medium | fixed |
 | SEC-FIL-05 | `runtime/components/base/framework/service/org/moqui/resource/FileServices.xml:2669-2702` | No attempt limit on a public link's password | Low | reported (to check) |
 | SEC-FIL-06 | `FileServices.xml:2834-2870`, `:1250` | Anonymous file drop has no size, count or type limit of its own | Low | reported (likely) |
 | SEC-FIL-07 | `FileServices.xml:307,341` | Three `FileServices` parameters name a server path and are not checked in the service | Low | reported (confirmed in code) |
 | SEC-FIL-62 | crates/moqui-host/src/command/shell.rs:87 | The admin shell's `service`, `entity`, `cache` and `js` commands leave no audit record | Low | reported (confirmed in code) |
 | SEC-FIL-63 | crates/moqui-host/src/command/shell.rs:185 | Admin shell error text and C1 controls reach the administrator's terminal unescaped | Low | reported (likely) |
-| SEC-FIL-67 | crates/moqui-dav/src/pim/rrule.rs:35 | Calendar and contact objects have no parser limit of their own; the bound is the 256 MiB DAV body | Low | reported (to check) |
+| SEC-FIL-67 | crates/moqui-dav/src/pim/rrule.rs:35 | Calendar and contact objects have no parser limit of their own; the bound is the 256 MiB DAV body | Low | fixed |
 | SEC-FIL-09 | `runtime/components/addon/mr-boss/screen/PublicShare.xml:28,56` | `PublicShare.xml` `open` and `upload` name no method | Info | reported (confirmed in code) |
 | SEC-FIL-10 | `FileServices.xml:2649-2655` | A link or share stays valid after its maker loses access | Info | reported (confirmed in code) |
 | SEC-FIL-11 | `crates/moqui-host/src/ssh/server.rs:746-763`, `:1073`, `:1196` | SSH permissions are fixed for the life of a connection | Info | reported (confirmed in code) |
@@ -393,33 +412,33 @@ Map file: [Attack-Surface-Comms.md](../docs/security/Attack-Surface-Comms.md). R
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
-| SEC-COM-01 | `runtime/components/base/basic-comms/service/org/moqui/comms/CommsServices.xml:17-45` | Any Comms user lists every account and can message or add it; only calls ask the apps who may be reached | Medium | reported (confirmed in code) |
-| SEC-COM-02 | `crates/moqui-lib/src/safe_html.rs:30-36` | A chat message may carry an external image, so a sender learns each reader's address and when they read | Medium | reported (confirmed in code) |
-| SEC-COM-11 | `crates/moqui-host/src/xmpp/mod.rs:596-603` | `ipAllowed` is not checked for XMPP sign-in or its service calls | Medium | reported (confirmed in code) |
-| SEC-COM-12 | `crates/moqui-core/src/user/login.rs:1303-1310`, `1736-1746` | A connected XMPP app keeps a locked account locked | Medium | reported (likely) |
-| SEC-COM-13 | `crates/moqui-rtc/src/turn/mod.rs:473-492` | TURN: usernames from unauthenticated requests are kept without bound | Medium | reported (confirmed in code) |
-| SEC-COM-14 | `ChatServices.xml:2807-2811`, `3235` | A file uploaded over XMPP outlives the deletion and retention of its message | Medium | reported (confirmed in code) |
-| SEC-COM-25 | `crates/moqui-sip/src/ua.rs:1871-1888` (failure counting), `ua.rs:469` (the block), `crates/moqui-lib/src/source_guard.rs:121-146` | A forged-source digest failure blocks a trunk's or a phone's address | Medium | reported (likely) |
-| SEC-COM-03 | `runtime/components/base/framework/service/org/moqui/chat/ChatServices.xml:3143-3192` | Chat files have no size limit or quota of their own | Low | reported (confirmed in code) |
+| SEC-COM-01 | `runtime/components/base/basic-comms/service/org/moqui/comms/CommsServices.xml:17-45` | Any Comms user lists every account and can message or add it; only calls ask the apps who may be reached | Medium | fixed |
+| SEC-COM-02 | `crates/moqui-lib/src/safe_html.rs:30-36` | A chat message may carry an external image, so a sender learns each reader's address and when they read | Medium | fixed |
+| SEC-COM-11 | `crates/moqui-host/src/xmpp/mod.rs:596-603` | `ipAllowed` is not checked for XMPP sign-in or its service calls | Medium | fixed |
+| SEC-COM-12 | `crates/moqui-core/src/user/login.rs:1303-1310`, `1736-1746` | A connected XMPP app keeps a locked account locked | Medium | fixed |
+| SEC-COM-13 | `crates/moqui-rtc/src/turn/mod.rs:473-492` | TURN: usernames from unauthenticated requests are kept without bound | Medium | fixed |
+| SEC-COM-14 | `ChatServices.xml:2807-2811`, `3235` | A file uploaded over XMPP outlives the deletion and retention of its message | Medium | fixed |
+| SEC-COM-25 | `crates/moqui-sip/src/ua.rs:1871-1888` (failure counting), `ua.rs:469` (the block), `crates/moqui-lib/src/source_guard.rs:121-146` | A forged-source digest failure blocks a trunk's or a phone's address | Medium | fixed |
+| SEC-COM-03 | `runtime/components/base/framework/service/org/moqui/chat/ChatServices.xml:3143-3192` | Chat files have no size limit or quota of their own | Low | fixed |
 | SEC-COM-04 | `crates/moqui-host/src/notws/rtc.rs:670-688,691-713,737` | A few anonymous connections keep every guest out of `/callws` | Low | reported (confirmed in code) |
 | SEC-COM-05 | `runtime/components/base/framework/service/org/moqui/call/Calls.js:1514-1561` (`guestJoin`), `:1414-1438` (`revokeGuest`) | Fifty guest joins fill a link's meeting until it ends, and on the default conf nothing slows them | Low | reported (confirmed in code for the count; likely for the rate limit) |
 | SEC-COM-06 | `runtime/components/base/framework/service/org/moqui/chat/ChatServices.xml:4086-4099` | An invisible user's last activity and call state are still answered | Low | reported (confirmed in code) |
-| SEC-COM-07 | `runtime/components/base/framework/service/org/moqui/chat/ChatServices.xml:1596,1623,1668,1673` (`add#Member`), `:1774,1799` (`set#MemberRole`), `:4023-4033` (`deliver#AgentMessage`) | A room member's `agentRef` is any service name a moderator gives, and each message then calls it | Low | reported (confirmed in code that it is not checked; no request path that sets it was found) |
+| SEC-COM-07 | `runtime/components/base/framework/service/org/moqui/chat/ChatServices.xml:1596,1623,1668,1673` (`add#Member`), `:1774,1799` (`set#MemberRole`), `:4023-4033` (`deliver#AgentMessage`) | A room member's `agentRef` is any service name a moderator gives, and each message then calls it | Low | fixed |
 | SEC-COM-08 | `crates/moqui-host/src/rtc/driver.rs:435-449` | Relayed call frames have no rate limit and reach every leg, a guest's included | Low | reported (confirmed in code) |
-| SEC-COM-15 | `XmppServices.xml:82-90` (`check#Credential`) | An XMPP session outlives the account's `terminateDate` and keeps receiving room messages | Low | reported (likely) |
+| SEC-COM-15 | `XmppServices.xml:82-90` (`check#Credential`) | An XMPP session outlives the account's `terminateDate` and keeps receiving room messages | Low | fixed |
 | SEC-COM-16 | `crates/moqui-xmpp/src/session/chat.rs:303-310` | An upload URL with its token is written to the log | Low | reported (confirmed in code) |
-| SEC-COM-17 | `crates/moqui-rtc/src/turn/mod.rs:495-503` | TURN allocation quotas are per username, and a leg or user can get many usernames | Low | reported (likely) |
+| SEC-COM-17 | `crates/moqui-rtc/src/turn/mod.rs:495-503` | TURN allocation quotas are per username, and a leg or user can get many usernames | Low | fixed |
 | SEC-COM-18 | `crates/moqui-rtc/src/turn/mod.rs:340-358` | An XMPP user's TURN credential can relay to the host's own public addresses | Low | reported (likely) |
 | SEC-COM-19 | `crates/moqui-xmpp/src/registry.rs:182-190` | One user can close another user's XMPP sessions with routed stanzas | Low | reported (likely) |
 | SEC-COM-20 | `XmppServices.xml:507-514` (PEP), `592-598` (block list), `611-626` (push), `660-667` and `738-750` (uploads) | Per-user storage over XMPP has no total bound | Low | reported (confirmed in code) |
-| SEC-COM-21 | `runtime/components/base/basic-comms/screen/BasicComms/Settings/ChatApps.xml:22-27` | Chat apps makes a long-lived, unscoped credential with no recent sign-in | Low | reported (confirmed in code) |
-| SEC-COM-22 | `crates/moqui-xmpp/src/session/auth.rs:411-421` | SCRAM and FAST sign-ins leave no login history and no last-used date | Low | reported (confirmed in code) |
+| SEC-COM-21 | `runtime/components/base/basic-comms/screen/BasicComms/Settings/ChatApps.xml:22-27` | Chat apps makes a long-lived, unscoped credential with no recent sign-in | Low | partly fixed |
+| SEC-COM-22 | `crates/moqui-xmpp/src/session/auth.rs:411-421` | SCRAM and FAST sign-ins leave no login history and no last-used date | Low | fixed |
 | SEC-COM-26 | `crates/moqui-sip/src/ua.rs:492-499`, `crates/moqui-lib/src/source_guard.rs:214-215` | Unauthenticated connections can hold every SIP TCP and TLS slot | Low | reported (likely) |
 | SEC-COM-27 | `crates/moqui-sip/src/media.rs:149-150,264-266`, `crates/moqui-host/src/sip/leg.rs:334` | RTP is sent to whatever address an SDP names, with no address check | Low | reported (confirmed in code) |
-| SEC-COM-28 | `crates/moqui-sip/src/digest.rs:472-486` | The digest answer's `uri` is not compared with the request | Low | reported (confirmed in code) |
+| SEC-COM-28 | `crates/moqui-sip/src/digest.rs:472-486` | The digest answer's `uri` is not compared with the request | Low | fixed |
 | SEC-COM-09 | `runtime/components/base/framework/service/org/moqui/chat/ChatServices.xml:192,2225,2231,3125,4164`, `:1367` | "Authorization disabled" doubles as "trusted caller" in the chat and call services | Info | reported (confirmed in code) |
-| SEC-COM-10 | `crates/moqui-channels/src/telnyx.rs:97-100,122-124,150-161,242-244,388-391` | An SMS bridge's API base may be `http://`, and one setting lifts the address guard | Info | reported (confirmed in code) |
-| SEC-COM-23 | `crates/moqui-rtc/src/turn/mod.rs:84-122` | `is_public` leaves out some non-public IPv6 ranges | Info | reported (to check) |
+| SEC-COM-10 | `crates/moqui-channels/src/telnyx.rs:97-100,122-124,150-161,242-244,388-391` | An SMS bridge's API base may be `http://`, and one setting lifts the address guard | Info | fixed |
+| SEC-COM-23 | `crates/moqui-rtc/src/turn/mod.rs:84-122` | `is_public` leaves out some non-public IPv6 ranges | Info | fixed |
 | SEC-COM-24 | `crates/moqui-xmpp/src/session/auth.rs:242-248` | The SCRAM decoy differs from a real user by one service call | Info | reported (to check) |
 | SEC-COM-29 | `call/Voicemail.js:625-637`, `crates/moqui-host/src/sip/voicemail.rs:371-374` | The phone-access answers tell an existing box from a number with none | Info | reported (likely) |
 | SEC-COM-30 | `call/Voice.js:302-309` | The emergency call email has no subject | Info | reported (confirmed in code) |
@@ -444,15 +463,15 @@ Map file: [Attack-Surface-Data.md](../docs/security/Attack-Surface-Data.md). Rev
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
-| SEC-DAT-01 | `crates/moqui-entity/src/entity/search_form.rs:189-195`, `:86-92` | A find by request parameters takes conditions and order on password-hash and encrypted fields | Medium | confirmed (second check) |
-| SEC-DAT-02 | `runtime/components/addon/mr-mantle/data/MantleDocumentData.xml:55` | An encrypted field in a data document is indexed in plaintext | Medium | likely (second check) |
-| SEC-DAT-03 | `runtime/components/base/tools/service/moqui.rest.xml:123-126`, `:179-183` | REST entity reads return stored credentials in plaintext | Medium | confirmed (lead) |
-| SEC-DAT-04 | `crates/moqui-db/src/sql/view.rs:1195-1209` | A view alias function from a database row may be any SQL function name | Medium | likely (second check) |
-| SEC-DAT-05 | `runtime/components/base/framework/service/org/moqui/impl/EntityServices.xml:252`, `:276-284` | `export#EntityDataSnapshot` writes to a path built from an unchecked `baseFilename` | Low | confirmed (second check) |
+| SEC-DAT-01 | `crates/moqui-entity/src/entity/search_form.rs:189-195`, `:86-92` | A find by request parameters takes conditions and order on password-hash and encrypted fields | Medium | fixed |
+| SEC-DAT-02 | `runtime/components/addon/mr-mantle/data/MantleDocumentData.xml:55` | An encrypted field in a data document is indexed in plaintext | Medium | fixed |
+| SEC-DAT-03 | `runtime/components/base/tools/service/moqui.rest.xml:123-126`, `:179-183` | REST entity reads return stored credentials in plaintext | Medium | fixed |
+| SEC-DAT-04 | `crates/moqui-db/src/sql/view.rs:1195-1209` | A view alias function from a database row may be any SQL function name | Medium | fixed |
+| SEC-DAT-05 | `runtime/components/base/framework/service/org/moqui/impl/EntityServices.xml:252`, `:276-284` | `export#EntityDataSnapshot` writes to a path built from an unchecked `baseFilename` | Low | fixed |
 | SEC-DAT-06 | `postgresql_embedded-0.22.0/src/postgresql.rs:256` (reached from `crates/moqui-drivers/src/embedded.rs:769`) | Files with secrets are created with the process umask | Low | confirmed (second check) |
 | SEC-DAT-07 | `crates/moqui-drivers/src/embedded.rs:590-603`, `:906-927` | The fallback socket directory under the temp directory is accepted when it already exists | Low | likely (second check) |
-| SEC-DAT-08 | `crates/moqui-core/src/service/system_sync/entity_sync.rs:246-299`, `:220-240` | `get#EntitySyncData` reads any entity, and `put#EntitySyncData` takes `UserAccount` and job rows | Low | likely (second check) |
-| SEC-DAT-09 | `crates/moqui-entity/src/entity/search_form.rs:98-113` | No upper bound on `pageSize`, and `pageNoLimit=true` is honored, for screens and Service REST | Low | confirmed (second check) |
+| SEC-DAT-08 | `crates/moqui-core/src/service/system_sync/entity_sync.rs:246-299`, `:220-240` | `get#EntitySyncData` reads any entity, and `put#EntitySyncData` takes `UserAccount` and job rows | Low | fixed |
+| SEC-DAT-09 | `crates/moqui-entity/src/entity/search_form.rs:98-113` | No upper bound on `pageSize`, and `pageNoLimit=true` is honored, for screens and Service REST | Low | partly fixed |
 | SEC-DAT-10 | `crates/moqui-entity/src/entity/field_rw.rs:187-198` | Stored text that is not ciphertext is read as a valid value | Low | confirmed (second check) |
 | SEC-DAT-11 | `crates/moqui-core/src/user/filter.rs:155`, `:376-378` | Row filters fail open when the set has `allowMissingAlias="Y"` or its `applyCond` is false | Low | confirmed (second check) |
 | SEC-DAT-12 | `runtime/components/addon/mr-mantle/entity/AccountingAccountEntities.xml:1144-1145` | Regulated identifiers stored in clear | Info | confirmed (second check) |
@@ -464,7 +483,7 @@ Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PAS
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
-| SEC-PSF-01 | `service/pass/Facade.js:25-32` | In local mode a login key in a header drives every PASS page, without the session token | Medium | reported (likely) |
+| SEC-PSF-01 | `service/pass/Facade.js:25-32` | In local mode a login key in a header drives every PASS page, without the session token | Medium | fixed |
 | SEC-PSF-02 | 57 transitions (list in A8), for example `screen/Forum/HeldMail.xml:13`, `screen/Shop/Checkout.xml:7,37,43`, `screen/Forum/Topics/TopicDetail.xml:37` | Write transitions without `method="post"` run on a GET that carries no query string, with no session token | Low | fixed |
 | SEC-PSF-03 | `service/pass/RouteServices.xml:46-49` | Bearer values in PASS URLs that the log and Visit redaction do not cover | Low | reported (confirmed in code) |
 | SEC-PSF-04 | `screen/Shared/Headers.js:8-16`. | The shell's CSP has no `default-src` and allows `'unsafe-eval'` and every same-origin script | Low | reported (confirmed in code) |
@@ -480,13 +499,13 @@ Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PAS
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
-| SEC-PSA-01 | `FW/service/org/moqui/public/Account.js:536-537` | PASS sign-in has no rate limit on the authority | Medium | reported (confirmed in code) |
+| SEC-PSA-01 | `FW/service/org/moqui/public/Account.js:536-537` | PASS sign-in has no rate limit on the authority | Medium | fixed |
 | SEC-PSA-02 | `FW/service/org/moqui/public/Account.js:339-344` (also `:473`, `:511`) | Failed logins by someone else end a PASS visitor's delegation | Low | reported (confirmed in code) |
 | SEC-PSA-03 | `MM/script/PassApi.js:215-219` | A wrong client secret is not counted on the REST servlet | Low | reported (confirmed in code) |
 | SEC-PSA-04 | `crates/moqui-host/src/pass_authority/mod.rs:135-147, 190-196` | The gRPC wrong-secret limit is per connection address and stops right secrets too | Low | reported (confirmed in code) |
 | SEC-PSA-05 | `MM/script/PassAuthority.js:387-433` | A registered client reads other sites as an anonymous caller | Low | reported (confirmed in code) |
 | SEC-PSA-06 | `FW/service/org/moqui/public/Account.js:128-198, 539-549` | Registration and recovery tell whether an account exists | Low | reported (likely) |
-| SEC-PSA-07 | `MM/MoquiConf.xml:51-53` | A multipart POST to the servlet may be 2 GiB | Low | reported (to check) |
+| SEC-PSA-07 | `MM/MoquiConf.xml:51-53` | A multipart POST to the servlet may be 2 GiB | Low | fixed |
 | SEC-PSA-08 | `MM/script/PassApi.js:153-182` | A REST download is read whole into the script | Low | reported (to check) |
 | SEC-PSA-09 | `crates/moqui-core/src/context/identity.rs:3-41` | `returnKey` is not a secret name for the request log | Low | reported (confirmed in code) |
 | SEC-PSA-10 | `crates/moqui-core/src/pass_authority.rs:556-569, 618-639` | A gRPC session handle may stay signed in after an account action sent with a delegation | Low | reported (to check) |
@@ -500,18 +519,18 @@ Map file: [Attack-Surface-Apps-PASS-Commerce.md](../docs/security/Attack-Surface
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
-| SEC-PSS-01 | `M/product/ShopFulfillment.js:118`, `:525`, `:612` | A download product's file location is not restricted | Medium | reported (likely) |
-| SEC-PSS-21 | `request/SupportPortal.js:758-765`, `:775`, `:833` | `createCustomerCase` leaves the staged upload on disk when the operation is a repeat | Medium | reported (confirmed in code; a helper reader's item, not checked by the slice's reviewer) |
-| SEC-PSS-41 | `service/mantle/marketing/MarketingPortal.js` reserveRegistration (starts 1058), registrationView (starts 961), subscriberOf (198-231) | An anonymous event reservation answers the directory name of the party that owns a typed email address | Medium | reported (confirmed in code; a helper reader's item, not checked by the slice's reviewer) |
-| SEC-PSS-42 | `service/mantle/forum/Forum.js` publishSitePage (starts 3275), getSitePage (starts 1976) | A site owner can publish any wiki page of an unrestricted space as the site's public page | Medium | reported (likely; a helper reader's item, not checked by the slice's reviewer) |
-| SEC-PSS-61 | runtime/components/addon/mr-mantle/service/mantle/marketing/MarketingPortal.js:198 (subscriberOf), :1019, :1058 | An anonymous event reservation answers the stored name of the party that owns a typed email address | Medium | reported (confirmed in code) |
+| SEC-PSS-01 | `M/product/ShopFulfillment.js:118`, `:525`, `:612` | A download product's file location is not restricted | Medium | fixed |
+| SEC-PSS-21 | `request/SupportPortal.js:758-765`, `:775`, `:833` | `createCustomerCase` leaves the staged upload on disk when the operation is a repeat | Medium | fixed |
+| SEC-PSS-41 | `service/mantle/marketing/MarketingPortal.js` reserveRegistration (starts 1058), registrationView (starts 961), subscriberOf (198-231) | An anonymous event reservation answers the directory name of the party that owns a typed email address | Medium | fixed |
+| SEC-PSS-42 | `service/mantle/forum/Forum.js` publishSitePage (starts 3275), getSitePage (starts 1976) | A site owner can publish any wiki page of an unrestricted space as the site's public page | Medium | fixed |
+| SEC-PSS-61 | runtime/components/addon/mr-mantle/service/mantle/marketing/MarketingPortal.js:198 (subscriberOf), :1019, :1058 | An anonymous event reservation answers the stored name of the party that owns a typed email address | Medium | partly fixed |
 | SEC-PSS-02 | `M/order/ShopCheckout.js:1212` | The checkout return key and the cart recovery token are query parameters the request log keeps | Low | reported (confirmed in code) |
 | SEC-PSS-03 | `M/product/ShopFulfillment.js:490-506`, `:573-588` | A ten-minute download capability is accepted as an order link and can issue its successor | Low | reported (confirmed in code) |
 | SEC-PSS-04 | `M/party/ShopCustomer.js:114-160` | A guest order with a typed email is merged into the account that verifies that email | Low | reported (to check) |
 | SEC-PSS-05 | `M/order/ShopCart.js:155-190` | Anonymous cart creation is limited per requester only | Low | reported (confirmed in code) |
 | SEC-PSS-06 | `M/order/ShopCheckout.js:677`, `:1174` | A zero-total guest checkout mails any typed address | Low | reported (to check) |
 | SEC-PSS-08 | `M/product/ShopCatalog.js:560-600` | Shop search and catalog reads have no limit at the authority | Low | reported (to check) |
-| SEC-PSS-22 | `request/SupportPortal.js:751-761` | `createCustomerCase` stages and scans the upload before it checks who asks | Low | reported (confirmed in code; a helper reader's item, not checked by the slice's reviewer) |
+| SEC-PSS-22 | `request/SupportPortal.js:751-761` | `createCustomerCase` stages and scans the upload before it checks who asks | Low | fixed |
 | SEC-PSS-23 | `request/SupportPortal.js:149-166` (`askers`), `order/CustomerOrders.js:133-162`, `order/CustomerReturns.js:287-341`, `request/SupportPortal.js:806-809` | A guest's order link (`OrderView`, a read scope) authorizes cancel, return and case writes | Low | reported (confirmed in code; a helper reader's item, not checked by the slice's reviewer) |
 | SEC-PSS-24 | `account/Portal.js:426-438`, `:467-475` | The BillUpload page shows the purchase order's current total to a superseded or not-yet-sent revision's link | Low | reported (confirmed in code; a helper reader's item, not checked by the slice's reviewer) |
 | SEC-PSS-25 | `request/SupportPortal.js:466`, `:472-503` | `rateArticle`'s "nonce" is any text the client sends | Low | reported (confirmed in code; a helper reader's item, not checked by the slice's reviewer) |
@@ -536,7 +555,7 @@ Map file: [Attack-Surface-Apps-PASS-Forum-Smithy.md](../docs/security/Attack-Sur
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
-| SEC-PFS-61 | `runtime/components/addon/mr-mantle/service/mantle/smithy/SmithyGit.js:385-415` | A Smithy access token made for git is the account's whole login key, with no scope | Medium | reported (confirmed in code) |
+| SEC-PFS-61 | `runtime/components/addon/mr-mantle/service/mantle/smithy/SmithyGit.js:385-415` | A Smithy access token made for git is the account's whole login key, with no scope | Medium | fixed |
 | SEC-PFS-01 | `mr-mantle/service/mantle/work/GitServices.xml:1119, 1128, 1189` | The framework's review-thread REST gives party ids and party names of a Smithy repository's commenters | Low | reported (confirmed in code) |
 | SEC-PFS-02 | `mr-mantle/service/mantle/forum/Forum.js:2494-2599` | Staged forum uploads have no count or total size limit per member | Low | reported (likely) |
 | SEC-PFS-62 | `runtime/components/addon/mr-mantle/service/mantle/smithy/SmithyGit.js:225` | The webhook secret is inside the stored hash of `storeWebhook`'s receipt | Low | reported (confirmed in code) |
@@ -551,10 +570,10 @@ Map file: [Attack-Surface-Apps-BOSS.md](../docs/security/Attack-Surface-Apps-BOS
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
-| SEC-BOS-01 | crates/moqui-core/src/user/filter.rs:144 and runtime/components/addon/mr-boss/data/BossAccountingSetupData.xml:209 | Organization row filters do not apply below a sub-area ALWAYS grant | Medium | reported (confirmed in code) |
-| SEC-BOS-02 | runtime/components/addon/mr-mantle/service/mantle/ledger/AccountingPolicy.js:83 and runtime/components/addon/mr-mantle/service/mantle/party/PartyServices.xml:626 | App administrators and ACCOUNTING_ADMIN are not bound to an organization | Medium | reported (confirmed in code) |
+| SEC-BOS-01 | crates/moqui-core/src/user/filter.rs:144 and runtime/components/addon/mr-boss/data/BossAccountingSetupData.xml:209 | Organization row filters do not apply below a sub-area ALWAYS grant | Medium | fixed |
+| SEC-BOS-02 | runtime/components/addon/mr-mantle/service/mantle/ledger/AccountingPolicy.js:83 and runtime/components/addon/mr-mantle/service/mantle/party/PartyServices.xml:626 | App administrators and ACCOUNTING_ADMIN are not bound to an organization | Medium | fixed |
 | SEC-BOS-03 | runtime/components/addon/mr-boss/screen/AcceptInvitation.xml:35 | An invitation is accepted by a bare GET for a signed-in user | Medium | fixed |
-| SEC-BOS-04 | runtime/components/addon/mr-boss/screen/Unsubscribe.xml:53 | Unsubscribe and public-share changes run on a bare GET | Low | reported (confirmed in code) |
+| SEC-BOS-04 | runtime/components/addon/mr-boss/screen/Unsubscribe.xml:53 | Unsubscribe and public-share changes run on a bare GET | Low | fixed |
 | SEC-BOS-05 | runtime/components/addon/mr-boss/screen/PublishedCalendar.xml:27 and PublishedCalendar.qvue:120 | A published calendar's password travels in the query string | Low | reported (confirmed in code) |
 | SEC-BOS-06 | runtime/components/addon/mr-mantle/service/mantle/account/PaymentRuns.js:354 and InvoiceWorkflow.js:142 | Accounting separation of duties is a preference, and two bundles hold both sides | Low | reported (to check) |
 | SEC-BOS-07 | runtime/components/addon/mr-boss/skill/reset-factor.md:8 | The reset-factor skill is declared reversible | Low | reported (confirmed in code) |
@@ -567,13 +586,13 @@ Map file: [Attack-Surface-Apps-BOSS.md](../docs/security/Attack-Surface-Apps-BOS
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
-| SEC-BAP-01 | runtime/components/addon/mr-mantle/service/mantle/work/CalendarServices.xml:785-822 and 898-925 | Calendar subscription makes the server fetch any URL, private addresses included | Medium | reported (confirmed in code) |
-| SEC-BAP-02 | runtime/components/addon/mr-mantle/service/mantle/account/PaymentMethodServices.xml:509 and :555 | A bank account number is copied whole into the payment method description | Medium | reported (confirmed in code) |
+| SEC-BAP-01 | runtime/components/addon/mr-mantle/service/mantle/work/CalendarServices.xml:785-822 and 898-925 | Calendar subscription makes the server fetch any URL, private addresses included | Medium | fixed |
+| SEC-BAP-02 | runtime/components/addon/mr-mantle/service/mantle/account/PaymentMethodServices.xml:509 and :555 | A bank account number is copied whole into the payment method description | Medium | fixed |
 | SEC-BAP-03 | runtime/components/addon/mr-mantle/service/mantle/account/GatewayConnections.js:112-124 | A gateway's address is checked against its provider's hosts only on a production instance, and private addresses are refused only when `allowPrivateNetwork` is `N` | Low | reported (likely) |
-| SEC-BAP-04 | runtime/components/addon/mr-mantle/service/mantle/account/PaymentMethodServices.xml:17-70 | `get#PartyPaymentMethodInfo` returns the whole card and bank account records and ignores its `partyId` | Low | reported (to check) |
+| SEC-BAP-04 | runtime/components/addon/mr-mantle/service/mantle/account/PaymentMethodServices.xml:17-70 | `get#PartyPaymentMethodInfo` returns the whole card and bank account records and ignores its `partyId` | Low | fixed |
 | SEC-BAP-05 | runtime/components/addon/mr-mantle/service/mantle/account/PaymentServices.xml:1891-1895 | A card security code stays stored until an authorization succeeds | Low | reported (to check) |
-| SEC-BAP-06 | runtime/components/addon/mr-mantle/service/mantle/shipment/ShipmentServices.xml:1981 | Label fetches GET a stored URL with no internal-address guard | Low | reported (to check) |
-| SEC-BAP-08 | runtime/components/addon/mr-mantle/service/mantle/ext/account/NachaServices.xml:19, OfxServices.xml:16-53, BaiServices.xml:16-53 | The bank file services hold no permission or organization check | Low | reported (to check) |
+| SEC-BAP-06 | runtime/components/addon/mr-mantle/service/mantle/shipment/ShipmentServices.xml:1981 | Label fetches GET a stored URL with no internal-address guard | Low | partly fixed |
+| SEC-BAP-08 | runtime/components/addon/mr-mantle/service/mantle/ext/account/NachaServices.xml:19, OfxServices.xml:16-53, BaiServices.xml:16-53 | The bank file services hold no permission or organization check | Low | fixed |
 | SEC-BAP-07 | runtime/components/addon/mr-mantle/data/MantleSetupData.xml:17-20 | Under `/rest/s1/mantle` an administrator's calls run with no row filter set and past every BOSS sub-area DENY | Info | reported (confirmed in code) |
 | SEC-BAP-09 | runtime/components/addon/mr-boss/screen/Commerce.xml:32 | The Commerce store limit is one entity filter set by one screen | Info | reported (to check) |
 
@@ -583,7 +602,7 @@ Map file: [Attack-Surface-Clients.md](../docs/security/Attack-Surface-Clients.md
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
-| SEC-CLI-01 | crates/moqui-desktop/src/node/mod.rs:271, crates/moqui-core/src/web/origin.rs:127, runtime/components/base/webroot/screen/webroot/Login.xml:116 | The sidecar's loopback web listener is open to every local user and has no Host check seen | Medium | reported (to check) |
+| SEC-CLI-01 | crates/moqui-desktop/src/node/mod.rs:271, crates/moqui-core/src/web/origin.rs:127, runtime/components/base/webroot/screen/webroot/Login.xml:116 | The sidecar's loopback web listener is open to every local user and has no Host check seen | Medium | fixed |
 | SEC-CLI-02 | runtime/components/base/webroot/screen/webroot/sw.js:28 | The service worker keeps any same-origin GET that has a `v` parameter, cache first, with no expiry | Low | reported (to check) |
 | SEC-CLI-03 | crates/moqui-desktop/src/lib.rs:234 | The main window's navigation check in node modes passes every scheme but five | Low | reported (confirmed in code) |
 | SEC-CLI-04 | crates/moqui-client-tauri/src/scheme.rs:319, crates/moqui-desktop/src/node/scheme.rs:195, crates/moqui-core/src/context/factory.rs:93 | In the apps the server's default CSP is dropped whole, `form-action` and `frame-ancestors` with it | Low | reported (confirmed in code) |
@@ -601,15 +620,15 @@ Map file: [Attack-Surface-Scripts.md](../docs/security/Attack-Surface-Scripts.md
 | --- | --- | --- | --- | --- |
 | SEC-SCR-01 | runtime/components/base/tools/screen/Tools/Data/Export.xml:18 and :56 | Data Export `filterMap` runs any server script, on a GET, without the script permission | High | fixed |
 | SEC-SCR-05 | crates/moqui-core/src/notify/message.rs:322 and :899-911 | Notification titles are expanded as script, and three callers build them from record values | High | fixed |
-| SEC-SCR-02 | crates/moqui-core/src/service/tools.rs:204-208 | `print#ScreenDocument` evaluates its `screenParametersStr` parameter as a script | Medium | reported (confirmed in code) |
-| SEC-SCR-03 | crates/moqui-core/src/script/host/globals.rs:562-565 | `System.getProperty` returns secret properties and the whole environment to any script | Medium | reported (confirmed in code) |
-| SEC-SCR-04 | crates/moqui-core/src/script/host/tools.rs:721 and :2603-2620 | `ec.resource.runTokenCommand` starts a host program from any server script | Medium | reported (confirmed in code) |
-| SEC-SCR-06 | crates/moqui-core/src/script/oxide/resource.rs:227-237 (localized text expanded) | Records whose text is evaluated as script are writable without the script permission | Medium | reported (to check) |
+| SEC-SCR-02 | crates/moqui-core/src/service/tools.rs:204-208 | `print#ScreenDocument` evaluates its `screenParametersStr` parameter as a script | Medium | fixed |
+| SEC-SCR-03 | crates/moqui-core/src/script/host/globals.rs:562-565 | `System.getProperty` returns secret properties and the whole environment to any script | Medium | fixed |
+| SEC-SCR-04 | crates/moqui-core/src/script/host/tools.rs:721 and :2603-2620 | `ec.resource.runTokenCommand` starts a host program from any server script | Medium | fixed |
+| SEC-SCR-06 | crates/moqui-core/src/script/oxide/resource.rs:227-237 (localized text expanded) | Records whose text is evaluated as script are writable without the script permission | Medium | fixed |
 | SEC-SCR-07 | crates/moqui-core/src/script/host/tools.rs:2720-2726 and the `RestClient` shim near :903 | `ec.service.rest()` reaches internal addresses unless the script opts out | Low | reported (confirmed in code) |
 | SEC-SCR-08 | runtime/components/base/framework/template/screen/ScreenHtml.js:849 | The `editable` widget writes its text unescaped by default | Low | reported (to check) |
 | SEC-SCR-09 | crates/moqui-core/src/script/host/files.rs:455 | A thumbnail decodes an image with no limits of its own | Low | reported (to check) |
 | SEC-SCR-10 | crates/moqui-host/src/chromium.rs:312-327 | Chromium's DevTools port has no authentication on loopback | Low | reported (to check) |
-| SEC-SCR-12 | `crates/moqui-core/src/screen/definition.rs:1694` | A subscreen row's menu title is expanded as script, in menus and in the breadcrumb | Low | reported (confirmed in code) |
+| SEC-SCR-12 | `crates/moqui-core/src/screen/definition.rs:1694` | A subscreen row's menu title is expanded as script, in menus and in the breadcrumb | Low | fixed |
 | SEC-SCR-11 | crates/moqui-core/src/screen/definition.rs:910 | A screen definition loads from any resource scheme, `http` and `dbresource` included | Info | reported (to check) |
 
 ### Outbound requests, processes and packaging
@@ -618,18 +637,18 @@ Map file: [Attack-Surface-Outbound.md](../docs/security/Attack-Surface-Outbound.
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
-| SEC-OUT-01 | crates/moqui-mail/src/implementation.rs:1916 | SMTP credentials go out without TLS when the server offers no STARTTLS, or when neither TLS flag is set | Medium | reported (confirmed in code) |
-| SEC-OUT-02 | crates/moqui-core/src/service/sso.rs:237 | The address guard fails open on stored rows: it applies only when `allowPrivateNetwork` is exactly `N` | Medium | reported (confirmed in code) |
-| SEC-OUT-03 | crates/moqui-core/src/telemetry/scrape.rs:557 | Scrape targets, synthetic checks, EntitySync, `remote-rest` and resource locations never use the guard | Medium | reported (likely) |
-| SEC-OUT-07 | podman/moqui-postgres-compose.yml:32 | Compose files default the database password to `moqui` with TLS off and the port published on the host | Medium | reported (confirmed in code) |
-| SEC-OUT-08 | runtime/components/base/framework/service/org/moqui/dev/InstanceServices.xml:447 | A stored field is run as a program: `runTokenCommand(instanceImage.authTokenCmd)`; the Docker API defaults to plain HTTP on 2375 | Medium | reported (to check) |
-| SEC-OUT-04 | crates/moqui-mail/src/mx.rs:978 | MX delivery connects to any address a recipient domain's DNS names, internal ones included | Low | reported (confirmed in code) |
+| SEC-OUT-01 | crates/moqui-mail/src/implementation.rs:1916 | SMTP credentials go out without TLS when the server offers no STARTTLS, or when neither TLS flag is set | Medium | fixed |
+| SEC-OUT-02 | crates/moqui-core/src/service/sso.rs:237 | The address guard fails open on stored rows: it applies only when `allowPrivateNetwork` is exactly `N` | Medium | fixed |
+| SEC-OUT-03 | crates/moqui-core/src/telemetry/scrape.rs:557 | Scrape targets, synthetic checks, EntitySync, `remote-rest` and resource locations never use the guard | Medium | fixed |
+| SEC-OUT-07 | podman/moqui-postgres-compose.yml:32 | Compose files default the database password to `moqui` with TLS off and the port published on the host | Medium | fixed |
+| SEC-OUT-08 | runtime/components/base/framework/service/org/moqui/dev/InstanceServices.xml:447 | A stored field is run as a program: `runTokenCommand(instanceImage.authTokenCmd)`; the Docker API defaults to plain HTTP on 2375 | Medium | partly fixed |
+| SEC-OUT-04 | crates/moqui-mail/src/mx.rs:978 | MX delivery connects to any address a recipient domain's DNS names, internal ones included | Low | fixed |
 | SEC-OUT-05 | crates/moqui-devkit/src/deploy/git.rs:1506 | The deploy token is in the `git` child's argument list | Low | reported (confirmed in code) |
 | SEC-OUT-06 | crates/moqui-drivers/src/embedded.rs:596 | The embedded Postgres socket directory under the temp directory is used without checking its owner or mode | Low | reported (confirmed in code) |
-| SEC-OUT-09 | crates/moqui-host/src/pdf.rs:684 | Child processes inherit the server's whole environment | Low | reported (confirmed in code) |
-| SEC-OUT-10 | crates/moqui-core/src/service/mail_capture.rs:86 | Mail capture has no test-run gate | Low | reported (confirmed in code) |
-| SEC-OUT-11 | crates/moqui-llm/src/provider/mod.rs:1669 | The LLM endpoint check reads only an address written in the URL | Low | reported (confirmed in code) |
-| SEC-OUT-12 | crates/moqui-lib/src/net.rs:42 | `internal_address` leaves out some non-public ranges; proxy variables may take names past the guard | Low | reported (to check) |
+| SEC-OUT-09 | crates/moqui-host/src/pdf.rs:684 | Child processes inherit the server's whole environment | Low | fixed |
+| SEC-OUT-10 | crates/moqui-core/src/service/mail_capture.rs:86 | Mail capture has no test-run gate | Low | fixed |
+| SEC-OUT-11 | crates/moqui-llm/src/provider/mod.rs:1669 | The LLM endpoint check reads only an address written in the URL | Low | fixed |
+| SEC-OUT-12 | crates/moqui-lib/src/net.rs:42 | `internal_address` leaves out some non-public ranges; proxy variables may take names past the guard | Low | fixed |
 | SEC-OUT-13 | systemd/moqui.service:23 | The systemd unit and the image leave the binary and confs writable by the service user | Low | reported (confirmed in code) |
 | SEC-OUT-14 | moq:1476 | The default release build carries `devtools`; `moq` downloads Chromium and add-on zips with no checksum | Info | reported (to check) |
 
@@ -639,9 +658,9 @@ Map file: [Attack-Surface-Dev.md](../docs/security/Attack-Surface-Dev.md). Revie
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
-| SEC-DEV-01 | runtime/components/dev/dev-aide/src/entities.rs:98-131 | export#Records returns any entity's records to every Dev AIDE tier, including the stored tokens get#Credentials keeps for ADMIN | Medium | reported (likely) |
-| SEC-DEV-05 | crates/moqui-core/src/service/mail_capture.rs:176-232 | MailCapture.enable() has no test-run gate, unlike HttpFixtures | Medium | reported (to check) |
-| SEC-DEV-06 | runtime/components/dev/demo/data/DemoSecurityData.xml:21-59 | The demo lock-down leaves many ADMIN grants and permissions in place that were added after it | Medium | reported (to check) |
+| SEC-DEV-01 | runtime/components/dev/dev-aide/src/entities.rs:98-131 | export#Records returns any entity's records to every Dev AIDE tier, including the stored tokens get#Credentials keeps for ADMIN | Medium | fixed |
+| SEC-DEV-05 | crates/moqui-core/src/service/mail_capture.rs:176-232 | MailCapture.enable() has no test-run gate, unlike HttpFixtures | Medium | fixed |
+| SEC-DEV-06 | runtime/components/dev/demo/data/DemoSecurityData.xml:21-59 | The demo lock-down leaves many ADMIN grants and permissions in place that were added after it | Medium | fixed |
 | SEC-DEV-02 | runtime/components/dev/dev-aide/src/services.rs:87-117 and 58-82 | eval#Condition runs a caller-supplied expression at the view tier | Low | reported (to check) |
 | SEC-DEV-03 | runtime/components/dev/dev-aide/screen/DevAide/Workspace.xml (transition `restart`, last transition of the file) | State-changing Dev AIDE transitions have no method attribute, so a parameterless GET runs them | Low | reported (to check) |
 | SEC-DEV-04 | runtime/components/dev/dev-aide/src/confine.rs:28 | The file deny list covers six runtime names; conf, save, sftp and install are readable at the view tier, and store#Root accepts any other host directory | Low | reported (confirmed in code) |
