@@ -337,6 +337,7 @@ helper functions above are also on the class Java has them on. Sources: `script/
 | `isSameOriginRedirect(url, configuredHost)` | The URL is a path on this server, or an `http(s)` URL whose host is `configuredHost` (else the webapp's `http-host`). The request's `Host` header does not count |
 | `lastPathSegment(path)` | The part after the last `/` or `\`. Null for null |
 | `isRestrictedGenericEntity(entityName)` | The entity, or a view over it, is one the generic tools (auto screens, data edit, data import) do not take from a request |
+| `isGenericWriteRefused(entityName)` | `isRestrictedGenericEntity`, or an entity only its own services write (the entity audit log, Monitor's recovery rows, drains and ingest keys): a generic tool's write refuses it |
 | `simpleHttpStringRequest(location, body, contentType)` | The response text of a `POST` of the body, or of a `GET` with no body |
 | `simpleHttpMapRequest(location, parameters)` | The response text of a `POST` of the parameters as a form |
 

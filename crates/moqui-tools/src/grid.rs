@@ -944,7 +944,7 @@ fn editable_table(
     let Some(entity) = found else {
         return Err(format!("No entity is on table {table}"));
     };
-    if sensitive::is_restricted_generic_entity(&entity.full_name) {
+    if sensitive::is_generic_write_refused(&entity.full_name) {
         return Err(format!("{} is not available in the data grid", entity.full_name));
     }
     let mut fields = BTreeMap::new();
@@ -1851,6 +1851,10 @@ pub fn save(
 ) -> Result<SaveOutcome, Refusal> {
     refuse_restricted(facade, entity_name)?;
     let entity = definition(facade, entity_name)?;
+    // the entity audit log and Monitor's recovery and ingest rows: read here, written only by their own services
+    if !sensitive::generic_access(facade, &entity.full_name).write {
+        return Err(refusal(format!("{} is written only by its own services", entity.full_name)));
+    }
     // a data document's definition holds expressions that run as whoever reads the document: changed on its own
     // screens, not by any Tools viewer through the grid
     if entity.full_name.starts_with("moqui.entity.document.DataDocument") {

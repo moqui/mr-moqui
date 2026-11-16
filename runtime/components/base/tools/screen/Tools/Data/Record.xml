@@ -23,7 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="edit"><default-response url="."/></transition>
     <transition name="update">
         <actions>
-            <set field="entityName" from="selectedEntity"/><if condition="WebUtilities.isRestrictedGenericEntity(selectedEntity)"><message error="true">Entity ${entityName} is not available through this tool</message><return/></if>
+            <set field="entityName" from="selectedEntity"/><if condition="WebUtilities.isGenericWriteRefused(selectedEntity)"><message error="true">Entity ${entityName} is not available through this tool</message><return/></if>
             <service-call name="update#${selectedEntity}" in-map="true"/></actions>
         <default-response url="." parameter-map="ec.entity.getEntityDefinition(selectedEntity).getPrimaryKeys(context)"/>
     </transition>

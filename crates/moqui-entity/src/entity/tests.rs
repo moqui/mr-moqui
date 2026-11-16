@@ -1370,6 +1370,33 @@ fn generic_entity_rest_keeps_sensitive_entities_and_fields_out() {
     );
 }
 
+/// The entity audit log and Monitor's recovery and ingest rows are read through entity REST but never written there:
+/// any signed-in user could add audit rows saying anyone changed anything (plans/Security-Review-Medium.md
+/// SEC-RTE-03), or an ingest key or a recovery action (SEC-TLS-11).
+#[test]
+fn entity_rest_does_not_write_the_audit_log_or_the_monitor_rows() {
+    let facade = crate::testing::open();
+    let unauthorized = |err: &Error| crate::error::ErrorKind::of(err) == crate::error::ErrorKind::Unauthorized;
+    let mut audit = BTreeMap::new();
+    audit.insert("changedEntityName".to_string(), Value::string("moqui.security.UserAccount"));
+    audit.insert("changedFieldName".to_string(), Value::string("disabled"));
+    audit.insert("changedByUserId".to_string(), Value::string("EX_JOHN_DOE"));
+    let err = facade.rest("post", "moqui.entity.EntityAuditLog", &audit).unwrap_err();
+    assert!(unauthorized(&err), "{err}");
+    let mut key = BTreeMap::new();
+    key.insert("keyId".to_string(), Value::string("planted"));
+    for entity in ["moqui.monitor.IngestKey", "moqui.monitor.RecoveryAction", "moqui.monitor.RecoveryControl"] {
+        let err = facade.rest("post", entity, &key).unwrap_err();
+        assert!(unauthorized(&err), "{entity}: {err}");
+    }
+    assert_eq!(facade.find("moqui.entity.EntityAuditLog").unwrap().count().unwrap(), 0);
+    // still read
+    assert!(matches!(
+        facade.rest("get", "moqui.entity.EntityAuditLog", &BTreeMap::new()).unwrap(),
+        Value::List(_)
+    ));
+}
+
 /// As Java's `getPlainValueMap`, a REST find of a view-entity gives its alias values, and the primary key aliases
 /// (here `enumId`, from the path or the parameters) find one row.
 #[test]

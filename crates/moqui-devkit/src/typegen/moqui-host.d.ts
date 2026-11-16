@@ -1771,6 +1771,8 @@ interface MoquiWebUtilities {
     isSameOriginRedirect(url: string, host?: string | null): boolean;
     lastPathSegment(path: string): string;
     isRestrictedGenericEntity(entityName: string): boolean;
+    /** isRestrictedGenericEntity, or an entity only its own services write: a generic tool's write refuses it. */
+    isGenericWriteRefused(entityName: string): boolean;
     /** The response text of a POST of the body, or of a GET with none. */
     simpleHttpStringRequest(location: string, requestBody?: string | null, contentType?: string | null): string | null;
     /** The response text of a POST of the parameters as a form. */

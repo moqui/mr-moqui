@@ -459,10 +459,10 @@ fn refuse_restricted(facade: &EntityFacade, record: &Record) -> Result<(), Error
     Ok(())
 }
 
-/// `WebUtilities.isRestrictedGenericEntity` of an entity name, or of the noun of a `verb#noun` service name.
+/// `WebUtilities.isGenericWriteRefused` of an entity name, or of the noun of a `verb#noun` service name: a load writes.
 pub fn is_restricted_entity(entity_name: &str) -> bool {
     let noun = entity_name.rsplit('#').next().unwrap_or(entity_name);
-    crate::entity::sensitive::is_restricted_generic_entity(noun)
+    crate::entity::sensitive::is_generic_write_refused(noun)
 }
 
 fn write_tree(facade: &EntityFacade, options: &LoadOptions, record: Record, ancestor: &FieldMap) -> Result<u64, Error> {

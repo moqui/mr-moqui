@@ -667,9 +667,10 @@ fn run_entity(
         "list" | "one" => find_entity(&facade, name, master_name, operation, params),
         "count" => count_entity(&facade, name, params),
         "create" | "update" | "store" | "delete" => {
-            if sensitive::is_identity_admin_entity(&full_name)
-                || sensitive::is_audit_entity(&full_name)
-                || (sensitive::is_secret_config_entity(&full_name) && !crate::user::is_in_group("ADMIN")?)
+            // the restricted entities, and those only their own services write (the entity audit log, Monitor's
+            // recovery and ingest rows); a secret-config entity by ADMIN only
+            if sensitive::is_generic_write_refused(&full_name)
+                && !(sensitive::is_secret_config_entity(&full_name) && crate::user::is_in_group("ADMIN")?)
             {
                 return refused("writable");
             }

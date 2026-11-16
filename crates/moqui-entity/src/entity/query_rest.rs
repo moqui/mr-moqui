@@ -211,10 +211,11 @@ pub fn rest(
                 format!("Entity {full_name} is not available through generic entity REST"),
             ));
         }
-    } else if sensitive::is_identity_admin_entity(&full_name)
-        || sensitive::is_user_account_entity(&full_name)
-        || sensitive::is_audit_entity(&full_name)
-        || (sensitive::is_secret_config_entity(&full_name) && !(crate::hooks::get().in_group)("ADMIN")?)
+    } else if sensitive::is_user_account_entity(&full_name)
+        // the restricted entities, and those only their own services write (the entity audit log, Monitor's recovery
+        // and ingest rows); a secret-config entity by ADMIN only
+        || (sensitive::is_generic_write_refused(&full_name)
+            && !(sensitive::is_secret_config_entity(&full_name) && (crate::hooks::get().in_group)("ADMIN")?))
     {
         return Err(kinded(
             ErrorKind::Unauthorized,
