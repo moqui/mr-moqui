@@ -22,15 +22,16 @@ const OPERATION_RUNS: &str = "moqui.operation.runs";
 /// Artifact attribute sets a thread keeps; past this many they are dropped and made again as they come.
 const ARTIFACT_ATTRIBUTES_CAP: usize = 4096;
 
-/// Counts changes of the metric attribute lists, so a thread's [`ARTIFACT_ATTRIBUTES`] made before one is dropped.
-static ATTRIBUTE_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// A thread's artifact attribute sets, by the runtime, the instrument and the artifact's key.
+/// A thread's artifact attribute sets, by the runtime, the instrument and the artifact's key, each with the generation of
+/// its runtime's attribute lists it was made under ([`Runtime::attribute_generation`]): a change of one runtime's lists
+/// makes its own sets again and leaves another runtime's.
 #[derive(Default)]
 struct ArtifactAttributes {
-    generation: u64,
-    rows: HashMap<(usize, u8, u64), Arc<[KeyValue]>>,
+    rows: HashMap<ArtifactKey, (u64, Arc<[KeyValue]>)>,
 }
+
+/// The runtime (its address), the instrument (0 duration, 1 slow) and the artifact's key.
+type ArtifactKey = (usize, u8, u64);
 
 thread_local! {
     static ARTIFACT_ATTRIBUTES: std::cell::RefCell<ArtifactAttributes> = std::cell::RefCell::new(ArtifactAttributes::default());
@@ -67,6 +68,9 @@ pub(super) struct Runtime {
     /// The configured attribute allow-lists by instrument (telemetry/metric), in place of [`ALLOWED_ATTRIBUTES`], with
     /// the live overrides; a gauge reads it at each observation.
     allowed: Arc<arc_swap::ArcSwap<AllowedAttributes>>,
+    /// Counts changes of [`Self::allowed`], so a thread's [`ARTIFACT_ATTRIBUTES`] of this runtime made before one are
+    /// made again.
+    attribute_generation: std::sync::atomic::AtomicU64,
 }
 
 /// A reader the meter provider owns that the runtime can still collect from.
@@ -157,6 +161,7 @@ impl Runtime {
             gauges: Mutex::default(),
             pull,
             allowed,
+            attribute_generation: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -180,7 +185,8 @@ impl Runtime {
     /// Replace the attribute lists by instrument, from the live config.
     pub(super) fn set_metric_attributes(&self, lists: &HashMap<String, Vec<String>>) {
         self.allowed.store(Arc::new(allowed_keys(lists)));
-        ATTRIBUTE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.attribute_generation
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// `moqui.artifact.duration` of one artifact frame, and `moqui.artifact.slow` when `slow`. The attributes are made
@@ -218,18 +224,21 @@ impl Runtime {
         instrument: &str,
         attributes: &impl Fn() -> Document,
     ) -> Arc<[KeyValue]> {
-        let generation = ATTRIBUTE_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
+        let generation = self.attribute_generation.load(std::sync::atomic::Ordering::Relaxed);
         let owner = std::ptr::from_ref(self) as usize;
         ARTIFACT_ATTRIBUTES.with(|memo| {
             let mut memo = memo.borrow_mut();
-            if memo.generation != generation || memo.rows.len() >= ARTIFACT_ATTRIBUTES_CAP {
-                memo.rows.clear();
-                memo.generation = generation;
+            if let Some((made, kept)) = memo.rows.get(&(owner, which, key)) {
+                if *made == generation {
+                    return kept.clone();
+                }
             }
-            memo.rows
-                .entry((owner, which, key))
-                .or_insert_with(|| self.metric_attributes(instrument, attributes()).into())
-                .clone()
+            if memo.rows.len() >= ARTIFACT_ATTRIBUTES_CAP {
+                memo.rows.clear();
+            }
+            let kept: Arc<[KeyValue]> = self.metric_attributes(instrument, attributes()).into();
+            memo.rows.insert((owner, which, key), (generation, kept.clone()));
+            kept
         })
     }
 
