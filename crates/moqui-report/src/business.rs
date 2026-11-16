@@ -793,7 +793,8 @@ fn recompile(ec: &ExecutionContext, document: &str) -> Result<(), Error> {
     let entities = entity(ec)?;
     let info = moqui_core::entity::document::document_info(&entities, document)
         .map_err(|error| fail(format!("document {document} does not resolve: {error}")))?;
-    let mut encrypted = Vec::new();
+    // the document leaves an encrypted field out (SEC-DAT-02); a dataset refuses it, so its steward sees why
+    let mut encrypted = info.omitted.clone();
     let mut failure = None;
     info.walk(|_, node| {
         for field in node.fields.iter().filter(|field| !field.is_expression) {

@@ -176,6 +176,7 @@ fn a_document_leaves_out_encrypted_fields_and_takes_only_the_listed_functions() 
     let info = super::document::document_info(&facade, "SYNCS").unwrap();
     let aliases: Vec<&str> = info.root.fields.iter().map(|field| field.alias.as_str()).collect();
     assert_eq!(aliases, ["entitySyncId", "targetUsername"]);
+    assert_eq!(info.omitted, ["targetPassword (moqui.entity.sync.EntitySync)"]);
 
     create_row(
         &facade,
