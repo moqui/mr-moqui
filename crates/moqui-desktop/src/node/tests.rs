@@ -91,6 +91,7 @@ fn both_modes_listen_on_loopback_only() {
     assert_eq!(get("webapp_http_port"), Some("51234"));
     assert_eq!(get("webapp_https_listen_port"), Some("off"));
     assert_eq!(get("cluster_bind_address"), Some("127.0.0.1"));
+    assert_eq!(get("webapp_allowed_hosts"), Some("127.0.0.1:51234,localhost:51234"));
 }
 
 #[test]

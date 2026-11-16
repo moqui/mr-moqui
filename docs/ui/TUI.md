@@ -37,7 +37,8 @@ the dialog creates the first administrator, as the browser's `/Login` page does.
 (`UserServices.get#InitialAdminNeeded`, over HTTP the Login screen's `initialAdminNeeded`), and shows the login until
 the answer comes. On a system with no accounts the dialog becomes "Welcome to your new system: create the first
 administrator", with Username, Password, Password again, Full name and Email, and the password rules ("at least 12
-characters, 1 digit, 1 other"). Tab, Down, Up and Shift+Tab move between the fields; Enter goes to the next field and
+characters, 1 digit, 1 other"). From another machine than the server it has a Setup secret field too, with where the
+secret is (the server's startup log). Tab, Down, Up and Shift+Tab move between the fields; Enter goes to the next field and
 sends from the last, and Ctrl+S or Alt+Enter sends from any. The client checks that every field is filled and the two
 passwords match before it sends. The account is made by `create#InitialAdminAccount`, in the `ADMIN` group, and the
 dialog then logs in with it, as a login does (with `--server` the login key is kept). A refusal (the password rules,

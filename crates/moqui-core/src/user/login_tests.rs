@@ -322,6 +322,93 @@ fn a_password_change_keeps_a_permanent_disable_and_ends_a_timed_lock() {
     session::reset_session();
 }
 
+/// SEC-WEB-03, SEC-COM-12: a password tried during a lock window counts but does not restart the window, and an
+/// internal login (an XMPP service call, queued work) or a valid key tried no password and counts nothing, nor is it
+/// noted for the web protection.
+#[test]
+fn attempts_during_a_lock_window_do_not_restart_it_and_internal_logins_do_not_count() {
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    let locked_at = now_millis() - 2 * 60_000;
+    create_user(&facade, "ada", "Secret1!", |_| {});
+    internal_login_user("ada").unwrap();
+    let key = get_login_key(None).unwrap();
+    logout().unwrap();
+    update_user(
+        &facade,
+        "ada",
+        &[
+            ("disabled", Value::string("Y")),
+            ("disabledDateTime", stamp(locked_at)),
+            ("successiveFailedLogins", Value::I64(4)),
+        ],
+    )
+    .unwrap();
+    crate::web::take_auth_failure();
+
+    assert_eq!(login_user("ada", "wrong").unwrap_err().to_string(), INVALID_LOGIN);
+    assert!(crate::web::take_auth_failure());
+    let after_password = load_user(&facade, "ada");
+    assert_eq!(i64_field(&after_password, "successiveFailedLogins"), 5);
+    assert_eq!(field_millis(&after_password, "disabledDateTime"), Some(locked_at));
+
+    for _ in 0..3 {
+        assert_eq!(internal_login_user("ada").unwrap_err().to_string(), INVALID_LOGIN);
+        assert_eq!(internal_login_queued_user("ada").unwrap_err().to_string(), INVALID_LOGIN);
+        assert_eq!(login_user_key(&key).unwrap_err().to_string(), INVALID_LOGIN);
+    }
+    assert!(!crate::web::take_auth_failure(), "a valid key is not a failed credential");
+    let after = load_user(&facade, "ada");
+    assert_eq!(i64_field(&after, "successiveFailedLogins"), 5);
+    assert_eq!(field_millis(&after, "disabledDateTime"), Some(locked_at));
+    assert!(session::current_username().unwrap().is_none());
+
+    // once the window is over, the next wrong password starts a new one
+    update_user(&facade, "ada", &[("disabledDateTime", stamp(now_millis() - 6 * 60_000))]).unwrap();
+    assert_eq!(login_user("ada", "wrong").unwrap_err().to_string(), INVALID_LOGIN);
+    let relocked = field_millis(&load_user(&facade, "ada"), "disabledDateTime").unwrap();
+    assert!(relocked > now_millis() - 60_000);
+    session::reset_session();
+}
+
+/// SEC-WEB-02, SEC-ADM-02: the old password of a password change is behind the login gate. A wrong one counts and is
+/// noted; during the lock window even the right one is refused, counted and noted; an unknown user is refused; a reset
+/// password in date is taken, an ended one is not.
+#[test]
+fn the_old_password_of_a_change_is_behind_the_login_gate() {
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    create_user(&facade, "ada", "Secret1!", |_| {});
+    crate::web::take_auth_failure();
+    assert!(check_old_password("ada", "Secret1!").unwrap());
+    assert!(!crate::web::take_auth_failure());
+    for _ in 0..4 {
+        assert!(!check_old_password("ada", "wrong").unwrap());
+        assert!(crate::web::take_auth_failure());
+    }
+    let locked = load_user(&facade, "ada");
+    assert_eq!(text(&locked, "disabled"), "Y");
+    assert_eq!(i64_field(&locked, "successiveFailedLogins"), 4);
+    assert!(!check_old_password("ada", "Secret1!").unwrap(), "the lock window refuses the right one");
+    assert!(crate::web::take_auth_failure());
+    assert_eq!(i64_field(&load_user(&facade, "ada"), "successiveFailedLogins"), 5);
+
+    assert!(!check_old_password("nobody", "Secret1!").unwrap());
+    assert!(!check_old_password("", "Secret1!").unwrap());
+    assert!(crate::web::take_auth_failure());
+
+    let reset_hash = hash_password("Reset-1234").unwrap();
+    create_user(&facade, "bob", "Secret1!", |value| {
+        value.set("resetPassword", Value::string(&reset_hash));
+        value.set("resetPasswordSetDate", stamp(now_millis()));
+    });
+    assert!(check_old_password("bob", "Reset-1234").unwrap());
+    update_user(&facade, "bob", &[("resetPasswordSetDate", stamp(now_millis() - 49 * 3_600_000))]).unwrap();
+    assert!(!check_old_password("bob", "Reset-1234").unwrap());
+    assert_eq!(i64_field(&load_user(&facade, "bob"), "successiveFailedLogins"), 1);
+    session::reset_session();
+}
+
 #[test]
 fn a_correct_password_logs_in_after_the_disable_window() {
     let (ctx, facade) = open_ctx();
@@ -535,6 +622,63 @@ fn key_app_password_and_external_logins_leave_history_rows() {
     update_user(&facade, &user_id("off"), &[("disabled", Value::string("Y"))]).unwrap();
     assert!(login_user_key(&off_key).is_err());
     assert!(history(&user_id("off")).is_empty());
+    session::reset_session();
+}
+
+/// SEC-COM-11, SEC-COM-22: an XMPP SCRAM or FAST sign-in by an app password the session verified checks the account's
+/// ipAllowed against the session's address, and is recorded in the login history with the app password's last use;
+/// another user's or a revoked app password is refused.
+#[test]
+fn a_verified_app_password_sign_in_checks_ip_allowed_and_is_recorded() {
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    create_user(&facade, "xmpp", "Secret1!", |value| {
+        value.set("ipAllowed", Value::string("10.1.*.*"));
+    });
+    create_user(&facade, "other", "Secret1!", |_| {});
+    let mut row = facade.make_value(USER_APP_PASSWORD).unwrap();
+    row.set("appPasswordId", Value::string("AP_XMPP"));
+    row.set("userId", Value::string("xmpp"));
+    row.set("passwordHash", Value::string("unused"));
+    row.create(&facade).unwrap();
+    let last_used = || {
+        facade
+            .find(USER_APP_PASSWORD)
+            .unwrap()
+            .eq("appPasswordId", Value::string("AP_XMPP"))
+            .one()
+            .unwrap()
+            .and_then(|row| field_millis(&row, "lastUsedDate"))
+    };
+
+    with_client_ip("10.1.2.3", || login_verified_app_password("xmpp", Some("AP_XMPP"))).unwrap();
+    assert_eq!(session::current_username().unwrap().as_deref(), Some("xmpp"));
+    logout().unwrap();
+    assert!(last_used().is_some());
+    let history = facade
+        .find(USER_LOGIN_HISTORY)
+        .unwrap()
+        .eq("userId", Value::string("xmpp"))
+        .list()
+        .unwrap();
+    assert!(history.iter().any(|row| text(row, "successfulLogin") == "Y"));
+
+    let refused = with_client_ip("192.0.2.10", || login_verified_app_password("xmpp", Some("AP_XMPP")));
+    assert!(refused.unwrap_err().to_string().contains("not in allowed list"));
+    assert!(session::current_username().unwrap().is_none());
+
+    assert_eq!(
+        with_client_ip("10.1.2.3", || login_verified_app_password("other", Some("AP_XMPP")))
+            .unwrap_err()
+            .to_string(),
+        INVALID_LOGIN
+    );
+    update_user(&facade, "xmpp", &[("ipAllowed", Value::Null)]).unwrap();
+    let mut revoked = facade.make_value(USER_APP_PASSWORD).unwrap();
+    revoked.set("appPasswordId", Value::string("AP_XMPP"));
+    revoked.set("revokedDate", stamp(now_millis() - 1000));
+    revoked.update(&facade).unwrap();
+    assert!(login_verified_app_password("xmpp", Some("AP_XMPP")).is_err());
     session::reset_session();
 }
 

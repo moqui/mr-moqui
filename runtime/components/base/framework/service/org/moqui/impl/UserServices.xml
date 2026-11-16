@@ -153,11 +153,15 @@ along with this software (see the LICENSE.md file). If not, see
             <entity-find-one entity-name="moqui.security.UserAccount" value-field="userAccount"/>
             <script>userAccount.set("successiveFailedLogins", userAccount.get("successiveFailedLogins") ? userAccount.get("successiveFailedLogins") + 1 : 1)</script>
             <set field="maxFailures" from="ec.user.loginRules.maxFailures"/>
-            <!-- if successiveFailedLogins is greater than max in conf then disable account;
-                 refresh disabledDateTime even when already disabled so the window restarts. An account disabled for
-                 good (disabled with no disabledDateTime) stays so: a lock time would end by itself (SEC-WEB-01). -->
+            <!-- if successiveFailedLogins is greater than max in conf then disable account, and after a lock window
+                 ended the next failure starts a new one. An attempt during a lock window counts but does not restart
+                 it, so attempts that go on cannot keep the account locked (SEC-WEB-03, as login.rs
+                 write_failed_increment). An account disabled for good (disabled with no disabledDateTime) stays so: a
+                 lock time would end by itself (SEC-WEB-01). -->
             <set field="disabledForGood" from="userAccount.get('disabled') == 'Y' &amp;&amp; !userAccount.get('disabledDateTime')"/>
-            <if condition="userAccount.get('successiveFailedLogins') > maxFailures &amp;&amp; !disabledForGood">
+            <set field="inLockWindow" from="userAccount.get('disabled') == 'Y' &amp;&amp; userAccount.get('disabledDateTime') &amp;&amp;
+                ec.user.timestampMillis(userAccount.get('disabledDateTime')) + ec.user.loginRules.disableMinutes * 60000 &gt; ec.user.timestampMillis(ec.user.nowTimestamp)"/>
+            <if condition="userAccount.get('successiveFailedLogins') > maxFailures &amp;&amp; !disabledForGood &amp;&amp; !inLockWindow">
                 <script>userAccount.set("disabled", "Y"); userAccount.set("disabledDateTime", ec.user.nowTimestamp)</script>
             </if>
             <log level="warn" message="User ${userId} failed logins [${userAccount.get('successiveFailedLogins')}], maxFailures [${maxFailures}], disabled [${userAccount.get('disabled')}]"/>
@@ -197,7 +201,10 @@ along with this software (see the LICENSE.md file). If not, see
                     <field-map field-name="userId" from="ec.user.userId"/></entity-find-one>
             </else></if>
             <set field="passwordUpdatePublicMsg" value="Password could not be updated with the information provided."/>
-            <if condition="userAccount == null"><return message="${passwordUpdatePublicMsg}" public="true" type="danger"/></if>
+            <!-- Every refusal of the old password answers passwordUpdatePublicMsg and takes as long as a wrong password:
+                checkOldPassword with no user burns the same argon2 verify (SEC-WEB-02). -->
+            <if condition="userAccount == null"><script>ec.user.checkOldPassword(null, oldPassword)</script>
+                <return message="${passwordUpdatePublicMsg}" public="true" type="danger"/></if>
             <set field="userId" from="userAccount.get('userId')"/>
             <set field="username" from="userAccount.get('username')"/>
             <!-- An account disabled for good or past its terminateDate is closed: its password is changed only by a
@@ -205,6 +212,7 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="!hasPwAdminPermission &amp;&amp; ((userAccount.get('disabled') == 'Y' &amp;&amp; !userAccount.get('disabledDateTime')) ||
                     (userAccount.get('terminateDate') &amp;&amp; ec.user.timestampMillis(userAccount.get('terminateDate')) &lt; ec.user.timestampMillis(ec.user.nowTimestamp)))">
                 <log level="warn" message="Password change refused for closed account ${userId}"/>
+                <script>ec.user.checkOldPassword(null, oldPassword)</script>
                 <return message="${passwordUpdatePublicMsg}" public="true" type="danger"/></if>
 
             <if condition="!hasPwAdminPermission">
@@ -242,28 +250,13 @@ along with this software (see the LICENSE.md file). If not, see
                     <if condition="!oldPassword">
                         <return message="Please enter current password" public="true" type="danger"/></if>
 
-                    <if condition="!userAccount.get('currentPassword') || !ec.user.passwordsMatch(oldPassword, userAccount.get('currentPassword'),
-                            userAccount.get('passwordHashType'), userAccount.get('passwordSalt'), userAccount.get('passwordBase64') == 'Y')">
-                        <if condition="userAccount.get('resetPassword')"><then>
-                            <!-- try the resetPassword; honour password.@email-expire-hours; missing set date is expired -->
-                            <set field="resetStillValid" from="false" type="Boolean"/>
-                            <if condition="userAccount.get('resetPasswordSetDate')">
-                                <set field="expireHours" from="ec.user.loginRules.emailExpireHours"/>
-                                <set field="resetExpireAt" from="ec.user.timestampMillis(userAccount.get('resetPasswordSetDate')) + expireHours * 3600000"/>
-                                <if condition="ec.user.timestampMillis(ec.user.nowTimestamp) &lt;= resetExpireAt"><set field="resetStillValid" from="true" type="Boolean"/></if>
-                            </if>
-                            <!-- a reset password is always an argon2 hash in this port -->
-                            <if condition="!resetStillValid || !ec.user.passwordsMatch(oldPassword, userAccount.get('resetPassword'),
-                                    userAccount.get('passwordHashType'), userAccount.get('passwordSalt'), userAccount.get('passwordBase64') == 'Y')">
-                                <service-call name="org.moqui.impl.UserServices.increment#UserAccountFailedLogins"
-                                        in-map="{userId: userId}" transaction="force-new"/>
-                                <return message="${passwordUpdatePublicMsg}" public="true" type="danger"/></if>
-                        </then><else>
-                            <service-call name="org.moqui.impl.UserServices.increment#UserAccountFailedLogins"
-                                    in-map="{userId: userId}" transaction="force-new"/>
-                            <return message="${passwordUpdatePublicMsg}" public="true" type="danger"/>
-                        </else></if>
-                    </if>
+                    <!-- The old password (the current one, or the reset password while in date) behind the gate of a
+                        password login, in Rust: an account in a lock window or terminated is refused whatever password
+                        is given, one check of the user runs at a time, a wrong password counts as a failed login and
+                        every refusal is noted for the web protection (SEC-WEB-02, SEC-ADM-02). So the second factor's
+                        message below answers only a caller who passed the gate with the right password. -->
+                    <if condition="!ec.user.checkOldPassword(userId, oldPassword)">
+                        <return message="${passwordUpdatePublicMsg}" public="true" type="danger"/></if>
 
                     <if condition="secondFactorRequired">
                         <if condition="!code">
@@ -418,6 +411,11 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="username"><description>May be used instead of userId to identify user.</description></parameter>
         </in-parameters>
         <actions>
+            <!-- The reset password and its argon2 hash are made first, for every request: an unknown, closed or
+                already reset account then answers after the same work as one that gets a reset password, so the time
+                does not tell whether the account exists (SEC-WEB-09). -->
+            <set field="resetPassword" from="ec.user.randomString(12)"/>
+            <set field="resetPasswordHash" from="ec.user.hashPassword(resetPassword)"/>
             <!-- find by userId -->
             <entity-find-one entity-name="moqui.security.UserAccount" value-field="userAccount" for-update="true"/>
             <if condition="userAccount == null">
@@ -457,13 +455,14 @@ along with this software (see the LICENSE.md file). If not, see
                 </if>
             </if>
 
-            <!-- reset the password to a random value -->
-            <set field="resetPassword" from="ec.user.randomString(12)"/>
-            <!-- argon2 whatever the account's passwordHashType; update#Password verifies it that way -->
+            <!-- reset the password to the random value; argon2 whatever the account's passwordHashType, as
+                update#Password (ec.user.checkOldPassword) verifies it. requirePasswordChange is left as it is: a
+                request anyone may make neither clears an administrator's "change at first sign-in" nor makes the
+                owner's next sign-in fail (SEC-WEB-09, SEC-ADM-12). The reset password is taken only by update#Password,
+                so using it is a password change, whatever email-require-change says. -->
             <script>
-                userAccount.set("resetPassword", ec.user.hashPassword(resetPassword))
+                userAccount.set("resetPassword", resetPasswordHash)
                 userAccount.set("resetPasswordSetDate", ec.user.nowTimestamp)
-                userAccount.set("requirePasswordChange", ec.user.loginRules.emailRequireChange ? "Y" : "N")
             </script>
             <entity-update value-field="userAccount"/>
 
@@ -509,10 +508,24 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="newPasswordVerify" required="true"/>
             <parameter name="userFullName"/>
             <parameter name="emailAddress"><text-email/></parameter>
+            <parameter name="setupSecret"><description>The one-time setup secret the server writes to its startup log
+                while no account exists; not needed for a request from this machine (ec.user.initialAdminLocal).</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="userId" required="true"/></out-parameters>
         <actions>
             <!-- only allow this if there are no user accounts but the seed ones (get#InitialAdminNeeded) -->
+            <service-call name="org.moqui.impl.UserServices.get#InitialAdminNeeded" out-map="adminNeeded"/>
+            <if condition="!adminNeeded.needed">
+                <return error="true" message="Can only create initial admin account if there are no UserAccount records"/></if>
+            <!-- The first caller became an administrator from any address (SEC-WEB-08, SEC-CLI-01): only a request from
+                this machine, or one with the setup secret of the startup log, may create it now. -->
+            <if condition="!ec.user.initialAdminAllowed(setupSecret)">
+                <log level="warn" message="Initial admin account refused for client ${ec.user.getClientIp()}: not from this machine and no valid setup secret"/>
+                <return error="true" message="The setup secret is not valid: it is in the server's startup log"/></if>
+            <!-- One create at a time (SEC-ADM-13): the seed _NA_ account's row is locked for this transaction, so a
+                second request waits here, then asks again and finds the account this one made. -->
+            <entity-find-one entity-name="moqui.security.UserAccount" value-field="createLock" for-update="true">
+                <field-map field-name="userId" value="_NA_"/></entity-find-one>
             <service-call name="org.moqui.impl.UserServices.get#InitialAdminNeeded" out-map="adminNeeded"/>
             <if condition="!adminNeeded.needed">
                 <return error="true" message="Can only create initial admin account if there are no UserAccount records"/></if>

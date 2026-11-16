@@ -17,6 +17,7 @@
 //! shapes `XmppServices` and `ChatServices` give; the integration test (`it xmpp::`) runs the real ones.
 
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use base64::engine::general_purpose::STANDARD;
@@ -52,6 +53,12 @@ pub struct State {
     pub revoked: Vec<String>,
     pub pep: HashMap<(String, String), PepNode>,
     pub calls: Vec<String>,
+    /// The peer each call came for, in the order of `calls`.
+    pub call_clients: Vec<IpAddr>,
+    /// The sign-ins the session verified itself (SCRAM, FAST): username, peer, app password.
+    pub sign_ins: Vec<(String, IpAddr, Option<String>)>,
+    /// Peers an account's `ipAllowed` does not take: their sign-ins are refused.
+    pub refused_from: Vec<IpAddr>,
     pub statuses: HashMap<String, String>,
     pub push: Vec<(String, Json)>,
 }
@@ -516,8 +523,33 @@ impl Fake {
 }
 
 impl Backend for Fake {
-    fn call(&self, caller: Caller, service: &str, parameters: Json) -> BoxFuture<'_, Result<Json, CallError>> {
+    fn call(
+        &self,
+        caller: Caller,
+        client: IpAddr,
+        service: &str,
+        parameters: Json,
+    ) -> BoxFuture<'_, Result<Json, CallError>> {
+        moqui_lib::sync::lock(&self.state).call_clients.push(client);
         let result = self.answer(&caller, service, &parameters);
+        Box::pin(async move { result })
+    }
+
+    fn sign_in(
+        &self,
+        username: &str,
+        client: IpAddr,
+        credential: Option<&str>,
+    ) -> BoxFuture<'_, Result<(), CallError>> {
+        let mut state = moqui_lib::sync::lock(&self.state);
+        let result = if state.refused_from.contains(&client) {
+            Err(CallError(format!("client IP {client} is not in allowed list")))
+        } else {
+            state
+                .sign_ins
+                .push((username.to_string(), client, credential.map(str::to_string)));
+            Ok(())
+        };
         Box::pin(async move { result })
     }
 }

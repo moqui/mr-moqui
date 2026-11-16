@@ -92,7 +92,9 @@ On the server:
 
 5. The first start creates the tables and loads the seed, seed-initial and install data. Open
    `https://erp.example.com:8443/Login` and create the first administrator with **Create Initial Admin Account**. The
-   form is there only while nobody has an account.
+   form is there only while nobody has an account. From any machine but the server itself it also asks for the setup
+   secret, which the server writes to its log at startup (`moqui.log`, the line that begins "No user account exists
+   yet").
 6. Back up `/opt/moqui/.env` with the database. It holds `entity_ds_crypt_pass`, the key of the encrypted fields.
 
 Upgrades, backups, binding port 443 and the rest are in [One production server](#one-production-server).
@@ -524,7 +526,10 @@ columns and indexes. Columns are never dropped or changed.
 
 While the only accounts are the seeded ones nobody logs in as (`_NA_` and the agents' chat users), the login page
 shows **Create Initial Admin Account**. The account it makes is in the `ADMIN` group. Once any person has an account,
-the form is gone and the service refuses the call.
+the form is gone and the service refuses the call. A request from the server's own machine (a loopback peer, straight
+to the listener, with no proxy's forwarding header) creates it as is; from any other address the form asks for the
+one-time setup secret the server writes to its startup log while no account exists, and a restart makes a new one.
+Two requests at once make one account: the create takes a row lock and asks again.
 
 | Type | What it holds |
 |---|---|

@@ -677,6 +677,27 @@ fn record_failure(
     }
 }
 
+/// The tarpit's user id for a caller with nobody signed in: `_ANON_` and a digest of the client address (an IPv6
+/// address by its /64, which one client holds), short enough for `ArtifactTarpitLock.userId`; empty with no address
+/// (work outside a request), as before.
+pub(crate) fn anonymous_tarpit_subject(client_ip: &str) -> String {
+    let Ok(address) = client_ip.trim().parse::<std::net::IpAddr>() else {
+        return String::new();
+    };
+    let client = match address.to_canonical() {
+        std::net::IpAddr::V6(v6) => {
+            let mut segments = v6.segments();
+            segments[4..].fill(0);
+            std::net::Ipv6Addr::from(segments).to_string()
+        }
+        v4 => v4.to_string(),
+    };
+    match super::password::hash_login_key(&client) {
+        Ok(digest) => format!("_ANON_{}", &digest[..16.min(digest.len())]),
+        Err(_) => String::new(),
+    }
+}
+
 /// Velocity limit. Counts hits per user and artifact and locks the artifact when a rule is exceeded.
 fn check_tarpit(artifact_type: &str, name: &str) -> Result<(), Error> {
     let _guard = disable_authz_guard()?;
@@ -700,7 +721,12 @@ fn check_tarpit(artifact_type: &str, name: &str) -> Result<(), Error> {
     if matching.is_empty() {
         return Ok(());
     }
-    let user_id = current_user_id()?.unwrap_or_default();
+    // with nobody signed in, the hits and the lock are the client address's, so one client past the limit does not lock
+    // the artifact for every signed-out visitor (SEC-WEB-14)
+    let user_id = match current_user_id()?.filter(|id| !id.is_empty()) {
+        Some(user_id) => user_id,
+        None => anonymous_tarpit_subject(&crate::web::current_client_ip()),
+    };
     let key = format!("{user_id}@{artifact_type}:{name}");
     let now = now_millis();
     let times = ExecutionContext::with_current(|ec| ec.factory().tarpit_times(&key)).unwrap_or_default();

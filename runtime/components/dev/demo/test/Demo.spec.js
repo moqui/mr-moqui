@@ -37,13 +37,57 @@ const stubbed = [
 const viewOnlyAuthz = [
     "TOOLS_APP_ADMIN", "SYSTEM_APP_ADMIN", "MOQUI_API_ADMIN", "EntitySyncServicesADMIN", "SystemMessageServicesADMIN",
     "ResourceCommandServicesADMIN",
-    "GitRepositoriesADMIN", "REPORT_GIT_SYNC_ADMIN", "REPORT_CONTACT_ADMIN",
+    "GitRepositoriesADMIN", "REPORT_GIT_SYNC_ADMIN", "REPORT_CONTACT_ADMIN", "TOOLS_DATABASE_LOAD_ADMIN", "AIDE_PROJECTS_ADMIN",
 ]
 // ended for ADMIN (data/DemoSecurityData.xml)
 const endedPermissions = [
     "SearchRemote", "DashboardRemote", "ADMIN_PASSWORD", "SSH_SFTP", "SSH_GIT", "MONITOR_INGEST", "REPORT_SAVE_LOCATION",
     "MONITOR_RECOVER", "MONITOR_RECOVER_ADMIN", "MONITOR_SETTINGS",
+    "ADMIN_ACCESS_MANAGE", "ADMIN_IDENTITY_MANAGE", "ADMIN_IDENTITY_GLOBAL", "ADMIN_BACKUP_RUN", "ADMIN_BACKUP_DOWNLOAD",
+    "ADMIN_CONNECTION_MANAGE", "ADMIN_TRANSFER_RUN", "ADMIN_SETTINGS_MANAGE", "ADMIN_OPERATION_MANAGE", "ADMIN_CONSTITUTION_GLOBAL",
+    "AgentAdmin", "AgentSkillAuthor", "ChatBridgeAdmin", "VoiceAdmin", "GIT_CI_ADMIN", "MONITOR_EVAL_RUN", "MONITOR_REPLAY",
+    "EMAIL_ACCOUNT_HOSTED",
 ]
+// what ADMIN keeps on a demo server, as the base seed grants it: the apps a visitor browses and changes (Comms, CalcGrid,
+// Dashboards, reports), the Admin app's views, the Assist drawer, and ownership hand-overs between users. A grant the base
+// seed gives ADMIN that the demo data neither ends nor names here fails "the base seed's ADMIN grants are each ended or
+// allowed" (plans/Security-Review-Medium.md SEC-DEV-06).
+const allowedAuthz = [
+    "AIDE_READ_API_ADMIN", "BASIC_COMMS_ADMIN", "CALC_GRID_ADMIN", "CALC_GRID_AUTHOR_ADMIN", "DASHBOARDS_APP_ADMIN",
+    "REPORT_ALERT_EVALUATION_ADMIN", "REPORT_BUSINESS_ADMIN", "REPORT_DATASETS_ADMIN", "REPORT_DELIVERY_ADMIN", "REPORT_SHARE_ADMIN",
+]
+const allowedPermissions = [
+    "ADMIN_ACCESS_VIEW", "ADMIN_AUDIT_VIEW", "ADMIN_BACKUP_VIEW", "ADMIN_CONNECTION_VIEW", "ADMIN_IDENTITY_VIEW",
+    "ADMIN_OPERATION_VIEW", "ADMIN_OVERVIEW_VIEW", "ADMIN_SETTINGS_VIEW", "ADMIN_TRANSFER_VIEW", "AIDE_READ", "AgentUse",
+    "DRIVE_OWNER_CHANGE", "EMAIL_ACCOUNT_OWNER_CHANGE", "MONITOR_EVAL", "MONITOR_INCIDENT", "REPORT_OWNER_CHANGE", "REST_SCHEMA",
+]
+// the ADMIN grants of the base components' seed data, read from their files: {authz: [artifactAuthzId], permissions: [id]}
+function baseSeedAdminGrants() {
+    const authz = new Set(), permissions = new Set()
+    for (const component of ["framework", "tools", "webroot", "basic-comms"]) {
+        const dir = ec.resource.getLocationReference("component://" + component + "/data")
+        for (const ref of Array.from(dir.getDirectoryEntries() || [])) {
+            if (!String(ref.getFileName()).endsWith(".xml")) continue
+            const root = MNode.parse(ref.getLocation())
+            if (!root || !["seed", "seed-initial"].includes(root.attribute("type"))) continue
+            root.depthFirst((node) => {
+                const name = node.name
+                if ((name == "moqui.security.ArtifactAuthz" || name == "authz") && node.attribute("userGroupId") == "ADMIN")
+                    authz.add(node.attribute("artifactAuthzId"))
+                if ((name == "moqui.security.UserGroupPermission" || name == "userGroupPermissions") &&
+                        node.attribute("userGroupId") == "ADMIN" && node.attribute("userPermissionId"))
+                    permissions.add(node.attribute("userPermissionId"))
+                // a grant under its permission: <userPermissions userPermissionId=".."><userGroupPermissions userGroupId="ADMIN"/>
+                for (const child of node.childNodes || [])
+                    if (child.name == "userGroupPermissions" && child.attribute("userGroupId") == "ADMIN" && !child.attribute("userPermissionId")
+                            && node.attribute("userPermissionId"))
+                        permissions.add(node.attribute("userPermissionId"))
+                return false
+            })
+        }
+    }
+    return {authz: Array.from(authz).sort(), permissions: Array.from(permissions).sort()}
+}
 // what john.doe no longer has: those, but SSH_GIT, which BOSS's project groups also grant (SSH is off), and the
 // ADMIN_ADV permissions
 const johnLacks = endedPermissions.filter((id) => id != "SSH_GIT").concat(["SQL_RUNNER_WEB", "SSH_SHELL", "ADMIN_LOGIN_AS"])
@@ -119,6 +163,17 @@ feature("the security rows are the demo's", {
         permissions.every((row) => row.thruDate != null)
         advanced.length == 1
         advanced[0].thruDate != null
+    },
+})
+
+feature("the base seed's ADMIN grants are each ended or allowed", {
+    when() { return baseSeedAdminGrants() },
+    then({ authz, permissions }) {
+        // the files were read
+        authz.includes("TOOLS_APP_ADMIN")
+        permissions.includes("ADMIN_PASSWORD")
+        authz.filter((id) => !viewOnlyAuthz.includes(id) && !allowedAuthz.includes(id)).join(", ") == ""
+        permissions.filter((id) => !endedPermissions.includes(id) && !allowedPermissions.includes(id)).join(", ") == ""
     },
 })
 

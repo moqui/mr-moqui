@@ -27,7 +27,7 @@ services:
       entity_ds_port: "3306"
       entity_ds_database: ${MOQUI_DB_NAME:-moqui}
       entity_ds_user: ${MOQUI_DB_USER:-moqui}
-      entity_ds_password: ${MOQUI_DB_PASSWORD:-moqui}
+      entity_ds_password: ${MOQUI_DB_PASSWORD:?set MOQUI_DB_PASSWORD in podman/.env}
       entity_ds_sslmode: disable
       search_backend: opensearch
       elasticsearch_url: http://opensearch:9200
@@ -44,12 +44,13 @@ services:
     environment:
       MYSQL_DATABASE: ${MOQUI_DB_NAME:-moqui}
       MYSQL_USER: ${MOQUI_DB_USER:-moqui}
-      MYSQL_PASSWORD: ${MOQUI_DB_PASSWORD:-moqui}
-      MYSQL_ROOT_PASSWORD: ${MOQUI_DB_ROOT_PASSWORD:-moquiroot}
+      MYSQL_PASSWORD: ${MOQUI_DB_PASSWORD:?set MOQUI_DB_PASSWORD in podman/.env}
+      MYSQL_ROOT_PASSWORD: ${MOQUI_DB_ROOT_PASSWORD:?set MOQUI_DB_ROOT_PASSWORD in podman/.env}
     volumes:
       - moqui-mysql:/var/lib/mysql
-    ports:
-      - "127.0.0.1:3306:3306"
+    # Not published by default; uncomment to reach the database from the host (loopback only).
+    # ports:
+    #   - "127.0.0.1:3306:3306"
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\""]
       interval: 5s
