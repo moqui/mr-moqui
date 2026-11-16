@@ -232,13 +232,30 @@ fn a_name_that_resolves_internal_is_refused_by_the_resolver() {
         "{}",
         chain(&err)
     );
-    assert!(resolve_public("localhost").is_err());
+    assert!(crate::net::public_addresses("localhost", 0).is_err());
     // Off, the same name is resolved and connected to, and only the connect fails.
     let open = RestClient::new()
         .get("http://localhost:9/x")
         .send(false)
         .expect_err("nothing listens");
     assert!(!chain(&open).contains("internal address"), "{}", chain(&open));
+}
+
+#[test]
+fn a_link_local_guard_refuses_the_metadata_address_and_lets_loopback_through() {
+    let client = RestClient::new().deny_link_local_addresses(true);
+    for url in [
+        "http://169.254.169.254/latest",
+        "http://[fe80::1]/",
+        "http://[fd00:ec2::254]/",
+        "http://[::ffff:a9fe:a9fe]/",
+    ] {
+        let err = client.get(url).send(false).expect_err("link-local");
+        assert!(chain(&err).contains("link-local address"), "{url}: {}", chain(&err));
+    }
+    // loopback is allowed: the connect is tried, and fails only because nothing listens on port 9
+    let open = client.get("http://localhost:9/x").send(false).expect_err("nothing listens");
+    assert!(!chain(&open).contains("address and is"), "{}", chain(&open));
 }
 
 #[test]
