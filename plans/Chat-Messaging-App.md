@@ -17,6 +17,7 @@ The goal: the Comms chat works as a daily messaging app.
 | §9: the user's own phone number | Most of it is built; the gaps are listed |
 | §10: the phone's SIM texts (`sim-sms`) | Needs a design |
 | RCS | Research and plan in [RCS.md](RCS.md) |
+| Other apps: GroupMe, iMessage, Google Messages, Signal, Cheogram | Reach and feature equivalents in [Messaging-Replacement.md](Messaging-Replacement.md) |
 
 ## 1. Where we start
 
@@ -443,7 +444,7 @@ Optional: the app becomes the Android default SMS app for the phone's own SIM.
 | 8 | Phone number: port, live checks, dialer, contacts, group texts | §9 |
 | 9 | E2EE by default, after its design | §6.5 |
 | 10 | `sim-sms`, after its design | §10 |
-| 11 | Matrix (C6), WhatsApp and Telegram (C4), RCS | Future-Plans, [RCS.md](RCS.md) |
+| 11 | Other networks and app equivalents | [Messaging-Replacement.md](Messaging-Replacement.md), [RCS.md](RCS.md) |
 
 After phases 1 to 3: a pull request and a new APK for a test on a real phone. Again after phase 6.
 
