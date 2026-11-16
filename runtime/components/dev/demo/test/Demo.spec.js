@@ -46,10 +46,10 @@ const endedPermissions = [
     "ADMIN_ACCESS_MANAGE", "ADMIN_IDENTITY_MANAGE", "ADMIN_IDENTITY_GLOBAL", "ADMIN_BACKUP_RUN", "ADMIN_BACKUP_DOWNLOAD",
     "ADMIN_CONNECTION_MANAGE", "ADMIN_TRANSFER_RUN", "ADMIN_SETTINGS_MANAGE", "ADMIN_OPERATION_MANAGE", "ADMIN_CONSTITUTION_GLOBAL",
     "AgentAdmin", "AgentSkillAuthor", "ChatBridgeAdmin", "VoiceAdmin", "GIT_CI_ADMIN", "MONITOR_EVAL_RUN", "MONITOR_REPLAY",
-    "EMAIL_ACCOUNT_HOSTED",
+    "EMAIL_ACCOUNT_HOSTED", "DRIVE_OWNER_CHANGE", "EMAIL_ACCOUNT_OWNER_CHANGE", "REPORT_OWNER_CHANGE",
 ]
 // what ADMIN keeps on a demo server, as the base seed grants it: the apps a visitor browses and changes (Comms, CalcGrid,
-// Dashboards, reports), the Admin app's views, the Assist drawer, and ownership hand-overs between users. A grant the base
+// Dashboards, reports), the Admin app's views and the Assist drawer. A grant the base
 // seed gives ADMIN that the demo data neither ends nor names here fails "the base seed's ADMIN grants are each ended or
 // allowed" (plans/Security-Review-Medium.md SEC-DEV-06).
 const allowedAuthz = [
@@ -59,7 +59,7 @@ const allowedAuthz = [
 const allowedPermissions = [
     "ADMIN_ACCESS_VIEW", "ADMIN_AUDIT_VIEW", "ADMIN_BACKUP_VIEW", "ADMIN_CONNECTION_VIEW", "ADMIN_IDENTITY_VIEW",
     "ADMIN_OPERATION_VIEW", "ADMIN_OVERVIEW_VIEW", "ADMIN_SETTINGS_VIEW", "ADMIN_TRANSFER_VIEW", "AIDE_READ", "AgentUse",
-    "DRIVE_OWNER_CHANGE", "EMAIL_ACCOUNT_OWNER_CHANGE", "MONITOR_EVAL", "MONITOR_INCIDENT", "REPORT_OWNER_CHANGE", "REST_SCHEMA",
+    "MONITOR_EVAL", "MONITOR_INCIDENT", "REST_SCHEMA",
 ]
 // the ADMIN grants of the base components' seed data, read from their files: {authz: [artifactAuthzId], permissions: [id]}
 function baseSeedAdminGrants() {

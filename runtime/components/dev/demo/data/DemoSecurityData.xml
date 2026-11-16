@@ -87,4 +87,10 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_EVAL_RUN" fromDate="0" thruDate="1265184000000"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_REPLAY" fromDate="0" thruDate="1265184000000"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="EMAIL_ACCOUNT_HOSTED" fromDate="0" thruDate="1265184000000"/>
+    <!-- handing another user's shared drives, shared mail accounts and report schedules to a new owner (framework
+        SecurityTypeData.xml, ReportSetupData.xml): every visitor signs in as john.doe, so a hand-over moves another visitor's
+        things -->
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="DRIVE_OWNER_CHANGE" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="EMAIL_ACCOUNT_OWNER_CHANGE" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="REPORT_OWNER_CHANGE" fromDate="0" thruDate="1265184000000"/>
 </entity-facade-xml>
