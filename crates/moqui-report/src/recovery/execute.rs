@@ -35,6 +35,40 @@ pub(crate) struct Adapter {
     pub instructions: String,
 }
 
+/// The prefix of a process property an adapter may read without the conf's list.
+const PROPERTY_PREFIX: &str = "recovery_";
+/// The conf's list (comma-separated) of other process properties an adapter may read, secret ones among them.
+const PROPERTY_LIST: &str = "monitor_recovery_properties";
+
+/// Whether an adapter may read the process property `name`: one the conf's `monitor_recovery_properties` lists, or one
+/// whose name starts with `recovery_` and, when its value is `sent` (a header or the URL), that the conf does not mark
+/// secret. A recovery administrator would otherwise send any property the process holds (a generated secret, a conf
+/// password) to a URL of their choosing (SEC-TLS-12). The HMAC key (`secretProperty`) is not sent, so a secret is
+/// what it should be.
+pub(crate) fn property_allowed(name: &str, sent: bool) -> Result<(), String> {
+    let listed = moqui_lib::env::get_prop_or_env(PROPERTY_LIST)
+        .split(',')
+        .any(|entry| entry.trim() == name);
+    if listed {
+        return Ok(());
+    }
+    let plain_name = name.len() <= 128 && name.bytes().all(|c| c.is_ascii_alphanumeric() || b"_.-".contains(&c));
+    if !name.starts_with(PROPERTY_PREFIX) || !plain_name {
+        return Err(format!(
+            "property {name} is not a recovery property: name one that starts with {PROPERTY_PREFIX}, or list it in \
+             {PROPERTY_LIST}"
+        ));
+    }
+    let secret = moqui_core::context::ExecutionContext::with_current(|ec| ec.factory().conf_property_is_secret(name))
+        .unwrap_or(true);
+    if sent && secret {
+        return Err(format!(
+            "property {name} is a secret in the conf; list it in {PROPERTY_LIST} to send it"
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn adapters(entity: &EntityFacade) -> Result<Vec<Adapter>, Error> {
     let rows = entity.find(ADAPTER)?.list()?;
     Ok(rows
@@ -42,8 +76,16 @@ pub(crate) fn adapters(entity: &EntityFacade) -> Result<Vec<Adapter>, Error> {
         .iter()
         .filter_map(|row| {
             let kind = AdapterKind::parse(&field(row, "adapterType"))?;
+            // a property no longer allowed (a row from before the rule, or a conf changed since) is not read: the
+            // adapter then has no URL and fails
             let url = match field(row, "urlProperty") {
-                property if !property.is_empty() => moqui_lib::env::get_property(&property).unwrap_or_default(),
+                property if !property.is_empty() => match property_allowed(&property, true) {
+                    Ok(()) => moqui_lib::env::get_property(&property).unwrap_or_default(),
+                    Err(why) => {
+                        tracing::warn!(target: crate::incident::AUDIT, adapter = %field(row, "adapterId"), "{why}");
+                        String::new()
+                    }
+                },
                 _ => field(row, "url"),
             };
             let headers = serde_json::from_str::<serde_json::Map<String, Json>>(&field(row, "headerPropertiesJson"))
@@ -426,6 +468,16 @@ fn webhook(adapter: &Adapter, row: &EntityValue, incident: &EntityValue, token: 
     }
     let text = body.to_string();
     let mut headers = vec![("content-type".to_string(), "application/json".to_string())];
+    for (property, sent) in adapter
+        .headers
+        .iter()
+        .map(|(_, property)| (property, true))
+        .chain((!adapter.secret_property.is_empty()).then_some((&adapter.secret_property, false)))
+    {
+        if let Err(why) = property_allowed(property, sent) {
+            return Ran::Failed(why);
+        }
+    }
     if !adapter.secret_property.is_empty() {
         let Some(secret) = moqui_lib::env::get_property(&adapter.secret_property) else {
             return Ran::Failed(format!("secret property {} is not set", adapter.secret_property));
@@ -698,3 +750,7 @@ pub(crate) fn cancel(
     finish(ec, entity, row, now);
     row.update(entity)
 }
+
+#[cfg(test)]
+#[path = "execute_tests.rs"]
+mod tests;
