@@ -1300,9 +1300,54 @@ pub(crate) fn view_email_message() {
     }
 }
 
-/// Java's `markEmailMessageViewed`. A missing id returns. A `.` after the first character drops the suffix, so
-/// `NOTAREALID.png` marks `NOTAREALID` and a leading dot (`.png`) is kept. An unknown id is a warning. A message that
-/// is already `ES_VIEWED` is left as it is. The find and the update both run with authorization disabled.
+/// The label of the key an email's view key is signed with, derived from `session_cookie_key`, so its MAC is never a
+/// session cookie's.
+const EMAIL_VIEW_LABEL: &str = "moqui email view key v1";
+/// Bytes of the HMAC kept in a view key: 128 bits, 22 characters of base64url.
+const EMAIL_VIEW_TAG_BYTES: usize = 16;
+
+fn email_view_mac(id: &str) -> Result<hmac::Hmac<sha2::Sha256>, Error> {
+    use hmac::{KeyInit as _, Mac as _};
+    let key = crate::user::session::derived_cookie_key(EMAIL_VIEW_LABEL).map_err(|err| Error::new(err.message()))?;
+    let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(&key)
+        .map_err(|_| Error::new("session_cookie_key cannot be used as an HMAC key"))?;
+    mac.update(id.as_bytes());
+    Ok(mac)
+}
+
+/// The view key of `EmailMessage` `id` for its tracking image, `/email/{key}.png`: `{id}.{tag}`, the tag a keyed MAC of
+/// the id, so only the mail that carries it marks the message viewed (plans/Security-Review.md SEC-RTE-01). The mail
+/// render puts it in the template context as `emailViewKey`.
+///
+/// # Errors
+///
+/// Returns an error when `session_cookie_key` is not set or not usable.
+pub fn email_view_key(id: &str) -> Result<String, Error> {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use hmac::Mac as _;
+    let tag = email_view_mac(id)?.finalize().into_bytes();
+    Ok(format!("{id}.{}", URL_SAFE_NO_PAD.encode(&tag[..EMAIL_VIEW_TAG_BYTES])))
+}
+
+/// The message id of a view key (`{id}.{tag}`, with any `.png` or other suffix after it) whose tag is right, compared in
+/// constant time; None for a bare id or a wrong tag.
+fn verified_email_view_id(raw: &str) -> Option<String> {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use hmac::Mac as _;
+    let mut parts = raw.split('.');
+    let id = parts.next().filter(|id| !id.is_empty())?;
+    let tag = URL_SAFE_NO_PAD.decode(parts.next()?).ok()?;
+    if tag.len() != EMAIL_VIEW_TAG_BYTES {
+        return None;
+    }
+    email_view_mac(id).ok()?.verify_truncated_left(&tag).ok()?;
+    Some(id.to_string())
+}
+
+/// Java's `markEmailMessageViewed`, with the view key in place of the bare id (SEC-RTE-01): a missing id returns, and an
+/// id without its right tag is a warning and changes nothing. Only a sent message (`ES_SENT`) becomes `ES_VIEWED`, so the
+/// image neither takes queued mail out of the Outbox nor rewrites received mail. An unknown id is a warning. The find
+/// and the update both run with authorization disabled.
 fn mark_email_message_viewed() -> Result<(), Error> {
     let Some(raw) = crate::script::context_value("emailMessageId") else {
         return Ok(());
@@ -1310,9 +1355,9 @@ fn mark_email_message_viewed() -> Result<(), Error> {
     let Some(raw) = raw.as_str().filter(|id| !id.is_empty()) else {
         return Ok(());
     };
-    let id = match raw.split_once('.') {
-        Some((id, _)) if !id.is_empty() => id.to_string(),
-        _ => raw.to_string(),
+    let Some(id) = verified_email_view_id(raw) else {
+        tracing::warn!("Tried to mark an EmailMessage viewed without a valid view key");
+        return Ok(());
     };
     let facade = ExecutionContext::with_current(|ec| ec.factory().entity())
         .flatten()
@@ -1326,7 +1371,7 @@ fn mark_email_message_viewed() -> Result<(), Error> {
         tracing::warn!("Tried to mark EmailMessage {id} viewed but not found");
         return Ok(());
     };
-    if message.get("statusId").and_then(Value::as_str) == Some("ES_VIEWED") {
+    if message.get("statusId").and_then(Value::as_str) != Some("ES_SENT") {
         return Ok(());
     }
     let parameters = BTreeMap::from([

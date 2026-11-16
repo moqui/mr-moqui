@@ -122,6 +122,11 @@ pub(super) fn send_template(
     if create_message(parameters) {
         email_message_id = insert_draft(facade, parameters, &template, &server_id, &headers, &cc, &bcc)?;
         put_context("emailMessageId", Value::string(&email_message_id))?;
+        // the tracking image's `/email/{emailViewKey}.png`: the id with a keyed MAC, so only this mail marks it viewed
+        match moqui_core::web::email_view_key(&email_message_id) {
+            Ok(key) => put_context("emailViewKey", Value::string(key))?,
+            Err(err) => tracing::warn!("no view key for email message {email_message_id}: {err}"),
+        }
     }
     let (body, body_text) = match render_bodies(&env, &screen, supplied_body, supplied_text) {
         Ok(pair) => pair,
