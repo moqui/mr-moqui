@@ -258,6 +258,9 @@ fn prepare_database(runtime: &Path, framework: &Path, scratch: &Path, mode: DbMo
     if let Some(dump) = dump.as_ref().filter(|dump| dump.is_file()) {
         let started = Instant::now();
         tracing::warn!("Restoring the test database from {}", dump.display());
+        if let Some(dir) = dump.parent() {
+            restore_runtime_env(dir, scratch)?;
+        }
         crate::db::embedded::load_save(scratch, &cluster, dump)?;
         tracing::warn!("Restored in {:.1}s", started.elapsed().as_secs_f64());
         let dir = dump.parent().map(Path::to_path_buf);
@@ -282,6 +285,9 @@ fn prepare_database(runtime: &Path, framework: &Path, scratch: &Path, mode: DbMo
             std::fs::create_dir_all(dir).map_err(io("could not create the snapshot directory"))?;
         }
         crate::db::embedded::save_db(scratch, &cluster, &dump)?;
+        if let Some(dir) = dump.parent() {
+            keep_runtime_env(scratch, dir)?;
+        }
         tracing::warn!("Saved the test database to {}", dump.display());
         let dir = dump.parent().map(Path::to_path_buf);
         if let Some(dir) = &dir {
@@ -290,6 +296,30 @@ fn prepare_database(runtime: &Path, framework: &Path, scratch: &Path, mode: DbMo
         return Ok(dir);
     }
     Ok(None)
+}
+
+/// The loader's `runtime/.env`, kept beside a snapshot's dump: the secrets the load generated, `entity_ds_crypt_pass`
+/// among them, which the encrypted fields of the dump were written with.
+const RUNTIME_ENV: &str = "runtime.env";
+
+/// Keep the scratch runtime's `.env` with the snapshot at `dir`, so a run that restores it (each worker of a run with
+/// several) reads the encrypted fields with the loader's keys rather than new ones it generates. No `.env` keeps none.
+fn keep_runtime_env(scratch: &Path, dir: &Path) -> Result<(), Error> {
+    let env = scratch.join(".env");
+    if env.is_file() {
+        std::fs::copy(&env, dir.join(RUNTIME_ENV)).map_err(io("could not keep the test runtime's .env"))?;
+    }
+    Ok(())
+}
+
+/// Put the `.env` kept with the snapshot at `dir` in the scratch runtime before it boots; a snapshot made before it was
+/// kept has none, and its encrypted fields read as the run's own keys find them.
+fn restore_runtime_env(dir: &Path, scratch: &Path) -> Result<(), Error> {
+    let kept = dir.join(RUNTIME_ENV);
+    if kept.is_file() {
+        std::fs::copy(&kept, scratch.join(".env")).map_err(io("could not restore the test runtime's .env"))?;
+    }
+    Ok(())
 }
 
 /// The file whose change time is a snapshot's last use: written at each restore and at its save.
