@@ -48,6 +48,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="dev-reload"/>
                 <xs:element minOccurs="0" ref="dev-aide"/>
                 <xs:element minOccurs="0" ref="component-deploy"/>
+                <xs:element minOccurs="0" ref="instance-hosting"/>
                 <xs:element minOccurs="0" ref="entity-facade"/>
                 <xs:element minOccurs="0" ref="database-list"/>
                 <xs:element minOccurs="0" ref="repository-list"/>
@@ -2493,6 +2494,26 @@ along with this software (see the LICENSE.md file). If not, see
                 base URLs, separated by spaces or commas: an attestation's audience (the source environment's
                 targetUrl) must be one of them. Empty: the webroot webapp's URL when webapp_http_host is set; with
                 neither, every attestation is refused.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="instance-hosting">
+        <xs:annotation><xs:documentation>Hosted instances (System, Instance; org.moqui.dev.InstanceServices): the
+            commands that print a registry token for an image pull, by name. An InstanceImage's authTokenCmd names one;
+            its text is never run itself. get#RegistryToken runs the command for a holder of INSTANCE_ADMIN, split on
+            white space, with no shell, stdin closed, only PATH, HOME, USER, the locale, TZ and TMPDIR of the server's
+            environment, and 30 seconds; the first line of its output is the token.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="token-command" minOccurs="0" maxOccurs="unbounded">
+                    <xs:complexType>
+                        <xs:attribute name="name" type="xs:string" use="required"/>
+                        <xs:attribute name="command" type="xs:string" use="required"><xs:annotation><xs:documentation>The
+                            program and its arguments, separated by white space; ${} names a property.</xs:documentation>
+                            </xs:annotation></xs:attribute>
+                    </xs:complexType>
+                </xs:element>
+            </xs:sequence>
         </xs:complexType>
     </xs:element>
 

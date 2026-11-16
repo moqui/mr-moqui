@@ -1503,6 +1503,11 @@
         from this server's own pages needs such an attestation too. -->
     <component-deploy require-passed-run="false" attestation-secret="${component_deploy_attestation_key}"
             max-age-seconds="300" public-urls="${component_deploy_public_urls}"/>
+    <!-- Hosted instances (System > Instance): the commands that print a registry token for an image pull, by name. An
+        InstanceImage's authTokenCmd names one; a runtime conf adds them, as
+        <token-command name="ecr" command="/opt/moqui/bin/ecr-token us-east-1"/>. The command runs with no shell and
+        only the named environment (get#RegistryToken, plans/Security-Review-Medium.md SEC-TLS-03). -->
+    <instance-hosting/>
 
     <!-- Rust: java names for fresh schemas; set entity_sql_name_style=legacy before opening an old Rust database. -->
     <entity-facade sql-name-style="${entity_sql_name_style ?: 'java'}"
