@@ -294,6 +294,8 @@ pub struct TreeRow {
     pub depth: usize,
     pub text: String,
     pub url: String,
+    /// The link changes data (the server marks it `loadMethod` post): it is posted with its parameters, never got.
+    pub post: bool,
     pub mark: TreeMark,
 }
 
