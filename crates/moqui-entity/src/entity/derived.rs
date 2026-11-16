@@ -293,6 +293,12 @@ fn db_view(facade: &EntityFacade, name: &str) -> Result<Option<EntityDefinition>
             alias_node.set_attribute("field", field);
         }
         if let Some(function) = text(alias.get("functionName")) {
+            check_row_function(&function).map_err(|err| {
+                Error::new(format!(
+                    "DbViewEntity {view_name} alias {}: {err}",
+                    text(alias.get("fieldAlias")).unwrap_or_default()
+                ))
+            })?;
             alias_node.set_attribute("function", function);
         }
     }
@@ -314,6 +320,27 @@ fn document_view(facade: &EntityFacade, id: &str) -> Result<Option<EntityDefinit
     let info = super::document::document_info(facade, id)?;
     let node = super::document::entity_view_node(facade, &info)?;
     facade.with_model(|model| model.derive_view(&node)).map(Some)
+}
+
+/// The alias functions a view built from database rows (a `DbViewEntityAlias`, a `DataDocumentField`) may name: the
+/// `alias` `function` values of the entity definition schema. Any other name was written into the SQL as a function
+/// call, such as `pg_read_file`, run with the database user's rights (plans/Security-Review-Medium.md SEC-DAT-04).
+pub const ROW_VIEW_FUNCTIONS: &[&str] = &["min", "max", "sum", "avg", "count", "count-distinct", "upper", "lower"];
+
+/// Refuse an alias function of a view built from rows that is not one of [`ROW_VIEW_FUNCTIONS`].
+///
+/// # Errors
+///
+/// An error naming the function.
+pub fn check_row_function(function: &str) -> Result<(), Error> {
+    if ROW_VIEW_FUNCTIONS.contains(&function) {
+        Ok(())
+    } else {
+        Err(Error::new(format!(
+            "alias function {function} is not one of {}",
+            ROW_VIEW_FUNCTIONS.join(", ")
+        )))
+    }
 }
 
 fn text(value: Option<&Value>) -> Option<String> {

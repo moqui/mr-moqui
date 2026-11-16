@@ -37,7 +37,7 @@ const OPERATORS: &[&str] = &[
     "is-null",
     "is-not-null",
 ];
-const FUNCTIONS: &[&str] = &["min", "max", "sum", "avg", "count", "count-distinct", "upper", "lower"];
+const FUNCTIONS: &[&str] = moqui_core::entity::derived::ROW_VIEW_FUNCTIONS;
 
 /// A business dataset is one whose definition says `signal: "business"`, whatever else its body names: a body that says so
 /// without a document is still held to admission (and is never admissible), so the signal alone cannot be dropped to escape it.

@@ -609,14 +609,31 @@ fn load_info(facade: &EntityFacade, data_document_id: &str) -> Result<DocumentIn
             None
         } else {
             let entity_name = node.entity.clone();
-            Some(facade.with_entity(&entity_name, |entity, _, _| {
-                entity.field(last).map(|field| field.field_type.clone()).ok_or_else(|| {
-                    Error::new(format!(
-                        "Could not find field [{last}] for entity [{entity_name}] in DataDocument [{data_document_id}]"
-                    ))
-                })
-            })?)
+            let (field_type, encrypted) = facade.with_entity(&entity_name, |entity, _, _| {
+                entity
+                    .field(last)
+                    .map(|field| (field.field_type.clone(), field.encrypt))
+                    .ok_or_else(|| {
+                        Error::new(format!(
+                            "Could not find field [{last}] for entity [{entity_name}] in DataDocument [{data_document_id}]"
+                        ))
+                    })
+            })?;
+            // an encrypted field or a password field is not put in a document, whose rows are read with
+            // authorization off, decrypted, and indexed (plans/Security-Review-Medium.md SEC-DAT-02)
+            if encrypted || super::sensitive::USER_ACCOUNT_SECRET_FIELDS.contains(&last.as_str()) {
+                tracing::warn!(
+                    "DataDocument {data_document_id} field {path} is encrypted or a password and is left out of the document"
+                );
+                continue;
+            }
+            Some(field_type)
         };
+        let function = text(row.get("functionName"));
+        if let Some(function) = function.as_deref() {
+            super::derived::check_row_function(function)
+                .map_err(|err| Error::new(format!("DataDocument {data_document_id} field {path}: {err}")))?;
+        }
         has_expression |= is_expression;
         node.fields.push(DocField {
             path_element: last.clone(),
@@ -624,7 +641,7 @@ fn load_info(facade: &EntityFacade, data_document_id: &str) -> Result<DocumentIn
             field_type: text(row.get("fieldType")),
             entity_type,
             sortable: text(row.get("sortable")).as_deref() == Some("Y"),
-            function: text(row.get("functionName")),
+            function,
             is_expression,
             search_role: text(row.get("searchRole")),
             search_weight: text(row.get("searchWeight")),
