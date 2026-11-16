@@ -228,7 +228,10 @@ fn child_nodes(
                     attrs.insert("href".to_string(), Value::string(url_text.clone()));
                     // a link that loads a container through a transition that changes data is a POST with the session token
                     // and its parameters in the body (SEC-RTE-08); the client then reloads the container
-                    if !load_id.is_empty() && url.is_transition && !url.read_only {
+                    let writes = url
+                        .transition()
+                        .is_some_and(|transition| !transition.read_only && super::render::runs_actions(transition));
+                    if !load_id.is_empty() && writes {
                         attrs.insert("loadMethod".to_string(), Value::string("post"));
                     }
                     attrs.insert("loadId".to_string(), Value::string(load_id));

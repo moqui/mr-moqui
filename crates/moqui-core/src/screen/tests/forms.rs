@@ -1232,7 +1232,7 @@ fn a_tree_answers_its_node_data() {
 /// A tree link that loads a container (`dynamic-load-id`) through a transition that changes data is marked
 /// `loadMethod: post`, so the client sends it as a POST with its parameters in the body and the session token; the same
 /// link as a GET with its query is refused and runs nothing (SEC-RTE-08, Tools' DataDocFields `createFieldDynamic`). A
-/// link through a read-only transition stays a load by GET, and no href is a `javascript:` URL.
+/// link through a read-only transition or one with no actions stays a load by GET, and no href is a `javascript:` URL.
 #[test]
 fn a_tree_link_that_loads_through_a_writing_transition_is_a_post() {
     let dir = std::env::temp_dir().join(format!("moqui-forms-tree-post-{}", std::process::id()));
@@ -1245,6 +1245,7 @@ fn a_tree_link_that_loads_through_a_writing_transition_is_a_post() {
     <transition name="add"><actions><script>ec.web.sendJsonResponse({added: code})</script></actions>
         <default-response type="none"/></transition>
     <transition name="look" read-only="true"><default-response url="."/></transition>
+    <transition name="open"><default-response url="."/></transition>
     <widgets>
         <tree name="Places">
             <tree-node name="Country">
@@ -1254,7 +1255,11 @@ fn a_tree_link_that_loads_through_a_writing_transition_is_a_post() {
                 <link url="look" text="${nodeList_entry}" id="L${nodeList_entry}" dynamic-load-id="Fields"><parameter name="code" from="nodeList_entry"/></link>
             </tree-node>
             <tree-sub-node node-name="Country" list="countries"><actions><script>countries = ['FR']</script></actions></tree-sub-node>
+            <tree-node name="Open">
+                <link url="open" text="${nodeList_entry}" id="O${nodeList_entry}" dynamic-load-id="Fields"><parameter name="code" from="nodeList_entry"/></link>
+            </tree-node>
             <tree-sub-node node-name="Look" list="looks"><actions><script>looks = ['IS']</script></actions></tree-sub-node>
+            <tree-sub-node node-name="Open" list="opens"><actions><script>opens = ['NO']</script></actions></tree-sub-node>
         </tree>
     </widgets>
 </screen>"#,
@@ -1269,7 +1274,10 @@ fn a_tree_link_that_loads_through_a_writing_transition_is_a_post() {
     assert_eq!(top[0]["a_attr"]["loadMethod"], "post", "{top}");
     assert_eq!(top[0]["a_attr"]["loadId"], "Fields", "{top}");
     assert_eq!(top[0]["a_attr"]["href"], "/add?code=FR", "{top}");
+    // a read-only transition, and one with no actions (mr-marble's message thread tree), still load by GET
     assert!(top[1]["a_attr"].get("loadMethod").is_none(), "{top}");
+    assert_eq!(top[2]["a_attr"]["loadId"], "Fields", "{top}");
+    assert!(top[2]["a_attr"].get("loadMethod").is_none(), "{top}");
     assert!(!top.to_string().contains("javascript:"), "{top}");
 
     let mut by_get = request("GET", "/add");
