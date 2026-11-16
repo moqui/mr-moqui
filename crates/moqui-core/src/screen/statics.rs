@@ -224,7 +224,19 @@ pub(crate) struct StaticTemplate {
     pub html: String,
     pub script: String,
     pub etag: String,
+    /// The names the compiled script reads from its scope ([`super::static_ast::scope_reads`]): the context names its
+    /// actions package may hold, with the screen's `client-context` names and [`CLIENT_READS`].
+    pub reads: BTreeSet<String>,
 }
+
+/// The names of the screen package the client reads outside the template (`WebrootVue.qvt.js`): `m-static-form-list`
+/// reads `hideNav` from the scope to hide its tools and page buttons.
+pub(crate) const CLIENT_READS: [&str; 1] = ["hideNav"];
+
+/// The keys of a form-list row `m-static-form-list` and `m-list-views` read outside the template
+/// (`WebrootVue.qvt.js`): the show-total row's marker and an aggregated row's sub-rows. The row's availability key
+/// (`disable-key`), its row-selection id field and the fields its views name are added for each form.
+const ROW_CLIENT_READS: [&str; 2] = ["_moquiRowType", "aggregateSubList"];
 
 /// A number for the resolved definition of a screen: its merged XML (`screen-extend` included), each form and its
 /// extensions, the files it was read from, and the macro module. A change to any of them changes the validator.
@@ -357,13 +369,117 @@ fn build_template(
         .map_err(|err| Error::new(format!("{}: {}", def.location, err.message())))?;
     let script = wrap_script(key, &code);
     let etag = format!("W/\"{:x}\"", fnv1a_extend(identity(def), script.as_bytes()));
-    Ok(Arc::new(StaticTemplate { html, script, etag }))
+    // The names the actions package may hold. A read by a computed name cannot be followed, so the package leaves its
+    // names out unless an actions element names them in client-context (SEC-RTE-02).
+    let found = super::static_ast::scope_reads(&code);
+    if !found.computed.is_empty() {
+        tracing::warn!(
+            "{}: the static template reads the scope by a computed name ({}); the actions package sends such a name only \
+             when an actions element lists it in client-context",
+            def.location,
+            found.computed.join(", ")
+        );
+    }
+    Ok(Arc::new(StaticTemplate {
+        html,
+        script,
+        etag,
+        reads: found.names,
+    }))
 }
 
 /// The key of a template: the request path, as the client names it, without the render mode extension or the query.
 pub(crate) fn template_key(path: &str) -> String {
     let path = path.split(['?', '#']).next().unwrap_or(path);
     path.strip_suffix(".qvt").unwrap_or(path).to_string()
+}
+
+/// The frames a template is built under: each screen of the path, the last one authorized when it requires
+/// authentication. `telemetry` names the screen's view in the request's telemetry, as a `.qvt` request does; the actions
+/// transition keeps its own.
+fn template_frames(info: &super::url::ScreenUrlInfo, telemetry: bool) -> Result<Frames, Error> {
+    let mut frames = Frames::untracked();
+    let last = info.path_defs.len().saturating_sub(1);
+    for (index, def) in info.path_defs.iter().enumerate() {
+        if telemetry {
+            frames.enter_screen(def, index == last)?;
+        } else {
+            frames.enter_screen_untold(def, index == last)?;
+        }
+    }
+    Ok(frames)
+}
+
+/// The template of the screen `state` renders for the request path `key`, from the cache or built now, under
+/// [`template_frames`].
+fn built_template(state: &RenderState, key: &str) -> Result<Arc<StaticTemplate>, Error> {
+    // the template is cached for every visitor: no token route's `/<name>/<token>` in the paths it holds
+    let _no_prefix = crate::web::set_link_prefix("");
+    script::with_screen_runner(|runner| template_for(state, runner, key))
+}
+
+/// The path of the screen an actions request is for: the request path without `/actions` and the `extra` names after it
+/// (a form or tree name), as the client makes it from the screen's path.
+fn actions_screen_path(path: &str, extra: usize) -> String {
+    let mut rest = path.split(['?', '#']).next().unwrap_or(path).trim_end_matches('/');
+    for _ in 0..extra {
+        rest = rest.rsplit_once('/').map_or("", |(head, _)| head);
+    }
+    rest.strip_suffix("/actions").unwrap_or(rest).to_string()
+}
+
+/// The template the browser has for the screen of an actions request, whose recorded reads limit what the request
+/// answers (SEC-RTE-02): the cached one of the screen's path, else built now as the `.qvt` request of that path builds
+/// it (after a restart, on another node, or for a browser that kept the script), with the same frames, no link prefix
+/// and a qvt render of the path. None, logged, when it cannot be built: the answer then holds no name of the template's.
+///
+/// # Errors
+///
+/// Returns a security error of the build, as the `.qvt` request would.
+fn package_template(state: &RenderState, path: &str) -> Result<Option<Arc<StaticTemplate>>, Error> {
+    let info = &state.url_info;
+    let def = &info.target_screen;
+    let key = template_key(&actions_screen_path(path, info.extra_path.len()));
+    if let Some(found) = def.generated.static_template(&key) {
+        return Ok(Some(found));
+    }
+    let Some(root) = info.path_defs.first() else {
+        return Ok(None);
+    };
+    let screen_info = match super::url::ScreenUrlInfo::parse(&state.factory, &root.location, &key, info.last_standalone)
+    {
+        Ok(found) if found.target_screen.location == def.location && found.target_transition_name.is_none() => found,
+        Ok(found) => {
+            tracing::warn!(
+                "{}: the actions package sends no template names: {key} is the path of {}, not of this screen",
+                def.location,
+                found.target_screen.location
+            );
+            return Ok(None);
+        }
+        Err(err) => {
+            tracing::warn!(
+                "{}: the actions package sends no template names: {key}: {err}",
+                def.location
+            );
+            return Ok(None);
+        }
+    };
+    let _frames = template_frames(&screen_info, false)?;
+    let made = super::render::with_qvt_render(&state.factory, &state.facade, screen_info, |qvt| {
+        built_template(qvt, &key)
+    });
+    match made {
+        Ok(template) => Ok(Some(template)),
+        Err(err) if is_security(&err) => Err(err),
+        Err(err) => {
+            tracing::warn!(
+                "{}: the actions package sends no template names, the template could not be built: {err}",
+                def.location
+            );
+            Ok(None)
+        }
+    }
 }
 
 /// Send the static template for the screen being rendered when it is eligible. Returns false when the screen stays a server merge.
@@ -389,18 +505,9 @@ pub(crate) fn serve_template(state: &RenderState, request: &WebRequest, path: &s
         // A report has what it needs, and the merged render would only run the screen's actions again.
         return Ok(report_active());
     }
-    let mut frames = Frames::untracked();
-    let last = info.path_defs.len() - 1;
-    for (index, def) in info.path_defs.iter().enumerate() {
-        frames.enter_screen(def, index == last)?;
-    }
+    let _frames = template_frames(info, true)?;
     let key = template_key(path);
-    // the template is cached for every visitor: no token route's `/<name>/<token>` in the paths it holds
-    let made = {
-        let _no_prefix = crate::web::set_link_prefix("");
-        script::with_screen_runner(|runner| template_for(state, runner, &key))
-    };
-    let template = match made {
+    let template = match built_template(state, &key) {
         Ok(template) => template,
         Err(err)
             if matches!(
@@ -763,9 +870,15 @@ fn collect_widget(
     }
 }
 
-/// `GET {screen}/actions`.
-fn screen_package(state: &RenderState, def: &ScreenDef) -> Result<(), Error> {
-    prepare_screen(state, def)?;
+/// `GET {screen}/actions`: the context names `reads` (the template's), the `client-context` names of the screen's
+/// always-actions, pre-actions and actions and of the sections whose actions ran, and [`CLIENT_READS`]. A name kept is
+/// sent whole, with all that its value holds (SEC-RTE-02).
+fn screen_package(state: &RenderState, def: &ScreenDef, reads: &BTreeSet<String>) -> Result<(), Error> {
+    let mut allowed = prepare_screen(state, def)?;
+    allowed.extend(def.always_client_context.iter().cloned());
+    allowed.extend(def.pre_client_context.iter().cloned());
+    allowed.extend(CLIENT_READS.iter().map(|name| (*name).to_string()));
+    allowed.extend(reads.iter().cloned());
     let mut package = unwrap_context();
     for (name, definition) in &def.forms {
         if !definition.dynamic {
@@ -810,6 +923,7 @@ fn screen_package(state: &RenderState, def: &ScreenDef) -> Result<(), Error> {
             Err(err) => tracing::warn!("pass-through of {}: {err}", def.location),
         }
     }
+    package.retain(|name, _| allowed.contains(name));
     let mut body = serde_json::Value::Object(package);
     web::strip_credential_parameters(&mut body);
     send_json(&body, Vec::new());
@@ -918,8 +1032,64 @@ fn node_wants_pass_through(
     Ok(false)
 }
 
-/// `GET {screen}/actions/{formName}`.
-fn form_package(state: &RenderState, def: &ScreenDef, name: &str) -> Result<(), Error> {
+/// The keys a row of the form-list `node` keeps in a server-static screen's answer (SEC-RTE-02): the names the template
+/// reads (`reads`; the row slots are in the same script), the form's fields and their `_display` texts, the
+/// `client-context` of its `row-actions`, and what `m-static-form-list` and the list views read of a row outside the
+/// template: [`ROW_CLIENT_READS`], the row's availability key, its row-selection id field, and the fields its views
+/// name (`view-board`, `view-calendar`, `view-tree`), with their `_display` texts.
+fn row_names(reads: &BTreeSet<String>, node: &MNode) -> BTreeSet<String> {
+    let mut names = reads.clone();
+    names.extend(ROW_CLIENT_READS.iter().map(|name| (*name).to_string()));
+    names.insert(disable_key(&lit_of(node, true)));
+    let mut fields: Vec<String> = node
+        .children_named("field")
+        .iter()
+        .filter_map(|field| field.attribute("name"))
+        .collect();
+    for element in ["row-selection", "view-board", "view-calendar", "view-tree"] {
+        for found in node.children_named(element) {
+            for (attribute, value) in found.attributes() {
+                if attribute.ends_with("-field") || attribute.ends_with("-fields") {
+                    fields.extend(super::definition::client_context_names(&value));
+                }
+            }
+        }
+    }
+    for field in fields {
+        names.insert(format!("{field}_display"));
+        names.insert(field);
+    }
+    names.extend(super::definition::client_context_of(
+        node.first_named("row-actions").as_ref(),
+    ));
+    names
+}
+
+/// A row as JSON with only the keys `keep` names; an aggregated row's sub-rows (`aggregateSubList`) the same.
+fn kept_row(row: serde_json::Value, keep: Option<&BTreeSet<String>>) -> serde_json::Value {
+    let (mut map, keep) = match (row, keep) {
+        (serde_json::Value::Object(map), Some(keep)) => (map, keep),
+        (row, _) => return row,
+    };
+    map.retain(|key, _| keep.contains(key));
+    if let Some(serde_json::Value::Array(entries)) = map.get_mut("aggregateSubList") {
+        for entry in entries.iter_mut() {
+            if let serde_json::Value::Object(sub) = entry {
+                sub.retain(|key, _| keep.contains(key));
+            }
+        }
+    }
+    serde_json::Value::Object(map)
+}
+
+/// `GET {screen}/actions/{formName}`. `limit` is the template's reads for a server-static screen, whose rows keep only
+/// [`row_names`]; another screen's rows are answered whole.
+fn form_package(
+    state: &RenderState,
+    def: &ScreenDef,
+    name: &str,
+    limit: Option<&BTreeSet<String>>,
+) -> Result<(), Error> {
     let Some(definition) = def.forms.get(name) else {
         if let Some(tree) = def.trees.get(name) {
             let nodes = super::tree::sub_node_json(state, tree, &def.location)?;
@@ -1003,13 +1173,18 @@ fn form_package(state: &RenderState, def: &ScreenDef, name: &str) -> Result<(), 
         .position(|row| row.get("_moquiRowType").and_then(Value::as_str) == Some("total"))
         .map(|index| rows.remove(index));
 
+    let keep = limit.map(|reads| row_names(reads, &node));
+    let keep = keep.as_ref();
     let mut body = serde_json::Map::new();
     body.insert(
         instance.list_name.clone(),
-        serde_json::Value::Array(rows.iter().map(unwrap_map).collect()),
+        serde_json::Value::Array(rows.iter().map(|row| kept_row(unwrap_map(row), keep)).collect()),
     );
     if let Some(total) = &total {
-        body.insert(format!("{}Total", instance.list_name), unwrap_map(total));
+        body.insert(
+            format!("{}Total", instance.list_name),
+            kept_row(unwrap_map(total), keep),
+        );
     }
     // The first, second and last rows: the map-*-row map (an empty one without), with the lookups and sets of the *-row-field
     // widgets over it, as Java pushes the map for those rows.
@@ -1034,7 +1209,10 @@ fn form_package(state: &RenderState, def: &ScreenDef, name: &str) -> Result<(), 
         };
         let mut fields = script::value_map(&map).unwrap_or_default();
         fields.extend(extras?);
-        body.insert(format!("{}{suffix}", instance.list_name), unwrap_map(&fields));
+        body.insert(
+            format!("{}{suffix}", instance.list_name),
+            kept_row(unwrap_map(&fields), keep),
+        );
     }
     let mut headers = Vec::new();
     if let Some(pages) = page_keys(&node, rows.len())? {
@@ -1362,14 +1540,26 @@ fn row_widget_extras(
 }
 
 /// The `actions` transition: the pre-actions of the path (the always-actions have run), then the data of the screen or of one form.
+/// `path` is the request path, `{screen}/actions[/{name}]`. For a server-static screen the answer holds only the context
+/// names its template reads, its `client-context` names and [`CLIENT_READS`], and a form-list's rows only what the
+/// template and the client read of a row ([`row_names`]); the template is the one the browser has for the screen's path
+/// ([`package_template`]), found before any actions run.
 ///
 /// # Errors
 ///
 /// Returns the error an action raised.
-pub(crate) fn run_actions_transition(state: &RenderState) -> Result<(), Error> {
+pub(crate) fn run_actions_transition(state: &RenderState, path: &str) -> Result<(), Error> {
     let info = &state.url_info;
     let defs = &info.path_defs;
     let last = defs.len().saturating_sub(1);
+    let static_screen = sends_package(state);
+    let template = if static_screen {
+        package_template(state, path)?
+    } else {
+        None
+    };
+    let none = BTreeSet::new();
+    let reads = template.as_ref().map_or(&none, |template| &template.reads);
     // The mode is always standalone, so the pre-actions of the screens from the third on run, as for a qvt render.
     let first_pre = if state.facade.is_always_standalone("qvt") && defs.len() > 2 {
         2
@@ -1401,15 +1591,19 @@ pub(crate) fn run_actions_transition(state: &RenderState) -> Result<(), Error> {
         }
     }
     match info.extra_path.first() {
-        None if !sends_package(state) => {
+        None if !static_screen => {
             json_error(
                 404,
-                &format!("Screen {} is not a server-static template and has no actions package", target.screen_name),
+                &format!(
+                    "Screen {} is not a server-static template and has no actions package",
+                    target.screen_name
+                ),
             );
             Ok(())
         }
-        None => screen_package(state, &target),
-        Some(name) => form_package(state, &target, name),
+        None => screen_package(state, &target, reads),
+        // the rows of a screen that is not server-static are drawn by a server-merged template, whose reads are not known
+        Some(name) => form_package(state, &target, name, static_screen.then_some(reads)),
     }
 }
 

@@ -394,10 +394,14 @@ fn actions_answers_the_package_without_the_lists_and_with_plain_values() {
     assert_eq!(package["greeting"], "ZEBRA greeting for Ada Lovelace");
     assert_eq!(package["item"]["itemId"], "ZEBRA-I1");
     assert_eq!(package["tags"][1], "ZEBRA-t2");
-    // always-actions ran, a decimal is a string, the request's own parameters are there, and a credential is not
+    // always-actions ran and their client-context sends alwaysTag, which the template does not read (SEC-RTE-02)
     assert_eq!(package["alwaysTag"], "always-ran");
-    assert_eq!(package["amount"], "1234.50");
-    assert_eq!(package["keep"], "yes");
+    // what the template does not read is not sent: a decimal it does not show, a request parameter, a flag
+    for unread in ["amount", "keep", "showExtra"] {
+        assert!(package.get(unread).is_none(), "{unread} in {package}");
+    }
+    // a name kept is sent whole (the form shows no note), and a credential in it is not
+    assert_eq!(package["item"]["note"], "ZEBRA note");
     assert!(package.get("password").is_none(), "{package}");
     assert!(package["item"].get("currentPassword").is_none(), "{package}");
     // the list of the form-list is a request of its own
@@ -420,6 +424,8 @@ fn a_form_request_answers_its_rows_and_page_keys() {
     assert_eq!(rows.len(), 2, "{body}");
     assert_eq!(rows[0]["itemId"], "ZEBRA-R1");
     assert_eq!(rows[1]["name"], "ZEBRA row two");
+    // an entry's key that no column shows and the template does not read is left out (SEC-RTE-02)
+    assert!(rows[0].get("owner").is_none(), "{body}");
     // the body is the context-shaped map, not a bare array
     assert!(body.is_object());
     golden("Items.ItemList.json", &output.body_text());
@@ -986,16 +992,144 @@ fn only_a_server_static_screen_answers_its_actions_package() {
         "<screen require-authentication=\"false\"><widgets><subscreens-active/></widgets><subscreens default-item=\"Marked\"/></screen>",
     )
     .unwrap();
-    std::fs::write(
-        dir.join("Root/Marked.xml"),
-        "<screen require-authentication=\"false\" server-static=\"qvt\"><actions><set field=\"shown\" value=\"yes\"/></actions>\
-         <widgets><label text=\"${shown}\"/></widgets></screen>",
-    )
-    .unwrap();
+    let write_marked = |name: &str, actions: &str, widgets: &str| {
+        std::fs::write(
+            dir.join(format!("Root/{name}.xml")),
+            format!("<screen require-authentication=\"false\" server-static=\"qvt\">{actions}<widgets>{widgets}</widgets></screen>"),
+        )
+        .unwrap();
+    };
+    let sets = "<set field=\"shown\" value=\"yes\"/><set field=\"internalCheck\" value=\"internal\"/>";
+    write_marked(
+        "Marked",
+        &format!("<actions>{sets}</actions>"),
+        "<label text=\"${shown}\"/>",
+    );
+    write_marked(
+        "Listed",
+        &format!("<actions client-context=\"internalCheck\">{sets}</actions>"),
+        "<label text=\"${shown}\"/>",
+    );
+    write_marked(
+        "Always",
+        &format!(
+            "<always-actions client-context=\"alwaysCheck, \"><set field=\"alwaysCheck\" value=\"always\"/>\
+             <set field=\"alwaysHidden\" value=\"hidden\"/></always-actions><actions>{sets}</actions>"
+        ),
+        "<label text=\"${shown}\"/>",
+    );
+    write_marked(
+        "Sectioned",
+        "",
+        "<section name=\"Part\"><actions client-context=\"sectionCheck\"><set field=\"sectionCheck\" value=\"section\"/>\
+         <set field=\"sectionHidden\" value=\"hidden\"/></actions><widgets><label text=\"in the section\"/></widgets></section>",
+    );
+    write_marked(
+        "Rows",
+        "<transition name=\"save\"><default-response type=\"none\"/></transition>\
+         <actions><set field=\"rowList\" from=\"[{rowId: 'R1', unshown: 'entry-only'}]\"/></actions>",
+        "<form-list name=\"RowForm\" list=\"rowList\" transition=\"save\">\
+         <row-actions client-context=\"rowListed\"><set field=\"rowListed\" value=\"listed\"/><set field=\"rowNote\" value=\"note\"/></row-actions>\
+         <field name=\"rowId\"><default-field><display/></default-field></field></form-list>",
+    );
     std::fs::write(
         dir.join("Root/Plain.xml"),
         "<screen require-authentication=\"false\"><actions><set field=\"checkedRow\" value=\"internal\"/></actions>\
          <widgets><label text=\"plain\"/></widgets></screen>",
+    )
+    .unwrap();
+    // a parent whose always-actions set a name, and a child that has only the subscreens placeholders
+    std::fs::create_dir_all(dir.join("Root/Parent")).unwrap();
+    std::fs::write(
+        dir.join("Root/Parent.xml"),
+        "<screen require-authentication=\"false\"><always-actions><set field=\"parentValue\" value=\"parent\"/></always-actions>\
+         <widgets><subscreens-active/></widgets></screen>",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Root/Parent/Child.xml"),
+        "<screen require-authentication=\"false\"><widgets><subscreens-menu/><subscreens-active/></widgets></screen>",
+    )
+    .unwrap();
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let get = |path: &str, parameters: &[(&str, &str)]| {
+        make_render(factory)
+            .root_screen(root.clone())
+            .screen_path(path)
+            .parameters(
+                parameters
+                    .iter()
+                    .map(|(key, value)| ((*key).to_string(), Value::string(*value)))
+                    .collect(),
+            )
+            .render()
+            .unwrap_or_else(|err| panic!("{path}: {err}"))
+    };
+    let package = |path: &str| {
+        let output = get(path, &[("requestOnly", "request")]);
+        assert_eq!(output.status, 200, "{path}: {}", output.body_text());
+        json_of(&output)
+    };
+    // before any .qvt request: the template is built for the package, and the package holds only what it reads
+    let location = dir.join("Root/Marked.xml").to_string_lossy().into_owned();
+    let def = ScreenFacade::of(factory).screen_def(factory, &location).unwrap();
+    assert!(def.generated().static_template("/Marked").is_none());
+    let marked = package("/Marked/actions");
+    assert!(def.generated().static_template("/Marked").is_some(), "built on demand");
+    assert_eq!(marked["shown"], "yes");
+    for unread in ["internalCheck", "requestOnly"] {
+        assert!(marked.get(unread).is_none(), "{unread} in {marked}");
+    }
+    // the template built for the package is the one the .qvt request sends
+    let built = def.generated().static_template("/Marked").unwrap().script.clone();
+    assert_eq!(get("/Marked.qvt", &[]).body_text(), built);
+    // client-context on actions, on always-actions and on a section's actions sends a name the template does not read
+    let listed = package("/Listed/actions");
+    assert_eq!(listed["shown"], "yes");
+    assert_eq!(listed["internalCheck"], "internal");
+    let always = package("/Always/actions");
+    assert_eq!(always["alwaysCheck"], "always");
+    assert!(
+        always.get("alwaysHidden").is_none() && always.get("internalCheck").is_none(),
+        "{always}"
+    );
+    let sectioned = package("/Sectioned/actions");
+    assert_eq!(sectioned["sectionCheck"], "section");
+    assert!(sectioned.get("sectionHidden").is_none(), "{sectioned}");
+    // a row keeps its fields and its row-actions' client-context, not another row-actions value or an entry key no column shows
+    let rows = json_of(&get("/Rows/actions/RowForm", &[]));
+    let row = &rows["rowList"][0];
+    assert_eq!(row["rowId"], "R1", "{rows}");
+    assert_eq!(row["rowListed"], "listed", "{rows}");
+    assert!(row.get("rowNote").is_none() && row.get("unshown").is_none(), "{rows}");
+    // a placeholder screen: hideNav, which its form-lists read outside the template, and nothing of its parent's
+    let child = json_of(&get("/Parent/Child/actions", &[("hideNav", "true")]));
+    assert_eq!(child["hideNav"], "true", "{child}");
+    assert!(child.get("parentValue").is_none(), "{child}");
+    let plain = get("/Plain/actions", &[]);
+    assert_eq!(plain.status, 404, "{}", plain.body_text());
+    assert!(!plain.body_text().contains("internal"), "{}", plain.body_text());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-RTE-02: a template that reads the scope by a computed name logs a warning when it is built, and the package does
+/// not send the names it may read unless client-context names them.
+#[test]
+fn a_computed_scope_read_is_warned_at_build_and_left_to_client_context() {
+    let context = ExecutionContextFactory::test_context();
+    let factory = context.factory();
+    let dir = std::env::temp_dir().join(format!("moqui-static-computed-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root")).unwrap();
+    std::fs::write(
+        dir.join("Root.xml"),
+        "<screen require-authentication=\"false\"><widgets><subscreens-active/></widgets><subscreens default-item=\"Picked\"/></screen>",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Root/Picked.xml"),
+        "<screen require-authentication=\"false\" server-static=\"qvt\"><actions><set field=\"pick\" value=\"one\"/>\
+         <set field=\"value_one\" value=\"first\"/></actions><widgets><label text=\"${$scope['value_' + pick]}\"/></widgets></screen>",
     )
     .unwrap();
     let root = dir.join("Root.xml").to_string_lossy().into_owned();
@@ -1006,12 +1140,25 @@ fn only_a_server_static_screen_answers_its_actions_package() {
             .render()
             .unwrap_or_else(|err| panic!("{path}: {err}"))
     };
-    let marked = get("/Marked/actions");
-    assert_eq!(marked.status, 200, "{}", marked.body_text());
-    assert_eq!(json_of(&marked)["shown"], "yes");
-    let plain = get("/Plain/actions");
-    assert_eq!(plain.status, 404, "{}", plain.body_text());
-    assert!(!plain.body_text().contains("internal"), "{}", plain.body_text());
+    let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let template =
+        tracing::subscriber::with_default(crate::testing::LogSubscriber(std::sync::Arc::clone(&lines)), || {
+            get("/Picked.qvt")
+        });
+    assert_eq!(
+        header(&template, "X-Moqui-Qvt"),
+        "static-template",
+        "{}",
+        template.body_text()
+    );
+    let logged = lines.lock().unwrap().join("\n");
+    assert!(
+        logged.contains("reads the scope by a computed name") && logged.contains("Picked.xml"),
+        "{logged}"
+    );
+    let package = json_of(&get("/Picked/actions"));
+    assert_eq!(package["pick"], "one");
+    assert!(package.get("value_one").is_none(), "{package}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

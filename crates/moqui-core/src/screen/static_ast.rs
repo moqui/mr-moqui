@@ -205,9 +205,149 @@ fn walk(node: &Json, inside_chain: bool, found: &mut Vec<AstViolation>) {
     }
 }
 
+/// The names a compiled static template reads from its scope, which the actions package is limited to
+/// (plans/Security-Review-Medium.md SEC-RTE-02).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ScopeReads {
+    /// Each top-level name read: `_ctx.name`, or `_ctx.$scope['name']` with a literal name.
+    pub names: std::collections::BTreeSet<String>,
+    /// The text of each read whose name is computed (`_ctx[expr]`, `_ctx.$scope[expr]`) or of `$scope` passed on whole,
+    /// whose names cannot be known.
+    pub computed: Vec<String>,
+}
+
+/// The scope reads of `script`, the render function the Vue compiler wrote with `prefixIdentifiers`: every free name of a
+/// template expression is `_ctx.name`, and `$scope` is the scope itself. A slot that declares its own `_ctx` (`m-scope`,
+/// a form-list row) reads the same chain, so its reads are recorded the same way. A script that does not parse gives
+/// none, with the parse error as its one computed read.
+pub(crate) fn scope_reads(script: &str) -> ScopeReads {
+    crate::script::parse::with_arena(|allocator| {
+        // the compiler's code is the body of a function of `Vue`, which returns the render function
+        let options = ParseOptions {
+            allow_return_outside_function: true,
+            ..ParseOptions::default()
+        };
+        let parsed = Parser::new(allocator, script, std::default::Default::default())
+            .with_options(options)
+            .parse();
+        let mut reads = ScopeReads::default();
+        if parsed.fatal_error || parsed.diagnostics.has_errors() {
+            reads.computed.push("the script does not parse".to_string());
+            return reads;
+        }
+        match serde_json::from_str::<Json>(&parsed.program.to_estree_json(false, false)) {
+            Ok(tree) => walk_reads(&tree, false, script, &mut reads),
+            Err(err) => reads.computed.push(format!("the script tree could not be read: {err}")),
+        }
+        reads
+    })
+}
+
+/// The source text of a node, by its span.
+fn source_of<'a>(node: &Json, script: &'a str) -> &'a str {
+    let at = |key: &str| {
+        node.get(key)
+            .and_then(Json::as_u64)
+            .and_then(|at| usize::try_from(at).ok())
+    };
+    match (at("start"), at("end")) {
+        (Some(start), Some(end)) => script.get(start..end).unwrap_or(""),
+        _ => "",
+    }
+}
+
+/// Visit a node. `inside_chain` is true for the object of a member expression, whose chain the outer node recorded.
+fn walk_reads(node: &Json, inside_chain: bool, script: &str, reads: &mut ScopeReads) {
+    match node {
+        Json::Array(items) => {
+            for item in items {
+                walk_reads(item, false, script, reads);
+            }
+        }
+        Json::Object(map) => {
+            let kind = map.get("type").and_then(Json::as_str).unwrap_or("");
+            match kind {
+                "MemberExpression" | "StaticMemberExpression" | "ComputedMemberExpression" => {
+                    if !inside_chain {
+                        if let Some(path) = member_path(node) {
+                            record_read(&path, node, script, reads);
+                        }
+                    }
+                    if let Some(object) = map.get("object") {
+                        walk_reads(object, member_path(object).is_some(), script, reads);
+                    }
+                    if map.get("computed").and_then(Json::as_bool) == Some(true) {
+                        if let Some(property) = map.get("property") {
+                            walk_reads(property, false, script, reads);
+                        }
+                    }
+                }
+                _ => {
+                    for (key, value) in map {
+                        // a function's parameters declare names (`(_ctx) => ...`), they read none
+                        if key != "type" && key != "params" {
+                            walk_reads(value, false, script, reads);
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Record a whole member chain that starts at an identifier.
+fn record_read(path: &[String], node: &Json, script: &str, reads: &mut ScopeReads) {
+    let [root, first, rest @ ..] = path else {
+        return;
+    };
+    if root != "_ctx" {
+        return;
+    }
+    match (first.as_str(), rest.first().map(String::as_str)) {
+        // `_ctx[expr]`, `_ctx.$scope[expr]`, or `_ctx.$scope` passed on whole
+        ("[]", _) | ("$scope", Some("[]") | None) => reads.computed.push(source_of(node, script).to_string()),
+        ("$scope", Some(name)) | (name, _) => {
+            reads.names.insert(name.to_string());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::check_expression;
+    use super::{check_expression, scope_reads};
+
+    #[test]
+    fn the_scope_reads_of_a_render_function_are_its_top_level_names() {
+        let reads = scope_reads(
+            "const { withCtx: _withCtx } = Vue\n\nreturn function render(_ctx, _cache) { return [_ctx.greeting, _ctx.item.name, \
+             _ctx.$scope['mqExtra_F'], _ctx.ec.resource.expand('x ${a}', {'a': () => (_ctx.a)}), \
+             _withCtx((_ctx) => [_ctx.$scope['row'], formProps.fields.x]), (_ctx.$scope['mqSection_S']||[])[i], _ctx.$scope.dotted] }",
+        );
+        let names: Vec<&str> = reads.names.iter().map(String::as_str).collect();
+        assert_eq!(
+            names,
+            [
+                "a",
+                "dotted",
+                "ec",
+                "greeting",
+                "item",
+                "mqExtra_F",
+                "mqSection_S",
+                "row"
+            ]
+        );
+        assert!(reads.computed.is_empty(), "{:?}", reads.computed);
+        let reads =
+            scope_reads("function render(_ctx) { return [_ctx.$scope[_ctx.key + '_x'], _ctx[name], f(_ctx.$scope)] }");
+        assert_eq!(
+            reads.computed,
+            ["_ctx.$scope[_ctx.key + '_x']", "_ctx[name]", "_ctx.$scope"],
+            "{reads:?}"
+        );
+        assert!(reads.names.contains("key"), "{reads:?}");
+    }
 
     fn operations(expression: &str) -> Vec<String> {
         check_expression(expression)

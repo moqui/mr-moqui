@@ -626,6 +626,8 @@ pub struct SectionDef {
     pub kind: SectionKind,
     pub condition: Option<Condition>,
     pub actions: Option<Actions>,
+    /// The `client-context` of its `actions`: names its server-static package always sends ([`client_context_names`]).
+    pub client_context: Vec<String>,
     pub widgets: Option<XmlFragment>,
     pub fail_widgets: Option<XmlFragment>,
 }
@@ -650,8 +652,9 @@ impl SectionDef {
                 condition = Condition::from_element(&element, label)?;
             }
         }
-        let actions = match node.first_named("actions") {
-            Some(actions) => Some(Actions::from_node(&actions, &format!("{label} actions"))?),
+        let element = node.first_named("actions");
+        let actions = match &element {
+            Some(actions) => Some(Actions::from_node(actions, &format!("{label} actions"))?),
             None => None,
         };
         Ok(Self {
@@ -659,10 +662,28 @@ impl SectionDef {
             kind,
             condition,
             actions,
+            client_context: client_context_of(element.as_ref()),
             widgets: node.first_named("widgets").as_ref().map(XmlFragment::of),
             fail_widgets: node.first_named("fail-widgets").as_ref().map(XmlFragment::of),
         })
     }
+}
+
+/// The names of a `client-context` attribute, comma or space separated: the context names a server-static screen's
+/// actions package sends whether or not its template reads them (plans/Security-Review-Medium.md SEC-RTE-02).
+pub fn client_context_names(text: &str) -> Vec<String> {
+    text.split(|ch: char| ch == ',' || ch.is_whitespace())
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// The `client-context` names of an actions element (`always-actions`, `pre-actions`, `actions`, `row-actions`).
+pub(crate) fn client_context_of(element: Option<&MNode>) -> Vec<String> {
+    element
+        .and_then(|element| element.attribute("client-context"))
+        .map(|text| client_context_names(&text))
+        .unwrap_or_default()
 }
 
 #[derive(Clone, Debug)]
@@ -765,6 +786,10 @@ pub struct ScreenDef {
     pub parameters: Vec<ParameterDef>,
     pub always_actions: Option<Actions>,
     pub pre_actions: Option<Actions>,
+    /// The `client-context` names of the `always-actions` and the `pre-actions`, which this screen's server-static
+    /// package always sends. The root actions' and each section's are on its [`SectionDef`].
+    pub always_client_context: Vec<String>,
+    pub pre_client_context: Vec<String>,
     pub transitions: Vec<TransitionDef>,
     pub subscreens: Subscreens,
     pub root: SectionDef,
@@ -996,12 +1021,14 @@ impl ScreenDef {
                 .filter(|text| !text.is_empty()),
         };
 
-        let always_actions = match node.first_named("always-actions") {
-            Some(actions) => Some(Actions::from_node(&actions, &format!("{location} always-actions"))?),
+        let always_element = node.first_named("always-actions");
+        let always_actions = match &always_element {
+            Some(actions) => Some(Actions::from_node(actions, &format!("{location} always-actions"))?),
             None => None,
         };
-        let pre_actions = match node.first_named("pre-actions") {
-            Some(actions) => Some(Actions::from_node(&actions, &format!("{location} pre-actions"))?),
+        let pre_element = node.first_named("pre-actions");
+        let pre_actions = match &pre_element {
+            Some(actions) => Some(Actions::from_node(actions, &format!("{location} pre-actions"))?),
             None => None,
         };
 
@@ -1178,6 +1205,8 @@ impl ScreenDef {
             parameters: parameters_of(node),
             always_actions,
             pre_actions,
+            always_client_context: client_context_of(always_element.as_ref()),
+            pre_client_context: client_context_of(pre_element.as_ref()),
             transitions,
             subscreens,
             root,
@@ -1319,6 +1348,19 @@ fn merge_extend(screen: &MNode, extend: &MNode, location: &str, extended: &mut E
             .filter(|text| !text.is_empty())
             .unwrap_or_else(|| "actions".to_string());
         let current = screen.first_named(&kind).unwrap_or_else(|| screen.append(kind.clone()));
+        // the names the extension's actions need sent to the client are added to the screen's (SEC-RTE-02)
+        if let Some(added) = actions_extend
+            .attribute("client-context")
+            .filter(|text| !text.trim().is_empty())
+        {
+            let mut names = client_context_of(Some(&current));
+            for name in client_context_names(&added) {
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+            current.set_attribute("client-context", names.join(","));
+        }
         let copies: Vec<MNode> = actions_extend.children().iter().map(MNode::deep_copy).collect();
         actions_extend.with_attribute("when", |value| match value {
             Some("replace") => {
@@ -1482,6 +1524,7 @@ fn pull_section_include(
                 kind: SectionKind::Include { location: from, name },
                 condition: None,
                 actions: None,
+                client_context: Vec::new(),
                 widgets: None,
                 fail_widgets: None,
             },

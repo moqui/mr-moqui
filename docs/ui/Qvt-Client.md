@@ -1364,7 +1364,10 @@ a script and `X-Moqui-Qvt: static-template`, `Cache-Control: max-age=86400, must
 `(m.qvtStatic = m.qvtStatic || {})[path] = function (Vue) { ...; return function render(_ctx, _cache) { ... } }`, the Vue compiler's
 `prefixIdentifiers` output of a template that holds no request data (no `with`, no `new Function`). The handler loads it with a script element
 (a CSP without `unsafe-eval` allows that and not `fetch` and `new Function`), and the component it makes fetches `<path>/actions` (the
-screen package, `private, no-store`) and shows the render function over it.
+screen package, `private, no-store`) and shows the render function over it. The package holds only the names the
+template reads (recorded from the compiled render function when it is built, and built for an `actions` request that
+comes first), `hideNav`, and the `client-context` names of the screen's actions elements; a form-list's rows keep what
+the template, `m-static-form-list` and the list views read of a row ([JS-Screen-Scripts](../dev/JS-Screen-Scripts.md#server-static-screens)).
 
 Links and forms receive their availability from each actions response, including separate values for list rows.
 The server uses the same permission and transition-condition checks as a merged render. A missing target is disabled

@@ -273,6 +273,9 @@ pub struct FileReport {
     /// Containers, boxes, rows and sections of a screen with no `name` or `id`, which a `screen-extend` cannot anchor
     /// to (plans/design-dev-aide.md F16). Information: an upstream screen names the places sites extend.
     pub unnamed_anchors: Vec<(u32, String)>,
+    /// `client-context` names that the actions element they are on never sets or mentions ([`scan_client_context`]):
+    /// a typo, or a name that is set elsewhere and sent anyway if the context has it. A warning.
+    pub client_context_gaps: Vec<(u32, String)>,
     /// Lines of comments that hold `--` (a nested `<!--` among them), which this reader takes and other XML parsers
     /// refuse the whole file for ([`moqui_lib::node::malformed_comments`]).
     pub malformed_comments: Vec<u32>,
@@ -495,6 +498,17 @@ impl ScreenLintReport {
                     let _ = writeln!(out, "  {}:{line} {element}", file.path.display());
                 }
             }
+            let gaps: usize = self.files.iter().map(|file| file.client_context_gaps.len()).sum();
+            let _ = writeln!(
+                out,
+                "\nclient-context names their actions never set: {gaps}, sent to a server-static screen's client only \
+                 when the context has them (warning)"
+            );
+            for file in &self.files {
+                for (line, detail) in &file.client_context_gaps {
+                    let _ = writeln!(out, "  {}:{line} {detail}", file.path.display());
+                }
+            }
         }
         let _ = writeln!(out, "\nKnown exclusions (not scanned)");
         for (path, reason) in &self.excluded {
@@ -620,12 +634,82 @@ fn scan_screen_text(
         }
     }
     crate::lint_hazards::refine(&root, &mut file);
+    scan_client_context(&root, &mut file);
     // a template's sections are included into screens: its own anchors and terminal parts are its includers'
     if root.has_name("screen") && !is_template(&file.path) {
         scan_tui(&root, &mut file);
         scan_anchors(&root, &mut file);
     }
     Ok(Some(file))
+}
+
+/// The elements whose `client-context` names what their actions send to a server-static screen's client (SEC-RTE-02).
+const CLIENT_CONTEXT_ELEMENTS: &[&str] = &[
+    "actions",
+    "always-actions",
+    "pre-actions",
+    "row-actions",
+    "actions-extend",
+];
+
+/// Each `client-context` name that its actions element neither sets nor mentions: no attribute of an action in it starts
+/// with the name (a `set` field, an `entity-find` list, a service call's out-map) and no script text names it. An
+/// element whose actions may set any name (a `service-call` with no `out-map` or `out-map="context"`, a `script` from a
+/// location) is not checked.
+fn scan_client_context(node: &MNode, file: &mut FileReport) {
+    for child in node.child_iter() {
+        if CLIENT_CONTEXT_ELEMENTS.contains(&child.name().as_str()) {
+            if let Some(text) = child.attribute("client-context") {
+                let mut said = Vec::new();
+                let open = mentions(&child, &mut said);
+                for name in moqui_core::screen::client_context_names(&text) {
+                    let set = said.iter().any(|text| has_word(text, &name));
+                    if !open && !set {
+                        file.client_context_gaps.push((
+                            child.line(),
+                            format!(
+                                "<{} client-context> names {name}, which these actions never set",
+                                child.name()
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+        scan_client_context(&child, file);
+    }
+}
+
+/// The attribute values and text of the actions under `node` into `out`; true when one of them may set any name.
+fn mentions(node: &MNode, out: &mut Vec<String>) -> bool {
+    let mut open = false;
+    for child in node.child_iter() {
+        let name = child.name();
+        let out_map = child.attribute("out-map").unwrap_or_default();
+        if (name == "service-call" && (out_map.is_empty() || out_map == "context"))
+            || (name == "script" && child.attribute("location").is_some_and(|location| !location.is_empty()))
+        {
+            open = true;
+        }
+        for (_, value) in child.attributes() {
+            out.push(value);
+        }
+        if let Some(text) = child.text() {
+            out.push(text);
+        }
+        open |= mentions(&child, out);
+    }
+    open
+}
+
+/// Whether `text` holds `word` with no identifier character on either side.
+fn has_word(text: &str, word: &str) -> bool {
+    text.match_indices(word).any(|(at, _)| {
+        let before = text.get(..at).and_then(|head| head.chars().next_back());
+        let after = text.get(at + word.len()..).and_then(|tail| tail.chars().next());
+        let ident = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '$');
+        !ident(before) && !ident(after)
+    })
 }
 
 /// The containers and sections of a screen with no name or id to anchor a `screen-extend` to.

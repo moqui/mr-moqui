@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ================ Shared Elements ================ -->
     <xs:group name="section-elements"><xs:sequence>
         <xs:element ref="condition" minOccurs="0"/>
-        <xs:element ref="actions" minOccurs="0"/>
+        <xs:element name="actions" type="screen-actions" minOccurs="0"/>
         <xs:element ref="widgets"/>
         <xs:element ref="fail-widgets" minOccurs="0"/>
     </xs:sequence></xs:group>
@@ -228,6 +228,7 @@ along with this software (see the LICENSE.md file). If not, see
 
             <xs:element name="actions-extend" minOccurs="0" maxOccurs="unbounded"><xs:complexType>
                 <xs:group minOccurs="0" maxOccurs="unbounded" ref="AllOperations"/>
+                <xs:attributeGroup ref="client-context"/>
                 <xs:attribute name="type" default="actions"><xs:simpleType><xs:restriction base="xs:token">
                     <xs:enumeration value="always-actions"/>
                     <xs:enumeration value="pre-actions"/>
@@ -296,20 +297,22 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- NOTE: Right now we send some cache headers, could add config for cache headers for screen,
              static screen content, template screen content -->
     </xs:complexType></xs:element>
-    <xs:element name="always-actions"><xs:annotation>
+    <xs:element name="always-actions" type="screen-actions"><xs:annotation>
         <xs:documentation>These actions always run when this screen appears in a screen path, including
             both screen rendering and transition running. One difference between this and the pre-actions element is
             that this runs before transitions are processed while pre-actions do not. The always-actions also run for
             all screens in a path while the pre-actions only run for screens that will be rendered.</xs:documentation>
-    </xs:annotation><xs:complexType>
-        <xs:group minOccurs="0" maxOccurs="unbounded" ref="AllOperations"/>
-    </xs:complexType></xs:element>
-    <xs:element name="pre-actions"><xs:annotation>
+    </xs:annotation></xs:element>
+    <xs:element name="pre-actions" type="screen-actions"><xs:annotation>
         <xs:documentation>These actions run before any of the screens (this screen or any parent screens)
             are rendered, allowing you to set parameters used by parent screens or other general reasons.</xs:documentation>
-    </xs:annotation><xs:complexType>
+    </xs:annotation></xs:element>
+    <!-- The actions of a screen and of its sections, with client-context (xml-form-3.xsd, as row-actions has it). A
+         transition's and a tree's are the actions element of xml-actions-3.xsd. -->
+    <xs:complexType name="screen-actions">
         <xs:group minOccurs="0" maxOccurs="unbounded" ref="AllOperations"/>
-    </xs:complexType></xs:element>
+        <xs:attributeGroup ref="client-context"/>
+    </xs:complexType>
 
     <!-- ================ Transition ================ -->
     <xs:element name="transition"><xs:complexType>

@@ -1877,6 +1877,8 @@ type MoquiStripped<T> = T extends readonly (infer U)[]
 /**
  * `GET {screen}/actions`: the context after data prep, unwrapped, credentials stripped, the lists and page keys of every
  * form-list removed (`L`), plus the `mqExtra_{form}` maps of the form-singles (`X`). Keys the generator cannot prove are unknown.
+ * Each key is optional: the server sends only the names the screen's compiled template reads, `hideNav` and the
+ * `client-context` names of its actions elements.
  */
 type MoquiScreenPackage<C, L extends string, X> = MoquiStripped<
     MoquiUnwrapMap<{ [K in keyof C as K extends L | MoquiPageKey<L> ? never : K]: C[K] }>

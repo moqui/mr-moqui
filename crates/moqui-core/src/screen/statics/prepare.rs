@@ -14,6 +14,8 @@
 
 //! Per-request preparation of server-static screens and their section scopes.
 
+use std::collections::BTreeSet;
+
 use moqui_lib::node::MNode;
 use moqui_lib::object::{is_empty, Value};
 
@@ -31,17 +33,27 @@ const ENTRY_SCOPE_PREFIXES: [&str; 4] = ["mqDisable_", "mqOpt_", "mqPlain_", "mq
 
 /// Run the data preparation of a screen as the render does, without writing anything: the root actions, then the actions of
 /// the sections the render reaches. A section-iterate runs its actions for each entry, and the list is kept as those actions left it.
-pub(super) fn prepare_screen(state: &RenderState, def: &ScreenDef) -> Result<(), Error> {
+/// Answers the `client-context` names of the actions that ran (the root's, an included screen's, a section's), which the
+/// package sends whether or not the template reads them (SEC-RTE-02). A section-iterate's are kept inside each entry.
+pub(super) fn prepare_screen(state: &RenderState, def: &ScreenDef) -> Result<BTreeSet<String>, Error> {
+    let mut allowed = BTreeSet::new();
     if let Some(actions) = &def.root.actions {
         actions.run()?;
     }
+    allowed.extend(def.root.client_context.iter().cloned());
     if let Some(widgets) = &def.root.widgets {
-        walk_widgets(state, def, &widgets.shared_node()?, 0)?;
+        walk_widgets(state, def, &widgets.shared_node()?, 0, &mut allowed)?;
     }
-    Ok(())
+    Ok(allowed)
 }
 
-fn walk_widgets(state: &RenderState, owner: &ScreenDef, node: &MNode, depth: usize) -> Result<(), Error> {
+fn walk_widgets(
+    state: &RenderState,
+    owner: &ScreenDef,
+    node: &MNode,
+    depth: usize,
+    allowed: &mut BTreeSet<String>,
+) -> Result<(), Error> {
     if depth > MAX_WALK_DEPTH {
         return Err(Error::new(format!(
             "sections of {} are nested too deeply",
@@ -58,8 +70,8 @@ fn walk_widgets(state: &RenderState, owner: &ScreenDef, node: &MNode, depth: usi
             "section" | "section-iterate" => {
                 let section_name = child.attribute("name").unwrap_or_default();
                 match owner.sections.get(&section_name) {
-                    Some(section) => prepare_section(state, owner, section, depth)?,
-                    None => walk_widgets(state, owner, &child, depth)?,
+                    Some(section) => prepare_section(state, owner, section, depth, allowed)?,
+                    None => walk_widgets(state, owner, &child, depth, allowed)?,
                 }
             }
             "section-include" => {
@@ -73,7 +85,7 @@ fn walk_widgets(state: &RenderState, owner: &ScreenDef, node: &MNode, depth: usi
                     given
                 };
                 if let Some(section) = owner.sections.get(&section_name) {
-                    prepare_section(state, owner, section, depth)?;
+                    prepare_section(state, owner, section, depth, allowed)?;
                 }
             }
             "include-screen" => {
@@ -85,8 +97,9 @@ fn walk_widgets(state: &RenderState, owner: &ScreenDef, node: &MNode, depth: usi
                 if let Some(actions) = &other.root.actions {
                     actions.run()?;
                 }
+                allowed.extend(other.root.client_context.iter().cloned());
                 if let Some(widgets) = &other.root.widgets {
-                    walk_widgets(state, &other, &widgets.shared_node()?, depth + 1)?;
+                    walk_widgets(state, &other, &widgets.shared_node()?, depth + 1, allowed)?;
                 }
             }
             "editable" => {
@@ -96,13 +109,19 @@ fn walk_widgets(state: &RenderState, owner: &ScreenDef, node: &MNode, depth: usi
             }
             // A form reads its own scope, and the rest of these hold no widgets with actions.
             "form-single" | "form-list" | "tree" | "actions" | "condition" | "row-actions" | "entity-find" => {}
-            _ => walk_widgets(state, owner, &child, depth)?,
+            _ => walk_widgets(state, owner, &child, depth, allowed)?,
         }
     }
     Ok(())
 }
 
-fn prepare_section(state: &RenderState, owner: &ScreenDef, section: &SectionDef, depth: usize) -> Result<(), Error> {
+fn prepare_section(
+    state: &RenderState,
+    owner: &ScreenDef,
+    section: &SectionDef,
+    depth: usize,
+    allowed: &mut BTreeSet<String>,
+) -> Result<(), Error> {
     if let SectionKind::Iterate {
         list,
         entry,
@@ -122,6 +141,9 @@ fn prepare_section(state: &RenderState, owner: &ScreenDef, section: &SectionDef,
         let mut kept = Vec::with_capacity(items.len());
         let mut scopes = Vec::with_capacity(items.len());
         let count = items.len();
+        // The client-context names of the section's actions, and of the sections inside it, apply inside each entry: their
+        // actions ran in the entry's frame.
+        let mut inner: BTreeSet<String> = section.client_context.iter().cloned().collect();
         for (index, (item_key, item)) in items.into_iter().enumerate() {
             let frame = ContextFrame::push();
             let outcome = (|| -> Result<(Value, Value), Error> {
@@ -137,12 +159,14 @@ fn prepare_section(state: &RenderState, owner: &ScreenDef, section: &SectionDef,
                     actions.run()?;
                 }
                 if let Some(widgets) = &section.widgets {
-                    walk_widgets(state, owner, &widgets.shared_node()?, depth + 1)?;
+                    walk_widgets(state, owner, &widgets.shared_node()?, depth + 1, &mut inner)?;
                 }
                 // These request-specific values belong to this iteration, not the cached template or another entry.
                 let extras = script::top_context_entries()
                     .into_iter()
-                    .filter(|(name, _)| ENTRY_SCOPE_PREFIXES.iter().any(|prefix| name.starts_with(prefix)))
+                    .filter(|(name, _)| {
+                        ENTRY_SCOPE_PREFIXES.iter().any(|prefix| name.starts_with(prefix)) || inner.contains(name)
+                    })
                     .collect();
                 Ok((script::context_value(entry).unwrap_or(item), Value::Map(extras)))
             })();
@@ -169,12 +193,13 @@ fn prepare_section(state: &RenderState, owner: &ScreenDef, section: &SectionDef,
         if let Some(actions) = &section.actions {
             actions.run()?;
         }
+        allowed.extend(section.client_context.iter().cloned());
         section.widgets.as_ref()
     } else {
         section.fail_widgets.as_ref()
     };
     if let Some(fragment) = fragment {
-        walk_widgets(state, owner, &fragment.shared_node()?, depth + 1)?;
+        walk_widgets(state, owner, &fragment.shared_node()?, depth + 1, allowed)?;
     }
     Ok(())
 }

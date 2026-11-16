@@ -242,6 +242,26 @@ The data package is the context after the actions, as plain data (`screen/static
 timestamp is text, an entity value is a map of its fields, credential names are removed, and the lists and page keys
 of each form-list are left out and fetched by `GET <screen>/actions/<form>`.
 
+**Only the names the template reads.** When the template is built, the names its compiled render function reads
+(`_ctx.name`, `$scope['name']`) are recorded, and the package holds only those, `hideNav`, and the names listed in
+`client-context` on the screen's `always-actions`, `pre-actions` and `actions` and on the actions of the sections that
+ran. A name kept is sent whole: `item` read as `item.name` sends the whole `item` map, so a value the browser must not
+see is kept out of a map the template reads, not only out of the template. The rows of `GET <screen>/actions/<form>`
+keep the names the template reads, the form's fields (with their `_display` texts), the fields its `row-selection` and
+views name, and the `client-context` of its `row-actions`; a key of a list entry that no column shows is left out. An
+`actions` request that comes before any `.qvt` request (after a restart, on another node) builds the template first;
+if it cannot be built, the package holds only the `client-context` names and `hideNav`.
+
+```xml
+<actions client-context="chartData"><set field="chartData" from="..."/></actions>
+```
+
+`client-context` (a comma or space separated list) is for a name the template reads in a way the build cannot see,
+such as by a computed name (`$scope['total_' + period]`, logged as a warning when the template is built), or one a
+client component reads by itself. On a `section-iterate`'s actions the names are kept inside each entry; on a
+`screen-extend`'s `actions-extend` they are added to the screen's. `moqui lint --screens` lists a `client-context` name
+that its actions never set.
+
 **A static expression may use:**
 
 - the names of the package, and of the row or the form's map inside a form;
