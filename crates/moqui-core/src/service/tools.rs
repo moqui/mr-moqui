@@ -181,7 +181,8 @@ fn print_resource_document(
 
 /// `print#ScreenDocument`: render the screen as `html-print` (the `xsl-fo` mode), turn it into PDF, and pass the bytes
 /// to `print#Document`, which stores the `PrintJob` and sends it. The screen parameters are `screenParameters` plus the
-/// map `screenParametersStr` evaluates to; the job name defaults to the screen name and those parameter values.
+/// JSON object `screenParametersStr` holds (read as JSON, never run as script: plans/Security-Review-Medium.md
+/// SEC-SCR-02); the job name defaults to the screen name and those parameter values.
 fn print_screen_document(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
@@ -195,17 +196,21 @@ fn print_screen_document(
         add_error(format!("Screen not found at [{location}]"));
         return Ok(BTreeMap::new());
     };
-    // In the order given, as Java's `[:]` (a `LinkedHashMap`), for the job name; a `screenParametersStr` map comes in
-    // key order, as `eval_map` returns it.
+    // In the order given, as Java's `[:]` (a `LinkedHashMap`), for the job name; a `screenParametersStr` object comes
+    // in key order.
     let mut screen_parameters = IndexMap::new();
     if let Some(Value::Map(given)) = parameters.get("screenParameters") {
         screen_parameters.extend(given.iter().map(|(name, value)| (name.clone(), value.clone())));
     }
-    let expression = param_text(parameters, "screenParametersStr");
-    if !expression.is_empty() {
-        let evaluated = crate::script::eval_map(&expression)
-            .map_err(|err| LibError::new(format!("screenParametersStr: {}", err.message())))?;
-        screen_parameters.extend(evaluated);
+    let text = param_text(parameters, "screenParametersStr");
+    if !text.trim().is_empty() {
+        match json_object(&text) {
+            Some(object) => screen_parameters.extend(object),
+            None => {
+                add_error("screenParametersStr is not a JSON object");
+                return Ok(BTreeMap::new());
+            }
+        }
     }
     let content_type = match param_text(parameters, "contentType") {
         found if found.is_empty() => "application/pdf".to_string(),
@@ -258,6 +263,19 @@ fn print_screen_document(
     print.insert("inputStream".to_string(), Value::Bytes(bytes));
     print.insert("contentType".to_string(), Value::string(content_type));
     Ok(call(PRINT_DOCUMENT, &print, &CallOptions::default()))
+}
+
+/// The entries of a JSON object's text, or `None` when the text is not one.
+fn json_object(text: &str) -> Option<Vec<(String, Value)>> {
+    match serde_json::from_str::<serde_json::Value>(text).ok()? {
+        serde_json::Value::Object(object) => Some(
+            object
+                .iter()
+                .map(|(name, value)| (name.clone(), moqui_lib::json::from_json(value)))
+                .collect(),
+        ),
+        _ => None,
+    }
 }
 
 /// A record's fields, a `PrintJob` or a `NetworkPrinter`.
