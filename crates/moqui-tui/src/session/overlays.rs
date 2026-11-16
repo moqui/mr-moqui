@@ -15,7 +15,7 @@
 //! The overlays' keys: the confirmation, the login (and its setup of the first administrator), a drop-down, the date
 //! picker and the drawer; and opening them.
 
-use super::{DropDown, Intent, Login, Overlay, Picker, Session, SETUP_FIELDS};
+use super::{DropDown, Intent, Login, Overlay, Picker, Session};
 use crate::edit::{self, Limits};
 use crate::forms::{self, FocusKind};
 use crate::keys::{Action, Key, KeyPress, KeyScheme};
@@ -173,9 +173,10 @@ impl Session {
     /// Send the setup's account, once its fields are filled and its passwords match; else say what is missing in the
     /// dialog and send nothing. The passwords stay until the answer: a created account logs in with them.
     fn send_setup(&mut self, mut login: Login) {
-        let missing = (0..SETUP_FIELDS.len()).find(|at| login.field(*at).trim().is_empty());
+        let labels = login.labels();
+        let missing = (0..labels.len()).find(|at| login.field(*at).trim().is_empty());
         if let Some(at) = missing {
-            login.error = format!("{} is required", SETUP_FIELDS[at]);
+            login.error = format!("{} is required", labels[at]);
             login.at = at;
         } else if login.password != login.verify {
             login.error = "The passwords do not match".to_string();
@@ -189,6 +190,7 @@ impl Session {
                 verify: login.verify.clone(),
                 full_name: login.full_name.trim().to_string(),
                 email: login.email.trim().to_string(),
+                setup_secret: login.setup_secret.trim().to_string(),
             };
             if self
                 .lanes

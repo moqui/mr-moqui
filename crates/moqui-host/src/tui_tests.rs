@@ -287,6 +287,7 @@ fn the_first_administrator_is_posted_with_the_token_initial_admin_needed_hands_o
         verify: password.into(),
         full_name: "Ada Admin".into(),
         email: "ada@example.com".into(),
+        setup_secret: String::new(),
     };
     let asked = Arc::new(Mutex::new(Vec::new()));
     let link = Link::over(Setup {
@@ -298,7 +299,8 @@ fn the_first_administrator_is_posted_with_the_token_initial_admin_needed_hands_o
         Ok(Some(AdminSetup {
             min_length: 12,
             min_digits: 1,
-            min_others: 1
+            min_others: 1,
+            secret_required: false
         }))
     );
     assert_eq!(link.create_initial_admin(&account("Secret-pass-1")), Ok(()));

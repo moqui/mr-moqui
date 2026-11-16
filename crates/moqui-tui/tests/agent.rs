@@ -354,6 +354,7 @@ fn the_setup_dialog_is_driven_by_set_and_do() {
         min_length: 12,
         min_digits: 1,
         min_others: 1,
+        secret_required: false,
     });
     let mut agent = Agent::open(link.clone(), GALLERY_LIST_PATH, 100, 40);
     let look = agent.run("look");

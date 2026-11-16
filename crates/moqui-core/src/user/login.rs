@@ -1574,7 +1574,7 @@ pub fn with_client_ip<T>(client_ip: &str, work: impl FnOnce() -> T) -> T {
 }
 
 /// The request's address, else the one [`with_client_ip`] gave, else empty.
-fn client_ip() -> String {
+pub(super) fn client_ip() -> String {
     let web = crate::web::current_client_ip();
     if !web.is_empty() {
         return web;

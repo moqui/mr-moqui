@@ -131,6 +131,7 @@ pub(crate) fn create_initial_admin_over<T: Transport + ?Sized>(
         ("newPasswordVerify".to_string(), account.verify.clone()),
         ("userFullName".to_string(), account.full_name.clone()),
         ("emailAddress".to_string(), account.email.clone()),
+        ("setupSecret".to_string(), account.setup_secret.clone()),
     ]);
     let output = transport.send(Ask {
         path: "/Login/createInitialAdminAccount".to_string(),
@@ -185,6 +186,7 @@ fn admin_setup_of(field: impl Fn(&str) -> String) -> AdminSetup {
         min_length: number("minLength"),
         min_digits: number("minDigits"),
         min_others: number("minOthers"),
+        secret_required: field("secretRequired") == "true",
     }
 }
 
@@ -591,9 +593,17 @@ impl Transport for InProcess {
         Ok(factor.to_string())
     }
 
-    /// `get#InitialAdminNeeded` with no user, as the Login screen asks it.
+    /// `get#InitialAdminNeeded` with no user, as the Login screen asks it; from another machine than the server (the
+    /// SSH client's address) the setup takes the setup secret too.
     fn initial_admin(&self) -> Result<Option<AdminSetup>, LinkError> {
-        let out = self.on_pool_anonymous(|| anonymous_service(INITIAL_ADMIN_NEEDED, &BTreeMap::new()))?;
+        let out = self.on_pool_anonymous(|| {
+            let mut out = anonymous_service(INITIAL_ADMIN_NEEDED, &BTreeMap::new())?;
+            out.insert(
+                "secretRequired".to_string(),
+                Value::Bool(!moqui_core::user::initial_admin_local()),
+            );
+            Ok(out)
+        })?;
         let text = |name: &str| {
             out.get(name)
                 .map(moqui_lib::object::to_plain_string)
@@ -611,6 +621,7 @@ impl Transport for InProcess {
             ("newPasswordVerify", &account.verify),
             ("userFullName", &account.full_name),
             ("emailAddress", &account.email),
+            ("setupSecret", &account.setup_secret),
         ]
         .into_iter()
         .map(|(name, value)| (name.to_string(), Value::string(value)))

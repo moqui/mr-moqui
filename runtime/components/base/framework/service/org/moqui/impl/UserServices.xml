@@ -508,10 +508,24 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="newPasswordVerify" required="true"/>
             <parameter name="userFullName"/>
             <parameter name="emailAddress"><text-email/></parameter>
+            <parameter name="setupSecret"><description>The one-time setup secret the server writes to its startup log
+                while no account exists; not needed for a request from this machine (ec.user.initialAdminLocal).</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="userId" required="true"/></out-parameters>
         <actions>
             <!-- only allow this if there are no user accounts but the seed ones (get#InitialAdminNeeded) -->
+            <service-call name="org.moqui.impl.UserServices.get#InitialAdminNeeded" out-map="adminNeeded"/>
+            <if condition="!adminNeeded.needed">
+                <return error="true" message="Can only create initial admin account if there are no UserAccount records"/></if>
+            <!-- The first caller became an administrator from any address (SEC-WEB-08, SEC-CLI-01): only a request from
+                this machine, or one with the setup secret of the startup log, may create it now. -->
+            <if condition="!ec.user.initialAdminAllowed(setupSecret)">
+                <log level="warn" message="Initial admin account refused for client ${ec.user.getClientIp()}: not from this machine and no valid setup secret"/>
+                <return error="true" message="The setup secret is not valid: it is in the server's startup log"/></if>
+            <!-- One create at a time (SEC-ADM-13): the seed _NA_ account's row is locked for this transaction, so a
+                second request waits here, then asks again and finds the account this one made. -->
+            <entity-find-one entity-name="moqui.security.UserAccount" value-field="createLock" for-update="true">
+                <field-map field-name="userId" value="_NA_"/></entity-find-one>
             <service-call name="org.moqui.impl.UserServices.get#InitialAdminNeeded" out-map="adminNeeded"/>
             <if condition="!adminNeeded.needed">
                 <return error="true" message="Can only create initial admin account if there are no UserAccount records"/></if>

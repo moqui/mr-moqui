@@ -69,6 +69,13 @@ pub(super) static USER: HostClass = HostClass {
         ),
         method!(
             "ec.user",
+            "initialAdminAllowed",
+            [OptNullableText],
+            None,
+            initial_admin_allowed
+        ),
+        method!(
+            "ec.user",
             "passwordsMatch",
             [Value, Value, OptValue, OptValue, OptValue],
             passwords_match
@@ -94,6 +101,7 @@ pub(super) static USER: HostClass = HostClass {
         method!("ec.user", "userId", [], None, leaf, user_id),
         method!("ec.user", "loginKeyKind", [], None, leaf, login_key_kind),
         method!("ec.user", "loginRules", [], login_rules),
+        method!("ec.user", "initialAdminLocal", [], None, leaf, initial_admin_local),
     ],
     hidden: &[
         method!("ec.user.context", "read", [Text], context_read),
@@ -519,6 +527,18 @@ fn check_old_password(call: &mut Call<'_>) -> Result<Ret, HostError> {
     crate::user::check_old_password(&user_id, &old_password)
         .map(Ret::from)
         .map_err(|err| user_error(&err))
+}
+
+/// `ec.user.initialAdminAllowed(setupSecret)`: whether this request may create the first administrator (from this
+/// machine, or with the setup secret of the startup log; [`crate::user::initial_admin_allowed`]).
+fn initial_admin_allowed(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(crate::user::initial_admin_allowed(&call.text_or_empty(0)).into())
+}
+
+/// `ec.user.initialAdminLocal`: whether this request comes from this machine, so the first administrator's form needs
+/// no setup secret ([`crate::user::initial_admin_local`]).
+fn initial_admin_local(_: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(crate::user::initial_admin_local().into())
 }
 
 fn passwords_match(call: &mut Call<'_>) -> Result<Ret, HostError> {

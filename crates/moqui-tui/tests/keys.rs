@@ -1293,6 +1293,7 @@ fn rules() -> AdminSetup {
         min_length: 12,
         min_digits: 1,
         min_others: 1,
+        secret_required: false,
     }
 }
 
@@ -1381,6 +1382,36 @@ fn setup_checks_its_fields_and_passwords_before_it_sends() {
     let login = setup_login(&session);
     assert_eq!((login.error.as_str(), login.at), ("Email is required", 4));
     assert_eq!(creations(&link), 0, "nothing is sent until the fields are right");
+}
+
+/// SEC-WEB-08: from another machine the setup takes the server's setup secret too, masked, and sends nothing without it.
+#[test]
+fn setup_from_another_machine_asks_for_the_setup_secret() {
+    let link = gallery_link();
+    link.require_login("old-pw");
+    link.need_initial_admin(AdminSetup {
+        secret_required: true,
+        ..rules()
+    });
+    let mut session = Session::start(GALLERY_LIST_PATH);
+    session.set_login_name(Some("admin".to_string()));
+    session.run_now(&link);
+    let login = setup_login(&session);
+    assert_eq!(login.labels().len(), 6);
+    assert!(login.masked(5));
+    fill_setup(
+        &mut session,
+        &link,
+        ["Secret-pass-1", "Secret-pass-1", "Ada Admin", "ada@example.com"],
+    );
+    session.press(&KeyPress::with_ctrl(Key::Char('s')), &link);
+    let login = setup_login(&session);
+    assert_eq!((login.error.as_str(), login.at), ("Setup secret is required", 5));
+    assert_eq!(creations(&link), 0);
+    session.set_login_field(5, "abcd-efgh-jkmn-pqrs-tuvw");
+    assert_eq!(setup_login(&session).setup_secret, "abcd-efgh-jkmn-pqrs-tuvw");
+    session.press(&KeyPress::with_ctrl(Key::Char('s')), &link);
+    assert_eq!(creations(&link), 1);
 }
 
 #[test]

@@ -23,11 +23,13 @@ mod login;
 mod password;
 pub(crate) mod policy;
 mod preference;
+mod setup;
 pub mod session;
 mod system;
 mod totp;
 mod visit;
 
+pub use setup::{initial_admin_allowed, initial_admin_local, log_initial_admin_setup};
 pub use system::as_system;
 pub(crate) use system::system_scope_allowed;
 

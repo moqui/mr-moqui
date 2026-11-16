@@ -166,6 +166,8 @@ the user services call.
 | `hashPassword(password)` | A new argon2 password hash |
 | `passwordsMatch(plain, stored, hashType, salt, base64)` | Whether the plain text matches a stored hash, argon2 or a legacy digest; an empty stored hash never matches |
 | `checkOldPassword(userId, oldPassword)` | The old password of a password change (`update#Password`), behind the gate of a password login (lock window, terminate date, one check at a time): true when it is the current password or the reset password while in date. A null or unknown user, a locked or terminated account and a wrong password are all false and take as long; a wrong one counts as a failed login |
+| `initialAdminLocal` | Whether this request comes from this machine (a loopback peer straight to the listener, no proxy's forwarding header), so the first administrator's form needs no setup secret |
+| `initialAdminAllowed(setupSecret)` | Whether this request may create the first administrator: `initialAdminLocal`, or `setupSecret` is the one-time secret the server wrote to its startup log while no account exists (dashes, spaces and case aside) |
 | `singleUseCodeHash(code)` | The stored form of a single-use code |
 | `randomCode(width)` | A random number of `width` digits (6) as text, zero padded |
 | `randomString(length)` | Random URL-safe text of the length |
@@ -1317,7 +1319,7 @@ Members Moqui Java does not have.
 |---|---|
 | `ec` | `search`, `llm` |
 | `ec.context` | Property reads and writes, `in`, `delete`, `Object.keys` |
-| `ec.user` | `machineTimeZone`, `passwordRules`, `loginRules`, `endVisit`, `hashPassword`, `passwordsMatch`, `checkOldPassword`, `singleUseCodeHash`, `randomCode`, `randomString`, `totpSecret`, `totpCodeValid`, `totpUri`, `timestampMillis` |
+| `ec.user` | `machineTimeZone`, `passwordRules`, `loginRules`, `endVisit`, `hashPassword`, `passwordsMatch`, `checkOldPassword`, `initialAdminLocal`, `initialAdminAllowed`, `singleUseCodeHash`, `randomCode`, `randomString`, `totpSecret`, `totpCodeValid`, `totpUri`, `timestampMillis` |
 | `ec.l10n` | `getAvailableTimeZones`, `getAvailableLocales`, the time zone argument of `format` |
 | `ec.resource` | `makeChangeSet`, `putContent`, `getLastChange`, `getChildChanges`, `getChangeLog`, `getTreeSize`, `restoreVersion`, `getVersionBytes`, `textDiff`, `readLines`, `digest`, `digestText`, `hmac`, `gunzip`, `extractArchive`, `writeZip`, `writeTarGz`, `extractText`, `readSheetPreview`, `makeThumbnail`, `makePdfPreview`, `imageAvailable`, `makeGrant`, `checkGrant`, `runTokenCommand`, `markdownHtml`, `code128Svg`, `barcodeSvg`, `parseGs1`, `isValidGs1CheckDigit`, `theme`; version notes on a reference's `putText`, `putBytes` and `putStream`, and `getVersionDiff` |
 | `ec.artifactExecution` | `runAsSystem`, `runAsUser`, `isPermitted`, `isPermittedOwn` |

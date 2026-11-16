@@ -54,12 +54,23 @@ const SETUP_ELEMENTS: [(&str, &str); 6] = [
     ("login.submit", "Create and log in"),
 ];
 
+/// The setup's elements from another machine: the setup secret of the server's startup log too.
+const SETUP_SECRET_ELEMENTS: [(&str, &str); 7] = [
+    ("login.username", "Username"),
+    ("login.password", "Password"),
+    ("login.verify", "Password again"),
+    ("login.fullName", "Full name"),
+    ("login.email", "Email"),
+    ("login.setupSecret", "Setup secret"),
+    ("login.submit", "Create and log in"),
+];
+
 /// The elements of the login dialog as it is now.
 fn login_elements(login: &crate::session::Login) -> &'static [(&'static str, &'static str)] {
-    if login.setup.is_some() {
-        &SETUP_ELEMENTS
-    } else {
-        &LOGIN_ELEMENTS
+    match &login.setup {
+        Some(setup) if setup.secret_required => &SETUP_SECRET_ELEMENTS,
+        Some(_) => &SETUP_ELEMENTS,
+        None => &LOGIN_ELEMENTS,
     }
 }
 

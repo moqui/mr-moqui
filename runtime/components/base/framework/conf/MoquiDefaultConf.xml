@@ -35,6 +35,10 @@
     <!-- The address the HTTP listener binds, every address when empty; 127.0.0.1 keeps it local (a dev instance with the
         dev-aide gives code execution to its users: plans/design-dev-aide.md 15). -->
     <default-property name="webapp_http_bind" value=""/>
+    <!-- The Host names (with the port, as the header gives it: 127.0.0.1:8080) a request straight to a listener must
+        name, comma separated, or it is answered 421; empty takes any. The Desktop app's node sets its own loopback
+        names, against DNS rebinding. -->
+    <default-property name="webapp_allowed_hosts" value=""/>
     <default-property name="webapp_http_port" value=""/>
     <default-property name="webapp_https_port" value=""/>
     <default-property name="webapp_https_enabled" value="false"/>

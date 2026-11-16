@@ -127,7 +127,7 @@ along with this software (see the LICENSE.md file). If not, see
             <script>
                 if (adminNeeded.needed) {
                     ec.web.sendJsonResponse({needed: true, minLength: adminNeeded.minLength, minDigits: adminNeeded.minDigits,
-                        minOthers: adminNeeded.minOthers, sessionToken: ec.web.sessionToken})
+                        minOthers: adminNeeded.minOthers, secretRequired: !ec.user.initialAdminLocal, sessionToken: ec.web.sessionToken})
                 } else {
                     ec.web.declineSession()
                     ec.web.sendJsonResponse({needed: false})
@@ -187,6 +187,8 @@ along with this software (see the LICENSE.md file). If not, see
             in as do not count, as create#InitialAdminAccount counts (get#InitialAdminNeeded) -->
         <service-call name="org.moqui.impl.UserServices.get#InitialAdminNeeded" out-map="adminNeeded"/>
         <set field="hasUserAccounts" from="!adminNeeded.needed"/>
+        <!-- from another machine the first administrator takes the setup secret of the startup log (SEC-WEB-08) -->
+        <set field="setupSecretRequired" from="adminNeeded.needed &amp;&amp; !ec.user.initialAdminLocal"/>
         <!-- the test user's password is still 'moqui': verified, not compared to its seed SHA hash, since a login re-hashes it -->
         <set field="testUserAccount" from="ec.entity.find('moqui.security.UserAccount').condition('userId', 'EX_JOHN_DOE').disableAuthz().one()"/>
         <set field="hasTestLogin" from="testUserAccount != null &amp;&amp; ec.user.passwordsMatch('moqui', testUserAccount.get('currentPassword'),
@@ -215,6 +217,8 @@ along with this software (see the LICENSE.md file). If not, see
             <input type="password" name="newPasswordVerify" placeholder="New Password Verify" required autocomplete="new-password">
             <input type="text" name="userFullName" value="${html(ec.web.errorParameters.userFullName || "")}" placeholder="User Full Name" required>
             <input type="text" name="emailAddress" value="${html(ec.web.errorParameters.emailAddress || "")}" placeholder="Email Address" required>
+            ${setupSecretRequired ? '<input type="password" name="setupSecret" placeholder="Setup Secret" required autocomplete="off">'
+                + '<p class="muted">From another machine the setup secret is needed: the server wrote it to its startup log (moqui.log), in the line that begins "No user account exists yet".</p>' : ''}
             <button data-btn="primary" data-size="lg" type="submit">Create Initial Admin Account</button>
         </form>
     </div>
@@ -237,11 +241,13 @@ along with this software (see the LICENSE.md file). If not, see
             "w":{"kind":"textLine","value":${JSON.stringify(ec.web.errorParameters?.userFullName || "")}}},
         {"t":"field","id":"InitialAdminForm.emailAddress","name":"emailAddress","title":"Email Address","required":true,
             "w":{"kind":"textLine","value":${JSON.stringify(ec.web.errorParameters?.emailAddress || "")}}},
+        ${setupSecretRequired ? '{"t":"field","id":"InitialAdminForm.setupSecret","name":"setupSecret","title":"Setup Secret","required":true,"w":{"kind":"password"}},' : ''}
         {"t":"field","id":"InitialAdminForm.submitButton","name":"submitButton","title":"Create Initial Admin Account",
             "w":{"kind":"submit","text":"Create Initial Admin Account"}}
     ]},
     {"t":"text","id":"InitialAdminRules","style":"quote","text":${JSON.stringify("The password: at least " + minLength
-        + " characters, " + minDigits + (minDigits == 1 ? " digit, " : " digits, ") + minOthers + (minOthers == 1 ? " other" : " others"))}}
+        + " characters, " + minDigits + (minDigits == 1 ? " digit, " : " digits, ") + minOthers + (minOthers == 1 ? " other" : " others"))}}${setupSecretRequired
+        ? ',{"t":"text","id":"InitialAdminSecretHint","style":"quote","text":' + JSON.stringify('The setup secret is in the startup log of the server (moqui.log), in the line that begins "No user account exists yet".') + '}' : ''}
 ]]]></text></render-mode>
             </fail-widgets></section>
 

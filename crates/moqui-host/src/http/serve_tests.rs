@@ -377,3 +377,21 @@ impl CloneForRetry for http::Request<axum::body::Body> {
         request
     }
 }
+
+/// SEC-CLI-01: with `webapp_allowed_hosts` a listener answers only for its own names, so a page that rebinds another
+/// name to 127.0.0.1 is refused; a request that did not come straight to a listener (in process, the edge link) is not
+/// asked, and with no list every name is served.
+#[test]
+fn a_listener_with_allowed_hosts_answers_only_for_them() {
+    use moqui_core::web::RequestVia;
+    let mut web = plain_app(Router::new(), ListenLimits::defaults());
+    assert!(super::host_allowed(&web, "rebind.example:51234", RequestVia::Direct));
+    web.allowed_hosts = Some(Arc::new(vec!["127.0.0.1:51234".into(), "localhost:51234".into()]));
+    assert!(super::host_allowed(&web, "127.0.0.1:51234", RequestVia::Direct));
+    assert!(super::host_allowed(&web, "LOCALHOST:51234", RequestVia::Direct));
+    assert!(!super::host_allowed(&web, "rebind.example:51234", RequestVia::Direct));
+    assert!(!super::host_allowed(&web, "127.0.0.1:8080", RequestVia::Direct));
+    assert!(!super::host_allowed(&web, "", RequestVia::Direct));
+    assert!(super::host_allowed(&web, "rebind.example", RequestVia::InProcess));
+    assert!(super::host_allowed(&web, "rebind.example", RequestVia::Edge));
+}
