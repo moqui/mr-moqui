@@ -238,7 +238,8 @@ along with this software (see the LICENSE.md file). If not, see
                 roleEnumId: memberRow.roleEnumId ?? null,
                 agentRef: memberRow.agentRef ?? null, joinedDate: toMillis(memberRow.joinedDate), leftDate: toMillis(memberRow.leftDate),
                 lastReadEventSeq: Number(memberRow.lastReadEventSeq || 0), notificationLevelEnumId: memberRow.notificationLevelEnumId ?? null,
-                isPinned: memberRow.isPinned === 'Y', isMuted: memberRow.isMuted === 'Y'}
+                isPinned: memberRow.isPinned === 'Y', isMuted: memberRow.isMuted === 'Y',
+                archivedEventSeq: memberRow.archivedEventSeq != null ? Number(memberRow.archivedEventSeq) : null}
         ]]></script></actions>
     </service>
 

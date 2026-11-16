@@ -3105,6 +3105,9 @@ const roomTemplate = `
                         <q-item clickable v-close-popup @click="togglePin">
                             <q-item-section avatar><q-icon name="sym_o_keep"></q-icon></q-item-section>
                             <q-item-section>{{member && member.isPinned ? t('Unpin from my rooms') : t('Pin to the top of my rooms')}}</q-item-section></q-item>
+                        <q-item clickable v-close-popup @click="toggleArchive">
+                            <q-item-section avatar><q-icon :name="archivedByMe ? 'sym_o_unarchive' : 'sym_o_archive'"></q-icon></q-item-section>
+                            <q-item-section>{{archivedByMe ? t('Unarchive') : t('Archive')}}</q-item-section></q-item>
                         <q-item clickable v-close-popup @click="markRead(true)">
                             <q-item-section avatar><q-icon name="sym_o_done_all"></q-icon></q-item-section><q-item-section>{{t('Mark as read')}}</q-item-section></q-item>
                         <q-separator></q-separator>
@@ -3532,6 +3535,13 @@ const chatRoom = {
     },
     computed: {
         self() { return this; },
+        // archived by me until a message after the archive
+        archivedByMe() {
+            const seq = this.member && this.member.archivedEventSeq;
+            if (seq == null) return false;
+            const last = this.events.reduce((max, event) => (event.type === 'message' ? Math.max(max, Number(event.eventSeq) || 0) : max), 0);
+            return last <= Number(seq);
+        },
         isDirect() { return !!this.room && this.room.roomTypeEnumId === 'CrtDirect'; },
         // an end-to-end encrypted room (C7): its messages are encrypted and decrypted in this browser
         sealed() { return !!this.room && !!this.room.encrypted; },
@@ -4709,6 +4719,14 @@ const chatRoom = {
                 this.$emit('changed');
             }, () => {});
         },
+        // my own archive: the room leaves my list until a newer message (ChatRoomMember.archivedEventSeq)
+        toggleArchive() {
+            const archived = !this.archivedByMe;
+            this.post('setNotification', { chatRoomId: this.roomId, archived: archived ? 'true' : 'false' }).then(() => {
+                if (this.member) this.member.archivedEventSeq = archived ? this.events.reduce((max, event) => Math.max(max, Number(event.eventSeq) || 0), Number((this.room && this.room.lastEventSeq) || 0)) : null;
+                this.$emit('changed');
+            }, () => {});
+        },
         togglePin() {
             const pinned = !(this.member && this.member.isPinned);
             this.post('setNotification', { chatRoomId: this.roomId, isPinned: pinned ? 'true' : 'false' }).then(() => {
@@ -4892,13 +4910,17 @@ module.exports = {
         filterItems() {
             const unread = this.memberRooms.filter((room) => this.countsOf(room).unread || this.countsOf(room).mentions).length;
             const mentions = this.memberRooms.filter((room) => this.countsOf(room).mentions).length;
+            const archived = this.memberRooms.filter((room) => this.archivedByMe(room)).length;
             return [{ value: 'all', label: t('All') }, { value: 'unread', label: t('Unread'), count: unread }, { value: 'mentions', label: t('Mentions'), count: mentions },
-                { value: 'direct', label: t('Direct') }, { value: 'rooms', label: t('Rooms') }, { value: 'records', label: t('Records') }];
+                { value: 'direct', label: t('Direct') }, { value: 'rooms', label: t('Rooms') }, { value: 'records', label: t('Records') }]
+                .concat(archived || this.filter === 'archived' ? [{ value: 'archived', label: t('Archived'), count: archived }] : []);
         },
         shownRooms() {
             const text = String(this.search || '').trim().toLowerCase();
             return this.rooms.filter((room) => {
                 const counts = this.countsOf(room);
+                // my own archive (ChatRoomMember.archivedEventSeq): only under Archived, or found by a search
+                if (this.filter === 'archived' ? !this.archivedByMe(room) : (!text && this.archivedByMe(room))) return false;
                 if (this.filter === 'unread' && !(counts.unread || counts.mentions)) return false;
                 if (this.filter === 'mentions' && !counts.mentions) return false;
                 if (this.filter === 'direct' && room.roomTypeEnumId !== 'CrtDirect') return false;
@@ -4959,6 +4981,7 @@ module.exports = {
             const names = (room.bridgeNetworkNames || []).join(', ');
             return room.notConnected ? fill(t('Not connected to {names}: messages wait here'), { names }) : fill(t('Also on {names}'), { names });
         },
+        archivedByMe(room) { return room.isMember && room.archivedEventSeq != null && Number(room.lastMessage ? room.lastMessage.eventSeq : 0) <= Number(room.archivedEventSeq); },
         countsOf(room) {
             if (!room.isMember) return { unread: 0, mentions: 0 };
             if (moqui.chat && moqui.chat.state.unread[room.chatRoomId]) return moqui.chat.unreadOf(moqui.chat.state, room.chatRoomId);
@@ -6643,6 +6666,30 @@ module.exports = {
                                                   _createVNode(_component_q_item_section, null, {
                                                     default: _withCtx(() => [
                                                       _createTextVNode(_toDisplayString(_ctx.member && _ctx.member.isPinned ? _ctx.t('Unpin from my rooms') : _ctx.t('Pin to the top of my rooms')), 1)
+                                                    ]),
+                                                    _: 1
+                                                  })
+                                                ]),
+                                                _: 1
+                                              }, 8, ["onClick"])), [
+                                                [_directive_close_popup]
+                                              ]),
+                                              _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                clickable: "",
+                                                onClick: _ctx.toggleArchive
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                    default: _withCtx(() => [
+                                                      _createVNode(_component_q_icon, {
+                                                        name: _ctx.archivedByMe ? 'sym_o_unarchive' : 'sym_o_archive'
+                                                      }, null, 8, ["name"])
+                                                    ]),
+                                                    _: 1
+                                                  }),
+                                                  _createVNode(_component_q_item_section, null, {
+                                                    default: _withCtx(() => [
+                                                      _createTextVNode(_toDisplayString(_ctx.archivedByMe ? _ctx.t('Unarchive') : _ctx.t('Archive')), 1)
                                                     ]),
                                                     _: 1
                                                   })
