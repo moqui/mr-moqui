@@ -148,16 +148,53 @@ fn auth_of(entity: &EntityFacade, job: &moqui_core::entity::EntityValue) -> Resu
 
 /// The active registered runner `token` is: its id and its pool.
 pub fn runner_of(entity: &EntityFacade, token: &str) -> Result<Option<(String, String)>, Error> {
+    Ok(match runner_token(entity, token)? {
+        RunnerToken::Active { runner_id, pool_id, .. } => Some((runner_id, pool_id)),
+        RunnerToken::Expired | RunnerToken::Unknown => None,
+    })
+}
+
+/// What a runner token is now.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RunnerToken {
+    /// An active runner's token within its time: the runner, its pool, and when the token expires (`None`: never).
+    Active {
+        runner_id: String,
+        pool_id: String,
+        expires: Option<i64>,
+    },
+    /// An active runner's token past its time (`git-ci` `runner-token-days`): the runner registers again.
+    Expired,
+    /// Not a runner token this server made, or a revoked runner's.
+    Unknown,
+}
+
+/// What `token` is: an active runner's within its time, an active runner's that expired, or unknown.
+pub fn runner_token(entity: &EntityFacade, token: &str) -> Result<RunnerToken, Error> {
     if !token.starts_with(RUNNER_PREFIX) {
-        return Ok(None);
+        return Ok(RunnerToken::Unknown);
     }
     let _rows = crate::rows_guard();
-    Ok(entity
+    let Some(row) = entity
         .find(RUNNER)?
         .eq("tokenHash", Value::string(hash(token)))
         .eq("statusId", Value::string("active"))
         .one()?
-        .and_then(|row| Some((field(&row, "runnerId")?, field(&row, "runnerPoolId")?))))
+    else {
+        return Ok(RunnerToken::Unknown);
+    };
+    let expires = super::registered::runner_token_expires(&row);
+    if expires.is_some_and(|expires| expires <= now_millis()) {
+        return Ok(RunnerToken::Expired);
+    }
+    let (Some(runner_id), Some(pool_id)) = (field(&row, "runnerId"), field(&row, "runnerPoolId")) else {
+        return Ok(RunnerToken::Unknown);
+    };
+    Ok(RunnerToken::Active {
+        runner_id,
+        pool_id,
+        expires,
+    })
 }
 
 /// The enabled pool of registered runners `token` registers a runner with.

@@ -585,8 +585,8 @@ Options:
 const CI_RUN: &str = "\
 moqui ci-run [--workspace DIR] [--shell SHELL]
 moqui ci-run register [--name NAME] [--platform TEXT]
-moqui ci-run poll [--token-file FILE] [--pass-env NAME,...] [--once] [--interval SECONDS] [--work DIR] [--shell SHELL]
-                  [--keep-processes]
+moqui ci-run poll [--token-file FILE] [--pass-env NAME,...] [--step-user USER] [--once] [--interval SECONDS]
+                  [--work DIR] [--shell SHELL] [--keep-processes]
     The runner of a pipeline job (docs/interfaces/Pipelines.md). With no command it runs the one job
     its environment names, as the server starts it in the job's container: it gets the job, checks
     the commit out shallow with git, restores the caches, runs each step with the shell in the
@@ -597,7 +597,10 @@ moqui ci-run poll [--token-file FILE] [--pass-env NAME,...] [--once] [--interval
     once with the pool's token (the runner token is printed, once), then poll with the runner token,
     kept in a file only the runner's user reads. A registered runner's steps do not get its
     environment: only PATH, HOME, USER, LOGNAME, LANG, LANGUAGE, TZ, TMPDIR, SHELL, TERM, the LC_
-    variables and those --pass-env names, then the job's own variables; never a runner token.
+    variables and those --pass-env names, then the job's own variables; never a runner token. The
+    runner token expires (the server's git-ci runner-token-days, 90); poll rotates it halfway and
+    writes the new one to its token file. With --step-user the runner runs as root and each step as
+    that user, who owns the checkout and its home but cannot read the runner's token file.
 
   MOQUI_CI_SERVER_URL=https://moqui.example.com MOQUI_CI_TOKEN=... MOQUI_CI_JOB_RUN_ID=100123 moqui ci-run
   MOQUI_CI_SERVER_URL=... MOQUI_CI_POOL_TOKEN=... moqui ci-run register --name mac-mini-1 > ~/.moqui-ci-token
@@ -629,6 +632,9 @@ Options
   --interval SECONDS              poll: the wait between asks with no job (10).
   --work DIR                      poll: where each job gets a directory, removed after it
                                   (moqui-ci in the temporary directory).
+  --step-user USER                poll (unix): run each step as USER, not as the runner, which then
+                                  runs as root; the checkout and the steps' home are handed to USER,
+                                  and USER's processes a job left are killed after it.
   --keep-processes                poll: leave the processes of the runner's user a job left running;
                                   by default each is killed after the job (never as root), so a runner
                                   runs as a user of its own.

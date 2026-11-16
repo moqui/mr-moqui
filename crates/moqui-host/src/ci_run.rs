@@ -58,6 +58,11 @@ fn step_home(workspace: &Path) -> Vec<(String, String)> {
     if can_write {
         return Vec::new();
     }
+    job_home(workspace)
+}
+
+/// A `home` beside the workspace, as the steps' `HOME`.
+fn job_home(workspace: &Path) -> Vec<(String, String)> {
     let home = workspace.parent().unwrap_or(workspace).join("home");
     match std::fs::create_dir_all(&home) {
         Ok(()) => vec![("HOME".to_string(), home.to_string_lossy().into_owned())],
@@ -96,14 +101,18 @@ fn run_one(
     workspace: PathBuf,
     shell: Option<String>,
     registered: Option<Vec<String>>,
+    step_user: Option<runner::StepUser>,
 ) -> i32 {
     let transport = HttpTransport::new(server, job_run_id, token);
+    // a step user gets a home of its own beside the workspace, never the runner's (root's)
+    let env = if step_user.is_some() { job_home(&workspace) } else { step_home(&workspace) };
     let options = Options {
-        env: step_home(&workspace),
+        env,
         workspace,
         shell: shell.unwrap_or_else(|| "sh".to_string()),
         inherit_env: registered.is_none(),
         pass_env: registered.unwrap_or_default(),
+        step_user,
         ..Options::default()
     };
     runner::run(&transport, &options)
@@ -113,7 +122,8 @@ fn run_one(
 /// runner's user should read; else `MOQUI_CI_RUNNER_TOKEN`, with a warning, since a process's starting environment can
 /// be read by any process of its user (`/proc/<pid>/environ`), the steps it runs included (plans/Security-Review.md
 /// SEC-GIT-02).
-fn runner_token(args: &[String]) -> Result<String, Error> {
+/// The token, and the file it came from (where a rotated token is written), if any.
+fn runner_token(args: &[String]) -> Result<(String, Option<PathBuf>), Error> {
     let file = option(args, "--token-file").or_else(|| env("MOQUI_CI_RUNNER_TOKEN_FILE").ok());
     if let Some(file) = file {
         let text = std::fs::read_to_string(&file)
@@ -122,14 +132,82 @@ fn runner_token(args: &[String]) -> Result<String, Error> {
         if token.is_empty() {
             return Err(Error::new(format!("moqui ci-run poll: the runner token file {file} is empty")));
         }
-        return Ok(token);
+        return Ok((token, Some(PathBuf::from(file))));
     }
     let token = env("MOQUI_CI_RUNNER_TOKEN")?;
     eprintln!(
         "moqui ci-run poll: the runner token is in MOQUI_CI_RUNNER_TOKEN, which a step can read from this process's \
-         environment; keep it in a file only the runner's user reads and give --token-file or MOQUI_CI_RUNNER_TOKEN_FILE"
+         environment, and a token there cannot be rotated before it expires; keep it in a file only the runner's user \
+         reads and give --token-file or MOQUI_CI_RUNNER_TOKEN_FILE"
     );
-    Ok(token)
+    Ok((token, None))
+}
+
+/// Replace the token file at `path` with `token`: a new file beside it, readable by its owner only, renamed over it, so
+/// a crash leaves the old token or the new one, never part of one.
+fn write_token_file(path: &Path, token: &str) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let name = path.file_name().map_or_else(|| "token".into(), |name| name.to_string_lossy().into_owned());
+    let fresh = path.with_file_name(format!(".{name}.new"));
+    let _ = std::fs::remove_file(&fresh);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&fresh)?;
+    file.write_all(format!("{token}\n").as_bytes())?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::rename(&fresh, path)
+}
+
+/// After a claim's answer, rotate the runner token once its `rotateAfter` has passed: the new token is written to the
+/// token file and used from then on. With no file the token cannot be kept, so the runner says when it expires instead
+/// (once). A failed rotation is said and tried again after the next claim; the old token is good until it expires.
+fn rotate_when_due(server: &str, answer: &serde_json::Value, token: &mut String, file: Option<&Path>, warned: &mut bool) {
+    let Some(after) = answer["rotateAfter"].as_i64() else {
+        return;
+    };
+    if jiff::Timestamp::now().as_millisecond() < after {
+        return;
+    }
+    let Some(file) = file else {
+        if !*warned {
+            eprintln!(
+                "moqui ci-run poll: the runner token is due to be rotated and cannot be, as it is not in a token file; \
+                 it stops working when it expires: give it by --token-file"
+            );
+            *warned = true;
+        }
+        return;
+    };
+    match runner::http::call(server, "rotate", token, &serde_json::json!({})) {
+        Ok((200, rotated)) => {
+            let Some(fresh) = rotated["token"].as_str() else {
+                eprintln!("moqui ci-run poll: the server answered a rotation with no token");
+                return;
+            };
+            // the old token is dead once the server answered: keep the new one even if the file cannot be written
+            if let Err(err) = write_token_file(file, fresh) {
+                eprintln!(
+                    "moqui ci-run poll: the runner token was rotated but could not be written to {}: {err}; it is kept \
+                     in memory only, so register the runner again before restarting it",
+                    file.display()
+                );
+            } else {
+                eprintln!("moqui ci-run poll: the runner token was rotated");
+            }
+            *token = fresh.to_string();
+        }
+        Ok((status, rotated)) => eprintln!(
+            "moqui ci-run poll: rotating the runner token was answered {status}: {}",
+            rotated["error"].as_str().unwrap_or_default()
+        ),
+        Err(err) => eprintln!("moqui ci-run poll: rotating the runner token: {err}"),
+    }
 }
 
 /// The names `--pass-env NAME,...` lets through to a registered runner's steps (repeatable).
@@ -178,7 +256,12 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
         }
         Some("poll") => {
             let server = env("MOQUI_CI_SERVER_URL")?;
-            let runner_token = runner_token(args)?;
+            let (mut runner_token, token_file) = runner_token(args)?;
+            let mut warned = false;
+            let step_user = match option(args, "--step-user") {
+                Some(name) => Some(runner::step_user(&name).map_err(|why| Error::new(format!("moqui ci-run poll: {why}")))?),
+                None => None,
+            };
             let passed = pass_env(args);
             let once = args.iter().any(|arg| arg == "--once");
             let interval = option(args, "--interval")
@@ -192,18 +275,26 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
                 let claimed = runner::http::call(&server, "claim", &runner_token, &serde_json::json!({}));
                 match claimed {
                     Ok((200, answer)) => {
+                        rotate_when_due(&server, &answer, &mut runner_token, token_file.as_deref(), &mut warned);
                         if let (Some(job), Some(token)) = (answer["jobRunId"].as_str(), answer["token"].as_str()) {
                             let dir = work.join(job);
                             let _ = std::fs::remove_dir_all(&dir);
                             let began = std::time::Instant::now();
-                            let code =
-                                run_one(&server, job, token, dir.join("src"), shell.clone(), Some(passed.clone()));
+                            let code = run_one(
+                                &server,
+                                job,
+                                token,
+                                dir.join("src"),
+                                shell.clone(),
+                                Some(passed.clone()),
+                                step_user.clone(),
+                            );
                             eprintln!("job run {job} ended with exit code {code}");
                             let _ = std::fs::remove_dir_all(&dir);
                             // a registered runner is not cleaned between jobs but for this: what the job left
                             // running does not see the next one (the runner runs as a user of its own)
                             if !keep_processes {
-                                let killed = runner::end_leftovers(began.elapsed().as_secs() + 1);
+                                let killed = runner::end_leftovers(began.elapsed().as_secs() + 1, step_user.as_ref());
                                 if killed > 0 {
                                     eprintln!("killed {killed} processes job run {job} left");
                                 }
@@ -245,7 +336,31 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
                 workspace,
                 option(args, "--shell"),
                 None,
+                None,
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// A rotated runner token replaces the file whole, readable by its owner only (SEC-GIT-02).
+    #[test]
+    fn a_rotated_token_replaces_the_token_file() {
+        let dir = std::env::temp_dir().join(format!("moqui-ci-token-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("token");
+        std::fs::write(&file, "mqcr_old\n").unwrap();
+        super::write_token_file(&file, "mqcr_new").unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "mqcr_new\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        // nothing is left beside it
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
