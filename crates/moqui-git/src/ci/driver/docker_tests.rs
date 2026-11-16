@@ -78,7 +78,7 @@ fn answer(method: &str, target: &str, body: &serde_json::Value, seen: &Seen) -> 
             ])
             .to_string(),
         ),
-        ("GET", "/v1.40/containers/running1/json") => (
+        ("GET", "/v1.40/containers/a1/json") => (
             200,
             json!({"State": {"Status": "running", "Running": true, "ExitCode": 0}}).to_string(),
         ),
@@ -106,7 +106,10 @@ fn answer(method: &str, target: &str, body: &serde_json::Value, seen: &Seen) -> 
                 "named-user:1" => "app",
                 _ => "1000:1000",
             };
-            (200, json!({"Config": {"User": user}}).to_string())
+            (
+                200,
+                json!({"Config": {"User": user, "Labels": {"moqui.ci.server": "this"}}}).to_string(),
+            )
         }
         ("GET", _) => (404, json!({"message": "No such container"}).to_string()),
         ("POST", path) if path.ends_with("/start") => (204, String::new()),
@@ -485,11 +488,7 @@ fn the_run_services_speak_the_docker_api() {
     );
 
     // inspect: running, exited with its code, missing
-    for (id, state, exit) in [
-        ("running1", "running", ""),
-        ("dead1", "exited", "137"),
-        ("nope", "missing", ""),
-    ] {
+    for (id, state, exit) in [("a1", "running", ""), ("dead1", "exited", "137"), ("ff", "missing", "")] {
         let (out, errors) = api.call(inspect_run_docker, &[("instanceRef", Value::string(id))]);
         assert!(errors.is_empty(), "{errors}");
         assert_eq!(to_plain_string(&out["state"]), state);
@@ -518,18 +517,50 @@ fn the_run_services_speak_the_docker_api() {
         .iter()
         .map(|(method, target, _)| format!("{method} {target}"))
         .collect();
+    // the container named is asked for its labels first: only one this server made is removed
+    assert_eq!(targets[0], "GET /v1.40/containers/c0/json", "{targets:?}");
     assert!(
-        targets[0].starts_with("GET /v1.40/containers/json?all=true&filters="),
+        targets[1].starts_with("GET /v1.40/containers/json?all=true&filters="),
         "{targets:?}"
     );
-    assert!(targets[0].contains("moqui.ci.job%3DJ1"), "{targets:?}");
+    assert!(targets[1].contains("moqui.ci.job%3DJ1"), "{targets:?}");
     // only this server's containers of that job run
-    assert!(targets[0].contains("moqui.ci.server%3Dthis"), "{targets:?}");
+    assert!(targets[1].contains("moqui.ci.server%3Dthis"), "{targets:?}");
     assert!(
         targets.contains(&"DELETE /v1.40/containers/c0?force=true&v=true".to_string()),
         "{targets:?}"
     );
     assert_eq!(targets.last().unwrap(), "DELETE /v1.40/networks/moqui-ci-J1-net");
+
+    // SEC-GIT-17: an instanceRef that is not a container id goes into no path, and a container without this server's
+    // label is not removed
+    for bad in ["../images/x", "c0?force=true", "c0/../../info"] {
+        api.seen.lock().unwrap().clear();
+        let (_, errors) = api.call(inspect_run_docker, &[("instanceRef", Value::string(bad))]);
+        assert!(errors.contains("is not a container id"), "{errors}");
+        let (_, errors) = api.call(remove_run_docker, &[("instanceRef", Value::string(bad))]);
+        assert!(errors.contains("is not a container id"), "{errors}");
+        assert!(api.seen().is_empty(), "{:?}", api.seen());
+    }
+    api.seen.lock().unwrap().clear();
+    let (_, errors) = api.call(remove_run_docker, &[("instanceRef", Value::string("dead1"))]);
+    assert!(errors.is_empty(), "{errors}");
+    assert!(
+        !api.seen().iter().any(|(method, _, _)| method == "DELETE"),
+        "{:?}",
+        api.seen()
+    );
+    // a listing is held to this server's label whatever filterLabels says
+    api.seen.lock().unwrap().clear();
+    let (_, errors) = api.call(
+        cleanup_runs_docker,
+        &[
+            ("labelName", Value::string("moqui.ci.job")),
+            ("filterLabels", map(&[("moqui.ci.server", "another")])),
+        ],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    assert!(api.seen()[0].1.contains("moqui.ci.server%3Dthis"), "{:?}", api.seen());
 
     // cleanup: this server's containers whose job run is not kept
     api.seen.lock().unwrap().clear();
@@ -579,7 +610,7 @@ fn a_host_is_reached_over_a_unix_socket() {
     let (out, errors) = api.call(start_run_docker, &start_parameters("moqui-build:1"));
     assert!(errors.is_empty(), "{errors}");
     assert_eq!(to_plain_string(&out["instanceRef"]), "c0");
-    let (out, _) = api.call(inspect_run_docker, &[("instanceRef", Value::string("running1"))]);
+    let (out, _) = api.call(inspect_run_docker, &[("instanceRef", Value::string("a1"))]);
     assert_eq!(to_plain_string(&out["state"]), "running");
     assert_eq!(api.seen()[0].1, "/v1.40/containers/create?name=moqui-ci-J1");
     let _ = std::fs::remove_file(&path);
