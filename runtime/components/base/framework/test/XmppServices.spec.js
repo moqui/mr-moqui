@@ -149,6 +149,32 @@ feature("a session and its FAST token go with the app password signed in with: r
     }
 })
 
+// SEC-COM-15: an account past its terminateDate signs in to XMPP no more, and its session ends at the next check
+feature("a session ends when its account passes its terminate date", {
+    when() {
+        ec.user.internalLoginUser(username(C))
+        const appPasswordId = sys(() => ec.service.sync().name("org.moqui.impl.UserServices.create#UserAppPassword").parameter("name", "terminal").call()).appPasswordId
+        const check = {userId: C, appPasswordId}
+        const before = as(null, "check#Credential", check)
+        const terminate = (date) => sys(() => {
+            const account = ec.entity.find("moqui.security.UserAccount").condition("userId", C).one()
+            account.terminateDate = date
+            account.update()
+        })
+        terminate(new Date(Date.now() - 60000))
+        const after = as(null, "check#Credential", check)
+        const account = as(null, "get#Account", {username: username(C)})
+        terminate(null)
+        return {appPasswordId, before, after, account}
+    },
+    then({appPasswordId, before, after, account}) {
+        !!appPasswordId
+        before.valid == true
+        after.valid == false
+        account.canLogin == false
+    }
+})
+
 feature("the archive and an event by its clientRef are a member's; another user is refused with the same parameters", {
     when() {
         const params = {chatRoomId: room, limit: 10, latest: true}

@@ -32,7 +32,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="Account" authenticate="false" allow-remote="false">
         <description>Internal: the account of a username (compared without case) and whether it may sign in (not disabled,
-            not past its disabledDateTime).</description>
+            not past its disabledDateTime, not past its terminateDate).</description>
         <in-parameters><parameter name="username" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="userId"/><parameter name="username"/><parameter name="displayName"/>
@@ -49,7 +49,9 @@ along with this software (see the LICENSE.md file). If not, see
             if (!account) return
             userId = account.userId; username = account.username; displayName = account.userFullName || account.username
             const until = account.disabledDateTime ? Number(account.disabledDateTime) : null
-            canLogin = account.disabled !== 'Y' || (until != null && until < Number(ec.user.nowTimestamp))
+            // an account past its terminateDate is closed, as the sign-in gate has it (SEC-COM-15)
+            const closed = account.terminateDate != null && Number(account.terminateDate) < Number(ec.user.nowTimestamp)
+            canLogin = !closed && (account.disabled !== 'Y' || (until != null && until < Number(ec.user.nowTimestamp)))
         ]]></script></actions>
     </service>
 
@@ -75,7 +77,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="check" noun="Credential" authenticate="false" allow-remote="false">
         <description>Internal: whether a signed-in XMPP session may go on: the account may still sign in (get#Account's
-            canLogin) and the app password it signed in with (appPasswordId) is the user's and not revoked. The session
+            canLogin: not disabled, not past its terminateDate) and the app password it signed in with (appPasswordId) is the user's and not revoked. The session
             asks every minute and ends when valid is false.</description>
         <in-parameters><parameter name="userId" required="true"/><parameter name="appPasswordId"/></in-parameters>
         <out-parameters><parameter name="valid" type="Boolean"/></out-parameters>
@@ -85,6 +87,8 @@ along with this software (see the LICENSE.md file). If not, see
             if (!account || !appPasswordId) return
             const until = account.disabledDateTime ? Number(account.disabledDateTime) : null
             if (account.disabled === 'Y' && !(until != null && until < Number(ec.user.nowTimestamp))) return
+            // past its terminateDate the account is closed and its session ends (SEC-COM-15), as a web session does
+            if (account.terminateDate != null && Number(account.terminateDate) < Number(ec.user.nowTimestamp)) return
             const password = ec.entity.find('moqui.security.UserAppPassword').condition('appPasswordId', appPasswordId).disableAuthz().one()
             valid = !!password && password.userId === userId && !password.revokedDate
         ]]></script></actions>
