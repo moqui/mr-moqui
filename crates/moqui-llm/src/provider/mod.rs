@@ -1662,40 +1662,47 @@ pub(crate) fn read_capped(
     (String::from_utf8_lossy(&bytes).into_owned(), end)
 }
 
-/// An endpoint URL with a private address that is not loopback needs `allow-private-network` (or `local`); loopback
+/// An endpoint URL with an internal address that is not loopback (`moqui_lib::net::internal_address`: private,
+/// link-local, shared and the other ranges that are not public) needs `allow-private-network` (or `local`); loopback
 /// (LM Studio, llama.cpp and Ollama on the same machine) is always allowed. The host is read as the URL parser reads
 /// it, so a numeric host (`http://2852039166/`) is the address it stands for, and an IPv4-mapped IPv6 address is the
-/// IPv4 one. Only addresses written in the URL are checked, with no lookup: the URL is admin configuration.
+/// IPv4 one. A host name is looked up and each of its addresses checked (SEC-OUT-11); a name that does not resolve is
+/// left to the call, which fails. The lookup is the call's own resolver's to repeat: the URL is admin configuration.
 pub(crate) fn check_address(target: &Target) -> Result<(), String> {
     let endpoint = &target.endpoint;
     if endpoint.protocol == ProtocolId::Fake || endpoint.allow_private_network || endpoint.local {
         return Ok(());
     }
-    let Some(mut address) = moqui_lib::http::host_address(&endpoint.url) else {
-        return Ok(());
+    let addresses = match moqui_lib::http::host_address(&endpoint.url) {
+        Some(address) => vec![address],
+        None => resolved(&endpoint.url),
     };
-    if let std::net::IpAddr::V6(v6) = address {
-        if let Some(v4) = v6.to_ipv4_mapped() {
-            address = std::net::IpAddr::V4(v4);
-        }
-    }
-    let private = match address {
-        std::net::IpAddr::V4(v4) => {
-            let [a, b, ..] = v4.octets();
-            v4.is_private() || v4.is_link_local() || (a == 100 && (64..128).contains(&b)) || v4.is_unspecified()
-        }
-        std::net::IpAddr::V6(v6) => {
-            let first = v6.segments()[0];
-            (first & 0xfe00) == 0xfc00 || (first & 0xffc0) == 0xfe80 || v6.is_unspecified()
-        }
+    let refused = |address: &std::net::IpAddr| {
+        let address = match address {
+            std::net::IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(*address, std::net::IpAddr::V4),
+            _ => *address,
+        };
+        moqui_lib::net::internal_address(address) && !address.is_loopback()
     };
-    if private && !address.is_loopback() {
+    if let Some(address) = addresses.iter().find(|address| refused(address)) {
         return Err(format!(
             "endpoint {} is at the private address {address}; set allow-private-network (allowPrivateNetwork) to call it",
             endpoint.id
         ));
     }
     Ok(())
+}
+
+/// The addresses the host name of `url` resolves to; none when it has no name or does not resolve.
+fn resolved(url: &str) -> Vec<std::net::IpAddr> {
+    use std::net::ToSocketAddrs;
+    let Some((host, port)) = moqui_lib::http::host_and_port(url) else {
+        return Vec::new();
+    };
+    (host.as_str(), port)
+        .to_socket_addrs()
+        .map(|found| found.map(|address| address.ip()).collect())
+        .unwrap_or_default()
 }
 
 /// The calls in flight per endpoint, against the endpoint's `max-concurrent` and the model's `max-concurrency`. Counted

@@ -311,7 +311,7 @@ impl RestClient {
     /// Refuse only link-local and cloud metadata addresses (`moqui_lib::net::link_local_address`), checked as
     /// [`deny_internal_addresses`](Self::deny_internal_addresses) checks: for a request that may go to the private
     /// network, such as a monitoring scrape of an exporter beside the server. `deny_internal_addresses(true)` refuses
-    /// these too.
+    /// these too. Unlike that guard this one keeps a proxy named in the environment, which then resolves the name.
     #[must_use]
     pub fn deny_link_local_addresses(mut self, deny: bool) -> Self {
         if deny && self.guard == AddressGuard::Off {
@@ -571,9 +571,9 @@ impl RestClient {
             ));
         match self.guard {
             AddressGuard::Off => {}
-            AddressGuard::LinkLocal => {
-                builder = builder.no_proxy().dns_resolver(std::sync::Arc::new(NotLinkLocal));
-            }
+            // A proxy named in the environment stays in use here: the name is then the proxy's to resolve, and only an
+            // address written out is checked.
+            AddressGuard::LinkLocal => builder = builder.dns_resolver(std::sync::Arc::new(NotLinkLocal)),
             AddressGuard::Internal => builder = builder.no_proxy().dns_resolver(std::sync::Arc::new(PublicOnly)),
         }
         if let Some(path) = &self.unix_socket {
@@ -828,6 +828,15 @@ pub fn host_address(url: &str) -> Option<std::net::IpAddr> {
         .ok()
 }
 
+/// The host of `url` as the URL parser reads it (no brackets on an IPv6 address) and its port, or the scheme's
+/// default; `None` for a URL that does not parse or has no host. No lookup.
+pub fn host_and_port(url: &str) -> Option<(String, u16)> {
+    let parsed = reqwest::Url::parse(url).ok()?;
+    let host = parsed.host_str().filter(|host| !host.is_empty())?;
+    let port = parsed.port_or_known_default()?;
+    Some((host.trim_start_matches('[').trim_end_matches(']').to_string(), port))
+}
+
 /// Whether the host of `url` is an internal IP address written out (a name is not: only a lookup tells). The URL
 /// parser has already put an IPv4 host in dotted form, however it was written.
 pub fn internal_literal(url: &reqwest::Url) -> bool {
@@ -837,7 +846,8 @@ pub fn internal_literal(url: &reqwest::Url) -> bool {
 /// The resolver of a client that denies internal addresses: the system lookup, failing when any address is
 /// internal. The lookup runs on its own thread, as reqwest's own resolver does, so it does not hold up the client's
 /// runtime. Public for a client built outside [`RestClient`] (the SSO client's); such a client checks an address
-/// written out itself ([`internal_literal`]), which no resolver sees.
+/// written out itself ([`internal_literal`]), which no resolver sees, and calls `no_proxy()`, since a proxy resolves
+/// the name itself.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PublicOnly;
 
