@@ -839,7 +839,9 @@ authorization disabled):
   followed. An SSH push connects to an address the name resolved to in the one check that all its addresses are
   public, not to the name again (the host key is pinned). HTTPS is git's smart HTTP (`GET info/refs?service=git-receive-pack`, then `POST git-receive-pack`, the
   request written to a file under `runtime/tmp` and sent from it), with 60 seconds to read the refs (at most 32 MiB)
-  and 30 minutes for the push, its report at most 1 MiB. Refused in sim mode.
+  and 30 minutes for the push, its report at most 1 MiB. Over SSH the same: the refs at most 32 MiB, the report at
+  most 1 MiB, 30 minutes for the whole command (each read at most 120 seconds), and at most 64 KiB of its stderr kept.
+  Refused in sim mode.
 
 **The older push mirror.** A repository with a `pushMirrorRemoteId` is pushed to another server (GitHub, GitLab, another Moqui) after each push,
 fetch, import or write, by the framework's post-receive rule (`push#GitMirror`; Push Mirror Now on the repository's
