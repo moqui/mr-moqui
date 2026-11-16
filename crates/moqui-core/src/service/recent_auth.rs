@@ -24,7 +24,8 @@
 //! - `send#ReauthCode`: a code to an email or SMS factor, once the password was checked.
 //!
 //! - `require#RecentAuth`: the same rule as a refusal, for the services that make or end a credential or a sign-in
-//!   factor of the caller's own account ([`require_recent_auth`]).
+//!   factor of the caller's own account, and for an administrator's action on another account (its password, codes,
+//!   factors, email or provider link, its credentials revoked, Login as) ([`require_recent_auth`]).
 //!
 //! The ChatKeys services refuse a cross-signing reset, a new or deleted key backup and a device revoke without it
 //! (`reauthRequired`); the browser's piece is `js/WebrootReAuth.js` over the `/ReAuth` transitions, and a form refused for

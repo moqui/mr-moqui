@@ -235,6 +235,12 @@ MX: STARTTLS when offered, MTA-STS honored (with `mode: enforce`, only the polic
 certificate), a 4xx tried again from 5 minutes (`mail_delivery_retry_seconds`) doubling to 4 hours, for
 `mail_delivery_days` (5).
 
+- **Required TLS.** STARTTLS is opportunistic: an MX that does not offer it, or whose handshake fails, gets the
+  message in clear text, and its certificate is not checked, unless the domain publishes an MTA-STS `enforce` policy.
+  `mail_mx_require_tls` names recipient domains (comma-separated, `*` for every one) that get mail only over
+  STARTTLS with a certificate valid for the MX host: without it the try waits as for a 4xx, and the message bounces
+  after `mail_delivery_days`. Empty by default.
+
 - **Bounces.** Set `edge_mail_bounce_domain` (as `bounces.example.com`, with its MX at the edge node) and each message
   goes from `bounce+<item>@` that domain, so a remote server's later bounce names the message. This replaces an app's
   own bounce address (`send#EmailTemplate`'s `bounceAddress`), so an app that reads its own bounces also reads the

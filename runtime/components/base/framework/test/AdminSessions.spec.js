@@ -9,6 +9,15 @@
 const S = "org.moqui.admin.IdentityServices."
 const operator = "spec.sessions.operator"
 const operatorId = "SPEC_SES_OPERATOR"
+const operatorPassword = "Spec-sessions-9!"
+// the signed-in user confirms who they are (the browser's ReAuth transition calls it with authorization disabled)
+const confirm = () =>
+    ec.service
+        .sync()
+        .name("org.moqui.sso.RecentAuthServices.reauthenticate#User")
+        .parameters({password: operatorPassword})
+        .disableAuthz()
+        .call()
 const viewerId = "SPEC_SES_VIEWER"
 const targetId = "SPEC_SES_TARGET"
 const sealedId = "SPEC_SES_SEALED"
@@ -58,7 +67,9 @@ spec({
     setupSpec() {
         ec.user.internalLoginUser("john.doe")
         ec.artifactExecution.disableAuthz()
-        make("moqui.security.UserAccount", {userId: operatorId, username: operator, userFullName: "Spec identity operator"})
+        // the operator's password, to confirm who they are before ending another account's credentials
+        make("moqui.security.UserAccount", {userId: operatorId, username: operator, userFullName: "Spec identity operator",
+            currentPassword: ec.user.hashPassword(operatorPassword), passwordHashType: "argon2", passwordSalt: "", passwordBase64: "N"})
         make("moqui.security.UserAccount", {
             userId: viewerId,
             username: "spec.sessions.viewer",
@@ -213,16 +224,25 @@ feature("revoke#AccountAccess ends another user's sessions, keys, app passwords,
     when() {
         const refused = as("spec.sessions.viewer", () => invoke(S + "revoke#AccountAccess", {userId: targetId}))
         const self = as(operator, () => invoke(S + "revoke#AccountAccess", {userId: operatorId}))
-        const revoked = as(operator, () => invoke(S + "revoke#AccountAccess", {userId: targetId, reason: "Device lost"}))
+        // a session alone (no sign-in in the last five minutes) ends no credential; after confirming who they are, it does
+        const stale = as(operator, () => invoke(S + "revoke#AccountAccess", {userId: targetId, reason: "Device lost"}))
+        const staleKept = one("moqui.security.UserLoginKey", {loginKey: "SPEC_SES_KEY_HASH"}).thruDate == null &&
+            one("moqui.server.HttpSession", {sessionId: "SPEC_SES_SESSION_1"}) != null
+        const revoked = as(operator, () => {
+            confirm()
+            return invoke(S + "revoke#AccountAccess", {userId: targetId, reason: "Device lost"})
+        })
         const sealed = as(operator, () => ({
             access: invoke(S + "revoke#AccountAccess", {userId: sealedId}),
             session: invoke(S + "revoke#Sessions", {sessionKeyList: [visit(6)]})
         }))
-        return {refused, self, revoked, sealed}
+        return {refused, self, stale, staleKept, revoked, sealed}
     },
-    then({refused, self, revoked, sealed}) {
+    then({refused, self, stale, staleKept, revoked, sealed}) {
         refused.error.includes("ADMIN_IDENTITY_MANAGE")
         self.error.includes("your account settings")
+        stale.error.includes("Confirm it is you") && stale.reasonCode == "reauthRequired"
+        staleKept
         // an account holding a sealed permission the operator lacks is not the operator's to sign out
         sealed.access.error.includes("ADMIN_IDENTITY_GLOBAL")
         sealed.session.refusedCount == 1 && sealed.session.sessionCount == 0

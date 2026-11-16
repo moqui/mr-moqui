@@ -528,6 +528,14 @@ function revokeAccountAccess(p) {
         : Array.from(p.kindList || accessKinds)
               .map(text)
               .filter(kind => accessKinds.includes(kind))
+    // ending another account's keys, tokens, app passwords or phones asks the administrator's sign-in in the last five
+    // minutes (require#RecentAuth: its error and the X-Moqui-Reauth header, which a browser form answers by asking and
+    // sending again; a job or a caller with authorization disabled passes); ending sessions alone does not, as
+    // revoke#Sessions
+    if (kinds.some(kind => kind !== "sessions")) {
+        const recent = ec.service.sync().name("org.moqui.sso.RecentAuthServices.require#RecentAuth").call()?.recent
+        if (!recent) return {revokedCounts: {}, failedKinds: [], reasonCode: "reauthRequired"}
+    }
     const counts = {}
     const failed = []
     for (const kind of kinds) {

@@ -175,6 +175,10 @@ along with this software (see the LICENSE.md file). If not, see
                 directory unless absolute. Otherwise a relative path of letters, digits, '.', '_' and '-' segments
                 under runtime/git-export. The repository's localPath (default runtime/git/repositoryId) when
                 empty</description></parameter>
+            <parameter name="underExportDir" type="Boolean" default="false"><description>Hold targetPath under
+                runtime/git-export with authorization disabled too: a caller that checked its own right first
+                (FileServices.export#Drive, the view right on the drive) and calls with authorization disabled keeps the
+                location rule.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="exportPath"/>

@@ -551,6 +551,19 @@ pub fn redacted(url: &str) -> String {
     moqui_lib::http::redacted(url)
 }
 
+/// Whether `url` is at or under the base URL `base` (`moqui_lib::http::url_under_base`: the same scheme, host and port,
+/// a path at or below the base's).
+#[cfg(feature = "http")]
+pub fn url_under_base(url: &str, base: &str) -> bool {
+    moqui_lib::http::url_under_base(url, base)
+}
+
+/// Without the URL parser no URL is taken as under a base: no HTTP is built into this host either.
+#[cfg(not(feature = "http"))]
+pub fn url_under_base(_url: &str, _base: &str) -> bool {
+    false
+}
+
 /// `scheme://host/path` with no user, password, query, or fragment, for messages and logs.
 #[cfg(not(feature = "http"))]
 pub fn redacted(url: &str) -> String {

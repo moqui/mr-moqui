@@ -2,7 +2,8 @@
 // SEC-WEB-12; org.moqui.impl.UserServices check#AccountAction, org.moqui.sso.RecentAuthServices require#RecentAuth): a code
 // stands in for the old password only in a pre-authenticated session, never a signed-in one; issuing codes and adding or
 // ending a factor need a recent sign-in; another account's factors need ADMIN_IDENTITY_MANAGE and are refused when that
-// account holds access the caller lacks (heldBeyond), as is setting its password or changing its email; a verified
+// account holds access the caller lacks (heldBeyond), as is setting its password or changing its email, and an
+// administrator acting on another account (its codes, factors, password, email) needs a recent sign-in too; a verified
 // authenticator's secret is not given again; a code is sent at most once a half minute; an
 // identity operator gives no bundle to their own account; a session changes its own email address or provider link only
 // after a recent sign-in. The Rust side (keys, tokens, app passwords) is in
@@ -151,7 +152,7 @@ feature("a signed-in session's code does not stand in for the old password; issu
     }
 })
 
-feature("another account's factors need ADMIN_IDENTITY_MANAGE, and an account holding access the caller lacks is refused", {
+feature("another account's factors need ADMIN_IDENTITY_MANAGE and a recent sign-in, and an account holding access the caller lacks is refused", {
     when() {
         ec.user.logoutUser()
         signIn(OTHER)
@@ -160,14 +161,21 @@ feature("another account's factors need ADMIN_IDENTITY_MANAGE, and an account ho
         const notYoursEnd = call("invalidate#UserAuthcFactorEntry", {userId: OWNER, factorId: TOTP})
         signIn(ADMIN)
         const info = call("get#UserAuthcFactorInfo", {userId: OWNER})
-        const adminCodes = call("create#SingleUseAuthcCodes", {userId: OTHER, numberOfCodes: 2})
+        // an administrator signed in by a session alone (no recent sign-in): another account's codes and password are refused
+        const staleCodes = call("create#SingleUseAuthcCodes", {userId: OTHER, numberOfCodes: 2})
+        const stalePassword = call("update#Password", {userId: OTHER, oldPassword: "-", newPassword: "Stale-set-9!", newPasswordVerify: "Stale-set-9!"})
+        const staleUnchanged = passwordIs(OTHER, PASSWORD)
         const heldCodes = call("create#SingleUseAuthcCodes", {userId: SEALED, numberOfCodes: 2})
         const heldEnd = call("invalidate#UserAuthcFactorEntry", {userId: SEALED, factorId: TOTP + "_S"})
         const heldPassword = call("update#Password", {userId: SEALED, oldPassword: "-", newPassword: "Taken-9!x", newPasswordVerify: "Taken-9!x"})
         const heldEmail = call("update#UserAccount", {userId: SEALED, emailAddress: "taken@example.com"})
+        // after confirming who they are, the same actions go through
+        const adminConfirmed = confirm()
+        const adminCodes = call("create#SingleUseAuthcCodes", {userId: OTHER, numberOfCodes: 2})
         const otherPassword = call("update#Password", {userId: OTHER, oldPassword: "-", newPassword: "Admin-set-9!", newPasswordVerify: "Admin-set-9!"})
         const ownByAdmin = call("update#Password", {userId: ADMIN, oldPassword: "not-it", newPassword: "Taken-9!x", newPasswordVerify: "Taken-9!x"})
-        return {notYours, notYoursInfo, notYoursEnd, totpKept: inDate(TOTP), info, adminCodes, heldCodes, heldEnd, heldKept: inDate(TOTP + "_S"),
+        return {notYours, notYoursInfo, notYoursEnd, totpKept: inDate(TOTP), info, staleCodes, stalePassword, staleUnchanged, adminConfirmed,
+            adminCodes, heldCodes, heldEnd, heldKept: inDate(TOTP + "_S"),
             heldPassword, sealedUnchanged: passwordIs(SEALED, PASSWORD), heldEmail,
             sealedEmail: one("moqui.security.UserAccount", {userId: SEALED}).emailAddress, otherPassword, otherSet: passwordIs(OTHER, "Admin-set-9!"),
             ownByAdmin, adminUnchanged: passwordIs(ADMIN, PASSWORD)}
@@ -179,6 +187,12 @@ feature("another account's factors need ADMIN_IDENTITY_MANAGE, and an account ho
         r.totpKept
         r.info.errors == ""
         r.info.secondFactorRequired == true
+        r.staleCodes.errors.includes("Confirm it is you")
+        r.staleCodes.singleUseCodes == null
+        r.stalePassword.errors.includes("Confirm it is you")
+        r.stalePassword.updateSuccessful != true
+        r.staleUnchanged
+        r.adminConfirmed.reauthenticated == true
         r.adminCodes.errors == ""
         r.adminCodes.singleUseCodes.length == 2
         r.heldCodes.errors.includes("SQL_RUNNER_WEB")
@@ -237,7 +251,7 @@ feature("an identity operator gives no bundle to their own account", {
     }
 })
 
-feature("a session changes its own email address or provider link only after a recent sign-in; an administrator changes another's", {
+feature("a session changes its own email address or provider link only after a recent sign-in; an administrator changes another's after one too", {
     when() {
         const account = () => one("moqui.security.UserAccount", {userId: OTHER})
         // the spec's password again and no factor (an earlier feature set another password and issued codes)
@@ -261,10 +275,18 @@ feature("a session changes its own email address or provider link only after a r
         const afterConfirm = account().emailAddress
         ec.user.logoutUser()
         signIn(ADMIN)
+        // another account's email address: an administrator too confirms who they are first
+        const adminRefused = call("update#UserAccount", {userId: OTHER, emailAddress: before.emailAddress, userFullName: before.userFullName})
+        const afterAdminRefusal = account().emailAddress
+        confirm()
         const byAdmin = call("update#UserAccount", {userId: OTHER, emailAddress: before.emailAddress, userFullName: before.userFullName})
-        return {nameOnly, emailRefused, linkRefused, afterRefusal, before, confirmed, emailChanged, afterConfirm, byAdmin, restored: account().emailAddress}
+        return {nameOnly, emailRefused, linkRefused, afterRefusal, before, confirmed, emailChanged, afterConfirm, adminRefused,
+            afterAdminRefusal, byAdmin, restored: account().emailAddress}
     },
-    then({nameOnly, emailRefused, linkRefused, afterRefusal, before, confirmed, emailChanged, afterConfirm, byAdmin, restored}) {
+    then({nameOnly, emailRefused, linkRefused, afterRefusal, before, confirmed, emailChanged, afterConfirm, adminRefused, afterAdminRefusal,
+            byAdmin, restored}) {
+        adminRefused.errors.includes("Confirm it is you")
+        afterAdminRefusal == "guard-other-new@example.com"
         nameOnly.errors == ""
         emailRefused.errors.includes("Confirm it is you")
         linkRefused.errors.includes("Confirm it is you")

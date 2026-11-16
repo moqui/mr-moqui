@@ -314,3 +314,38 @@ fn get_and_post_json_show_method_url_and_body() {
     );
     assert!(client.transport.get().is_none());
 }
+
+/// A header a script names by property goes only to a URL under its base (`url_under_base`): the same scheme, host and
+/// port, and a path at or below the base's; never a host that only starts with the base's, a user part that names
+/// another host, or a path that only shares a prefix.
+#[test]
+fn a_url_is_under_a_base_only_on_its_origin_and_below_its_path() {
+    let base = "https://pass.example.com";
+    for url in [
+        "https://pass.example.com/rest/s1/pass/v1/sites/a/x",
+        "https://PASS.example.com:443/rest",
+        "https://pass.example.com",
+    ] {
+        assert!(url_under_base(url, base), "{url}");
+    }
+    for url in [
+        "https://pass.example.com.evil/rest",
+        "https://pass.example.com@evil.example/rest",
+        "https://user@pass.example.com/rest",
+        "https://evil.example/https://pass.example.com/",
+        "http://pass.example.com/rest",
+        "https://pass.example.com:8443/rest",
+        "https://other.example.com/rest",
+        "not a url",
+    ] {
+        assert!(!url_under_base(url, base), "{url}");
+    }
+    let pathed = "https://pass.example.com/api/";
+    assert!(url_under_base("https://pass.example.com/api/v1", pathed));
+    assert!(url_under_base("https://pass.example.com/api", pathed));
+    assert!(!url_under_base("https://pass.example.com/apiv2/x", pathed));
+    assert!(!url_under_base("https://pass.example.com/api/../admin", pathed));
+    assert!(!url_under_base("https://pass.example.com/api/%2e%2e/admin", pathed));
+    assert!(!url_under_base("https://pass.example.com/other", pathed));
+    assert!(!url_under_base("https://pass.example.com/x", "edge:"));
+}

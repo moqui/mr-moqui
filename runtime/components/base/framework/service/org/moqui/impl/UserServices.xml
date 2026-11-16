@@ -137,9 +137,10 @@ along with this software (see the LICENSE.md file). If not, see
                     !['userId', 'userFullName', 'locale', 'timeZone', 'currencyUomId', 'lastUpdatedStamp'].includes(name) &amp;&amp;
                     context[name] != null &amp;&amp; context[name] !== '' &amp;&amp; String(context[name]) != String(userAccount.get(name) ?? ''))"/>
             <!-- The email address (where reset#Password mails) and the provider link (externalUserId: who signs in through SSO)
-                recover or take over the account: a session changes them on its own account only after signing in, or
-                confirming who it is, in the last five minutes (check#AccountAction recentAuth, require#RecentAuth; the
-                browser's form asks and sends again on X-Moqui-Reauth). Cleared counts as changed. -->
+                recover or take over the account: a session changes them, on its own account or as an administrator on
+                another's, only after signing in, or confirming who it is, in the last five minutes (check#AccountAction
+                recentAuth, require#RecentAuth; the browser's form asks and sends again on X-Moqui-Reauth). Cleared counts as
+                changed. -->
             <set field="recoveryChanged" from="['emailAddress', 'externalUserId'].some(name =&gt; context[name] != null &amp;&amp;
                     String(context[name]) != String(userAccount.get(name) ?? ''))"/>
             <if condition="signInChanged || recoveryChanged">
@@ -194,7 +195,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="userId"><description>Defaults to the current userId in the ExecutionContext.</description></parameter>
             <parameter name="username"><description>May be used instead of userId to identify user.</description></parameter>
             <parameter name="oldPassword" required="true"><description>Ignored when a password administrator (ADMIN_PASSWORD) sets
-                another account's password, one that holds no access the administrator lacks.</description></parameter>
+                another account's password, one that holds no access the administrator lacks, after signing in in the last
+                five minutes (require#RecentAuth).</description></parameter>
             <parameter name="newPassword" required="true"/>
             <parameter name="newPasswordVerify" required="true"/>
             <parameter name="code"><description>Second factor authentication, required if second factor required for user (via group or authc factors configured)</description></parameter>
@@ -234,6 +236,11 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="adminPath">
                 <set field="heldBeyond" from="ec.resource.script('component://framework/service/org/moqui/admin/Identity.js').heldBeyond(userId)"/>
                 <if condition="heldBeyond"><return error="true" message="${heldBeyond}: its password is not yours to set"/></if>
+                <!-- and only after the administrator signed in, or confirmed who they are, in the last five minutes
+                    (require#RecentAuth, which a caller with authorization disabled passes), so a stolen session sets no
+                    password; the browser's form asks and sends again on X-Moqui-Reauth -->
+                <service-call name="org.moqui.sso.RecentAuthServices.require#RecentAuth" out-map="recentAuthOut"/>
+                <if condition="!recentAuthOut.recent"><return/></if>
             </if>
             <!-- An account disabled for good or past its terminateDate is closed: its password is changed only by a
                 password administrator, so a known or mailed password does not open it again (SEC-ADM-01). -->
@@ -576,7 +583,8 @@ along with this software (see the LICENSE.md file). If not, see
             the last five minutes (org.moqui.sso.RecentAuthServices.require#RecentAuth; SEC-ADM-03); another user only with
             permissionId (NONE: any caller the service's authorization lets in) and, for a change (bounded), when the
             account holds no access the caller lacks (Identity.js heldBeyond: a privileged group the caller is not in, a
-            sealed permission the caller does not hold; SEC-ADM-04, SEC-ADM-05). With nobody signed in (the sign-in
+            sealed permission the caller does not hold; SEC-ADM-04, SEC-ADM-05), and for a recentAuth action after the
+            caller's own sign-in in the last five minutes, as for their own account. With nobody signed in (the sign-in
             services, which act for a pre-authenticated user before the login and check that user themselves) and for a
             caller that disabled authorization (a job, a setup service) the caller answers for it. A refusal is an error
             and allowed false. anonymous-all because those sign-in services call it with nobody signed in; it grants
@@ -599,7 +607,9 @@ along with this software (see the LICENSE.md file). If not, see
             } else {
                 const held = bounded ? ec.resource.script('component://framework/service/org/moqui/admin/Identity.js').heldBeyond(userId) : null
                 if (held) ec.message.addError(held + ': ' + ec.l10n.localize('that account is not yours to change'))
-                else allowed = true
+                // an administrator's action on another account that makes or ends its codes or factors, or changes its email
+                // or provider link, asks the same recent sign-in as the owner's own (a stolen session takes over no account)
+                else allowed = !recentAuth || !!ec.service.sync().name('org.moqui.sso.RecentAuthServices.require#RecentAuth').call()?.recent
             }
         ]]></script></actions>
     </service>

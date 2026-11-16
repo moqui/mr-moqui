@@ -197,3 +197,63 @@ feature("a folder drive's named export goes under runtime/drive-export; any othe
         up.errors.includes("runtime/drive-export")
     },
 })
+
+// export#Drive of a git drive needs only the view right on the drive (no delete right on its repository), with
+// authorization on; a user who may not view it is refused, and a named targetPath still goes under runtime/git-export.
+// The bare repository it writes (runtime/git-export/files-spec/, git-ignored) is written again by each run.
+feature("a git drive's viewer exports it under runtime/git-export; one who may not view it is refused", {
+    when() {
+        const GROUP = "FILES_SPEC_GIT_EXPORT"
+        const make = (entityName, fields) => {
+            const {fromDate, ...keys} = fields
+            if (ec.entity.find(entityName).condition(keys).count() > 0) return
+            const row = ec.entity.makeValue(entityName)
+            row.setFields(fields, true, null, null)
+            row.create()
+        }
+        for (const id of ["filesViewer", "filesStranger"]) user(id)
+        // the drive services as a screen grants them, to the viewer and to a user who is no member of the drive
+        make("moqui.security.UserGroup", { userGroupId: GROUP, description: "Files spec git export" })
+        make("moqui.security.ArtifactGroup", { artifactGroupId: GROUP, description: "Files spec git export" })
+        make("moqui.security.ArtifactGroupMember", { artifactGroupId: GROUP, artifactTypeEnumId: "AT_SERVICE", inheritAuthz: "Y",
+            nameIsPattern: "Y", artifactName: "org\\.moqui\\.resource\\.FileServices\\..*" })
+        make("moqui.security.ArtifactAuthz", { artifactAuthzId: GROUP, userGroupId: GROUP, artifactGroupId: GROUP,
+            authzTypeEnumId: "AUTHZT_ALWAYS", authzActionEnumId: "AUTHZA_ALL" })
+        for (const id of ["filesViewer", "filesStranger"]) make("moqui.security.UserGroupMember", { userGroupId: GROUP, userId: id, fromDate: 0 })
+        ec.user.internalLoginUser("filesOwner")
+        files("add#DriveMember", { driveId: gitDriveId, userId: "filesViewer", permissionEnumId: "RdpView" })
+        const exported = (userId, targetPath) => {
+            ec.user.internalLoginUser(userId)
+            ec.artifactExecution.enableAuthz()
+            try {
+                const out = ec.service.sync().name(`${SERVICES}.export#Drive`).parameters({ driveId: gitDriveId, targetPath }).call() || {}
+                return { path: out.exportPath ?? null, count: out.fileCount ?? 0, errors: [...ec.message.errors].join(" | ") }
+            } catch (err) {
+                return { path: null, errors: String(err.message || err) }
+            } finally {
+                ec.message.clearErrors()
+                ec.artifactExecution.disableAuthz()
+            }
+        }
+        const outcome = {
+            viewer: exported("filesViewer", "files-spec/viewer.git"),
+            up: exported("filesViewer", "files-spec/../../conf"),
+            stranger: exported("filesStranger", "files-spec/stranger.git"),
+        }
+        ec.user.internalLoginUser("filesOwner")
+        ec.entity.find("moqui.security.UserGroupMember").condition("userGroupId", GROUP).deleteAll()
+        ec.entity.find("moqui.security.ArtifactAuthz").condition("artifactAuthzId", GROUP).deleteAll()
+        ec.entity.find("moqui.security.ArtifactGroupMember").condition("artifactGroupId", GROUP).deleteAll()
+        ec.entity.find("moqui.security.ArtifactGroup").condition("artifactGroupId", GROUP).deleteAll()
+        ec.entity.find("moqui.security.UserGroup").condition("userGroupId", GROUP).deleteAll()
+        return outcome
+    },
+    then({ viewer, up, stranger }) {
+        viewer.errors == ""
+        viewer.path.endsWith("git-export/files-spec/viewer.git")
+        up.path == null
+        up.errors.includes("runtime/git-export")
+        stranger.path == null
+        stranger.errors.includes("Drive not found")
+    },
+})

@@ -674,7 +674,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="export" noun="Drive">
         <description>A copy of a drive: a git drive in the database as a bare repository on disk
             (GitServices.export#GitRepository, exportPath), a git drive on disk is already one (its path), a folder drive
-            as a zip (exportLocation, under runtime/tmp/drive-export unless targetLocation is given). Manage permission.
+            as a zip (exportLocation, under runtime/tmp/drive-export unless targetLocation is given). A git drive needs the
+            view permission on the drive (a records drive the manage one), a folder drive the manage one.
             targetPath goes to export#GitRepository, which holds it under runtime/git-export. targetLocation, with
             authorization on, is a relative path of letters, digits, '.', '_' and '-' segments under runtime/drive-export
             (an absolute path, a location with a scheme or '..' is refused); with authorization disabled (a job, a setup
@@ -693,16 +694,24 @@ along with this software (see the LICENSE.md file). If not, see
             exportPath = null; exportLocation = null; fileCount = 0
             const access = ec.service.sync().name('org.moqui.resource.FileServices.get#DriveAccess').parameter('driveId', driveId).call()
             if (!access.drive || access.level < 1) { ec.message.addError(ec.l10n.localize('Drive not found')); return }
-            if (access.level < 3) { ec.message.addError(ec.l10n.localize('You may not export this drive')); return }
             const drive = access.drive
+            // A git drive is exported by whoever may view it: the copy holds what a clone over git gives them, and a
+            // read-only drive gives nobody the delete right export#GitRepository asks for. That right was checked here on
+            // the drive, so the repository's own is not asked again (authorization disabled), and underExportDir keeps a
+            // named targetPath under runtime/git-export. A records drive shows a viewer only the records they may see, and
+            // a folder drive's zip is written where its manager names: both stay the manager's.
+            const gitDrive = drive.storage.startsWith('git-')
+            if (access.level < (gitDrive && drive.driveKindEnumId !== 'RdkRecords' ? 1 : 3)) {
+                ec.message.addError(ec.l10n.localize('You may not export this drive')); return }
             if (drive.storage === 'git-db') {
                 const out = ec.service.sync().name('org.moqui.git.GitServices.export#GitRepository')
-                        .parameters({repositoryId: drive.repositoryId, targetPath: targetPath || null}).call()
-                exportPath = out.exportPath ?? null
-                fileCount = out.objectCount ?? 0
+                        .parameters({repositoryId: drive.repositoryId, targetPath: targetPath || null, underExportDir: true})
+                        .disableAuthz().call()
+                exportPath = out?.exportPath ?? null
+                fileCount = out?.objectCount ?? 0
                 return
             }
-            if (drive.storage.startsWith('git-')) {
+            if (gitDrive) {
                 const repo = ec.entity.find('moqui.resource.GitRepository').condition('repositoryId', drive.repositoryId).one()
                 exportPath = repo && repo.localPath ? repo.localPath : `runtime/git/${drive.repositoryId}`
                 ec.message.addMessage(`Drive ${drive.driveName} is a git repository on disk: clone it from ${exportPath}`)
