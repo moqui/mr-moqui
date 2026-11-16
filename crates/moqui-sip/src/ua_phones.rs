@@ -449,18 +449,19 @@ impl Inner {
         auth: &crate::digest::Authorization,
         method: &str,
         realm: Option<&str>,
+        source: Option<std::net::IpAddr>,
     ) -> (crate::digest::Verdict, Option<PhoneDevice>) {
         // a forged or foreign nonce fails whoever it names: the directory (a service call) is not asked for it
         let (ours, realm_name) = match realm {
             Some(realm) => (
                 lock(&self.device_realms)
                     .get(realm)
-                    .is_some_and(|book| book.answers_ours(auth)),
+                    .is_some_and(|book| book.answers_ours(auth, source)),
                 realm.to_string(),
             ),
             None => {
                 let book = lock(&self.nonces);
-                (book.answers_ours(auth), book.realm().to_string())
+                (book.answers_ours(auth, source), book.realm().to_string())
             }
         };
         let check = crate::digest::ResponseCheck::of(auth, method);
@@ -483,10 +484,10 @@ impl Inner {
         let matched = found.as_ref().is_some_and(|(_, matched)| *matched);
         let verdict = match realm {
             Some(realm) => match lock(&self.device_realms).get_mut(realm) {
-                Some(book) => book.verify_checked(auth, matched, now_secs()),
+                Some(book) => book.verify_checked(auth, matched, now_secs(), source),
                 None => crate::digest::Verdict::Invalid,
             },
-            None => lock(&self.nonces).verify_checked(auth, matched, now_secs()),
+            None => lock(&self.nonces).verify_checked(auth, matched, now_secs(), source),
         };
         (verdict, found.map(|(device, _)| device))
     }

@@ -20,12 +20,16 @@
 //! response computed for a realm it chose. The answer uses `qop=auth` when offered, with a fresh client nonce.
 //!
 //! **Challenging a request.** [`NonceBook`] issues nonces that carry their time, random bytes and a MAC under a secret
-//! of this process, so they need no table to check, and two challenges in the same second differ; one older than its lifetime is answered `stale` (a client may retry with
-//! a new one). Each nonce's last nonce count is kept for its lifetime, and a count that does not go up is a replay.
-//! A request without `qop` may use a nonce once. Responses are compared in constant time.
+//! of this process, so they need no table to check, and two challenges in the same second differ; one older than its
+//! lifetime is answered `stale` (a client may retry with a new one). The MAC also covers the address the challenge was
+//! sent to: an answer with a nonce not issued to its own source is challenged again, not counted as a failed attempt,
+//! so a request with a forged source cannot count failures against the address it names (SEC-COM-25). Each nonce's
+//! last nonce count is kept for its lifetime, and a count that does not go up is a replay. A request without `qop` may
+//! use a nonce once. Responses are compared in constant time.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
+use std::net::IpAddr;
 
 use base64::Engine as _;
 use hmac::{KeyInit, Mac};
@@ -293,8 +297,11 @@ pub enum Verdict {
     Stale,
     /// A nonce count that did not go up, or a nonce without `qop` used twice.
     Replay,
-    /// A nonce this process did not issue, for another realm, or a wrong response: a failed attempt.
+    /// A nonce of this book issued to this source, for another realm, or a wrong response: a failed attempt.
     Invalid,
+    /// A nonce this book did not issue, or issued to another source: challenged again, not a failed attempt, since a
+    /// datagram's source can be forged and only an answer to a challenge the source received tells it sent the answer.
+    Foreign,
     /// The answer could not be checked now: whoever holds the verifiers did not answer (an edge node's local node away,
     /// plans/archive/Edge-Node.md §5.4 "Voice (SIP)"). Not a failed attempt; the request is answered 503.
     Unavailable,
@@ -331,32 +338,46 @@ impl NonceBook {
         &self.realm
     }
 
-    fn mac(&self, time: u64, salt: &[u8]) -> [u8; 16] {
+    fn mac(&self, time: u64, salt: &[u8], source: Option<IpAddr>) -> [u8; 16] {
         let mut mac = hmac::Hmac::<Sha256>::new_from_slice(&self.key).expect("HMAC takes a key of any length");
         mac.update(&time.to_be_bytes());
         mac.update(salt);
         mac.update(self.realm.as_bytes());
+        // the address the challenge went to, in one form for IPv4 and IPv4-mapped IPv6
+        match source.map(|ip| ip.to_canonical()) {
+            Some(IpAddr::V4(ip)) => mac.update(&ip.octets()),
+            Some(IpAddr::V6(ip)) => mac.update(&ip.octets()),
+            None => {}
+        }
         let full = mac.finalize().into_bytes();
         let mut out = [0u8; 16];
         out.copy_from_slice(&full[..16]);
         out
     }
 
-    /// A nonce issued at `now_secs`: the time, 8 random bytes (each challenge its own nonce, so the nonce counts of two
-    /// clients challenged in the same second are not taken for a replay) and their MAC.
-    pub fn nonce(&self, now_secs: u64) -> String {
+    /// A nonce issued at `now_secs` to `source` (the address the challenge is sent to; none when the request has
+    /// none): the time, 8 random bytes (each challenge its own nonce, so the nonce counts of two clients challenged in
+    /// the same second are not taken for a replay) and their MAC with the source.
+    pub fn nonce(&self, now_secs: u64, source: Option<IpAddr>) -> String {
         let mut salt = [0u8; NONCE_SALT];
         let _ = getrandom::fill(&mut salt);
         let mut bytes = Vec::with_capacity(8 + NONCE_SALT + 16);
         bytes.extend_from_slice(&now_secs.to_be_bytes());
         bytes.extend_from_slice(&salt);
-        bytes.extend_from_slice(&self.mac(now_secs, &salt));
+        bytes.extend_from_slice(&self.mac(now_secs, &salt, source));
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
     }
 
-    /// The challenge header value, one per algorithm offered (strongest first, RFC 8760 §2.4).
-    pub fn challenges(&self, now_secs: u64, algorithms: &[Algorithm], stale: bool) -> Vec<String> {
-        let nonce = self.nonce(now_secs);
+    /// The challenge header value for a request from `source`, one per algorithm offered (strongest first, RFC 8760
+    /// §2.4).
+    pub fn challenges(
+        &self,
+        now_secs: u64,
+        algorithms: &[Algorithm],
+        stale: bool,
+        source: Option<IpAddr>,
+    ) -> Vec<String> {
+        let nonce = self.nonce(now_secs, source);
         algorithms
             .iter()
             .map(|a| {
@@ -370,31 +391,52 @@ impl NonceBook {
             .collect()
     }
 
-    /// Checks an answer for `method`, with the password of its username (`None` when there is no such user, which is
-    /// checked the same way so the time does not tell).
-    pub fn verify(&mut self, auth: &Authorization, method: &str, password: Option<&str>, now_secs: u64) -> Verdict {
+    /// Checks an answer for `method` from `source`, with the password of its username (`None` when there is no such
+    /// user, which is checked the same way so the time does not tell).
+    pub fn verify(
+        &mut self,
+        auth: &Authorization,
+        method: &str,
+        password: Option<&str>,
+        now_secs: u64,
+        source: Option<IpAddr>,
+    ) -> Verdict {
         let password = password.unwrap_or("\u{0}no user");
         let verifier = auth
             .algorithm
             .map(|algorithm| ha1(algorithm, &auth.username, &auth.realm, password));
-        self.verify_ha1(auth, method, verifier.as_deref(), now_secs)
+        self.verify_ha1(auth, method, verifier.as_deref(), now_secs, source)
     }
 
-    /// Checks an answer for `method` against a stored verifier: the HA1 of its username, this book's realm and the
-    /// answer's algorithm ([`ha1`]), as the registrar keeps a phone's credentials (§5.2 "Verifiers"). `None` when there
-    /// is no such user or no verifier for that algorithm, which is checked the same way so the time does not tell.
-    pub fn verify_ha1(&mut self, auth: &Authorization, method: &str, verifier: Option<&str>, now_secs: u64) -> Verdict {
+    /// Checks an answer for `method` from `source` against a stored verifier: the HA1 of its username, this book's realm
+    /// and the answer's algorithm ([`ha1`]), as the registrar keeps a phone's credentials (§5.2 "Verifiers"). `None`
+    /// when there is no such user or no verifier for that algorithm, which is checked the same way so the time does not
+    /// tell.
+    pub fn verify_ha1(
+        &mut self,
+        auth: &Authorization,
+        method: &str,
+        verifier: Option<&str>,
+        now_secs: u64,
+        source: Option<IpAddr>,
+    ) -> Verdict {
         let matched = ResponseCheck::of(auth, method).is_some_and(|check| check.matches(verifier));
-        self.verify_checked(auth, matched, now_secs)
+        self.verify_checked(auth, matched, now_secs, source)
     }
 
     /// [`NonceBook::verify_ha1`] with the response already checked against the verifier elsewhere (`matched`, from
     /// [`ResponseCheck::matches`]): by the node that holds the verifiers, for a registrar that holds none (an edge
-    /// node's, plans/archive/Edge-Node.md §5.4 "Voice (SIP)"). The nonce, its realm, its lifetime and its counts are checked
-    /// here, as they are this book's.
-    pub fn verify_checked(&mut self, auth: &Authorization, matched: bool, now_secs: u64) -> Verdict {
-        let Some(issued) = self.issued_at(&auth.nonce) else {
-            return Verdict::Invalid;
+    /// node's, plans/archive/Edge-Node.md §5.4 "Voice (SIP)"). The nonce, its source, its realm, its lifetime and its
+    /// counts are checked here, as they are this book's.
+    pub fn verify_checked(
+        &mut self,
+        auth: &Authorization,
+        matched: bool,
+        now_secs: u64,
+        source: Option<IpAddr>,
+    ) -> Verdict {
+        let Some(issued) = self.issued_at(&auth.nonce, source) else {
+            return Verdict::Foreign;
         };
         if !auth.realm.eq_ignore_ascii_case(&self.realm) || auth.algorithm.is_none() {
             return Verdict::Invalid;
@@ -422,18 +464,19 @@ impl NonceBook {
         Verdict::Valid
     }
 
-    /// Whether an answer is to a challenge of this book: a nonce it issued, for its realm. One that is not fails
-    /// [`NonceBook::verify_ha1`] whatever the verifier, so a caller may skip looking the username up for it.
-    pub fn answers_ours(&self, auth: &Authorization) -> bool {
-        self.issued_at(&auth.nonce).is_some() && auth.realm.eq_ignore_ascii_case(&self.realm)
+    /// Whether an answer from `source` is to a challenge of this book: a nonce it issued to that source, for its realm.
+    /// One that is not fails [`NonceBook::verify_ha1`] whatever the verifier, so a caller may skip looking the username
+    /// up for it.
+    pub fn answers_ours(&self, auth: &Authorization, source: Option<IpAddr>) -> bool {
+        self.issued_at(&auth.nonce, source).is_some() && auth.realm.eq_ignore_ascii_case(&self.realm)
     }
 
-    fn issued_at(&self, nonce: &str) -> Option<u64> {
+    fn issued_at(&self, nonce: &str, source: Option<IpAddr>) -> Option<u64> {
         let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(nonce).ok()?;
         let (time, rest) = bytes.split_at_checked(8)?;
         let (salt, mac) = rest.split_at_checked(NONCE_SALT)?;
         let time = u64::from_be_bytes(time.try_into().ok()?);
-        constant_eq(&self.mac(time, salt), mac).then_some(time)
+        constant_eq(&self.mac(time, salt, source), mac).then_some(time)
     }
 
     fn forget_expired(&mut self, now_secs: u64) {

@@ -967,11 +967,46 @@ async fn with_the_registrar_off_a_register_is_refused_without_a_challenge() {
     ua.shutdown();
 }
 
+/// SEC-COM-25: failed answers from a trunk's address are refused but never counted, so they cannot block the address
+/// the trunk's calls and responses come from.
+#[tokio::test]
+async fn failed_answers_from_a_trunks_address_never_block_it() {
+    let mut h = Harness::start(RegistrarLimits::default()).await;
+    let phone = UdpPhone::new().await;
+    h.ua.set_trunks(vec![crate::ua::TrunkConfig {
+        id: "T1".to_string(),
+        host: phone.addr.ip().to_string(),
+        port: Some(phone.addr.port()),
+        transport: crate::ua::Transport::Udp,
+        credentials: Credentials::default(),
+        domain: None,
+        register: false,
+        inbound: Vec::new(),
+        inbound_digest: false,
+        srtp: false,
+    }])
+    .await;
+    for attempt in 0..6u32 {
+        let call_id = format!("trunk-addr-{attempt}");
+        let r = Reg {
+            password: "not-the-password",
+            call_id: &call_id,
+            ..Default::default()
+        };
+        let (refused, _) = phone.register(h.udp, &r).await;
+        assert_eq!(code(&refused), 403, "attempt {attempt}");
+    }
+    let (ok, _) = phone.register(h.udp, &Reg::default()).await;
+    assert_eq!(code(&ok), 200, "not blocked");
+    h.binding(BindingChange::Added).await;
+}
+
 #[tokio::test]
 async fn a_forged_nonce_is_not_looked_up_and_a_via_does_not_choose_the_transport() {
     let mut h = Harness::start(RegistrarLimits::default()).await;
     let phone = UdpPhone::new().await;
-    // an answer to a nonce this side never issued fails whoever it names, without a lookup of the username
+    // an answer to a nonce this side never issued to the source is challenged again, without a lookup of the username,
+    // and is no failed attempt: its source may be forged (SEC-COM-25)
     let forged = format!(
         "Digest username=\"p100\", realm=\"{REALM}\", nonce=\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\", \
          uri=\"sip:{}\", response=\"{}\", algorithm=SHA-256, qop=auth, nc=00000001, cnonce=\"c1\"",
@@ -985,9 +1020,7 @@ async fn a_forged_nonce_is_not_looked_up_and_a_via_does_not_choose_the_transport
             h.udp,
         )
         .await;
-    assert_eq!(code(&phone.response().await), 403);
-    h.event(|e| matches!(e, UaEvent::AuthFailure { .. }).then_some(()))
-        .await;
+    assert_eq!(code(&phone.response().await), 401, "a counted failure would be 403");
     assert_eq!(h.directory.lookups.load(Ordering::Relaxed), 0);
     // a REGISTER over UDP whose Via says TCP: its binding is the UDP flow it came over, so a call to it goes there
     let r = Reg {

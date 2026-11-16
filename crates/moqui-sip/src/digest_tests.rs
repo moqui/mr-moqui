@@ -92,7 +92,7 @@ fn a_challenge_for_another_realm_or_algorithm_is_not_answered() {
 #[test]
 fn the_server_side_checks_nonces_counts_and_staleness() {
     let mut book = NonceBook::new("moqui.example", 300);
-    let challenge = Challenge::parse(&book.challenges(1_000, &[Algorithm::Sha256], false)[0]).unwrap();
+    let challenge = Challenge::parse(&book.challenges(1_000, &[Algorithm::Sha256], false, None)[0]).unwrap();
     assert_eq!(challenge.realm, "moqui.example");
     let credentials = Credentials {
         username: "trunk1".to_string(),
@@ -108,45 +108,115 @@ fn the_server_side_checks_nonces_counts_and_staleness() {
     )
     .unwrap();
     let auth = Authorization::parse(&value).unwrap();
-    assert_eq!(book.verify(&auth, "INVITE", Some("s3cret"), 1_010), Verdict::Valid);
+    assert_eq!(
+        book.verify(&auth, "INVITE", Some("s3cret"), 1_010, None),
+        Verdict::Valid
+    );
     // the same nonce count again is a replay, even with the right password
-    assert_eq!(book.verify(&auth, "INVITE", Some("s3cret"), 1_011), Verdict::Replay);
+    assert_eq!(
+        book.verify(&auth, "INVITE", Some("s3cret"), 1_011, None),
+        Verdict::Replay
+    );
     // a higher count on the same nonce is fine
     let next = value.replace("nc=00000001", "nc=00000002");
     let mut auth2 = Authorization::parse(&next).unwrap();
     let ha1 = Algorithm::Sha256.hash("trunk1:moqui.example:s3cret");
     let ha2 = Algorithm::Sha256.hash("INVITE:sip:+15551230000@moqui.example");
     auth2.response = Algorithm::Sha256.hash(&format!("{ha1}:{}:00000002:cn1:auth:{ha2}", auth2.nonce));
-    assert_eq!(book.verify(&auth2, "INVITE", Some("s3cret"), 1_012), Verdict::Valid);
-    // a wrong password, an unknown user, a nonce from elsewhere and another realm are failures
-    let fresh = Challenge::parse(&book.challenges(1_020, &[Algorithm::Sha256], false)[0]).unwrap();
+    assert_eq!(
+        book.verify(&auth2, "INVITE", Some("s3cret"), 1_012, None),
+        Verdict::Valid
+    );
+    // a wrong password and an unknown user are failures; a nonce from elsewhere is challenged again (SEC-COM-25)
+    let fresh = Challenge::parse(&book.challenges(1_020, &[Algorithm::Sha256], false, None)[0]).unwrap();
     let wrong = answer(&credentials, &fresh, "INVITE", "sip:a@b", "cn2").unwrap();
     assert_eq!(
-        book.verify(&Authorization::parse(&wrong).unwrap(), "INVITE", Some("other"), 1_021),
+        book.verify(
+            &Authorization::parse(&wrong).unwrap(),
+            "INVITE",
+            Some("other"),
+            1_021,
+            None
+        ),
         Verdict::Invalid
     );
     assert_eq!(
-        book.verify(&Authorization::parse(&wrong).unwrap(), "INVITE", None, 1_021),
+        book.verify(&Authorization::parse(&wrong).unwrap(), "INVITE", None, 1_021, None),
         Verdict::Invalid
     );
     let forged = wrong.replace(&fresh.nonce, "AAAAAAAAA-forged-nonce");
     assert_eq!(
-        book.verify(&Authorization::parse(&forged).unwrap(), "INVITE", Some("s3cret"), 1_021),
-        Verdict::Invalid
+        book.verify(
+            &Authorization::parse(&forged).unwrap(),
+            "INVITE",
+            Some("s3cret"),
+            1_021,
+            None
+        ),
+        Verdict::Foreign
     );
     let other_book = NonceBook::new("moqui.example", 300);
-    let theirs = Challenge::parse(&other_book.challenges(1_020, &[Algorithm::Sha256], false)[0]).unwrap();
+    let theirs = Challenge::parse(&other_book.challenges(1_020, &[Algorithm::Sha256], false, None)[0]).unwrap();
     let theirs = answer(&credentials, &theirs, "INVITE", "sip:a@b", "cn3").unwrap();
     assert_eq!(
-        book.verify(&Authorization::parse(&theirs).unwrap(), "INVITE", Some("s3cret"), 1_021),
-        Verdict::Invalid
+        book.verify(
+            &Authorization::parse(&theirs).unwrap(),
+            "INVITE",
+            Some("s3cret"),
+            1_021,
+            None
+        ),
+        Verdict::Foreign
     );
     // the right answer on an expired nonce is stale, not a failure
-    let old = Challenge::parse(&book.challenges(1_000, &[Algorithm::Md5], false)[0]).unwrap();
+    let old = Challenge::parse(&book.challenges(1_000, &[Algorithm::Md5], false, None)[0]).unwrap();
     let late = answer(&credentials, &old, "INVITE", "sip:a@b", "cn4").unwrap();
     assert_eq!(
-        book.verify(&Authorization::parse(&late).unwrap(), "INVITE", Some("s3cret"), 1_400),
+        book.verify(
+            &Authorization::parse(&late).unwrap(),
+            "INVITE",
+            Some("s3cret"),
+            1_400,
+            None
+        ),
         Verdict::Stale
+    );
+}
+
+/// SEC-COM-25: a nonce is issued to the address the challenge went to. An answer from another source, as a datagram with
+/// a forged source sends it, is not a failed attempt but is challenged again, whatever its response; from the source
+/// the challenge went to, a wrong response is a failure and the right one is valid. IPv4-mapped IPv6 is the same address.
+#[test]
+fn a_nonce_answers_only_from_the_source_it_was_issued_to() {
+    let mut book = NonceBook::new("moqui.example", 300);
+    let phone: std::net::IpAddr = "198.51.100.7".parse().unwrap();
+    let mapped: std::net::IpAddr = "::ffff:198.51.100.7".parse().unwrap();
+    let forger: std::net::IpAddr = "203.0.113.9".parse().unwrap();
+    let credentials = Credentials {
+        username: "phone1".to_string(),
+        password: "s3cret".to_string(),
+        ..Default::default()
+    };
+    let challenge = Challenge::parse(&book.challenges(1_000, &[Algorithm::Sha256], false, Some(phone))[0]).unwrap();
+    let value = answer(&credentials, &challenge, "REGISTER", "sip:moqui.example", "c1").unwrap();
+    let auth = Authorization::parse(&value).unwrap();
+    assert_eq!(
+        book.verify(&auth, "REGISTER", Some("other"), 1_001, Some(forger)),
+        Verdict::Foreign
+    );
+    assert_eq!(
+        book.verify(&auth, "REGISTER", Some("s3cret"), 1_001, None),
+        Verdict::Foreign
+    );
+    assert!(!book.answers_ours(&auth, Some(forger)));
+    assert!(book.answers_ours(&auth, Some(mapped)));
+    assert_eq!(
+        book.verify(&auth, "REGISTER", Some("other"), 1_001, Some(phone)),
+        Verdict::Invalid
+    );
+    assert_eq!(
+        book.verify(&auth, "REGISTER", Some("s3cret"), 1_002, Some(mapped)),
+        Verdict::Valid
     );
 }
 
@@ -159,8 +229,8 @@ fn two_calls_challenged_in_the_same_second_are_not_replays() {
         password: "s3cret".to_string(),
         ..Default::default()
     };
-    let first = Challenge::parse(&book.challenges(2_000, &[Algorithm::Sha256], false)[0]).unwrap();
-    let second = Challenge::parse(&book.challenges(2_000, &[Algorithm::Sha256], false)[0]).unwrap();
+    let first = Challenge::parse(&book.challenges(2_000, &[Algorithm::Sha256], false, None)[0]).unwrap();
+    let second = Challenge::parse(&book.challenges(2_000, &[Algorithm::Sha256], false, None)[0]).unwrap();
     assert_ne!(first.nonce, second.nonce);
     for (challenge, cnonce) in [(&first, "a"), (&second, "b")] {
         let value = answer(
@@ -172,7 +242,13 @@ fn two_calls_challenged_in_the_same_second_are_not_replays() {
         )
         .unwrap();
         assert_eq!(
-            book.verify(&Authorization::parse(&value).unwrap(), "INVITE", Some("s3cret"), 2_001),
+            book.verify(
+                &Authorization::parse(&value).unwrap(),
+                "INVITE",
+                Some("s3cret"),
+                2_001,
+                None
+            ),
             Verdict::Valid
         );
     }
