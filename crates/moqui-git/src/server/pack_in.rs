@@ -28,7 +28,6 @@ use gix::odb::pack::cache::lru::MemoryCappedHashmap;
 use gix::odb::pack::Bundle;
 use gix::ObjectId;
 
-use gix::odb::pack::data::decode::header::ResolvedBase;
 use gix::odb::pack::data::entry::Header;
 
 use crate::ops;
@@ -94,6 +93,8 @@ pub(crate) struct Quarantine<'a> {
     /// `None` for a pack of no objects.
     bundle: Option<Bundle>,
     files: Option<(PathBuf, PathBuf)>,
+    /// Each object's kind and size, read once from the entry headers ([`read_entries`]).
+    kinds: HashMap<ObjectId, (Kind, u64)>,
     cache: Mutex<(gix::zlib::Inflate, MemoryCappedHashmap)>,
     /// The objects of the repository the pushed ones refer to, found by [`Quarantine::check_closure`]: an accepted
     /// push freshens them.
@@ -125,21 +126,57 @@ impl Drop for Quarantine<'_> {
     }
 }
 
-/// Read a pack from `input` into the new directory `dir`, completing a thin pack from `base`. `max_object` caps
-/// the memory of one object (`git-server` `max-object-size`).
+/// What one received pack may cost beyond its bytes.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PackLimits {
+    /// The memory of one object or delta result.
+    pub max_object: Option<usize>,
+    /// The most deltas from an object to a whole one.
+    pub max_depth: u32,
+}
+
+impl PackLimits {
+    /// The conf's: `git-server` `max-object-size` (512 MiB) and `max-delta-depth` (4095, the deepest git writes); for
+    /// a `viewer` (who has no push right and pushes for review only) `review-max-object-size` (32 MiB) and
+    /// `review-max-delta-depth` (250), when lower.
+    pub(crate) fn of(viewer: bool) -> Self {
+        let max_object = super::max_object_size();
+        let max_depth = Some(crate::number_setting("max-delta-depth", 4095u32))
+            .filter(|depth| *depth > 0)
+            .unwrap_or(4095);
+        if !viewer {
+            return Self { max_object, max_depth };
+        }
+        let review_object = Some(crate::number_setting("review-max-object-size", 32usize * 1024 * 1024))
+            .filter(|size| *size > 0)
+            .unwrap_or(32 * 1024 * 1024);
+        let review_depth = Some(crate::number_setting("review-max-delta-depth", 250u32))
+            .filter(|depth| *depth > 0)
+            .unwrap_or(250);
+        Self {
+            max_object: Some(max_object.map_or(review_object, |most| most.min(review_object))),
+            max_depth: max_depth.min(review_depth),
+        }
+    }
+}
+
+/// Read a pack from `input` into the new directory `dir`, completing a thin pack from `base`. `limits` caps the
+/// memory of one object and the depth of a delta chain: a deeper one is refused (`GitDeltaTooDeep`).
 pub(crate) fn receive<'a>(
     base: &'a dyn GitStore,
     input: &mut dyn BufRead,
     dir: &Path,
-    max_object: Option<usize>,
+    limits: PackLimits,
     threads: Option<usize>,
 ) -> Result<Quarantine<'a>, Error> {
+    let max_object = limits.max_object;
     std::fs::create_dir_all(dir).map_err(|err| pack_error(&format!("cannot create {}", dir.display()), err))?;
     let mut quarantine = Quarantine {
         base,
         dir: dir.to_path_buf(),
         bundle: None,
         files: None,
+        kinds: HashMap::new(),
         cache: Mutex::new((
             gix::zlib::Inflate::default(),
             MemoryCappedHashmap::new(DELTA_CACHE_BYTES),
@@ -189,11 +226,115 @@ pub(crate) fn receive<'a>(
         let _ = std::fs::remove_file(keep);
     }
     if let (Some(data), Some(index)) = (written.data_path.clone(), written.index_path.clone()) {
-        quarantine.bundle =
-            Some(Bundle::at(&index, gix::hash::Kind::Sha1).map_err(|err| pack_error("opening the pushed pack", err))?);
+        let bundle =
+            Bundle::at(&index, gix::hash::Kind::Sha1).map_err(|err| pack_error("opening the pushed pack", err))?;
         quarantine.files = Some((data, index));
+        quarantine.kinds = read_entries(&bundle, limits.max_depth)?;
+        quarantine.bundle = Some(bundle);
     }
     Ok(quarantine)
+}
+
+/// Each object's kind and size from the pack's entry headers, each entry read once: a delta's kind is its base's,
+/// kept by offset, so a chain of N deltas costs N header reads, not N²/2 (SEC-GIT-05), and its size is the result
+/// size that begins its delta. A chain deeper than `max_depth` is refused.
+fn read_entries(bundle: &Bundle, max_depth: u32) -> Result<HashMap<ObjectId, (Kind, u64)>, Error> {
+    let mut entries: Vec<(u64, ObjectId)> = bundle
+        .index
+        .iter()
+        .map(|entry| (entry.pack_offset, entry.oid))
+        .collect();
+    entries.sort_unstable_by_key(|(offset, _)| *offset);
+    let end = bundle.pack.pack_end() as u64;
+    let read = |offset: u64, id: &ObjectId| {
+        bundle
+            .pack
+            .entry(offset)
+            .map_err(|err| pack_error(&format!("reading {id} from the pushed pack"), err))
+    };
+    let too_deep = |id: &ObjectId| {
+        Error::new(format!(
+            "GitDeltaTooDeep: pushed object {id} is a chain of more than {max_depth} deltas; repack with a smaller \
+             --depth"
+        ))
+    };
+    // the kind and the chain depth of each entry seen, by its offset
+    let mut known: HashMap<u64, (Kind, u32)> = HashMap::with_capacity(entries.len());
+    let mut out = HashMap::with_capacity(entries.len());
+    for (position, (offset, id)) in entries.iter().enumerate() {
+        let entry = read(*offset, id)?;
+        let size = match entry.header {
+            Header::OfsDelta { .. } | Header::RefDelta { .. } => {
+                let next = entries.get(position + 1).map_or(end, |(next, _)| *next);
+                delta_result_size(bundle, &entry, next)
+                    .ok_or_else(|| Error::new(format!("pushed object {id} is a delta whose sizes cannot be read")))?
+            }
+            _ => entry.decompressed_size,
+        };
+        let mut chain = Vec::new();
+        let mut at = entry;
+        let (kind, mut depth) = loop {
+            let here = at.pack_offset();
+            if let Some(found) = known.get(&here) {
+                break *found;
+            }
+            let base = match at.header {
+                Header::OfsDelta { base_distance } => at
+                    .checked_base_pack_offset(base_distance)
+                    .ok_or_else(|| Error::new(format!("pushed object {id} has a delta base before the pack")))?,
+                Header::RefDelta { base_id } => {
+                    let index = bundle.index.lookup(base_id).ok_or_else(|| {
+                        Error::new(format!("{MISSING_OBJECT}{base_id}, which a pushed object refers to"))
+                    })?;
+                    bundle.index.pack_offset_at_index(index)
+                }
+                whole => {
+                    let kind = whole
+                        .as_kind()
+                        .ok_or_else(|| Error::new(format!("pushed object {id} has no kind")))?;
+                    known.insert(here, (kind, 0));
+                    break (kind, 0);
+                }
+            };
+            chain.push(here);
+            // also what ends a cycle of deltas
+            if chain.len() > max_depth as usize {
+                return Err(too_deep(id));
+            }
+            at = read(base, id)?;
+        };
+        for here in chain.into_iter().rev() {
+            depth += 1;
+            if depth > max_depth {
+                return Err(too_deep(id));
+            }
+            known.insert(here, (kind, depth));
+        }
+        out.insert(*id, (kind, size));
+    }
+    Ok(out)
+}
+
+/// The size of the object a delta entry (its data up to `next`) makes: the second of the two sizes that begin a
+/// delta, the base's and the result's, from the first bytes inflated.
+fn delta_result_size(bundle: &Bundle, entry: &gix::odb::pack::data::Entry, next: u64) -> Option<u64> {
+    let data = bundle.pack.entry_slice(entry.data_offset..next)?;
+    let mut head = [0u8; 20];
+    let mut inflate = flate2::Decompress::new(true);
+    let _ = inflate.decompress(data, &mut head, flate2::FlushDecompress::None);
+    let head = &head[..usize::try_from(inflate.total_out()).ok()?.min(head.len())];
+    let size = |bytes: &[u8]| -> Option<(u64, usize)> {
+        let mut value = 0u64;
+        for (at, byte) in bytes.iter().enumerate().take(10) {
+            value |= u64::from(byte & 0x7f) << (7 * at);
+            if byte & 0x80 == 0 {
+                return Some((value, at + 1));
+            }
+        }
+        None
+    };
+    let (_, used) = size(head)?;
+    size(&head[used..]).map(|(result, _)| result)
 }
 
 impl Quarantine<'_> {
@@ -203,6 +344,16 @@ impl Quarantine<'_> {
             .as_ref()
             .map(|bundle| bundle.index.iter().map(|entry| entry.oid).collect())
             .unwrap_or_default()
+    }
+
+    /// The bytes of the objects the push brought, as each is inflated (not the bases a thin pack was completed with):
+    /// what a push for review counts toward its caps beside [`Quarantine::pack_bytes`].
+    pub(crate) fn inflated_bytes(&self) -> u64 {
+        self.kinds
+            .iter()
+            .filter(|(id, _)| !self.bases.contains(*id))
+            .map(|(_, (_, size))| *size)
+            .fold(0u64, u64::saturating_add)
     }
 
     /// The size of the pack file in quarantine, in bytes: what the push adds to a `local` repository, and close to
@@ -246,7 +397,7 @@ impl Quarantine<'_> {
             }
         };
         for id in &ids {
-            if self.bases.contains(id) || self.kind_in_pack(id)? == Some(Kind::Blob) {
+            if self.bases.contains(id) || self.kinds.get(id).map(|(kind, _)| *kind) == Some(Kind::Blob) {
                 continue;
             }
             let (kind, data) = self
@@ -321,26 +472,6 @@ impl Quarantine<'_> {
         let mut named: HashSet<ObjectId> = moqui_lib::sync::lock(&self.referenced).iter().copied().collect();
         named.extend(self.bases.iter().copied());
         named.into_iter().collect()
-    }
-
-    /// The kind of a pushed object from its entry's header (and those of its delta bases), without decoding it.
-    fn kind_in_pack(&self, id: &ObjectId) -> Result<Option<Kind>, Error> {
-        let Some(bundle) = &self.bundle else {
-            return Ok(None);
-        };
-        let Some(index) = bundle.index.lookup(id) else {
-            return Ok(None);
-        };
-        let entry = bundle
-            .pack
-            .entry(bundle.index.pack_offset_at_index(index))
-            .map_err(|err| pack_error(&format!("reading {id} from the pushed pack"), err))?;
-        let mut cache = moqui_lib::sync::lock(&self.cache);
-        let outcome = bundle
-            .pack
-            .decode_header(entry, &mut cache.0, &|base| resolve_in(bundle, base))
-            .map_err(|err| pack_error(&format!("reading {id} from the pushed pack"), err))?;
-        Ok(Some(outcome.kind))
     }
 
     /// Move the pushed objects into the repository: the pack files into its `objects/pack` on disk, or each object
@@ -448,24 +579,22 @@ impl Quarantine<'_> {
             Header::RefDelta { base_id } => Some(base_id),
         };
         let delta_size = entry.decompressed_size;
-        let outcome = {
-            let mut cache = moqui_lib::sync::lock(&self.cache);
-            bundle
-                .pack
-                .decode_header(entry, &mut cache.0, &|base| resolve_in(bundle, base))
-                .map_err(|err| read_error(&err))?
-        };
+        // read once for the pack, by offset ([`read_entries`])
+        let (kind, object_size) = *self
+            .kinds
+            .get(&id)
+            .ok_or_else(|| Error::new(format!("object {id} of the pushed pack was not read")))?;
         let depth = base.and_then(|base| depths.get(&base)).map(|depth| depth + 1);
-        let keep = matches!(outcome.kind, Kind::Tree | Kind::Blob)
-            && outcome.object_size <= max_size
+        let keep = matches!(kind, Kind::Tree | Kind::Blob)
+            && object_size <= max_size
             && depth.is_some_and(|depth| depth <= max_depth);
         match (keep, base, depth) {
             (true, Some(base), Some(depth)) => {
                 depths.insert(id, depth);
                 Ok(Incoming::Delta {
                     id,
-                    kind: outcome.kind,
-                    size: outcome.object_size,
+                    kind,
+                    size: object_size,
                     base,
                     depth,
                     delta_size,
@@ -482,16 +611,6 @@ impl Quarantine<'_> {
             }
         }
     }
-}
-
-/// Where the base of a `REF_DELTA` entry is: in the pack (a thin pack's bases from the repository are added to it
-/// as it is indexed).
-fn resolve_in(bundle: &Bundle, base: &gix::hash::oid) -> gix::Result<Option<ResolvedBase>> {
-    let Some(index) = bundle.index.lookup(base) else {
-        return Ok(None);
-    };
-    let entry = bundle.pack.entry(bundle.index.pack_offset_at_index(index))?;
-    Ok(Some(ResolvedBase::InPack(entry)))
 }
 
 /// The repository with the quarantined objects over it: what pre-receive rules and checks read before a push is
@@ -541,3 +660,7 @@ impl GitStore for Quarantine<'_> {
         Err(Error::new("a push's quarantine is read only"))
     }
 }
+
+#[cfg(test)]
+#[path = "pack_in_tests.rs"]
+mod tests;

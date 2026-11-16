@@ -1293,9 +1293,11 @@
         (smart HTTP) and over the SSH server (SSH_GIT), checked against AT_GIT_REPOSITORY (docs/interfaces/Git-Hosting.md).
         public-url, lfs-token-key and lfs-token-key-previous: see the git_ properties.
         max-concurrent clones and pushes run at once, on threads of their own, with max-queued waiting. max-request
-        bytes of an upload-pack request, max-push-size bytes of a push, max-object-size bytes of one pushed object;
-        idle-timeout seconds of silence in a request body end it. pack-threads (all cores when empty) compress and index
-        packs. Credentials over plain HTTP are refused unless allow-http. lfs-max-object-size: the largest Git LFS
+        bytes of an upload-pack request, max-push-size bytes of a push (each as sent and as a gzip body inflates, and
+        over SSH for the whole conversation), at most fetch-max-lines lines (wants, haves, capabilities) in
+        fetch-max-request-bytes of an upload-pack request, max-object-size bytes of one pushed object;
+        idle-timeout seconds of silence in a request body end it. pack-threads (2 when empty) compress and index one
+        pack; a pushed or fetched delta chain is at most max-delta-depth deep. Credentials over plain HTTP are refused unless allow-http. lfs-max-object-size: the largest Git LFS
         object, at /git/<repositoryId>.git/info/lfs. eca-max-commits: the most commits one change raises gitECA commit
         events for. Repository webhooks are not delivered to loopback, private or link-local addresses unless
         webhook-private-network="true". lfs-upload-check-service: a service asked before Git LFS objects new to a
@@ -1304,7 +1306,10 @@
         and blame-max-lines lines, at most blame-max-commits commits of history and blame-max-diffs comparisons of two
         versions, for at most blame-max-seconds; get#GitArchive writes a tree of at most archive-max-bytes of content
         and archive-max-files entries (files, links, directories), at most archive-max-concurrent archives at once, and
-        keeps at most archive-max-disk-bytes of archive files (runtime/tmp/git-archive). More is refused.
+        keeps at most archive-max-disk-bytes of archive files (runtime/tmp/git-archive). More is refused. get#GitBlob
+        reads a file of at most blob-max-bytes (else answers its size and tooLarge), get#GitCommitDiff and
+        get#GitCommit diff at most commit-max-diff-files files, and a get#GitLog page with a path compares at most
+        log-max-commits commits.
         The storage of db kind repositories (docs/interfaces/Git-Hosting.md, Storage): objects are rows of zlib streams, or of
         deltas against another object, as a pack has them: db-delta-depth deltas at most from an object to a whole
         one, and objects up to db-delta-max-size bytes as deltas; an object over db-large-object bytes is a content
@@ -1315,7 +1320,9 @@
         over a repository of more than gc-max-objects objects.
         Push to review (docs/interfaces/Git-Hosting.md, Push to review): with review-push a user who may view a
         repository pushes refs/for/[branch], which opens or updates a merge request, and nothing else; one with no
-        push right brings at most review-max-push-bytes a push and review-max-account-bytes a day (0: no cap). With
+        push right brings at most review-max-push-bytes a push and review-max-account-bytes a day (0: no cap), counted
+        as its objects inflate when that is more, objects of at most review-max-object-size in delta chains at most
+        review-max-delta-depth deep. With
         review-start-hidden such a merge request starts hidden, until the application shows it. What the server does
         for such a user is small: a push's commands, shallow lines and options are at most review-max-commands each
         in review-max-request-bytes (push-max-commands and push-max-request-bytes for a user who may push), it builds
@@ -1345,15 +1352,18 @@
     <git-server public-url="${git_public_url}" lfs-token-key="${git_lfs_token_key}"
             lfs-token-key-previous="${git_lfs_token_key_previous}"
             max-concurrent="4" anonymous-max-concurrent="" max-queued="16" max-request="67108864" max-push-size="2147483648"
-            max-object-size="536870912" idle-timeout="120" pack-threads="" allow-http="false"
+            fetch-max-lines="1000000" fetch-max-request-bytes="67108864"
+            max-object-size="536870912" max-delta-depth="4095" idle-timeout="120" pack-threads="" allow-http="false"
             lfs-max-object-size="5368709120" lfs-upload-check-service="" outbound-check-service="" eca-max-commits="10000"
             webhook-private-network="false" blame-max-bytes="1048576" blame-max-lines="50000"
             blame-max-commits="10000" blame-max-diffs="2000" blame-max-seconds="10"
+            blob-max-bytes="16777216" commit-max-diff-files="300" log-max-commits="10000"
             archive-max-bytes="268435456" archive-max-files="50000" archive-max-disk-bytes="2147483648"
             archive-max-concurrent="2"
             db-delta-depth="50" db-delta-max-size="16777216" db-large-object="8388608" db-write-format="v2"
             db-cache-bytes="67108864" gc-prune-days="14" gc-reflog-days="30" gc-max-objects="20000000"
             review-push="true" review-start-hidden="false" review-max-push-bytes="52428800" review-max-account-bytes="209715200"
+            review-max-object-size="33554432" review-max-delta-depth="250"
             review-max-commands="8" review-max-request-bytes="65536" review-max-built-on="8" review-max-trees="20000"
             review-max-refused="30" push-max-commands="100000" push-max-request-bytes="16777216"
             merge-request-url="" rest-write-check-service="" offer-service="" agreement-check-service="" review-thread-service=""

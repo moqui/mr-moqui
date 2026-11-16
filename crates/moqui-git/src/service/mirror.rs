@@ -355,6 +355,11 @@ fn push_mirror_now(parameters: &Parameters, facade: &EntityFacade) -> Out {
 /// `run#GitRepositoryMirrors`: the queue (the `run_GitRepositoryMirrors_frequent` job, and what a request starts):
 /// push the mirrors that are due, or the one named now. Out: `pushedIds`, `failedIds`.
 fn run_mirrors(parameters: &Parameters, _facade: &EntityFacade) -> Out {
+    // a mirror named is pushed at once, past its back-off: the job's and the queue's call only
+    if !authz_disabled() {
+        add_error("run#GitRepositoryMirrors is called by its job and the mirror queue only");
+        return none();
+    }
     let Some((provider, _)) = provider_and_id(parameters, false) else {
         return none();
     };

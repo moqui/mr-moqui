@@ -81,6 +81,17 @@ fn fork_repository(parameters: &Parameters, _facade: &EntityFacade) -> Out {
         add_error("repositoryId is required");
         return none();
     };
+    // the new id names its directory under runtime/git: one segment of a repository path's letters, never `..`
+    if let Err(why) = crate::server::path::check_path(id.trim()).and_then(|()| {
+        if id.contains('/') {
+            Err("it is one segment".to_string())
+        } else {
+            Ok(())
+        }
+    }) {
+        add_error(format!("repositoryId {} is not a repository id: {why}", id.trim()));
+        return none();
+    }
     // where a fork's directory is made is the server's to say: a path is taken from the application only
     let local_path = text(parameters, "localPath");
     if local_path.is_some() && !authz_disabled() {

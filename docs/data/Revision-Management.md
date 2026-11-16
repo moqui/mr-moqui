@@ -130,12 +130,12 @@ an error in the message facade, as for any service.
 
 | Service | |
 |---|---|
-| `fetch#GitRepository(repositoryId)` | Fetch a `remote` repository now |
+| `fetch#GitRepository(repositoryId)` | Fetch a `remote` repository now. Needs the delete right on it, or authorization disabled |
 | `fetch#AllGitRepositories` | Fetch each `remote` repository whose `fetchIntervalMinutes` has passed; a failure is recorded on that row and logged, and the others are still fetched. The `fetch_AllGitRepositories_frequent` ServiceJob runs it every 5 minutes |
-| `init#GitRepository(repositoryId, contentRepository)` | Create a `local` bare repository; fetch a `remote` one; nothing for `db`. With `contentRepository`, `setup#GitLfs` too |
+| `init#GitRepository(repositoryId, contentRepository)` | Create a `local` bare repository; fetch a `remote` one; nothing for `db`. With `contentRepository`, `setup#GitLfs` too, with its update right |
 | `setup#GitLfs(repositoryId, patterns)` | Keep files matching `patterns` (images, video, audio, PDFs and archives when empty) in Git LFS: a commit of `.gitattributes`. A `git://` write of such a file stores it as a content blob behind an LFS pointer, and reads give the content ([Git-Hosting](../interfaces/Git-Hosting.md#large-files-git-lfs)) |
 | `gc#GitRepositories(repositoryId, dryRun)`, `fsck#GitRepository(repositoryId)` | Collect and repack `db` repositories; check every object ([Git-Hosting](../interfaces/Git-Hosting.md#storage-of-db-repositories)) |
-| `export#GitRepository(repositoryId, targetPath)` | Write a `db` repository as a bare repository on disk, with its branch and `HEAD` |
+| `export#GitRepository(repositoryId, targetPath)` | Write a `db` repository as a bare repository on disk, with its branch and `HEAD`. Needs the delete right on it, or authorization disabled; with authorization on, `targetPath` is a relative path under `runtime/git-export` |
 | `import#GitRepository(repositoryId, source)` | Copy a branch with its history into a `db` repository, replacing its branch. `source` is `git://otherRepositoryId`, a repository directory (bare or not), or a URL; the row's `remoteUrl` when empty |
 
 ### Wiki spaces on git

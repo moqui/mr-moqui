@@ -135,7 +135,8 @@ fn a_database_git_repository_is_written_through_resources_and_exported() {
     assert!(!page.contains("Error rendering"), "{page}");
     assert!(page.contains("git://gate-git/"), "{page}");
 
-    let target = gate.runtime.join("git-export");
+    // with authorization on, a targetPath is a relative path under runtime/git-export (SEC-GIT-07)
+    let target = gate.runtime.join("git-export").join("gate-git.git");
     let (status, body) = post(
         address,
         &john,
@@ -143,7 +144,7 @@ fn a_database_git_repository_is_written_through_resources_and_exported() {
         &format!(
             "serviceName={}&repositoryId=gate-git&targetPath={}",
             encode("org.moqui.git.GitServices.export#GitRepository"),
-            encode(&target.to_string_lossy())
+            encode("gate-git.git")
         ),
     );
     assert_eq!(status, 200, "{body}");

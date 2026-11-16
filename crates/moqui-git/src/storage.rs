@@ -41,6 +41,7 @@ const GIT_MERGE_REQUEST: &str = "moqui.resource.GitMergeRequest";
 const GIT_MERGE_REQUEST_REVIEWER: &str = "moqui.resource.GitMergeRequestReviewer";
 const GIT_COMMIT_PUSH: &str = "moqui.resource.GitCommitPush";
 const RESOURCE_DRIVE: &str = "moqui.resource.ResourceDrive";
+const SYSTEM_MESSAGE: &str = "moqui.service.message.SystemMessage";
 
 /// Ids in one `IN` list.
 const ID_BATCH: usize = 500;
@@ -157,11 +158,26 @@ fn delete_rows_of(entity: &EntityFacade, repository_id: &str) -> Result<(), Erro
             delete_where(entity, child, &Condition::is_in(key, chunk.to_vec()))?;
         }
     }
+    // the queued deliveries of its webhooks go with them, as delete#GitWebhook cancels a webhook's
+    if entity.table_ready(SYSTEM_MESSAGE) {
+        let hooks = ids_of(entity, GIT_WEBHOOK, repository_id, "webhookId")?;
+        for chunk in hooks.chunks(ID_BATCH) {
+            let _rows = rows_guard();
+            entity
+                .find(SYSTEM_MESSAGE)?
+                .eq("systemMessageTypeId", Value::string("GitWebhook"))
+                .eq("statusId", Value::string("SmsgProduced"))
+                .condition(Condition::is_in("receiverId", chunk.to_vec()))
+                .update_all([("statusId".to_string(), Value::string("SmsgCancelled"))])?;
+        }
+    }
     for name in [
         GIT_UPDATE,
         GIT_MERGE_REQUEST,
         GIT_COMMIT_STATUS,
         GIT_WEBHOOK,
+        // a push mirror's row, with its encrypted credential, would otherwise attach to a later repository of the id
+        crate::mirror::GIT_REPOSITORY_MIRROR,
         GIT_BRANCH_RULE,
         GIT_LFS_LOCK,
         GIT_COMMIT_PUSH,

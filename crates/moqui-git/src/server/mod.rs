@@ -31,6 +31,7 @@ mod ci_tests;
 pub(crate) mod hosting_tests;
 mod job_fetch;
 pub mod lfs;
+pub(crate) mod limited;
 pub(crate) mod pack_in;
 pub(crate) mod pack_out;
 pub mod path;
@@ -294,8 +295,10 @@ pub fn pool(factory: &ExecutionContextFactory) -> Arc<GitPool> {
     })
 }
 
+/// The threads that compress and index one pack (`git-server` `pack-threads`, 2): each push and clone has its own, so
+/// the default is small.
 pub(crate) fn pack_threads() -> Option<usize> {
-    positive_setting("pack-threads")
+    Some(positive_setting("pack-threads").unwrap_or(2))
 }
 
 pub(crate) fn max_object_size() -> Option<usize> {
@@ -342,7 +345,7 @@ pub(crate) fn copy_objects(
             )),
             None => scratch.join("quarantine"),
         };
-        let mut received = pack_in::receive(to, &mut input, &quarantine, max_object_size(), pack_threads())?;
+        let mut received = pack_in::receive(to, &mut input, &quarantine, pack_in::PackLimits::of(false), pack_threads())?;
         received.check_closure(&HashSet::new())?;
         received.accept()
     })();
@@ -769,9 +772,13 @@ fn refuse_http(out: &mut dyn HttpResponder, refusal: &Refusal) {
 /// One smart-HTTP request, in an entered context (a [`pool`] job). Refusals are HTTP statuses; a failure once the
 /// protocol started is an `ERR` line, as git reports it.
 pub fn serve_http(request: &GitHttpRequest, body: &mut dyn Read, out: &mut dyn HttpResponder) {
+    // the host counts the body as sent; the limit holds for what it inflates to as well
     let mut gunzip;
     let body: &mut dyn Read = if request.gzip {
-        gunzip = flate2::read::GzDecoder::new(body);
+        gunzip = limited::Capped::new(
+            flate2::read::GzDecoder::new(body),
+            limited::request_limit(request.service),
+        );
         &mut gunzip
     } else {
         body
@@ -917,7 +924,8 @@ pub fn serve_ssh(
         client: String::new(),
     };
     let v2 = wants_v2(git_protocol) && service == GitService::UploadPack;
-    let mut input = BufReader::new(input);
+    // the whole conversation's input is held to what one HTTP request of the service may send
+    let mut input = BufReader::new(limited::Capped::new(input, limited::request_limit(service)));
     let outcome = (|| -> Result<(), Error> {
         match service {
             GitService::UploadPack if v2 => {
@@ -1154,12 +1162,14 @@ impl Session<'_> {
             let dir = self.quarantine_dir();
             // a user with no push right brings at most what one push for review may: the rest is not read
             let cap: u64 = crate::number_setting("review-max-push-bytes", 50 * 1024 * 1024);
+            // and a smaller object, in a shallower delta chain
+            let limits = pack_in::PackLimits::of(viewer);
             let (received, cut) = if cap > 0 && viewer {
                 let mut limited = BufReader::new((&mut input).take(cap.saturating_add(1)));
-                let received = pack_in::receive(store, &mut limited, &dir, max_object_size(), pack_threads());
+                let received = pack_in::receive(store, &mut limited, &dir, limits, pack_threads());
                 (received, limited.get_ref().limit() == 0)
             } else {
-                let received = pack_in::receive(store, &mut input, &dir, max_object_size(), pack_threads());
+                let received = pack_in::receive(store, &mut input, &dir, limits, pack_threads());
                 (received, false)
             };
             match received {
@@ -1239,8 +1249,14 @@ impl Session<'_> {
         }
         let for_review = |index: usize| request.commands[index].name.starts_with(crate::reach::REVIEW_REFS);
         let pack_bytes = quarantine.as_ref().map_or(0, pack_in::Quarantine::pack_bytes);
-        // a user with no push right sends objects only for review, within the server's caps
+        // a user with no push right sends objects only for review, within the server's caps, which count what the
+        // objects inflate to (a db repository stores a large one inflated) as a proposal's content is counted
         let capped = (0..request.commands.len()).any(for_review) && viewer;
+        let pack_bytes = if capped {
+            pack_bytes.max(quarantine.as_ref().map_or(0, pack_in::Quarantine::inflated_bytes))
+        } else {
+            pack_bytes
+        };
         let over_cap = if capped {
             self.provider.review_cap(pack_bytes)
         } else {

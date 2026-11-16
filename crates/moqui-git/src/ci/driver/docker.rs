@@ -269,6 +269,20 @@ impl DockerHost {
         Ok(())
     }
 
+    /// Whether container `id` carries this server's label (`moqui.ci.server` of [`super::server_id`]): what this
+    /// server made, and so may remove. One that is not there does not.
+    fn ours(&self, id: &str) -> Result<bool, Error> {
+        let response = self.send(Method::Get, &format!("/containers/{id}/json"), None, CALL_TIMEOUT)?;
+        if response.status() == 404 {
+            return Ok(false);
+        }
+        if response.status() >= 300 {
+            return Err(Self::problem(&format!("inspecting container {id}"), &response));
+        }
+        let body: serde_json::Value = serde_json::from_str(response.body()).unwrap_or(serde_json::Value::Null);
+        Ok(body["Config"]["Labels"][super::LABEL_SERVER].as_str() == Some(super::server_id().as_str()))
+    }
+
     /// Remove a container with its volumes, running or not. One that is not there is removed.
     fn remove(&self, id: &str) -> Result<(), Error> {
         let response = self.send(
@@ -370,6 +384,33 @@ impl DockerHost {
             Err(err) => tracing::warn!("network {name} was not removed: {err}"),
         }
     }
+}
+
+/// `instanceRef` when it is a container id as Docker gives one (hex digits, a full id or a prefix): nothing else is
+/// put in an API path. `None` when it is not given; an error recorded when it is not an id.
+fn container_ref(parameters: &Parameters) -> Result<Option<String>, ()> {
+    let Some(id) = text(parameters, "instanceRef") else {
+        return Ok(None);
+    };
+    if id.is_empty() || id.len() > 64 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        add_error(format!("instanceRef {id} is not a container id"));
+        return Err(());
+    }
+    Ok(Some(id))
+}
+
+/// The label filters of `filterLabels`, and always this server's own label: a listing names only what this server
+/// made, whatever the caller asked.
+fn own_filters(parameters: &Parameters) -> Vec<String> {
+    let mut filters: Vec<String> = string_pairs(parameters.get("filterLabels"))
+        .into_iter()
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect();
+    let own = format!("{}={}", super::LABEL_SERVER, super::server_id());
+    if !filters.contains(&own) {
+        filters.push(own);
+    }
+    filters
 }
 
 /// Percent-encode a query value.
@@ -725,9 +766,13 @@ fn inspect_run_docker(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let Some(host) = connect(parameters, facade) else {
         return Ok(BTreeMap::new());
     };
-    let Some(id) = text(parameters, "instanceRef") else {
-        add_error("instanceRef is required");
-        return Ok(BTreeMap::new());
+    let id = match container_ref(parameters) {
+        Ok(Some(id)) => id,
+        Ok(None) => {
+            add_error("instanceRef is required");
+            return Ok(BTreeMap::new());
+        }
+        Err(()) => return Ok(BTreeMap::new()),
     };
     let response = match host.send(Method::Get, &format!("/containers/{id}/json"), None, CALL_TIMEOUT) {
         Ok(response) => response,
@@ -766,13 +811,21 @@ fn remove_run_docker(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let Some(host) = connect(parameters, facade) else {
         return Ok(BTreeMap::new());
     };
-    let mut ids: Vec<String> = text(parameters, "instanceRef").into_iter().collect();
+    let Ok(named) = container_ref(parameters) else {
+        return Ok(BTreeMap::new());
+    };
+    // the container named goes only when this server made it (its label): an id names any container of the host
+    let mut ids: Vec<String> = Vec::new();
+    if let Some(id) = named {
+        match host.ours(&id) {
+            Ok(true) => ids.push(id),
+            Ok(false) => tracing::info!("container {id} is not this server's (or not there); not removed"),
+            Err(err) => add_error(err.message()),
+        }
+    }
     if let (Some(label), Some(value)) = (text(parameters, "labelName"), text(parameters, "labelValue")) {
         // only this server's: another server's job run of the same id on a shared host is not this one's
-        let mut filters: Vec<String> = string_pairs(parameters.get("filterLabels"))
-            .into_iter()
-            .map(|(name, value)| format!("{name}={value}"))
-            .collect();
+        let mut filters = own_filters(parameters);
         filters.push(format!("{label}={value}"));
         match host.list(&filters) {
             Ok(listed) => {
@@ -811,10 +864,7 @@ fn cleanup_runs_docker(parameters: &Parameters, facade: &EntityFacade) -> Out {
         Some(Value::List(values)) => values.iter().map(to_plain_string).collect(),
         _ => Vec::new(),
     };
-    let mut filters: Vec<String> = string_pairs(parameters.get("filterLabels"))
-        .into_iter()
-        .map(|(name, value)| format!("{name}={value}"))
-        .collect();
+    let mut filters = own_filters(parameters);
     filters.push(label.clone());
     let listed = match host.list(&filters) {
         Ok(listed) => listed,

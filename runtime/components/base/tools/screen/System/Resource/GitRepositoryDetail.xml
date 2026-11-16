@@ -137,7 +137,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <form-single name="ExportGitRepository" transition="exportGitRepository">
                             <field name="repositoryId"><default-field><hidden/></default-field></field>
                             <field name="targetPath"><default-field title="Export To"
-                                    tooltip="A directory for a bare repository; the Local Path (or runtime/git/ID) when empty">
+                                    tooltip="A path under runtime/git-export for a bare repository (name.git); the Local Path (or runtime/git/ID) when empty">
                                 <text-line size="40"/></default-field></field>
                             <field name="submitButton"><default-field title="Export"><submit/></default-field></field>
                         </form-single>

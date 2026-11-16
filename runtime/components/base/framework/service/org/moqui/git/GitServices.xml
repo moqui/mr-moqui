@@ -19,7 +19,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="fetch" noun="GitRepository" type="rust" location="moqui_git::service::fetch_repository">
         <description>Fetch the branch of a remote kind repository from its remoteUrl into its bare mirror, created by
             the first fetch. The local branch is replaced by the remote one. Records lastFetchDate, lastFetchError and
-            headCommitId on the repository. Refused in sim mode.</description>
+            headCommitId on the repository. Refused in sim mode. Needs the delete right on the repository (it reaches
+            out of the server with the repository's credential), or authorization disabled.</description>
         <in-parameters><parameter name="repositoryId" required="true"/></in-parameters>
         <out-parameters><parameter name="headCommitId"/></out-parameters>
     </service>
@@ -37,7 +38,8 @@ along with this software (see the LICENSE.md file). If not, see
             forced to the local one as it is when the push runs; nothing is deleted. Nothing for a repository with no
             push mirror. The framework's post-receive gitECA rule runs it async after each change; pushes of one
             repository take turns. Records lastPushMirrorDate and lastPushMirrorError in a transaction of their own,
-            so a failure is kept. Refused in sim mode.</description>
+            so a failure is kept. Refused in sim mode. Needs the delete right on the repository, as its
+            GitRepositoryMirror rows, or authorization disabled (the rule's async call).</description>
         <in-parameters><parameter name="repositoryId" required="true"/></in-parameters>
         <out-parameters><parameter name="pushResult"/></out-parameters>
     </service>
@@ -95,7 +97,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="run" noun="GitRepositoryMirrors" type="rust" location="moqui_git::service::mirror::run_mirrors"
             authenticate="anonymous-all" transaction="ignore">
         <description>The queue of push mirrors (the run_GitRepositoryMirrors_frequent ServiceJob, each minute): push each
-            enabled mirror whose nextAttemptDate has come, or the one named now. A push forces each ref its patterns
+            enabled mirror whose nextAttemptDate has come, or the one named now. With authorization disabled only (the
+            job, and the queue's async call). A push forces each ref its patterns
             cover to the local value and, with deleteRefs, deletes those gone here; it asks git-server
             outbound-check-service first. A success clears lastError and nextAttemptDate (a push asked for while it ran
             is pushed again at once); a failure sets lastError (the credential taken out), counts, and puts the next try
@@ -142,7 +145,8 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="init" noun="GitRepository" type="rust" location="moqui_git::service::init_repository">
         <description>Make a repository ready: create the bare repository of a local kind (a local repository is also
-            created on its first use), fetch a remote kind for the first time. A db kind needs nothing.</description>
+            created on its first use), fetch a remote kind for the first time. A db kind needs nothing. With
+            contentRepository it needs the update right, as setup#GitLfs.</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="contentRepository" type="Boolean" default-value="false"><description>A repository of
@@ -163,11 +167,14 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="export" noun="GitRepository" type="rust" location="moqui_git::service::export_repository">
         <description>Write a db kind repository as a bare repository on disk, with its branch and HEAD, so it can be
-            cloned and pushed with the git command line. Object ids are the same as in the database.</description>
+            cloned and pushed with the git command line. Object ids are the same as in the database. Needs the delete
+            right on the repository, or authorization disabled.</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
-            <parameter name="targetPath"><description>Relative to the runtime directory unless absolute; the
-                repository's localPath (default runtime/git/repositoryId) when empty</description></parameter>
+            <parameter name="targetPath"><description>With authorization disabled: relative to the runtime
+                directory unless absolute. Otherwise a relative path of letters, digits, '.', '_' and '-' segments
+                under runtime/git-export. The repository's localPath (default runtime/git/repositoryId) when
+                empty</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="exportPath"/>
@@ -213,7 +220,8 @@ along with this software (see the LICENSE.md file). If not, see
                 of a merge request that is not hidden reaches it: the repository's store may hold more (its fork
                 network's commits), which are answered as not there. The same in every get#Git* service.</description></parameter>
             <parameter name="path"><description>Only the commits that changed this path against their first
-                parent</description></parameter>
+                parent. A page compares at most git-server log-max-commits (10,000) commits at the path, and ends
+                there: hasMore when it found any</description></parameter>
             <parameter name="afterCommitId"><description>Start after this commit: the last commitId of the previous
                 page</description></parameter>
             <parameter name="limit" type="Integer" default="50"><description>At most 500</description></parameter>
@@ -242,14 +250,16 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="commit" type="Map"><description>As each map of get#GitLog commitList</description></parameter>
             <parameter name="fileList" type="List"><description>Maps: path, changeType (added, modified, deleted),
-                oldObjectId, newObjectId, and with stats binary, tooLarge, insertions, deletions</description></parameter>
+                oldObjectId, newObjectId, and with stats binary, tooLarge, insertions, deletions (no counts past the
+                first 300 files, as get#GitCommitDiff)</description></parameter>
             <parameter name="insertions" type="Integer"/>
             <parameter name="deletions" type="Integer"/>
         </out-parameters>
     </service>
     <service verb="get" noun="GitCommitDiff" type="rust" location="moqui_git::service::get_commit_diff">
         <description>The line diff of each file a commit changed, or of one file. A binary file, or a side over 1 MB,
-            has no diff.</description>
+            has no diff; past the first git-server commit-max-diff-files (300, as a comparison) a file is listed with
+            tooLarge and no diff.</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="commitId" required="true"/>
@@ -264,7 +274,9 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="get" noun="GitBlob" type="rust" location="moqui_git::service::get_blob">
-        <description>The file at a path in a revision; no out parameters when it is not a file there.</description>
+        <description>The file at a path in a revision; no out parameters when it is not a file there. A file over
+            git-server blob-max-bytes (16 MiB; an LFS file's content counted) is not read: size and tooLarge only (read
+            it as a git:// location, which streams it).</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="revision"/>
@@ -273,7 +285,8 @@ along with this software (see the LICENSE.md file). If not, see
                 merge requests too (set#MergeRequestHidden); with authorization disabled only</description></parameter>
         </in-parameters>
         <out-parameters>
-            <parameter name="size" type="Integer"/>
+            <parameter name="size" type="Long"/>
+            <parameter name="tooLarge" type="Boolean"><description>Over blob-max-bytes: no text or bytes</description></parameter>
             <parameter name="binary" type="Boolean"/>
             <parameter name="text"><description>A UTF-8 file without NUL bytes</description></parameter>
             <parameter name="bytes" type="Object"><description>Any other file</description></parameter>
@@ -467,12 +480,13 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- The push log and the git:// writes a gitECA rule listens to. recording, pending, running and failed stay. -->
     <service verb="clean" noun="GitUpdates" authenticate="false" transaction-timeout="600">
         <description>Delete GitUpdate rows in ecaStatus done or none whose updateDate is older than daysToKeep
-            (for the clean_GitUpdates_daily ServiceJob). A row's GitUpdateRef rows go first. A row that cannot
-            be removed is logged and the others still go.</description>
+            (for the clean_GitUpdates_daily ServiceJob, with authorization disabled only). A row's GitUpdateRef rows
+            go first. A row that cannot be removed is logged and the others still go.</description>
         <in-parameters><parameter name="daysToKeep" type="Integer" default="90"/></in-parameters>
         <out-parameters><parameter name="recordsRemoved" type="Long"/></out-parameters>
         <actions>
             <script><![CDATA[
+                if (!ec.artifactExecution.authzDisabled()) { ec.message.addError('clean#GitUpdates is called by its job only'); return }
                 const basisTimestamp = new Date(ec.user.timestampMillis(ec.user.nowTimestamp) - daysToKeep * 86400000).toISOString()
                 let removed = 0
                 // read through the find's iterator, so a long log is not held whole; each row goes beside the cursor
@@ -1216,7 +1230,8 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="queue" noun="GitWebhookPush" type="rust" location="moqui_git::service::hosting::queue_webhook_push">
         <description>For the framework's post-receive gitECA rule (Git.gitecas.xml): a push event per branch that
-            changed and a tag event per tag, to each active webhook of the repository that takes it.</description>
+            changed and a tag event per tag, to each active webhook of the repository that takes it. With
+            authorization disabled only (the rule runs so): its user, source and refs are taken as given.</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="source"/>

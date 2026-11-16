@@ -248,7 +248,11 @@ fetches, edit pushes new refs and fast-forwards on a drive that is not read only
 - Clones and pushes run on a pool of their own (`git-server` `max-concurrent`, 4, and `git-server` `max-queued` waiting), not on the
   request workers of the screens, and are exempt from `webapp_request_timeout`; `git-server` `idle-timeout` (120 seconds) of
   silence in a request body ends it. Limits: `git-server` `max-request` (64 MB) for a fetch request, `git-server` `max-push-size` (2 GB),
-  `git-server` `max-object-size` (512 MB) for one pushed object; `git-server` `pack-threads` (all cores when empty) compress and index.
+  each counted as sent and, for a `Content-Encoding: gzip` body, as inflated, and over SSH for the whole conversation's input
+  (more is refused, not cut short); `git-server` `fetch-max-lines` (1,000,000 want, have, shallow, deepen and argument lines,
+  each capability on a want line counted as one) in `fetch-max-request-bytes` (64 MB) of a fetch request (a v0 conversation,
+  a v2 command), else `GitFetchRequestTooLarge`; `git-server` `max-object-size` (512 MB) for one pushed object, `max-delta-depth` (4095, the deepest git writes) deltas
+  from a pushed object to a whole one (`GitDeltaTooDeep`); `git-server` `pack-threads` (2) compress and index one pack.
 
 ## gitECA rules
 
@@ -396,7 +400,7 @@ Mantle-free: Mantle links merge requests to work items and comments to lines.
 | `find#GitRepositories` | the repositories the user may view, paged, by id list, text and kind; archived ones only with `includeArchived` or `archivedOnly`; each with its open merge requests |
 | `find#GitUpdates` | a repository's push log, newest first: every push (refused ones too), mirror fetch, import and write, its refs and the state of its gitECA rules |
 | `get#GitTree` | a directory at a revision, directories first, each entry with its size (a file in LFS: its content's) and last commit, from the path index of the branch the revision names (or of the commit) |
-| `get#GitRefs`, `get#GitLog`, `get#GitCommit`, `get#GitCommitDiff`, `get#GitBlob` | as before ([Revision-Management](../data/Revision-Management.md)) |
+| `get#GitRefs`, `get#GitLog`, `get#GitCommit`, `get#GitCommitDiff`, `get#GitBlob` | as before ([Revision-Management](../data/Revision-Management.md)); `get#GitBlob` reads a file of at most `git-server` `blob-max-bytes` (16 MiB, an LFS file's content counted) and answers a larger one's `size` and `tooLarge` only (a `git://` location streams it, as a screen's raw download does); a commit's diff diffs its first `commit-max-diff-files` (300) files and lists the rest with `tooLarge`; a `get#GitLog` page with a `path` compares at most `log-max-commits` (10,000) commits at it and ends there, with `hasMore` when it found any |
 | `get#GitBlame` | for each line of a file at a revision, the commit that last changed it ([below](#blame-and-archive)) |
 | `get#GitArchive` | a tree at a revision as a zip or tar.gz file to serve ([below](#blame-and-archive)) |
 | `get#GitCommitRefs` | the branches and tags that contain a commit ([below](#reachability)) |
@@ -645,6 +649,8 @@ merge request`). Match the start of the error; the text after it may change.
 | `GitReviewPushTooLarge`, `GitReviewQuota` | a push to `refs/for/`, `commit#GitFiles` (`asProposal`) | over the caps for a user with no push right |
 | `GitReviewRefusals` | a push to `refs/for/`, `commit#GitFiles` (`asProposal`) | too many of the account's pushes for review and proposals were refused this hour (`review-max-refused`) |
 | `GitReviewPushTooWide` | a push to `refs/for/` | it builds on more commits of the repository than `review-max-built-on` |
+| `GitFetchRequestTooLarge` | a fetch or clone | more want, have or argument lines than the server takes (`fetch-max-lines`, `fetch-max-request-bytes`) |
+| `GitDeltaTooDeep` | a push, a fetch | a pushed or fetched object is a chain of more deltas than `max-delta-depth` (`review-max-delta-depth` for a push for review) |
 | `GitPushRequestTooLarge` | a push | more commands, shallow lines or push options than the server takes (`push-max-commands`, `review-max-commands`) |
 | `GitNeedsSharedStorage` | a write, `init#GitRepository`, `fetch#GitRepository`, `fork#GitRepository` | a new `local` or `remote` repository on a cluster member without `git-server` `shared-storage` ([shared storage](#shared-storage-in-a-cluster)) |
 | `GitLeaseBusy` | a push, a write, `fork#GitRepository`, `delete#GitRepository` | another cluster member writes the repository past `shared-lock-wait-seconds` |
@@ -797,7 +803,7 @@ authorization disabled):
 | `find#GitRepositoryMirrors` | `repositoryId*` → `mirrorList`: each row with `hasCredential`, never the credential |
 | `delete#GitRepositoryMirror` | `mirrorId*` → `deleted` |
 | `push#GitRepositoryMirror` | `mirrorId*` → `queued`: a push now, whatever the back-off; while one runs on any member, an error starting `GitMirrorBusy: ` |
-| `run#GitRepositoryMirrors` | `mirrorId` → `pushedIds`, `failedIds`: the queue (`run_GitRepositoryMirrors_frequent`, each minute) |
+| `run#GitRepositoryMirrors` | `mirrorId` → `pushedIds`, `failedIds`: the queue (`run_GitRepositoryMirrors_frequent`, each minute), with authorization disabled only |
 
 - **Where.** `url` is `https://host/owner/repo.git` with no user or password in it (refused), the credential apart:
   `username` and a password or token in `credential` (GitHub: any user, such as `x-access-token`, and a token with
@@ -833,7 +839,9 @@ authorization disabled):
   followed. An SSH push connects to an address the name resolved to in the one check that all its addresses are
   public, not to the name again (the host key is pinned). HTTPS is git's smart HTTP (`GET info/refs?service=git-receive-pack`, then `POST git-receive-pack`, the
   request written to a file under `runtime/tmp` and sent from it), with 60 seconds to read the refs (at most 32 MiB)
-  and 30 minutes for the push, its report at most 1 MiB. Refused in sim mode.
+  and 30 minutes for the push, its report at most 1 MiB. Over SSH the same: the refs at most 32 MiB, the report at
+  most 1 MiB, 30 minutes for the whole command (each read at most 120 seconds), and at most 64 KiB of its stderr kept.
+  Refused in sim mode.
 
 **The older push mirror.** A repository with a `pushMirrorRemoteId` is pushed to another server (GitHub, GitLab, another Moqui) after each push,
 fetch, import or write, by the framework's post-receive rule (`push#GitMirror`; Push Mirror Now on the repository's
@@ -956,7 +964,8 @@ rule, and `get#GitRefs` does not list it.
   retention time) from its recorded `headCommitId` while that commit is in the store, so `get#MergeRequestDiff`
   and the checks of its head still answer.
 
-`refresh#MergeRequests`, the framework's ref-update rule (`Git.gitecas.xml`), keeps them current on every change of a
+`refresh#MergeRequests`, the framework's ref-update rule (`Git.gitecas.xml`; it, `sync#MergeRequest` and
+`check#MergeRequest` take a call with authorization disabled only), keeps them current on every change of a
 branch, from any source, in the branch's repository and for the merge requests of other repositories of the network
 whose source it is (`sync#MergeRequest`): a source's new head is recorded (its approvals dismissed when the target's rules say so;
 webhooks get `synchronize`), each request of the branch is checked for mergeability again (`GmaMergeable`,
@@ -1035,8 +1044,10 @@ remote:   https://moqui.org/moqui/mr-moqui/-/merge-requests/12
   uploads no LFS objects. A branch that is not there (`GitNoSuchRef`), and a push that brings nothing the branch does
   not have, are refused.
 - **Caps**, for a user with no push right (a user who may push is not capped: they could push a branch): the pack
-  of one push is at most `git-server` `review-max-push-bytes` (50 MiB, `GitReviewPushTooLarge`), and no more than
-  that is read from such a user's connection, over HTTP and SSH alike; the packs of an account's pushes for review
+  of one push is at most `git-server` `review-max-push-bytes` (50 MiB, `GitReviewPushTooLarge`), counted as its
+  objects inflate when that is more (a `db` repository stores a large object inflated), and no more than
+  that is read from such a user's connection, over HTTP and SSH alike; one object is at most `review-max-object-size`
+  (32 MiB) and a delta chain at most `review-max-delta-depth` (250) deep; the packs of an account's pushes for review
   in the last day, over every repository, are at most `review-max-account-bytes` (200 MiB, `GitReviewQuota`); 0 is
   no cap. `GitUpdate.packBytes` and `reviewPush` keep what was counted. A pre-receive rule sees `forReview`, the
   ref's `targetBranch`, `userId` and `packBytes`, and refuses by the application's own rules (a confirmed address,

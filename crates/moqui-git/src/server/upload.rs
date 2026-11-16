@@ -401,8 +401,56 @@ enum MultiAck {
     Detailed,
 }
 
-fn read_line(input: &mut dyn Read) -> Result<Option<Packet>, Error> {
-    pktline::read(input).map_err(io_error)
+/// How much of a fetch's request is kept: its want, have, shallow, deepen and argument lines and the capabilities on
+/// them, which a client sends as many of as it likes (`git-server` `fetch-max-lines`, 1,000,000, each capability on a
+/// want line counted as a line, and `fetch-max-request-bytes`, 64 MiB of them). A v0 conversation has one budget, a v2
+/// command one of its own.
+pub(crate) struct LineBudget {
+    most_lines: usize,
+    most_bytes: usize,
+    lines: usize,
+    bytes: usize,
+}
+
+impl LineBudget {
+    pub(crate) fn of_conf() -> Self {
+        let number = |name: &str, default: usize| {
+            Some(crate::number_setting(name, default))
+                .filter(|n| *n > 0)
+                .unwrap_or(default)
+        };
+        Self {
+            most_lines: number("fetch-max-lines", 1_000_000),
+            most_bytes: number("fetch-max-request-bytes", 64 * 1024 * 1024),
+            lines: 0,
+            bytes: 0,
+        }
+    }
+
+    /// Count a line: one, and one more for each word past its second (a want line's capabilities).
+    fn take(&mut self, data: &[u8]) -> Result<(), Error> {
+        let words = data
+            .split(|byte| byte.is_ascii_whitespace())
+            .filter(|word| !word.is_empty())
+            .count();
+        self.lines = self.lines.saturating_add(words.saturating_sub(1).max(1));
+        self.bytes = self.bytes.saturating_add(data.len());
+        if self.lines > self.most_lines || self.bytes > self.most_bytes {
+            return Err(Error::new(format!(
+                "GitFetchRequestTooLarge: a fetch here sends at most {} lines and capabilities, in {} bytes",
+                self.most_lines, self.most_bytes
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn read_line(input: &mut dyn Read, budget: &mut LineBudget) -> Result<Option<Packet>, Error> {
+    let packet = pktline::read(input).map_err(io_error)?;
+    if let Some(Packet::Data(data)) = &packet {
+        budget.take(data)?;
+    }
+    Ok(packet)
 }
 
 /// A v0/v1 upload-pack after the advertisement: wants, shallow lines, negotiation, then the pack. `stateless` for HTTP,
@@ -417,8 +465,9 @@ pub(crate) fn upload_v0(
     threads: Option<usize>,
 ) -> Result<(), Error> {
     let mut request = Request::default();
+    let mut budget = LineBudget::of_conf();
     loop {
-        match read_line(input)? {
+        match read_line(input, &mut budget)? {
             None | Some(Packet::Flush) => break,
             Some(packet) => {
                 let line = packet.text().unwrap_or_default();
@@ -463,7 +512,7 @@ pub(crate) fn upload_v0(
     let (mut got_common, mut got_other, mut sent_ready) = (false, false, false);
     let mut last: Option<ObjectId> = None;
     loop {
-        match read_line(input)? {
+        match read_line(input, &mut budget)? {
             // the end of a stateless request that only asked for the shallow list, or a client that went away: git's
             // upload-pack writes nothing more
             None => return Ok(()),
@@ -539,8 +588,9 @@ fn read_command(input: &mut dyn Read) -> Result<Option<(String, Vec<String>)>, E
     let mut command = None;
     let mut arguments = Vec::new();
     let mut in_arguments = false;
+    let mut budget = LineBudget::of_conf();
     loop {
-        match read_line(input)? {
+        match read_line(input, &mut budget)? {
             None => return Ok(None),
             Some(Packet::Flush) if command.is_none() => return Ok(None),
             Some(Packet::Flush) => break,

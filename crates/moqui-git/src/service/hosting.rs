@@ -1451,6 +1451,11 @@ fn queue_delivery(webhook: &EntityValue, event: &str, payload: &serde_json::Valu
 /// event per tag, to each active webhook that takes it. A webhook that cannot be queued is logged and the others
 /// still are.
 fn queue_webhook_push(parameters: &Parameters, facade: &EntityFacade) -> Out {
+    // its user, source and ref updates are taken as given, and each event is signed with the webhook's secret
+    if !super::internal_call() {
+        add_error("queue#GitWebhookPush is called by the framework's gitECA rule only");
+        return none();
+    }
     let Some((provider, id)) = provider_and_id(parameters, true) else {
         return none();
     };

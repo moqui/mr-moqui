@@ -31,14 +31,10 @@ use gix::ObjectId;
 use moqui_core::context::Error;
 use moqui_lib::http::{Method, OpenRequest, OpenResponse, RestClient};
 
-use super::push::{self, PushOutcome, RefMap, RemoteRefs};
+use super::push::{self, PushOutcome, RefMap, RemoteRefs, MAX_ADVERTISEMENT, MAX_REPORT};
 use super::{io_error, pack_in, pktline, pktline::Packet};
 use crate::store::GitStore;
 
-/// The largest refs advertisement read: a repository with tens of thousands of refs is well within it.
-const MAX_ADVERTISEMENT: u64 = 32 * 1024 * 1024;
-/// The largest push report read.
-const MAX_REPORT: u64 = 1024 * 1024;
 /// The largest pack a fetch reads (each object is also held to `git-server` `max-object-size`).
 const MAX_FETCH_PACK: u64 = 8 * 1024 * 1024 * 1024;
 /// How long reading the refs may take.
@@ -265,8 +261,14 @@ pub(crate) fn push(
             .map_err(|err| remote.failed(what, &err))?;
         remote.status(what, &response)?;
         let mut report = response.reader.take(MAX_REPORT);
-        push::read_report(&mut report, &mut outcome)
-            .map_err(|err| Error::new(format!("{what} {}: {}", remote.shown(), remote.redact(err.message()))))
+        let read = push::read_report(&mut report, &mut outcome);
+        if report.limit() == 0 {
+            return Err(Error::new(format!(
+                "{what} {}: the report is more than {MAX_REPORT} bytes",
+                remote.shown()
+            )));
+        }
+        read.map_err(|err| Error::new(format!("{what} {}: {}", remote.shown(), remote.redact(err.message()))))
     })();
     if let Err(err) = std::fs::remove_dir_all(scratch) {
         tracing::warn!("cannot remove {}: {err}", scratch.display());
@@ -360,7 +362,11 @@ pub(crate) fn fetch_pack<'a>(
             Some(_) => {}
         }
     }
-    let received = pack_in::receive(store, &mut reader, dir, max_object, super::pack_threads())
+    let limits = pack_in::PackLimits {
+        max_object,
+        ..pack_in::PackLimits::of(false)
+    };
+    let received = pack_in::receive(store, &mut reader, dir, limits, super::pack_threads())
         .map_err(|err| Error::new(format!("{what} {}: {}", remote.shown(), remote.redact(err.message()))))?;
     if reader.get_ref().limit() == 0 {
         return Err(Error::new(format!(
