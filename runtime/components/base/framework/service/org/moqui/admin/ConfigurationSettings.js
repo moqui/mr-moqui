@@ -245,7 +245,12 @@ function described(setting, preference, canManage) {
         // a secret is never returned: only whether it is set to something other than the placeholder
         value: secret ? null : found.value,
         masked: secret,
-        valueSet: secret ? !!found.value && found.value !== "CHANGEME" : found.value !== "",
+        // a script reads no secret property (System.getProperty answers null): whether one is set comes from the server
+        valueSet: secret
+            ? setting.propertyName && !editable
+                ? System.isPropertySet(setting.propertyName)
+                : !!found.value && found.value !== "CHANGEME"
+            : found.value !== "",
         source: found.source,
         sourceText: sourceTexts[found.source],
         propertyName: setting.propertyName || null,

@@ -12,7 +12,12 @@ declare const ObjectUtilities: MoquiObjectUtilities;
 declare const CollectionUtilities: MoquiCollectionUtilities;
 declare const StringUtilities: MoquiStringUtilities;
 declare const WebUtilities: MoquiWebUtilities;
-declare const System: { getProperty(name: string): string | null };
+declare const System: {
+    getProperty(name: string): string | null;
+    isPropertySet(name: string): boolean;
+    propertyMatches(name: string, given: string | null): boolean;
+    secretCodeHash(name: "xmpp_upload_secret", text: string | null): string | null;
+};
 /** Java's `MNode` statics: an XML text or resource parsed, or a new element. */
 declare const MNode: {
     /** Null for text that does not parse. */

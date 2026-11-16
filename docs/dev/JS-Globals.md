@@ -404,7 +404,10 @@ A node kept in the context keeps its methods. The form, service and entity defin
 
 | Global | |
 |---|---|
-| `System.getProperty(name)` | A system property or environment value, null when it is not set or empty |
+| `System.getProperty(name)` | A system property or environment value, null when it is not set or empty, and null for a secret: a property the conf marks `is-secret="true"`, and a name of a password, secret, token, credential or key (`_key`, `_pass`, `_pw`, `crypt`), so the crypt pass, the session key and passwords given in the environment never reach a script (`pass_client_secret`, which mr-pass sends as its client credential, is read) |
+| `System.isPropertySet(name)` | Whether a property, a secret one too, has a value other than the `CHANGEME` placeholder; the value is not returned |
+| `System.propertyMatches(name, given)` | Whether `given` is the property's value, compared by digest on the server; false when either is empty. For a client secret a caller presents |
+| `System.secretCodeHash(name, text)` | `ec.user.singleUseCodeHash` of the secret's value followed by `text`, for `xmpp_upload_secret` only (an XMPP file's download token); null when it is not set |
 | `ResourceReference.isTextFilename(filename)` | Whether the content type of the file name is a text type. It is the only member: get a reference with `ec.resource.getLocationReference(location)` ([JS-Core-API](JS-Core-API.md#ecresource)) |
 
 ### EdiHandler
