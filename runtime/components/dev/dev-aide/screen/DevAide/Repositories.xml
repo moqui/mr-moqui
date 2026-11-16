@@ -60,8 +60,9 @@ along with this software (see the LICENSE.md file). If not, see
             <link url="pullAll" text="Pull all" link-type="hidden-form" btn-type="primary" confirmation="Pull every repository, fast-forward only?"/>
         </row-col></container-row>
         <form-list name="RepositoryList" list="repositories" skip-form="true">
+            <!-- the row's own path (an absolute directory) is not Workspace's path (a file in the root): the empty value leaves it out -->
             <field name="label"><default-field title="Root">
-                <link url="workspace" text="${label}${upstream ? '' : ' (site)'}" parameter-map="{rootId: rootId}" link-type="anchor"/></default-field></field>
+                <link url="workspace" text="${label}${upstream ? '' : ' (site)'}" parameter-map="{rootId: rootId, path: ''}" link-type="anchor"/></default-field></field>
             <field name="kind"><default-field title="Kind"><display text="${kind == 'git' ? 'git' : 'plain'}"/></default-field></field>
             <field name="components"><default-field title="Components"><display/></default-field></field>
             <field name="branch"><default-field title="Branch"><display text="${branch || ''}${upstream ? ' → ' + upstream : ''}"/></default-field></field>

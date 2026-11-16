@@ -264,9 +264,12 @@ mod tests {
                 continue;
             };
             for (number, line) in text.lines().enumerate() {
+                // a whole name: not inside a longer word, nor its plural ("…-the-dev-components", a heading's anchor)
                 let named = old.iter().any(|name| {
-                    line.match_indices(name)
-                        .any(|(at, _)| !line[..at].ends_with(|ch: char| ch.is_ascii_alphanumeric()))
+                    line.match_indices(name).any(|(at, _)| {
+                        !line[..at].ends_with(|ch: char| ch.is_ascii_alphanumeric())
+                            && !line[at + name.len()..].starts_with('s')
+                    })
                 });
                 if named {
                     found.push(format!("{path}:{}", number + 1));

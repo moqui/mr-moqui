@@ -40,6 +40,7 @@ From [EntityService-Parity-Review](archive/EntityService-Parity-Review.md), phas
 | P4b-09 | data writer | `isoDateTime(true)` formats dates in JSON and XML; Java ignores it (`TODO`) (`entity/query_rest.rs:1550-1582,1715-1732`) | Implements Java's TODO |
 | P5-14 | entity REST | Request `pageSize` capped at `entity_rest_max_page_size` (1000); Java caps nothing | Documented `entity/query_rest.rs:532-551` |
 | P5-16 | entity value | A `pq-expression` alias whose expression fails is logged with the alias and entity names and reads as null; Java's `get` throws an `EntityException` (`eval_pq_alias`, `entity/value.rs:1202`) | AGENTS.md failure tolerance: one bad expression does not fail the read of a row, its map, or a form-list of such rows; doc comment at `eval_pq_alias` |
+| TUI-B17 | entity audit log | A timestamp's `oldValueText` and `newValueText` are ISO 8601 in UTC with milliseconds (`2026-01-02T15:04:05.000Z`), a date `2026-01-02` and a time `15:04:05`; Java writes `toString()`, a timestamp in the server's zone with no zone named (`moqui-entity/src/entity/field_rw.rs`, `audit_value_text`) | The text names its instant whatever the server's or the reader's zone; readers parse it with `Date.parse` (older rows keep epoch milliseconds, which the readers still take). Test `audit_text_of_a_date_is_iso_text` |
 
 ### Service definition, validation and call
 

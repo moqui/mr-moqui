@@ -171,3 +171,19 @@ fn an_audited_update_finds_the_row_by_a_numeric_date_time_key() {
         .all(|row| row.get("oldValueText").is_none_or(Value::is_null)
             && row.get("newValueText").is_some_and(|value| !value.is_null())));
 }
+
+/// As Java's `toString()`, the audit log keeps a date as text, not as epoch milliseconds.
+#[test]
+fn audit_text_of_a_date_is_iso_text() {
+    use super::audit_value_text;
+    let stamp = jiff::Timestamp::from_millisecond(1_767_366_245_007).unwrap();
+    assert_eq!(audit_value_text(&Value::Timestamp(stamp)), "2026-01-02T15:04:05.007Z");
+    let date = jiff::civil::Date::constant(2026, 1, 2);
+    assert_eq!(audit_value_text(&Value::Date(date)), "2026-01-02");
+    let time = jiff::civil::Time::constant(15, 4, 5, 0);
+    assert_eq!(audit_value_text(&Value::Time(time)), "15:04:05");
+    assert_eq!(audit_value_text(&Value::string("x")), "x");
+    // the text reads back as the same instant
+    let parsed = moqui_lib::object::parse_timestamp("2026-01-02T15:04:05.007Z", &jiff::tz::TimeZone::system());
+    assert_eq!(parsed, Some(stamp));
+}

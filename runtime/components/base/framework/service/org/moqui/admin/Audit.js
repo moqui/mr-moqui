@@ -394,12 +394,14 @@ function shown(projection, row, found) {
     const secondaryKey = keyText(projection.secondaryKeyKind, row.pkSecondaryValue)
     const before = row.oldValueText == null || row.oldValueText === "" ? null : String(row.oldValueText)
     const after = row.newValueText == null || row.newValueText === "" ? null : String(row.newValueText)
-    // the audit log keeps a date as its milliseconds: shown as a time in the user's zone
+    // the audit log keeps a timestamp as ISO text in UTC (older rows as milliseconds): shown as a time in the user's zone
     const dated = /Date$/.test(text(row.changedFieldName))
     const value = found => {
         if (found == null) return null
         if (dated && /^-?\d{1,15}$/.test(found))
             return Number(found) === 0 ? "the start" : ec.l10n.format(new Date(Number(found)), "yyyy-MM-dd HH:mm")
+        if (dated && /^\d{4}-\d{2}-\d{2}T[\d:.]+(Z|[+-]\d{2}:?\d{2})$/.test(found) && Number.isFinite(Date.parse(found)))
+            return Date.parse(found) === 0 ? "the start" : ec.l10n.format(new Date(Date.parse(found)), "yyyy-MM-dd HH:mm")
         const line = lineText(found, valueLength + 1)
         return line.length > valueLength ? line.slice(0, valueLength) + "…" : line
     }

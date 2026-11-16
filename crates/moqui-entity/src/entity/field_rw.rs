@@ -400,7 +400,7 @@ fn audit_text(facade: &EntityFacade, encrypt_field: bool, value: Option<&Value>)
     };
     // A decimal read back from the database carries the column scale (10.000000); the audit text is the plain value (10).
     // A computed decimal keeps its scale (-3.40); one read from the database has none left (see params::map_row).
-    let plain = to_plain_string(value);
+    let plain = audit_value_text(value);
     let text = if encrypt_field {
         if let Some((primary, _)) = facade.crypt() {
             encrypt(&plain, &primary)?
@@ -411,6 +411,18 @@ fn audit_text(facade: &EntityFacade, encrypt_field: bool, value: Option<&Value>)
         plain
     };
     Ok(Some(clip_text(&text)))
+}
+
+/// A value as the audit log keeps it. Java writes `toString()`, so a date is text, not a number: a timestamp is ISO 8601
+/// in UTC with milliseconds (`2026-01-02T15:04:05.000Z`, which names its zone where Java's does not), a date
+/// `2026-01-02` and a time `15:04:05`. Anything else is its plain text.
+pub(crate) fn audit_value_text(value: &Value) -> String {
+    match value {
+        Value::Timestamp(timestamp) => timestamp.strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+        Value::Date(date) => date.strftime("%Y-%m-%d").to_string(),
+        Value::Time(time) => time.strftime("%H:%M:%S").to_string(),
+        other => to_plain_string(other),
+    }
 }
 
 fn clip_text(text: &str) -> String {
