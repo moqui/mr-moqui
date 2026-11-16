@@ -3,7 +3,8 @@
 // edit is in place and audit-logged, a published field keeps its type and a successor field from a date takes a new
 // one, an answered field or option is ended and never deleted, and a response reads the form as of its date. A
 // dependency's operator is from the allowlist, an equals has a value, a cycle is refused, and evaluate#DbFormDependencies checks a submit on
-// the server. The renders of the dependencies are crates/moqui-core screen::tests::db_forms.
+// the server. get#FormResponseStats counts a relabelled option once, under its current label. The renders of the
+// dependencies are crates/moqui-core screen::tests::db_forms.
 // Run: ./moq test framework --spec DbForms
 const S = 'org.moqui.impl.ScreenServices.'
 const FORM = 'CSF_SPEC'
@@ -230,5 +231,24 @@ feature('a published dependency changed is ended and replaced from now, never ed
         after[0].value == 'B' && after[0].thruDate != null
         after[1].value == 'C' && after[1].fromDate != null && after[1].thruDate == null
         c.missingFieldNames.includes('serial')
+    },
+})
+
+feature('the response stats count a relabelled option once, under its current label', {
+    when() {
+        // B relabelled: its option ended and one of the same key started; A was ended before and is offered no more
+        const ended = invoke('end#DbFormFieldOption', { formId: FORM, fieldName: 'kind', sequenceNum: 2 })
+        make('moqui.screen.form.DbFormFieldOption', { formId: FORM, fieldName: 'kind', sequenceNum: 4, keyValue: 'B', text: 'B relabelled',
+            fromDate: new Date(Date.now() - 1000) })
+        const answers = ['B', 'B'].map((kind) => invoke('create#FormResponse', { formId: FORM, responseMap: { kind, serial: 'S1' } }))
+        const stats = invoke('get#FormResponseStats', { formId: FORM })
+        return { ended, answers, stats, kind: stats.enumDbFormFieldResponseCountList.find((field) => field.title == 'Kind') }
+    },
+    then({ ended, answers, stats, kind }) {
+        ended.errors == ''
+        answers.every((answer) => answer.errors == '')
+        stats.errors == ''
+        kind.fieldOptionList.map((option) => option.text).join() == 'A,B relabelled'
+        kind.fieldOptionList.map((option) => option.count).join() == '1,2'
     },
 })

@@ -21,12 +21,12 @@
 
 use moqui_lib::object::Value;
 
-use super::definition::SubscreensItem;
+use super::definition::{ScreenDef, SubscreensItem};
 use super::render::{Frames, RenderState};
 use super::sri::screen_permitted;
 use super::url::ScreenUrlInfo;
 use super::urls::{self, UrlInstance};
-use crate::context::{Error, ErrorKind};
+use crate::context::{Error, ErrorKind, ExecutionContext};
 use crate::{l10n, script, user, web};
 
 type Item = moqui_lib::object::ValueMap;
@@ -93,6 +93,31 @@ pub(crate) fn included(parent: &str, item: &SubscreensItem) -> bool {
     item.in_menu().unwrap_or_else(|err| {
         leave_out(parent, item, &err);
         false
+    })
+}
+
+/// Whether `target`'s own `<condition>` decides whether it is offered: a screen with a condition and no `fail-widgets`.
+/// With `fail-widgets` the condition only chooses what the screen shows (Insights' record screens), so it is always
+/// offered.
+pub(crate) fn has_offer_condition(target: &ScreenDef) -> bool {
+    target.root.condition.is_some() && target.root.fail_widgets.is_none()
+}
+
+/// Whether `target`, the screen of `item` below the screen at `parent`, is offered in the current context: its own
+/// `<condition>` holds, or [`has_offer_condition`] is false. Evaluate it only where the context holds what the parents
+/// set (their always-actions at least). A condition that fails is logged and leaves the screen offered, so one bad
+/// expression does not hide a tab.
+pub(crate) fn offered(parent: &str, item: &SubscreensItem, target: &ScreenDef) -> bool {
+    let Some(condition) = target.root.condition.as_ref().filter(|_| has_offer_condition(target)) else {
+        return true;
+    };
+    super::render::check_condition(condition).unwrap_or_else(|err| {
+        tracing::error!(
+            "The condition of subscreen {} [{}] of screen [{parent}] failed, so it stays in the menu: {err}",
+            item.name,
+            item.location
+        );
+        true
     })
 }
 
@@ -207,6 +232,38 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
         return Ok(None);
     };
 
+    // A subscreen's own condition reads what the screens above it set in their always-actions (the app root's appRoot,
+    // a 360's tab list), as when the page renders; so when a listed subscreen has one, the always-actions of the path
+    // below the root (whose own ran for this transition) run first, as a render runs them.
+    let conditions = needs_conditions(state, &info, full_path.len());
+    if conditions {
+        let mut frames = Frames::untracked();
+        for (index, def) in info.path_defs.iter().enumerate() {
+            frames.enter_screen(def, false)?;
+            if index >= 1 {
+                if let Some(actions) = &def.always_actions {
+                    // an error they add is logged, not answered: it would make the menu data a 500
+                    let mark = ExecutionContext::with_current(|ec| ec.message().error_mark());
+                    let result = actions.run();
+                    let added = mark
+                        .and_then(|mark| ExecutionContext::with_current(|ec| ec.message().take_errors_since(mark)))
+                        .unwrap_or_default();
+                    if let Err(err) = result {
+                        tracing::warn!(
+                            "Error running always-actions in {} while getting menu data: {err}",
+                            def.location
+                        );
+                    } else if !added.is_empty() {
+                        tracing::warn!(
+                            "Errors from always-actions in {} while getting menu data: {}",
+                            def.location,
+                            added.join("; ")
+                        );
+                    }
+                }
+            }
+        }
+    }
     // Menu titles may come from values set in pre-actions: they run for every screen except the first two
     // (webroot and the app root), and an error in one is logged and does not stop the menu.
     {
@@ -260,7 +317,17 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
                 next_item,
                 in_menu,
             ) {
-                Ok(Some(entry)) => subscreens.push(entry),
+                Ok(Some(entry)) => {
+                    // the entry loaded the item's screen, so this finds it cached
+                    let shown = !conditions
+                        || state
+                            .facade
+                            .screen_def(&state.factory, &item.location)
+                            .is_ok_and(|target| offered(&cur_screen.location, item, &target));
+                    if shown {
+                        subscreens.push(entry);
+                    }
+                }
                 Ok(None) => {}
                 Err(err) => leave_out(&cur_screen.location, item, &err),
             }
@@ -396,6 +463,24 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
     entry.insert("savedFinds".into(), Value::List(saved_finds));
     out.push(Value::Map(entry));
     Ok(Some(Value::List(out)))
+}
+
+/// Whether a subscreen listed in the menu data of `info` (the subscreens of each of its first `levels` screens below the
+/// root) has its own condition ([`has_offer_condition`]), so the menu needs the context a render would have. A screen
+/// that does not load is left for the entry to report.
+fn needs_conditions(state: &RenderState, info: &ScreenUrlInfo, levels: usize) -> bool {
+    info.path_defs
+        .iter()
+        .skip(1)
+        .take(levels.saturating_sub(1))
+        .any(|level| {
+            level.subscreens.sorted().into_iter().any(|item| {
+                state
+                    .facade
+                    .screen_def(&state.factory, &item.location)
+                    .is_ok_and(|target| has_offer_condition(&target))
+            })
+        })
 }
 
 /// The screen's `density` (handheld), which the shell applies to the screen and the screens below it; none when unset.

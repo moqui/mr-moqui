@@ -223,11 +223,13 @@ impl EntityFind {
         input: &BTreeMap<String, Value>,
     ) -> Result<bool, Error> {
         let mut added = false;
-        if let Some(from) = bound(input.get(&format!("{name}_from")), field, " 00:00:00.000") {
+        if let Some(from) = reported(field, bound(input.get(&format!("{name}_from")), field, " 00:00:00.000")).flatten()
+        {
             self.add(field, Condition::greater_equal(name, from));
             added = true;
         }
-        if let Some(thru) = bound(input.get(&format!("{name}_thru")), field, " 23:59:59.999") {
+        if let Some(thru) = reported(field, bound(input.get(&format!("{name}_thru")), field, " 23:59:59.999")).flatten()
+        {
             self.add(field, Condition::less_equal(name, thru));
             added = true;
         }
@@ -263,7 +265,7 @@ fn text_condition(name: &str, field: &SearchField, input: &BTreeMap<String, Valu
     let condition = match op.as_str() {
         "equals" if !value_empty => {
             let typed = match &value {
-                Value::String(raw) => convert(raw, &field.java_type),
+                Value::String(raw) => reported(field, convert(raw, field))?,
                 other => other.clone(),
             };
             if not {
@@ -323,30 +325,58 @@ fn like(name: &str, pattern: Value, not: bool) -> Condition {
     }
 }
 
-/// Text from a form becomes the field's type. Text that does not convert is kept, and the database
-/// reports it, as a lone bad value in a search is the user's to see. A time stamp without an offset is in the session
-/// time zone, as Java's `ec.l10n.parseTimestamp` reads it and as the form showed it.
-fn convert(text: &str, java_type: &str) -> Value {
-    let converted = crate::hooks::convert_checked(&Value::string(text), java_type);
-    converted.unwrap_or_else(|| Value::string(text))
+/// Text from a form becomes the field's type. A time stamp without an offset is in the session time zone, as Java's
+/// `ec.l10n.parseTimestamp` reads it and as the form showed it. Text that does not convert is the message naming the
+/// field and the text: the database would refuse it and fail the whole find (and the screen that renders it), so the
+/// condition is left out and the user is told ([`reported`]).
+fn convert(text: &str, field: &SearchField) -> Result<Value, String> {
+    crate::hooks::convert_checked(&Value::string(text), &field.java_type).ok_or_else(|| not_valid(text, field))
+}
+
+/// "Sent Date: 'zz' is not a valid date and time".
+fn not_valid(text: &str, field: &SearchField) -> String {
+    let kind = match field.java_type.rsplit('.').next().unwrap_or_default() {
+        "Timestamp" => "date and time",
+        "Date" => "date",
+        "Time" => "time",
+        "Long" | "Integer" | "Short" | "BigInteger" | "BigDecimal" | "Double" | "Float" => "number",
+        "Boolean" => "true or false",
+        other => other,
+    };
+    format!(
+        "{}: '{text}' is not a valid {kind}",
+        moqui_lib::string::camel_case_to_pretty(&field.name)
+    )
+}
+
+/// The converted value, or None after adding the message as a validation error of `field`.
+fn reported<T>(field: &SearchField, converted: Result<T, String>) -> Option<T> {
+    match converted {
+        Ok(value) => Some(value),
+        Err(message) => {
+            (crate::hooks::get().add_validation_error)(&field.name, message);
+            None
+        }
+    }
 }
 
 /// A range bound. A date typed into a date-time field covers the whole day: the start of the day
 /// for `from`, the last millisecond for `thru`.
-fn bound(raw: Option<&Value>, field: &SearchField, day_end: &str) -> Option<Value> {
-    let raw = raw?;
-    if is_empty(raw) {
-        return None;
-    }
+fn bound(raw: Option<&Value>, field: &SearchField, day_end: &str) -> Result<Option<Value>, String> {
+    let Some(raw) = raw.filter(|raw| !is_empty(raw)) else {
+        return Ok(None);
+    };
     let Value::String(text) = raw else {
-        return Some(raw.clone());
+        return Ok(Some(raw.clone()));
     };
     let stamp = field.java_type.ends_with("Timestamp");
     if stamp && text.len() < 12 {
         let widened = Value::string(format!("{text}{day_end}"));
-        return Some(crate::hooks::basic_convert(&widened, "Timestamp").value);
+        return crate::hooks::convert_checked(&widened, "Timestamp")
+            .map(Some)
+            .ok_or_else(|| not_valid(text, field));
     }
-    Some(convert(text, &field.java_type))
+    convert(text, field).map(Some)
 }
 
 fn truthy(value: &Value) -> bool {

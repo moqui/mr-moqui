@@ -406,6 +406,42 @@ fn a_screen_of_only_subscreens_placeholders_is_server_static() {
     );
 }
 
+/// A screen's own `<condition>` is its root section's, and decides whether the screen is offered only when the screen has
+/// no `fail-widgets` (screen/menu.rs `has_offer_condition`).
+#[test]
+fn a_screen_condition_is_its_root_sections_and_offers_it_without_fail_widgets() {
+    let context = ExecutionContextFactory::test_context();
+    let facade = ScreenFacade::of(context.factory());
+    let build = |text: &str| {
+        let node = MNode::parse_text("C.xml", text).unwrap();
+        ScreenDef::build(
+            &facade,
+            context.factory(),
+            &node,
+            "C.xml",
+            0,
+            Extended::default(),
+            Vec::new(),
+        )
+        .unwrap()
+    };
+    let offered = build(
+        "<screen><condition><expression>appRoot == 'Here'</expression></condition><widgets><label text=\"x\"/></widgets></screen>",
+    );
+    assert!(matches!(
+        &offered.root.condition,
+        Some(super::Condition::Expression(expression)) if expression == "appRoot == 'Here'"
+    ));
+    assert!(crate::screen::menu::has_offer_condition(&offered));
+    let choosing = build(
+        "<screen><condition><expression>appRoot != 'Here'</expression></condition><widgets/><fail-widgets><label text=\"y\"/></fail-widgets></screen>",
+    );
+    assert!(choosing.root.condition.is_some() && !crate::screen::menu::has_offer_condition(&choosing));
+    assert!(!crate::screen::menu::has_offer_condition(&build(
+        "<screen><widgets/></screen>"
+    )));
+}
+
 #[test]
 fn a_transition_name_is_also_a_pattern_for_a_request_with_a_method() {
     let context = ExecutionContextFactory::test_context();

@@ -94,6 +94,8 @@ pub struct EntityHooks {
     pub locate: fn(&str) -> Result<PathBuf, Error>,
     pub add_message: fn(String),
     pub add_error: fn(String),
+    /// A validation error for a field (name, message), as `ec.message.addValidationError` with no form or service.
+    pub add_validation_error: fn(&str, String),
     pub message_errors: fn() -> Vec<String>,
     /// Take the message errors as one text, clearing them.
     pub take_errors: fn() -> Option<String>,
@@ -191,6 +193,7 @@ impl EntityHooks {
         },
         add_message: |_| {},
         add_error: |_| {},
+        add_validation_error: |_, _| {},
         message_errors: Vec::new,
         take_errors: || None,
         note_no_search_params: || {},

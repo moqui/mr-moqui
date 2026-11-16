@@ -828,3 +828,88 @@ fn a_sibling_menu_entry_leaves_out_the_page_of_the_list_shown() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A screen's own condition with no fail-widgets says whether it is offered: false leaves it out of the menu data (with
+/// the always-actions of the path run, so the app's appRoot is there) and of the html menu (`sri.getMenuItems`), and a
+/// request naming it shows that it is not offered, running none of its actions. One with fail-widgets is offered, and
+/// one whose condition fails to evaluate stays in.
+#[test]
+fn a_screen_condition_leaves_the_screen_out_where_it_is_not_offered() {
+    let dir = std::env::temp_dir().join(format!("moqui-menu-condition-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root/App")).unwrap();
+    let base = dir.to_string_lossy().into_owned();
+    let write = |path: &str, text: &str| std::fs::write(dir.join(path), text.replace("{dir}", &base)).unwrap();
+    write("Root.xml", ROOT);
+    write(
+        "Root/App.xml",
+        r#"<screen require-authentication="true" default-menu-title="The App">
+            <always-actions><set field="appRoot" value="Here"/></always-actions>
+            <subscreens default-item="Open">
+                <subscreens-item name="Open" menu-title="Open" location="{dir}/Root/App/Open.xml"/>
+                <subscreens-item name="Here" menu-title="Here" location="{dir}/Root/App/Here.xml"/>
+                <subscreens-item name="Elsewhere" menu-title="Elsewhere" location="{dir}/Root/App/Elsewhere.xml"/>
+                <subscreens-item name="Choosing" menu-title="Choosing" location="{dir}/Root/App/Choosing.xml"/>
+                <subscreens-item name="Broken" menu-title="Broken" location="{dir}/Root/App/Broken.xml"/>
+            </subscreens>
+            <widgets><subscreens-menu/><subscreens-active/></widgets>
+        </screen>"#,
+    );
+    let screen = |name: &str, condition: &str, fail: bool| {
+        let condition = if condition.is_empty() {
+            String::new()
+        } else {
+            format!("<condition><expression>{condition}</expression></condition>")
+        };
+        let fail = if fail {
+            "<fail-widgets><label text=\"choosing fail\"/></fail-widgets>"
+        } else {
+            ""
+        };
+        write(
+            &format!("Root/App/{name}.xml"),
+            &format!(
+                r#"<screen require-authentication="true" default-menu-title="{name}">{condition}
+                    <actions><script>ec.message.addError('{name} actions ran')</script></actions>
+                    <widgets><label text="{name} page"/></widgets>{fail}</screen>"#
+            ),
+        );
+    };
+    write(
+        "Root/App/Open.xml",
+        r#"<screen require-authentication="true"><widgets><label text="Open page"/></widgets></screen>"#,
+    );
+    screen("Here", "appRoot == 'Here'", false);
+    screen("Elsewhere", "appRoot == 'Elsewhere'", false);
+    screen("Choosing", "appRoot == 'Elsewhere'", true);
+    screen("Broken", "noSuchValue.nothing()", false);
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = World::open("");
+    world.user("plain", None);
+    let html = |path: &str| {
+        let mut get = request("GET", path);
+        get.set_header("authorization", basic("plain"));
+        serve_at(&world.factory, get, &root).body_text()
+    };
+
+    let (status, menu) = get_menu(&world, &root, Some("plain"), "/menuData/App/Open");
+    assert_eq!(status, 200, "{menu}");
+    let mut names: Vec<String> = menu[0]["subscreens"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["name"].as_str().unwrap().to_string())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["Broken", "Choosing", "Here", "Open"], "{menu}");
+    let page = html("/App/Open");
+    assert!(page.contains("/App/Here") && page.contains("/App/Choosing"), "{page}");
+    assert!(!page.contains("/App/Elsewhere"), "{page}");
+    let direct = html("/App/Elsewhere");
+    assert!(direct.contains("Elsewhere is not offered here."), "{direct}");
+    assert!(
+        !direct.contains("Elsewhere page") && !direct.contains("Elsewhere actions ran"),
+        "{direct}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

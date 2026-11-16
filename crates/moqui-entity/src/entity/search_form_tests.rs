@@ -175,6 +175,40 @@ fn text_becomes_the_field_type_and_a_date_widens_to_the_whole_day() {
 }
 
 #[test]
+fn text_that_does_not_convert_is_left_out_with_a_message_naming_the_field() {
+    // The database would refuse it and fail the whole find, so the condition is left out and the good ones stay.
+    let stamp = search(&[("testDateTime_from", "zz"), ("testDateTime_thru", "2026-10-02")]);
+    assert!(matches!(
+        conditions(&stamp).as_slice(),
+        [Condition::LessEqual(_, Value::Timestamp(_))]
+    ));
+    assert!(conditions(&search(&[("testDateTime", "zz")])).is_empty());
+    let number = search(&[("testNumberInteger", "seven"), ("testMedium", "alp")]);
+    assert_eq!(
+        conditions(&number),
+        [Condition::equals("testMedium", Value::string("alp"))]
+    );
+    // The message, which the framework's hook adds as a validation error of the field.
+    let field = |name: &str, java_type: &str| super::SearchField {
+        name: name.to_string(),
+        java_type: java_type.to_string(),
+        aggregate: false,
+    };
+    assert_eq!(
+        super::bound(
+            Some(&Value::string("zz")),
+            &field("sentDate", "java.sql.Timestamp"),
+            " 00:00:00.000"
+        ),
+        Err("Sent Date: 'zz' is not a valid date and time".to_string())
+    );
+    assert_eq!(
+        super::convert("seven", &field("testNumberInteger", "java.lang.Long")),
+        Err("Test Number Integer: 'seven' is not a valid number".to_string())
+    );
+}
+
+#[test]
 fn a_period_makes_a_half_open_range() {
     let found = conditions(&search(&[
         ("testDateTime_period", "month"),

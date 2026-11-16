@@ -120,6 +120,12 @@ fn menu_entry(
     if !crate::screen::menu::permitted_under(parents, &target) {
         return Ok(None);
     }
+    // the screen's own condition, in the context the parent renders with (the path's always-actions and the parents'
+    // actions have run)
+    let parent = parents.last().map_or("", |def| def.location.as_str());
+    if !crate::screen::menu::offered(parent, item, &target) {
+        return Ok(None);
+    }
     let disabled = match &item.disable_when {
         Some(expression) => script::eval_condition(expression)?,
         None => false,

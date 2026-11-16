@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- The ScreenOffer spec's parent screen (test only, never mounted): its always-actions set appRoot, as an app root does,
+    and its tabs are two screens with no condition (the AiOptOut spec's, here only tabs; the html panel draws tabs for two
+    or more) and ScreenOfferHidden, whose own condition does not hold under this appRoot. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="false" default-menu-title="Screen offer">
+    <always-actions><set field="appRoot" value="Here"/></always-actions>
+    <subscreens default-item="Shown">
+        <subscreens-item name="Shown" menu-title="Shown tab" location="component://framework/test/screen/AiOptOutScreen.xml"/>
+        <subscreens-item name="Also" menu-title="Also tab" location="component://framework/test/screen/AiOptOut.xml"/>
+        <subscreens-item name="Hidden" menu-title="Hidden tab" location="component://framework/test/screen/ScreenOfferHidden.xml"/>
+    </subscreens>
+    <widgets><subscreens-panel id="offer-panel"/></widgets>
+</screen>

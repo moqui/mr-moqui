@@ -156,7 +156,7 @@ along with this software (see the LICENSE.md file). If not, see
                                         <column><field-ref name="stateText"/><field-ref name="seenText"/></column>
                                     </columns>
                                 </form-list>
-                                <label type="p" style="q-pa-md m-muted" condition="!sessions.length &amp;&amp; !failure" text="${filtered ? 'No session matches.' : 'No one is signed in.'}"/>
+                                <label type="p" style="q-pa-md m-muted" condition="!sessions.length &amp;&amp; !failure" text="${filtered ? 'No session matches.' : 'No web session is open. Terminal (SSH) sessions are listed in Terminal Sessions.'}"/>
                             </box-body-nopad>
                         </container-box>
                     </widgets>

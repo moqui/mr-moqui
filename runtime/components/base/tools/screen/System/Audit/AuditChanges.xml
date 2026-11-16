@@ -152,10 +152,12 @@ along with this software (see the LICENSE.md file). If not, see
                         </form-single>
                     </widgets>
                 </section>
-                <container style="row items-center q-gutter-sm" condition="!!narrowed">
-                    <label type="span" text="Narrowed to ${narrowed}."/>
-                    <link url="." text="Show all" link-type="anchor" condition="!printing" parameter-map="clearValues"/>
-                </container>
+                <section name="Narrowed" condition="!!narrowed"><widgets>
+                    <container style="row items-center q-gutter-sm">
+                        <label type="span" text="Narrowed to ${narrowed}."/>
+                        <link url="." text="Show all" link-type="anchor" condition="!printing" parameter-map="clearValues"/>
+                    </container>
+                </widgets></section>
                 <label type="p" style="text-warning" condition="!!found.notice" text="${found.notice}"/>
                 <label type="p" style="text-warning" condition="!!problemText" text="Not answered just now, so not listed: ${problemText}."/>
                 <label type="p" style="text-warning" condition="found.truncated" text="Only the newest ${found.exportRows} changes are in this print or file: narrow the dates for the rest."/>

@@ -44,6 +44,9 @@ moqui_entity::hooks::submit! {
         add_error: |text| {
             ExecutionContext::with_current(|ec| ec.message().add_error(text));
         },
+        add_validation_error: |field, text| {
+            ExecutionContext::with_current(|ec| ec.message().add_validation_error("", field, "", &text));
+        },
         message_errors: || ExecutionContext::with_current(|ec| ec.message().errors().to_vec()).unwrap_or_default(),
         take_errors: crate::service::util::take_errors_string,
         note_no_search_params: || {

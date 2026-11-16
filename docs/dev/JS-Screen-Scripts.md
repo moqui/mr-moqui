@@ -65,6 +65,17 @@ For a request to a screen path (`render.rs` `render_screens`):
   are written in place of its widgets.
 - A subscreen rendered on its own (a tab loaded by the client, a `lastStandalone` render) runs its parents'
   `always-actions` and not their `actions`.
+- A screen stopped at step 4 runs none of its actions; the errors are written in place of the first rendered screen's
+  widgets (the stopped screen's own, when it is the first).
+- A screen's own `condition` (its root section's, before `actions`) with no `fail-widgets` says whether the screen is
+  offered here. When it is false the screen is left out of the menu data (the browser's tabs and menus) and of
+  `sri.getMenuItems` (the terminal's and html's tab bars), and a request that names the screen by its path shows
+  "... is not offered here." in place of its widgets, with no actions run. It is evaluated in the context of the
+  parents: the menu data runs the path's `always-actions` first when a listed subscreen has a condition, and a tab bar
+  is drawn inside its parent's render. Keep such a condition to what `always-actions` set (an app root's `appRoot`, a
+  360's tab list), and give the parent a default subscreen, or a `conditional-default`, that is offered in each
+  context: the default is not checked. A condition that fails to evaluate leaves the screen offered (logged). With
+  `fail-widgets`, the condition only chooses between `widgets` and `fail-widgets`, and the screen is always offered.
 - A widget that fails does not fail the page: "Error rendering ..." is written where its output would have been. A
   security error (not logged in, not authorized, a tarpit) does stop the render.
 - `sri.sendRedirectAndStopRender(url)` in `pre-actions` or `always-actions` answers with a redirect and renders
@@ -340,6 +351,7 @@ naming a screen there overwrites that screen. With no file the report goes to st
 | `actions`, `always-actions`, `pre-actions`, `row-actions`, and a transition's `service-call` | The generated script must parse |
 | `<text template="true">` bodies | Must compile as a fancy template |
 | Widget elements | An element no macro names is reported: it would render as a placeholder |
+| Attributes | An attribute the XSD does not define on its element (`<container condition>`) is listed as a warning: the renderers ignore it. It does not change the exit code, as `moqui check`'s schema warnings do not |
 
 A parse failure, an unknown element or a template that does not compile is printed and makes the command exit 1.
 

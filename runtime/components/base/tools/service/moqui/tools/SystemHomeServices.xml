@@ -147,8 +147,9 @@ along with this software (see the LICENSE.md file). If not, see
             })
             check('swap', () => {
                 const swap = readings.Swap || {}
-                if (flagged(swap.Level)) item(resources, {key: 'swap', severity: swap.Level, value: swap.UsedPercent,
-                    text: say('Swap is ${percent} % used', {percent: whole(swap.UsedPercent)})})
+                // no metric records swap; the memory left is what drives it
+                if (flagged(swap.Level)) item(resources, Object.assign({key: 'swap', severity: swap.Level, value: swap.UsedPercent,
+                    text: say('Swap is ${percent} % used', {percent: whole(swap.UsedPercent)})}, metrics('system.linux.memory.available')))
             })
 
             // ---- saturation and state ----

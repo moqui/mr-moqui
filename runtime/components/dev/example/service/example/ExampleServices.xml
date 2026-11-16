@@ -54,11 +54,14 @@
                 emptyText: 'No gallery notes', rowList: [{title: 'Gallery home row', countText: '1 new', link: '/qapps/gallery/Widgets'}]}]
         ]]></script></actions>
     </service>
+    <!-- Fails on purpose only for a user whose preference example.gallery.homeFailing is Y (basic-comms
+        BasicCommsInbox.spec.js sets it), so Comms Home does not tell every user of an instance with this component that
+        some parts could not be read. -->
     <service verb="get" noun="GalleryHomeSourceFailing">
         <implements service="org.moqui.comms.ProviderInterfaces.home#Source"/>
         <actions><script><![CDATA[
             cardList = []
-            ec.message.addError('The example home source fails on purpose')
+            if (ec.user.getPreference('example.gallery.homeFailing') === 'Y') ec.message.addError('The example home source fails on purpose')
         ]]></script></actions>
     </service>
     <service verb="get" noun="GalleryContactCard">

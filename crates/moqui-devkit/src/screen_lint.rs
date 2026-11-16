@@ -260,6 +260,10 @@ pub struct FileReport {
     pub tui_unsafe: Vec<u32>,
     /// Elements of a screen's widgets that no macro names, often a typo: a render logs each and writes a placeholder.
     pub unknown_elements: Vec<(u32, String)>,
+    /// Attributes the XSD does not define on their element (`<container condition>`), which the renderers ignore: the
+    /// schema.unknown-attribute warning of `moqui check`. A warning, not a failure, as every schema finding is: the XSD
+    /// may lag what the framework reads.
+    pub unknown_attributes: Vec<(u32, String)>,
     /// Containers, boxes, rows and sections of a screen with no `name` or `id`, which a `screen-extend` cannot anchor
     /// to (plans/design-dev-aide.md F16). Information: an upstream screen names the places sites extend.
     pub unnamed_anchors: Vec<(u32, String)>,
@@ -454,6 +458,21 @@ impl ScreenLintReport {
             }
         }
         if self.title.is_empty() {
+            let unknown: usize = self.files.iter().map(|file| file.unknown_attributes.len()).sum();
+            let screens = self
+                .files
+                .iter()
+                .filter(|file| !file.unknown_attributes.is_empty())
+                .count();
+            let _ = writeln!(
+                out,
+                "\nAttributes the XSD does not define: {unknown} in {screens} file(s), which the renderers ignore (warning)"
+            );
+            for file in &self.files {
+                for (line, detail) in &file.unknown_attributes {
+                    let _ = writeln!(out, "  {}:{line} {detail}", file.path.display());
+                }
+            }
             let unnamed: usize = self.files.iter().map(|file| file.unnamed_anchors.len()).sum();
             let screens = self
                 .files
@@ -576,6 +595,17 @@ fn scan_screen_text(
     };
     scan_node(&root, false, &mut file);
     scan_widgets(&root, names, opaque, &mut file);
+    let xsd_dir = moqui_core::context::framework_dir().join("xsd");
+    for problem in crate::check::schema_problems(&xsd_dir, &root, "", text) {
+        if problem.rule == "schema.unknown-attribute" {
+            // the detail alone ("<container> has no attribute condition"), without the rule's sentence
+            let detail = problem
+                .message
+                .split_once(": ")
+                .map_or(problem.message.as_str(), |(detail, _)| detail);
+            file.unknown_attributes.push((problem.line, detail.to_string()));
+        }
+    }
     crate::lint_hazards::refine(&root, &mut file);
     if root.has_name("screen") {
         scan_tui(&root, &mut file);

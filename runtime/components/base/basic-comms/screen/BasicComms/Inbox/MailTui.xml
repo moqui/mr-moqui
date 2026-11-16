@@ -13,10 +13,12 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The terminal twin of the Inbox (style-guide §4.8): Mail.tui.json is a dynamic container of this screen with Mail's view
-    parameters (view, account, folder, label, mailbox, q, unreadOnly, cursor). The thread list of that view through the same
+    parameters (view, account, folder, label, mailbox, q, unreadOnly, cursor, thread). The thread list of that view through the same
     find#InboxRows (org.moqui.comms.InboxServices.run#Operation) the Mail.qvue client calls, each thread opening its newest message in MessageDetail,
     with Mark read or unread and Archive through set#ThreadState, which checks the user's accounts and messages (R21). The
-    view and search form opens Mail with its fields; an action goes back to Mail with the view it was on. -->
+    view and search form opens Mail with its fields; an action goes back to Mail with the view it was on. A thread link
+    (thread=store:threadId, as Mail.qvue takes it) opens that thread above the list, its messages each opening in
+    MessageDetail, through get#ThreadView ("not found" for one the user may not see), and marks its row. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Inbox" default-menu-include="false">
 
@@ -28,6 +30,7 @@ along with this software (see the LICENSE.md file). If not, see
     <parameter name="q"/>
     <parameter name="unreadOnly"/>
     <parameter name="cursor"/>
+    <parameter name="thread"/>
 
     <!-- a row's action on its thread: read, unread or archive -->
     <transition name="state">
@@ -63,6 +66,34 @@ along with this software (see the LICENSE.md file). If not, see
                     detailEmailMessageId: row.store === 'email' ? (row.lastEmailMessageId || row.emailMessageId || null) : null,
                     detailCommEventId: row.store === 'email' ? null : (row.lastCommEventId || row.communicationEventId || null)}
             })
+            // the thread a link names (store:threadId), opened above the list; one that is not found says so and the list stays
+            threadMessages = []
+            threadSubject = ''
+            threadMissing = false
+            const at = String(thread || '').indexOf(':')
+            if (at > 0) {
+                let opened = null
+                ec.message.pushErrors()
+                try {
+                    opened = ec.service.sync().name('org.moqui.comms.InboxServices.run#Operation').parameters({operation: 'get#ThreadView',
+                        parameters: {store: thread.substring(0, at), threadId: thread.substring(at + 1)}}).call()?.result?.thread || null
+                    if (ec.message.hasError()) opened = null
+                } finally {
+                    ec.message.clearErrors()
+                    ec.message.popErrors()
+                }
+                threadMissing = !opened
+                if (opened) {
+                    threadSubject = opened.subject || ec.l10n.localize('(no subject)')
+                    threadMessages = Array.from(opened.messageList || []).map((message) => ({
+                        fromText: nameOf(message.from) || '', subjectText: message.subject || threadSubject,
+                        dateText: message.date ? ec.l10n.format(new Date(Number(message.date)), 'MMM d, h:mm a') : '',
+                        snippet: String(message.snippet || message.text || '').replace(/\s+/g, ' ').trim().slice(0, 160),
+                        detailEmailMessageId: message.store === 'email' ? (message.emailMessageId || null) : null,
+                        detailCommEventId: message.store === 'email' ? null : (message.communicationEventId || null)}))
+                    for (const row of threadList) if (row.store + ':' + row.threadId === thread) row.fromText = '▸ ' + row.fromText
+                }
+            }
             hasMore = !ec.message.hasError() && out.hasMore === true && !!out.nextCursor
             nextParams = Object.assign({}, viewParams, {cursor: hasMore ? String(out.nextCursor) : ''})
             search = {view: view || 'inbox', q: q || ''}
@@ -86,6 +117,22 @@ along with this software (see the LICENSE.md file). If not, see
             <field-layout><field-row-big><field-ref name="view"/><field-ref name="q"/><field-ref name="searchButton"/></field-row-big></field-layout>
         </form-single>
 
+        <section name="MailTuiThread" condition="threadMessages.length"><widgets>
+            <container-box id="MailTuiThreadBox"><box-header title="${threadSubject}"/><box-toolbar>
+                <link url="../Mail" text="Close" parameter-map="viewParams"/></box-toolbar><box-body-nopad>
+                <form-list name="MailTuiThreadMessages" list="threadMessages" skip-form="true" paginate="false">
+                    <field name="fromText"><default-field title="From"><display/></default-field></field>
+                    <field name="subjectText"><default-field title="Subject">
+                        <link url="../MessageDetail" link-type="anchor" text="${subjectText}"
+                                parameter-map="{emailMessageId:detailEmailMessageId, communicationEventId:detailCommEventId}"/></default-field></field>
+                    <field name="snippet"><default-field title="Message"><display/></default-field></field>
+                    <field name="dateText"><default-field title="Date"><display/></default-field></field>
+                </form-list>
+            </box-body-nopad></container-box>
+        </widgets></section>
+        <section name="MailTuiThreadMissing" condition="threadMissing"><widgets>
+            <label type="p" text="That thread is not found" style="text-warning"/>
+        </widgets></section>
         <form-list name="MailTuiThreads" list="threadList" skip-form="true" paginate="false">
             <field name="fromText"><default-field title="From"><display/></default-field></field>
             <field name="subjectText"><default-field title="Subject">

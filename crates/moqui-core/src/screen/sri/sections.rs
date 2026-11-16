@@ -196,6 +196,13 @@ fn render_def(state: &RenderState, runner: &dyn Runner, def: &Arc<ScreenDef>, is
     let mut frames = Frames::default();
     frames.enter_rendered_screen(def, is_target)?;
     frames.hit_detail(Some(&state.content_type), def.track_artifact_hit);
+    // A screen stopped before the render (a required parameter missing) runs no actions and shows why. A subscreen on
+    // the path is skipped before it gets here (render_next_screen); this is the first screen rendered.
+    if state.override_def.borrow().is_none() && state.stopped.borrow().contains(&def.location) {
+        let errors = ExecutionContext::with_current(|ec| ec.message().errors().join("\n")).unwrap_or_default();
+        write_errors(state, &errors);
+        return Ok(());
+    }
     render_section_of(state, runner, def, "")
 }
 
@@ -517,6 +524,10 @@ fn render_single(
         None => true,
     };
     let fail = !holds;
+    if fail && section.fail_widgets.is_none() && std::ptr::eq(section, &def.root) && named_target(state, def) {
+        write_not_offered(state, def);
+        return Ok(());
+    }
     if holds {
         if let Some(actions) = &section.actions {
             if let Err(err) = actions.run() {
@@ -553,14 +564,44 @@ fn render_single(
     let errors = ExecutionContext::with_current(|ec| ec.message().errors().join("\n")).unwrap_or_default();
     if holds && !errors.is_empty() {
         // Rendering widgets after an error in the actions would only add more errors.
-        if state.output_kind == OutputKind::Json {
-            write(state, &json_error_array(&errors));
-        } else {
-            write(state, &encode_html(&errors));
-        }
+        write_errors(state, &errors);
         return Ok(());
     }
     runner.run(&unit)
+}
+
+/// The errors written in place of a screen's or section's widgets.
+fn write_errors(state: &RenderState, errors: &str) {
+    if errors.is_empty() {
+        return;
+    }
+    if state.output_kind == OutputKind::Json {
+        write(state, &json_error_array(errors));
+    } else {
+        write(state, &encode_html(errors));
+    }
+}
+
+/// Whether `def` is the screen the request names, not one chosen as a default subscreen or included.
+fn named_target(state: &RenderState, def: &Arc<ScreenDef>) -> bool {
+    let info = &state.url_info;
+    state.override_def.borrow().is_none()
+        && info.path_defs.last().is_some_and(|last| Arc::ptr_eq(last, def))
+        && info.full_path.len() <= info.minimal_path.len()
+}
+
+/// A screen asked for by its path whose own condition does not hold here, and that has no fail-widgets: it is not
+/// offered here (it is left out of the menus, screen/menu.rs `offered`), so it says so in place of its widgets, and its
+/// actions do not run.
+fn write_not_offered(state: &RenderState, def: &ScreenDef) {
+    let title = crate::l10n::localize(&def.default_menu_title).unwrap_or_else(|_| def.default_menu_title.clone());
+    let text = format!("{title} is not offered here.");
+    if state.output_kind == OutputKind::Json {
+        let encoded = serde_json::to_string(&strip_controls(&text)).unwrap_or_else(|_| "\"\"".to_string());
+        write(state, &format!(r#"[{{"t":"text","text":{encoded}}}]"#));
+    } else {
+        write(state, &format!("<p class=\"text-grey\">{}</p>", encode_html(&text)));
+    }
 }
 
 /// `sri.renderSubscreen()`: the next screen in the path.

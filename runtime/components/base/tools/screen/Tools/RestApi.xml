@@ -62,9 +62,11 @@ along with this software (see the LICENSE.md file). If not, see
     </actions>
     <widgets>
         <label text="Each link opens the description of one API as JSON in a new tab, with your current sign-in: a resource's OpenAPI document, an entity's master schema." type="p" style="m-muted"/>
-        <container id="RestApiDevAide" style="q-mb-sm" condition="devAide">
-            <link url="//apps/dev" text="Explore services and entities in Dev AIDE" link-type="anchor" icon="sym_o_code"/>
-        </container>
+        <section name="RestApiDevAide" condition="devAide"><widgets>
+            <container id="RestApiDevAide" style="q-mb-sm">
+                <link url="//apps/dev" text="Explore services and entities in Dev AIDE" link-type="anchor" icon="sym_o_code"/>
+            </container>
+        </widgets></section>
         <form-single name="RestApiFilter" transition=".">
             <field name="api"><default-field><hidden/></default-field></field>
             <field name="filter"><default-field title="Filter" tooltip="A part of a resource's or an entity's name or description">

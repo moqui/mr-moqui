@@ -102,6 +102,41 @@ fn a_screen_with_a_missing_required_parameter_is_skipped_and_reports_an_error() 
     assert!(trace_of(&with).contains(&"Deep.actions".to_string()));
 }
 
+/// The first screen rendered (a level loaded alone) with a required parameter missing runs none of its actions: the
+/// message alone shows, not also what its actions would say with no value (Tools AutoEdit with no aen).
+#[test]
+fn a_stopped_first_screen_runs_none_of_its_actions() {
+    let dir = std::env::temp_dir().join(format!("moqui-render-stopped-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root")).unwrap();
+    std::fs::write(
+        dir.join("Root.xml"),
+        r#"<screen require-authentication="false"><widgets><subscreens-active/></widgets></screen>"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Root/Needs.xml"),
+        r#"<screen require-authentication="false"><parameter name="needId" required="true"/>
+            <actions><script>ec.message.addError('Needs actions ran')</script></actions>
+            <widgets><label text="needs page"/></widgets></screen>"#,
+    )
+    .unwrap();
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = World::open("");
+    let response = serve_at(
+        &world.factory,
+        with_query(request("GET", "/Needs.text"), "lastStandalone", "true"),
+        &root,
+    );
+    let body = response.body_text();
+    assert!(body.contains("Required parameter missing (needId)"), "{body}");
+    assert!(
+        !body.contains("Needs actions ran") && !body.contains("needs page"),
+        "{body}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn an_always_standalone_mode_starts_pre_actions_at_the_third_screen() {
     let context = ExecutionContextFactory::test_context();

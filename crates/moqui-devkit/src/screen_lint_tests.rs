@@ -35,6 +35,35 @@ fn unnamed_containers_are_listed_as_anchors_a_screen_extend_cannot_use() {
     );
 }
 
+/// An attribute the XSD does not define on its element is listed as a warning, as `moqui check`'s
+/// schema.unknown-attribute: `<container condition>` is ignored by every renderer (a section has the condition).
+#[test]
+fn an_attribute_the_xsd_does_not_define_is_listed_and_is_not_a_failure() {
+    let text = r#"<screen><widgets>
+    <container id="Narrowed" condition="!!narrowed"><label text="x"/></container>
+    <section name="Shown" condition="!!narrowed"><widgets><label text="y"/></widgets></section>
+</widgets></screen>"#;
+    let file = super::lint_screen_text(std::path::Path::new("Attributes.xml"), text)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        file.unknown_attributes,
+        [(2, "<container> has no attribute condition".to_string())]
+    );
+    let report = ScreenLintReport {
+        files: vec![file],
+        ..ScreenLintReport::default()
+    };
+    assert!(report.failures().is_empty());
+    assert!(
+        report
+            .render()
+            .contains("Attributes the XSD does not define: 1 in 1 file(s)"),
+        "{}",
+        report.render()
+    );
+}
+
 #[test]
 fn a_comment_left_open_before_the_next_is_a_failure() {
     let text =

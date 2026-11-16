@@ -552,6 +552,8 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions>
             <script>enumFieldTypeEnumIdList = ['DBFFT_check', 'DBFFT_drop-down', 'DBFFT_radio'];</script>
+            <entity-find-one entity-name="moqui.screen.form.DbForm" value-field="dbForm"/>
+            <set field="formDated" from="dbForm?.isDated == 'Y'"/>
             <entity-find entity-name="moqui.screen.form.DbFormField" list="textDbFormFieldList">
                 <econdition field-name="formId" from="formId"/>
                 <econdition field-name="fieldTypeEnumId" from="enumFieldTypeEnumIdList" operator="not-in" />
@@ -584,7 +586,25 @@ along with this software (see the LICENSE.md file). If not, see
                 <entity-find entity-name="moqui.screen.form.DbFormFieldOption" list="dbFormFieldOptionList">
                     <econdition field-name="formId" from="formId"/>
                     <econdition field-name="fieldName" from="enumDbFormField.fieldName"/>
+                    <order-by field-name="sequenceNum"/>
                 </entity-find>
+                <!-- One option per key, counted under its current label: a relabelled option (the old one ended, a new one of the
+                    same key started) is counted once. The option in effect now, else for a key no longer offered the one that
+                    ended last; a draft of a dated form (no fromDate) and an option not started yet have no answers. -->
+                <script><![CDATA[{
+                    const nowMillis = ec.user.timestampMillis(ec.user.nowTimestamp)
+                    const millis = (value) => value == null || value === '' ? null : ec.user.timestampMillis(value)
+                    const best = new Map()
+                    dbFormFieldOptionList.forEach((option, index) => {
+                        const from = millis(option.fromDate), thru = millis(option.thruDate)
+                        if (from == null ? formDated : from > nowMillis) return
+                        const rank = thru == null || thru > nowMillis ? Number.MAX_SAFE_INTEGER : thru
+                        const seen = best.get(option.keyValue)
+                        if (!seen || rank > seen.rank) best.set(option.keyValue, {index, rank})
+                    })
+                    const kept = new Set(Array.from(best.values()).map((entry) => entry.index))
+                    dbFormFieldOptionList = dbFormFieldOptionList.filter((option, index) => kept.has(index))
+                }]]></script>
                 <iterate list="dbFormFieldOptionList" entry="dbFormFieldOption">
                     <set field="dbFormFieldOptionResponseObj" from="{}"/>
                     <entity-find-count entity-name="moqui.screen.form.FormResponseAnsAndDbFormField" count-field="enumDbFormFieldOptionResponseCount">

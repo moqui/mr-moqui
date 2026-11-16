@@ -164,6 +164,15 @@ const smtpConfigured = (facts, listening) => ({
     edgeNode: ["front", "front_edge", "edge"].includes(text(facts.prop("node_role")).toLowerCase())
 })
 
+// The mail relays, each EmailServer no EmailAccount owns (ConfigurationConnections.js), SYSTEM among them: what outgoing
+// mail is sent through. Only whether each has a host and is disabled, never the host itself.
+function mailRelays() {
+    const owned = new Set(rows("moqui.basic.email.EmailAccount", {ownsEmailServer: "Y"}).map(row => text(row.emailServerId)))
+    return rows("moqui.basic.email.EmailServer", {})
+        .filter(row => !owned.has(text(row.emailServerId)))
+        .map(row => ({emailServerId: text(row.emailServerId), smtpHost: !!text(row.smtpHost), disabled: text(row.disabled) === "Y"}))
+}
+
 // ===== the protocols =====
 // on(facts): {on, reason} whether the conf turns it on, and when it does not, the setting that would. entry: its line of the
 // startup report (a listener or an integration); web: it is served by the web listener. feature null: no build has it.
@@ -175,7 +184,18 @@ const protocols = [
         description: "The mail the instance sends through its relays (SMTP)",
         feature: "smtp",
         ownerKey: "mailRelays",
-        on: () => ({on: true})
+        // on when a relay can send: the SYSTEM mail server or another relay with an SMTP host that is not disabled
+        on: facts => {
+            const hosted = (facts.mailRelays || mailRelays)().filter(relay => relay.smtpHost)
+            if (!hosted.length)
+                return {
+                    on: false,
+                    reason: "Neither the SYSTEM mail server nor a mail relay has an SMTP host, so the instance sends no mail"
+                }
+            if (hosted.every(relay => relay.disabled))
+                return {on: false, reason: "Every mail relay with an SMTP host is disabled, so the instance sends no mail"}
+            return {on: true}
+        }
     },
     {
         protocolKey: "smtpIn",

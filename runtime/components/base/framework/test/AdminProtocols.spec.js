@@ -2,7 +2,7 @@
 // ProtocolsHome and ServerConfiguration, §15.3 "Protocol readiness"): a protocol this build leaves out, one the conf keeps
 // off, one that did not start and one that runs read apart; SMTP reception is trusted only while its allowlist and its
 // authserv-id hold, and a mismatch is never ready; a check that leaves the server runs only when confirmed, and a protocol
-// that is off is sent nothing. The states are read from given facts (the server's own are a command-line run's here, which
+// that is off is sent nothing; outgoing mail is ready only with a relay (SYSTEM or another) that has an SMTP host. The states are read from given facts (the server's own are a command-line run's here, which
 // opens no listeners); nothing is connected to.
 // Run: ./moq test framework --spec AdminProtocols
 const C = "org.moqui.admin.ConfigurationServices."
@@ -168,6 +168,34 @@ feature("a protocol that is not built, one kept off, one that did not start and 
         out.settings.settingList.length > 0
         out.settings.settingList.every(row => row.settingGroup.startsWith("Protocols: ") && row.editable === false)
         out.settings.settingList.some(row => row.propertyName === "smtp_allowed_addresses")
+    }
+})
+
+feature("outgoing mail is ready only with the SYSTEM mail server or a relay that has an SMTP host and is not disabled", {
+    when() {
+        const out = relays => protocols.readinessOf("smtpOut", Object.assign(facts({features: ["smtp"]}), {mailRelays: () => relays}))
+        const system = ec.entity.find("moqui.basic.email.EmailServer").condition("emailServerId", "SYSTEM").one()
+        const before = system?.smtpHost ?? null
+        // the server's own relays, read from the database: SYSTEM given a host
+        ec.entity.makeValue("moqui.basic.email.EmailServer").setAll({emailServerId: "SYSTEM", smtpHost: "smtp.example.com"}).createOrUpdate()
+        const stored = as(users.view, () => invoke(C + "get#ProtocolReadiness", {protocolKey: "smtpOut"}))
+        ec.entity.makeValue("moqui.basic.email.EmailServer").setAll({emailServerId: "SYSTEM", smtpHost: before}).createOrUpdate()
+        return {
+            none: out([]),
+            noHost: out([{emailServerId: "SYSTEM", smtpHost: false, disabled: false}]),
+            disabled: out([{emailServerId: "RELAY", smtpHost: true, disabled: true}]),
+            relay: out([{emailServerId: "SYSTEM", smtpHost: false, disabled: false}, {emailServerId: "RELAY", smtpHost: true, disabled: false}]),
+            stored: stored.protocolList?.[0]
+        }
+    },
+    then({none, noHost, disabled, relay, stored}) {
+        none.state === "disabled"
+        none.reason.includes("SMTP host")
+        noHost.state === "disabled"
+        disabled.state === "disabled"
+        disabled.reason.includes("disabled")
+        relay.state === "ready"
+        stored.state === (ec.factory.hasFeature("smtp") ? "ready" : "absent")
     }
 })
 

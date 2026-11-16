@@ -151,6 +151,15 @@ along with this software (see the LICENSE.md file). If not, see
 
             Screen filenames should be camel-cased and start with an upper-case letter (whereas transitions should
             start with a lower-case letter).
+
+            The screen's own condition, actions, widgets and fail-widgets (the section-elements at the end) are its root
+            section. The condition is evaluated in the context the parent screen renders with (the always-actions of the
+            path, so values such as appRoot that an app root sets there). In a screen with no fail-widgets it says whether
+            the screen is offered here: when it is false the screen is left out of menus and tab bars, its actions and
+            widgets do not run, and a request that names the screen by its path shows "... is not offered here." in place
+            of its widgets. Give such a screen's parent a default subscreen (or a conditional-default) whose condition holds
+            in each context. In a screen with fail-widgets the condition only chooses between widgets and fail-widgets, and
+            the screen is always offered.
         </xs:documentation>
     </xs:annotation><xs:complexType><xs:complexContent><xs:extension base="screen-base">
         <!-- NOTE: screen element attributes come from screen-base that this is an extension of -->

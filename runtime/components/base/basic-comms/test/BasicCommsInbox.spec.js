@@ -163,7 +163,7 @@ feature("an action on the thread, and Home counts the account", {
     }
 })
 
-feature("Needs reply keeps the mail a day old or more that is not answered and has no reply sent after it, on Home and as an Inbox filter", {
+feature("Needs reply keeps the mail a day old or more that is not answered and has no reply sent after it, on Home and as an Inbox filter; the terminal Inbox opens the thread its link names", {
     when() {
         const daysAgo = (days) => new Date(Date.now() - days * 86400000)
         const message = (id, fields) => store("moqui.basic.email.EmailMessage", Object.assign({emailMessageId: id, rootEmailMessageId: id,
@@ -182,9 +182,26 @@ feature("Needs reply keeps the mail a day old or more that is not answered and h
         const rows = inbox("find#InboxRows", {view: "inbox", needsReply: true, pageSize: 10})
         const home = attempt("org.moqui.comms.CommsHomeServices.get#CommsHome")
         const shown = sys(() => ec.screen.makeTest().rootScreen("component://basic-comms/screen/BasicComms.xml").renderMode("tui").render("Home", {}, null))
-        return {rows, home, text: String(shown.output || "")}
+        // the terminal Inbox opens the thread Home links to (thread=store:threadId), above the list, and marks its row
+        const mail = sys(() => ec.screen.makeTest().rootScreen("component://basic-comms/screen/BasicComms.xml").renderMode("tui")
+            .render("Inbox/MailTui", {thread: "email:BCI_NR_REPLIED"}, null))
+        const nodes = (value, out = []) => {
+            if (Array.isArray(value)) value.forEach((item) => nodes(item, out))
+            else if (value && typeof value === "object") {
+                if (value.t) out.push(value)
+                Object.values(value).forEach((item) => nodes(item, out))
+            }
+            return out
+        }
+        const mailText = String(mail.output || "")
+        const opened = nodes(JSON.parse(mailText || "{}")).find((node) => node.t === "formList" && node.name === "MailTuiThreadMessages")
+        return {rows, home, text: String(shown.output || ""), mailText, opened}
     },
-    then({rows, home, text}) {
+    then({rows, home, text, mailText, opened}) {
+        opened.rows.length == 2
+        mailText.includes("Re: Replied in thread")
+        mailText.includes("▸ ")
+        !mailText.includes("That thread is not found")
         rows.errors == ""
         rows.threadList.map(row => row.rowKey).join() == "email:BCI_NR_WAIT"
         home.needsReplyList.map(row => row.rowKey).join() == "email:BCI_NR_WAIT"
@@ -252,21 +269,31 @@ feature("the operations go to the app's inbox-source when the user may open it, 
 })
 
 // The home-source and contact-card hooks (plans/archive/Comms-Framework.md §3.3) over the example gallery's providers: its Home box,
-// one failing on purpose and named in failedParts, and its contact card for its own addresses; an address nobody knows
+// one failing on purpose (for a user who asks it to) and named in failedParts, and its contact card for its own addresses; an address nobody knows
 // is the address alone. Skipped when the example component is not loaded.
 const exampleInstalled = ec.resource.getLocationReference("component://example/screen/Gallery.xml").getExists()
 feature("Home adds the apps' home-source boxes and leaves out one that fails; the contact card is a provider's, else the address alone", {
     when() {
         if (!exampleInstalled) return {skip: true}
         login("john.doe")
-        const sources = attempt("org.moqui.comms.CommsHomeServices.get#HomeSources")
+        // the example's failing source fails only for a user who asks it to (dev/example ExampleServices.xml)
+        const sources = (() => {
+            ec.user.setPreference("example.gallery.homeFailing", "Y")
+            try {
+                return attempt("org.moqui.comms.CommsHomeServices.get#HomeSources")
+            } finally {
+                ec.user.setPreference("example.gallery.homeFailing", "N")
+            }
+        })()
+        const quiet = attempt("org.moqui.comms.CommsHomeServices.get#HomeSources")
         const known = inbox("get#ContactCard", {emailAddress: "pat@gallery.example", name: "Pat"})
         const unknown = inbox("get#ContactCard", {emailAddress: "nobody@unknown.example", name: "Nobody Known"})
-        return {sources, known, unknown}
+        return {sources, quiet, known, unknown}
     },
-    then({skip, sources, known, unknown}) {
+    then({skip, sources, quiet, known, unknown}) {
         skip || sources.cardList.some(card => card.sourceId == "gallery.home" && card.title == "Gallery notes" && card.rowList[0].title == "Gallery home row")
         skip || sources.failedParts.includes("gallery.homeFailing")
+        skip || !Array.from(quiet.failedParts || []).includes("gallery.homeFailing")
         skip || !sources.cardList.some(card => card.sourceId == "gallery.homeFailing")
         skip || known.card.name == "Gallery contact"
         skip || known.card.url == "/qapps/gallery/Widgets"
