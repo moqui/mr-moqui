@@ -4,7 +4,8 @@
 // ending a factor need a recent sign-in; another account's factors need ADMIN_IDENTITY_MANAGE and are refused when that
 // account holds access the caller lacks (heldBeyond), as is setting its password or changing its email; a verified
 // authenticator's secret is not given again; a code is sent at most once a half minute; an
-// identity operator gives no bundle to their own account. The Rust side (keys, tokens, app passwords) is in
+// identity operator gives no bundle to their own account; a session changes its own email address or provider link only
+// after a recent sign-in. The Rust side (keys, tokens, app passwords) is in
 // crates/moqui-core/src/service/user_keys_tests.rs, an authenticator code taken once in screen/tests/authc.rs.
 // Run: ./moq test framework --spec CredentialGuards
 const USER = "org.moqui.impl.UserServices."
@@ -233,5 +234,46 @@ feature("an identity operator gives no bundle to their own account", {
     then({own}) {
         own.applied == false
         own.reasonCode == "OWN_ACCOUNT"
+    }
+})
+
+feature("a session changes its own email address or provider link only after a recent sign-in; an administrator changes another's", {
+    when() {
+        const account = () => one("moqui.security.UserAccount", {userId: OTHER})
+        // the spec's password again and no factor (an earlier feature set another password and issued codes)
+        sys(() => {
+            ec.entity.find("moqui.security.UserAuthcFactor").condition("userId", OTHER).deleteAll()
+            const row = ec.entity.find("moqui.security.UserAccount").condition("userId", OTHER).one()
+            row.setFields({currentPassword: ec.user.hashPassword(PASSWORD), passwordHashType: "argon2", passwordSalt: "",
+                passwordBase64: "N", successiveFailedLogins: 0, disabled: "N", disabledDateTime: null}, true, null, null)
+            row.update()
+        })
+        const before = account()
+        ec.user.logoutUser()
+        signIn(OTHER)
+        const nameOnly = call("update#UserAccount", {userId: OTHER, userFullName: "Guard Other Renamed"})
+        const emailRefused = call("update#UserAccount", {userId: OTHER, emailAddress: "taken-over@example.com"})
+        const linkRefused = call("update#UserAccount", {userId: OTHER, externalUserId: "sso-taken-over"})
+        const afterRefusal = account()
+        // OTHER has no second factor: the password confirms it
+        const confirmed = confirm()
+        const emailChanged = call("update#UserAccount", {userId: OTHER, emailAddress: "guard-other-new@example.com"})
+        const afterConfirm = account().emailAddress
+        ec.user.logoutUser()
+        signIn(ADMIN)
+        const byAdmin = call("update#UserAccount", {userId: OTHER, emailAddress: before.emailAddress, userFullName: before.userFullName})
+        return {nameOnly, emailRefused, linkRefused, afterRefusal, before, confirmed, emailChanged, afterConfirm, byAdmin, restored: account().emailAddress}
+    },
+    then({nameOnly, emailRefused, linkRefused, afterRefusal, before, confirmed, emailChanged, afterConfirm, byAdmin, restored}) {
+        nameOnly.errors == ""
+        emailRefused.errors.includes("Confirm it is you")
+        linkRefused.errors.includes("Confirm it is you")
+        afterRefusal.emailAddress == before.emailAddress
+        afterRefusal.externalUserId == before.externalUserId
+        confirmed.reauthenticated == true
+        emailChanged.errors == ""
+        afterConfirm == "guard-other-new@example.com"
+        byAdmin.errors == ""
+        restored == before.emailAddress
     }
 })
