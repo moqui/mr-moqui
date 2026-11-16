@@ -1,0 +1,4 @@
+<span tabindex="0" role="note" aria-label="Add exchange rate: Exchange rates are maintained by a finance administrator of every organization"><q-btn id="AddRate_button" disabled unelevated no-caps icon="sym_o_add" label="Add exchange rate"></q-btn><q-tooltip>Exchange rates are maintained by a finance administrator of every organization</q-tooltip></span>
+<m-container-dialog id="EditRate" color="primary" button-text="Edit rate" title="Edit rate"><span class="text-inline">the edit form</span> </m-container-dialog>
+<span tabindex="0" role="note" aria-label="Import rates: Imports need a finance administrator of every organization"><q-btn dense no-caps disabled flat class="m-link" label="Import rates"></q-btn><q-tooltip>Imports need a finance administrator of every organization</q-tooltip></span>
+<a href="/save"><q-btn dense unelevated no-caps class="m-btn-tonal text-primary m-link">Fetch rates</q-btn></a>

@@ -1,0 +1,20 @@
+<screen require-authentication="false">
+    <!-- disable-condition and disable-message on a link and a container-dialog: shown disabled with the reason, or as usual -->
+    <transition name="save"><default-response type="none"/></transition>
+    <actions>
+        <set field="mayAdd" from="false"/>
+        <set field="mayEdit" from="true"/>
+        <set field="who" value="a finance administrator of every organization"/>
+    </actions>
+    <widgets>
+        <container-dialog id="AddRate" button-text="Add exchange rate" icon="sym_o_add" disable-condition="!mayAdd"
+                disable-message="Exchange rates are maintained by ${who}">
+            <label text="the add form"/>
+        </container-dialog>
+        <container-dialog id="EditRate" button-text="Edit rate" disable-condition="!mayEdit" disable-message="Not yours">
+            <label text="the edit form"/>
+        </container-dialog>
+        <link url="save" text="Import rates" disable-condition="!mayAdd" disable-message="Imports need ${who}"/>
+        <link url="save" text="Fetch rates" disable-condition="!mayEdit" disable-message="Not yours"/>
+    </widgets>
+</screen>

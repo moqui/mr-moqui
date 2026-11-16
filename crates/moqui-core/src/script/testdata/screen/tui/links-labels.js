@@ -33,6 +33,7 @@ try {
             
             
             
+            
             return $link;
         })();
     if ($l.text || $l.icon || $l.tooltip) $emit($l);
@@ -51,6 +52,7 @@ if (b != null) {
             const $isTransition = !!$made && $made.isTransition();
             if ($isTransition && !$made.isReadOnly()) $link.writes = true;
             $link.kind = "hidden-form-link";
+            
             
             
             
@@ -77,6 +79,7 @@ if (b != null) {
             const $isTransition = !!$made && $made.isTransition();
             if ($isTransition && !$made.isReadOnly()) $link.writes = true;
             $link.kind = "auto";
+            
             
             
             
@@ -109,6 +112,7 @@ if (b != null) {
             
             
             
+            
             return $link;
         })();
     if ($l.text || $l.icon || $l.tooltip) $emit($l);
@@ -126,6 +130,7 @@ if (b != null) {
             const $isTransition = !!$made && $made.isTransition();
             if ($isTransition && !$made.isReadOnly()) $link.writes = true;
             $link.kind = "anchor";
+            
             
             
             
@@ -153,6 +158,7 @@ $closeChildren();
             // asked once: whether the URL is a transition decides writes and the method
             const $isTransition = !!$made && $made.isTransition();
             if ($isTransition && !$made.isReadOnly()) $link.writes = true;
+            
             
             
             

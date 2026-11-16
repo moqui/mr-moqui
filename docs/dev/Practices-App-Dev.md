@@ -416,6 +416,12 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
 - **One primary action**, chosen by status (Approve, Publish, Activate; New when there is no record yet):
   `btn-type="primary"` on a link, `type="primary"` on a `container-dialog`. The other actions go in a `button-menu`
   "More" with `icon="more_horiz"`.
+- **An action the user lacks the authority for is shown disabled, not hidden** (`disable-condition` with a
+  `disable-message` in the user's words, on a `link` or a `container-dialog`), so they see it exists and can ask for it:
+  "Exchange rates are maintained by a finance administrator of every organization" on Currencies' Add exchange rate. A
+  screen's actions read the authority from the service (a `may*` or capability flag), never decide it, and the service
+  still refuses. Keep hidden (`condition`) what makes no sense in the record's state, row actions and More-menu items that
+  would crowd every row or the menu, phone and terminal-only compact screens, and links into an app the user does not have.
 - **Ends and deletes** use `btn-type="danger"` and a `confirmation` that names the record. Activate, publish and generate
   confirm too.
 - **Landing** screens use `number-card`s in a `dashboard`, each linking to a filtered list, shortcut buttons with one

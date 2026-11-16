@@ -1016,7 +1016,8 @@
                     urlType: at(n, "url-type") || "transition", expand: at(n, "expand-transition-url") || "true",
                     passThrough: at(n, "pass-through-parameters") === "true", badge: at(n, "badge"), tooltip: at(n, "tooltip"),
                     confirmation: at(n, "confirmation"), style: at(n, "style"), linkType: at(n, "link-type"), btnType: at(n, "btn-type"),
-                    noParam: at(n, "url-noparam") === "true", target: at(n, "target-window"), load: at(n, "dynamic-load-id")
+                    noParam: at(n, "url-noparam") === "true", target: at(n, "target-window"), load: at(n, "dynamic-load-id"),
+                    disableCondition: at(n, "disable-condition"), disableMessage: at(n, "disable-message")
                 };
                 links.set(n, l);
             }
@@ -1055,7 +1056,9 @@
             if (l.passThrough) url = url.addParameters(sri.getScreenUrlInstance().getPassThroughParameterMap());
             // link-type anchor and anchor-button are anchors whatever the URL (sri.isAnchorLink's first rule)
             const anchor = l.linkType === "anchor" || l.linkType === "anchor-button" || sri.isAnchorLink(n, url);
-            return { text, url, img, anchor, disabled: url.getDisableLink() };
+            // disable-condition: shown, not followed, with disable-message as the reason (as a link the user may not reach)
+            const unavailable = !!l.disableCondition && cond(l.disableCondition);
+            return { text, url, img, anchor, disabled: unavailable || url.getDisableLink(), reason: unavailable ? x(l.disableMessage) || null : null };
         };
 
         const linkBody = (n, text, img) => {
@@ -1070,6 +1073,13 @@
                 (img ? imageTag(img) : text) + (badge ? ' <q-badge class="on-right" transparent>' + t(badge) + "</q-badge>" : "");
         };
 
+        // The wrapper of an action shown disabled for a reason (disable-message): the reason as its tooltip, and the wrapper a
+        // focusable note that names the action and the reason, since the disabled button itself takes no focus or pointer.
+        const unavailableReason = (reason, name) => (reason ? {
+            tip: tooltipTag(reason),
+            attrs: { tabindex: "0", role: "note", "aria-label": (name ? name + ": " : "") + reason }
+        } : { tip: "", attrs: {} });
+
         // A link with no text or image (an icon only) is named by its tooltip.
         const iconOnlyLabel = (n, parts) => (!parts.text && !parts.img ? xc(linkOf(n).tooltip) || null : null);
         const linkElement = (n, parts, formId) => {
@@ -1082,11 +1092,13 @@
             // are tonal buttons, or the filled primary button with btn-type="primary".
             const textLink = st.textLinks || linkType === "anchor" || (st.inList && linkType !== "anchor-button");
             if (parts.disabled) {
-                if (parts.anchor && textLink) return '<span class="text-grey-5">' + linkBody(n, parts.text, parts.img) + "</span>";
-                return "<span><q-btn" + A({
+                const reason = unavailableReason(parts.reason, accessibleLabel || (l.text ? x(l.text) : ""));
+                if (parts.anchor && textLink) return "<span" + A(Object.assign({ class: "text-grey-5" }, reason.attrs)) + ">" +
+                    linkBody(n, parts.text, parts.img) + reason.tip + "</span>";
+                return "<span" + A(reason.attrs) + "><q-btn" + A({
                     dense: true, "no-caps": true, disabled: true, flat: true, class: cls("m-link", style), id: formId || null,
                     label: parts.text || null, "aria-label": accessibleLabel
-                }) + ">" + (xn(l.icon) ? iconTag(xn(l.icon), false) : "") + "</q-btn></span>";
+                }) + ">" + (xn(l.icon) ? iconTag(xn(l.icon), false) : "") + "</q-btn>" + reason.tip + "</span>";
             }
             const confirmation = xc(l.confirmation);
             if (parts.anchor) {
@@ -1215,6 +1227,15 @@
             const buttonIcon = xn(at(n, "icon")) || null;
             const buttonStyle = xn(at(n, "button-style")) || null;
             const inCell = st.inList;
+            // disable-condition: the button shown disabled with its reason, and no dialog
+            if (at(n, "disable-condition") && cond(at(n, "disable-condition"))) {
+                const reason = unavailableReason(x(at(n, "disable-message")) || null, buttonText);
+                w("<span" + A(reason.attrs) + "><q-btn" + A({
+                    id: id + "_button", disabled: true, dense: inCell || null, flat: inCell || null, unelevated: inCell ? null : true,
+                    "no-caps": true, icon: buttonIcon, label: buttonText || null, class: cls(inCell ? "m-link" : null, buttonStyle)
+                }) + "></q-btn>" + reason.tip + "</span>\n");
+                return false;
+            }
             w("<m-container-dialog" + A({
                 id, color: quasarColor(xn(at(n, "type") || "primary")) || null, width: at(n, "width") || null, "button-text": buttonText,
                 "button-icon": inCell ? null : buttonIcon, "button-class": inCell ? null : buttonStyle, title: x(at(n, "title")) || buttonText,
@@ -2977,17 +2998,19 @@
                 let $text = $map ? ec.resource.expand(${lit(attr(node, "text"))}, "", $map) : ec.resource.expand(${lit(attr(node, "text"))}, "");
                 if ($text === "null") $text = "";
                 if ($text || ${!!image} || ${!!attr(node, "icon")}) {
+                    // the menu's name for assistive technology: its text (Quasar names a slot-labelled dropdown "Expand")
+                    const $name = String($text || ${attr(node, "tooltip") ? `ec.resource.expand(${lit(attr(node, "tooltip"))}, "")` : '""'} || ec.l10n.localize("Menu"));
                     if (${lit(attr(node, "encode"))} !== "false") $text = $v.t($text);
                     let $icon = ${attr(node, "icon") ? noL10n(attr(node, "icon")) : '""'};
                     if (!$icon && $text) $icon = sri.getThemeIconClass($text) || "";
                     const $badge = ec.resource.expand(${lit(attr(node, "badge"))}, "");
-                    sri.write("<q-btn-dropdown" + $v.A(Object.assign({dense: true, unelevated: true, "no-caps": true}, $v.btnKind(${attr(node, "btn-type") ? noL10n(attr(node, "btn-type")) : "null"}, ${attr(node, "style") ? noL10n(attr(node, "style")) : "null"}))) + "><template v-slot:label>" +
+                    sri.write("<q-btn-dropdown" + $v.A(Object.assign({dense: true, unelevated: true, "no-caps": true, "toggle-aria-label": $name}, $v.btnKind(${attr(node, "btn-type") ? noL10n(attr(node, "btn-type")) : "null"}, ${attr(node, "style") ? noL10n(attr(node, "style")) : "null"}))) + "><template v-slot:label>" +
                         ${attr(node, "tooltip") ? `$v.tooltipTag(ec.resource.expand(${lit(attr(node, "tooltip"))}, "")) + ` : ""}
                         ($icon ? $v.iconTag($icon, !!$text) : ""));
                     // as Java: the image child in the place of the text
                     ${image ? image.source : "sri.write($text);"}
                     sri.write(($badge ? "<q-badge class=\\"on-right\\" transparent>" + $v.t($badge) + "</q-badge>" : "") + "</template><q-list>");
-                    ${linkItems.map((kid) => condGuard(attr(kid, "condition"), `sri.write("<q-item clickable><q-item-section>");\n${kid.source}sri.write("</q-item-section></q-item>");\n`)).join("")}
+                    ${linkItems.map((kid) => condGuard(attr(kid, "condition"), `sri.write("<q-item clickable tabindex=\\"-1\\"><q-item-section>");\n${kid.source}sri.write("</q-item-section></q-item>");\n`)).join("")}
                     sri.write("</q-list></q-btn-dropdown>\\n");
                 }
             }

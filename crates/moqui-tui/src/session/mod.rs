@@ -1806,7 +1806,12 @@ impl Session {
             return;
         };
         if link.disabled {
-            self.set_message("This action is not available.".to_string(), true);
+            let text = if link.reason.is_empty() {
+                "This action is not available.".to_string()
+            } else {
+                link.reason.clone()
+            };
+            self.set_message(text, true);
             return;
         }
         if !link.confirm.is_empty() {

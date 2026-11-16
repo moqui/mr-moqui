@@ -410,7 +410,10 @@ message, or Java's form of it, `Enter a name(for field Name`) are not repeated o
 leaves them out. A dialog among a button menu's items is listed by its button text, else its title. A link button with
 no `btn-type` is drawn as a plain one and a `primary` one bold, so a row of link buttons that marks the current one
 `primary` (Product 360's tabs) shows it without color; a link's check icon (`check`, `done`, `check_circle`,
-`task_alt`) is drawn as `✓` before its text (Cases' current view).
+`task_alt`) is drawn as `✓` before its text (Cases' current view). An action its author shows disabled for a reason
+(`disable-condition` and `disable-message` on a link or a container-dialog) is drawn `[ text ]` dimmed and takes focus:
+the hint line gives its text and the reason, and Enter gives the reason as the message and does nothing. A link disabled
+with no reason (its transition out of the user's reach) is left out, as before.
 
 A successful write and F5 refresh the current screen and its cached parent screens, so a record's header and actions
 reflect child-screen changes. Moving between child tabs, or resizing the terminal, reuses those parents. Each parent

@@ -1516,3 +1516,35 @@ fn empty_controls_follow_java_form_exclusion() {
         assert_eq!(calls[0].1.get("partyId").map(String::as_str), Some("P1"));
     }
 }
+
+/// An action disabled for a reason (`disable-condition`, `disable-message`) is drawn dimmed and takes focus, its reason on
+/// the hint line and as the message on Enter, and follows nothing; a link disabled with no reason stays out (ACC-UI-039).
+#[test]
+fn an_action_disabled_for_a_reason_is_shown_and_says_why() {
+    const REASON: &str = "Exchange rates are maintained by a finance administrator of every organization";
+    let json = format!(
+        r#"{{"v":1,"screen":{{"path":"/rates","title":"Rates"}},"c":[
+            {{"t":"link","id":"AddRate","text":"Add exchange rate","url":"","kind":"anchor-button","disabled":true,"reason":"{REASON}"}},
+            {{"t":"link","id":"Unreached","text":"Not reached","url":"/x","disabled":true}},
+            {{"t":"link","id":"Open","text":"Open rates","url":"/open"}}]}}"#
+    );
+    let model = ScreenModel::from_json(&json).unwrap();
+    let link = FakeLink::from_json(&[json.as_str()]).unwrap();
+    let text = moqui_tui::render_text(&model, &link, 140, 12);
+    assert!(text.contains("[ Add exchange rate ]"), "{text}");
+    // focused first: the hint line names it and its reason
+    assert!(text.contains(&format!("Add exchange rate · {REASON}")), "{text}");
+    assert!(!text.contains("Not reached"), "{text}");
+
+    let mut session = Session::new(model);
+    let order: Vec<&str> = session.focus_order().iter().map(|item| item.node.as_str()).collect();
+    assert_eq!(order, ["AddRate", "Open"]);
+    assert_eq!(session.focus_id(), "AddRate");
+    press(&mut session, &link, Key::Enter);
+    assert_eq!(session.message(), REASON);
+    assert!(
+        levels(&link).is_empty() && transitions(&link).is_empty(),
+        "{:?}",
+        link.calls()
+    );
+}

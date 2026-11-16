@@ -453,11 +453,10 @@ fn message_line(paint: &mut Painter, session: &Session, row: u16, width: u16) {
     } else if let Some(mark) = mark {
         (format!(" ! {mark}"), Look::role(Role::Negative))
     } else {
-        // The focused field's full title, which the label may have cut, and its tooltip.
-        let hint = session
-            .focus()
-            .and_then(|item| session.index().fields.get(&item.node))
-            .map(|field| {
+        // The focused field's full title, which the label may have cut, and its tooltip; for an action disabled for a
+        // reason, the reason.
+        let field_hint = |node: &str| {
+            session.index().fields.get(node).map(|field| {
                 if field.tooltip.is_empty() {
                     field.title.clone()
                 } else if field.title.is_empty() {
@@ -466,6 +465,18 @@ fn message_line(paint: &mut Painter, session: &Session, row: u16, width: u16) {
                     format!("{} · {}", field.title, field.tooltip)
                 }
             })
+        };
+        let reason_hint = |node: &str| {
+            session
+                .index()
+                .links
+                .get(node)
+                .filter(|link| link.disabled && !link.reason.is_empty())
+                .map(|link| format!("{} · {}", link.text, link.reason))
+        };
+        let hint = session
+            .focus()
+            .and_then(|item| field_hint(&item.node).or_else(|| reason_hint(&item.node)))
             .unwrap_or_default();
         (format!(" {hint}"), Look::role(Role::Muted))
     };
@@ -1449,6 +1460,7 @@ fn draw_inline(paint: &mut Painter, session: &Session, items: &[Inline], x: u16,
                 }
             }
             Inline::Dialog { text, .. } => (format!("{number}[ {text}… ]"), Look::role(Role::Secondary)),
+            Inline::Unavailable { text, .. } => (format!("[ {text} ]"), Look::role(Role::Muted).dim()),
         };
         paint.spot(item.id(), col, y);
         let url = match item {

@@ -699,6 +699,7 @@
                     passThrough: at(n, "pass-through-parameters") === "true", badge: at(n, "badge"), tooltip: at(n, "tooltip"),
                     confirmation: at(n, "confirmation"), style: at(n, "style"), urlNoparam: at(n, "url-noparam") === "true",
                     load: at(n, "dynamic-load-id"), target: at(n, "target-window"), btnType: at(n, "btn-type"), linkType: at(n, "link-type"),
+                    disableCondition: at(n, "disable-condition"), disableMessage: at(n, "disable-message"),
                     // a btn-type with ${ can differ by row, so it is expanded each time
                     btn: at(n, "btn-type").indexOf("${") >= 0 ? undefined : btnAttr(n)
                 };
@@ -739,7 +740,9 @@
             if (l.passThrough) url = url.addParameters(sri.getScreenUrlInstance().getPassThroughParameterMap());
             // link-type anchor and anchor-button are anchors whatever the URL (sri.isAnchorLink's first rule)
             const anchor = l.linkType === "anchor" || l.linkType === "anchor-button" || sri.isAnchorLink(n, url);
-            return { text, url, img, anchor, disabled: url.getDisableLink() };
+            // disable-condition: shown, not followed, with disable-message as the reason (as a link the user may not reach)
+            const unavailable = !!l.disableCondition && cond(l.disableCondition);
+            return { text, url, img, anchor, disabled: unavailable || url.getDisableLink(), reason: unavailable ? x(l.disableMessage) || null : null };
         };
 
         const linkContent = (n, text, img) => {
@@ -761,7 +764,9 @@
             const confirmation = xc(l.confirmation);
             const style = xn(l.style) || null;
             if (parts.disabled) {
-                return "<a" + A({ href: "#", id: formId || null, class: cls("disabled", style), "data-btn": l.btn === undefined ? btnAttr(n) : l.btn, "aria-disabled": "true" }) + ">" + body + "</a>";
+                // the reason (disable-message) is its title and part of its name
+                return "<a" + A({ href: "#", id: formId || null, class: cls("disabled", style), "data-btn": l.btn === undefined ? btnAttr(n) : l.btn, "aria-disabled": "true",
+                    title: parts.reason, "aria-label": parts.reason ? (l.text ? x(l.text) + ": " : "") + parts.reason : null }) + ">" + body + "</a>";
             }
             if (parts.anchor) {
                 const href = l.urlNoparam ? parts.url.url : parts.url.getUrlWithParams();
@@ -868,6 +873,15 @@
             if (at(n, "condition") && !cond(at(n, "condition"))) return false;
             const text = x(at(n, "button-text"));
             const id = nodeId(n);
+            // disable-condition: the button shown disabled with its reason as its title, and no dialog
+            if (at(n, "disable-condition") && cond(at(n, "disable-condition"))) {
+                const reason = x(at(n, "disable-message"));
+                w("<button" + A({
+                    type: "button", id: id + "-button", disabled: true, "data-btn": xn(at(n, "type")) || "primary", class: xn(at(n, "button-style")) || null,
+                    title: reason || text, "aria-label": reason ? text + ": " + reason : text
+                }) + ">" + icon(at(n, "icon") || "fa fa-share") + e(text) + "</button>\n");
+                return false;
+            }
             w(dialogOpen(n, id, text));
             w(dialogShell(n, id, text, { dialog: { "data-open": ec.context.get("_openDialog") === id ? true : null } }, "", "container-dialog") + "\n");
             return true;

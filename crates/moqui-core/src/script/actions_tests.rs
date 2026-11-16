@@ -499,6 +499,23 @@ fn message_expands_and_records_an_error() {
     clear_context_stack();
 }
 
+/// A message written across lines in the XML is one line, its break and indentation a space (ACC-UI-028: the terminal
+/// showed the indentation in its message line and history).
+#[test]
+fn a_message_across_lines_is_one_line() {
+    clear_context_stack();
+    let ctx = ExecutionContextFactory::test_context();
+    let _guard = ctx.enter();
+    set_context_name("made", Value::I32(1)).unwrap();
+    run_actions(
+        "<actions><message type=\"success\">Made ${made};\n                none failed,\r\n\t\t2 not reported</message></actions>",
+    )
+    .unwrap();
+    let messages = ExecutionContext::with_current(|ec| ec.message().messages().to_vec()).unwrap();
+    assert_eq!(messages, vec!["Made 1; none failed, 2 not reported".to_string()]);
+    clear_context_stack();
+}
+
 #[test]
 fn inline_action_finds_and_creates() -> Result<(), Error> {
     clear_context_stack();

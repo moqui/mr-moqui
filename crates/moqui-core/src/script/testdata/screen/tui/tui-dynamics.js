@@ -484,6 +484,7 @@ if (showMenu) {
             
             
             
+            
             if ($isTransition && !$link.method && !sri.isAnchorLink({"name":"link","attrs":{"url":"/a","url-type":"plain","text":"A"},"parent":{"name":"button-menu","attrs":{"text":"More","condition":"showMenu"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}, $made)
                 && $made.getTransitionMethod() !== "get") $link.method = "post";
             
