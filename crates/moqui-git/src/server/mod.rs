@@ -31,6 +31,7 @@ mod ci_tests;
 pub(crate) mod hosting_tests;
 mod job_fetch;
 pub mod lfs;
+pub(crate) mod limited;
 pub(crate) mod pack_in;
 pub(crate) mod pack_out;
 pub mod path;
@@ -769,9 +770,13 @@ fn refuse_http(out: &mut dyn HttpResponder, refusal: &Refusal) {
 /// One smart-HTTP request, in an entered context (a [`pool`] job). Refusals are HTTP statuses; a failure once the
 /// protocol started is an `ERR` line, as git reports it.
 pub fn serve_http(request: &GitHttpRequest, body: &mut dyn Read, out: &mut dyn HttpResponder) {
+    // the host counts the body as sent; the limit holds for what it inflates to as well
     let mut gunzip;
     let body: &mut dyn Read = if request.gzip {
-        gunzip = flate2::read::GzDecoder::new(body);
+        gunzip = limited::Capped::new(
+            flate2::read::GzDecoder::new(body),
+            limited::request_limit(request.service),
+        );
         &mut gunzip
     } else {
         body
@@ -917,7 +922,8 @@ pub fn serve_ssh(
         client: String::new(),
     };
     let v2 = wants_v2(git_protocol) && service == GitService::UploadPack;
-    let mut input = BufReader::new(input);
+    // the whole conversation's input is held to what one HTTP request of the service may send
+    let mut input = BufReader::new(limited::Capped::new(input, limited::request_limit(service)));
     let outcome = (|| -> Result<(), Error> {
         match service {
             GitService::UploadPack if v2 => {
