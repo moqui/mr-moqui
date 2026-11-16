@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The frame of a parent level (docs/ui/Qvt-Client.md, "A level is its own screen"; docs/security/Attack-Surface.md,
-//! "Parent frames").
+//! The frame of a parent level (docs/ui/Qvt-Client.md, "A level is its own screen";
+//! docs/security/Attack-Surface-Web.md, "Parent frames").
 //!
 //! The `/qapps` shell loads each level of the page's path as its own `.qvt` request, and the terminal client each level
 //! between the app root and the leaf as its own `.tui` request; the server checks each as the target of its own path. A

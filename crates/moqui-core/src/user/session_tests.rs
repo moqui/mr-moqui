@@ -238,7 +238,7 @@ fn a_bad_mac_is_an_unknown_session() {
 /// `session_cookie_key` has no old key to fall back on: a new key ends every session cookie and every value signed
 /// with a key derived from it (`derived_cookie_key`). A derived key differs by label and is never the session MAC.
 ///
-/// When this is fixed, this test fails: update the threat model in Attack-Surface.md.
+/// When this is fixed, this test fails: update the threat model in Attack-Surface-Data.md.
 #[test]
 fn known_gap_a_new_session_cookie_key_ends_every_session_cookie() {
     let _lock = cookie_tests_lock();

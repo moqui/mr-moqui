@@ -13,7 +13,7 @@
  */
 
 //! Field encryption. The `known_gap_` tests pin weaknesses the threat model names
-//! (docs/security/Attack-Surface.md, "Threat model: stored secrets").
+//! (docs/security/Attack-Surface-Data.md, "Threat model: stored secrets").
 
 use aes::Aes128;
 use base64::engine::general_purpose::URL_SAFE;
@@ -176,7 +176,7 @@ fn only_the_same_pass_salt_and_iterations_decrypt() {
 /// the database sees which secrets are equal and can confirm a guess with the pass. Lookup by value
 /// (`CalendarShare.publishToken`) needs this.
 ///
-/// When this is fixed, this test fails: update the threat model in Attack-Surface.md.
+/// When this is fixed, this test fails: update the threat model in Attack-Surface-Data.md.
 #[test]
 fn known_gap_equal_plaintexts_give_equal_ciphertext() {
     let first = encrypt("hunter2-hunter2", &aes_config()).unwrap();
@@ -188,7 +188,7 @@ fn known_gap_equal_plaintexts_give_equal_ciphertext() {
 /// The IV is a constant (`CONSTANT_IV`), so two values that share their first 16 bytes share their first ciphertext
 /// block: a reader of the database learns that two secrets share a prefix.
 ///
-/// When this is fixed, this test fails: update the threat model in Attack-Surface.md.
+/// When this is fixed, this test fails: update the threat model in Attack-Surface-Data.md.
 #[test]
 fn known_gap_a_shared_16_byte_prefix_gives_a_shared_first_block() {
     let a = ciphertext(&encrypt("https://api.example/a-token-1", &aes_config()).unwrap());
@@ -201,7 +201,7 @@ fn known_gap_a_shared_16_byte_prefix_gives_a_shared_first_block() {
 /// knows the plaintext of the first block set it to text of their choice by storing an IV of their own
 /// (`<iv>:<ct>`, a form decrypt accepts), and dropping the first block turns a value into its tail.
 ///
-/// When this is fixed, this test fails: update the threat model in Attack-Surface.md.
+/// When this is fixed, this test fails: update the threat model in Attack-Surface-Data.md.
 #[test]
 fn known_gap_a_changed_ciphertext_is_not_detected() {
     let plain = "role=user;limit=00000100;note=kept";
@@ -229,7 +229,7 @@ fn known_gap_a_changed_ciphertext_is_not_detected() {
 /// the IV is the first 16 bytes of `CONSTANT_IV`. Whoever has the pass has every field's key; one guess of the pass
 /// costs 10 HMACs.
 ///
-/// When this is fixed, this test fails: update the threat model in Attack-Surface.md.
+/// When this is fixed, this test fails: update the threat model in Attack-Surface-Data.md.
 #[test]
 fn known_gap_the_key_is_aes_128_from_10_pbkdf2_iterations_and_a_fixed_salt() {
     let key = pbkdf2::pbkdf2_hmac_array::<Sha256, 16>(PASS.as_bytes(), b"20201202", 10);
@@ -241,7 +241,7 @@ fn known_gap_the_key_is_aes_128_from_10_pbkdf2_iterations_and_a_fixed_salt() {
 /// PBEWithMD5AndDES (56-bit DES, MD5 key derivation) still decrypts through the alternates, so a value written as DES
 /// stays readable and is not refused.
 ///
-/// When this is fixed, this test fails: update the threat model in Attack-Surface.md.
+/// When this is fixed, this test fails: update the threat model in Attack-Surface-Data.md.
 #[test]
 fn known_gap_des_ciphertext_still_decrypts_through_the_alternates() {
     assert_eq!(
@@ -255,7 +255,7 @@ fn known_gap_des_ciphertext_still_decrypts_through_the_alternates() {
 /// (`MoquiDefaultConf.xml`, `decrypt-alt`). A writer to the database with no key stores a value sealed under the
 /// public pass, and a read with the generated pass takes it as valid.
 ///
-/// When this is fixed, this test fails: update the threat model in Attack-Surface.md.
+/// When this is fixed, this test fails: update the threat model in Attack-Surface-Data.md.
 #[test]
 fn known_gap_a_value_sealed_under_the_public_default_pass_is_read_as_valid() {
     let mut generated = aes_config();

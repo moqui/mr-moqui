@@ -95,7 +95,7 @@ Stop the server when the client exits (its standard input is the terminal). The 
 
 These are server-side proofs, not client specs: framework specs (`./moq test framework --spec Name`, `./moq test tools
 --spec Name`), crate tests (`cargo test -p moqui-tools`) and embedded-cluster host tests (`cargo test -p moqui-host
---test it -- name`). The rules are in [Attack-Surface, Tools and System](Attack-Surface.md#tools-and-system) and
+--test it -- name`). The rules are in [Attack-Surface, Tools and System](Attack-Surface-Tools.md#tools-and-system) and
 [Database](../tools/Database.md).
 
 | Control | Test |
@@ -117,7 +117,7 @@ HMAC signing in the client is `hmac.sha256Base64` and `hmac.sha256Timestamp` ([J
 
 ### Stored secrets
 
-Crate tests for [Threat model: stored secrets](Attack-Surface.md#threat-model-stored-secrets): `cargo test -p moqui-entity crypto`, and `cargo test -p <crate> <name>` for the others. A test whose name starts with `known_gap_` pins a weakness. When it fails, the weakness changed: update the threat model.
+Crate tests for [Threat model: stored secrets](Attack-Surface-Data.md#threat-model-stored-secrets): `cargo test -p moqui-entity crypto`, and `cargo test -p <crate> <name>` for the others. A test whose name starts with `known_gap_` pins a weakness. When it fails, the weakness changed: update the threat model.
 
 | Claim | Test |
 | --- | --- |

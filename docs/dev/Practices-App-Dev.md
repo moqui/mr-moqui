@@ -180,7 +180,7 @@ References: [JS-Service-Scripts](JS-Service-Scripts.md) (what a service body see
 - **Writing as the system.** A service that has checked its caller and must write what the caller may not (a page
   space with `restrictUpdate`) uses `ec.artifactExecution.runAsSystem(() => ...)`: no user, authorization off, the
   same transaction. Only a service's own code may call it ([The system
-  scope](../security/Attack-Surface.md#the-system-scope)); never grant the user a row for the write. Records written
+  scope](../security/Attack-Surface-Web.md#the-system-scope)); never grant the user a row for the write. Records written
   inside have no user, so pass the acting user where the write takes one (`update#WikiPage` `historyUserId`).
 - **No EECA guarding an entity that only its own module writes**, and no EECA or SECA on a hot path (every `Payment` or
   `AcctgTrans` write, a framework entity, `service=".*"`) without a narrow `<condition>`.
@@ -265,7 +265,7 @@ A component shows in System › Operations › Health, the System home's attenti
 settings index (and in an app that shows those screens, such as IronStone Admin) by seed rows of three framework
 entities, read by `org.moqui.admin.ReadinessServices`
 ([JS-Framework-Services](JS-Framework-Services.md#administration-orgmoquiadmin); the rules a hand-made request meets
-are in [Attack-Surface](../security/Attack-Surface.md)). The fields are described in
+are in [Attack-Surface](../security/Attack-Surface-Admin.md)). The fields are described in
 `runtime/components/base/framework/entity/ServerEntities.xml`; the framework's own rows are in
 `framework/data/AdminConfigurationData.xml`.
 
@@ -598,5 +598,10 @@ write one for a business rule you add or change (its result and its refusals) an
     in `actions` (report options, a record's link parameters);
   - Prettier with the repository's config shows no change.
 - The design and implementation records updated: what was built, the commits, the findings, and what is left for later.
+- What the phase made reachable is recorded in the attack surface map, in the application's file:
+  [Attack-Surface-Apps-BOSS](../security/Attack-Surface-Apps-BOSS.md) for mr-boss and the Mantle services staff reach,
+  [Attack-Surface-Apps-PASS](../security/Attack-Surface-Apps-PASS.md) for mr-pass and the Mantle services its
+  operations reach. A framework hook the phase added goes in that area's framework file
+  ([index](../security/Attack-Surface.md#the-files)), never in the index.
   Commands in a record name no machine's paths (`/Applications/...`, `/tmp/...`): point to [Build-Test](../Build-Test.md) for
   the Chromium setting, and to a report file of the reader's choosing.

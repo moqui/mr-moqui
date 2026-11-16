@@ -303,7 +303,7 @@ and in `runtime/.env` a secret of at least 32 characters (`openssl rand -hex 32`
 What it does not cover: whoever edits the conf (`CONF_EDIT`) or the runtime's files turns it off or puts a component in
 a component directory for the next start; whoever writes the database (Tools' SQL with Allow Changes, Data Load, an
 entity editor) can change the rows a start reads; it keeps the server's own deploy services to attested commits, not
-its file system or database. See [Attack-Surface](../security/Attack-Surface.md#component-deploy-and-conf-reload).
+its file system or database. See [Attack-Surface](../security/Attack-Surface-Tools.md#component-deploy-and-conf-reload).
 
 ## Clusters and containers
 

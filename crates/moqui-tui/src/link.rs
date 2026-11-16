@@ -210,7 +210,7 @@ pub enum LinkCall {
         parameters: BTreeMap<String, String>,
     },
     /// A level above the leaf (`Party.tui`), loaded for the page `page` (the leaf's path, no query): a level the user may
-    /// not open alone answers as that page's frame (docs/security/Attack-Surface.md, "Parent frames").
+    /// not open alone answers as that page's frame (docs/security/Attack-Surface-Web.md, "Parent frames").
     Parent {
         path: String,
         page: String,

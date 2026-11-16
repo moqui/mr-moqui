@@ -2925,8 +2925,8 @@ fn restore_run_as_user(
 /// that shares the caller's transaction ([`crate::user::as_system`]); the caller's user, authorization and artifact
 /// stack come back when `body` returns or throws. Only a service's own code may call it
 /// ([`crate::user::system_scope_allowed`]): a screen's widget expressions, actions and transitions, a REST resource and
-/// a web script are refused (docs/security/Attack-Surface.md, Commerce F72). The shim passes `body` (refused when it is
-/// not a function) and a function that calls it and keeps its result, so the result is the script's own value.
+/// a web script are refused (docs/security/Attack-Surface-Web.md, Commerce F72). The shim passes `body` (refused when
+/// it is not a function) and a function that calls it and keeps its result, so the result is the script's own value.
 fn run_as_system(call: &mut Call<'_>) -> Result<Ret, HostError> {
     crate::user::system_scope_allowed().map_err(|err| HostError::message(err.message()))?;
     match crate::user::as_system(|| call.ops.call_back(1, Vec::new())) {

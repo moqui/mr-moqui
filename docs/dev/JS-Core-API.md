@@ -18,7 +18,7 @@ Related pages: [JS-Globals](JS-Globals.md) (`Decimal`, timestamps, the utility o
 [JS-Testkit](JS-Testkit.md), [JS-Types-Tooling](JS-Types-Tooling.md) (the typed declarations of everything here),
 [Web-Scripts](../interfaces/Web-Scripts.md) (the request and response of a web script),
 [Services](../logic/Services.md) (errors and transactions of a service call),
-[Attack-Surface](../security/Attack-Surface.md) (`runAsSystem`) and [Native-Components](Native-Components.md) (tools).
+[Attack-Surface](../security/Attack-Surface-Web.md#the-system-scope) (`runAsSystem`) and [Native-Components](Native-Components.md) (tools).
 
 Contents: [Conventions](#conventions) · [`ec`](#ec) · [`ec.context`](#eccontext) · [`ec.user`](#ecuser) ·
 [`ec.message`](#ecmessage) · [`ec.l10n`](#ecl10n) · [`ec.resource`](#ecresource) · [`ec.logger`](#eclogger) ·
@@ -469,7 +469,7 @@ context.
 | `disableTarpit()` | No hit of this execution context is counted against a tarpit until `enableTarpit()`. Returns whether it was already disabled |
 | `enableTarpit()` | Counts hits again |
 | `setAnonymousAuthorizedAll()`, `setAnonymousAuthorizedView()` | What runs under the top frame is authorized for an anonymous user, for every action or for view |
-| `runAsSystem(body)` | `body()` with no user and authorization off, in a fresh execution context that shares the transaction; the caller's user and authorization come back after. Only a service's own code may call it ([Attack-Surface](../security/Attack-Surface.md)) |
+| `runAsSystem(body)` | `body()` with no user and authorization off, in a fresh execution context that shares the transaction; the caller's user and authorization come back after. Only a service's own code may call it ([Attack-Surface](../security/Attack-Surface-Web.md#the-system-scope)) |
 | `runAsUser(location, body)` | `body()` as the current user with authorization on, whatever disabled it, with the screen at `location` checked for all actions and pushed under it |
 | `getFindFiltersForUser(entityName)` | The `EntityFilter` records that apply to a find on the entity; null when none do |
 
@@ -1093,10 +1093,10 @@ empty, and a send needs a request.
 | `getWebappRootUrl(requireFullUrl, useEncryption)` | Empty when a path-only link will do, else the scheme and host of the conf webapp. The request's `Host` only when a `root-screen` pattern other than `.*` names it (a site of its own, [Run-Deploy](../Run-Deploy.md#several-sites-by-host-name)), with the conf's scheme and port; never another `Host` header |
 | `getWebappRootUrl(webappName, servletContextPath, requireFullUrl, useEncryption)` | The same for a named webapp |
 | `getResourceDistinctValue()` | A value that changes when the server starts, for the `?v=` of asset links |
-| `reservedPaths` | The first path segments the framework reserves on every host, an array of text as written (`Login`): the host's own routes (`git`, `ci`, `dav`, `mcp`, `assist`, `.well-known`...), the framework's screens and its sign-in, token and asset paths, whether or not this binary's features serve them now, and after them the first segment of each servlet the conf's `webroot` webapp declares, enabled or not (the default conf's `search` and `dashboard`, a component's web script such as PASS's `trk` and `trk-o`), since a servlet answers on every host. `ci` and `.well-known` are in it though the host uses only some of their sub-paths (`reservedSubPaths`): an app keeps the names that own everything under them (a repository group, a mount, a handle) off every one of these, since `/ci/runner` would shadow a group `ci`'s `runner`, comparing without case where its names are. There with no request too ([Attack-Surface](../security/Attack-Surface.md)) |
+| `reservedPaths` | The first path segments the framework reserves on every host, an array of text as written (`Login`): the host's own routes (`git`, `ci`, `dav`, `mcp`, `assist`, `.well-known`...), the framework's screens and its sign-in, token and asset paths, whether or not this binary's features serve them now, and after them the first segment of each servlet the conf's `webroot` webapp declares, enabled or not (the default conf's `search` and `dashboard`, a component's web script such as PASS's `trk` and `trk-o`), since a servlet answers on every host. `ci` and `.well-known` are in it though the host uses only some of their sub-paths (`reservedSubPaths`): an app keeps the names that own everything under them (a repository group, a mount, a handle) off every one of these, since `/ci/runner` would shadow a group `ci`'s `runner`, comparing without case where its names are. There with no request too ([Attack-Surface](../security/Attack-Surface-Routes.md#host-routes-and-servlets)) |
 | `reservedSubPaths` | The sub-paths the host uses of `ci` and `.well-known`, `segment/sub-path` (`ci/runner`, `.well-known/caldav`, `.well-known/carddav`, `.well-known/agent-card.json`, `.well-known/mcp.json`, `.well-known/ai-catalog.json`). A site page's route or redirect stays off these and the wholly reserved segments (`reservedPaths` without `ci` and `.well-known`), and may take the rest: `/.well-known/security.txt`, `/ci` |
 | `rotateSession()` | Gives the browser a new session id after authentication, keeping the session's state |
-| `declineSession()` | Sends this response no session: no session or visitor cookie and no session token ([Attack-Surface](../security/Attack-Surface.md)) |
+| `declineSession()` | Sends this response no session: no session or visitor cookie and no session token ([Attack-Surface](../security/Attack-Surface-Web.md#pages-without-a-session)) |
 | `getPageMessages()` | The messages, errors and validation errors for the page, the saved ones first: each `{message, typeString}`, a validation error also with `field` and `form` |
 | `savedMessages`, `savedErrors`, `savedValidationErrors` | What the response before this one saved for the page |
 | `errorParameters` | The parameters of the submit that led here with an error, or null |

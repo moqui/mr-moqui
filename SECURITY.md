@@ -20,6 +20,6 @@ For more information on submitting issues and pull requests please see the [Issu
 
 ## Attack surface
 
-A map of the HTTP routes, screens, REST, WebSocket, and the other listeners in this repository is in [Attack-Surface.md](docs/security/Attack-Surface.md). That file also covers production notices and the lock-down options, plus git, DAV, SSH, inbound mail, the LLM gateway (`/llm/v1`), A2A (default off), MCP, and Assist.
+A map of the HTTP routes, screens, REST, WebSocket, and the other listeners in this repository starts at [Attack-Surface.md](docs/security/Attack-Surface.md), which holds the lock-down options and the table of the map's files. Each area has its own file, `docs/security/Attack-Surface-*.md`: web authentication and controls, routes and REST, administration, tools, the LLM gateway (`/llm/v1`), A2A (default off), MCP and Assist, git, mail, DAV and SFTP, SSH, calls and messaging, the cluster and edge node, clients, stored secrets, and the BOSS and PASS applications.
 
 Proof tests (what is covered, and how to run them with `moqui test-client`): [Proof-Tests.md](docs/security/Proof-Tests.md).

@@ -695,7 +695,7 @@ in `runtime/db/backup`, or the directory in `embedded_db_backup_dir`.
 The details are in [plans/archive/PostgresBackup.md](../plans/archive/PostgresBackup.md). The job does not back up an
 external database. `org.moqui.admin.BackupServices` reads the job's runs and the archive directory for an application's
 backup screen (IronStone Admin › Data › Backups): coverage as the runs recorded it, the archives as names and sizes, and
-a backup asked for now with the job's own parameters ([Attack-Surface](security/Attack-Surface.md)).
+a backup asked for now with the job's own parameters ([Attack-Surface](security/Attack-Surface-Admin.md)).
 
 ## HTTPS, ports and proxies
 
@@ -1049,7 +1049,7 @@ address.
 | Calls: the media node and TURN; recordings | [WebRTC](interfaces/WebRTC.md#the-edge-node-as-media-node), [TURN](interfaces/TURN.md#on-an-edge-node), [Call-Recording](interfaces/Call-Recording.md) |
 | Phones: trunks, outside phones, the fallback while the local node is away | [SIP](interfaces/SIP.md#behind-an-edge-node), [Voicemail](interfaces/Voicemail.md#while-the-local-node-is-away) |
 | XMPP clients through the tunnel ports | [XMPP](interfaces/XMPP.md#behind-an-edge-node) |
-| SSH through the tunnel port | [`MoquiEdgeConf.xml`](../runtime/conf/edge/MoquiEdgeConf.xml)'s comments; [Attack-Surface](security/Attack-Surface.md#edge-node), SSH tunnel port |
+| SSH through the tunnel port | [`MoquiEdgeConf.xml`](../runtime/conf/edge/MoquiEdgeConf.xml)'s comments; [Attack-Surface](security/Attack-Surface-Cluster-Edge.md#edge-node), SSH tunnel port |
 | Git hosting and CI: the URLs, the SSH tunnel's clone URLs, uploads, refusing hosts, runners' tokens | [Git-Hosting](interfaces/Git-Hosting.md#behind-a-front-or-edge-node-and-in-a-pool), [Pipelines](interfaces/Pipelines.md#behind-a-front-or-edge-node-and-in-a-pool) |
 | Work over the link: delegated services, the queue, replicated sets | the `<edge>` element in `MoquiEdgeConf.xml` and `MoquiDefaultConf.xml`; [plan](../plans/archive/Edge-Node.md) §5.2 |
 

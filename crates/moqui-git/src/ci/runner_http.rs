@@ -12,7 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The runner REST, at `/ci/runner/` (docs/interfaces/Pipelines.md "The runner REST", docs/security/Attack-Surface.md).
+//! The runner REST, at `/ci/runner/` (docs/interfaces/Pipelines.md "The runner REST",
+//! docs/security/Attack-Surface-Git.md).
 //! It takes no user session: every request carries a token in `Authorization: Bearer`. A job token reaches only
 //! `jobs/<its job run>/...`, while that job runs: the job (its steps, variables and, for a trusted run, its secrets),
 //! log lines, step results, uploads (artifacts, reports, caches, streamed to content blobs with a size limit), cache

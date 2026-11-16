@@ -20,7 +20,7 @@
 //! Only that process honours it ([`allow`], which nothing but `moqui test --serve` calls; no property or conf turns it
 //! on), only from a loopback peer, and only for a loopback address: a client can name no address it is not already
 //! connecting from in effect, and a server of `moqui run` reads no such header at all
-//! (docs/security/Attack-Surface.md).
+//! (docs/security/Attack-Surface-Web.md).
 
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};

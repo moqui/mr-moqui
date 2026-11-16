@@ -1,7 +1,7 @@
 # Sealed Secrets
 
 Status 2026-11-14: plan; nothing built. The threat model this plan answers is in
-[Attack-Surface, Threat model: stored secrets](../docs/security/Attack-Surface.md#threat-model-stored-secrets). Its `known_gap_*` tests
+[Attack-Surface, Threat model: stored secrets](../docs/security/Attack-Surface-Data.md#threat-model-stored-secrets). Its `known_gap_*` tests
 (`crates/moqui-entity/src/entity/crypto_tests.rs`) pin today's weaknesses. Each phase below that closes a gap flips its
 test and updates the threat model.
 
@@ -69,7 +69,7 @@ What a compromise of each zone gives:
 | Field encryption | AES-128-CBC, a constant IV, no MAC, PBKDF2 with 10 iterations and a fixed salt; DES decrypt kept | `crates/moqui-entity/src/entity/crypto.rs` |
 | Public alternate pass | `entity_ds_crypt_pass_old` keeps the public sentinel `MoquiDefaultPassword:CHANGEME` and is a `decrypt-alt`, so a value a database writer seals under it is read as valid | `MoquiDefaultConf.xml` (`decrypt-alt`), `factory.rs` (`leave_sentinel`) |
 | Empty pass | An empty `crypt-pass` turns field encryption off with no error: `encrypt="true"` fields are stored as plaintext | `crates/moqui-entity/src/entity/facade.rs` (about line 478) |
-| One key | `entity_ds_crypt_pass` encrypts every `encrypt="true"` field (46 uses) | [Field encryption](../docs/security/Attack-Surface.md#field-encryption) |
+| One key | `entity_ds_crypt_pass` encrypts every `encrypt="true"` field (46 uses) | [Field encryption](../docs/security/Attack-Surface-Data.md#field-encryption) |
 | Lookup by value | `CalendarShare.publishToken` is found by its ciphertext, so it needs deterministic encryption | same |
 | Secrets on disk | Each secret `default-property` still at `CHANGEME` is generated (32 CSPRNG bytes) and written to `runtime/.env`, mode 0600 | `crates/moqui-core/src/context/factory.rs` (`set_conf_property`, about line 1020, and the boot path about line 1823) |
 | Secret properties | `email_oauth_*_client_secret`, `ssh_host_key`, `git_lfs_token_key(_previous)`, `mail_dkim_key`, `chat_store_key_secret`, `turn_auth_secret`, `channels_media_key`, `xmpp_upload_secret`, `xmpp_scram_decoy_key`, `entity_ds_password`, `entity_ds_crypt_pass(_old)`, `content_ds_password`, `session_cookie_key`, `web_push_vapid_key`, `fcm_service_account`, `cluster_tls_cert`, `cluster_tls_key`, `edge_node_key`, `edge_link_key`, `entity_ds_c1_password`, `elasticsearch_password`, `llm_openai_api_key`, `mcp_request_state_key` | `MoquiDefaultConf.xml`, `is-secret="true"` |

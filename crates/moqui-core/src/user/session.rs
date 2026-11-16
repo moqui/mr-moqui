@@ -2119,11 +2119,12 @@ impl Drop for RequestSessionScope {
     }
 }
 
-/// Decline a session for this web request (`ec.web.declineSession()`, impl-commerce F86; docs/security/Attack-Surface.md
-/// "Pages without a session"): the response carries no session or visitor cookie and no session token. A request that
-/// came with no session of its own and has nobody signed in has its session discarded unwritten and starts no Visit; a
-/// request that has a session keeps it, and is only sent nothing new. Either way a Visit the request started is taken
-/// back, so no Visit records it as its `initialRequest`. Nothing outside a web request.
+/// Decline a session for this web request (`ec.web.declineSession()`, impl-commerce F86;
+/// docs/security/Attack-Surface-Web.md "Pages without a session"): the response carries no session or visitor cookie
+/// and no session token. A request that came with no session of its own and has nobody signed in has its session
+/// discarded unwritten and starts no Visit; a request that has a session keeps it, and is only sent nothing new.
+/// Either way a Visit the request started is taken back, so no Visit records it as its `initialRequest`. Nothing
+/// outside a web request.
 pub fn decline_session() {
     REQUEST_SESSION.with(|slot| {
         if let Some(request) = slot.borrow_mut().as_mut() {

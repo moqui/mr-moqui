@@ -460,7 +460,7 @@ Load into… call.
   - `get#EtlRuns` and `get#EtlRun` show the user's own runs, or every run with `DATABASE_ADMIN`.
 - <a id="scheduling"></a>**Scheduling:** a `ServiceJob` that calls `run#EtlMapping` with a `mappingId`. The
   Mapping screen's Schedule makes one.
-  - A cron run has no user signed in (see [Attack-Surface, Jobs](../security/Attack-Surface.md#jobs)), so the run signs
+  - A cron run has no user signed in (see [Attack-Surface, Jobs](../security/Attack-Surface-Tools.md#jobs)), so the run signs
     in as the mapping's `ownerUserId` and then runs as that user. All of the owner's own checks apply: the Tools app,
     `GROOVY_SHELL_WEB`, `SQL_RUNNER_WEB`, the locations and the `ext:` gate.
   - The owner must be a `ServiceJobUser` of the job. An `ADMIN` may write both, so may schedule another user's saved

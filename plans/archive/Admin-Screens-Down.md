@@ -1443,7 +1443,7 @@ State: every phase above is built and merged to `master` of mr-moqui, mr-boss, m
   `impl-sales`, `impl-marketing` and `impl-maintenance`, two rows of `ss-inventory`, and the README. Here:
   [Practices-App-Dev](../../docs/dev/Practices-App-Dev.md#a-framework-screen-under-an-apps-root) §5 (the three ways an
   app shows a framework screen, the grant and mount rules, and the engine behaviours of F16, F18, F24, F36, F101 and
-  F102), [Attack-Surface](../../docs/security/Attack-Surface.md#tools-and-system) ("Screens another app shows": the mount
+  F102), [Attack-Surface](../../docs/security/Attack-Surface-Tools.md#tools-and-system) ("Screens another app shows": the mount
   rule for both tracks and the engine's rules of F54 and F94), `plans/README.md`, and this plan's own tables read
   against the Record (the A4 row, `state()`'s `hidden`, the registries among what moved down).
 - **The acceptance specs changed by path**, run one by one: mr-boss's `AdminFoundationWalk`, `AdminRegistriesWalk`,

@@ -1,6 +1,6 @@
 # Integration review
 
-> Archived 2026-10-27: all 21 findings are resolved. Implementation and validation evidence remain below; the applicable cluster rollout requirement is maintained in [Security surface](../../docs/security/Attack-Surface.md#integration-fix-cluster-rollout).
+> Archived 2026-10-27: all 21 findings are resolved. Implementation and validation evidence remain below; the applicable cluster rollout requirement is maintained in [Security surface](../../docs/security/Attack-Surface-Cluster-Edge.md#integration-fix-cluster-rollout).
 
 > 2026-10-26. Read-only sweep of the assembled framework. Eight seam reviews, then a check of each conflict and bug against the cited lines. No source changes.
 >
@@ -93,7 +93,7 @@ P3 validation: the full core suite passed 2,038 tests (three ignored), with only
 
 I-9/I-16 follow-up validation: all 16 native browser-host tests, 317 core screen tests (one ignored), and 220 host unit tests passed. The browser custom-runtime test verifies component entities, extensions, configured extra entity files, entity-auto service calls, runtime-overridden physical naming and encrypted storage. Render regressions compare merged HTML/QVT and server-static QVT both inside and outside form fields, TUI JSON versus HTML fallback conversion, duplicate matches, fallback ordering, comma-separated types and print aliases. `moqui test framework --spec ScreenQvt` passed all 16 features after its static-renderer fixture switched from stubbed support to the real shared module; the selected offline QVT/static/HTML browser suites passed all 65 features. Workspace and minimal-build lint, changed-file rustfmt and `git diff --check` passed. Existing generated fixture outputs remain unchanged. A WASM build was not run because this checkout has neither the Emscripten SDK nor the WASM Rust target installed; browser-host coverage here runs natively against SQLite.
 
-**Cluster rollout:** stop collaborative editing, upgrade and restart every member, then reopen editing. Mixed versions are unsupported: the compact envelope uses `body.frame.update`, whereas old receivers expect a second top-level update and old HTTPS listeners cap bodies at 1 MiB. The common limit is now 16 MiB on every transport. See [Security surface](../../docs/security/Attack-Surface.md#integration-fix-cluster-rollout).
+**Cluster rollout:** stop collaborative editing, upgrade and restart every member, then reopen editing. Mixed versions are unsupported: the compact envelope uses `body.frame.update`, whereas old receivers expect a second top-level update and old HTTPS listeners cap bodies at 1 MiB. The common limit is now 16 MiB on every transport. See [Security surface](../../docs/security/Attack-Surface-Cluster-Edge.md#integration-fix-cluster-rollout).
 
 ## Bugs
 

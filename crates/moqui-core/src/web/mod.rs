@@ -1514,8 +1514,8 @@ fn file_content_type(file_name: &str, last: &str) -> &'static str {
 /// application's own) is never sniffed as another type (`nosniff`), and one shown inline is sandboxed
 /// (`Content-Security-Policy: sandbox`, without `allow-same-origin` or `allow-scripts`): an HTML or SVG file a user
 /// or a CI job wrote runs no script and does not have the application's origin, so it cannot act as the signed-in
-/// viewer (docs/security/Attack-Surface.md). A PDF is not sandboxed, since browsers will not show one in a sandbox and
-/// its viewer has an origin of its own.
+/// viewer (docs/security/Attack-Surface-Web.md). A PDF is not sandboxed, since browsers will not show one in a sandbox
+/// and its viewer has an origin of its own.
 fn file_headers(file_name: &str, last: &str, inline: bool, application_file: bool) -> Vec<(String, String)> {
     // a type the name does not tell is bytes to save, never sniffed as a page
     let content_type = file_content_type(file_name, last);

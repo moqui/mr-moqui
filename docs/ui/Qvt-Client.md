@@ -100,7 +100,7 @@ screen) with the extra path and query, and gives `callback` a component. It retu
   and nothing else of it written (`crates/moqui-core/src/screen/frame.rs`). The terminal client names the page the same way for its
   parent levels ([TUI](TUI.md)), and gets the level's tab bar in the frame. A user whose grants open an area below an app root and not the
   root itself (a non-inheritable grant) then opens the area's pages in the shell; the root asked for alone, as a page, or for a page they
-  may not open is refused as before ([Attack-Surface](../security/Attack-Surface.md#parent-frames)).
+  may not open is refused as before ([Attack-Surface](../security/Attack-Surface-Web.md#parent-frames)).
 - **A screen's own path and query: `inject: ["mScreen"]`.** Each `m-dynamic-container` and `m-dynamic-dialog` provides `mScreen` for the screen
   it loaded, `{url, path, parameters, containerId}` (`path` without the query and the `.qvt`/`.qvue`/`.qjs`, `parameters` the query as an
   object; `moqui.urlScreen`), and the root provides the page's (`currentPath`, `currentParameters`), as the public shell does for its route. A

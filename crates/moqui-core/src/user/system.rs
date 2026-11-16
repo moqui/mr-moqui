@@ -14,7 +14,7 @@
 
 //! The system scope (Commerce F72): `ec.artifactExecution.runAsSystem(body)` and its Rust form [`as_system`], which run
 //! work with no user and authorization off in a fresh execution context sharing the caller's transaction, and the rule
-//! that keeps it to a service's own code (docs/security/Attack-Surface.md, "The system scope").
+//! that keeps it to a service's own code (docs/security/Attack-Surface-Web.md, "The system scope").
 
 use crate::context::{Error, ErrorKind, ExecutionContext};
 

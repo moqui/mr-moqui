@@ -1339,7 +1339,7 @@ queue and sets per node, and the replica conflicts. On a node with the front set
 - **Several pairings.** The limits of [§4.1](#41-domains-on-one-edge-node), and a TURN secret per pairing.
 - **ACME.** The account key and the certificates' keys are secrets. The challenge answers only for a name the
   operator set up.
-- [Attack-Surface](../docs/security/Attack-Surface.md) gets each phase's part: the member list on the link, the
+- [Attack-Surface](../docs/security/Attack-Surface-Cluster-Edge.md) gets each phase's part: the member list on the link, the
   list of edge members in Hello, an edge node that dials, TCP ports on a front, the ACME challenge.
 
 ## 5. Phases

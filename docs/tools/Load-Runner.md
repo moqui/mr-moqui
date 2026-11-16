@@ -300,4 +300,4 @@ every other one is dropped. A run against another server has none: the target's 
   line, and asked again on Run again.
 - **Result files.** A run is read, deleted and imported only by its `runId`, a directory name with no path in it.
 
-[Attack-Surface](../security/Attack-Surface.md#load-runs) has the same rules among the server's other tools.
+[Attack-Surface](../security/Attack-Surface-Tools.md#load-runs) has the same rules among the server's other tools.

@@ -252,7 +252,7 @@ impl ArtifactStack {
     }
 
     /// Whether the top frame is a service's and no screen render began since it was pushed: code running now is that
-    /// service's own, not a widget expression of a render (`runAsSystem`'s rule, docs/security/Attack-Surface.md).
+    /// service's own, not a widget expression of a render (`runAsSystem`'s rule, docs/security/Attack-Surface-Web.md).
     pub(super) fn top_is_service_body(&self) -> bool {
         self.frames.last().is_some_and(|frame| {
             frame.artifact_type == "AT_SERVICE" && frame.render_depth == crate::screen::active_depth()

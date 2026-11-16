@@ -524,9 +524,9 @@ fn git_page_uri<B>(web: &WebApp, request: &hyper::Request<B>) -> Option<http::Ur
 /// The deadline of a request at `path` (the one it is served at), `limit` the conf's `request-timeout`: none for one
 /// that runs as long as it needs (`streaming`: a socket or a multipart upload, whose screen has the deadline once it
 /// has arrived), git (its own idle timeout), the CI runner REST, DAV, XMPP uploads and the LLM gateway's model calls
-/// (docs/security/Attack-Surface.md). On an edge node a request it `forwarded` to a member has none either: the member
-/// applies its own, with the exemptions only it can tell (git at a public site's page URL, whose site rows the edge
-/// node does not have), and the forward's waits bound it here (`crate::edge_link::web::Waits`).
+/// (docs/security/Attack-Surface-Web.md). On an edge node a request it `forwarded` to a member has none either: the
+/// member applies its own, with the exemptions only it can tell (git at a public site's page URL, whose site rows the
+/// edge node does not have), and the forward's waits bound it here (`crate::edge_link::web::Waits`).
 pub(crate) fn request_deadline(
     limit: Option<Duration>,
     path: &str,

@@ -212,7 +212,7 @@ authorization. A call with authorization disabled needs no logged-in user.
 
 `runAsSystem` works only in a service's own code: the top artifact frame must be the service's. A screen's actions,
 widget expressions and transitions, a REST resource and a web script are refused ([The system
-scope](../security/Attack-Surface.md#the-system-scope)).
+scope](../security/Attack-Surface-Web.md#the-system-scope)).
 
 ## Parameters: validation and types
 

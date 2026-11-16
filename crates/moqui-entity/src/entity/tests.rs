@@ -437,7 +437,7 @@ fn locale_defaults_to_en_and_crypt_stays_unset() {
 /// An empty `crypt-pass` leaves field encryption off with no error, so `encrypt="true"` fields are then written as
 /// plaintext. Startup fills `entity_ds_crypt_pass` when it is the `CHANGEME` default, not when it is set empty.
 ///
-/// When this is fixed, this test fails: update the threat model in Attack-Surface.md.
+/// When this is fixed, this test fails: update the threat model in Attack-Surface-Data.md.
 #[test]
 fn known_gap_an_empty_crypt_pass_turns_field_encryption_off() {
     let facade = open_fake();

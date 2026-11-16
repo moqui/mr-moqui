@@ -6,7 +6,7 @@ proves who they are by badge and PIN). An administrator registers it, enters a c
 code is in `crates/moqui-core/src/user/device.rs` (the credential and the route gate),
 `org.moqui.admin.DeviceServices` (`service/org/moqui/admin/Devices.js`) and the `/Device` page
 (`webroot/screen/webroot/Device.xml`). The design is IronStone's CX-DEVICE (mr-boss `plan/design-crosscut.md` §1.5,
-`plan/design-admin.md` §6 Devices); the threats are in [Attack-Surface](Attack-Surface.md).
+`plan/design-admin.md` §6 Devices); the threats are in [Attack-Surface](Attack-Surface-Admin.md).
 
 ## The parts
 

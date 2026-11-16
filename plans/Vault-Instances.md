@@ -291,7 +291,7 @@ The screen also checks the choice:
   - A key passphrase, a vault password or key, a personal private key, a vault key.
   - An operational value, except inside a lease and only for that lease's items.
 
-The limits, which the vault's About and [Attack-Surface](../docs/security/Attack-Surface.md) state:
+The limits, which the vault's About and [Attack-Surface](../docs/security/Attack-Surface-Data.md#threat-model-stored-secrets) state:
 
 - **The web form runs code the server sends.** A compromised server can send code that takes the passphrase, which is
   the limit of every web password manager. The desktop and mobile apps carry their own code and are the strong form.
@@ -616,7 +616,7 @@ The order:
 - **[Dogfood](Dogfood.md):** M3 builds §8.6 and DG10 for managed instances. Dogfood gets a pointer when M3 starts.
 - **[Pipelines](../docs/interfaces/Pipelines.md):** environments, deploy secrets as vault items, and runner hosts'
   credentials under machine access, as M1 and M3 are built.
-- **[Attack-Surface](../docs/security/Attack-Surface.md):** vaults and managed instances in the threat model. The rows
+- **[Attack-Surface](../docs/security/Attack-Surface-Data.md#threat-model-stored-secrets):** vaults and managed instances in the threat model. The rows
   "the server sees every plaintext" and the client-side vault in "What MR Moqui can take" point here once V1 is built.
 - **Guides, as each phase is built:**
   - [Run-Deploy](../docs/Run-Deploy.md): a Managed instances section (M1, M2);

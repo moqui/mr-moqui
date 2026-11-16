@@ -211,7 +211,7 @@ fn number(args: &Json) -> Result<String, ToolError> {
 }
 
 /// Where a read came from, and its answer as untrusted data: the server's text (titles, descriptions, comments, logs)
-/// is someone else's, which the model reads as data and never as instructions (docs/security/Attack-Surface.md).
+/// is someone else's, which the model reads as data and never as instructions (docs/security/Attack-Surface-AI.md).
 #[must_use]
 pub fn as_data(what: &str, answer: &Json) -> String {
     format!(

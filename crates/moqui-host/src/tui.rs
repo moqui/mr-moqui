@@ -50,7 +50,7 @@ pub struct Ask {
     /// A screen the user goes to, kept in the history; a fragment, options or a file are not.
     pub remember: bool,
     /// For a level above the leaf, the leaf's path (no query): sent as `X-Moqui-Page-Path`, so a level the user may not
-    /// open alone answers as that page's frame (docs/security/Attack-Surface.md, "Parent frames"). Empty otherwise.
+    /// open alone answers as that page's frame (docs/security/Attack-Surface-Web.md, "Parent frames"). Empty otherwise.
     pub page: String,
 }
 
