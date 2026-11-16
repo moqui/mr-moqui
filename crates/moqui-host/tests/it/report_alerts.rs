@@ -978,7 +978,7 @@ fn alerts_deliver_real_smtp_and_webhooks_retry_failures_and_resolve_live_credent
     let id = "wire-alert";
     {
         let factory = gate.server.factory();
-        moqui_core::service::mail_capture::MailCapture::of(factory).set_enabled(Some(false));
+        moqui_core::service::mail_capture::MailCapture::of(factory).set_enabled(Some(false)).unwrap();
         points(factory, at, 12.0);
         let mut body = rule(at);
         body["pendingSeconds"] = json!(0);
@@ -1042,7 +1042,7 @@ fn alerts_deliver_real_smtp_and_webhooks_retry_failures_and_resolve_live_credent
     let old = Arc::downgrade(gate.server.factory());
     gate = gate.restart();
     assert!(old.upgrade().is_none());
-    moqui_core::service::mail_capture::MailCapture::of(gate.server.factory()).set_enabled(Some(false));
+    moqui_core::service::mail_capture::MailCapture::of(gate.server.factory()).set_enabled(Some(false)).unwrap();
     moqui_lib::env::set_property(WIRE_URL_PROPERTY, format!("{WIRE_ORIGIN}/primary-v2"));
     moqui_lib::env::set_property(WIRE_AUTH_PROPERTY, "Bearer m6-phase-two");
     moqui_lib::env::set_property(WIRE_MISSING_PROPERTY, "Bearer m6-missing-now-configured");

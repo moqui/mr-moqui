@@ -2606,7 +2606,8 @@ fn a_test_message_goes_from_the_account_to_itself() {
     install();
     let account = shared_account(&facade, "smtp.example.com");
     let capture = moqui_core::service::mail_capture::MailCapture::of(ctx.factory());
-    capture.set_enabled(Some(true));
+    moqui_core::service::http_fixtures::allow();
+    capture.set_enabled(Some(true)).unwrap();
     capture.clear();
 
     let out = ok("send#TestMessage", &[("emailAccountId", text(&account))]);
@@ -2655,7 +2656,7 @@ fn a_test_message_goes_from_the_account_to_itself() {
     assert_eq!(out_text(&failed, "emailMessageId"), "");
     assert!(message_ids(&ok("find#Messages", &[("view", text("outbox"))])).is_empty());
     assert_eq!(capture.messages().len(), 2);
-    capture.set_enabled(None);
+    capture.set_enabled(None).unwrap();
 }
 
 /// The mail search index of a test: every message in it matches the free text; a search answers those dated before
