@@ -433,7 +433,7 @@ pub(super) fn store_record(facade: &EntityFacade, options: &LoadOptions, record:
         return super::check::check_record(facade, &record);
     }
     if options.restrict_sensitive_entities {
-        refuse_restricted(facade, &record, options.refuse_password_fields)?;
+        refuse_restricted(facade, &record, options)?;
     }
     // Inside an outer transaction a failed record marks it rollback-only and gives back its join, so the
     // owner's rollback still ends the frame.
@@ -446,16 +446,26 @@ pub(super) fn store_record(facade: &EntityFacade, options: &LoadOptions, record:
 
 /// Refuses the record when it or any nested record, by relationship name, short alias, or entity name, resolves to
 /// a restricted entity ([`is_restricted_entity`]). Checked before anything of the tree is written.
-fn refuse_restricted(facade: &EntityFacade, record: &Record, passwords: bool) -> Result<(), Error> {
+fn refuse_restricted(facade: &EntityFacade, record: &Record, options: &LoadOptions) -> Result<(), Error> {
     let full_name = canonical_name(facade, &record.entity).unwrap_or_else(|_| record.entity.clone());
     if is_restricted_entity(&full_name) {
         return Err(Error::new(format!(
             "Entity {full_name} is not allowed in this data load"
         )));
     }
+    // a package this load does not take (a sync partner's: the service jobs, which run with authorization off)
+    if options
+        .refused_packages
+        .iter()
+        .any(|package| full_name.starts_with(&format!("{package}.")))
+    {
+        return Err(Error::new(format!(
+            "Entity {full_name} is not allowed in this data load"
+        )));
+    }
     // the password fields are not taken on a generic write: a load would set any user's password hash
     // (plans/Security-Review-Low.md SEC-DAT-08, through put#EntitySyncData)
-    if passwords
+    if options.refuse_password_fields
         && crate::entity::sensitive::is_user_account_entity(&full_name)
         && crate::entity::sensitive::USER_ACCOUNT_SECRET_FIELDS
             .iter()
@@ -466,7 +476,7 @@ fn refuse_restricted(facade: &EntityFacade, record: &Record, passwords: bool) ->
         )));
     }
     for child in &record.children {
-        refuse_restricted(facade, child, passwords)?;
+        refuse_restricted(facade, child, options)?;
     }
     Ok(())
 }
@@ -524,7 +534,7 @@ pub(super) fn store_value(facade: &EntityFacade, options: &LoadOptions, record: 
         return super::check::check_record(facade, &record);
     }
     if options.restrict_sensitive_entities {
-        refuse_restricted(facade, &record, options.refuse_password_fields)?;
+        refuse_restricted(facade, &record, options)?;
     }
     let Record { entity, fields, .. } = record;
     let entity = entity.as_str();

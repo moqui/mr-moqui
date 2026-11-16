@@ -159,6 +159,13 @@ fn entity_sync_data_keeps_login_keys_and_password_hashes_from_a_partner() {
     )]);
     let err = super::entity_sync::put_data(&put, facade).unwrap_err();
     assert!(err.to_string().contains("password"), "{err}");
+    // nor a service job, which runs with authorization off
+    let job = params(&[(
+        "entityData",
+        r#"<entity-facade-xml><moqui.service.job.ServiceJob jobName="SyncPlanted" serviceName="org.moqui.impl.BasicServices.noop#Service"/></entity-facade-xml>"#,
+    )]);
+    let err = super::entity_sync::put_data(&job, facade).unwrap_err();
+    assert!(err.to_string().contains("moqui.service.job.ServiceJob"), "{err}");
 }
 
 #[test]

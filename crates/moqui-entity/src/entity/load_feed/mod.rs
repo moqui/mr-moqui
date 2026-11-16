@@ -90,6 +90,9 @@ pub struct LoadOptions {
     /// With `restrict_sensitive_entities`, also refuse a `UserAccount` record that sets a password field: a sync
     /// partner's load (`put#EntitySyncData`, plans/Security-Review-Low.md SEC-DAT-08).
     pub refuse_password_fields: bool,
+    /// With `restrict_sensitive_entities`, also refuse every entity of these packages: a sync partner's load refuses
+    /// `moqui.service.job`, whose jobs run with authorization off (SEC-DAT-08).
+    pub refused_packages: Vec<String>,
     /// Java `csvEntityName`: the entity or service of a CSV text with no entity line.
     pub csv_entity_name: Option<String>,
     /// Java `csvFieldNames`: the fields of a CSV text with no header line.

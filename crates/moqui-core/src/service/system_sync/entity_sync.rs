@@ -237,6 +237,8 @@ pub(super) fn put_data(
         restrict_sensitive_entities: true,
         // ... and a UserAccount record that sets a password hash
         refuse_password_fields: true,
+        // ... and a service job, which runs with authorization off
+        refused_packages: vec!["moqui.service.job".to_string()],
         ..LoadOptions::default()
     };
     let loaded = load_entity_xml_text(facade, PUT_DATA, &text, &options)?;

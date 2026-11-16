@@ -1855,6 +1855,7 @@ fn load_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
             .map(std::time::Duration::from_secs),
         restrict_sensitive_entities: flag("restrictSensitiveEntities"),
         refuse_password_fields: false,
+        refused_packages: Vec::new(),
         csv_entity_name: Some(text("csvEntityName")).filter(|name| !name.is_empty()),
         csv_field_names: list("csvFieldNames"),
         csv_delimiter: text("csvDelimiter").chars().next(),
