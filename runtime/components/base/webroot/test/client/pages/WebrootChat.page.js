@@ -480,7 +480,7 @@ test("a card's button posts to chatAssistCard; an agent's typing carries its sta
 test("an encrypted room's decrypted HTML keeps what a plain room's message may have, and a decrypted file opens as an image or bytes", async () => {
     await chat.loadPurify();
     const kept = '<p>Hi <span data-mention-id="bob">@Bob</span> <a href="https://example.com/x" hreflang="en">link</a> <b>bold</b></p>'
-        + '<table><tbody><tr><td colspan="2">cell</td></tr></tbody></table><img src="/files/a.png" alt="a" width="10">';
+        + '<table><tbody><tr><td colspan="2">cell</td></tr></tbody></table><img src="/richTextImage/100123" alt="a" width="10">';
     assert.equal(chat.clean(kept), kept, "the markup a plain room keeps stays");
     const cleaned = chat.clean('<p class="fixed-full z-max" id="moqui" style="color:red" onclick="alert(1)">x</p>'
         + '<a href="javascript:alert(1)" target="_blank">y</a><svg><circle onload="alert(1)"></circle></svg><script>alert(1)</script>'
@@ -491,6 +491,13 @@ test("an encrypted room's decrypted HTML keeps what a plain room's message may h
         assert.ok(cleaned.indexOf(bad) < 0, "no " + bad + " in " + cleaned);
     }
     assert.ok(cleaned.indexOf("<p>x</p>") >= 0, cleaned);
+    // an image only of this server (SEC-COM-02): another host's, or another path of this one, loses its src, in an encrypted
+    // room's HTML and in a plain room's stored one
+    for (const src of ["https://host.example/x.png?u=1", "//host.example/x.png", "/apps/report/export", "/richTextImage/1?x=2"]) {
+        assert.ok(chat.clean('<p>a<img src="' + src + '" alt="b"></p>').indexOf("src=") < 0, src);
+        assert.ok(chat.ownImages('<p>a<img src="' + src + '" alt="b"></p>').indexOf("src=") < 0, src);
+    }
+    assert.equal(chat.ownImages('<p><img src="/richTextImage/9"></p>'), '<p><img src="/richTextImage/9"></p>');
     assert.equal(chat.blobType("image/PNG"), "image/png");
     assert.equal(chat.blobType("image/jpeg"), "image/jpeg");
     for (const type of ["text/html", "image/svg+xml", "application/xhtml+xml", "application/pdf", "", null]) {

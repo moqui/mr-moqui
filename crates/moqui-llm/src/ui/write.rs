@@ -20,9 +20,11 @@
 //! exact request under the gate's `Approved` with the hash ([`execute`]). Two ways reach it:
 //!
 //! - **A click** on a Button the framework drew (`canvasAction` with the user's activation, from the browser session
-//!   with its token): the click is the approval, so no card is asked for; an `AgentApproval` row records it, approved
-//!   through the channel `canvas` and run at once. For a Vue SFC canvas that Button is the Save of the confirm the page
-//!   draws outside the frame for a submit the frame made.
+//!   with its token): the model wrote the Button's label and its Mutation, so the click answers the held write (its
+//!   path and parameters, as an approval card shows them) and runs nothing; the user's OK of that write, a second click
+//!   that names its hash, is the approval (SEC-AI-02), so no card is asked for: an `AgentApproval` row records it,
+//!   approved through the channel `canvas` and run at once. For a Vue SFC canvas that Button is the Save of the confirm
+//!   the page draws outside the frame for a submit the frame made.
 //! - **The agent proposes it** (`write_ui` with `run`): that is a write without a click, so it is an approval card like
 //!   any other ([`crate::approval::request`]); the run pauses until the user decides, and the approved request runs
 //!   when it resumes.

@@ -438,6 +438,77 @@ fn sink_receives_a_template_send_and_expands_the_subject() {
     assert!(out.contains_key("emailMessageId"));
 }
 
+/// SEC-MAIL-64: a user sends only a stored message they may send: system mail that is Ready (or Bounced), and their own
+/// account's Ready message; another user's Sent mail, a received message and old system mail are answered as messages
+/// that do not exist. Internal work (authorization disabled) sends any.
+#[test]
+fn a_user_sends_again_only_a_message_they_may_send() {
+    let _lock = lock_tests();
+    let (facade, context) = entered();
+    let _entered = context.enter();
+    moqui_core::service::load_definitions().unwrap();
+    seed(&facade, &context, "moqui.basic.email.EmailServer", &[("emailServerId", "M64_NOHOST")]);
+    seed(
+        &facade,
+        &context,
+        "moqui.security.UserAccount",
+        &[("userId", "M64_OTHER"), ("username", "m64.other")],
+    );
+    for (account, owner) in [("M64_MINE", "EMAILER"), ("M64_THEIRS", "M64_OTHER")] {
+        seed(
+            &facade,
+            &context,
+            "moqui.basic.email.EmailAccount",
+            &[
+                ("emailAccountId", account),
+                ("ownerUserId", owner),
+                ("emailServerId", "M64_NOHOST"),
+                ("accountKindEnumId", "EakExternal"),
+                ("statusId", "EasActive"),
+            ],
+        );
+    }
+    let message = |id: &str, account: &str, status: &str| {
+        let mut fields = vec![
+            ("emailMessageId", id),
+            ("statusId", status),
+            ("emailServerId", "M64_NOHOST"),
+            ("fromAddress", "from@example.com"),
+            ("toAddresses", "to@example.com"),
+            ("subject", "Again"),
+            ("bodyText", "Hello"),
+        ];
+        if !account.is_empty() {
+            fields.push(("emailAccountId", account));
+        }
+        seed(&facade, &context, MESSAGE, &fields);
+    };
+    message("M64_SYS_READY", "", "ES_READY");
+    message("M64_SYS_SENT", "", "ES_SENT");
+    message("M64_MINE_READY", "M64_MINE", "ES_READY");
+    message("M64_THEIRS_SENT", "M64_THEIRS", "ES_SENT");
+    message("M64_THEIRS_READY", "M64_THEIRS", "ES_READY");
+    message("M64_MINE_RECEIVED", "M64_MINE", "ES_RECEIVED");
+    log_in(&facade, &context);
+    let refused = |id: &str| {
+        let _ = moqui_core::service::sync(
+            "org.moqui.mail.EmailServices.send#EmailMessage",
+            &BTreeMap::from([("emailMessageId".to_string(), Value::string(id))]),
+        );
+        let errors = context.message().errors().join("\n");
+        context.message().clear_errors();
+        errors.contains("No EmailMessage record found")
+    };
+    assert!(!refused("M64_SYS_READY"));
+    assert!(!refused("M64_MINE_READY"));
+    assert!(refused("M64_SYS_SENT"));
+    assert!(refused("M64_THEIRS_SENT"));
+    assert!(refused("M64_THEIRS_READY"));
+    assert!(refused("M64_MINE_RECEIVED"));
+    let _authz = context.disable_authz();
+    assert!(!refused("M64_THEIRS_SENT"), "internal work sends any");
+}
+
 /// With the mail capture on, a send through a server with no SMTP host (the SYSTEM server) is captured, and the
 /// message is Sent; with it off, the send is skipped as before: nothing kept, and the message stays Ready.
 #[test]

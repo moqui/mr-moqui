@@ -627,7 +627,7 @@ What the Tools and System apps call. Their reach is wide (SQL, conf files, resta
 | `ChatScreenServices.find#RecordRoom` | `recordEntityName*`, `recordId*` → `chatRoomId`, `created`: the room of a record, made on first use |
 | `ChatScreenServices.send#ChatMessage`, `create#ChatRoom` | As the chat services, from the composer and dialogs |
 | `FilePickerServices.get#PickerData`, `list#PickerFolder` | `driveId*`, `path` → `driveList`, `recentList`; `fileList`, `breadcrumbList` |
-| `CommsServices.search#Users` | `term`, `limit` → `userList` of `{id, value, label}` |
+| `CommsServices.search#Users` | `term`, `limit`, `purpose` (`chat`, or `call` to ask the `call-target` hook) → `userList` of `{id, value, label}`: only the people the user may reach (the `chat-target` hook, no external user) |
 | `CommsHomeServices.get#CommsHome` | → `cardList`, `needsReplyList`, `followUpList`, `meetingList`, `roomList` |
 
 `ProviderInterfaces.xml` holds the interfaces an application implements to take part in Comms through shell providers: `inbox#Source`, `recipient#Source`, `record#Lookup`, `record#Link`, `create#From`, `contact#Card`, `home#Source`, `call#Target` and the others. `MailSettingsServices` is the mail settings screens.

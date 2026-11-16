@@ -477,7 +477,8 @@ test("record chips: drawn only from the chip map (the user's own without a link)
 
 test("the thread's Markdown: remote images as placeholders, links through safePath, external ones with their host, invented ones plain", () => {
     const html = assist.renderMarkdown(marked, [
-        "![chart](https://evil.example.com/p.png) ![local](/apps/static/logo.png) ![tracker](//evil.example.com/t.gif)",
+        "![chart](https://evil.example.com/p.png) ![local](/images/logo.png) ![tracker](//evil.example.com/t.gif)",
+        "![run](/apps/Orders/export.png) ![query](/images/logo.png?d=1) ![page](/qapps/Orders/OrderDetail)",
         "<img src=\"https://evil.example.com/raw.png\" srcset=\"https://evil.example.com/a.png 1x\"> <img src=\"data:image/png;base64,AAAA\" alt=\"inline\">",
         "<image src=\"https://evil.example.com/image.png\"> <svg><image href=\"https://evil.example.com/svg.png\"></image></svg> <a href=\"javascript:alert(1)\">raw</a>",
         "inline <b onclick=\"alert(1)\">bold</b> and <iframe src=\"https://evil.example.com/\"></iframe>",
@@ -492,7 +493,9 @@ test("the thread's Markdown: remote images as placeholders, links through safePa
     assert.match(html, /&lt;image src=&quot;https:\/\/evil.example.com\/image.png&quot;&gt;/);
     assert.match(html, /&lt;a href=&quot;javascript:alert\(1\)&quot;&gt;raw&lt;\/a&gt;/);
     assert.match(html, /inline &lt;b onclick=/);
-    assert.match(html, /<img src="\/apps\/static\/logo.png" alt="local">/);
+    assert.match(html, /<img src="\/images\/logo.png" alt="local">/);
+    // a same-site image only of a static path (SEC-AI-03): a screen, a transition or a query would be a GET with the cookie
+    assert.doesNotMatch(html, /src="\/(apps|qapps)|logo.png\?d=1"/);
     // an application path through the shell; a path that is not one, as text
     assert.match(html, /<a href="\/qapps\/Orders\?status=open" data-md-link>Orders<\/a>/);
     assert.doesNotMatch(html, /rest\/s1/);

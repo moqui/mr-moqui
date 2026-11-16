@@ -19,7 +19,8 @@
  *
  * Reads (a Query, a Lookup's options, a Display's value) go through the one read proxy, GET /assist/read, never to a
  * screen from the page. A Mutation is run by the server from the stored program (POST canvasAction): the user's click on
- * a Button the framework drew is the approval, so no card is asked for it; a Mutation the agent proposes without a click
+ * a Button the framework drew, confirmed in the drawer's dialog of the held write (its path and parameters, SEC-AI-02), is
+ * the approval, so no card is asked for it; a Mutation the agent proposes without a click
  * is an approval card in the drawer (write_ui run). The dialect registers itself: moqui.assist.dialects.register("openui").
  *
  * The Vue SFC dialect (m-assist-vue-sfc, docs/ai/Assist.md "Vue SFC canvases") is the parent's half of a sandboxed frame:
@@ -959,7 +960,7 @@
                     if (problems.length) this.$emit("problems", problems);
                 },
                 actionKey(action) { return action && action.steps ? JSON.stringify(action.steps.map((step) => step.statementId || step.type)) : "submit"; },
-                // A Button's Action plan, step by step: a Mutation is run by the server (the click is the approval); a Query
+                // A Button's Action plan, step by step: a Mutation is run by the server (the click, confirmed, is the approval); a Query
                 // fetches again; @Set and @Reset change state; @ToAssistant sends the canvas's values to the agent. A Button
                 // with no plan submits its form's values to the agent.
                 act(action, label, event, formName) {

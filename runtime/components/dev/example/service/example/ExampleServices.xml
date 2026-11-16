@@ -82,9 +82,10 @@
         ]]></script></actions>
     </service>
 
-    <!-- A call-target provider of the suite shell (the shell-providers of screen/Gallery.xml; plans/archive/Comms-Framework.md §3.3):
-        of the users the signed-in user would call, transfer a call to or add to one, it refuses those whose username ends
-        with .offlimits, as an app keeping them to the user's organizations would refuse another organization's. -->
+    <!-- A call-target and chat-target provider of the suite shell (the shell-providers of screen/Gallery.xml;
+        plans/archive/Comms-Framework.md §3.3): of the users the signed-in user would call, transfer a call to or add to one,
+        find, message or put in a chat room, it refuses those whose username ends with .offlimits, as an app keeping them to
+        the user's organizations would refuse another organization's. The two hooks' interfaces have the same parameters. -->
     <service verb="get" noun="GalleryCallTarget">
         <implements service="org.moqui.comms.ProviderInterfaces.call#Target"/>
         <actions><script><![CDATA[

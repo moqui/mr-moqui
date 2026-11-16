@@ -1228,7 +1228,8 @@ fn the_canvas_over_http_on_postgres() {
     );
     assert_eq!(status, 404);
 
-    // a click runs the program's Mutation with the posted state: the click is the approval, recorded with no card
+    // a click runs the program's Mutation with the posted state once the user confirms the held write: that OK is the
+    // approval, recorded with no card
     let click = json!({"artifactId": artifact_id, "version": 1, "kind": "mutation", "statement": "save",
         "state": {"description": "Canvas renamed"}, "activation": false});
     let (status, refused) = john.post("canvasAction", &click);
@@ -1248,6 +1249,21 @@ fn the_canvas_over_http_on_postgres() {
     assert_eq!(status, 403, "arming with no activation: {refused}");
     let nonce = arm(&john, &artifact_id, 1).remove(0);
     clicked["nonce"] = json!(nonce);
+    // SEC-AI-02: the click answers the held write, its path and parameters, and runs nothing; a hash that is not the
+    // write's runs nothing either
+    let (status, held) = john.post("canvasAction", &clicked);
+    assert_eq!((status, held["ok"].as_bool()), (200, Some(false)), "{held}");
+    assert_eq!(held["confirm"]["parameters"]["description"], "Canvas renamed", "{held}");
+    assert!(!str_of(&held["confirm"]["argsHash"]).is_empty(), "{held}");
+    assert_eq!(group_description(&factory), "Canvas before");
+    clicked["nonce"] = json!(arm(&john, &artifact_id, 1).remove(0));
+    clicked["confirm"] = json!("not-the-hash");
+    let (status, again) = john.post("canvasAction", &clicked);
+    assert_eq!((status, again["ok"].as_bool()), (200, Some(false)), "{again}");
+    assert_eq!(group_description(&factory), "Canvas before");
+    // the user's OK of that write: a new click's nonce and the write's hash
+    clicked["nonce"] = json!(arm(&john, &artifact_id, 1).remove(0));
+    clicked["confirm"] = held["confirm"]["argsHash"].clone();
     let (status, done) = john.post("canvasAction", &clicked);
     assert_eq!((status, done["ok"].as_bool()), (200, Some(true)), "{done}");
     assert_eq!(group_description(&factory), "Canvas renamed");

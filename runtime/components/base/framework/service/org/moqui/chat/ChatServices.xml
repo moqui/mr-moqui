@@ -277,6 +277,71 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
+    <service verb="get" noun="RefusedUsers" allow-remote="false">
+        <description>Internal (SEC-COM-01): of userIdList, the users the current user may not reach, whom the people
+            search leaves out and create#Room, add#Member and a public room's mentions answer as users that do not exist:
+            those a provider of hook (chat-target, or call-target for the Calls pickers) of the apps the user may open
+            refuses (org.moqui.ui.ShellServices.call#Providers; a provider that fails refuses them all, as call-target does
+            in Calls.js), and for an external caller (EXTERNAL_USER) everyone they share no room with. The current user is
+            never refused. A caller with authorization disabled (internal work) is refused no one; with no user everyone is
+            refused.</description>
+        <in-parameters>
+            <parameter name="userIdList" type="List"/>
+            <parameter name="hook" default-value="chat-target"/>
+        </in-parameters>
+        <out-parameters><parameter name="refusedUserIdList" type="List"/></out-parameters>
+        <actions><script><![CDATA[
+            refusedUserIdList = []
+            const ids = Array.from(new Set(Array.from(userIdList || []).map((id) => String(id || '').trim()).filter((id) => id)))
+            if (!ids.length || ec.artifactExecution.authzDisabled()) return
+            const me = ec.user.userId
+            if (!me) { refusedUserIdList = ids; return }
+            const asked = ids.filter((id) => id !== me)
+            if (!asked.length) return
+            const refused = new Set()
+            // an external caller reaches only the people of their own rooms (a direct room's even after leaving it)
+            const outside = ec.service.sync().name('org.moqui.chat.ChatServices.get#ExternalUsers').parameter('userIdList', [me])
+                    .disableAuthz().call()
+            if (!outside || outside.anyExternal !== false) {
+                const mine = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('userId', me)
+                        .selectField('chatRoomId').selectField('leftDate').disableAuthz().list())
+                const roomIds = Array.from(new Set(mine.map((row) => row.chatRoomId)))
+                const direct = new Set(roomIds.length ? Array.from(ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', 'in', roomIds)
+                        .condition('roomTypeEnumId', 'CrtDirect').selectField('chatRoomId').disableAuthz().list()).map((row) => row.chatRoomId) : [])
+                const current = mine.filter((row) => !row.leftDate || direct.has(row.chatRoomId)).map((row) => row.chatRoomId)
+                const shared = new Set(current.length ? Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', 'in', current)
+                        .condition('userId', 'in', asked).selectField('chatRoomId').selectField('userId').selectField('leftDate').disableAuthz().list())
+                        .filter((row) => !row.leftDate || direct.has(row.chatRoomId)).map((row) => row.userId) : [])
+                for (const id of asked) if (!shared.has(id)) refused.add(id)
+            }
+            const hookName = hook === 'call-target' ? 'call-target' : 'chat-target'
+            const open = asked.filter((id) => !refused.has(id))
+            if (open.length) {
+                ec.message.pushErrors()
+                try {
+                    const out = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers').parameters({hook: hookName,
+                        parameters: {userIdList: open}}).call() || {}
+                    if (out.unavailable !== true) {
+                        if (Array.from(out.failedParts || []).length) {
+                            ec.logger.warn(`The ${hookName} providers failed for ${open.join(', ')}: every one is refused`)
+                            open.forEach((id) => refused.add(id))
+                        } else {
+                            for (const answer of Array.from(out.results || []))
+                                for (const id of Array.from(answer?.refusedUserIdList || [])) if (open.includes(String(id))) refused.add(String(id))
+                        }
+                    }
+                } catch (err) {
+                    ec.logger.warn(`The ${hookName} providers failed for ${open.join(', ')}: ${err && err.message ? err.message : err}`)
+                    open.forEach((id) => refused.add(id))
+                } finally {
+                    ec.message.clearErrors()
+                    ec.message.popErrors()
+                }
+            }
+            refusedUserIdList = asked.filter((id) => refused.has(id))
+        ]]></script></actions>
+    </service>
+
     <service verb="push" noun="Signal" type="rust" location="moqui_core::service::chat::push_signal" authenticate="false"
             transaction="ignore">
         <description>Internal: send message to the users of userIdList on a chat topic (chatRoom:id, chatUser:userId or
@@ -1337,7 +1402,11 @@ along with this software (see the LICENSE.md file). If not, see
                 const found = new Set(Array.from(ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', others)
                         .condition(ec.entity.conditionFactory.makeCondition('disabled', 'not-equals', 'Y', true))
                         .selectField('userId').disableAuthz().list()).map((row) => row.userId))
-                const missing = others.filter((id) => !found.has(id))
+                // a user an app's chat-target provider keeps from this one, or anyone outside an external user's rooms, is
+                // answered as one that does not exist (SEC-COM-01)
+                const refused = new Set(ec.service.sync().name('org.moqui.chat.ChatServices.get#RefusedUsers')
+                        .parameter('userIdList', others.filter((id) => found.has(id))).call()?.refusedUserIdList || [])
+                const missing = others.filter((id) => !found.has(id) || refused.has(id))
                 if (missing.length) { ec.message.addError(`User ${missing.join(', ')} not found`); return }
             }
             const now = ec.user.nowTimestamp
@@ -1598,6 +1667,8 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="addedUserIdList" type="List"/></out-parameters>
         <actions><script><![CDATA[
             const ROLES = {owner: 'CmrOwner', moderator: 'CmrModerator', member: 'CmrMember', agent: 'CmrAgent'}
+            const AGENT_REFS = String(System.getProperty('chat_agent_entry_services') || 'org.moqui.agent.AgentServices.handle#ChatMessage')
+                    .split(',').map((name) => name.trim()).filter((name) => name)
             addedUserIdList = []
             const me = ec.user.userId
             if (!me) { ec.message.addError(ec.l10n.localize('No user')); return }
@@ -1625,7 +1696,11 @@ along with this software (see the LICENSE.md file). If not, see
                 const found = new Set(Array.from(ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', targets)
                         .condition(ec.entity.conditionFactory.makeCondition('disabled', 'not-equals', 'Y', true))
                         .selectField('userId').disableAuthz().list()).map((row) => row.userId))
-                const missing = targets.filter((id) => !found.has(id))
+                // a user an app's chat-target provider keeps from this one, or anyone outside an external user's rooms, is
+                // answered as one that does not exist (SEC-COM-01)
+                const refused = new Set(ec.service.sync().name('org.moqui.chat.ChatServices.get#RefusedUsers')
+                        .parameter('userIdList', targets.filter((id) => found.has(id))).call()?.refusedUserIdList || [])
+                const missing = targets.filter((id) => !found.has(id) || refused.has(id))
                 if (missing.length) { ec.message.addError(`User ${missing.join(', ')} not found`); return }
                 // nobody adds an external user (EXTERNAL_USER) to a room bound to a record
                 if (room.roomTypeEnumId === 'CrtRecord' || room.visibilityEnumId === 'CrvRecord' || room.recordEntityName) {
@@ -1641,6 +1716,8 @@ along with this software (see the LICENSE.md file). If not, see
                     const people = targets.filter((id) => !agents.has(id))
                     if (people.length) { ec.message.addError(`User ${people.join(', ')} is no agent's chat user`); return }
                 }
+                // an agent member's messages go only to an agent entry service, never to a service a moderator names (SEC-COM-07)
+                if (agentRef && !AGENT_REFS.includes(String(agentRef))) { ec.message.addError(`${agentRef} is not an agent's entry service`); return }
             }
             const now = ec.user.nowTimestamp
             const lastSeq = Number(room.lastEventSeq || 0)
@@ -1789,6 +1866,10 @@ along with this software (see the LICENSE.md file). If not, see
             if (role === 'CmrAgent' && access.room.encrypted) { ec.message.addError(ec.l10n.localize('An agent cannot read an encrypted room')); return }
             if (role === 'CmrAgent' && !ec.entity.find('moqui.agent.AgentDefinition').condition('chatUserId', userId).disableAuthz().count()) {
                 ec.message.addError(`User ${userId} is no agent's chat user`); return }
+            // an agent member's messages go only to an agent entry service, never to a service a moderator names (SEC-COM-07)
+            const AGENT_REFS = String(System.getProperty('chat_agent_entry_services') || 'org.moqui.agent.AgentServices.handle#ChatMessage')
+                    .split(',').map((name) => name.trim()).filter((name) => name)
+            if (agentRef && !AGENT_REFS.includes(String(agentRef))) { ec.message.addError(`${agentRef} is not an agent's entry service`); return }
             if (row.roleEnumId === 'CmrOwner' && role !== 'CmrOwner') {
                 const owners = ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('leftDate', null)
                         .condition('roleEnumId', 'CmrOwner').count()
@@ -2141,7 +2222,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="send" noun="Message" transaction="cache">
         <description>A message from the current user (a member of the room, which is not archived). body is safe HTML (the
-            m-rich-text light value: mentions are span data-mention-id); a message needs a body or attachments
+            m-rich-text light value: mentions are span data-mention-id), and an image only of this server (/richTextImage/id, StringUtilities.cleanChatHtml: another image loses its src); a message needs a body or attachments
             (chatAttachmentIdList, files the sender uploaded to this room with upload#Attachment and not yet sent).
             replyToEventSeq quotes a message of the room; threadRootEventSeq puts it in a thread (a reply's root is its own
             root). recordList [{entity, id}] names records the message is about (record cards). Mentions are counted and
@@ -2290,10 +2371,11 @@ along with this software (see the LICENSE.md file). If not, see
                     return
                 }
             } else clientRef = null
-            const html = body ? String(body).trim() : ''
+            // only this server's own images (SEC-COM-02): another host's would learn each reader's address and when they read
+            const html = body ? StringUtilities.cleanChatHtml(String(body)).trim() : ''
             if (html.length > 65536) { ec.message.addError(ec.l10n.localize('The message is too long')); return }
             const bodyText = toText(html)
-            const emptyBody = !bodyText && !/<img\b/i.test(html)
+            const emptyBody = !bodyText && !/<img\b[^>]*\bsrc=/i.test(html)
             const attachmentIds = Array.from(new Set((chatAttachmentIdList || []).map((id) => String(id || '').trim()).filter((id) => id)))
 
             // a forward: made here from the message, which the sender may read as a member of its room
@@ -2324,7 +2406,7 @@ along with this software (see the LICENSE.md file). If not, see
                         name = account ? account.userFullName || account.username || source.senderUserId : source.senderUserId
                     }
                     forwardOf = {senderUserId: source.senderUserId ?? null, senderName: name, sentDate: Number(source.sentDate),
-                        body: sourceBody ? String(sourceBody).replace(/\s+data-mention-id="[^"]*"/g, '') : null, bodyText: source.bodyText ?? null}
+                        body: sourceBody ? StringUtilities.cleanChatHtml(String(sourceBody)).replace(/\s+data-mention-id="[^"]*"/g, '') : null, bodyText: source.bodyText ?? null}
                 }
                 forwardFiles = Array.from(ec.entity.find('moqui.chat.ChatAttachment').condition('chatRoomId', forwardOfChatRoomId)
                         .condition('eventSeq', forwardOfEventSeq).orderBy('attachmentSeq').list())
@@ -2397,6 +2479,13 @@ along with this software (see the LICENSE.md file). If not, see
                 const users = new Set(Array.from(ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', mentioned)
                         .selectField('userId').disableAuthz().list()).map((row) => row.userId))
                 mentionIds = mentioned.filter((id) => users.has(id) && (current(memberOf[id]) || room.visibilityEnumId === 'CrvUsers' || recordReader(id)))
+                // a public room's mention of a non-member reaches only a user the sender may reach (SEC-COM-01)
+                const strangers = room.visibilityEnumId === 'CrvUsers' ? mentionIds.filter((id) => !current(memberOf[id])) : []
+                if (strangers.length) {
+                    const refused = new Set(ec.service.sync().name('org.moqui.chat.ChatServices.get#RefusedUsers')
+                            .parameter('userIdList', strangers).call()?.refusedUserIdList || [])
+                    mentionIds = mentionIds.filter((id) => !refused.has(id))
+                }
             }
             // @room: every current member, from a moderator or owner, or from anyone in a room of 20 members or fewer
             if (mentionedAll.includes(ROOM_MENTION)) {
@@ -2588,9 +2677,10 @@ along with this software (see the LICENSE.md file). If not, see
                 ciphertext = externalActor || (body != null && String(body).trim()) ? null : megolm(encrypted)
                 if (!ciphertext) { reasonCode = 'encryptedRoom'; ec.message.addError(ec.l10n.localize('This room is end-to-end encrypted: its messages are encrypted in the browser')); return }
             } else if (encrypted != null) { reasonCode = 'notEncrypted'; ec.message.addError(ec.l10n.localize('This room is not encrypted')); return }
-            const html = body ? String(body).trim() : ''
+            // only this server's own images (SEC-COM-02), as send#Message
+            const html = body ? StringUtilities.cleanChatHtml(String(body)).trim() : ''
             const bodyText = toText(html)
-            if (!ciphertext && !bodyText && !/<img\b/i.test(html)) { ec.message.addError(ec.l10n.localize('Delete the message to remove its text')); return }
+            if (!ciphertext && !bodyText && !/<img\b[^>]*\bsrc=/i.test(html)) { ec.message.addError(ec.l10n.localize('Delete the message to remove its text')); return }
             if (html.length > 65536) { ec.message.addError(ec.l10n.localize('The message is too long')); return }
             const room = access.room
             const memberRows = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).list())
@@ -2803,10 +2893,10 @@ along with this software (see the LICENSE.md file). If not, see
             mentionedUserIdList = Array.from(ec.entity.find('moqui.chat.ChatEventMention').condition('chatRoomId', chatRoomId)
                     .condition('eventSeq', eventSeq).selectField('userId').list()).map((row) => row.userId)
             ec.entity.find('moqui.chat.ChatEventMention').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).deleteAll()
-            // the files: each one on its own; a file that cannot be removed is logged
-            const chatRoot = (System.getProperty('chat_attachment_root') || 'dbresource://chat').replace(/\/+$/, '') + '/'
+            // the files: each one on its own; a file that cannot be removed is logged. A file put over XMPP (attach#Upload) is
+            // under the upload root, and goes with the last chat file on it, with the uploads that serve it (SEC-COM-14).
             for (const file of ec.entity.find('moqui.chat.ChatAttachment').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).list()) {
-                try { if (file.location && String(file.location).startsWith(chatRoot)) ec.resource.getLocationReference(file.location).delete() }
+                try { ec.service.sync().name('org.moqui.chat.ChatServices.remove#AttachmentFile').parameter('chatAttachmentId', file.chatAttachmentId).call() }
                 catch (err) { ec.logger.warn(`Could not remove chat file ${file.location}: ${err && err.message ? err.message : err}`) }
                 file.delete()
             }
@@ -3147,7 +3237,9 @@ along with this software (see the LICENSE.md file). If not, see
             chatAttachmentId; a file never sent goes after a day (clean#PendingAttachments). In an encrypted room (C7) the file
             is the browser's ciphertext and is kept as an opaque blob: named encrypted, application/octet-stream, whatever
             was uploaded (its name and type travel in the encrypted message). uploadId in place of file is a file the user sent
-            in chunks (ClientSyncServices.upload#Chunk), complete.</description>
+            in chunks (ClientSyncServices.upload#Chunk), complete. A file is at most chat_attachment_max_bytes (25 MB by
+            default, as a chunked upload), and a user uploads at most chat_attachment_daily_bytes (1 GB by default) to chat in
+            a day (SEC-COM-03).</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="file" type="FileItem"/>
@@ -3183,6 +3275,15 @@ along with this software (see the LICENSE.md file). If not, see
             fileName = name
             contentType = sealed ? 'application/octet-stream' : (sent ? sent.contentType : file.getContentType()) || 'application/octet-stream'
             fileSize = Number((sent ? sent.fileSize : file.getSize()) || 0)
+            // a file's size, and a user's bytes in a day, are bounded (SEC-COM-03): one user does not fill the store
+            const most = Number(System.getProperty('chat_attachment_max_bytes') || 26214400)
+            if (fileSize > most) { chatAttachmentId = null; location = null; ec.message.addError(`The file is larger than ${Math.floor(most / 1048576) || most + ' bytes'}${most >= 1048576 ? ' MB' : ''}`); return }
+            const daily = Number(System.getProperty('chat_attachment_daily_bytes') || 1073741824)
+            const dayAgo = new Date(Number(ec.user.nowTimestamp) - 86400000)
+            const today = Array.from(ec.entity.find('moqui.chat.ChatAttachment').condition('uploadedByUserId', me)
+                    .condition('uploadedDate', '>=', dayAgo).selectField('fileSize').disableAuthz().list())
+                    .reduce((sum, one) => sum + Number(one.fileSize || 0), 0)
+            if (today + fileSize > daily) { chatAttachmentId = null; location = null; ec.message.addError(ec.l10n.localize('Too many files today; try again later')); return }
             if (sent) ec.resource.getLocationReference(location).copyFrom(sent.location)
             else file.write(location)
             row.setFields({chatRoomId: chatRoomId, location: location, fileName: fileName, contentType: contentType, fileSize: fileSize,
@@ -3219,6 +3320,30 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
+    <service verb="remove" noun="AttachmentFile" allow-remote="false">
+        <description>Internal: the stored file of a chat file that goes (clear#MessageContent, clean#PendingAttachments),
+            before its ChatAttachment row is deleted. A file under the chat root (chat_attachment_root) is deleted; a file
+            put over XMPP, under the upload root (xmpp_upload_root, attach#Upload), is deleted when no other chat file is on
+            it, with the XmppUpload rows of its location (SEC-COM-14). The XmppUpload rows made to serve this chat file to
+            XMPP clients (get#AttachmentUrls) go either way, so no upload URL outlives it.</description>
+        <in-parameters><parameter name="chatAttachmentId" required="true"/></in-parameters>
+        <actions><script><![CDATA[
+            const file = ec.entity.find('moqui.chat.ChatAttachment').condition('chatAttachmentId', chatAttachmentId).disableAuthz().one()
+            if (!file) return
+            const location = file.location ? String(file.location) : ''
+            const chatRoot = (System.getProperty('chat_attachment_root') || 'dbresource://chat').replace(/\/+$/, '') + '/'
+            const uploadRoot = (System.getProperty('xmpp_upload_root') || 'dbresource://xmpp-upload').replace(/\/+$/, '') + '/'
+            ec.entity.find('moqui.xmpp.XmppUpload').condition('chatAttachmentId', chatAttachmentId).disableAuthz().deleteAll()
+            if (location.startsWith(chatRoot)) {
+                ec.resource.getLocationReference(location).delete()
+            } else if (location.startsWith(uploadRoot) && !ec.entity.find('moqui.chat.ChatAttachment').condition('location', location)
+                    .condition('chatAttachmentId', 'not-equals', chatAttachmentId).disableAuthz().count()) {
+                ec.entity.find('moqui.xmpp.XmppUpload').condition('location', location).disableAuthz().deleteAll()
+                const ref = ec.resource.getLocationReference(location)
+                if (ref && ref.exists) ref.delete()
+            }
+        ]]></script></actions>
+    </service>
     <service verb="clean" noun="PendingAttachments" authenticate="anonymous-all">
         <description>Remove the chat files uploaded more than hours ago (24 by default) and never sent with a message. Each
             file is on its own: one that cannot be removed is logged and the rest go on.</description>
@@ -3226,13 +3351,12 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="removedCount" type="Integer"/></out-parameters>
         <actions><script><![CDATA[
             removedCount = 0
-            const chatRoot = (System.getProperty('chat_attachment_root') || 'dbresource://chat').replace(/\/+$/, '') + '/'
             const before = Number(ec.user.nowTimestamp) - Math.max(1, hours) * 3600000
             const rows = ec.entity.find('moqui.chat.ChatAttachment').condition('eventSeq', null).condition('uploadedDate', 'less', String(before))
                     .disableAuthz().list()
             for (const row of rows) {
                 try {
-                    if (row.location && String(row.location).startsWith(chatRoot)) ec.resource.getLocationReference(row.location).delete()
+                    ec.service.sync().name('org.moqui.chat.ChatServices.remove#AttachmentFile').parameter('chatAttachmentId', row.chatAttachmentId).call()
                     row.delete()
                     removedCount++
                 } catch (err) {

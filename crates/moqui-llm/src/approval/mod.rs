@@ -1119,6 +1119,41 @@ pub(crate) fn suspended<T>(
     out.unwrap_or_else(|| Err(DecideError::Failed("the decision did not run".to_string())))
 }
 
+/// Whether the current user (the decider, through [`moqui_core::user::as_user`]), a room member deciding a chat run's
+/// approval who is not its requester, may make the held write themselves (SEC-AI-01, the user's decision on question
+/// 12): a screen write's path for this user
+/// (`path_permitted`, the check the run made for the requester before it asked), a service's own permission
+/// ([`crate::tools::catalog::user_permitted`]). Any other write (another system's tool, an add-on's, a change set) has no
+/// check of the decider's, so only its requester approves it. The write still runs as the requester; the approval keeps
+/// both, `userId` the requester and `decisionUserId` the decider.
+///
+/// # Errors
+///
+/// Why the decider may not approve it.
+pub(crate) fn decider_may_write(
+    factory: &Arc<ExecutionContextFactory>,
+    target_kind: TargetKind,
+    target_name: &str,
+    args: &Json,
+) -> Result<(), String> {
+    let refused = |what: &str| format!("you may not run {what} yourself, so only the person who asked the agent may approve it");
+    match target_kind {
+        TargetKind::Screen => {
+            let write: crate::screen::PendingWrite =
+                serde_json::from_value(args.clone()).map_err(|_| refused("this write"))?;
+            let path = write.url.split('?').next().unwrap_or(&write.url);
+            match moqui_core::screen::path_permitted(factory, &crate::screen::root_screen(factory), path) {
+                Ok(true) => Ok(()),
+                _ => Err(refused(write.held["transition"].as_str().unwrap_or("this write"))),
+            }
+        }
+        TargetKind::Service => moqui_core::service::call::ToolService::of(target_name)
+            .map_err(|_| refused(target_name))
+            .and_then(|service| crate::tools::catalog::user_permitted(&service).map_err(|_| refused(target_name))),
+        TargetKind::Tool | TargetKind::File => Err(refused(target_name)),
+    }
+}
+
 fn decide_in(
     factory: &Arc<ExecutionContextFactory>,
     facade: &EntityFacade,
@@ -1128,7 +1163,8 @@ fn decide_in(
 ) -> Result<Decided, DecideError> {
     let view = match load_for_owner(facade, approval_id, &decider.user_id)? {
         Some(view) => view,
-        // answered question 12: a chat run's card is decided by any human who may post in its room, never an agent
+        // answered question 12: a chat run's card is decided by any human who may post in its room, never an agent; an
+        // approval only by one who may make the write themselves (SEC-AI-01, decider_may_write below)
         None if decider.channel == Channel::Chat => {
             crate::chat::room_approval(facade, approval_id, &decider.user_id)?.ok_or(DecideError::NotFound)?
         }
@@ -1161,8 +1197,9 @@ fn decide_in(
         ("decisionDate", run::stamp(now)),
         ("decisionChannel", Value::string(decider.channel.as_str())),
     ];
-    // a room member who is not the requester (answered question 12) approves the write as it stands or rejects it:
-    // no edited arguments, no hand-off to their own page, and their rejection gives the agent no task
+    // a room member who is not the requester (answered question 12) approves the write as it stands, when they may make
+    // it themselves (SEC-AI-01), or rejects it: no edited arguments, no hand-off to their own page, and their rejection
+    // gives the agent no task
     let member = view.user_id != decider.user_id;
     if member {
         let edits = match decision {
@@ -1175,6 +1212,15 @@ fn decide_in(
                 "only the person who asked the agent may change what it writes (edited arguments, Edit in screen)"
                     .to_string(),
             ));
+        }
+        // SEC-AI-01 (the user's decision): a member approves only a write they may make themselves
+        if matches!(decision, Decision::Approve { .. }) {
+            let permitted = moqui_core::user::as_user(&decider.user_id, || {
+                decider_may_write(factory, view.target_kind, &view.target_name, &view.args)
+            });
+            if let Err(why) = permitted.unwrap_or_else(|| Err("you may not approve this write".to_string())) {
+                return Err(DecideError::Refused(why));
+            }
         }
     }
     let (to, text) = match decision {

@@ -1564,6 +1564,22 @@ fn files_go_with_their_message_and_go_away_with_it() {
     assert_eq!(out_number(&stored, "fileSize"), 8);
     let bytes = ctx.factory().resource().get(&location).unwrap().read_bytes().unwrap();
     assert_eq!(bytes, b"the plan");
+    // a file over the size limit, or over the user's bytes of the day, is refused (SEC-COM-03); the properties are the
+    // process's, read under this test's attachment root lock
+    moqui_lib::env::set_property("chat_attachment_max_bytes", "4");
+    refused(
+        "upload#Attachment",
+        &[("chatRoomId", text(&chat)), ("file", upload("big.txt", b"too large"))],
+        "larger than",
+    );
+    moqui_lib::env::clear_property("chat_attachment_max_bytes");
+    moqui_lib::env::set_property("chat_attachment_daily_bytes", "12");
+    refused(
+        "upload#Attachment",
+        &[("chatRoomId", text(&chat)), ("file", upload("more.txt", b"8 more!!"))],
+        "Too many files today",
+    );
+    moqui_lib::env::clear_property("chat_attachment_daily_bytes");
 
     // another member may not send it; the uploader sends it alone, with no text
     login("flb");
@@ -1658,6 +1674,120 @@ fn files_go_with_their_message_and_go_away_with_it() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A file put over XMPP (attach#Upload makes the chat file on the upload's own location, under the upload root) goes
+/// with the last message that has it, with the upload rows that serve it; while another message has it, it stays
+/// (SEC-COM-14).
+#[test]
+fn a_file_put_over_xmpp_goes_with_the_last_message_that_has_it() {
+    let (ctx, facade, dir) = setup("xmppfile", crate::service::ServicePools::idle());
+    let _entered = ctx.enter();
+    install(&dir);
+    users(&facade, &["xfa", "xfb"]);
+    let (_root_lock, _root) = attachment_root(&dir);
+    std::fs::create_dir_all(dir.join("xmpp/7")).unwrap();
+    std::fs::write(dir.join("xmpp/7/photo.png"), b"png").unwrap();
+    moqui_lib::env::set_property("xmpp_upload_root", &format!("file:{}", dir.join("xmpp").display()));
+    let location = format!("file:{}", dir.join("xmpp/7/photo.png").display());
+    row(
+        &facade,
+        "moqui.xmpp.XmppUpload",
+        &[
+            ("xmppUploadId", text("XF1")),
+            ("tokenHash", text("xf-token-1")),
+            ("userId", text("xfa")),
+            ("location", text(&location)),
+        ],
+    );
+    login("xfa");
+    let chat = room("private", "Uploads", &["xfb"]);
+    let attach = |id: &str| {
+        row(
+            &facade,
+            "moqui.chat.ChatAttachment",
+            &[
+                ("chatAttachmentId", text(id)),
+                ("chatRoomId", text(&chat)),
+                ("location", text(&location)),
+                ("fileName", text("photo.png")),
+                ("uploadedByUserId", text("xfa")),
+            ],
+        );
+        out_number(
+            &ok(
+                "send#Message",
+                &[("chatRoomId", text(&chat)), ("chatAttachmentIdList", list(&[id]))],
+            ),
+            "eventSeq",
+        )
+    };
+    let first = attach("XFA1");
+    let second = attach("XFA2");
+    // the URL made to serve the first chat file to an XMPP client (get#AttachmentUrls)
+    row(
+        &facade,
+        "moqui.xmpp.XmppUpload",
+        &[
+            ("xmppUploadId", text("XF2")),
+            ("tokenHash", text("xf-token-2")),
+            ("location", text(&location)),
+            ("chatAttachmentId", text("XFA1")),
+        ],
+    );
+    let uploads = || {
+        let _authz = ctx.disable_authz();
+        let mut ids: Vec<String> = facade
+            .find("moqui.xmpp.XmppUpload")
+            .unwrap()
+            .eq("location", text(&location))
+            .list()
+            .unwrap()
+            .iter()
+            .map(|row| to_plain_string(row.get("xmppUploadId").unwrap()))
+            .collect();
+        ids.sort();
+        ids
+    };
+    ok("redact#Message", &[("chatRoomId", text(&chat)), ("eventSeq", int(first))]);
+    assert!(dir.join("xmpp/7/photo.png").exists(), "another message still has it");
+    assert_eq!(uploads(), ["XF1"], "the first chat file's own URL is gone");
+    ok("redact#Message", &[("chatRoomId", text(&chat)), ("eventSeq", int(second))]);
+    assert!(!dir.join("xmpp/7/photo.png").exists(), "the file is gone with the last message");
+    assert!(uploads().is_empty(), "its upload URL is gone");
+    moqui_lib::env::clear_property("xmpp_upload_root");
+    moqui_lib::env::clear_property("chat_attachment_root");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A chat message keeps an image only of this server's rich-text image route (SEC-COM-02): an outside image loses its
+/// `src` on a send and on an edit, so no reader's browser fetches it.
+#[test]
+fn a_message_keeps_only_this_servers_images() {
+    let (ctx, facade, dir) = setup("images", crate::service::ServicePools::idle());
+    let _entered = ctx.enter();
+    install(&dir);
+    users(&facade, &["ima", "imb"]);
+    login("ima");
+    let chat = room("private", "Images", &["imb"]);
+    let seq = send(
+        &chat,
+        r#"<p>look <img src="https://host.example/t.png?u=1" alt="x"><img src="/richTextImage/100200" alt="y"></p>"#,
+    );
+    let body = field(&one_event(&chat, seq), "body");
+    assert!(!body.contains("host.example"), "{body}");
+    assert!(body.contains(r#"src="/richTextImage/100200""#), "{body}");
+    ok(
+        "edit#Message",
+        &[
+            ("chatRoomId", text(&chat)),
+            ("eventSeq", int(seq)),
+            ("body", text(r#"<p>again <img src="//host.example/t.png"></p>"#)),
+        ],
+    );
+    let body = field(&one_event(&chat, seq), "body");
+    assert!(!body.contains("host.example"), "{body}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The agent entry point: an agent member's service gets each message from another member, with the message in its
 /// parameters, and answers in the room as the agent.
 #[test]
@@ -1704,15 +1834,17 @@ fn an_agent_member_gets_each_message_through_its_entry_point() {
             ("roleEnumId", text("agent")),
         ],
     );
-    ok(
-        "set#MemberRole",
-        &[
-            ("chatRoomId", text(&chat)),
-            ("userId", text("agbot")),
-            ("roleEnumId", text("agent")),
-            ("agentRef", text("test.ChatStub.receive#AgentMessage")),
-        ],
-    );
+    // only an agent entry service is an agentRef (SEC-COM-07): the property names this test's stub as one
+    let named = [
+        ("chatRoomId", text(&chat)),
+        ("userId", text("agbot")),
+        ("roleEnumId", text("agent")),
+        ("agentRef", text("test.ChatStub.receive#AgentMessage")),
+    ];
+    refused("set#MemberRole", &named, "is not an agent's entry service");
+    moqui_lib::env::set_property("chat_agent_entry_services", "test.ChatStub.receive#AgentMessage");
+    ok("set#MemberRole", &named);
+    moqui_lib::env::clear_property("chat_agent_entry_services");
     send(&chat, "<p>what is due today?</p>");
     let in_transaction = crate::transaction::thread_in_transaction();
     let ran = ctx.factory().service_pools().run_pending();

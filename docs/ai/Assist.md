@@ -443,7 +443,10 @@ would post one is refused (a canvas does not post secrets; a password form is a 
   running one Mutation of that canvas version, once. `kind=mutation` with `statement`, `nonce`, `state` and `activation`
   (the page's `navigator.userActivation.isActive` at the click) runs the program's own Mutation: only from the browser
   session with its token (`Decider::from_request`; a header login and a session one made are 403), only with the
-  activation and an unused nonce of the click (403 without), and only when the user ∩ the agent may run its transition. `{"ok", "data" (the transition's JSON answer),
+  activation and an unused nonce of the click (403 without), and only when the user ∩ the agent may run its transition.
+  Without `confirm` it runs nothing and answers the held write, `{"ok": false, "confirm": {"method", "path", "transition",
+  "parameters", "argsHash"}}`, which the drawer shows; with `confirm` equal to that `argsHash` (and a new click's nonce)
+  it runs it (SEC-AI-02). `{"ok", "data" (the transition's JSON answer),
   "error", "approvalId", "statement", "channel": "canvas"}`; a Mutation the program does not have, or a request the
   gate does not hold (it does not write, the user may not run it), is 200 with `ok` false and the `error`.
 - `canvasAdjust`: `text` (the user's correction) and `notices`, a turn: "Adjust canvas \"Visit hits\" v2: make it a line
@@ -937,7 +940,7 @@ show (`ScreenTui.js` gives each list column its `fields`, and `data` shows them 
 show a canvas), with `_id` and `_link`; the values are the text the list shows. A transition that answers JSON (a
 lookup) answers it as it is; one that writes is 403.
 
-**Writes: the click is the approval** (answered open question 13). A Mutation never posts from the page: the page names
+**Writes: the confirmed click is the approval** (answered open question 13; SEC-AI-02). A Mutation never posts from the page: the page names
 the Mutation, and the server evaluates its arguments from the stored program with the posted state (lang-core's
 `evaluate` in a script runtime), holds the request at the transition gate (a fenced render under `Hold`, which answers the held
 request and its hash and runs nothing) and runs that exact request under `Approved` with the hash
@@ -946,10 +949,14 @@ agent is checked as the screen tool checks its held writes: the agent's role gro
 permission for the path (`check_write`). In the page a Mutation is reached only from a Button's `act()`, through a token
 whose key is a Symbol no program can write, so a Query (its arguments are program data) never reaches one; and the
 server refuses a Query or Mutation option it does not take and any `__` name in them. A Button that saves shows what,
-beside its label ("saves: updateEnumType", `[data-assist-canvas-saves]`), so the click is an informed approval. So:
+beside its label ("saves: updateEnumType", `[data-assist-canvas-saves]`). As the model wrote the label and the Mutation,
+the click alone runs nothing (SEC-AI-02): it answers the held write, and the drawer shows its transition, path and every
+parameter (`confirmCanvasWrite`); the user's Save there, a second click that names the write's hash, is the informed
+approval. So:
 
 - a **click** on a Button the framework drew (a trusted event with the page's user activation; `canvasAction` `kind=arm`,
-  then `kind=mutation` with the click's nonce, from the browser session with its token) is the approval: no card is shown, and an `AgentApproval` row records it, decided through
+  then `kind=mutation` with the click's nonce, from the browser session with its token), confirmed in the dialog of the
+  held write (`kind=mutation` again with a new nonce and `confirm`), is the approval: no card is shown, and an `AgentApproval` row records it, decided through
   the channel `canvas`, Executed or Failed with the result;
 - a Mutation the **agent proposes without a click** (`write_ui` with `run`, which the skill's `query` section offers) is an
   approval card like any other: the run pauses, the card shows the request's parameters, and approving it runs the held
@@ -1261,8 +1268,11 @@ tasks, `ec.llm.summarize`/`classify`/`extract`/`startRun`, `propose#AiFieldValue
   from a browser session by its cookie with the session token (`approval::Decider::from_request` with channel `chat`, so a
   header login, an agent's context and internal code are refused); an agent member, the chat or run-as user of any agent,
   or a user who may not post never decides (not found). The write runs as the requester. A member who is not the
-  requester approves the write as it stands or rejects it: edited arguments, Edit in screen and a question's answer
-  stay the requester's, and a member's rejection keeps no feedback and gives the agent no task (it reads only that
+  requester approves only a write they may make themselves (SEC-AI-01, the user's decision): a screen write's path as
+  that member (`path_permitted`), a service's own permission (`user_permitted`); another system's tool, an add-on's
+  tool and a change set have no such check and only the requester approves them. The approval keeps both users
+  (`userId` the requester, `decisionUserId` the decider). A member approves the write as it stands or rejects it:
+  edited arguments, Edit in screen and a question's answer stay the requester's, and a member's rejection keeps no feedback and gives the agent no task (it reads only that
   another member rejected it, and asks the requester). The plan's section 1 said the card is "for the sender only": the card is a room
   message every member sees, naming the requester, and it is the decision that question 12 opens to the room. A card
   shows the changed fields' current and proposed values to the room, as the agent's reply would.

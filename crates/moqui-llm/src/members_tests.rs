@@ -331,9 +331,10 @@ fn agent_messages(facade: &EntityFacade, room: &str) -> Vec<(i64, Option<i64>, J
         .collect()
 }
 
-/// A chat agent member answers a mention in the message's thread; its write is an approval card in the room, which
-/// another human member approves while the agent itself and a user who is not in the room cannot (and Edit in screen
-/// stays the requester's); the run goes on, the card shows the outcome and the reply lands in the thread.
+/// A chat agent member answers a mention in the message's thread; its write is an approval card in the room, which the
+/// agent itself and a user who is not in the room cannot decide, and another member may not approve when the write has
+/// no check of their own (SEC-AI-01; Edit in screen stays the requester's), so the requester approves it from the room;
+/// the run goes on, the card shows the outcome and the reply lands in the thread.
 #[test]
 fn an_agent_member_replies_in_the_thread_and_a_room_member_approves_its_card() {
     let bed = bed("chat", "");
@@ -501,13 +502,18 @@ fn an_agent_member_replies_in_the_thread_and_a_room_member_approves_its_card() {
         matches!(decide("bob", &edited), Err(DecideError::Refused(_))),
         "a member may not edit what is written"
     );
-    let decided = decide("bob", &approve).unwrap();
+    // SEC-AI-01: a tool's write has no check of bob's own, so he may not approve it; its requester does, from the room
+    assert!(
+        matches!(decide("bob", &approve), Err(DecideError::Refused(_))),
+        "a member approves only a write they may make themselves"
+    );
+    let decided = decide("ann", &approve).unwrap();
     assert_eq!(decided.status, approval::ApprovalStatus::Approved);
     assert_eq!(run::wait_for(&bed.factory, &run_id, WAIT).unwrap(), RunState::Completed);
     assert!(observe::settle(&bed.factory, WAIT));
     let view = approval::load(&bed.facade, &approval_id).unwrap().unwrap();
     assert_eq!(view.status, approval::ApprovalStatus::Executed);
-    assert_eq!(view.decision_user_id.as_deref(), Some("bob"));
+    assert_eq!(view.decision_user_id.as_deref(), Some("ann"));
     assert_eq!(view.decision_channel.as_deref(), Some("chat"));
     assert!(!crate::tools::tests::calls("room-write").is_empty(), "the write ran");
     let messages = agent_messages(&bed.facade, &room);
@@ -516,7 +522,7 @@ fn an_agent_member_replies_in_the_thread_and_a_room_member_approves_its_card() {
         .find(|(_, _, content)| content["assist"]["kind"] == "approval")
         .unwrap();
     assert_eq!(card.2["assist"]["state"], "executed");
-    assert_eq!(card.2["assist"]["decidedBy"]["userId"], "bob");
+    assert_eq!(card.2["assist"]["decidedBy"]["userId"], "ann");
     let reply = messages
         .iter()
         .find(|(_, _, content)| content["assist"]["kind"] == "reply")

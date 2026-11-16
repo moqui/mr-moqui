@@ -346,6 +346,14 @@ fn mutation(caller: &Caller, params: &Params, canvas: &Canvas) -> Answer {
         Ok(held) => held,
         Err(why) => return Ok(json!({"ok": false, "error": why})),
     };
+    // SEC-AI-02: the model wrote the Button's label and its Mutation, so a click first answers the held write (its path
+    // and parameters, as an approval card shows them) and runs nothing; it runs when a second click, the user's OK of
+    // that write, names its hash. A write the model changed in between, or other values, has another hash.
+    let hash = held.args_hash();
+    if hash.is_empty() || params.text("confirm").as_deref() != Some(hash.as_str()) {
+        return Ok(json!({"ok": false, "confirm": {"statement": statement, "method": held.method, "path": held.path,
+            "transition": held.held["transition"], "parameters": held.parameters, "argsHash": hash}}));
+    }
     let agent_id = agent.agent_id.clone();
     let (canvas, approval_id) = update_data(caller, &canvas.artifact_id, canvas.version, |locked| {
         locked.data["state"] = stored(&values);

@@ -395,7 +395,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- people to call, for the New call picker -->
     <transition name="searchUsers" read-only="true">
         <actions>
-            <service-call name="org.moqui.comms.CommsServices.search#Users" in-map="{term:term}" out-map="found"/>
+            <service-call name="org.moqui.comms.CommsServices.search#Users" in-map="{term:term, purpose:'call'}" out-map="found"/>
             <script>ec.web.sendJsonResponse(Array.from(found.userList || []).filter((user) =&gt; user.value !== ec.user.userId).map((user) =&gt; ({value: user.value, label: user.label})))</script>
         </actions>
         <default-response type="none"/>

@@ -344,7 +344,7 @@ feature("A01 an email server host is not writable without ADMIN", {
     then({ listed, patched, got }) {
         listed.status == 200
         ;[401, 403].includes(patched.status)
-        got.status != 200 || got.json().storeHost != "127.0.0.1"
+        got.status != 200 || got.json().emailServer?.storeHost != "127.0.0.1"
     },
 })
 
