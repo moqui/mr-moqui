@@ -175,8 +175,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="adminPort" type="number-integer"/>
         <field name="username" type="text-short"/>
         <field name="password" type="text-medium" encrypt="true"/>
-        <!-- For the run services (CI jobs, docs/interfaces/Pipelines.md): hostProtocol is unix (hostAddress the path of a
-            Docker or Podman API socket), http, or https with these, PEM -->
+        <!-- For the hosted-instance services and the run services (CI jobs, docs/interfaces/Pipelines.md), which reach the
+            Docker Engine API through call#DockerApi and the CI driver: hostProtocol is unix (hostAddress the path of a
+            Docker or Podman API socket), https with these, PEM, or http to this machine only (localhost, 127.0.0.0/8,
+            ::1); plain http to another host is refused (SEC-OUT-08) -->
         <field name="tlsCaCert" type="text-long"><description>The authority that signed the host's certificate, when
             it is not a public one</description></field>
         <field name="tlsClientCert" type="text-long"><description>The certificate this server presents</description></field>
@@ -217,12 +219,15 @@ along with this software (see the LICENSE.md file). If not, see
                     runRemoveService="org.moqui.dev.InstanceServices.remove#RunFake"
                     runCleanupService="org.moqui.dev.InstanceServices.cleanup#RunsFake"/>
 
-            <!-- see: https://docs.docker.com/engine/reference/commandline/dockerd/#bind-docker-to-another-host-port-or-a-unix-socket -->
+            <!-- see: https://docs.docker.com/engine/reference/commandline/dockerd/#bind-docker-to-another-host-port-or-a-unix-socket
+                Plain http only on this machine; another host is reached over https, or a unix socket forwarded to it. -->
             <moqui.server.instance.InstanceHost instanceHostId="LocalDocker" hostTypeId="docker"
                     hostProtocol="http" hostAddress="127.0.0.1" adminPort="2375"/>
-            <!-- for future reference, connect with TLS; need some way to specify and pass the cert
+            <!-- a host over TLS: its certificate's authority in tlsCaCert, and this server's certificate and key in
+                tlsClientCert and tlsClientKey (PEM)
             <moqui.server.instance.InstanceHost instanceHostId="LocalDockerTLS" hostTypeId="docker"
-                    hostProtocol="https" hostAddress="127.0.0.1" adminPort="2376"/>
+                    hostProtocol="https" hostAddress="docker.example.com" adminPort="2376"
+                    tlsCaCert="(authority PEM)" tlsClientCert="(certificate PEM)" tlsClientKey="(key PEM)"/>
             -->
         </seed-data>
     </entity>
