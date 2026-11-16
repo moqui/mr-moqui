@@ -15,13 +15,21 @@
 //! The embedded TURN server against `turn-client-proto` clients on simulated time (W4): a leg's credential allocates and
 //! relays to and from a media node; an expired credential, a name that is not ours and a revoked leg are refused, and
 //! revoking closes the relay; a relay peer that is no media node is refused; the per-username quota holds; a pairing's
-//! credential is taken only with its own secret while it is paired (E16).
+//! credential is taken only with its own secret while it is paired (E16); an ALLOCATE is remembered only while the server
+//! is about to allocate for it (the TURN nonce table).
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
 use turn_client_proto::api::{TurnClientApi, TurnConfig as ClientConfig, TurnEvent, TurnRecvRet};
 use turn_client_proto::udp::TurnClientUdp;
+use turn_server_proto::types::attribute::RequestedTransport;
+use turn_server_proto::types::message::ALLOCATE;
+use turn_server_proto::types::stun::attribute::{Nonce, Realm, Username};
+use turn_server_proto::types::stun::message::{
+    IntegrityAlgorithm, LongTermKeyCredentials, Message, MessageClass, MessageIntegrityCredentials, MessageWriteVec,
+};
+use turn_server_proto::types::stun::prelude::{MessageWrite, MessageWriteExt};
 use turn_server_proto::types::{TransportType, TurnCredentials};
 
 use super::{credential, frame_len, pairing_of, pairing_secret, Turn, TurnConfig, TurnOutput};
@@ -420,6 +428,88 @@ fn a_username_is_kept_only_for_a_request_that_proves_its_password() {
     net.run(&mut [&mut client], Duration::from_secs(1));
     assert!(client.allocated().is_some());
     assert!(net.turn.users.contains(&honest));
+}
+
+/// An ALLOCATE carrying `username` and asking for `protocol`, with MESSAGE-INTEGRITY for `signed` (the password, the
+/// realm and the nonce) when it is given.
+fn allocate(username: &str, protocol: u8, signed: Option<(&str, &str, &str)>) -> Vec<u8> {
+    let mut request = Message::builder_request(ALLOCATE, MessageWriteVec::new());
+    request.add_attribute(&Username::new(username).unwrap()).unwrap();
+    request.add_attribute(&RequestedTransport::new(protocol)).unwrap();
+    if let Some((password, realm, nonce)) = signed {
+        request.add_attribute(&Realm::new(realm).unwrap()).unwrap();
+        request.add_attribute(&Nonce::new(nonce).unwrap()).unwrap();
+        let key: MessageIntegrityCredentials =
+            LongTermKeyCredentials::new(username.to_string(), password.to_string(), realm.to_string()).into();
+        request.add_message_integrity(&key, IntegrityAlgorithm::Sha1).unwrap();
+    }
+    request.finish()
+}
+
+/// The server's answers to `to` since the last call.
+fn answers_to(net: &mut Net, to: SocketAddr) -> Vec<Vec<u8>> {
+    let mut answers = Vec::new();
+    while let Some(out) = net.turn.poll_output() {
+        if let TurnOutput::Transmit { to: at, data, .. } = out {
+            if at == to {
+                answers.push(data);
+            }
+        }
+    }
+    answers
+}
+
+/// The TURN nonce table (a SEC-COM-13 follow-up): an ALLOCATE is remembered only from a request whose
+/// MESSAGE-INTEGRITY holds, and only until the server allocates for it or answers it otherwise, so ALLOCATEs with a
+/// name the server knows, from any source and without its password, leave nothing behind, nor does one the server
+/// refuses.
+#[test]
+fn an_allocate_is_remembered_only_while_the_server_allocates_for_it() {
+    let mut net = Net::new(2);
+    let (user, pass) = credential(SECRET, "LEG4", unix_now() + 600);
+    let mut first = net.client(5004, &user, &pass);
+    net.run(&mut [&mut first], Duration::from_secs(1));
+    assert!(first.allocated().is_some());
+    assert!(net.turn.users.contains(&user));
+    assert!(net.turn.asked.is_empty());
+
+    // the known name with no MESSAGE-INTEGRITY, from many forged sources
+    for i in 0..1000u32 {
+        let from = SocketAddr::new(IpAddr::V4(Ipv4Addr::from(0x0b00_0000 + i)), 4000);
+        let request = allocate(&user, RequestedTransport::UDP, None);
+        net.turn.handle_client(net.now, Proto::Udp, from, listen(), &request);
+        assert_eq!(answers_to(&mut net, from).len(), 1, "a 401");
+    }
+    assert!(net.turn.asked.is_empty(), "{} remembered", net.turn.asked.len());
+
+    // the known name with the wrong password
+    let mut wrong: Vec<Client> = (0..20)
+        .map(|i| net.client(6000 + i, &user, "not-the-password"))
+        .collect();
+    net.run(&mut wrong.iter_mut().collect::<Vec<_>>(), Duration::from_secs(5));
+    assert!(wrong.iter().all(|c| c.allocated().is_none()));
+    assert!(net.turn.asked.is_empty(), "{} remembered", net.turn.asked.len());
+
+    // the password, but a transport the server refuses: its error answer ends the request
+    let from = addr(3, 7000);
+    let request = allocate(&user, RequestedTransport::UDP, None);
+    net.turn.handle_client(net.now, Proto::Udp, from, listen(), &request);
+    let answer = answers_to(&mut net, from).pop().expect("a 401");
+    let answer = Message::from_bytes(&answer).unwrap();
+    let realm = answer.attribute::<Realm>().unwrap().realm().to_string();
+    let nonce = answer.attribute::<Nonce>().unwrap().nonce().to_string();
+    let request = allocate(&user, 99, Some((&pass, &realm, &nonce)));
+    net.turn.handle_client(net.now, Proto::Udp, from, listen(), &request);
+    let answer = answers_to(&mut net, from).pop().expect("an answer");
+    assert_eq!(Message::from_bytes(&answer).unwrap().class(), MessageClass::Error);
+    assert!(net.turn.asked.is_empty(), "{} remembered", net.turn.asked.len());
+
+    // a client with the password still allocates
+    let mut second = net.client(5005, &user, &pass);
+    net.run(&mut [&mut second], Duration::from_secs(1));
+    assert!(second.allocated().is_some());
+    assert_eq!(net.turn.allocation_count(), 2);
+    assert!(net.turn.asked.is_empty());
 }
 
 #[test]

@@ -221,7 +221,7 @@ does not order the items: their menu indexes do. System and Monitor (tools) are 
 Chrome: an anchor revealed on hover (a row's actions) is hidden with `opacity: 0` (and `pointer-events: none` until shown), not `visibility`.
 No `m-*` component anchors a menu that way.
 The shell gives Quasar a stand-in for `vue-router` (`$router.resolve`, `push`, `replace`, and `$route`), so `q-btn to="..."` and `q-item to="..."` navigate with `setUrl`.
-`moqui.webrootVue` is the root: `setUrl(url, bodyParameters)`, `setParameters(obj)`, `reloadContainer(id)`, `loadContainer(id, url)`,
+`moqui.webrootVue` is the root: `setUrl(url, bodyParameters)`, `setParameters(obj)`, `reloadContainer(id)`, `loadContainer(id, url, method)` (method `post`: url is a transition that changes data, POSTed with the session token, then the container reloads),
 `hideContainer(id)`, `addNotify`, `getLinkPath`, the screen context: `setScreenContext(key, value)`, `removeScreenContext(key)`,
 `screenContext` and `assistReach`, and the suite shell: `shellData`, `shellCounts`, `openPalette()`, `openTray(key)`, `closeTray()`,
 `openQuickCreate(item)` (below).

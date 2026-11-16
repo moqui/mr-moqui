@@ -174,6 +174,34 @@ pub fn is_host_config_entity(entity_name: &str) -> bool {
     HOST_CONFIG_ENTITY_KEYS.contains(&simple_entity_key(entity_name).as_str())
 }
 
+/// Whether `entity_name` is an `EmailServer` and `row` names one that a mail client account owns (an `EmailAccount` with
+/// `ownsEmailServer` Y): a user's own mailbox server, which is changed through the account's settings and nothing else, so
+/// no generic write takes it, an ADMIN's included. A row with no `emailServerId` names none.
+pub fn account_owned_email_server(
+    facade: &crate::entity::EntityFacade,
+    entity_name: &str,
+    row: &BTreeMap<String, Value>,
+) -> Result<bool, moqui_lib::error::Error> {
+    if simple_entity_key(entity_name) != "emailserver" {
+        return Ok(false);
+    }
+    let server_id = row
+        .get("emailServerId")
+        .map(moqui_lib::object::to_plain_string)
+        .unwrap_or_default();
+    if server_id.is_empty() {
+        return Ok(false);
+    }
+    let owners = facade
+        .find("moqui.basic.email.EmailAccount")?
+        .eq("emailServerId", Value::string(server_id))
+        .eq("ownsEmailServer", Value::string("Y"))
+        .use_cache(false)
+        .disable_authz()
+        .count()?;
+    Ok(owners > 0)
+}
+
 /// How deep [`secret_fields`] and [`is_restricted_entity_or_view`] follow views of views.
 const MAX_VIEW_DEPTH: u32 = 8;
 

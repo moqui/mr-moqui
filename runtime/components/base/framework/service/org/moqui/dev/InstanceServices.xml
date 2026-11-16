@@ -304,7 +304,8 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
                 <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if><script><![CDATA[
             const appInstance = ec.entity.find("moqui.server.instance.AppInstance").condition("appInstanceId", appInstanceId).one()
-            const restClient = ec.service.rest().method("GET").uri().host(String(appInstance.hostName)).path("status").build()
+            // the hosted instance's own host, which an INSTANCE_ADMIN set up, is often on this network
+            const restClient = ec.service.rest().method("GET").allowInternal().uri().host(String(appInstance.hostName)).path("status").build()
 
             try {
                 const restResponse = restClient.call()

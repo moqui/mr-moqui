@@ -24,7 +24,7 @@ along with this software (see the LICENSE.md file). If not, see
     userId and the notification client, as m-qapps-root has them, with a history of its own (the shell's page stays /).
     Bundled, precompiled (bundled-screens.txt). -->
 <template><q-layout view="hHh lpR fFf">
-    <q-header elevated class="bg-primary text-white">
+    <q-header v-show="!(homeRoom && !view && $q.screen.lt.md)" elevated class="bg-primary text-white">
         <q-toolbar>
             <q-btn flat round dense icon="sym_o_menu" :aria-label="t('Menu')" @click="drawer = !drawer"></q-btn>
             <q-btn v-if="view" flat round dense icon="sym_o_arrow_back" :aria-label="t('Back')" @click="goBack"><q-tooltip>{{t('Back')}}</q-tooltip></q-btn>
@@ -32,12 +32,12 @@ along with this software (see the LICENSE.md file). If not, see
             <q-chip v-if="isOffline" dense square color="warning" text-color="black" icon="sym_o_cloud_off" class="m-shell-offline">{{t('Offline: showing what was last seen')}}
                 <q-tooltip>{{shared ? t('A shared device keeps only the recent rooms and mail for offline use.') : t('What you send waits here and goes when the server can be reached.')}}</q-tooltip></q-chip>
             <q-chip v-if="updateNeeded" dense square color="warning" text-color="black" icon="sym_o_system_update">{{t('The server is newer than this app: update the app')}}</q-chip>
-            <q-chip v-else-if="socketState === 'closed'" dense square color="grey-7" text-color="white" icon="sym_o_sync_problem">{{t('Reconnecting')}}</q-chip>
+            <q-chip v-else-if="socketState === 'closed'" dense square color="grey-7" text-color="white" icon="sym_o_sync_problem"><span class="gt-xs">{{t('Reconnecting')}}</span><q-tooltip>{{t('Reconnecting')}}</q-tooltip></q-chip>
             <q-btn v-for="item in countItems" :key="item.key" flat dense no-caps :icon="item.icon" :aria-label="item.count ? item.label + ': ' + item.count : item.label" @click="setUrl(item.link)">
                 <q-badge v-if="item.count" floating rounded color="red">{{item.count > 99 ? '99+' : item.count}}</q-badge>
                 <q-tooltip>{{item.label}}</q-tooltip>
             </q-btn>
-            <q-btn flat no-caps class="q-ml-sm" icon="sym_o_account_circle" :label="userName">
+            <q-btn flat no-caps class="q-ml-sm" icon="sym_o_account_circle" :label="$q.screen.lt.sm ? undefined : userName" :aria-label="userName">
                 <q-menu anchor="bottom right" self="top right">
                     <q-list class="m-shell-account-menu">
                         <q-item-label header>{{t('Accounts')}}</q-item-label>
@@ -151,11 +151,11 @@ along with this software (see the LICENSE.md file). If not, see
         <q-page v-if="view" class="m-shell-view">
             <component v-if="viewComponent" ref="view" :is="viewComponent" :key="view"></component>
         </q-page>
-        <q-page v-else padding>
-            <q-card flat bordered class="m-shell-chat q-pa-sm">
-                <component v-if="chatPanel" :is="chatPanel"></component>
+        <q-page v-else class="m-shell-home">
+            <div class="m-shell-chat">
+                <component v-if="chatPanel" :is="chatPanel" home @room="homeRoom = $event"></component>
                 <div v-else class="q-pa-md m-muted">{{t('Chat is not available on this server.')}}</div>
-            </q-card>
+            </div>
         </q-page>
     </q-page-container>
 </q-layout></template>
@@ -211,6 +211,8 @@ module.exports = {
     data() {
         const data = this.shellData || {};
         return {
+            // the room open on the home (ChatPanel's room event): on a phone the room's own header replaces the shell's
+            homeRoom: null,
             drawer: false,
             // as m-qapps-root: what the client's components read of their $root
             appRootPath: '', basePath: '/apps', linkBasePath: '/qapps',

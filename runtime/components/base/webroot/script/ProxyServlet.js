@@ -26,8 +26,9 @@ const SKIP = new Set(["connection", "keep-alive", "proxy-authenticate", "proxy-a
         if (prefix && (path === prefix || path.startsWith(prefix + "/"))) path = path.substring(prefix.length)
         if (!path) path = "/"
         const query = request.queryString
+        // proxyTo is the conf's own upstream, often on this machine or its network (OpenSearch beside the server)
         const upstream = ec.service.rest().method(request.method).uri(proxyTo + path + (query ? "?" + query : ""))
-            .followRedirects(false).timeout(Number(config.getInitParameter("timeout") || 120))
+            .allowInternal().followRedirects(false).timeout(Number(config.getInitParameter("timeout") || 120))
         for (const [name, value] of request.headerPairs) if (!SKIP.has(name)) upstream.addHeader(name, value)
         const user = String(config.getInitParameter("user") || "").trim()
         if (user) {

@@ -17,7 +17,9 @@
 
 use std::io::{Read, Write};
 
-use super::super::tests::{define, fixture_with, Fixture, PASSWORD, WRITER};
+use super::super::tests::{
+    daemon, define, fixture_with, git_available, git_in, git_in_with, git_ok, write_file, Fixture, PASSWORD, WRITER,
+};
 use super::super::{GitHttpRequest, GitService, HttpResponder};
 use super::Capped;
 
@@ -126,6 +128,68 @@ fn a_gzip_body_and_ssh_input_are_held_to_max_request() {
     assert_ne!(status, 0);
     let errors = String::from_utf8_lossy(&errors);
     assert!(errors.contains("over 4096 bytes"), "{errors}");
+}
+
+/// Over a stateful connection (SSH, here a `git://` daemon) an upload-pack is held to `max-request` and
+/// `fetch-max-lines` round by round, as HTTP holds each request: a fetch from a clone with hundreds of commits the
+/// server does not have sends more haves in all than either limit, in rounds that each stay under them, and is
+/// answered, in protocol v0 and v2.
+#[test]
+fn a_long_negotiation_over_ssh_is_held_to_the_limits_per_round() {
+    if !git_available() {
+        eprintln!("skipped: git is not on the PATH");
+        return;
+    }
+    let fixture = fixture_with(
+        "limits-rounds",
+        std::path::PathBuf::from("."),
+        r#"<git-server max-request="16384" fetch-max-lines="300"/>"#,
+    );
+    define(&fixture, "rounds", "local");
+    let base = daemon(fixture.context.factory(), WRITER);
+    let url = format!("{base}/rounds.git");
+    let home = fixture.dir.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let work = fixture.dir.join("work");
+    git_ok(&fixture.dir, &home, &["clone", &url, &work.to_string_lossy()]);
+    write_file(&work, "a.txt", "a\n");
+    git_ok(&work, &home, &["add", "."]);
+    git_ok(&work, &home, &["commit", "-m", "A"]);
+    git_ok(&work, &home, &["push", "origin", "main"]);
+
+    // 600 commits of a history the server does not know: about 33 KB and 600 lines of haves, sent 32 a round in v0
+    // and at most 256 in v2
+    let mut stream = String::new();
+    for n in 0..600 {
+        let message = format!("unrelated {n}\n");
+        stream.push_str(&format!(
+            "commit refs/heads/side\ncommitter T <t@example.com> {} +0000\ndata {}\n{message}\n",
+            1_000_000_000 + n,
+            message.len()
+        ));
+    }
+    let stream_file = fixture.dir.join("side.stream");
+    std::fs::write(&stream_file, stream).unwrap();
+    for version in ["0", "2"] {
+        let local = fixture.dir.join(format!("local-v{version}"));
+        git_ok(&fixture.dir, &home, &["init", "-q", &local.to_string_lossy()]);
+        let input = std::fs::File::open(&stream_file).unwrap();
+        let (ok, out) = git_in_with(&local, &home, &["fast-import", "--quiet"], input.into());
+        assert!(ok, "{out}");
+        let (ok, out) = git_in(
+            &local,
+            &home,
+            &[
+                "-c",
+                &format!("protocol.version={version}"),
+                "fetch",
+                &url,
+                "main:refs/remotes/o/main",
+            ],
+        );
+        assert!(ok, "protocol v{version}: {out}");
+        assert_eq!(git_ok(&local, &home, &["show", "o/main:a.txt"]), "a\n");
+    }
 }
 
 /// An upload-pack request of more lines than `fetch-max-lines` is refused before they are kept.

@@ -53,7 +53,15 @@ pub(super) fn poll_server(
     }
     moqui_core::entity::fence::check_effect(moqui_core::entity::fence::Effect::Mail, "poll#EmailServer")?;
     let server_id = param_text(parameters, "emailServerId");
-    let Some(server) = find_one(facade, SERVER, "emailServerId", &server_id)? else {
+    // a mail account's own server is read by the mail client's sync, as its user, never polled by id (SEC-MAIL-04): it
+    // answers as one that does not exist
+    let owned = moqui_core::entity::sensitive::account_owned_email_server(facade, SERVER, parameters)?;
+    let found = if owned {
+        None
+    } else {
+        find_one(facade, SERVER, "emailServerId", &server_id)?
+    };
+    let Some(server) = found else {
         return fail(format!("No EmailServer found for ID [{server_id}]"));
     };
     let host = field_text(&server, "storeHost");

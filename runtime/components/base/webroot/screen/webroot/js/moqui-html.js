@@ -80,9 +80,11 @@
         }).join(",");
     };
 
-    // The tree nodes of a response, as the renderer draws them: text, href, name, open state and children.
+    // The tree nodes of a response, as the renderer draws them: text, href (with the container it loads and how), name, open state
+    // and children.
     const treeNodes = (data) => (Array.isArray(data) ? data : []).map((node) => ({
         id: node.id, text: node.text || "", href: node.a_attr && node.a_attr.href, name: node.li_attr && node.li_attr.treeNodeName,
+        loadId: (node.a_attr && node.a_attr.loadId) || "", loadMethod: (node.a_attr && node.a_attr.loadMethod) || "",
         opened: !!(node.state && node.state.opened), children: Array.isArray(node.children) ? treeNodes(node.children) : node.children ? true : false
     }));
 
@@ -298,6 +300,22 @@
         return request(container.dataset.loadUrl).then((response) => response.text().then((text) => {
             if (!response.ok) notify(response.status + " " + response.statusText, "danger");
             else fill(container, text);
+        })).catch((err) => notify(String(err.message || err), "danger"));
+    };
+
+    // A link that loads a container through a transition that changes data (a tree link with loadMethod post): a POST with the
+    // session token and the link's query as its body, since a GET of it is refused; its messages become toasts and the container's
+    // own screen loads again.
+    const postThenLoad = (container, url) => {
+        const at = url.indexOf("?");
+        const body = (at > 0 ? url.slice(at + 1) + "&" : "") + "moquiSessionToken=" + encodeURIComponent(sessionToken());
+        return request(at > 0 ? url.slice(0, at) : url, {
+            method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" }, body
+        }).then((response) => response.text().then((text) => {
+            if (!response.ok) { notify(response.status + " " + response.statusText, "danger"); return; }
+            const json = parseJson(text, null);
+            if (json && typeof json === "object" && !Array.isArray(json)) notifyFromJson(container, json);
+            if (container) load(container);
         })).catch((err) => notify(String(err.message || err), "danger"));
     };
 
@@ -731,7 +749,8 @@
         const list = el("ul");
         nodes.forEach((node) => {
             const item = el("li", node.children === false ? { class: "leaf" } : {});
-            item.append(el("span", { class: "toggle" }), node.href ? el("a", { href: node.href }, node.text) : el("span", {}, node.text));
+            const into = node.loadId ? Object.assign({ "data-load-into": node.loadId }, node.loadMethod ? { "data-load-method": node.loadMethod } : {}) : {};
+            item.append(el("span", { class: "toggle" }), node.href ? el("a", Object.assign({ href: node.href }, into), node.text) : el("span", {}, node.text));
             list.appendChild(item);
             // A node opens from its own children, or by asking the server for them the first time.
             const expand = () => {
@@ -968,7 +987,13 @@
             const dismiss = target.closest("[data-dismiss]");
             if (dismiss) { dismiss.closest(".alert").remove(); return; }
             const into = target.closest("a[data-load-into]");
-            if (into) { event.preventDefault(); load(doc.getElementById(into.dataset.loadInto), into.href); return; }
+            if (into) {
+                event.preventDefault();
+                const container = doc.getElementById(into.dataset.loadInto);
+                if (into.dataset.loadMethod === "post") postThenLoad(container, into.getAttribute("href"));
+                else load(container, into.href);
+                return;
+            }
             const clear = target.closest("[data-clear]");
             if (clear) { clearForm(doc.getElementById(clear.dataset.clear)); return; }
             const back = target.closest("[data-history-back]");

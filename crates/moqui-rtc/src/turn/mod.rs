@@ -36,7 +36,8 @@
 //!   from then on and closes its
 //!   relays, with no new `turn_auth_secret`. A leg of a pairing is never an XMPP user's own.
 //! - **Quotas:** allocations per leg (whatever username of it asks) and in all, and a bandwidth per allocation, past
-//!   which data is dropped. The servers are given a username only for a request whose MESSAGE-INTEGRITY holds for it.
+//!   which data is dropped. The servers are given a username only for a request whose MESSAGE-INTEGRITY holds for it,
+//!   and an ALLOCATE is remembered only from such a request, until the server allocates for it or answers it otherwise.
 //! - **Revocation** ([`Turn::revoke_leg`]): the leg's username is refused from then on, its allocations' relay sockets
 //!   close, and nothing more is relayed for them.
 //!
@@ -250,7 +251,8 @@ pub struct Turn {
     user_salts: HashMap<String, String>,
     /// By (listener, client).
     allocations: HashMap<(SocketAddr, SocketAddr), Allocation>,
-    /// Requests for an allocation, by (listener, client), with their username.
+    /// Requests for an allocation that the server is about to allocate for, by (listener, client), with their
+    /// username: only a request whose MESSAGE-INTEGRITY holds, and one the server answered instead is forgotten.
     asked: HashMap<(SocketAddr, SocketAddr), String>,
     relays: HashMap<SocketAddr, (SocketAddr, SocketAddr)>,
     out: VecDeque<TurnOutput>,
@@ -436,36 +438,58 @@ impl Turn {
     /// A message from a client arrived at the listener `listen`: on UDP a datagram, on a stream one message.
     pub fn handle_client(&mut self, now: Instant, proto: Proto, from: SocketAddr, listen: SocketAddr, data: &[u8]) {
         let transport = transport_of(proto);
+        let key = (listen, from);
+        // for an ALLOCATE, what `asked` held for its client before it
+        let mut asked_before = None;
         if let Ok(message) = Message::from_bytes(data) {
+            if message.class() == MessageClass::Request && message.method() == ALLOCATE {
+                asked_before = Some(self.asked.get(&key).cloned());
+            }
             if !self.admit_message(&message, listen, from) {
                 return;
             }
-        } else if self
-            .allocations
-            .get(&(listen, from))
-            .is_some_and(|a| self.is_revoked(&a.leg))
-        {
+        } else if self.allocations.get(&key).is_some_and(|a| self.is_revoked(&a.leg)) {
             return;
         }
         let tnow = self.clock(now);
-        let Some(server) = self.server_at(listen, transport) else {
-            return;
-        };
-        let built = server
-            .recv(
-                TurnTransmit {
-                    data,
-                    transport,
-                    from,
-                    to: listen,
-                },
-                tnow,
-            )
-            .map(|t| t.build());
-        if let Some(t) = built {
-            self.send_out(now, proto_of(t.transport), t.from, t.to, t.data);
+        let mark = self.out.len();
+        if let Some(server) = self.server_at(listen, transport) {
+            let built = server
+                .recv(
+                    TurnTransmit {
+                        data,
+                        transport,
+                        from,
+                        to: listen,
+                    },
+                    tnow,
+                )
+                .map(|t| t.build());
+            if let Some(t) = built {
+                self.send_out(now, proto_of(t.transport), t.from, t.to, t.data);
+            }
+            self.poll_servers(now);
         }
-        self.poll_servers(now);
+        // an ALLOCATE the server answered instead of allocating for (an error, a stale nonce) is forgotten, and one
+        // from before that still waits for its relay is kept, so `asked` holds only requests about to allocate
+        if let Some(before) = asked_before {
+            let allocating = self.out.iter().skip(mark).any(
+                |out| matches!(out, TurnOutput::AllocateRelay { listen, client, .. } if (*listen, *client) == key),
+            );
+            if !allocating {
+                match before {
+                    Some(username) => self.asked.insert(key, username),
+                    None => self.asked.remove(&key),
+                };
+            }
+        }
+    }
+
+    /// The request's MESSAGE-INTEGRITY holds for `username` with password `pass`.
+    fn integrity_holds(&self, message: &Message<'_>, username: &str, pass: &str) -> bool {
+        let key: MessageIntegrityCredentials =
+            LongTermKeyCredentials::new(username.to_string(), pass.to_string(), self.config.realm.clone()).into();
+        message.validate_integrity(&key).is_ok()
     }
 
     /// Checks a STUN request before the server sees it: its username, the allocation quotas and the relay peers.
@@ -475,6 +499,7 @@ impl Turn {
         }
         let username = message.attribute::<Username>().ok().map(|u| u.username().to_string());
         let mut request_leg = None;
+        let mut proven = false;
         if let Some(username) = &username {
             // a username the server has never been given gets its 401 from it; one it has (it expired or its leg was
             // revoked since) is dropped, since the server would still take it
@@ -488,11 +513,10 @@ impl Turn {
                 // MESSAGE-INTEGRITY holds), as the client's answer to the 401 does: the server cannot forget a name,
                 // so one from a request anyone could send would be kept for the life of the process (SEC-COM-13). A
                 // request that does not prove it gets the server's 401, as for a name it does not know.
-                let key: MessageIntegrityCredentials =
-                    LongTermKeyCredentials::new(username.clone(), pass.clone(), self.config.realm.clone()).into();
-                if message.validate_integrity(&key).is_err() {
+                if !self.integrity_holds(message, username, &pass) {
                     return true;
                 }
+                proven = true;
                 for server in &mut self.servers {
                     server.add_user(username.clone(), pass.clone());
                 }
@@ -514,7 +538,11 @@ impl Turn {
                     tracing::debug!("TURN allocation refused for {username}: over its quota");
                     return false;
                 }
-                self.asked.insert((listen, from), username);
+                // remembered only for a request that proves the name's password: a name the server knows can be put
+                // on a request from any source (the TURN nonce table)
+                if proven || self.integrity_holds(message, &username, &self.password_of(&username, &leg)) {
+                    self.asked.insert((listen, from), username);
+                }
             }
         } else if method == CREATE_PERMISSION || method == CHANNEL_BIND {
             let transaction = message.transaction_id();

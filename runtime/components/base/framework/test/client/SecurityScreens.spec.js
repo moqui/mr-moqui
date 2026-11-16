@@ -97,6 +97,35 @@ feature("a GET of a writing transition that another site started is refused; the
     },
 })
 
+// plans/Security-Review-Low.md SEC-RTE-08, SEC-ADM-09: the read-only transitions that changed state on a GET are not
+// read-only now. /sso/logout another site started is refused and the session stays signed in; setPrefGoLast takes only a
+// POST, so a GET with the preference in its URL sets nothing; the DataDocument field tree's createFieldDynamic is a POST
+// from the tree, and a GET with its parameters in the URL is refused.
+feature("a GET of sso/logout, setPrefGoLast or createFieldDynamic changes nothing", {
+    when() {
+        requireFixture(USER, PASSWORD)
+        const s = formSession(USER, PASSWORD)
+        const key = "SPEC_RTE08_PREF"
+        const read = () => s.get("/apps/getPreferences?keyRegexp=" + key, { accept: "json" }).json()?.[key] ?? null
+        const before = read()
+        const pref = s.get("/apps/setPrefGoLast?preferenceKey=" + key + "&preferenceValue=from-a-link")
+        const after = read()
+        const field = s.get("/apps/tools/Data/Documents/Edit/DataDocFields/FieldList/createFieldDynamic?dataDocumentId=MoquiEmailMessage&fieldPath=specRte08")
+        const crossSite = s.get("/sso/logout", { headers: { "Sec-Fetch-Site": "cross-site" } })
+        const still = s.get("/apps/tools/Home")
+        return { before, pref, after, field, crossSite, still }
+    },
+    then({ before, pref, after, field, crossSite, still }) {
+        pref.status >= 400
+        after == before
+        after != "from-a-link"
+        field.status == 400
+        field.text.includes("URL parameters")
+        crossSite.status == 403
+        still.status == 200
+    },
+})
+
 // plans/Security-Review.md SEC-RTE-05, SEC-FIL-01: /resources is read-only, so its file changes are refused when another
 // site started the request; a read is not
 feature("a /resources file change another site started is refused", {

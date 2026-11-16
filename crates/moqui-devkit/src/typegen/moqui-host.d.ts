@@ -1227,7 +1227,10 @@ interface MoquiRestClient {
     multipart(parts: unknown): MoquiRestClient;
     streamFrom(): MoquiRestClient;
     followRedirects(follow?: boolean): MoquiRestClient;
+    /** Refuse a host that is or resolves to an internal address, redirects included; wins over `allowInternal()`. */
     denyInternal(): MoquiRestClient;
+    /** On a production instance an internal address is refused unless this is called (false undoes it); a link-local one always is. */
+    allowInternal(allow?: boolean): MoquiRestClient;
     call(): MoquiRestResponse;
     /** As `call()`, with the headers only as given and the body left on the server until it is read or forwarded. */
     send(): MoquiRestResponse;

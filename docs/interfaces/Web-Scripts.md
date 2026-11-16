@@ -188,9 +188,11 @@ included. A header name must be a token and a value has no line break; anything 
 ## Calling out and passing a body through
 
 `ec.service.rest()` is the REST client of service scripts. `call()` reads the whole answer into the script.
-`.denyInternal()` before `call()` refuses a host that is, or whose name resolves to, a loopback, private or link-local
-address, on every redirect too: for a URL that came from outside, such as a mail's one-click unsubscribe (`send()`
-refuses it rather than going without the check). Four methods are for passing bodies through:
+`.denyInternal()` refuses a host that is, or whose name resolves to, a loopback, private or link-local address, on every
+redirect too, in `call()` and `send()`: for a URL that came from outside, such as a mail's one-click unsubscribe. On a
+production instance that is the default, and `.allowInternal()` lets a script reach an address the conf or an
+administrator set (an upstream beside the server); `denyInternal()` wins over it. A link-local or metadata address is
+refused either way. Four methods are for passing bodies through:
 
 | Method | What it does |
 |---|---|
@@ -217,6 +219,8 @@ in chunks) and the names in `skipHeaders`.
 - **Method, headers and body.** These go with the request, except for the hop-by-hop headers, `Host`, `Authorization`
   and `Cookie`. The client's Moqui sign in never reaches the upstream.
 - **Upstream sign in.** The `user` and `password` init params are sent as Basic auth.
+- **Internal upstream.** `proxyTo` is the conf's, so the request says `allowInternal()`: an upstream on this machine or
+  its network is reached on a production instance too.
 - **`requireElasticApi`.** With `"true"`, the servlet answers 404 unless the search backend is OpenSearch.
 - **`timeout`.** The whole exchange in seconds; 120 by default.
 

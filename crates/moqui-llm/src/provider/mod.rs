@@ -463,6 +463,8 @@ fn open_http(call: &HttpCall, timeout: Duration) -> Result<OpenResponse, Error> 
         body: Some(bytes::Bytes::from(body)),
         timeout: Some(timeout),
         follow_redirects: false,
+        // a model endpoint is the configuration's, often on this machine (a local model server)
+        deny_internal: false,
     })
 }
 

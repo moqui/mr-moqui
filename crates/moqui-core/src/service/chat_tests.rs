@@ -1097,10 +1097,37 @@ fn unread_and_mention_counts_follow_the_read_marker_and_the_notification_level()
             ("isMuted", Value::Bool(false)),
         ],
     );
+    // my own archive: the room is archived for me until a newer message; unarchive clears it
+    let archived_by_me = || {
+        let rooms = ok("find#Rooms", &[]);
+        let list = maps(rooms.get("roomList"));
+        let room = list
+            .iter()
+            .find(|room| field(room, "chatRoomId") == chat)
+            .expect("the room is listed");
+        field(room, "archivedByMe")
+    };
+    assert_eq!(archived_by_me(), "false");
+    ok(
+        "set#Notification",
+        &[("chatRoomId", text(&chat)), ("archived", Value::Bool(true))],
+    );
+    assert_eq!(archived_by_me(), "true");
+    ok(
+        "set#Notification",
+        &[("chatRoomId", text(&chat)), ("archived", Value::Bool(false))],
+    );
+    assert_eq!(archived_by_me(), "false");
+    ok(
+        "set#Notification",
+        &[("chatRoomId", text(&chat)), ("archived", Value::Bool(true))],
+    );
     // at level none a mention is counted in the room but not notified
     login("una");
     send(&chat, r#"<p>four <span data-mention-id="unc">@Unc</span></p>"#);
     assert_eq!(notified("unc"), 1, "the first mention only");
+    login("unc");
+    assert_eq!(archived_by_me(), "false", "a newer message brings the room back");
 
     // a redaction takes the message and its mention out of the counts
     login("una");
