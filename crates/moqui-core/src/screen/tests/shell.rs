@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 use moqui_lib::object::Value;
 use serde_json::json;
 
-use super::{basic, request, World};
+use super::{basic, request, stamp, World};
 use crate::screen::serve_at;
 
 fn screen_authz_conf() -> &'static str {
@@ -1175,6 +1175,64 @@ fn the_shell_counts_transition_answers_the_counts_of_the_current_user() {
     let (status, answer) = get(&world, &root, Some("admin"), "/shellCounts", &[]);
     assert_eq!(status, 200, "{answer}");
     assert_eq!(answer, json!({"counts": null}), "no counts service in the theme");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An ext item with a `permission` is listed only for a user who holds it, beside one with none, which every user of the
+/// screen gets (DC-UI-044: a Chat action the user would be refused is not offered).
+#[test]
+fn an_ext_item_with_a_permission_is_listed_only_for_a_user_who_holds_it() {
+    let dir = tree("ext-permission");
+    let webroot = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/webroot/screen/webroot.xml"),
+    )
+    .unwrap();
+    let start = webroot
+        .find("<transition name=\"extItems\"")
+        .expect("webroot.xml has extItems");
+    let end = start + webroot[start..].find("</transition>").unwrap() + "</transition>".len();
+    let root_text = ROOT.replacen(
+        "<subscreens default-item",
+        &format!("{}\n    <subscreens default-item", &webroot[start..end]),
+        1,
+    );
+    std::fs::write(dir.join("Root.xml"), root_text).unwrap();
+    std::fs::write(
+        dir.join("Apps/Open/Detail.xml"),
+        r#"<screen require-authentication="true" default-menu-title="Detail">
+            <transition name="make"><default-response url="."/></transition>
+            <ext-action name="test.everyone" slot="row-actions" sequence="1" label="Everyone" transition="make"/>
+            <ext-action name="test.gated" slot="row-actions" sequence="2" label="Gated" transition="make" permission="TEST_EXT_GATED"/>
+            <widgets/></screen>"#,
+    )
+    .unwrap();
+    let world = world(&dir);
+    {
+        let ctx = world.factory.new_context();
+        let _entered = ctx.enter();
+        let _authz = ctx.disable_authz();
+        row(
+            &world,
+            "moqui.security.UserPermission",
+            &[("userPermissionId", Value::string("TEST_EXT_GATED"))],
+        );
+        row(
+            &world,
+            "moqui.security.UserGroupPermission",
+            &[
+                ("userGroupId", Value::string("COUNTERS")),
+                ("userPermissionId", Value::string("TEST_EXT_GATED")),
+                ("fromDate", stamp()),
+            ],
+        );
+    }
+    let root = root_of(&dir);
+    let (status, plain) = get(&world, &root, Some("plain"), "/extItems/apps/open/Detail", &[]);
+    assert_eq!(status, 200, "{plain}");
+    assert_eq!(names(&plain["actions"], "name"), ["test.everyone"]);
+    let (status, grouped) = get(&world, &root, Some("grouped"), "/extItems/apps/open/Detail", &[]);
+    assert_eq!(status, 200, "{grouped}");
+    assert_eq!(names(&grouped["actions"], "name"), ["test.everyone", "test.gated"]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

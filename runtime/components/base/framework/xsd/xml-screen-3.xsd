@@ -673,6 +673,9 @@ along with this software (see the LICENSE.md file). If not, see
             when called.</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="hook" type="xs:string"><xs:annotation><xs:documentation>A provider hook the item needs
             (create-from, record-link): it is left out for a user no app answers that hook for.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="permission" type="xs:string"><xs:annotation><xs:documentation>A user permission
+            (UserPermission) the item needs: it is left out for a user without it. A display gate only, for an action every
+            user of the screen would see and most would be refused: the target still checks access when called.</xs:documentation></xs:annotation></xs:attribute>
     </xs:attributeGroup>
     <xs:element name="ext-action"><xs:annotation><xs:documentation>
         An action another app adds to this screen's items (plans/archive/Comms-Framework.md §3.3): a .qvue screen renders the actions of

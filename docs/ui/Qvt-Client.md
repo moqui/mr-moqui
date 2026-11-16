@@ -1113,8 +1113,10 @@ carries the same lists as `extActions` and `extPanels`:
 ```
 
 - A target the user may not view is left out, and a `transition` the screen does not have is logged and left out. An item
-  with a `hook` (a provider hook it needs, such as `create-from`) is left out for a user no app answers that hook for. The
-  target checks access again when it is called; a `condition` only hides an item, it is never an authorization rule.
+  with a `hook` (a provider hook it needs, such as `create-from`) is left out for a user no app answers that hook for, and
+  one with a `permission` (a user permission) for a user without it, so an action most users of the screen would be refused
+  is not offered to them. The target checks access again when it is called; a `condition` or `permission` only hides an
+  item, it is never the authorization rule.
 - Only the mapped fields of the item (`parameters`, `from` a field of the item) reach the target, never the whole item; a
   parameter may instead have a fixed `value` (the kind of record to make).
 - A `screen` action opens in the shell's dialog (`target="page"`: as the page), with the parameters in its query; a
