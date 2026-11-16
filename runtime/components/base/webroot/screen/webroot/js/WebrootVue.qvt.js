@@ -2122,7 +2122,8 @@
                 this.fieldErrors = errors;
                 this.fieldErrorValues = values;
             },
-            submitGo() {
+            // reauthed: sent again once the user confirmed who they are (a refusal for want of a recent sign-in)
+            submitGo(reauthed) {
                 if (this.disable) return;
                 this.fieldErrors = {};
                 this.answerTold = false;
@@ -2183,7 +2184,8 @@
                     return response.text().then((text) => {
                         let json;
                         try { json = JSON.parse(text); } catch (err) { json = undefined; }
-                        if (!response.ok) throw { status: response.status, statusText: response.statusText, text, json };
+                        if (!response.ok) throw { status: response.status, statusText: response.statusText, text, json,
+                            reauth: response.headers.get("X-Moqui-Reauth") === "required" };
                         const answer = json !== undefined ? json : text;
                         if (acknowledgeDraft) acknowledgeDraft(answer);
                         this.handleResponse(answer);
@@ -2192,11 +2194,20 @@
                     if (!arrived) root_.loading--;
                     // a refused save: the user fixes it and saves again at once (a good one keeps its button off for 3 s)
                     if (button) button.disabled = false;
-                    moqui.formAnswered(this, { ok: false, json: err && moqui.isPlainObject(err.json) ? err.json : null, status: err && err.status !== undefined ? err.status : 0 });
-                    if (err && err.json) err = Object.assign({}, err, { json: moqui.placeFieldErrors(this, err.json) });
-                    moqui.handleLoadError(err && err.status !== undefined ? err : { status: 0, error: err, text: "" });
-                    if (this.mWizard) this.mWizard.stepRefused(this);
+                    // refused for want of a recent sign-in (check#RecentAuth, docs/security/Recent-Auth.md): the user confirms
+                    // who they are and the form is sent once more; a cancel shows the refusal
+                    if (err && err.reauth && !reauthed && moqui.reauth) {
+                        moqui.reauth.confirm().then(() => this.submitGo(true), () => this.submitRefused(err));
+                        return;
+                    }
+                    this.submitRefused(err);
                 });
+            },
+            submitRefused(err) {
+                moqui.formAnswered(this, { ok: false, json: err && moqui.isPlainObject(err.json) ? err.json : null, status: err && err.status !== undefined ? err.status : 0 });
+                if (err && err.json) err = Object.assign({}, err, { json: moqui.placeFieldErrors(this, err.json) });
+                moqui.handleLoadError(err && err.status !== undefined ? err : { status: 0, error: err, text: "" });
+                if (this.mWizard) this.mWizard.stepRefused(this);
             },
             handleResponse(resp) {
                 let rest = null;

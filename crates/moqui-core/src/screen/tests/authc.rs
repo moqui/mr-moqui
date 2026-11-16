@@ -104,6 +104,10 @@ impl Flow {
         let _entered = context.enter();
         if let Some(username) = username {
             crate::user::internal_login_user(username).unwrap();
+            // as on the account page after signing in: a factor is added only after a recent sign-in
+            if let Some(user_id) = crate::user::current_user_id().unwrap() {
+                crate::user::note_recent_auth(&user_id);
+            }
         }
         let out = body();
         crate::user::session::reset_session();
@@ -225,7 +229,8 @@ fn rest_login_with_totp_needs_the_code_and_verify_otp_finishes_it() {
     let response = flow.post("/rest/logout", "", &mut session);
     assert_eq!(response.body_text(), "successful");
 
-    // The code can also come with the password, in one request.
+    // The code can also come with the password, in one request: a later code, as the step's own was taken
+    forget_totp_step(&flow, "ada");
     let mut session = Session::default();
     let code = current_totp(&secret);
     let response = flow.post(
@@ -238,6 +243,53 @@ fn rest_login_with_totp_needs_the_code_and_verify_otp_finishes_it() {
     // Without a pre-authenticated user there is nothing to verify.
     let response = flow.post("/rest/verifyOtp", "code=123456", &mut Session::default());
     assert_eq!(response.status, 401, "{}", response.body_text());
+}
+
+/// Forget the step of the last authenticator code `user_id`'s factor took, as if the next code were 30 seconds on: a code
+/// works once (SEC-WEB-12).
+fn forget_totp_step(flow: &Flow, user_id: &str) {
+    let context = flow.factory.new_context();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    flow.facade
+        .find("moqui.security.UserAuthcFactor")
+        .unwrap()
+        .eq("userId", Value::string(user_id))
+        .update_all([("lastTotpStep".to_string(), Value::Null)])
+        .unwrap();
+}
+
+/// An authenticator code is taken once (SEC-WEB-12): the factor keeps the step of the last code taken, and the same code
+/// again, from the same session or another, is not valid.
+#[test]
+fn an_authenticator_code_works_once() {
+    let flow = Flow::open();
+    flow.user("ada", "ada@example.com");
+    let secret = totp_factor(&flow, "ada");
+    let validate = |code: &str| {
+        flow.as_user(Some("ada"), || {
+            let parameters = BTreeMap::from([
+                ("userId".to_string(), Value::string("ada")),
+                ("code".to_string(), Value::string(code)),
+            ]);
+            let out =
+                crate::service::sync("org.moqui.impl.UserServices.validate#UserAuthcFactorCode", &parameters).unwrap();
+            out.get("verified") == Some(&Value::Bool(true))
+        })
+    };
+    let code = current_totp(&secret);
+    assert!(validate(&code));
+    assert!(!flow
+        .row_text("moqui.security.UserAuthcFactor", "userId", "ada", "lastTotpStep")
+        .is_empty());
+    assert!(!validate(&code), "the same code again");
+    let mut session = Session::default();
+    let response = flow.post(
+        "/rest/login",
+        &format!("username=ada&password=Secret1!&code={code}"),
+        &mut session,
+    );
+    assert_ne!(json(&response)["loggedIn"], true, "{}", response.body_text());
 }
 
 /// Seed `resetPassword` and `resetPasswordSetDate` so a later service call does not send mail.

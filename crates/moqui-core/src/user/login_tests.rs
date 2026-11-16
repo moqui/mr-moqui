@@ -935,7 +935,7 @@ fn an_api_key_logs_in_until_it_is_revoked_or_expires() {
     let thru = field_millis(row, "thruDate").unwrap() - field_millis(row, "fromDate").unwrap();
     assert_eq!(thru, 144 * 60 * 60 * 1000, "the conf default is six days");
 
-    apply_header_keys(Some(&key), None).unwrap();
+    apply_header_keys(Some(&key), None, None).unwrap();
     assert_eq!(session::current_username().unwrap().as_deref(), Some("ada"));
     logout().unwrap();
     assert_eq!(login_user_key(&short).unwrap_err().to_string(), INVALID_LOGIN);
@@ -943,7 +943,7 @@ fn an_api_key_logs_in_until_it_is_revoked_or_expires() {
     // Revoke: the admin deletes the key's row.
     row.delete(&facade).unwrap();
     assert_eq!(
-        apply_header_keys(Some(&key), None).unwrap_err().to_string(),
+        apply_header_keys(Some(&key), None, None).unwrap_err().to_string(),
         INVALID_LOGIN
     );
     assert!(session::current_username().unwrap().is_none());

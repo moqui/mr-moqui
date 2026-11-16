@@ -85,6 +85,7 @@ pub(super) static USER: HostClass = HostClass {
         method!("ec.user", "randomString", [Int], random_string),
         method!("ec.user", "totpSecret", [], totp_secret),
         method!("ec.user", "totpCodeValid", [Value, Value], totp_code_valid),
+        method!("ec.user", "totpCodeStep", [Value, Value, Value], totp_code_step),
         method!("ec.user", "totpUri", [Value, Value, Value], totp_uri),
         method!("ec.user", "timestampMillis", [Value], timestamp_millis),
     ],
@@ -581,6 +582,23 @@ fn totp_secret(_: &mut Call<'_>) -> Result<Ret, HostError> {
 
 fn totp_code_valid(call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(crate::user::totp_code_valid(&call.text_or_empty(0), &call.text_or_empty(1)).into())
+}
+
+/// `totpCodeStep(secret, code, afterStep)`: the step the code is valid for now when it is after `afterStep` (the factor's
+/// last one taken; null for none), else null (`user::totp_code_step`).
+fn totp_code_step(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    // a step read from an entity may come as a decimal's text (12345 or 12345.0)
+    let text = call.text_or_empty(2);
+    let text = text.trim();
+    let after = text
+        .split_once('.')
+        .map_or(text, |(whole, _)| whole)
+        .parse::<u64>()
+        .ok();
+    Ok(Ret::Value(
+        crate::user::totp_code_step(&call.text_or_empty(0), &call.text_or_empty(1), after)
+            .map_or(Value::Null, |step| Value::I64(i64::try_from(step).unwrap_or(i64::MAX))),
+    ))
 }
 
 fn totp_uri(call: &mut Call<'_>) -> Result<Ret, HostError> {

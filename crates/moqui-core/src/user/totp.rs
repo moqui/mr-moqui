@@ -86,18 +86,27 @@ pub(super) fn code(key: &[u8], counter: u64) -> String {
 /// Whether `entered` is the code of `key` at `time` (seconds since the epoch), or one step either side. Only
 /// [`DIGITS`] ASCII digits can match, and each comparison takes the same time whatever it finds.
 pub(super) fn matches(key: &[u8], entered: &str, time: u64) -> bool {
+    matching_step(key, entered, time, None).is_some()
+}
+
+/// The step (`time / STEP`, one either side) whose code of `key` is `entered`, when it is after `after`: a code is taken
+/// once, so a step at or before the last one accepted is refused (SEC-WEB-12). Only [`DIGITS`] ASCII digits can match,
+/// and each comparison takes the same time whatever it finds.
+pub(super) fn matching_step(key: &[u8], entered: &str, time: u64, after: Option<u64>) -> Option<u64> {
     if entered.len() != DIGITS as usize || !entered.bytes().all(|byte| byte.is_ascii_digit()) {
-        return false;
+        return None;
     }
     let step = time / STEP;
-    let mut found = false;
+    let mut found = None;
     for counter in step.saturating_sub(SKEW)..=step + SKEW {
         let expected = code(key, counter);
         let differ = expected
             .bytes()
             .zip(entered.bytes())
             .fold(0u8, |differ, (left, right)| differ | (left ^ right));
-        found |= differ == 0;
+        if differ == 0 && after.is_none_or(|last| counter > last) {
+            found = Some(counter);
+        }
     }
     found
 }
@@ -137,7 +146,7 @@ fn percent_encoded(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{base32, code, from_base32, key, matches, uri};
+    use super::{base32, code, from_base32, key, matches, matching_step, uri};
 
     /// RFC 6238's SHA1 test key, its codes cut to six digits.
     #[test]
@@ -158,6 +167,31 @@ mod tests {
         }
         assert!(!matches(key, "+87082", 59));
         assert!(!matches(key, "2870820", 59));
+    }
+
+    /// A code is taken once (SEC-WEB-12): its step, and any step before the last one taken, is refused.
+    #[test]
+    fn a_code_is_taken_for_a_step_after_the_last_one() {
+        let key = b"12345678901234567890";
+        let now = 1_111_111_111;
+        let step = now / 30;
+        let current = code(key, step);
+        assert_eq!(matching_step(key, &current, now, None), Some(step));
+        assert_eq!(matching_step(key, &current, now, Some(step - 1)), Some(step));
+        assert_eq!(
+            matching_step(key, &current, now, Some(step)),
+            None,
+            "the same code again"
+        );
+        assert_eq!(
+            matching_step(key, &code(key, step - 1), now, Some(step)),
+            None,
+            "an older code"
+        );
+        assert_eq!(
+            matching_step(key, &code(key, step + 1), now, Some(step)),
+            Some(step + 1)
+        );
     }
 
     #[test]

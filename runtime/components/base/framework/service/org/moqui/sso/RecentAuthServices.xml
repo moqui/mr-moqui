@@ -43,6 +43,20 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
+    <service verb="require" noun="RecentAuth" type="rust" location="moqui_core::service::recent_auth::require_recent_auth_service"
+            allow-remote="false">
+        <description>The rule of an action that makes or ends a credential or a sign-in factor of the caller's own account
+            (an access token, an app password, an SSH key, single use codes, a factor added or ended): the session's user
+            signed in, or confirmed who they are, in the last five minutes, as check#RecentAuth says. Not recent is an error
+            ("Confirm it is you"), recent false and reasonCode reauthRequired, and the response carries the header
+            X-Moqui-Reauth, so a browser form asks the user to confirm (moqui.reauth) and sends again. A caller that
+            disabled authorization (a job, a setup service) answers for the action and passes.</description>
+        <out-parameters>
+            <parameter name="recent" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+    </service>
+
     <service verb="reauthenticate" noun="User" type="rust" location="moqui_core::service::recent_auth::reauthenticate_user">
         <description>Confirm the signed-in user again: their password, then the code of their second factor when the account
             has one (a password checked here waits five minutes for the code, which may come without it). Nothing about the

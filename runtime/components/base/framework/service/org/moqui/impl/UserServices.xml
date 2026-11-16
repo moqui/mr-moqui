@@ -129,6 +129,18 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <entity-find-one entity-name="moqui.security.UserAccount" value-field="userAccount"/>
             <if condition="userAccount == null"><return error="true" message="User Account not found for User ID ${userId}"/></if>
+            <!-- A change to another account's sign-in fields (its username, email address, which a reset mails, flags,
+                dates, addresses, provider link) is refused when that account holds access the caller lacks
+                (check#AccountAction bounded, Identity.js heldBeyond; SEC-ADM-05): the caller could take it over. Its name,
+                locale, time zone and currency are anyone's to change whom the service lets in. -->
+            <set field="signInChanged" from="Object.keys(userAccount.getMap ? userAccount.getMap() : userAccount).some(name =&gt;
+                    !['userId', 'userFullName', 'locale', 'timeZone', 'currencyUomId', 'lastUpdatedStamp'].includes(name) &amp;&amp;
+                    context[name] != null &amp;&amp; context[name] !== '' &amp;&amp; String(context[name]) != String(userAccount.get(name) ?? ''))"/>
+            <if condition="signInChanged">
+                <service-call name="org.moqui.impl.UserServices.check#AccountAction" in-map="{userId: userId, permissionId: 'NONE'}"
+                        out-map="accountActionOut"/>
+                <if condition="!accountActionOut.allowed"><return/></if>
+            </if>
 
             <if condition="username &amp;&amp; username != userAccount.get('username')">
                 <!-- see if username already in use -->
@@ -175,7 +187,8 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="userId"><description>Defaults to the current userId in the ExecutionContext.</description></parameter>
             <parameter name="username"><description>May be used instead of userId to identify user.</description></parameter>
-            <parameter name="oldPassword" required="true"><description>Ignored if user has password admin permissions.</description></parameter>
+            <parameter name="oldPassword" required="true"><description>Ignored when a password administrator (ADMIN_PASSWORD) sets
+                another account's password, one that holds no access the administrator lacks.</description></parameter>
             <parameter name="newPassword" required="true"/>
             <parameter name="newPasswordVerify" required="true"/>
             <parameter name="code"><description>Second factor authentication, required if second factor required for user (via group or authc factors configured)</description></parameter>
@@ -207,15 +220,24 @@ along with this software (see the LICENSE.md file). If not, see
                 <return message="${passwordUpdatePublicMsg}" public="true" type="danger"/></if>
             <set field="userId" from="userAccount.get('userId')"/>
             <set field="username" from="userAccount.get('username')"/>
+            <!-- A password administrator sets another account's password without its old one (adminPath); their own is
+                changed as anyone's, with the old password, so a session left signed in cannot change it (SEC-ADM-03). An
+                account that holds access the administrator lacks (a privileged group they are not in, a sealed permission
+                they do not hold: Identity.js heldBeyond) is not theirs to take over (SEC-ADM-05). -->
+            <set field="adminPath" from="hasPwAdminPermission &amp;&amp; userId != ec.user.userId"/>
+            <if condition="adminPath">
+                <set field="heldBeyond" from="ec.resource.script('component://framework/service/org/moqui/admin/Identity.js').heldBeyond(userId)"/>
+                <if condition="heldBeyond"><return error="true" message="${heldBeyond}: its password is not yours to set"/></if>
+            </if>
             <!-- An account disabled for good or past its terminateDate is closed: its password is changed only by a
                 password administrator, so a known or mailed password does not open it again (SEC-ADM-01). -->
-            <if condition="!hasPwAdminPermission &amp;&amp; ((userAccount.get('disabled') == 'Y' &amp;&amp; !userAccount.get('disabledDateTime')) ||
+            <if condition="!adminPath &amp;&amp; ((userAccount.get('disabled') == 'Y' &amp;&amp; !userAccount.get('disabledDateTime')) ||
                     (userAccount.get('terminateDate') &amp;&amp; ec.user.timestampMillis(userAccount.get('terminateDate')) &lt; ec.user.timestampMillis(ec.user.nowTimestamp)))">
                 <log level="warn" message="Password change refused for closed account ${userId}"/>
                 <script>ec.user.checkOldPassword(null, oldPassword)</script>
                 <return message="${passwordUpdatePublicMsg}" public="true" type="danger"/></if>
 
-            <if condition="!hasPwAdminPermission">
+            <if condition="!adminPath">
                 <if condition="ec.user.userId &amp;&amp; userId != ec.user.userId">
                     <return message="Cannot update the password of another user without password admin permission" public="true" type="danger"/></if>
 
@@ -233,8 +255,11 @@ along with this software (see the LICENSE.md file). If not, see
                     <!-- if pre-auth and code specified check code first, otherwise check after oldPassword -->
                     <!-- Hardening beyond the Java, which took any pre-authenticated or logged-in user here: the code
                         stands in for oldPassword only when that user is the account being changed, so a user
-                        pre-authenticated as one account cannot set another's password with that account's code. -->
-                    <set field="codeUsername" from="ec.web?.sessionAttributes?.moquiPreAuthcUsername || ec.user.username"/>
+                        pre-authenticated as one account cannot set another's password with that account's code. And only
+                        for a pre-authenticated session (its password checked: the login's, or this service's below with no
+                        code), never for a signed-in one, so a session left signed in cannot change the password with a
+                        code alone (SEC-ADM-03). -->
+                    <set field="codeUsername" from="ec.web?.sessionAttributes?.moquiPreAuthcUsername"/>
                     <if condition="codeUsername &amp;&amp; codeUsername == username">
                         <service-call name="org.moqui.impl.UserServices.validate#UserAuthcFactorCode"
                                 in-map="{userId: userId, code: code, countFailure: true}" out-map="validateCodeOut"/>
@@ -539,6 +564,39 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ====== User Authentication Factor Services ====== -->
     <!-- ================================================= -->
 
+    <service verb="check" noun="AccountAction" allow-remote="false">
+        <description>Who may act on an account's sign-in (its factors and codes, its sign-in fields): its own user, for an
+            action that makes or ends a factor or codes (recentAuth) only after signing in, or confirming who they are, in
+            the last five minutes (org.moqui.sso.RecentAuthServices.require#RecentAuth; SEC-ADM-03); another user only with
+            permissionId (NONE: any caller the service's authorization lets in) and, for a change (bounded), when the
+            account holds no access the caller lacks (Identity.js heldBeyond: a privileged group the caller is not in, a
+            sealed permission the caller does not hold; SEC-ADM-04, SEC-ADM-05). With nobody signed in (the sign-in
+            services, which act for a pre-authenticated user before the login and check that user themselves) and for a
+            caller that disabled authorization (a job, a setup service) the caller answers for it. A refusal is an error
+            and allowed false.</description>
+        <in-parameters>
+            <parameter name="userId" required="true"/>
+            <parameter name="recentAuth" type="Boolean" default="false"/>
+            <parameter name="permissionId" default-value="ADMIN_IDENTITY_MANAGE"/>
+            <parameter name="bounded" type="Boolean" default="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="allowed" type="Boolean"/></out-parameters>
+        <actions><script><![CDATA[
+            allowed = false
+            const me = ec.user.userId
+            if (!me || ec.artifactExecution.authzDisabled()) allowed = true
+            else if (userId === me) {
+                allowed = !recentAuth || !!ec.service.sync().name('org.moqui.sso.RecentAuthServices.require#RecentAuth').call()?.recent
+            } else if (permissionId !== 'NONE' && !ec.user.hasPermission(permissionId)) {
+                ec.message.addError(ec.l10n.localize('That account is not yours'))
+            } else {
+                const held = bounded ? ec.resource.script('component://framework/service/org/moqui/admin/Identity.js').heldBeyond(userId) : null
+                if (held) ec.message.addError(held + ': ' + ec.l10n.localize('that account is not yours to change'))
+                else allowed = true
+            }
+        ]]></script></actions>
+    </service>
+
     <service verb="get" noun="ExternalUserAuthcFactorInfo" authenticate="anonymous-view">
         <out-parameters>
             <parameter name="secondFactorRequired" type="Boolean"/>
@@ -585,6 +643,8 @@ along with this software (see the LICENSE.md file). If not, see
             </parameter></parameter>
         </out-parameters>
         <actions>
+            <service-call name="org.moqui.impl.UserServices.check#AccountAction" in-map="{userId: userId, permissionId: 'ADMIN_IDENTITY_VIEW', bounded: false}" out-map="accountActionOut"/>
+            <if condition="!accountActionOut.allowed"><return/></if>
             <service-call name="org.moqui.impl.UserServices.get#UserAuthcFactorRequired" out-map="context">
                 <field-map field-name="userId"/></service-call>
 
@@ -682,6 +742,8 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions>
             <set field="verified" from="false"/>
+            <service-call name="org.moqui.impl.UserServices.check#AccountAction" in-map="{userId: userId}" out-map="accountActionOut"/>
+            <if condition="!accountActionOut.allowed"><return/></if>
 
             <if condition="countFailure">
                 <entity-find-one entity-name="moqui.security.UserAccount" value-field="codeAccount"/>
@@ -717,11 +779,14 @@ along with this software (see the LICENSE.md file). If not, see
                         </if>
                     </then>
                     <else-if condition="userAuthcFactor.get('factorTypeEnumId') == 'UafTotp'">
-                        <!-- This checks to see whether the secret key stored in the database matches the input code at this time -->
-                        <if condition="ec.user.totpCodeValid(userAuthcFactor.get('factorOption'), code)">
+                        <!-- This checks to see whether the secret key stored in the database matches the input code at this
+                            time, for a step after the last one taken: a code works once (SEC-WEB-12) -->
+                        <set field="totpStep" from="ec.user.totpCodeStep(userAuthcFactor.get('factorOption'), code, userAuthcFactor.get('lastTotpStep'))"/>
+                        <if condition="totpStep != null">
                             <set field="factorId" from="userAuthcFactor.get('factorId')"/>
                             <set field="verified" from="true"/>
-                            <service-call name="update#moqui.security.UserAuthcFactor" in-map="{factorId: userAuthcFactor.get('factorId'), needsValidation: 'N'}"/>
+                            <service-call name="update#moqui.security.UserAuthcFactor" in-map="{factorId: userAuthcFactor.get('factorId'),
+                                    needsValidation: 'N', lastTotpStep: totpStep}"/>
                         </if>
                     </else-if>
                 </if>
@@ -743,6 +808,8 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="singleUseCodes" type="List"/></out-parameters>
         <actions>
             <if condition="numberOfCodes &gt; 21"><return error="true" message="Cannot create more than 21 codes at a time"/></if>
+            <service-call name="org.moqui.impl.UserServices.check#AccountAction" in-map="{userId: userId, recentAuth: true}" out-map="accountActionOut"/>
+            <if condition="!accountActionOut.allowed"><return/></if>
             <set field="factorTypeEnumId" value="UafSingleUse"/>
             <set field="fromDate" from="ec.user.nowTimestamp"/>
             <entity-find entity-name="moqui.security.UserAuthcFactor" list="userAuthcFactorList">
@@ -782,6 +849,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="thruDate"/>
         </out-parameters>
         <actions>
+            <service-call name="org.moqui.impl.UserServices.check#AccountAction" in-map="{userId: userId}" out-map="accountActionOut"/>
+            <if condition="!accountActionOut.allowed"><return/></if>
             <!-- If there is a fromFactorId, this automatically invalidates any current single use authentication codes that are from the fromFactorId -->
             <if condition="fromFactorId">
                 <entity-find entity-name="moqui.security.UserAuthcFactor" list="userAuthcFactorList">
@@ -813,6 +882,17 @@ along with this software (see the LICENSE.md file). If not, see
             <entity-find-one entity-name="moqui.security.UserAccount" value-field="userAccount">
                 <field-map field-name="username"/></entity-find-one>
             <if condition="userAccount == null"><return error="true" message="User ${username} not found"/></if>
+
+            <!-- An email or SMS costs: one code each half minute for a factor, whoever asks (SEC-WEB-12), as the
+                re-authentication's send#ReauthCode. The codes sent are the factor's single use rows. -->
+            <entity-find-count entity-name="moqui.security.UserAuthcFactor" count-field="recentSendCount">
+                <econdition field-name="userId" from="userAccount.get('userId')"/>
+                <econdition field-name="fromFactorId" from="factorId"/>
+                <econdition field-name="factorTypeEnumId" value="UafSingleUse"/>
+                <econdition field-name="fromDate" operator="greater" from="new Date(ec.user.timestampMillis(ec.user.nowTimestamp) - 30000).toISOString()"/>
+            </entity-find-count>
+            <if condition="recentSendCount &gt; 0">
+                <return error="true" message="A code was sent a moment ago: wait half a minute before asking for another"/></if>
 
             <!-- special case for email OTP with UserAccount.emailAddress -->
             <if condition="factorId === 'UserAccountEmail'">
@@ -857,7 +937,11 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <entity-find-one entity-name="moqui.security.UserAuthcFactor" value-field="userAuthcFactor">
                 <field-map field-name="factorId"/></entity-find-one>
+            <if condition="userAuthcFactor == null || userAuthcFactor.get('factorTypeEnumId') != 'UafEmail'">
+                <return error="true" message="Authentication factor ${factorId} not found"/></if>
             <set field="userId" from="userAuthcFactor.get('userId')"/>
+            <service-call name="org.moqui.impl.UserServices.check#AccountAction" in-map="{userId: userId}" out-map="accountActionOut"/>
+            <if condition="!accountActionOut.allowed"><return/></if>
             <set field="emailAddress" from="userAuthcFactor.get('factorOption')"/>
 
             <entity-find-one entity-name="moqui.security.UserAccount" value-field="userAccount">
@@ -897,7 +981,10 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <entity-find-one entity-name="moqui.security.UserAccount" value-field="userAccount">
                 <field-map field-name="username"/></entity-find-one>
+            <if condition="userAccount == null"><return error="true" message="User ${username} not found"/></if>
             <set field="userId" from="userAccount.get('userId')"/>
+            <service-call name="org.moqui.impl.UserServices.check#AccountAction" in-map="{userId: userId}" out-map="accountActionOut"/>
+            <if condition="!accountActionOut.allowed"><return/></if>
             <set field="emailAddress" from="userAccount.get('emailAddress')"/>
 
             <!-- create a new single use authc factor code and get it's factorId -->
@@ -929,7 +1016,11 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <entity-find-one entity-name="moqui.security.UserAuthcFactor" value-field="userAuthcFactor">
                 <field-map field-name="factorId"/></entity-find-one>
+            <if condition="userAuthcFactor == null || userAuthcFactor.get('factorTypeEnumId') != 'UafSms'">
+                <return error="true" message="Authentication factor ${factorId} not found"/></if>
             <set field="userId" from="userAuthcFactor.get('userId')"/>
+            <service-call name="org.moqui.impl.UserServices.check#AccountAction" in-map="{userId: userId}" out-map="accountActionOut"/>
+            <if condition="!accountActionOut.allowed"><return/></if>
             <set field="contactNumber" from="userAuthcFactor.get('factorOption')"/>
 
             <!-- create a new single use authc factor code and get it's factorId -->
@@ -975,6 +1066,8 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- no longer generates and sends code: <parameter name="singleUseFactorId"/> <parameter name="code"/> -->
         </out-parameters>
         <actions>
+            <service-call name="org.moqui.impl.UserServices.check#AccountAction" in-map="{userId: userId, recentAuth: true}" out-map="accountActionOut"/>
+            <if condition="!accountActionOut.allowed"><return/></if>
             <entity-find-count entity-name="moqui.security.UserAuthcFactor" count-field="userAuthcFactorCount">
                 <date-filter/>
                 <econdition field-name="userId"/>
@@ -1005,6 +1098,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="factorId"/>
         </out-parameters>
         <actions>
+            <service-call name="org.moqui.impl.UserServices.check#AccountAction" in-map="{userId: userId, recentAuth: true}" out-map="accountActionOut"/>
+            <if condition="!accountActionOut.allowed"><return/></if>
             <entity-find-count entity-name="moqui.security.UserAuthcFactor" count-field="userAuthcFactorCount">
                 <date-filter/>
                 <econdition field-name="userId"/>
@@ -1030,6 +1125,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="factorOption"/>
         </out-parameters>
         <actions>
+            <service-call name="org.moqui.impl.UserServices.check#AccountAction" in-map="{userId: userId, recentAuth: true}" out-map="accountActionOut"/>
+            <if condition="!accountActionOut.allowed"><return/></if>
             <set field="factorTypeEnumId" value="UafTotp"/>
             <set field="fromDate" from="ec.user.nowTimestamp"/>
             <set field="factorOption" from="ec.user.totpSecret()"/>
@@ -1051,6 +1148,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="needsValidation"/>
         </out-parameters>
         <actions>
+            <!-- with no factorId this adds a factor, which needs a recent sign-in -->
+            <service-call name="org.moqui.impl.UserServices.check#AccountAction" in-map="{userId: userId, recentAuth: !factorId}" out-map="accountActionOut"/>
+            <if condition="!accountActionOut.allowed"><return/></if>
             <entity-find-one entity-name="moqui.security.UserAccount" value-field="userAccount">
                 <field-map field-name="userId" from="userId"/></entity-find-one>
 
@@ -1072,11 +1172,15 @@ along with this software (see the LICENSE.md file). If not, see
                 </else>
             </if>
 
+            <!-- the secret of a factor once verified, or of a factor that is not an authenticator's, is never given again:
+                it is a sign-in factor (SEC-ADM-04) -->
+            <if condition="factorId &amp;&amp; (userFactor == null || userFactor.get('factorTypeEnumId') != 'UafTotp' || needsValidation != 'Y')">
+                <set field="factorOption" from="null"/></if>
             <set field="qrLabel" from="userAccount.get('username')"/><set field="qrIssuer" from="ec.web.getHostName(false)"/>
             <set field="qrSecret" from="factorOption"/>
             <!-- the otpauth URI of the QR code (SHA1, 6 digits, 30 seconds); the PNG data URI is not made, the QR encoder is
                 not linked (totp-rs qr off), so a client draws the QR from qrUri -->
-            <set field="qrUri" from="ec.user.totpUri(qrLabel, qrIssuer, qrSecret)"/>
+            <set field="qrUri" from="qrSecret ? ec.user.totpUri(qrLabel, qrIssuer, qrSecret) : null"/>
         </actions>
     </service>
 
@@ -1088,6 +1192,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="fromFactorId"/>
         </in-parameters>
         <actions>
+            <service-call name="org.moqui.impl.UserServices.check#AccountAction" in-map="{userId: userId, recentAuth: true}" out-map="accountActionOut"/>
+            <if condition="!accountActionOut.allowed"><return/></if>
             <entity-find entity-name="moqui.security.UserAuthcFactor" list="userAuthcFactorList">
                 <date-filter/><econdition field-name="userId"/></entity-find>
 
@@ -1102,7 +1208,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="create" noun="UserSshKey" type="rust" location="moqui_core::service::user_keys::create_ssh_key">
         <description>Add an SSH public key (an OpenSSH line, as in id_ed25519.pub) for the current user, with its
             SHA-256 fingerprint, which the SSH server matches. A key another active row has is refused, with an error
-            that starts with the code KeyInUse.</description>
+            that starts with the code KeyInUse. Needs a sign-in in the last five minutes (require#RecentAuth).</description>
         <in-parameters>
             <parameter name="publicKey" required="true"/>
             <parameter name="description"/>
@@ -1140,11 +1246,13 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="create" noun="UserAccessToken" type="rust" location="moqui_core::service::user_keys::create_access_token">
-        <description>A new access token for the current user: the password for git over HTTPS (or an api_key
-            header). It is shown only in the out parameters; only its hash is stored, as a UserLoginKey.</description>
+        <description>A new access token for the current user: the password for git over HTTPS, or the api_key header of
+            the git REST (/rest/s1/moqui/git, /rest/s1/moqui/hosting); every other login refuses it (UserLoginKey.scope git).
+            It is shown only in the out parameters; only its hash is stored, as a UserLoginKey. Needs a sign-in in the last
+            five minutes (require#RecentAuth).</description>
         <in-parameters>
             <parameter name="description"/>
-            <parameter name="expireDays" type="BigDecimal" default="90"/>
+            <parameter name="expireDays" type="BigDecimal" default="90"><description>At most 366</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="accessToken"/>
@@ -1184,7 +1292,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="create" noun="UserAppPassword" type="rust" location="moqui_core::service::user_keys::create_app_password">
         <description>A new app password for the current user, for one device or app: the CalDAV, CardDAV and WebDAV
             servers and SFTP to drives take it with the username; the web login does not. It is shown only in the out
-            parameters (20 letters and digits in groups of four); only its hash is stored.</description>
+            parameters (20 letters and digits in groups of four); only its hash is stored. Needs a sign-in in the last five
+            minutes (require#RecentAuth).</description>
         <in-parameters><parameter name="name" required="true"><description>The device or app, such as "Pat's iPhone"</description></parameter></in-parameters>
         <out-parameters>
             <parameter name="appPasswordId"/>

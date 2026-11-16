@@ -892,11 +892,11 @@ fn login_key_header_logs_in_and_an_expired_key_does_not() {
     create_login_key(&facade, "old-key", "ada", Some(1));
     let guard = bind(&factory, None, None, false).unwrap();
     let id = guard.session_id();
-    login::apply_header_keys(Some("temp-key"), None).unwrap();
+    login::apply_header_keys(Some("temp-key"), None, None).unwrap();
     assert_eq!(current_username().unwrap().as_deref(), Some("ada"));
     assert_eq!(guard.session_id(), id);
     login::logout().unwrap();
-    assert!(login::apply_header_keys(None, Some("old-key")).is_err());
+    assert!(login::apply_header_keys(None, Some("old-key"), None).is_err());
     assert!(current_username().unwrap().is_none());
     assert_eq!(guard.session_id(), id);
     login::login_user("ada", "Secret1!").unwrap();
@@ -904,10 +904,10 @@ fn login_key_header_logs_in_and_an_expired_key_does_not() {
     // A key is checked even when the session is signed in; neither an unknown key nor another user's takes it over.
     create_user(&facade, "bob", "Secret1!");
     create_login_key(&facade, "bob-key", "bob", None);
-    assert!(login::apply_header_keys(Some("not-a-key"), None).is_err());
-    assert!(login::apply_header_keys(None, Some("bob-key")).is_err());
+    assert!(login::apply_header_keys(Some("not-a-key"), None, None).is_err());
+    assert!(login::apply_header_keys(None, Some("bob-key"), None).is_err());
     assert_eq!(current_username().unwrap().as_deref(), Some("ada"));
-    assert!(login::apply_header_keys(Some("temp-key"), None).unwrap());
+    assert!(login::apply_header_keys(Some("temp-key"), None, None).unwrap());
     assert_eq!(current_username().unwrap().as_deref(), Some("ada"));
     assert_eq!(guard.session_id(), rotated);
 }
@@ -936,28 +936,30 @@ fn a_key_login_names_its_kind_for_the_request_and_a_cookie_session_has_none() {
     }
     let script_kind = || crate::script::eval_value("ec.user.loginKeyKind").unwrap();
     let guard = bind(&factory, None, None, false).unwrap();
-    for (key, kind) in [
-        ("device-key", "device"),
-        ("token-key", "token"),
-        ("session-key", "session"),
+    // an access token logs in only on git's paths (its scope, SEC-PFS-61)
+    assert!(login::apply_header_keys(Some("token-key"), None, None).is_err());
+    for (key, kind, scope) in [
+        ("device-key", "device", None),
+        ("token-key", "token", Some(login::ACCESS_TOKEN_SCOPE)),
+        ("session-key", "session", None),
     ] {
-        assert!(login::apply_header_keys(Some(key), None).unwrap());
+        assert!(login::apply_header_keys(Some(key), None, scope).unwrap());
         assert_eq!(login_key_kind().map(login::LoginKeyKind::as_str), Some(kind), "{key}");
         assert_eq!(script_kind(), Value::string(kind), "{key}");
         login::logout().unwrap();
         assert_eq!(login_key_kind(), None, "a logout ends it");
     }
     // a scoped key logs in only where its scope is named, and says so there
-    assert!(login::apply_header_keys(None, Some("scoped-key")).is_err());
+    assert!(login::apply_header_keys(None, Some("scoped-key"), None).is_err());
     assert_eq!(login_key_kind(), None);
     login::login_user_key_for("scoped-key", "gateway").unwrap();
     assert_eq!(login_key_kind(), Some(login::LoginKeyKind::Scoped));
     login::logout().unwrap();
     // a password login has none, and the session it leaves carries none to its next request
-    login::apply_header_keys(Some("device-key"), None).unwrap();
+    login::apply_header_keys(Some("device-key"), None, None).unwrap();
     login::login_user("ada", "Secret1!").unwrap();
     assert_eq!(login_key_kind(), None);
-    login::apply_header_keys(Some("device-key"), None).unwrap();
+    login::apply_header_keys(Some("device-key"), None, None).unwrap();
     let id = guard.session_id();
     drop(guard);
     let cookie = format_session_cookie(&id, false).unwrap();
@@ -977,7 +979,7 @@ fn a_query_string_api_key_is_not_consulted() {
     save_parameter("api_key", "temp-key");
     let mut other = BTreeMap::new();
     other.insert("api_key".to_string(), "temp-key".to_string());
-    assert!(!login::apply_header_keys(None, None).unwrap());
+    assert!(!login::apply_header_keys(None, None, None).unwrap());
     assert!(current_username().unwrap().is_none());
     assert_eq!(other.get("api_key").map(String::as_str), Some("temp-key"));
 }

@@ -76,10 +76,13 @@ fn service(name: &str, parameters: &[(&str, Value)]) -> BTreeMap<String, Value> 
 
 fn app_password(user_id: &str, name: &str) -> (String, String) {
     login(user_id);
+    // as the account page runs it: the test's internal login is no recent sign-in, which a page's user would have
+    let authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let out = service(
         "org.moqui.impl.UserServices.create#UserAppPassword",
         &[("name", Value::string(name))],
     );
+    drop(authz);
     moqui_core::user::logout().unwrap();
     (
         out.get("appPasswordId").map(to_plain_string).unwrap(),

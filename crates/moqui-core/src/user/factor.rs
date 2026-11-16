@@ -99,6 +99,17 @@ pub fn totp_code_valid(secret: &str, code: &str) -> bool {
     super::totp::matches(&key, code.trim(), now)
 }
 
+/// The step of the authenticator code `code` for `secret` now (one step either side), when it is after `after`, the last
+/// step a code of this factor was taken for (`UserAuthcFactor.lastTotpStep`): a code works once (SEC-WEB-12). `None` when
+/// the code is not valid now or its step was already used.
+pub fn totp_code_step(secret: &str, code: &str, after: Option<u64>) -> Option<u64> {
+    let key = super::totp::key(secret)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    super::totp::matching_step(&key, code.trim(), now, after)
+}
+
 /// The authenticator code for `secret` now, as an app shows it. For the tests that sign in with one.
 #[cfg(test)]
 pub(crate) fn totp_code_now(secret: &str) -> String {

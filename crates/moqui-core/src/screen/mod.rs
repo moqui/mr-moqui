@@ -1121,7 +1121,9 @@ fn authenticate(request: &WebRequest, parameters: &BTreeMap<String, Value>) -> R
     // never falls back to a signed-in session's user, and a key for another user never takes over its session.
     // With nobody signed in, a rejected key leaves the request anonymous with the login error, as in Java Moqui.
     let signed_in = user::current_user_id()?.is_some_and(|id| !id.is_empty());
-    match user::apply_header_keys(request.header("api_key"), request.header("login_key")) {
+    // a key made for one service alone (an access token, git's) is taken only on that service's paths
+    let scope = user::request_key_scope(&request.path);
+    match user::apply_header_keys(request.header("api_key"), request.header("login_key"), scope) {
         Ok(false) => {}
         Ok(true) => {
             user::note_header_login();

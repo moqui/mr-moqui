@@ -516,7 +516,8 @@ fn authenticate_with(authorization: Option<&str>, api_key: Option<&str>) -> Resu
             .strip_prefix("Bearer ")
             .or_else(|| header.strip_prefix("bearer "))
         {
-            moqui_core::user::login_user_key(token.trim()).map_err(refused)?;
+            moqui_core::user::login_user_key_for(token.trim(), moqui_core::user::ACCESS_TOKEN_SCOPE)
+                .map_err(refused)?;
             return Ok(true);
         }
         if let Some((username, password)) = moqui_core::web::basic_credentials(header) {
@@ -530,7 +531,7 @@ fn authenticate_with(authorization: Option<&str>, api_key: Option<&str>) -> Resu
             }
             // an access token (a UserLoginKey) as the password, as git hosts take personal access tokens
             if password.len() == 40 {
-                if moqui_core::user::login_user_key(&password).is_ok() {
+                if moqui_core::user::login_user_key_for(&password, moqui_core::user::ACCESS_TOKEN_SCOPE).is_ok() {
                     let user = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
                     if username.is_empty() || user.eq_ignore_ascii_case(&username) {
                         return Ok(true);
@@ -555,7 +556,7 @@ fn authenticate_with(authorization: Option<&str>, api_key: Option<&str>) -> Resu
         if key.trim().is_empty() {
             return Err(unusable("an empty api_key"));
         }
-        moqui_core::user::login_user_key(key).map_err(refused)?;
+        moqui_core::user::login_user_key_for(key, moqui_core::user::ACCESS_TOKEN_SCOPE).map_err(refused)?;
         return Ok(true);
     }
     Ok(false)

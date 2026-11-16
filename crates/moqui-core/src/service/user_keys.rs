@@ -18,6 +18,12 @@
 //! per device, taken by the DAV servers, SFTP to drives and git, not by the web login), and the keys of the desktop and
 //! mobile clients (a `UserLoginKey` with a `deviceName`). No Java counterpart. Each service
 //! works on the current user's rows only, so it reads and writes them with authorization off.
+//!
+//! A new SSH key, access token or app password lasts and signs in without the second factor, so it is made only after a
+//! sign-in in the last five minutes ([`super::recent_auth::require_recent_auth`]; SEC-ADM-03, SEC-ADM-07, SEC-COM-21): a
+//! stolen session or key cannot make itself lasting credentials. An access token is for git alone
+//! (`UserLoginKey.scope` [`crate::user::ACCESS_TOKEN_SCOPE`]; SEC-PFS-61): git over HTTP and the git REST take it, every
+//! other login refuses it.
 
 use std::collections::BTreeMap;
 
@@ -46,6 +52,8 @@ const KEY_TYPES: [&str; 7] = [
 
 /// An access token lasts this long when no expiry is given.
 const DEFAULT_TOKEN_DAYS: f64 = 90.0;
+/// The longest an access token lasts (SEC-ADM-07): a year and a day, as Smithy's page offers.
+const MAX_TOKEN_DAYS: f64 = 366.0;
 
 pub(in crate::service) fn register(
     map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
@@ -152,6 +160,9 @@ fn create_ssh_key(
             return Ok(BTreeMap::new());
         }
     };
+    if !super::recent_auth::require_recent_auth() {
+        return Ok(BTreeMap::new());
+    }
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let now = crate::user::now_value();
     let taken = facade
@@ -211,8 +222,9 @@ fn delete_ssh_key(
     Ok(BTreeMap::new())
 }
 
-/// `create#UserAccessToken`: a new access token for the current user. Out: `accessToken` (shown only now; only its hash
-/// is kept), `loginKey` (that hash, which names the token), `thruDate`.
+/// `create#UserAccessToken`: a new access token for the current user, for git alone, good for `expireDays` (90 when not
+/// given, at most [`MAX_TOKEN_DAYS`]). Out: `accessToken` (shown only now; only its hash is kept), `loginKey` (that hash,
+/// which names the token), `thruDate`.
 fn create_access_token(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -224,6 +236,13 @@ fn create_access_token(
         .and_then(|days| days.parse::<f64>().ok())
         .filter(|days| *days > 0.0)
         .unwrap_or(DEFAULT_TOKEN_DAYS);
+    if days > MAX_TOKEN_DAYS {
+        add_error(format!("An access token lasts at most {MAX_TOKEN_DAYS} days"));
+        return Ok(BTreeMap::new());
+    }
+    if !super::recent_auth::require_recent_auth() {
+        return Ok(BTreeMap::new());
+    }
     let token = crate::user::get_login_key(Some(days * 24.0))?;
     let hashed = crate::user::hash_login_key(&token)?;
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
@@ -235,12 +254,16 @@ fn create_access_token(
         .as_ref()
         .and_then(|row| row.get("thruDate").cloned())
         .unwrap_or(Value::Null);
-    // a description marks the key as an access token (the user's other login keys are sessions')
+    // a description marks the key as an access token (the user's other login keys are sessions'), and its scope makes it
+    // git's alone
     let description = text(parameters, "description").unwrap_or_else(|| "Access token".to_string());
     facade
         .find(USER_LOGIN_KEY)?
         .eq("loginKey", Value::string(&hashed))
-        .update_all([("description".to_string(), Value::string(description))])?;
+        .update_all([
+            ("description".to_string(), Value::string(description)),
+            ("scope".to_string(), Value::string(crate::user::ACCESS_TOKEN_SCOPE)),
+        ])?;
     Ok(out([
         ("accessToken", Value::string(token)),
         ("tokenId", Value::string(access_token_id(&hashed))),
@@ -390,6 +413,9 @@ fn create_app_password(
         add_error("name is required: the device or app the password is for");
         return Ok(BTreeMap::new());
     };
+    if !super::recent_auth::require_recent_auth() {
+        return Ok(BTreeMap::new());
+    }
     let password = crate::user::new_app_password()?;
     let hashed = crate::user::hash_login_key(&crate::user::app_password_key(&password))?;
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
