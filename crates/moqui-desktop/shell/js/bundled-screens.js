@@ -36,7 +36,7 @@ module.exports = {
     inject: { mScreen: { default: null } },
     data() {
         return { loaded: !!memo.rooms, rooms: memo.rooms || [], me: memo.me || {}, prefs: memo.prefs || {}, roomId: null, componentVersion: 0,
-            height: 520, newOpen: false, newUserIds: [], busy: false, filter: '' };
+            height: 520, newOpen: false, newUserIds: [], busy: false, filter: '', archivedView: false, roomSheet: { open: false, room: null } };
     },
     computed: {
         // Qvue screens have no container ID wrapper; the loader supplies its identity before mount or measurement.
@@ -51,13 +51,17 @@ module.exports = {
             const words = this.home && this.filter ? String(this.filter).toLowerCase().split(/\s+/).filter(Boolean) : [];
             const rank = (room) => (this.countsOf(room).mentions ? 2 : (this.countsOf(room).unread ? 1 : 0));
             const matches = (room) => { const text = (room.displayName + ' ' + this.snippetOf(room)).toLowerCase(); return words.every((word) => text.indexOf(word) >= 0); };
-            const list = this.rooms.filter((room) => room.isMember && (!words.length || matches(room))).sort((left, right) => {
-                const byRank = rank(right) - rank(left);
+            // the home is the phone's list: pinned first, then the latest; the archive is apart (a search finds both)
+            const archived = (room) => this.isArchived(room);
+            const list = this.rooms.filter((room) => room.isMember && (!words.length ? (this.archivedView ? archived(room) : !archived(room)) : matches(room))).sort((left, right) => {
+                if (this.home && left.isPinned !== right.isPinned) return left.isPinned ? -1 : 1;
+                const byRank = this.home ? 0 : rank(right) - rank(left);
                 if (byRank !== 0) return byRank;
                 return (right.lastEventDate || 0) - (left.lastEventDate || 0);
             });
             return this.home ? list : list.slice(0, MAX_SHOWN);
         },
+        archivedCount() { return this.rooms.filter((room) => room.isMember && this.isArchived(room)).length; },
         unreadTotal() { return this.rooms.reduce((sum, room) => sum + (this.countsOf(room).unread || 0), 0); }
     },
     methods: {
@@ -76,6 +80,45 @@ module.exports = {
             }, (err) => { if (moqui.unreachable && moqui.unreachable(err)) this.needsConnection(); else moqui.handleAjaxError(err); throw err; });
         },
         needsConnection() { moqui.notifyMessages([{ type: 'info', message: t('This needs a connection to the server: try again when it is back') }]); },
+        // archived by me, until a message after the archive (ChatRoomMember.archivedEventSeq)
+        isArchived(room) { return room.archivedEventSeq != null && Number(room.lastMessage ? room.lastMessage.eventSeq : 0) <= Number(room.archivedEventSeq); },
+        holdStart(room, event) {
+            this.holdCancel();
+            if (!this.home || (event.touches && event.touches.length > 1)) return;
+            this.holdTimer = setTimeout(() => { this.holdTimer = null; this.held = true; this.openRoomSheet(room); }, 450);
+        },
+        holdCancel() { if (this.holdTimer) { clearTimeout(this.holdTimer); this.holdTimer = null; } },
+        holdEnd(event) { this.holdCancel(); if (this.held) { this.held = false; if (event.cancelable) event.preventDefault(); } },
+        contextMenu(room, event) { if (!this.home) return; event.preventDefault(); this.openRoomSheet(room); },
+        openRoomSheet(room) {
+            this.roomSheet = { open: true, room };
+            if (navigator.vibrate) { try { navigator.vibrate(10); } catch (e) { /* no vibration here */ } }
+        },
+        swiped(room, action, reset) { this.roomAction(room, action); setTimeout(reset, 300); },
+        // a room's own settings (pin, mute, archive: setNotification) and its read marker (markRead), changed here at once
+        roomAction(room, action) {
+            this.roomSheet.open = false;
+            if (action === 'pin' || action === 'mute' || action === 'archive') {
+                const key = action === 'pin' ? 'isPinned' : action === 'mute' ? 'isMuted' : 'archived';
+                const value = action === 'archive' ? !this.isArchived(room) : !room[key];
+                const before = { isPinned: room.isPinned, isMuted: room.isMuted, archivedEventSeq: room.archivedEventSeq };
+                if (action === 'archive') room.archivedEventSeq = value ? Number(room.lastEventSeq || (room.lastMessage && room.lastMessage.eventSeq) || 0) : null;
+                else room[key] = value;
+                this.post('setNotification', { chatRoomId: room.chatRoomId, [key]: value ? 'true' : 'false' }).then((json) => {
+                    if (json && json.archivedEventSeq !== undefined) room.archivedEventSeq = json.archivedEventSeq;
+                }, () => Object.assign(room, before));
+                if (action === 'archive') moqui.notifyMessages([{ type: 'info', message: value ? t('Conversation archived') : t('Conversation back in the list') }]);
+                return;
+            }
+            if (action === 'read') {
+                this.post('markRead', { chatRoomId: room.chatRoomId }).then(() => this.onRoomRead(room.chatRoomId), () => {});
+            } else if (action === 'unread' && room.lastMessage) {
+                this.post('markRead', { chatRoomId: room.chatRoomId, eventSeq: room.lastMessage.eventSeq, markUnread: 'true' }).then(() => {
+                    if (moqui.chat) moqui.chat.state.unread[room.chatRoomId] = { unread: 1, mentions: 0 };
+                    room.unreadCount = Math.max(1, room.unreadCount || 0);
+                }, () => {});
+            }
+        },
         roomIcon(room) { return (room.record && room.record.icon) || ROOM_ICONS[room.roomTypeEnumId] || 'sym_o_chat'; },
         countsOf(room) {
             if (!room.isMember) return { unread: 0, mentions: 0 };
@@ -199,6 +242,7 @@ module.exports = {
     },
     beforeUnmount() {
         if (this.resizer) this.resizer.disconnect();
+        this.holdCancel();
         (this.unsubscribe || []).forEach((off) => off());
         clearTimeout(this.roomsTimer);
     }
@@ -208,11 +252,11 @@ module.exports = {
         {
             const target = component;
             target.render = (function () {
-                const { toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createTextVNode: _createTextVNode, normalizeClass: _normalizeClass, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, normalizeStyle: _normalizeStyle, resolveDirective: _resolveDirective, withDirectives: _withDirectives, resolveDynamicComponent: _resolveDynamicComponent } = Vue
+                const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createTextVNode: _createTextVNode, normalizeClass: _normalizeClass, withCtx: _withCtx, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, normalizeStyle: _normalizeStyle, createSlots: _createSlots, resolveDirective: _resolveDirective, withDirectives: _withDirectives, resolveDynamicComponent: _resolveDynamicComponent } = Vue
 
                 return function render(_ctx, _cache) {
-                  const _component_q_tooltip = _resolveComponent("q-tooltip")
                   const _component_q_btn = _resolveComponent("q-btn")
+                  const _component_q_tooltip = _resolveComponent("q-tooltip")
                   const _component_q_icon = _resolveComponent("q-icon")
                   const _component_q_input = _resolveComponent("q-input")
                   const _component_m_drop_down = _resolveComponent("m-drop-down")
@@ -225,6 +269,7 @@ module.exports = {
                   const _component_q_item_label = _resolveComponent("q-item-label")
                   const _component_q_badge = _resolveComponent("q-badge")
                   const _component_q_item = _resolveComponent("q-item")
+                  const _component_q_slide_item = _resolveComponent("q-slide-item")
                   const _component_q_list = _resolveComponent("q-list")
                   const _component_q_card = _resolveComponent("q-card")
                   const _component_q_dialog = _resolveComponent("q-dialog")
@@ -236,86 +281,104 @@ module.exports = {
                   }, [
                     (!_ctx.roomId)
                       ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
-                          _createElementVNode("div", { class: "row items-center no-wrap q-pb-xs" }, [
-                            _createElementVNode("div", {
-                              class: _normalizeClass(["col ellipsis", _ctx.home ? 'text-h6 q-pl-sm' : 'text-subtitle2'])
-                            }, [
-                              _createTextVNode(_toDisplayString(_ctx.t('Chat')), 1),
-                              (_ctx.unreadTotal)
-                                ? (_openBlock(), _createElementBlock("span", {
-                                    key: 0,
-                                    class: "text-caption m-muted"
-                                  }, " · " + _toDisplayString(_ctx.fill(_ctx.t('{count} unread'), {count: _ctx.unreadTotal})), 1))
-                                : _createCommentVNode("", true)
-                            ], 2),
-                            (!_ctx.home)
-                              ? (_openBlock(), _createBlock(_component_q_btn, {
-                                  key: 0,
+                          (_ctx.archivedView)
+                            ? (_openBlock(), _createElementBlock("div", {
+                                key: 0,
+                                class: "row items-center no-wrap q-pb-xs"
+                              }, [
+                                _createVNode(_component_q_btn, {
                                   flat: "",
                                   round: "",
                                   dense: "",
-                                  icon: "sym_o_edit_square",
-                                  color: "primary",
-                                  "aria-label": _ctx.t('New message'),
-                                  onClick: _ctx.toggleNew
+                                  icon: "sym_o_arrow_back",
+                                  "aria-label": _ctx.t('Back'),
+                                  onClick: $event => (_ctx.archivedView = false)
+                                }, null, 8, ["aria-label", "onClick"]),
+                                _createElementVNode("div", { class: "col ellipsis text-h6 q-pl-sm" }, _toDisplayString(_ctx.t('Archived')), 1)
+                              ]))
+                            : (_openBlock(), _createElementBlock("div", {
+                                key: 1,
+                                class: "row items-center no-wrap q-pb-xs"
+                              }, [
+                                _createElementVNode("div", {
+                                  class: _normalizeClass(["col ellipsis", _ctx.home ? 'text-h6 q-pl-sm' : 'text-subtitle2'])
+                                }, [
+                                  _createTextVNode(_toDisplayString(_ctx.t('Chat')), 1),
+                                  (_ctx.unreadTotal)
+                                    ? (_openBlock(), _createElementBlock("span", {
+                                        key: 0,
+                                        class: "text-caption m-muted"
+                                      }, " · " + _toDisplayString(_ctx.fill(_ctx.t('{count} unread'), {count: _ctx.unreadTotal})), 1))
+                                    : _createCommentVNode("", true)
+                                ], 2),
+                                (!_ctx.home)
+                                  ? (_openBlock(), _createBlock(_component_q_btn, {
+                                      key: 0,
+                                      flat: "",
+                                      round: "",
+                                      dense: "",
+                                      icon: "sym_o_edit_square",
+                                      color: "primary",
+                                      "aria-label": _ctx.t('New message'),
+                                      onClick: _ctx.toggleNew
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_tooltip, null, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(_ctx.t('New message')), 1)
+                                          ]),
+                                          _: 1
+                                        })
+                                      ]),
+                                      _: 1
+                                    }, 8, ["aria-label", "onClick"]))
+                                  : _createCommentVNode("", true),
+                                _createVNode(_component_q_btn, {
+                                  flat: "",
+                                  round: "",
+                                  dense: "",
+                                  icon: "sym_o_done_all",
+                                  disable: !_ctx.unreadTotal,
+                                  "aria-label": _ctx.t('Mark all read'),
+                                  onClick: _ctx.markAllRead
                                 }, {
                                   default: _withCtx(() => [
                                     _createVNode(_component_q_tooltip, null, {
                                       default: _withCtx(() => [
-                                        _createTextVNode(_toDisplayString(_ctx.t('New message')), 1)
+                                        _createTextVNode(_toDisplayString(_ctx.t('Mark all read')), 1)
                                       ]),
                                       _: 1
                                     })
                                   ]),
                                   _: 1
-                                }, 8, ["aria-label", "onClick"]))
-                              : _createCommentVNode("", true),
-                            _createVNode(_component_q_btn, {
-                              flat: "",
-                              round: "",
-                              dense: "",
-                              icon: "sym_o_done_all",
-                              disable: !_ctx.unreadTotal,
-                              "aria-label": _ctx.t('Mark all read'),
-                              onClick: _ctx.markAllRead
-                            }, {
-                              default: _withCtx(() => [
-                                _createVNode(_component_q_tooltip, null, {
+                                }, 8, ["disable", "aria-label", "onClick"]),
+                                _createVNode(_component_q_btn, {
+                                  flat: "",
+                                  dense: "",
+                                  "no-caps": "",
+                                  size: "sm",
+                                  color: "primary",
+                                  icon: "sym_o_open_in_new",
+                                  label: _ctx.home ? undefined : _ctx.t('Open in Comms'),
+                                  "aria-label": _ctx.t('Open in Comms'),
+                                  onClick: $event => (_ctx.go(_ctx.linkBase))
+                                }, {
                                   default: _withCtx(() => [
-                                    _createTextVNode(_toDisplayString(_ctx.t('Mark all read')), 1)
+                                    (_ctx.home)
+                                      ? (_openBlock(), _createBlock(_component_q_tooltip, { key: 0 }, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(_ctx.t('Open in Comms')), 1)
+                                          ]),
+                                          _: 1
+                                        }))
+                                      : _createCommentVNode("", true)
                                   ]),
                                   _: 1
-                                })
-                              ]),
-                              _: 1
-                            }, 8, ["disable", "aria-label", "onClick"]),
-                            _createVNode(_component_q_btn, {
-                              flat: "",
-                              dense: "",
-                              "no-caps": "",
-                              size: "sm",
-                              color: "primary",
-                              icon: "sym_o_open_in_new",
-                              label: _ctx.home ? undefined : _ctx.t('Open in Comms'),
-                              "aria-label": _ctx.t('Open in Comms'),
-                              onClick: $event => (_ctx.go(_ctx.linkBase))
-                            }, {
-                              default: _withCtx(() => [
-                                (_ctx.home)
-                                  ? (_openBlock(), _createBlock(_component_q_tooltip, { key: 0 }, {
-                                      default: _withCtx(() => [
-                                        _createTextVNode(_toDisplayString(_ctx.t('Open in Comms')), 1)
-                                      ]),
-                                      _: 1
-                                    }))
-                                  : _createCommentVNode("", true)
-                              ]),
-                              _: 1
-                            }, 8, ["label", "aria-label", "onClick"])
-                          ]),
+                                }, 8, ["label", "aria-label", "onClick"])
+                              ])),
                           (_ctx.home && _ctx.rooms.length > 6)
                             ? (_openBlock(), _createBlock(_component_q_input, {
-                                key: 0,
+                                key: 2,
                                 modelValue: _ctx.filter,
                                 "onUpdate:modelValue": $event => ((_ctx.filter) = $event),
                                 dense: "",
@@ -333,7 +396,7 @@ module.exports = {
                             : _createCommentVNode("", true),
                           (_ctx.newOpen && !_ctx.home)
                             ? (_openBlock(), _createElementBlock("div", {
-                                key: 1,
+                                key: 3,
                                 class: "q-pb-sm"
                               }, [
                                 _createVNode(_component_m_drop_down, {
@@ -402,101 +465,207 @@ module.exports = {
                                 }, {
                                   default: _withCtx(() => [
                                     (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.shownRooms, (room) => {
-                                      return (_openBlock(), _createBlock(_component_q_item, {
+                                      return (_openBlock(), _createBlock(_component_q_slide_item, {
                                         key: room.chatRoomId,
-                                        clickable: "",
-                                        class: _normalizeClass(_ctx.home ? 'q-px-sm q-py-sm m-chat-home-row' : 'q-px-xs q-py-xs'),
-                                        "data-room": room.chatRoomId,
-                                        onClick: $event => (_ctx.openRoom(room.chatRoomId))
-                                      }, {
+                                        "left-color": "primary",
+                                        "right-color": "positive",
+                                        onLeft: ({reset}) => _ctx.swiped(room, 'pin', reset),
+                                        onRight: ({reset}) => _ctx.swiped(room, 'archive', reset)
+                                      }, _createSlots({
                                         default: _withCtx(() => [
-                                          _createVNode(_component_q_item_section, {
-                                            avatar: "",
-                                            style: _normalizeStyle({minWidth: _ctx.home ? '56px' : '40px'})
+                                          _createVNode(_component_q_item, {
+                                            clickable: "",
+                                            class: _normalizeClass(_ctx.home ? 'q-px-sm q-py-sm m-chat-home-row' : 'q-px-xs q-py-xs'),
+                                            "data-room": room.chatRoomId,
+                                            onClick: $event => (_ctx.openRoom(room.chatRoomId)),
+                                            onTouchstartPassive: $event => (_ctx.holdStart(room, $event)),
+                                            onTouchmovePassive: $event => (_ctx.holdCancel()),
+                                            onTouchend: $event => (_ctx.holdEnd($event)),
+                                            onContextmenu: $event => (_ctx.contextMenu(room, $event))
                                           }, {
                                             default: _withCtx(() => [
-                                              (room.roomTypeEnumId === 'CrtDirect' && room.otherUserId)
-                                                ? (_openBlock(), _createBlock(_component_m_avatar, {
-                                                    key: 0,
-                                                    name: room.displayName,
-                                                    "user-id": room.otherUserId,
-                                                    size: _ctx.avatarSize
-                                                  }, null, 8, ["name", "user-id", "size"]))
-                                                : (_openBlock(), _createBlock(_component_q_avatar, {
-                                                    key: 1,
-                                                    size: _ctx.avatarSize,
-                                                    rounded: "",
-                                                    class: "m-tonal text-primary",
-                                                    icon: _ctx.roomIcon(room)
-                                                  }, null, 8, ["size", "icon"]))
-                                            ]),
-                                            _: 2
-                                          }, 1032, ["style"]),
-                                          _createVNode(_component_q_item_section, { style: {"min-width":"0"} }, {
-                                            default: _withCtx(() => [
-                                              _createVNode(_component_q_item_label, { class: "row no-wrap items-center" }, {
-                                                default: _withCtx(() => [
-                                                  _createElementVNode("span", {
-                                                    class: _normalizeClass(["ellipsis", _ctx.countsOf(room).unread || _ctx.countsOf(room).mentions ? 'text-weight-bold' : ''])
-                                                  }, _toDisplayString(room.displayName), 3),
-                                                  _createVNode(_component_q_space),
-                                                  _createElementVNode("span", { class: "text-caption m-muted text-no-wrap q-ml-xs" }, _toDisplayString(_ctx.shortWhen(room.lastMessage ? room.lastMessage.sentDate : room.lastEventDate)), 1)
-                                                ]),
-                                                _: 2
-                                              }, 1024),
-                                              _createVNode(_component_q_item_label, {
-                                                caption: "",
-                                                class: "row no-wrap items-center"
+                                              _createVNode(_component_q_item_section, {
+                                                avatar: "",
+                                                style: _normalizeStyle({minWidth: _ctx.home ? '56px' : '40px'})
                                               }, {
                                                 default: _withCtx(() => [
-                                                  _createElementVNode("span", { class: "ellipsis col" }, _toDisplayString(_ctx.snippetOf(room)), 1),
-                                                  (_ctx.countsOf(room).mentions)
-                                                    ? (_openBlock(), _createBlock(_component_q_badge, {
+                                                  (room.roomTypeEnumId === 'CrtDirect' && room.otherUserId)
+                                                    ? (_openBlock(), _createBlock(_component_m_avatar, {
                                                         key: 0,
-                                                        color: "negative",
+                                                        name: room.displayName,
+                                                        "user-id": room.otherUserId,
+                                                        size: _ctx.avatarSize
+                                                      }, null, 8, ["name", "user-id", "size"]))
+                                                    : (_openBlock(), _createBlock(_component_q_avatar, {
+                                                        key: 1,
+                                                        size: _ctx.avatarSize,
                                                         rounded: "",
-                                                        class: "q-ml-xs"
-                                                      }, {
-                                                        default: _withCtx(() => [
-                                                          _createTextVNode("@" + _toDisplayString(_ctx.countsOf(room).mentions), 1)
-                                                        ]),
-                                                        _: 2
-                                                      }, 1024))
-                                                    : (_ctx.countsOf(room).unread)
-                                                      ? (_openBlock(), _createBlock(_component_q_badge, {
-                                                          key: 1,
-                                                          color: room.isMuted || room.notificationLevelEnumId !== 'CnlAll' ? 'grey-6' : 'primary',
-                                                          rounded: "",
-                                                          class: "q-ml-xs"
-                                                        }, {
-                                                          default: _withCtx(() => [
-                                                            _createTextVNode(_toDisplayString(_ctx.countsOf(room).unread), 1)
-                                                          ]),
-                                                          _: 2
-                                                        }, 1032, ["color"]))
-                                                      : _createCommentVNode("", true)
+                                                        class: "m-tonal text-primary",
+                                                        icon: _ctx.roomIcon(room)
+                                                      }, null, 8, ["size", "icon"]))
+                                                ]),
+                                                _: 2
+                                              }, 1032, ["style"]),
+                                              _createVNode(_component_q_item_section, { style: {"min-width":"0"} }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_item_label, { class: "row no-wrap items-center" }, {
+                                                    default: _withCtx(() => [
+                                                      _createElementVNode("span", {
+                                                        class: _normalizeClass(["ellipsis", _ctx.countsOf(room).unread || _ctx.countsOf(room).mentions ? 'text-weight-bold' : ''])
+                                                      }, _toDisplayString(room.displayName), 3),
+                                                      (room.isMuted)
+                                                        ? (_openBlock(), _createBlock(_component_q_icon, {
+                                                            key: 0,
+                                                            name: "sym_o_notifications_off",
+                                                            size: "14px",
+                                                            class: "m-muted q-ml-xs",
+                                                            "aria-label": _ctx.t('Muted')
+                                                          }, null, 8, ["aria-label"]))
+                                                        : _createCommentVNode("", true),
+                                                      (room.isPinned && _ctx.home)
+                                                        ? (_openBlock(), _createBlock(_component_q_icon, {
+                                                            key: 1,
+                                                            name: "sym_o_keep",
+                                                            size: "14px",
+                                                            class: "m-muted q-ml-xs",
+                                                            "aria-label": _ctx.t('Pinned')
+                                                          }, null, 8, ["aria-label"]))
+                                                        : _createCommentVNode("", true),
+                                                      _createVNode(_component_q_space),
+                                                      _createElementVNode("span", { class: "text-caption m-muted text-no-wrap q-ml-xs" }, _toDisplayString(_ctx.shortWhen(room.lastMessage ? room.lastMessage.sentDate : room.lastEventDate)), 1)
+                                                    ]),
+                                                    _: 2
+                                                  }, 1024),
+                                                  _createVNode(_component_q_item_label, {
+                                                    caption: "",
+                                                    class: "row no-wrap items-center"
+                                                  }, {
+                                                    default: _withCtx(() => [
+                                                      _createElementVNode("span", { class: "ellipsis col" }, _toDisplayString(_ctx.snippetOf(room)), 1),
+                                                      (_ctx.countsOf(room).mentions)
+                                                        ? (_openBlock(), _createBlock(_component_q_badge, {
+                                                            key: 0,
+                                                            color: "negative",
+                                                            rounded: "",
+                                                            class: "q-ml-xs"
+                                                          }, {
+                                                            default: _withCtx(() => [
+                                                              _createTextVNode("@" + _toDisplayString(_ctx.countsOf(room).mentions), 1)
+                                                            ]),
+                                                            _: 2
+                                                          }, 1024))
+                                                        : (_ctx.countsOf(room).unread)
+                                                          ? (_openBlock(), _createBlock(_component_q_badge, {
+                                                              key: 1,
+                                                              color: room.isMuted || room.notificationLevelEnumId !== 'CnlAll' ? 'grey-6' : 'primary',
+                                                              rounded: "",
+                                                              class: "q-ml-xs"
+                                                            }, {
+                                                              default: _withCtx(() => [
+                                                                _createTextVNode(_toDisplayString(_ctx.countsOf(room).unread), 1)
+                                                              ]),
+                                                              _: 2
+                                                            }, 1032, ["color"]))
+                                                          : _createCommentVNode("", true)
+                                                    ]),
+                                                    _: 2
+                                                  }, 1024)
                                                 ]),
                                                 _: 2
                                               }, 1024)
                                             ]),
                                             _: 2
-                                          }, 1024)
+                                          }, 1032, ["class", "data-room", "onClick", "onTouchstartPassive", "onTouchmovePassive", "onTouchend", "onContextmenu"])
                                         ]),
                                         _: 2
-                                      }, 1032, ["class", "data-room", "onClick"]))
-                                    }), 128))
+                                      }, [
+                                        (_ctx.home)
+                                          ? {
+                                              name: "left",
+                                              fn: _withCtx(() => [
+                                                _createElementVNode("div", { class: "row items-center no-wrap" }, [
+                                                  _createVNode(_component_q_icon, {
+                                                    name: room.isPinned ? 'sym_o_keep_off' : 'sym_o_keep',
+                                                    class: "q-mr-sm"
+                                                  }, null, 8, ["name"]),
+                                                  _createTextVNode(_toDisplayString(room.isPinned ? _ctx.t('Unpin') : _ctx.t('Pin')), 1)
+                                                ])
+                                              ]),
+                                              key: "0"
+                                            }
+                                          : undefined,
+                                        (_ctx.home)
+                                          ? {
+                                              name: "right",
+                                              fn: _withCtx(() => [
+                                                _createElementVNode("div", { class: "row items-center no-wrap" }, [
+                                                  _createTextVNode(_toDisplayString(_ctx.isArchived(room) ? _ctx.t('Unarchive') : _ctx.t('Archive')), 1),
+                                                  _createVNode(_component_q_icon, {
+                                                    name: _ctx.isArchived(room) ? 'sym_o_unarchive' : 'sym_o_archive',
+                                                    class: "q-ml-sm"
+                                                  }, null, 8, ["name"])
+                                                ])
+                                              ]),
+                                              key: "1"
+                                            }
+                                          : undefined
+                                      ]), 1032, ["onLeft", "onRight"]))
+                                    }), 128)),
+                                    (_ctx.home && !_ctx.archivedView && !_ctx.filter && _ctx.archivedCount)
+                                      ? (_openBlock(), _createBlock(_component_q_item, {
+                                          key: 0,
+                                          clickable: "",
+                                          class: "q-px-sm m-chat-archived-row",
+                                          onClick: $event => (_ctx.archivedView = true)
+                                        }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_item_section, {
+                                              avatar: "",
+                                              style: {"min-width":"56px"}
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_avatar, {
+                                                  size: "48px",
+                                                  class: "m-tonal",
+                                                  icon: "sym_o_archive"
+                                                })
+                                              ]),
+                                              _: 1
+                                            }),
+                                            _createVNode(_component_q_item_section, null, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(_ctx.t('Archived')), 1)
+                                              ]),
+                                              _: 1
+                                            }),
+                                            _createVNode(_component_q_item_section, { side: "" }, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(_ctx.archivedCount), 1)
+                                              ]),
+                                              _: 1
+                                            })
+                                          ]),
+                                          _: 1
+                                        }, 8, ["onClick"]))
+                                      : _createCommentVNode("", true)
                                   ]),
                                   _: 1
                                 }, 8, ["dense"])),
-                            (_ctx.loaded && _ctx.filter && _ctx.rooms.length && !_ctx.shownRooms.length)
+                            (_ctx.loaded && _ctx.archivedView && !_ctx.shownRooms.length)
                               ? (_openBlock(), _createElementBlock("div", {
                                   key: 2,
+                                  class: "text-center m-muted q-pa-lg"
+                                }, _toDisplayString(_ctx.t('No archived conversations')), 1))
+                              : _createCommentVNode("", true),
+                            (_ctx.loaded && _ctx.filter && _ctx.rooms.length && !_ctx.shownRooms.length)
+                              ? (_openBlock(), _createElementBlock("div", {
+                                  key: 3,
                                   class: "text-center m-muted q-pa-lg"
                                 }, _toDisplayString(_ctx.t('No conversation matches')), 1))
                               : _createCommentVNode("", true),
                             (_ctx.loaded && !_ctx.rooms.length)
                               ? (_openBlock(), _createElementBlock("div", {
-                                  key: 3,
+                                  key: 4,
                                   class: "column items-center q-pa-lg text-center"
                                 }, [
                                   _createVNode(_component_q_icon, {
@@ -521,7 +690,7 @@ module.exports = {
                               : _createCommentVNode("", true),
                             (_ctx.loaded && !_ctx.home && _ctx.rooms.length > _ctx.shownRooms.length)
                               ? (_openBlock(), _createElementBlock("div", {
-                                  key: 4,
+                                  key: 5,
                                   class: "text-center q-py-sm"
                                 }, [
                                   _createVNode(_component_q_btn, {
@@ -538,7 +707,7 @@ module.exports = {
                           ]),
                           (_ctx.home)
                             ? (_openBlock(), _createBlock(_component_q_btn, {
-                                key: 2,
+                                key: 4,
                                 fab: "",
                                 "no-caps": "",
                                 color: "primary",
@@ -550,7 +719,7 @@ module.exports = {
                             : _createCommentVNode("", true),
                           (_ctx.home)
                             ? (_openBlock(), _createBlock(_component_q_dialog, {
-                                key: 3,
+                                key: 5,
                                 modelValue: _ctx.newOpen,
                                 "onUpdate:modelValue": $event => ((_ctx.newOpen) = $event),
                                 maximized: "",
@@ -605,7 +774,145 @@ module.exports = {
                                 ]),
                                 _: 1
                               }, 8, ["modelValue", "onUpdate:modelValue"]))
-                            : _createCommentVNode("", true)
+                            : _createCommentVNode("", true),
+                          _createVNode(_component_q_dialog, {
+                            modelValue: _ctx.roomSheet.open,
+                            "onUpdate:modelValue": $event => ((_ctx.roomSheet.open) = $event),
+                            position: "bottom",
+                            onHide: $event => (_ctx.roomSheet.room = null)
+                          }, {
+                            default: _withCtx(() => [
+                              (_ctx.roomSheet.room)
+                                ? (_openBlock(), _createBlock(_component_q_card, {
+                                    key: 0,
+                                    class: "m-chat-room-sheet",
+                                    style: {"width":"100%","max-width":"560px","border-radius":"16px 16px 0 0"}
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createElementVNode("div", { class: "text-subtitle1 ellipsis q-px-md q-pt-md q-pb-xs" }, _toDisplayString(_ctx.roomSheet.room.displayName), 1),
+                                      _createVNode(_component_q_list, { class: "q-pb-sm" }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item, {
+                                            clickable: "",
+                                            onClick: $event => (_ctx.roomAction(_ctx.roomSheet.room, 'pin'))
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_icon, {
+                                                    name: _ctx.roomSheet.room.isPinned ? 'sym_o_keep_off' : 'sym_o_keep'
+                                                  }, null, 8, ["name"])
+                                                ]),
+                                                _: 1
+                                              }),
+                                              _createVNode(_component_q_item_section, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.roomSheet.room.isPinned ? _ctx.t('Unpin') : _ctx.t('Pin to the top')), 1)
+                                                ]),
+                                                _: 1
+                                              })
+                                            ]),
+                                            _: 1
+                                          }, 8, ["onClick"]),
+                                          _createVNode(_component_q_item, {
+                                            clickable: "",
+                                            onClick: $event => (_ctx.roomAction(_ctx.roomSheet.room, 'mute'))
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_icon, {
+                                                    name: _ctx.roomSheet.room.isMuted ? 'sym_o_notifications' : 'sym_o_notifications_off'
+                                                  }, null, 8, ["name"])
+                                                ]),
+                                                _: 1
+                                              }),
+                                              _createVNode(_component_q_item_section, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.roomSheet.room.isMuted ? _ctx.t('Unmute') : _ctx.t('Mute')), 1)
+                                                ]),
+                                                _: 1
+                                              })
+                                            ]),
+                                            _: 1
+                                          }, 8, ["onClick"]),
+                                          (_ctx.countsOf(_ctx.roomSheet.room).unread || _ctx.countsOf(_ctx.roomSheet.room).mentions)
+                                            ? (_openBlock(), _createBlock(_component_q_item, {
+                                                key: 0,
+                                                clickable: "",
+                                                onClick: $event => (_ctx.roomAction(_ctx.roomSheet.room, 'read'))
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                    default: _withCtx(() => [
+                                                      _createVNode(_component_q_icon, { name: "sym_o_mark_chat_read" })
+                                                    ]),
+                                                    _: 1
+                                                  }),
+                                                  _createVNode(_component_q_item_section, null, {
+                                                    default: _withCtx(() => [
+                                                      _createTextVNode(_toDisplayString(_ctx.t('Mark as read')), 1)
+                                                    ]),
+                                                    _: 1
+                                                  })
+                                                ]),
+                                                _: 1
+                                              }, 8, ["onClick"]))
+                                            : (_ctx.roomSheet.room.lastMessage)
+                                              ? (_openBlock(), _createBlock(_component_q_item, {
+                                                  key: 1,
+                                                  clickable: "",
+                                                  onClick: $event => (_ctx.roomAction(_ctx.roomSheet.room, 'unread'))
+                                                }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                      default: _withCtx(() => [
+                                                        _createVNode(_component_q_icon, { name: "sym_o_mark_chat_unread" })
+                                                      ]),
+                                                      _: 1
+                                                    }),
+                                                    _createVNode(_component_q_item_section, null, {
+                                                      default: _withCtx(() => [
+                                                        _createTextVNode(_toDisplayString(_ctx.t('Mark as unread')), 1)
+                                                      ]),
+                                                      _: 1
+                                                    })
+                                                  ]),
+                                                  _: 1
+                                                }, 8, ["onClick"]))
+                                              : _createCommentVNode("", true),
+                                          _createVNode(_component_q_item, {
+                                            clickable: "",
+                                            onClick: $event => (_ctx.roomAction(_ctx.roomSheet.room, 'archive'))
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_icon, {
+                                                    name: _ctx.isArchived(_ctx.roomSheet.room) ? 'sym_o_unarchive' : 'sym_o_archive'
+                                                  }, null, 8, ["name"])
+                                                ]),
+                                                _: 1
+                                              }),
+                                              _createVNode(_component_q_item_section, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.isArchived(_ctx.roomSheet.room) ? _ctx.t('Unarchive') : _ctx.t('Archive')), 1)
+                                                ]),
+                                                _: 1
+                                              })
+                                            ]),
+                                            _: 1
+                                          }, 8, ["onClick"])
+                                        ]),
+                                        _: 1
+                                      })
+                                    ]),
+                                    _: 1
+                                  }))
+                                : _createCommentVNode("", true)
+                            ]),
+                            _: 1
+                          }, 8, ["modelValue", "onUpdate:modelValue", "onHide"])
                         ], 64))
                       : (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
                           (_ctx.roomComponent)

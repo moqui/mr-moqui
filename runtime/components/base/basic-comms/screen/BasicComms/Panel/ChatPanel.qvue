@@ -24,7 +24,11 @@ along with this software (see the LICENSE.md file). If not, see
     back as it was. -->
 <template><div class="m-chat-panel column no-wrap relative-position" :class="home ? 'm-chat-home' : ''" :style="{height: height + 'px'}">
     <template v-if="!roomId">
-        <div class="row items-center no-wrap q-pb-xs">
+        <div v-if="archivedView" class="row items-center no-wrap q-pb-xs">
+            <q-btn flat round dense icon="sym_o_arrow_back" :aria-label="t('Back')" @click="archivedView = false"></q-btn>
+            <div class="col ellipsis text-h6 q-pl-sm">{{t('Archived')}}</div>
+        </div>
+        <div v-else class="row items-center no-wrap q-pb-xs">
             <div class="col ellipsis" :class="home ? 'text-h6 q-pl-sm' : 'text-subtitle2'">{{t('Chat')}}<span v-if="unreadTotal" class="text-caption m-muted"> · {{fill(t('{count} unread'), {count: unreadTotal})}}</span></div>
             <q-btn v-if="!home" flat round dense icon="sym_o_edit_square" color="primary" :aria-label="t('New message')" @click="toggleNew"><q-tooltip>{{t('New message')}}</q-tooltip></q-btn>
             <q-btn flat round dense icon="sym_o_done_all" :disable="!unreadTotal" :aria-label="t('Mark all read')" @click="markAllRead"><q-tooltip>{{t('Mark all read')}}</q-tooltip></q-btn>
@@ -49,7 +53,13 @@ along with this software (see the LICENSE.md file). If not, see
                 </div>
             </div>
             <q-list v-else :dense="!home">
-                <q-item v-for="room in shownRooms" :key="room.chatRoomId" clickable :class="home ? 'q-px-sm q-py-sm m-chat-home-row' : 'q-px-xs q-py-xs'" :data-room="room.chatRoomId" @click="openRoom(room.chatRoomId)">
+                <!-- on the home: a swipe right pins (or unpins), a swipe left archives (or brings back); a long press opens the room's actions -->
+                <q-slide-item v-for="room in shownRooms" :key="room.chatRoomId" left-color="primary" right-color="positive"
+                        @left="({reset}) => swiped(room, 'pin', reset)" @right="({reset}) => swiped(room, 'archive', reset)">
+                <template v-if="home" #left><div class="row items-center no-wrap"><q-icon :name="room.isPinned ? 'sym_o_keep_off' : 'sym_o_keep'" class="q-mr-sm"></q-icon>{{room.isPinned ? t('Unpin') : t('Pin')}}</div></template>
+                <template v-if="home" #right><div class="row items-center no-wrap">{{isArchived(room) ? t('Unarchive') : t('Archive')}}<q-icon :name="isArchived(room) ? 'sym_o_unarchive' : 'sym_o_archive'" class="q-ml-sm"></q-icon></div></template>
+                <q-item clickable :class="home ? 'q-px-sm q-py-sm m-chat-home-row' : 'q-px-xs q-py-xs'" :data-room="room.chatRoomId" @click="openRoom(room.chatRoomId)"
+                        @touchstart.passive="holdStart(room, $event)" @touchmove.passive="holdCancel()" @touchend="holdEnd($event)" @contextmenu="contextMenu(room, $event)">
                     <q-item-section avatar :style="{minWidth: home ? '56px' : '40px'}">
                         <m-avatar v-if="room.roomTypeEnumId === 'CrtDirect' && room.otherUserId" :name="room.displayName" :user-id="room.otherUserId" :size="avatarSize"></m-avatar>
                         <q-avatar v-else :size="avatarSize" rounded class="m-tonal text-primary" :icon="roomIcon(room)"></q-avatar>
@@ -57,6 +67,8 @@ along with this software (see the LICENSE.md file). If not, see
                     <q-item-section style="min-width:0">
                         <q-item-label class="row no-wrap items-center">
                             <span class="ellipsis" :class="countsOf(room).unread || countsOf(room).mentions ? 'text-weight-bold' : ''">{{room.displayName}}</span>
+                            <q-icon v-if="room.isMuted" name="sym_o_notifications_off" size="14px" class="m-muted q-ml-xs" :aria-label="t('Muted')"></q-icon>
+                            <q-icon v-if="room.isPinned && home" name="sym_o_keep" size="14px" class="m-muted q-ml-xs" :aria-label="t('Pinned')"></q-icon>
                             <q-space></q-space>
                             <span class="text-caption m-muted text-no-wrap q-ml-xs">{{shortWhen(room.lastMessage ? room.lastMessage.sentDate : room.lastEventDate)}}</span>
                         </q-item-label>
@@ -68,7 +80,14 @@ along with this software (see the LICENSE.md file). If not, see
                         </q-item-label>
                     </q-item-section>
                 </q-item>
+                </q-slide-item>
+                <q-item v-if="home && !archivedView && !filter && archivedCount" clickable class="q-px-sm m-chat-archived-row" @click="archivedView = true">
+                    <q-item-section avatar style="min-width:56px"><q-avatar size="48px" class="m-tonal" icon="sym_o_archive"></q-avatar></q-item-section>
+                    <q-item-section>{{t('Archived')}}</q-item-section>
+                    <q-item-section side>{{archivedCount}}</q-item-section>
+                </q-item>
             </q-list>
+            <div v-if="loaded && archivedView && !shownRooms.length" class="text-center m-muted q-pa-lg">{{t('No archived conversations')}}</div>
             <div v-if="loaded && filter && rooms.length && !shownRooms.length" class="text-center m-muted q-pa-lg">{{t('No conversation matches')}}</div>
             <div v-if="loaded && !rooms.length" class="column items-center q-pa-lg text-center">
                 <q-icon name="sym_o_forum" size="40px" class="m-muted"></q-icon>
@@ -94,6 +113,23 @@ along with this software (see the LICENSE.md file). If not, see
                 <q-space></q-space>
                 <div class="q-pa-md"><q-btn unelevated no-caps color="primary" class="full-width" size="lg" icon="sym_o_chat" :label="t('Start')"
                         :disable="!(newUserIds || []).length" :loading="busy" @click="startDirect"></q-btn></div>
+            </q-card>
+        </q-dialog>
+        <q-dialog v-model="roomSheet.open" position="bottom" @hide="roomSheet.room = null">
+            <q-card v-if="roomSheet.room" class="m-chat-room-sheet" style="width:100%;max-width:560px;border-radius:16px 16px 0 0">
+                <div class="text-subtitle1 ellipsis q-px-md q-pt-md q-pb-xs">{{roomSheet.room.displayName}}</div>
+                <q-list class="q-pb-sm">
+                    <q-item clickable @click="roomAction(roomSheet.room, 'pin')"><q-item-section avatar><q-icon :name="roomSheet.room.isPinned ? 'sym_o_keep_off' : 'sym_o_keep'"></q-icon></q-item-section>
+                        <q-item-section>{{roomSheet.room.isPinned ? t('Unpin') : t('Pin to the top')}}</q-item-section></q-item>
+                    <q-item clickable @click="roomAction(roomSheet.room, 'mute')"><q-item-section avatar><q-icon :name="roomSheet.room.isMuted ? 'sym_o_notifications' : 'sym_o_notifications_off'"></q-icon></q-item-section>
+                        <q-item-section>{{roomSheet.room.isMuted ? t('Unmute') : t('Mute')}}</q-item-section></q-item>
+                    <q-item v-if="countsOf(roomSheet.room).unread || countsOf(roomSheet.room).mentions" clickable @click="roomAction(roomSheet.room, 'read')">
+                        <q-item-section avatar><q-icon name="sym_o_mark_chat_read"></q-icon></q-item-section><q-item-section>{{t('Mark as read')}}</q-item-section></q-item>
+                    <q-item v-else-if="roomSheet.room.lastMessage" clickable @click="roomAction(roomSheet.room, 'unread')">
+                        <q-item-section avatar><q-icon name="sym_o_mark_chat_unread"></q-icon></q-item-section><q-item-section>{{t('Mark as unread')}}</q-item-section></q-item>
+                    <q-item clickable @click="roomAction(roomSheet.room, 'archive')"><q-item-section avatar><q-icon :name="isArchived(roomSheet.room) ? 'sym_o_unarchive' : 'sym_o_archive'"></q-icon></q-item-section>
+                        <q-item-section>{{isArchived(roomSheet.room) ? t('Unarchive') : t('Archive')}}</q-item-section></q-item>
+                </q-list>
             </q-card>
         </q-dialog>
     </template>
@@ -137,7 +173,7 @@ module.exports = {
     inject: { mScreen: { default: null } },
     data() {
         return { loaded: !!memo.rooms, rooms: memo.rooms || [], me: memo.me || {}, prefs: memo.prefs || {}, roomId: null, componentVersion: 0,
-            height: 520, newOpen: false, newUserIds: [], busy: false, filter: '' };
+            height: 520, newOpen: false, newUserIds: [], busy: false, filter: '', archivedView: false, roomSheet: { open: false, room: null } };
     },
     computed: {
         // Qvue screens have no container ID wrapper; the loader supplies its identity before mount or measurement.
@@ -152,13 +188,17 @@ module.exports = {
             const words = this.home && this.filter ? String(this.filter).toLowerCase().split(/\s+/).filter(Boolean) : [];
             const rank = (room) => (this.countsOf(room).mentions ? 2 : (this.countsOf(room).unread ? 1 : 0));
             const matches = (room) => { const text = (room.displayName + ' ' + this.snippetOf(room)).toLowerCase(); return words.every((word) => text.indexOf(word) >= 0); };
-            const list = this.rooms.filter((room) => room.isMember && (!words.length || matches(room))).sort((left, right) => {
-                const byRank = rank(right) - rank(left);
+            // the home is the phone's list: pinned first, then the latest; the archive is apart (a search finds both)
+            const archived = (room) => this.isArchived(room);
+            const list = this.rooms.filter((room) => room.isMember && (!words.length ? (this.archivedView ? archived(room) : !archived(room)) : matches(room))).sort((left, right) => {
+                if (this.home && left.isPinned !== right.isPinned) return left.isPinned ? -1 : 1;
+                const byRank = this.home ? 0 : rank(right) - rank(left);
                 if (byRank !== 0) return byRank;
                 return (right.lastEventDate || 0) - (left.lastEventDate || 0);
             });
             return this.home ? list : list.slice(0, MAX_SHOWN);
         },
+        archivedCount() { return this.rooms.filter((room) => room.isMember && this.isArchived(room)).length; },
         unreadTotal() { return this.rooms.reduce((sum, room) => sum + (this.countsOf(room).unread || 0), 0); }
     },
     methods: {
@@ -177,6 +217,45 @@ module.exports = {
             }, (err) => { if (moqui.unreachable && moqui.unreachable(err)) this.needsConnection(); else moqui.handleAjaxError(err); throw err; });
         },
         needsConnection() { moqui.notifyMessages([{ type: 'info', message: t('This needs a connection to the server: try again when it is back') }]); },
+        // archived by me, until a message after the archive (ChatRoomMember.archivedEventSeq)
+        isArchived(room) { return room.archivedEventSeq != null && Number(room.lastMessage ? room.lastMessage.eventSeq : 0) <= Number(room.archivedEventSeq); },
+        holdStart(room, event) {
+            this.holdCancel();
+            if (!this.home || (event.touches && event.touches.length > 1)) return;
+            this.holdTimer = setTimeout(() => { this.holdTimer = null; this.held = true; this.openRoomSheet(room); }, 450);
+        },
+        holdCancel() { if (this.holdTimer) { clearTimeout(this.holdTimer); this.holdTimer = null; } },
+        holdEnd(event) { this.holdCancel(); if (this.held) { this.held = false; if (event.cancelable) event.preventDefault(); } },
+        contextMenu(room, event) { if (!this.home) return; event.preventDefault(); this.openRoomSheet(room); },
+        openRoomSheet(room) {
+            this.roomSheet = { open: true, room };
+            if (navigator.vibrate) { try { navigator.vibrate(10); } catch (e) { /* no vibration here */ } }
+        },
+        swiped(room, action, reset) { this.roomAction(room, action); setTimeout(reset, 300); },
+        // a room's own settings (pin, mute, archive: setNotification) and its read marker (markRead), changed here at once
+        roomAction(room, action) {
+            this.roomSheet.open = false;
+            if (action === 'pin' || action === 'mute' || action === 'archive') {
+                const key = action === 'pin' ? 'isPinned' : action === 'mute' ? 'isMuted' : 'archived';
+                const value = action === 'archive' ? !this.isArchived(room) : !room[key];
+                const before = { isPinned: room.isPinned, isMuted: room.isMuted, archivedEventSeq: room.archivedEventSeq };
+                if (action === 'archive') room.archivedEventSeq = value ? Number(room.lastEventSeq || (room.lastMessage && room.lastMessage.eventSeq) || 0) : null;
+                else room[key] = value;
+                this.post('setNotification', { chatRoomId: room.chatRoomId, [key]: value ? 'true' : 'false' }).then((json) => {
+                    if (json && json.archivedEventSeq !== undefined) room.archivedEventSeq = json.archivedEventSeq;
+                }, () => Object.assign(room, before));
+                if (action === 'archive') moqui.notifyMessages([{ type: 'info', message: value ? t('Conversation archived') : t('Conversation back in the list') }]);
+                return;
+            }
+            if (action === 'read') {
+                this.post('markRead', { chatRoomId: room.chatRoomId }).then(() => this.onRoomRead(room.chatRoomId), () => {});
+            } else if (action === 'unread' && room.lastMessage) {
+                this.post('markRead', { chatRoomId: room.chatRoomId, eventSeq: room.lastMessage.eventSeq, markUnread: 'true' }).then(() => {
+                    if (moqui.chat) moqui.chat.state.unread[room.chatRoomId] = { unread: 1, mentions: 0 };
+                    room.unreadCount = Math.max(1, room.unreadCount || 0);
+                }, () => {});
+            }
+        },
         roomIcon(room) { return (room.record && room.record.icon) || ROOM_ICONS[room.roomTypeEnumId] || 'sym_o_chat'; },
         countsOf(room) {
             if (!room.isMember) return { unread: 0, mentions: 0 };
@@ -300,6 +379,7 @@ module.exports = {
     },
     beforeUnmount() {
         if (this.resizer) this.resizer.disconnect();
+        this.holdCancel();
         (this.unsubscribe || []).forEach((off) => off());
         clearTimeout(this.roomsTimer);
     }
