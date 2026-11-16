@@ -69,7 +69,7 @@ fn services_that_trusted_their_caller_check_it() {
             &[("repositoryId", s("site")), ("targetPath", s(target))],
         );
         assert!(errors.contains("under runtime/git-export"), "{target}: {errors}");
-        assert!(out.get("exportPath").is_none());
+        assert!(!out.contains_key("exportPath"));
     }
     let place = fixture.dir.join("exported.git");
     let (out, errors) = internal(
@@ -91,7 +91,8 @@ fn services_that_trusted_their_caller_check_it() {
     assert!(!errors.trim().is_empty(), "the reader may not commit .gitattributes");
 
     // the framework's own: a rule's, a job's or the queue's call, with authorization disabled
-    let refused: [(&str, Vec<(&str, Value)>, &str); 6] = [
+    type Refused<'a> = (&'a str, Vec<(&'a str, Value)>, &'a str);
+    let refused: [Refused; 6] = [
         (
             "org.moqui.git.GitServices.queue#GitWebhookPush",
             vec![("repositoryId", s("site")), ("userId", s(READER))],

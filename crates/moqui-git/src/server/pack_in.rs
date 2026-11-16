@@ -283,7 +283,7 @@ fn read_entries(bundle: &Bundle, max_depth: u32) -> Result<HashMap<ObjectId, (Ki
                     .checked_base_pack_offset(base_distance)
                     .ok_or_else(|| Error::new(format!("pushed object {id} has a delta base before the pack")))?,
                 Header::RefDelta { base_id } => {
-                    let index = bundle.index.lookup(&base_id).ok_or_else(|| {
+                    let index = bundle.index.lookup(base_id).ok_or_else(|| {
                         Error::new(format!("{MISSING_OBJECT}{base_id}, which a pushed object refers to"))
                     })?;
                     bundle.index.pack_offset_at_index(index)

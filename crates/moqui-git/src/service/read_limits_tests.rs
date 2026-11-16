@@ -72,7 +72,7 @@ fn a_viewers_reads_are_held_to_their_limits() {
         &[("repositoryId", s("site")), ("path", s("big.txt"))],
     );
     assert_eq!(big.get("tooLarge"), Some(&Value::Bool(true)), "{big:?}");
-    assert!(big.get("text").is_none() && big.get("bytes").is_none(), "{big:?}");
+    assert!(!big.contains_key("text") && !big.contains_key("bytes"), "{big:?}");
     assert_eq!(big.get("size").map(text_of).as_deref(), Some("100"), "{big:?}");
     let small = ok(
         &fixture,
