@@ -873,3 +873,18 @@ fn enter_prefers_a_link_to_another_screen_and_says_when_nothing_opens() {
         link.calls()
     );
 }
+
+/// A validation error the screen's render added (a find value that is not a date) is on the message line: no submitted
+/// form is there to mark it.
+#[test]
+fn a_validation_error_from_the_render_is_on_the_message_line() {
+    let main = serde_json::json!({"v":1,"screen":{"path":"/inbox"},
+        "messages":{"info":[],"errors":[],"validationErrors":[
+            {"form":"","field":"sentDate","message":"Sent Date: 'zz' is not a valid date and time"}]},
+        "c":[{"t":"text","id":"t","text":"No rows match"}]})
+    .to_string();
+    let link = FakeLink::from_json(&[&main]).unwrap();
+    let mut session = Session::start("/inbox");
+    session.run_now(&link);
+    assert_eq!(session.message(), "Sent Date: 'zz' is not a valid date and time");
+}

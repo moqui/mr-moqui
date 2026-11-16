@@ -2044,11 +2044,20 @@ impl Session {
         self.assist_after_level(navigate);
     }
 
-    /// The flash messages a transition left for this screen.
+    /// The flash messages a transition left for this screen, and the errors its render added: a validation error (a
+    /// find value that is not a date) is on the line too, as no submitted form is there to mark.
     fn show_model_messages(&mut self) {
         let messages = self.model().messages.clone();
-        if !messages.errors.is_empty() {
-            self.set_message(messages.errors.join("; "), true);
+        let mut errors = messages.errors.clone();
+        errors.extend(
+            messages
+                .validation_errors
+                .iter()
+                .map(|err| err.message.clone())
+                .filter(|text| !text.is_empty() && !messages.errors.contains(text)),
+        );
+        if !errors.is_empty() {
+            self.set_message(errors.join("; "), true);
         } else if !messages.info.is_empty() {
             self.set_message(messages.info.join("; "), false);
         }
