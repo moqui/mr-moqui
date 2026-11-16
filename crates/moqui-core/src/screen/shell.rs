@@ -1473,14 +1473,21 @@ pub fn run_in_app<T>(
     body: impl FnOnce() -> Result<T, Error>,
 ) -> Result<T, Error> {
     ExecutionContext::with_current(|ec| {
-        ec.push_checked(
+        // The app's frame is decided by the user's own authorization records, as the shell decides the apps the user may
+        // open, not inherited from the caller: an inheritable always-allow below it (a service group's, such as the XMPP
+        // client services that add#Member is one of) would authorize it with that record, and the body would run with
+        // none of the app's entity filters (DC-UI-043). What the body calls then inherits from the app's frame.
+        let base = ec.begin_isolated_check();
+        let pushed = ec.push_checked(
             "AT_XML_SCREEN",
             location,
             "view",
             Authz::required_if(requires_authentication),
             Tarpit::Skip,
             None,
-        )?;
+        );
+        ec.end_isolated_check(base);
+        pushed?;
         ec.untrack_hit();
         Ok::<(), crate::context::Error>(())
     })

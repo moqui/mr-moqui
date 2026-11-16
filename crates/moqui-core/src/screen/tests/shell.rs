@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 use moqui_lib::object::Value;
 use serde_json::json;
 
-use super::{basic, request, World};
+use super::{basic, request, stamp, World};
 use crate::screen::serve_at;
 
 fn screen_authz_conf() -> &'static str {
@@ -62,6 +62,12 @@ const ROOT: &str = r#"<screen require-authentication="false">
         const errors = ec.message.hasError() ? ec.message.errorsString : ''
         ec.message.clearErrors()
         ec.web.sendJsonResponse({results: out.results || [], failedParts: out.failedParts || [], unavailable: out.unavailable, errors: errors})
+    ]]></script></actions><default-response type="none"/></transition>
+    <transition name="reach" read-only="true" begin-transaction="false"><actions><script><![CDATA[
+        const out = ec.service.sync().name('test.Shell.call#Reach').call() || {}
+        const errors = ec.message.hasError() ? ec.message.errorsString : ''
+        ec.message.clearErrors()
+        ec.web.sendJsonResponse({results: out.results || [], errors: errors})
     ]]></script></actions><default-response type="none"/></transition>
     <subscreens default-item="apps"/>
     <widgets><subscreens-active/></widgets>
@@ -170,6 +176,27 @@ const SERVICES: &str = r#"<services>
         <out-parameters><parameter name="consent" type="Boolean"/></out-parameters>
         <actions><script>consent = false</script></actions>
     </service>
+    <service verb="call" noun="Reach">
+        <description>a caller under an inheritable always-allow of its own (as the XMPP client services, add#Member among them)</description>
+        <out-parameters><parameter name="results" type="List"/></out-parameters>
+        <actions><script><![CDATA[
+            results = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers').parameters({hook: 'chat-target',
+                parameters: {userIdList: ['someone']}}).call()?.results || []
+        ]]></script></actions>
+    </service>
+    <service verb="get" noun="Reach">
+        <description>a chat-target provider: what it calls is authorized as its app, which grants only view</description>
+        <in-parameters><parameter name="userIdList" type="List"/></in-parameters>
+        <out-parameters><parameter name="refusedUserIdList" type="List"/><parameter name="wrote" type="Boolean"/></out-parameters>
+        <actions><script><![CDATA[
+            refusedUserIdList = []
+            try { ec.service.sync().name('test.Shell.create#Thing').call(); wrote = !ec.message.hasError() } catch (err) { wrote = false }
+            ec.message.clearErrors()
+        ]]></script></actions>
+    </service>
+    <service verb="create" noun="Thing">
+        <actions><script>made = true</script></actions>
+    </service>
     <service verb="search" noun="Secret" authenticate="false">
         <in-parameters><parameter name="text"/></in-parameters>
         <out-parameters><parameter name="rows" type="List"/></out-parameters>
@@ -244,6 +271,7 @@ fn tree(name: &str) -> PathBuf {
                 <inbox-source name="open.down" service="test.Shell.get#InboxDown" sequence="10"/>
                 <inbox-source name="open.nameless" service=""/>
                 <sms-consent name="shared.consent" service="test.Shell.consent#Yes"/>
+                <chat-target name="open.reach" service="test.Shell.get#Reach"/>
                 <frobnicate/>
             </shell-providers>
             <widgets><subscreens-active/></widgets>
@@ -1150,6 +1178,64 @@ fn the_shell_counts_transition_answers_the_counts_of_the_current_user() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// An ext item with a `permission` is listed only for a user who holds it, beside one with none, which every user of the
+/// screen gets (DC-UI-044: a Chat action the user would be refused is not offered).
+#[test]
+fn an_ext_item_with_a_permission_is_listed_only_for_a_user_who_holds_it() {
+    let dir = tree("ext-permission");
+    let webroot = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/webroot/screen/webroot.xml"),
+    )
+    .unwrap();
+    let start = webroot
+        .find("<transition name=\"extItems\"")
+        .expect("webroot.xml has extItems");
+    let end = start + webroot[start..].find("</transition>").unwrap() + "</transition>".len();
+    let root_text = ROOT.replacen(
+        "<subscreens default-item",
+        &format!("{}\n    <subscreens default-item", &webroot[start..end]),
+        1,
+    );
+    std::fs::write(dir.join("Root.xml"), root_text).unwrap();
+    std::fs::write(
+        dir.join("Apps/Open/Detail.xml"),
+        r#"<screen require-authentication="true" default-menu-title="Detail">
+            <transition name="make"><default-response url="."/></transition>
+            <ext-action name="test.everyone" slot="row-actions" sequence="1" label="Everyone" transition="make"/>
+            <ext-action name="test.gated" slot="row-actions" sequence="2" label="Gated" transition="make" permission="TEST_EXT_GATED"/>
+            <widgets/></screen>"#,
+    )
+    .unwrap();
+    let world = world(&dir);
+    {
+        let ctx = world.factory.new_context();
+        let _entered = ctx.enter();
+        let _authz = ctx.disable_authz();
+        row(
+            &world,
+            "moqui.security.UserPermission",
+            &[("userPermissionId", Value::string("TEST_EXT_GATED"))],
+        );
+        row(
+            &world,
+            "moqui.security.UserGroupPermission",
+            &[
+                ("userGroupId", Value::string("COUNTERS")),
+                ("userPermissionId", Value::string("TEST_EXT_GATED")),
+                ("fromDate", stamp()),
+            ],
+        );
+    }
+    let root = root_of(&dir);
+    let (status, plain) = get(&world, &root, Some("plain"), "/extItems/apps/open/Detail", &[]);
+    assert_eq!(status, 200, "{plain}");
+    assert_eq!(names(&plain["actions"], "name"), ["test.everyone"]);
+    let (status, grouped) = get(&world, &root, Some("grouped"), "/extItems/apps/open/Detail", &[]);
+    assert_eq!(status, 200, "{grouped}");
+    assert_eq!(names(&grouped["actions"], "name"), ["test.everyone", "test.gated"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A user whose qapps theme names `test.Shell.get#ZonedCounts`, with a time zone and a locale of their own.
 fn zoned_user(world: &World, user: &str) {
     world.user(user, None);
@@ -1971,6 +2057,48 @@ fn providers_of_the_apps_the_user_may_open_answer_and_a_failing_one_is_left_out(
     assert!(
         bad["errors"].as_str().unwrap_or("").contains("not a provider hook"),
         "{bad}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A provider runs as its app, by the user's own grant of the app (DC-UI-043): called from under a caller's inheritable
+/// always-allow of every action (a service group's, as the XMPP client services are), what it calls is authorized as the
+/// app, which grants view, and not as the caller, so a write it tries is refused. Before, the app's frame inherited the
+/// caller's grant, and with it none of the app's entity filters applied.
+#[test]
+fn a_provider_runs_with_its_apps_own_grant_not_one_its_caller_inherits() {
+    let dir = tree("own-grant");
+    let world = service_authz_world(&dir);
+    let root = root_of(&dir);
+    row(
+        &world,
+        "moqui.security.ArtifactGroupMember",
+        &[
+            ("artifactGroupId", Value::string("CALLERS")),
+            ("artifactName", Value::string("test.Shell.call#Reach")),
+            ("artifactTypeEnumId", Value::string("AT_SERVICE")),
+            ("nameIsPattern", Value::string("N")),
+            ("inheritAuthz", Value::string("Y")),
+        ],
+    );
+    row(
+        &world,
+        "moqui.security.ArtifactAuthz",
+        &[
+            ("artifactAuthzId", Value::string("CALLERS_ALL")),
+            ("userGroupId", Value::string("ALL_USERS")),
+            ("artifactGroupId", Value::string("CALLERS")),
+            ("authzTypeEnumId", Value::string("AUTHZT_ALWAYS")),
+            ("authzActionEnumId", Value::string("AUTHZA_ALL")),
+        ],
+    );
+    let (status, out) = get(&world, &root, Some("plain"), "/reach", &[]);
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out["errors"], "", "{out}");
+    assert_eq!(names(&out["results"], "sourceId"), ["open.reach"], "{out}");
+    assert_eq!(
+        out["results"][0]["wrote"], false,
+        "the provider wrote under its caller's grant: {out}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

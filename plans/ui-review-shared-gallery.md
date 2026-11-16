@@ -1,6 +1,8 @@
 # MR Moqui — UI review: Shared shell and Gallery
 
-**Status — 2026-11-16:** planned; every activity pending. Source inspection only; no review or test results claimed.
+**Status — 2026-11-16:** review pass started. Batch SH-B01 exercised selected shell and Gallery branches and
+recorded five open findings. Every activity remains incomplete; unrecorded branches are pending. No refinement,
+build or automated test execution has started.
 
 Contents: [scope](#1-purpose-scope-and-sources) · [method](#2-review-method-and-refinement-criteria) ·
 [inventory](#3-screen-and-surface-inventory) · [activities](#4-end-to-end-activities) ·
@@ -385,9 +387,11 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
 
 - **Actor/start:** Fresh disposable wizard customer data; a validation failure prepared for the Options step.
 - **Objective/steps:** Wizard/Customer → enter identity → Options → back/edit → Review → cancel/return → finish
-  once → follow the created result.
+  once → inspect the demonstration acknowledgement and cleared session draft. Also enter Review directly with
+  an incomplete draft and check that required earlier steps cannot be bypassed.
 - **Expected:** Step names and progress stay visible; review reflects the latest values; only the explicit final
-  action creates the intended record.
+  action finishes and clears the draft. This Gallery wizard writes no customer record; its acknowledgement must
+  say so. Persistent creation and following a created customer require a real consuming app, not this demo.
 - **Recovery:** Invalid step, delayed save, navigation away, stale review and repeated finish preserve the
   appropriate draft and do not create duplicates.
 - **Screens/modes:** Wizard and Customer/Options/Review; narrow step header, keyboard movement and TUI/Standard
@@ -409,9 +413,11 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
 
 - **Actor/start:** Disposable scan targets for one match, several matches and no match; incomplete task lines.
 - **Objective/steps:** Handheld → scan/select a match → confirm put-away; Task → load step → confirm/short/skip
-  → next line → completion → return to remaining work.
-- **Expected:** The chosen record and quantity are visible at action time; each result advances the correct
-  line; remaining work agrees with completed steps.
+  → inspect the displayed line and remaining list → reach the final-line boundary.
+- **Expected:** The chosen record and quantity are visible at action time and acknowledgements distinguish
+  demonstration from persistence. Handheld writes no stock movement. Task Confirm reloads the same line;
+  Short/Skip advance its URL index, clamped to the seventh line. There is no persisted completion or completed-work
+  screen: record that limitation explicitly and review whether the visible explanation makes it understandable.
 - **Recovery:** Duplicate scan, wrong code, invalid quantity, lost focus, canceled chooser and failed
   confirmation leave the next safe action clear.
 - **Screens/modes:** Handheld and Task, primarily 390px with keyboard/scanner input; desktop and actual
@@ -588,15 +594,15 @@ execution records it; “exercised” never implies that all modes and recovery 
 
 | Activity | Status | Outcome / remaining branches | Evidence / findings |
 | --- | --- | --- | --- |
-| SH-01 — Sign in, recover and continue to the intended work | pending | All steps, modes and recovery branches pending. | — |
-| SH-02 — Find work and keep a reliable navigation history | pending | All steps, modes and recovery branches pending. | — |
-| SH-03 — Choose an appearance and read every state | pending | All steps, modes and recovery branches pending. | — |
-| SH-04 — Find a record, save the view and resume it | pending | All steps, modes and recovery branches pending. | — |
-| SH-05 — Understand and act on a record | pending | All steps, modes and recovery branches pending. | — |
+| SH-01 — Sign in, recover and continue to the intended work | exercised — partial | Protected Gallery deep link, wrong password/retry and protected-route refusal after logout passed in browser. Recovery mail, MFA, expired password, SSO, initial setup, ReAuth, narrow login and TUI remain pending. | SH-B01; `20-signed-out-protected-route.txt` |
+| SH-02 — Find work and keep a reliable navigation history | exercised — partial | Launcher, desktop/narrow menus, filtered list/detail and Back/Forward exercised. Site Map fails; launcher still recovers. Restricted users, new tab, missing/deleted routes, expired session and TUI remain pending. | SH-B01; SH-UI-004/005; `12-list-back.txt` |
+| SH-03 — Choose an appearance and read every state | exercised — partial | Light/dark, reload persistence, live Appearance dialog switch and compact/comfortable exercised. Task text clips in compact. Locked policy, full contrast measurements, other appearance controls, save failure and terminal branches pending. | SH-B01; SH-UI-003; screenshots `01`–`03`, `10`–`11` |
+| SH-04 — Find a record, save the view and resume it | exercised — partial | Landing count → filtered List → Detail → Back, Find Options/Escape, no-match search and reset exercised. Saved Finds, Columns, sorting/paging, export, edit dialogs, invalid filters, 390 and other modes pending. | SH-B01; `12-list-back.txt`, `14-list-empty-1280.jpg`, `15-list-reset.txt` |
+| SH-05 — Understand and act on a record | inspected — partial | Opened STRT_APPEARANCE_POLICY Detail and checked identity/context at 1280. Actions, editing, related records, 360/Contact, history, refusal and all other modes pending. | SH-B01; `13-detail-1280.jpg` |
 | SH-06 — Complete and recover shared forms | pending | All steps, modes and recovery branches pending. | — |
-| SH-07 — Leave and resume a multi-step task | pending | All steps, modes and recovery branches pending. | — |
-| SH-08 — Move work across boards, calendars and trees | pending | All steps, modes and recovery branches pending. | — |
-| SH-09 — Finish a scan-driven task | pending | All steps, modes and recovery branches pending. | — |
+| SH-07 — Leave and resume a multi-step task | exercised — partial | Empty-name validation, Back draft retention, normal finish/reset and skipped-Options deep link exercised; incomplete draft incorrectly finishes. Cancel/navigation-away, invalid Options, stale/repeated finish, dark/narrow and other modes pending. | SH-B01; SH-UI-001; evidence `04`–`06` |
+| SH-08 — Move work across boards, calendars and trees | exercised — partial | Calendar month rendering, quick-create demo, invalid month and Today recovery, 390 layout exercised. Views/Board/tree, persistence, drag/keyboard moves, date-range validation, day/week fallback and other modes pending. | SH-B01; SH-UI-002; `07-calendar-invalid-month.jpg`, `08-calendar-390.jpg` |
+| SH-09 — Finish a scan-driven task | exercised — partial | At 390: unmatched scan, ambiguous chooser cancellation, single match, put-away confirmation, Task Enter-confirm and Skip through final boundary exercised. Choosing among matches, GS1, duplicate/error/quantity branches, Short, dark, desktop and TUI pending. No business persistence exists in these demos. | SH-B01; SH-UI-003; evidence `09`–`11` |
 | SH-10 — Edit content and inspect its retained versions | pending | All steps, modes and recovery branches pending. | — |
 | SH-11 — Attach evidence and discuss it in context | pending | All steps, modes and recovery branches pending. | — |
 | SH-12 — Use shell shortcuts without losing the task | pending | All steps, modes and recovery branches pending. | — |
@@ -604,7 +610,7 @@ execution records it; “exercised” never implies that all modes and recovery 
 | SH-14 — Keep a terminal task alive across navigation | pending | All steps, modes and recovery branches pending. | — |
 | SH-15 — Read, compare and export without losing the selection | pending | All steps, modes and recovery branches pending. | — |
 | SH-16 — Use a bounded public or shared-device entry | pending | All steps, modes and recovery branches pending. | — |
-| SH-17 — Reconcile cross-app shell behavior and remaining modes | pending | All steps, modes and recovery branches pending. | — |
+| SH-17 — Reconcile cross-app shell behavior and remaining modes | exercised — partial | Brief Standard launcher and Site Map checks only; Material → Standard link fails, direct Standard URL works. Cross-app consumers, remaining helpers and TUI pending. | SH-B01; SH-UI-004/005; evidence `16`–`19` |
 | SH-18 — Maintain personal Assist memory and reusable skills | pending | All steps, modes and recovery branches pending. | — |
 
 ### Findings register
@@ -614,7 +620,11 @@ presentation; P3 is a localized refinement. Label evidence as observed behavior,
 
 | ID / severity | Actor, activity step, route, mode / viewport | Reproduction and impact | Evidence / owning layer | State / correction / retest |
 | --- | --- | --- | --- | --- |
-| — | — | No findings recorded. | — | — |
+| SH-UI-001 / P2 | Observed; john.doe; SH-07 incomplete draft; `/qapps/gallery/Wizard/Review`; Material light, compact, 1920×1080 | Save Customer, return from Options without submitting it, open Review directly, then Create customer. Country/Currency are empty, but success is reported and the draft is cleared. The demo bypasses its required Options validation. This is a wizard-validation defect, not evidence of a persisted customer or authorization bypass. | `05-wizard-review-incomplete.jpg`, `06-wizard-skipped-options-result.jpg` (cleared draft), `review-observations.md` (observed acknowledgement); Gallery [Review.xml](../runtime/components/dev/example/screen/Gallery/Wizard/Review.xml) final validation versus [Options.xml](../runtime/components/dev/example/screen/Gallery/Wizard/Options.xml). | Open; provisional priority. No correction/retest. Normal sequential finish separately exercised. |
+| SH-UI-002 / P2 | Observed; john.doe; SH-08 invalid month; `/qapps/gallery/Calendar?month=2026-13`; Material light, compact, 1920×1080 | Open the invalid month bookmark. Header says January 2027 and 11 events, but only one empty week (Dec 27–Jan 2) appears; no validation explains the mismatch. Today restores November's full grid and 13 events. | `07-calendar-invalid-month.{jpg,txt}`; Gallery [Calendar.qvue](../runtime/components/dev/example/screen/Gallery/Calendar.qvue) month parsing/grid, [Calendar.xml](../runtime/components/dev/example/screen/Gallery/Calendar.xml) event parameter validation. | Open; provisional priority. No correction/retest. Today is the observed recovery. |
+| SH-UI-003 / P2 | Observed; john.doe; SH-03/09; `/qapps/gallery/Task?lineIndex=7`; Material light, 390×844, compact | Set Compact, open Task, Skip through the final line. Large Location/Product values are vertically clipped inside read-only fields with internal scrollbars. Product textarea has 24px client height, 39px scroll height and 19.2px font; the bin/product cannot be read at a glance. Comfortable plus reload gives 30px client/scroll height and readable values. | `10-task-final-line-390.jpg`, `11-task-comfortable-390.jpg`; [Task.xml](../runtime/components/dev/example/screen/Gallery/Task.xml) large display styles; shared display/density sizing is the candidate owning layer, to confirm during triage. | Open; provisional priority. Comfortable is a review workaround, not a fix. Wider/dark and second-consumer reproduction pending. |
+| SH-UI-004 / P2 | Observed; john.doe; SH-02/17; `/qapps/ScreenTree` and `/apps/ScreenTree`; light, comfortable, 1280×900 | Click footer Site Map. Both Material and Standard replace the tree with a raw render error: `not a function`, at `currentScreenDef = sri.getRootScreenDef();`. Site Map and its nested walk are unavailable. Launcher/Home remain usable. | `16-site-map-error-1280.jpg`, `16-site-map-error.txt`, `19-site-map-standard.txt`; [ScreenTree.xml](../runtime/components/base/webroot/screen/webroot/apps/ScreenTree.xml) line 22 and screen-script API integration. | Open; provisional priority. No correction/retest. Nested tree branch blocked by this finding. |
+| SH-UI-005 / P2 | Observed; john.doe; SH-02/17; `/qapps/AppList`; Material light, comfortable, 1280×900 | Click Standard in the launcher. Its href is `/apps/AppList`, but the observed browser URL briefly becomes `/qapps/AppList/apps/AppList`, then returns to `/qapps/AppList`, with Material still selected. Direct `/apps/AppList` successfully opens Standard. The interface switch is broken through its visible entry path. | `17-standard-link-result.{json,jpg}` (settled Material page), `review-observations.md` (transient URL), `18-standard-direct.jpg`; [AppList.xml](../runtime/components/base/webroot/screen/webroot/apps/AppList.xml) mode link and shared client navigation. Precise cause remains for triage. | Open; provisional priority. Direct URL is the documented review workaround; no correction/retest. |
 
 ### Bounded batch record
 
@@ -626,7 +636,75 @@ For each later batch record:
 - In refinement only: decisions, owning files/components, correction, focused verification commands/results and retest.
 - Temporary settings/grants/files/jobs restored, remaining cleanup and companion handoffs.
 
-No execution batches have been started.
+### SH-B01 — Initial shell and Gallery review, 2026-11-16
+
+**Scope and phase.** First bounded review batch only: primary sign-in/navigation/appearance, a list/detail journey,
+Wizard, standalone Calendar, Handheld and Task, then brief Standard entry. No application or API fixes, triage,
+regression/acceptance runs or builds. Supporting subagents prepared the runtime and inspected Gallery source;
+only the browser observations below advance activity coverage. All five priorities remain provisional until
+consolidated findings triage after the review pass.
+
+**Environment and fixtures.** Source commit `b2295f71b6ea2c62ff17609997c1a80f51300c2e`; existing
+`target/release/moqui`, reporting `moqui 0.1.0 maximal`, SHA-256
+`f37fab7e583709f3b133f71b04241f73fcb137c6cc29158c107768163e2c10f1`. Fresh embedded PostgreSQL runtime
+`/tmp/mr-shared-gallery-review-o3w4sod2`, copied `conf/UiReviewConf.xml`, individual links for framework, tools,
+webroot, basic-comms, dev-aide and example; addon/test directories empty and demo/template unloaded. No mutable
+source workspace/database linked. HTTP `127.0.0.1:18871`, browser hostname `localhost`; final cluster listener
+`127.0.0.1:58900`, other protocol listeners and scheduled jobs disabled. Startup initially exposed the default
+cluster bind; setup corrected it to loopback and restarted the same disposable database before the workflow walks.
+One broad demo identity only: `john.doe`, `EX_JOHN_DOE`, ADMIN + ADMIN_ADV. This establishes no least-privilege result.
+No credentials are recorded here. No mail capture, second-factor/SSO, provider or local-model fixture was prepared.
+
+Runtime date 2026-11-16, review approximately 22:43–22:50 UTC / 16:43–16:50 America/Chicago; fresh seed timestamps
+showed 16:43. Current source files override embedded copies. Startup reported four changed embedded copies
+(ServerEntities, InstanceServices and the screen/form schemas), plus an unregistered Docker service; no rebuild
+was attempted, and this batch is evidence for the recorded binary/source combination. Runtime metadata, copied
+configuration and listener excerpt are retained with the evidence.
+
+**Modes and evidence.** In-app browser, Material default color scheme: 1920×1080 light/dark Landing and appearance;
+1920×1080 light/compact Wizard and Calendar; 390×844 light Calendar/Handheld/Task, compact then comfortable;
+1280×900 light/comfortable launcher/List/Detail/Site Map and Standard launcher/Site Map. The browser viewport
+was explicitly set; at 390 the scrolling document reported 375×844 content area, with no wider body overflow.
+A transient capture immediately after resizing was replaced after reload; only the settled narrow capture counts.
+Keyboard checks were limited to Enter on scan/task fields and Escape in Find Options, not a complete keyboard walk.
+No TUI was launched and no quantitative contrast pass was completed.
+
+Evidence filenames below are relative to ignored `plans/ui-refinement-evidence/shared-gallery/batch-01/`.
+Screenshots and supporting AX text/JSON are local artifacts, not committed baselines. Reproduction steps in the
+findings register remain usable without those files.
+
+| Branch | Observed actions and outcome | Evidence / remaining boundary |
+| --- | --- | --- |
+| SH-01 sign-in/out | Anonymous protected Gallery URL redirected to Login. Wrong password gave a generic error and cleared the password; correct retry returned to Gallery. At batch end logout returned to Login and reopening protected Gallery still required login. | Initial observations in this record; final `20-signed-out-protected-route.txt`. No MFA/reset/change-password/recent-auth evidence. |
+| SH-02/03 shell and appearance | Gallery defaulted to Landing. Account → Dark changed the page and survived reload. Appearance showed Dark selected; changing to Light and Compact with the dialog open worked. Compact remained selected after later reloads; Comfortable was restored and verified through the Task comparison. Desktop app menu, narrow drawer and launcher offered Gallery and the five app families. | `01-gallery-light.jpg`, `02-gallery-dark.jpg`, `03-appearance-light-compact.jpg`. Fonts, policy locks and complete focus/contrast checks still pending. |
+| SH-02/04/05 list journey | Launcher → Gallery → Screen Theme Resource Type count (34) → List (`1-20 / 34`) → STRT_APPEARANCE_POLICY Detail. Back restored the filtered URL, label and count; Forward reopened the same detail. Find Options retained the selected type; Escape closed it and focus returned to Find Options. Description `SH-BATCH-01-NO-MATCH` showed No results found with visible filter chips. Reset removed filters and returned `1-20 / 538`. | `12-list-back.txt`, `13-detail-1280.jpg`, `14-list-empty.txt` / `14-list-empty-1280.jpg`, `15-list-reset.txt`. No Saved Find/column preference created and no enumeration changed. Detail mutations/related parts not reviewed. |
+| SH-07 wizard | Clearing Customer name and Next showed inline Enter the customer name without advancing. `SH Batch 01 Customer` saved to Options; Back retained it. Direct Review skipped Options, showed empty country/currency, then reported success and reset the draft (SH-UI-001). A separate `SH Batch 01 Complete` draft followed every step, displayed USA/USD/newsletter choices, then finished/reset with the explicit nothing-is-written notice. | `review-observations.md`, `05-wizard-review-incomplete.jpg`, `06-wizard-skipped-options-result.jpg`. The `04`/`06` AX text files contain only unchanged-tree notices; they do not independently capture validation/success text. Default synthetic contact details only. Customer persistence is intentionally unsupported. |
+| SH-08 calendar | November displayed a full month with 13 demo events. Selecting Nov 16 opened a dialog with 09:00–10:00; Create with blank title reported a demonstration event and saved nothing. Invalid month `2026-13` produced SH-UI-002; Today recovered. At 390 the grid kept seven columns, one-letter headings and event dots whose accessibility labels described events. | `07-calendar-invalid-month.{jpg,txt}`, `08-calendar-390.jpg`. No real event created; empty-title behavior is a demo observation, not a separately asserted defect. Full keyboard event access/date-range validation remains pending. |
+| SH-09 handheld | `NOPE` returned No match with supported types and retained focus/input. `DUP-1` opened a two-match asset/lot chooser; Cancel returned focus to Code. `A-100` resolved Red widget, large and acknowledged a non-writing scan. Bin `B-01-07` required Confirm, then showed the resolved bin and explicit non-writing put-away acknowledgement, cleared the entry and retained focus. | `09-handheld-confirm-390.{jpg,txt}`. No stock data changed. Selecting one ambiguous match, GS1 and failures remain pending. |
+| SH-09 task | Enter confirmed line 1 and reloaded that same line, with explicit demo feedback and focus restored to Pick. Six Skip actions reached line 7 with Remaining lines (0); another Skip set `lineIndex=7` but still displayed line 7, as the source clamps the index. Compact clipped the large read-only values (SH-UI-003); Comfortable/reload restored readability. | `10-task-final-line.txt`, `10-task-final-line-390.jpg`, `11-task-comfortable-390.jpg`. No persisted completion exists. The end-of-demo boundary needs later usability judgment; it is not counted as a completed warehouse workflow. |
+| SH-02/17 Site Map and Standard | Footer Site Map failed in Material (SH-UI-004), but launcher recovered. Standard link briefly produced a nested Material URL, then normalized back to Material AppList instead of switching (SH-UI-005). Direct `/apps/AppList` rendered Standard successfully; its Site Map reproduced the same render error. Logout remained available. | `16-site-map-error*`, `17-standard-link-result.{json,jpg}`, `18-standard-direct.jpg`, `19-site-map-standard.txt`. No broad Standard walk or cross-app retest claimed. |
+
+**Diagnostics.** `browser-console.json` contains one captured warning: HTTP 500 at 22:44:55 UTC. The server log
+at that timestamp records the intentionally empty wizard name validation. This is supporting diagnostic behavior,
+not an unexplained extra finding. Site Map's server render errors were visible in both UIs and recorded in the server
+log. There is no complete network trace; absence of additional captured console warnings is not a clean-network
+claim. No external mail/provider action was attempted.
+
+**Scope reconciliation and next batch.** Source inspection established that the wizard uses only a session draft;
+Handheld/Task are non-writing demonstrations; standalone Board/Calendar and Views tree edits also report only.
+Views board/calendar changes do persist Example records, with demo dates in October 2026 (EX_100–EX_110), so the
+next Views walk must deliberately navigate those dates or prepare current-date disposable rows. SH-07/09 wording
+above now reflects these boundaries without treating missing business persistence as a defect. Resume with the
+unvisited common forms and remaining SH-04/05/06 branches, then Views/Board and the unfinished wizard/scan
+branches. Keep every unrecorded step and mode pending, especially actual TUI, restricted identities, mail, Assist,
+files/editors and terminal. Site Map's nested-tree branch is blocked by SH-UI-004; use launcher navigation only as
+a named workaround. Do not start refinement or mark the review pass complete.
+
+**Cleanup.** Light/default scheme and Comfortable density restored, no new saved searches or business records,
+no grants/providers changed, wizard drafts cleared by final actions, account logged out and protected access
+rechecked. Browser viewport override reset. The server exited cleanly after SIGINT at 22:50:34 UTC; HTTP/cluster ports had no listeners and refused
+connections, the server process was absent, and the embedded PostgreSQL PID file/processes were gone. See
+`runtime-cleanup.json` and `runtime-errors.txt`. Scratch runtime and local evidence are retained for reproducibility.
 
 ## 7. Decisions
 

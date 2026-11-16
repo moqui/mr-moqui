@@ -22,8 +22,8 @@
 //! screen. `parameter` children map an item's fields to the target's parameters (`name`, `from`), or give one a fixed
 //! `value` (the kind of record to make); nothing else of the item is passed. `condition` is a display test on the item's fields (`field`, `!field`, `field == 'v'`,
 //! `field != 'v'`), never an authorization rule: the server leaves out a target the user may not view, and an item whose
-//! `hook` (a provider hook it needs, such as `create-from`) no app the user may open answers; the target checks access
-//! again when it is called.
+//! `hook` (a provider hook it needs, such as `create-from`) no app the user may open answers, and one whose `permission` (a
+//! user permission) the user lacks; the target checks access again when it is called.
 
 use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
@@ -57,6 +57,9 @@ pub struct ExtItem {
     pub confirm: String,
     /// A provider hook (`create-from`) the item needs: it is left out for a user no app answers that hook for.
     pub hook: String,
+    /// A user permission the item needs: it is left out for a user without it. A display gate only, as `condition` is:
+    /// the target still checks access when it is called.
+    pub permission: String,
 }
 
 /// The display test of an item, parsed from `condition`.
@@ -204,6 +207,7 @@ fn item_of(node: &MNode, kind: &str, location: &str) -> Option<ExtItem> {
         values,
         confirm: attr(node, "confirm"),
         hook: attr(node, "hook"),
+        permission: attr(node, "permission"),
     })
 }
 
@@ -274,8 +278,8 @@ fn text_or_null(text: &str) -> Value {
     }
 }
 
-/// The JSON of `item` for the clients, with its `url`; None when the user may not view its target screen or the
-/// declaring screen has no such transition.
+/// The JSON of `item` for the clients, with its `url`; None when the user lacks its permission, may not view its target
+/// screen, or the declaring screen has no such transition.
 fn item_json(
     factory: &std::sync::Arc<crate::context::ExecutionContextFactory>,
     root: &str,
@@ -283,6 +287,9 @@ fn item_json(
     def: &ScreenDef,
     item: &ExtItem,
 ) -> Result<Option<Value>, Error> {
+    if !item.permission.is_empty() && !crate::user::has_permission(&item.permission)? {
+        return Ok(None);
+    }
     if !item.hook.is_empty() {
         let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::require_authz);
         if super::shell::declared_providers(factory, &item.hook).is_empty() {
