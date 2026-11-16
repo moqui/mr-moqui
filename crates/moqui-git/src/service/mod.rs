@@ -328,7 +328,9 @@ pub(crate) const EXPORT_DIR: &str = "git-export";
 
 /// `export#GitRepository`: write a db repository as a bare repository on disk. Out: `exportPath`, `objectCount`.
 /// Needs the delete right on the repository, or authorization disabled. With authorization on, `targetPath` is a
-/// relative path under `runtime/git-export`; with it disabled, any path, as before.
+/// relative path under `runtime/git-export`; with it disabled, any path, as before, unless `underExportDir` holds it
+/// there too (`FileServices.export#Drive`, which checked the drive's own view right and calls with authorization
+/// disabled).
 fn export_repository(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
@@ -336,8 +338,9 @@ fn export_repository(
     let Some((provider, id)) = hosting::allowed(parameters, "delete") else {
         return Ok(BTreeMap::new());
     };
+    let held = !internal_call() || flag(parameters, "underExportDir");
     let target = match text(parameters, "targetPath").map(|path| path.trim().to_string()) {
-        Some(path) if !path.is_empty() && !internal_call() => {
+        Some(path) if !path.is_empty() && held => {
             // segments as a repository path's, one ending in .git allowed (a bare repository's usual name)
             let checked = path
                 .split('/')
