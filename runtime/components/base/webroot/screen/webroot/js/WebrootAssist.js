@@ -81,7 +81,8 @@
             errorTitle: "Something went wrong", nothingWaiting: "Nothing waiting", up: "Helpful", down: "Not helpful",
             canvas: "Canvas", backToPage: "Back to the page", showCanvas: "Show canvas", closeCanvas: "Close the canvas", loading: "Loading",
             adjust: "Ask Assist to change this canvas", adjustSend: "Adjust", canvasProblems: "The canvas reported", canvasUpdating: "Updating the canvas",
-            canvasFailed: "The canvas could not be loaded",
+            canvasFailed: "The canvas could not be loaded", canvasWriteCanceled: "Not saved: the write was not confirmed",
+            canvasWriteTitle: "Save with {transition}?", canvasWriteNone: "No parameters",
             attach: "Attach a file", remove: "Remove", attachTooMany: "At most {n} files", attachTooBig: "{name} is larger than {size}",
             attachType: "{name}: this kind of file cannot be attached", attachFailed: "{name} was not attached", uploading: "Uploading",
             waitUploads: "Wait for the files to upload", dictate: "Dictate", stopDictation: "Stop dictation", transcribing: "Transcribing",
@@ -1745,12 +1746,40 @@
                     .then((json) => { if (action.done) action.done(json.nonces || []); return json; }, (err) => { if (action.failed) action.failed(err.errors); return null; });
             }
             if (action.kind === "mutation") {
+                const failed = (err) => { if (action.failed) action.failed(err && err.errors); return null; };
+                const done = (json) => { if (action.done) action.done(json); return json; };
+                // SEC-AI-02: the server answers the held write first (its path and parameters) and runs it only on the user's
+                // OK of that very write: a new click's nonce and the write's hash
                 return assist.canvasCall("canvasAction", { kind: "mutation", statement: action.statement, nonce: action.nonce, state: action.state || {},
-                    activation: !!action.activation })
-                    .then((json) => { if (action.done) action.done(json); return json; }, (err) => { if (action.failed) action.failed(err.errors); return null; });
+                    activation: !!action.activation }).then((json) => {
+                    if (!json || !json.confirm) return done(json);
+                    return assist.confirmCanvasWrite(json.confirm).then((ok) => {
+                        if (!ok) return done({ ok: false, error: assist.labels.canvasWriteCanceled });
+                        return assist.canvasCall("canvasAction", { kind: "arm", count: 1, activation: true }).then((armed) =>
+                            assist.canvasCall("canvasAction", { kind: "mutation", statement: action.statement, nonce: ((armed && armed.nonces) || [])[0],
+                                state: action.state || {}, activation: true, confirm: json.confirm.argsHash })).then(done, failed);
+                    });
+                }, failed);
             }
             const text = action.message || "Submit";
             return assist.sendCanvasTurn("canvasAction", { kind: "continue", message: text, values: action.values || {}, form: action.form || null }, text);
+        },
+        // The held write of a canvas Button (SEC-AI-02), shown before it runs as an approval card shows one: what it saves
+        // (the transition and its path) and every parameter. Resolves true on the user's OK, false otherwise.
+        confirmCanvasWrite(confirm) {
+            const vm = moqui.webrootVue;
+            const open = vm && vm.$q && vm.$q.dialog ? (o) => vm.$q.dialog(o) : root.Quasar && root.Quasar.Dialog ? (o) => root.Quasar.Dialog.create(o) : null;
+            if (!open) return Promise.resolve(false);
+            const esc = (text) => String(text == null ? "" : text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+            const method = String(confirm.method || "POST").toUpperCase();
+            const rows = Object.entries(confirm.parameters || {}).map(([name, value]) => "<div><b>" + esc(name) + "</b>: " + esc(value) + "</div>");
+            const message = "<div data-assist-canvas-confirm-path>" + esc(method + " " + (confirm.path || "")) + "</div>"
+                + (rows.length ? "<div class=\"q-mt-sm\" data-assist-canvas-confirm-parameters>" + rows.join("") + "</div>" : "<div class=\"q-mt-sm\">" + esc(assist.labels.canvasWriteNone) + "</div>");
+            return new Promise((resolve) => {
+                open({ title: esc(assist.labels.canvasWriteTitle.replace("{transition}", confirm.transition || "this write")), message, html: true, persistent: true,
+                    ok: { label: assist.labels.save, color: "primary", unelevated: true, noCaps: true }, cancel: { label: assist.labels.cancel, flat: true, noCaps: true } })
+                    .onOk(() => resolve(true)).onCancel(() => resolve(false)).onDismiss(() => resolve(false));
+            });
         },
         canvasAdjust(text, notices) {
             const value = String(text || "").trim();
