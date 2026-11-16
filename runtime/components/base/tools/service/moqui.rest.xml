@@ -120,13 +120,13 @@ along with this software (see the LICENSE.md file). If not, see
             </id>
         </resource>
         <!-- the servers no mail account owns, without their secrets (SEC-MAIL-04): a user's own mailbox server is not
-            answered here -->
+            answered, changed or polled here -->
         <resource name="servers">
             <method type="get"><service name="org.moqui.mail.EmailServices.find#RelayServers"/></method>
             <method type="post"><entity name="moqui.basic.email.EmailServer" operation="create"/></method>
             <id name="emailServerId">
                 <method type="get"><service name="org.moqui.mail.EmailServices.get#RelayServer"/></method>
-                <method type="patch"><entity name="moqui.basic.email.EmailServer" operation="update"/></method>
+                <method type="patch"><service name="org.moqui.mail.EmailServices.update#RelayServer"/></method>
                 <resource name="poll"><method type="post">
                     <service name="org.moqui.mail.EmailServices.poll#EmailServer"/></method></resource>
             </id>

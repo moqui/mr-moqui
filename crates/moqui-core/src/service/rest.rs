@@ -674,6 +674,10 @@ fn run_entity(
             {
                 return refused("writable");
             }
+            // a mail account's own server is changed through the account, an ADMIN's write included
+            if sensitive::account_owned_email_server(&facade, &full_name, params)? {
+                return refused("writable");
+            }
             let mut parms = params.clone();
             if operation != "delete" && sensitive::is_user_account_entity(&full_name) {
                 sensitive::remove_user_account_secrets(&mut parms);
