@@ -127,7 +127,7 @@ fn a_painted_list_keeps_unicode_pages_and_gives_a_long_description_the_room_left
     for _ in 0..3 {
         press(&mut view, Key::Tab);
     }
-    press(&mut view, Key::F(8));
+    press(&mut view, Key::PageDown);
     let next = view.screen_text(180, 50);
     assert!(next.contains("ENUM_10"), "{next}");
     assert!(next.contains("Rows 11–20 of 20 · Page 2/2"), "{next}");

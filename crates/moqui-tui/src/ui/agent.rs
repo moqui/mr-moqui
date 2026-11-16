@@ -27,7 +27,7 @@ use revue::widget::{RenderContext, View};
 use serde_json::{json, Value};
 
 use crate::forms::{parameter_keys, FocusItem, FocusKind, Scope};
-use crate::keys::{Key, KeyPress, ACTIONS};
+use crate::keys::{Key, KeyPress, KeyScheme, ACTIONS};
 use crate::link::{RawBody, ScreenLink};
 use crate::model::{walk, Widget};
 use crate::session::{Overlay, Session};
@@ -135,6 +135,8 @@ impl<L: ScreenLink> Agent<L> {
         view.set_theme(Theme::default());
         view.session_mut().resize(columns, rows);
         view.session_mut().set_pushed(subscription.is_some());
+        // Classic keys whatever the user chose, so an agent's `key Right` and the documented steps mean one thing.
+        view.session_mut().set_key_scheme_override(Some(KeyScheme::Classic));
         let mut agent = Self {
             view,
             columns,
@@ -147,6 +149,11 @@ impl<L: ScreenLink> Agent<L> {
         };
         agent.settle();
         agent
+    }
+
+    /// Use `scheme`'s keys (`moqui tui --agent --keys`); an agent starts with Classic.
+    pub fn set_key_scheme(&mut self, scheme: KeyScheme) {
+        self.view.session_mut().set_key_scheme_override(Some(scheme));
     }
 
     /// Answer in JSON from now on.

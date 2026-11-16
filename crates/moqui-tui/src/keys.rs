@@ -12,10 +12,12 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Key names, the actions of plans/archive/Screen-TUI-Impl.md 1.5 and the default keymap. A theme's `STRT_TUI_KEYS` rows merge
-//! on top (D11). Esc, Enter and Tab stay bound to what they do whatever a theme says, so no theme can leave a user stuck
-//! in a dialog. Single-letter keys act only when focus is not in a text field; the session sends typing to the field
-//! before it looks here.
+//! Key names, the actions of plans/archive/Screen-TUI-Impl.md 1.5 and the keymaps of the key schemes: Modern (the
+//! default: arrows move, Enter follows, Backspace goes back, desktop editor keys) and Classic (5250 function keys and
+//! Lynx link travel). The user's `TUI_KEYS` preference, else the theme's `STRT_TUI_KEY_SCHEME`, picks the scheme, and a
+//! theme's `STRT_TUI_KEYS` rows merge on top (D11). Esc, Enter and Tab stay bound to what they do whatever a theme says,
+//! so no theme can leave a user stuck in a dialog. Single-letter keys act only when focus is not in a text field; the
+//! session sends typing to the field before it looks here.
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Key {
@@ -111,6 +113,54 @@ impl KeyPress {
     }
 }
 
+/// A set of default keys, and the few behaviors outside the keymap that go with it (what Right and Esc do). A theme's
+/// `STRT_TUI_KEYS` rows apply over either; a row named `modern.<action>` or `classic.<action>` applies to that scheme only.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum KeyScheme {
+    /// Today's TUI apps and desktop editors: Left and Right move as Up and Down do, Enter follows, Backspace goes back,
+    /// Esc opens the palette when nothing is open, Ctrl+A selects all.
+    #[default]
+    Modern,
+    /// The 5250 green screen and Lynx: F3 back, F12 cancel, Right follows a link and Left goes back.
+    Classic,
+}
+
+/// Every scheme, in the order a choice of them lists them.
+pub const KEY_SCHEMES: [KeyScheme; 2] = [KeyScheme::Modern, KeyScheme::Classic];
+
+impl KeyScheme {
+    /// The `TUI_KEYS` value, the `--keys` value and the theme row prefix.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Modern => "modern",
+            Self::Classic => "classic",
+        }
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Modern => "Modern",
+            Self::Classic => "Classic (green screen)",
+        }
+    }
+
+    /// A name, in any case, with spaces around it allowed.
+    pub fn parse(name: &str) -> Option<Self> {
+        let name = name.trim();
+        KEY_SCHEMES
+            .into_iter()
+            .find(|scheme| scheme.name().eq_ignore_ascii_case(name))
+    }
+
+    /// The scheme a palette row switches to from this one.
+    pub fn other(self) -> Self {
+        match self {
+            Self::Modern => Self::Classic,
+            Self::Classic => Self::Modern,
+        }
+    }
+}
+
 /// What a key does. The theme names are in [`Action::name`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Action {
@@ -164,13 +214,23 @@ pub enum Action {
     Assist,
     /// Stop Assist's run.
     AssistStop,
+    /// The first and last: a list's first and last row, else the first and last thing to focus.
+    First,
+    Last,
+    /// The next and previous subscreen tab.
+    TabNext,
+    TabPrev,
+    /// Copy the focused item's text to the clipboard; in a text field, the selection.
+    Copy,
 }
 
 /// Every action, in the order the help lists them.
-pub const ACTIONS: [Action; 36] = [
+pub const ACTIONS: [Action; 41] = [
     Action::Help,
     Action::Next,
     Action::Prev,
+    Action::First,
+    Action::Last,
     Action::Activate,
     Action::Submit,
     Action::Back,
@@ -179,6 +239,8 @@ pub const ACTIONS: [Action; 36] = [
     Action::Refresh,
     Action::PagePrev,
     Action::PageNext,
+    Action::TabPrev,
+    Action::TabNext,
     Action::Drawer,
     Action::Find,
     Action::Sort,
@@ -200,6 +262,7 @@ pub const ACTIONS: [Action; 36] = [
     Action::Messages,
     Action::Tray,
     Action::EditRow,
+    Action::Copy,
     Action::Mouse,
     Action::Assist,
     Action::AssistStop,
@@ -247,6 +310,11 @@ impl Action {
             Self::Mouse => "mouse".into(),
             Self::Assist => "assist".into(),
             Self::AssistStop => "assist-stop".into(),
+            Self::First => "first".into(),
+            Self::Last => "last".into(),
+            Self::TabNext => "tab-next".into(),
+            Self::TabPrev => "tab-prev".into(),
+            Self::Copy => "copy".into(),
         }
     }
 
@@ -290,6 +358,11 @@ impl Action {
             Self::Mouse => "Mouse",
             Self::Assist => "Assist",
             Self::AssistStop => "Stop Assist",
+            Self::First => "First",
+            Self::Last => "Last",
+            Self::TabNext => "Next tab",
+            Self::TabPrev => "Previous tab",
+            Self::Copy => "Copy",
         }
     }
 
@@ -307,8 +380,16 @@ pub struct KeyMap {
 }
 
 impl KeyMap {
-    /// The scheme of section 1.5.
-    pub fn baseline() -> Self {
+    /// The keys of a scheme.
+    pub fn for_scheme(scheme: KeyScheme) -> Self {
+        match scheme {
+            KeyScheme::Modern => Self::modern(),
+            KeyScheme::Classic => Self::classic(),
+        }
+    }
+
+    /// The scheme of section 1.5: 5250 function keys and Lynx link travel.
+    pub fn classic() -> Self {
         let plain = KeyPress::plain;
         let ch = |c| KeyPress::plain(Key::Char(c));
         let mut bindings = vec![
@@ -364,11 +445,81 @@ impl KeyMap {
             (KeyPress::with_alt(Key::Char('a')), Action::Assist),
             (KeyPress::with_alt(Key::Char('x')), Action::AssistStop),
         ];
-        for n in 1..=9u8 {
-            let digit = char::from(b'0' + n);
-            bindings.push((KeyPress::with_alt(Key::Char(digit)), Action::Tab(n)));
-            bindings.push((ch(digit), Action::Tab(n)));
-        }
+        bindings.extend(shared());
+        Self { bindings }
+    }
+
+    /// Today's TUI apps and desktop editors, with the vi keys that clash with nothing: arrows and `j`/`k` move, Enter
+    /// follows, Backspace goes back, Ctrl+F finds and F3 finds the next, Ctrl+K or Ctrl+P the palette. The first chord
+    /// of an action is the one the key line shows.
+    pub fn modern() -> Self {
+        let plain = KeyPress::plain;
+        let ch = |c| KeyPress::plain(Key::Char(c));
+        let ctrl = |c| KeyPress::with_ctrl(Key::Char(c));
+        let mut bindings = vec![
+            (plain(Key::Tab), Action::Next),
+            (plain(Key::Down), Action::Next),
+            (plain(Key::Right), Action::Next),
+            (ch('j'), Action::Next),
+            (plain(Key::BackTab), Action::Prev),
+            (plain(Key::Up), Action::Prev),
+            (plain(Key::Left), Action::Prev),
+            (ch('k'), Action::Prev),
+            (plain(Key::Enter), Action::Activate),
+            (plain(Key::Backspace), Action::Back),
+            (KeyPress::with_alt(Key::Left), Action::Back),
+            (plain(Key::Escape), Action::Cancel),
+            (plain(Key::F(1)), Action::Help),
+            (ch('?'), Action::Help),
+            (plain(Key::F(4)), Action::Prompt),
+            (KeyPress::with_alt(Key::Down), Action::Prompt),
+            (plain(Key::F(5)), Action::Refresh),
+            (ctrl('r'), Action::Refresh),
+            (plain(Key::PageUp), Action::PagePrev),
+            (plain(Key::PageDown), Action::PageNext),
+            (plain(Key::F(9)), Action::Drawer),
+            (ctrl('s'), Action::Submit),
+            (KeyPress::with_alt(Key::Enter), Action::Submit),
+            (ch(' '), Action::Select),
+            (ctrl('a'), Action::SelectAll),
+            (ch('*'), Action::SelectAll),
+            (ch('f'), Action::Find),
+            (ch('s'), Action::Sort),
+            (ch('v'), Action::View),
+            (ch('#'), Action::NumberLinks),
+            (ch('='), Action::Info),
+            (ch('o'), Action::OpenBrowser),
+            (ctrl('l'), Action::Redraw),
+            (KeyPress::with_alt(Key::Char('l')), Action::Log),
+            (KeyPress::with_alt(Key::Char('p')), Action::Mouse),
+            (ctrl('q'), Action::Quit),
+            (ctrl('k'), Action::Palette),
+            (ctrl('p'), Action::Palette),
+            (ch(':'), Action::Palette),
+            (ch('g'), Action::GoTo),
+            (ctrl('g'), Action::GoTo),
+            (ch('+'), Action::QuickCreate),
+            (plain(Key::F(10)), Action::Actions),
+            (ctrl('f'), Action::FindText),
+            (ch('/'), Action::FindText),
+            (plain(Key::F(3)), Action::FindNext),
+            (ch('n'), Action::FindNext),
+            (
+                KeyPress {
+                    shift: true,
+                    ..plain(Key::F(3))
+                },
+                Action::FindPrev,
+            ),
+            (ch('N'), Action::FindPrev),
+            (KeyPress::with_alt(Key::Char('m')), Action::Messages),
+            (KeyPress::with_alt(Key::Char('t')), Action::Tray),
+            (ch('e'), Action::EditRow),
+            (plain(Key::F(2)), Action::Assist),
+            (KeyPress::with_alt(Key::Char('a')), Action::Assist),
+            (KeyPress::with_alt(Key::Char('x')), Action::AssistStop),
+        ];
+        bindings.extend(shared());
         Self { bindings }
     }
 
@@ -407,6 +558,42 @@ impl KeyMap {
         self.bindings.retain(|(bound, _)| bound != &press);
         self.bindings.push((press, action));
     }
+}
+
+/// The keys both schemes bind the same way: Home and End, the tabs, Copy.
+fn shared() -> Vec<(KeyPress, Action)> {
+    let mut bindings = vec![
+        (KeyPress::plain(Key::Home), Action::First),
+        (KeyPress::plain(Key::End), Action::Last),
+        (KeyPress::with_ctrl(Key::PageDown), Action::TabNext),
+        (KeyPress::with_ctrl(Key::PageUp), Action::TabPrev),
+        (KeyPress::with_ctrl(Key::Char('c')), Action::Copy),
+    ];
+    for n in 1..=9u8 {
+        let digit = char::from(b'0' + n);
+        bindings.push((KeyPress::with_alt(Key::Char(digit)), Action::Tab(n)));
+        bindings.push((KeyPress::plain(Key::Char(digit)), Action::Tab(n)));
+    }
+    bindings
+}
+
+/// The keys of `scheme` with a theme's `STRT_TUI_KEYS` rows over them. A row named `<scheme>.<action>` applies to that
+/// scheme only, after the rows without a scheme, so it wins over them; a row for another scheme is left out.
+pub fn scheme_keys(scheme: KeyScheme, overrides: &[(&str, &str)]) -> (KeyMap, Vec<MergeSkip>) {
+    let mut general = Vec::new();
+    let mut own = Vec::new();
+    for (name, chords) in overrides {
+        match name.trim().split_once('.') {
+            Some((prefix, action)) => match KeyScheme::parse(prefix) {
+                Some(named) if named == scheme => own.push((action, *chords)),
+                Some(_) => {}
+                None => general.push((*name, *chords)),
+            },
+            None => general.push((*name, *chords)),
+        }
+    }
+    general.extend(own);
+    merge_keys(&KeyMap::for_scheme(scheme), &general)
 }
 
 /// Why one theme entry was not applied.

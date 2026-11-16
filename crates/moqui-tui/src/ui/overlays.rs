@@ -17,7 +17,7 @@
 
 use revue::layout::Rect;
 
-use crate::keys::{Action, ACTIONS};
+use crate::keys::{Action, KeyScheme, ACTIONS};
 use crate::layout::{display_width, layout_nodes, truncate_width, Breakpoints, WidthClass};
 use crate::model::{walk, Node};
 use crate::session::{Columns, Editor, Menu, Overlay, PromptThen, Session};
@@ -472,6 +472,15 @@ fn date_picker(paint: &mut Painter, picker: &crate::session::Picker, canvas: Rec
 fn help(paint: &mut Painter, session: &Session, canvas: Rect) {
     let keys = session.keys();
     let mut lines = Vec::new();
+    let palette = keys
+        .chords(Action::Palette)
+        .first()
+        .map_or_else(|| "Ctrl+K".to_string(), |press| press.label());
+    lines.push(format!(
+        "Keys: {}. To change: {palette}, then Keys.",
+        session.key_scheme().title()
+    ));
+    lines.push(String::new());
     if !session.docs().is_empty() {
         lines.push("Documents (press the number):".to_string());
         for (at, (title, _)) in session.docs().iter().enumerate().take(9) {
@@ -490,6 +499,29 @@ fn help(paint: &mut Painter, session: &Session, canvas: Rect) {
             ("Alt+B", "bold the word at the cursor"),
             ("Alt+I", "italic"),
             ("Alt+K", "link: [word](), the url next"),
+        ] {
+            lines.push(format!("  {key:<14} {what}"));
+        }
+        lines.push(String::new());
+    }
+    if session.focused_is_text() {
+        lines.push("This text field:".to_string());
+        let select_all = if session.key_scheme() == KeyScheme::Modern {
+            "Ctrl+A selects all; "
+        } else {
+            ""
+        };
+        for (key, what) in [
+            ("Shift+arrows", format!("select; {select_all}Ctrl+Left/Right a word")),
+            (
+                "Ctrl+C, X, V",
+                "copy, cut (all of it with nothing selected), paste".to_string(),
+            ),
+            ("Ctrl+Z, Ctrl+Y", "undo, redo".to_string()),
+            (
+                "Alt+Backspace",
+                "delete a word (Ctrl+Backspace, Ctrl+Del); Ctrl+U to the line's start".to_string(),
+            ),
         ] {
             lines.push(format!("  {key:<14} {what}"));
         }

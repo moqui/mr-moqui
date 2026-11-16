@@ -6,7 +6,7 @@
 (function (moqui) {
     "use strict";
     moqui.qvtRenders = Object.assign(moqui.qvtRenders || {}, {
-        "m-appearance-dialog": { hash: "122444de", make: function (Vue) {
+        "m-appearance-dialog": { hash: "f6f93a17", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, renderList: _renderList, Fragment: _Fragment, normalizeStyle: _normalizeStyle, normalizeClass: _normalizeClass, createBlock: _createBlock, createTextVNode: _createTextVNode, withCtx: _withCtx, mergeProps: _mergeProps, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
 
             return function render(_ctx, _cache) {
@@ -257,6 +257,24 @@
                           ]))
                         : _createCommentVNode("", true)
                     ]),
+                    (_ctx.allowed('TUI_KEYS'))
+                      ? (_openBlock(), _createElementBlock("div", {
+                          key: 5,
+                          id: "m-appearance-terminal-keys"
+                        }, [
+                          _createElementVNode("div", { class: "text-subtitle2 q-mb-xs" }, _toDisplayString(_ctx.labels.terminalKeys), 1),
+                          _createVNode(_component_q_btn_toggle, {
+                            "model-value": _ctx.terminalKeys,
+                            "onUpdate:modelValue": _ctx.setTerminalKeys,
+                            dense: "",
+                            "no-caps": "",
+                            unelevated: "",
+                            "toggle-color": "primary",
+                            options: [{label:_ctx.labels.keysModern,value:'modern'},{label:_ctx.labels.keysClassic,value:'classic'}]
+                          }, null, 8, ["model-value", "onUpdate:modelValue", "options"]),
+                          _createElementVNode("div", { class: "text-caption m-muted q-mt-xs" }, _toDisplayString(_ctx.labels.terminalKeysHint), 1)
+                        ]))
+                      : _createCommentVNode("", true),
                     _createElementVNode("div", { class: "row justify-between items-center" }, [
                       _createVNode(_component_q_btn, {
                         flat: "",

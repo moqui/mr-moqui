@@ -23,7 +23,7 @@ use super::{shell, Editor, Overlay, Session, Timer};
 use crate::components::{Act, ComponentState};
 use crate::edit::{self, Limits};
 use crate::forms::FocusKind;
-use crate::keys::{Key, KeyPress};
+use crate::keys::{Key, KeyPress, KeyScheme};
 use crate::layout::{Shown, TreeMark, TreeRow};
 use crate::link::{LinkCall, LinkError, RawBody};
 use crate::model::Widget;
@@ -362,6 +362,7 @@ impl Session {
         if !press.is_plain() {
             return false;
         }
+        let press = &self.vi_rows(press);
         let Some(state) = self.trees.get(&id) else {
             return false;
         };
@@ -384,7 +385,9 @@ impl Session {
                         self.set_tree_at(&id, at + 1);
                     }
                 }
-                TreeMark::Leaf => self.follow_url(&row.url),
+                // Classic follows a leaf with Right as Lynx does; Modern leaves that to Enter.
+                TreeMark::Leaf if self.scheme == KeyScheme::Classic => self.follow_url(&row.url),
+                TreeMark::Leaf => {}
             },
             Key::Left => {
                 if row.mark == TreeMark::Open {

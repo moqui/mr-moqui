@@ -331,6 +331,7 @@ impl Session {
         self.edits.drop_keys(&keys);
         for key in &keys {
             self.cursors.remove(key);
+            self.field_edits.remove(key);
         }
     }
 

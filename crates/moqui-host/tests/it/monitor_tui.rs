@@ -666,7 +666,7 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
         press(&mut context, Key::Down);
     }
     assert_eq!(context.session().row_at("LogContext"), row);
-    press(&mut context, Key::Right);
+    press(&mut context, Key::Enter);
     assert!(context.session().path().ends_with("/TraceDetail"));
     assert_eq!(
         context.session().parameters().get("traceId").map(String::as_str),

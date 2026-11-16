@@ -49,6 +49,7 @@ fn main() {
         theme,
         notes: None,
         log: None,
+        keys: None,
     };
     if let Err(err) = run_local(link, options) {
         eprintln!("{err}");

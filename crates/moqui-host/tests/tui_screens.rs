@@ -34,7 +34,8 @@ use moqui_core::context::ExecutionContextFactory;
 use moqui_host::tui::{HostLink, Transport};
 use moqui_lib::object::Value;
 use moqui_tui::{
-    frame, outline, AppView, FormList, Key, KeyPress, LinkError, Node, Overlay, ScreenLink, ScreenModel, Session,
+    frame, outline, AppView, FormList, Key, KeyPress, KeyScheme, LinkError, Node, Overlay, ScreenLink, ScreenModel,
+    Session,
 };
 
 const GALLERY: &[&str] = &[
@@ -408,10 +409,15 @@ fn drive_tools(link: &HostLink) {
             }
         });
     }
-    assert!(!tabs.iter().any(|url| url.contains("EntitySyncDetail") || url.contains("EntitySyncHistory")), "{tabs:?}");
+    assert!(
+        !tabs
+            .iter()
+            .any(|url| url.contains("EntitySyncDetail") || url.contains("EntitySyncHistory")),
+        "{tabs:?}"
+    );
     // Run a service job and read its run.
     let mut view = AppView::with_session(
-        Session::start("/apps/system/Operations/JobDetail?jobName=clean_ServiceJobRun_daily"),
+        classic_session("/apps/system/Operations/JobDetail?jobName=clean_ServiceJobRun_daily"),
         link.clone(),
     );
     view.run_requests();
@@ -430,11 +436,7 @@ fn drive_tools(link: &HostLink) {
     let runs = link_with_text(&view, "Runs");
     focus(&mut view, &runs);
     view.on_key(&press(Key::Enter));
-    assert!(
-        view.session().path().ends_with("JobRuns"),
-        "{}",
-        view.session().path()
-    );
+    assert!(view.session().path().ends_with("JobRuns"), "{}", view.session().path());
     let list = view
         .session()
         .index()
@@ -454,7 +456,7 @@ fn drive_tools(link: &HostLink) {
     assert!(lone_error(view.session().model()).is_none());
     // A link to a transition that leaves a message: the message comes with the screen the transition goes back to.
     let mut view = AppView::with_session(
-        Session::start("/apps/system/Cache/CacheList/clearCache?cacheName=l10n.message"),
+        classic_session("/apps/system/Cache/CacheList/clearCache?cacheName=l10n.message"),
         link.clone(),
     );
     view.run_requests();
@@ -484,7 +486,7 @@ fn link_with_text(view: &AppView<HostLink>, text: &str) -> String {
 /// and the right one asks for the screen again.
 fn log_in_through_the_dialog(factory: &Arc<ExecutionContextFactory>) {
     let link = HostLink::new(factory);
-    let mut view = AppView::with_session(Session::start("/apps/gallery/List"), link);
+    let mut view = AppView::with_session(classic_session("/apps/gallery/List"), link);
     view.run_requests();
     assert!(
         matches!(view.session().top_overlay(), Some(Overlay::Login(_))),
@@ -664,7 +666,7 @@ fn snapshot_gallery(link: &HostLink) {
         } else {
             path.clone()
         };
-        let mut view = AppView::with_session(Session::start(&start), link.clone());
+        let mut view = AppView::with_session(classic_session(&start), link.clone());
         view.run_requests();
         view.set_clock("Tue 14:32");
         // The Calendar's events are days of this month, so it has no golden; drive_components reads it.
@@ -1110,8 +1112,16 @@ fn drive_row_dialog(link: &HostLink) {
     );
 }
 
+/// A session on Classic keys: these walks press Right to follow and F3 to go back, and the goldens hold its key line
+/// (moqui-tui's own snapshots show Modern's).
+fn classic_session(path: &str) -> Session {
+    let mut session = Session::start(path);
+    session.set_key_scheme_override(Some(KeyScheme::Classic));
+    session
+}
+
 fn open_screen(link: &HostLink, path: &str) -> AppView<HostLink> {
-    let mut view = AppView::with_session(Session::start(path), link.clone());
+    let mut view = AppView::with_session(classic_session(path), link.clone());
     view.run_requests();
     assert!(
         view.session().path().ends_with(path.rsplit('/').next().unwrap_or(path)),

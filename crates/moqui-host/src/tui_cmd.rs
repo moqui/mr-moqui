@@ -34,6 +34,8 @@ pub struct TuiFlags {
     pub server: Option<String>,
     /// Remove the login key stored for `server`.
     pub forget: bool,
+    /// `--keys`: the key scheme for this run, not saved; else the user's, and an agent's Classic.
+    pub keys: Option<moqui_tui::KeyScheme>,
 }
 
 /// # Errors
@@ -66,6 +68,14 @@ pub fn parse(args: &[String]) -> Result<TuiFlags, Error> {
             "--agent" => flags.agent = true,
             "--server" => flags.server = Some(value("a url such as https://erp.example.com")?),
             "--forget" => flags.forget = true,
+            "--keys" => {
+                let name = value("modern or classic")?;
+                flags.keys = Some(moqui_tui::KeyScheme::parse(&name).ok_or_else(|| {
+                    Error::new(format!(
+                        "moqui tui: --keys {name} is not a key scheme; use modern or classic"
+                    ))
+                })?);
+            }
             "--snapshot" => {
                 flags.path = value("a screen path")?;
                 flags.snapshot.get_or_insert((180, 50));
@@ -143,7 +153,7 @@ fn present<L: moqui_tui::ScreenLink + 'static>(
 ) -> Result<(), Error> {
     if flags.agent {
         let (columns, rows) = flags.snapshot.unwrap_or((120, 40));
-        return agent_lines(link, &flags.path, columns, rows)
+        return agent_lines(link, &flags.path, columns, rows, flags.keys)
             .map_err(|err| Error::new(format!("moqui tui --agent: {err}")));
     }
     let theme = moqui_tui::Theme::detect(&|name| std::env::var(name).ok(), flags.ascii, flags.no_color);
@@ -156,6 +166,7 @@ fn present<L: moqui_tui::ScreenLink + 'static>(
         theme,
         notes: Some(|note| tracing::warn!("TUI theme: {note}")),
         log: Some(log),
+        keys: flags.keys,
     };
     moqui_tui::run_local(link, options).map_err(|err| Error::new(format!("moqui tui: {err}")))
 }
@@ -226,10 +237,19 @@ fn run_here(flags: &TuiFlags) -> Result<(), Error> {
 }
 
 /// `--agent`: the first screen, then one answer for each command line on stdin, until `close` or the end of input.
-fn agent_lines<L: moqui_tui::ScreenLink>(link: L, path: &str, columns: u16, rows: u16) -> std::io::Result<()> {
+fn agent_lines<L: moqui_tui::ScreenLink>(
+    link: L,
+    path: &str,
+    columns: u16,
+    rows: u16,
+    keys: Option<moqui_tui::KeyScheme>,
+) -> std::io::Result<()> {
     use std::io::{BufRead, Write};
 
     let mut agent = moqui_tui::Agent::open(link, path, columns, rows);
+    if let Some(scheme) = keys {
+        agent.set_key_scheme(scheme);
+    }
     agent.finish_downloads(moqui_tui::save_download);
     let mut out = std::io::stdout().lock();
     writeln!(out, "{}", agent.look().text)?;
@@ -292,6 +312,11 @@ mod tests {
         assert!(parse(&args(&["--size", "wide"])).is_err());
         assert!(parse(&args(&["--frobnicate"])).is_err());
         assert!(parse(&args(&["--user"])).is_err());
+        assert_eq!(
+            parse(&args(&["--keys", "Classic"])).unwrap().keys,
+            Some(moqui_tui::KeyScheme::Classic)
+        );
+        assert!(parse(&args(&["--keys", "vi"])).is_err());
         assert_eq!(parse(&args(&[])).unwrap().path, "/apps");
     }
 }

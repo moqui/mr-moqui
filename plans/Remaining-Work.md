@@ -196,7 +196,7 @@ The activity-based review of the framework apps ([UI-Refinement](archive/UI-Refi
 | Item | Source |
 |---|---|
 | Live checks: the browser terminal's keys and paste in Chrome, Firefox and Safari; the mouse (clicks, the wheel and drag to copy in kitty and GNOME Terminal over SSH, in local mode, and OSC 52 in the browser terminal in Chrome and Firefox); F-keys, Alt and paste in xterm, kitty, GNOME Terminal, tmux and the Linux console | [Screen-TUI-Impl](archive/Screen-TUI-Impl.md) §5 Phase 4 findings, §7 |
-| Per-user key bindings and a screen for them (D11); a two-way rich-text editor (3.8; Markdown is styled source); a `diagram` component (Revue's Mermaid widget does not draw a status flow); board sums and the calendar's create and resize in list views; the upstream Revue asks of §7 | same |
+| A user's own key for one action (D11; a user chooses a whole key scheme, Modern or Classic, since 2026-11-15); vi and emacs key schemes; a two-way rich-text editor (3.8; Markdown is styled source); a `diagram` component (Revue's Mermaid widget does not draw a status flow); board sums and the calendar's create and resize in list views; the upstream Revue asks of §7 | same |
 
 ## Browser terminal
 

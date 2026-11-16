@@ -25,7 +25,7 @@ use std::time::Instant;
 use revue::core::app::App;
 use revue::event::{Event, Key as RevueKey, KeyEvent};
 
-use crate::keys::{Key, KeyPress, Mouse, MouseKind};
+use crate::keys::{Key, KeyPress, KeyScheme, Mouse, MouseKind};
 use crate::link::{Push, RawBody, Reply, ScreenLink};
 use crate::session::Session;
 use crate::theme::Theme;
@@ -42,6 +42,8 @@ pub struct LocalOptions {
     pub notes: Option<fn(&str)>,
     /// Log lines for the log pane (Alt+L).
     pub log: Option<mpsc::Receiver<String>>,
+    /// `--keys`: this key scheme for this run, whatever the user's `TUI_KEYS` says.
+    pub keys: Option<KeyScheme>,
 }
 
 /// Run the client on this terminal until the user quits.
@@ -53,6 +55,7 @@ pub fn run_local<L: ScreenLink + 'static>(link: L, options: LocalOptions) -> rev
     let link = Arc::new(link);
     let mut view = AppView::with_session(Session::start(&options.path), Arc::clone(&link));
     view.set_theme(options.theme.clone());
+    view.session_mut().set_key_scheme_override(options.keys);
     let (done_tx, done_rx) = mpsc::channel::<(u64, Reply)>();
     let done_tx = move |id, reply| {
         let _ = done_tx.send((id, reply));
@@ -78,6 +81,10 @@ pub fn run_local<L: ScreenLink + 'static>(link: L, options: LocalOptions) -> rev
         .run(view, move |event, view, app| {
             let changed = match event {
                 Event::Key(key) => {
+                    // Revue quits on Ctrl+C unless told not to; here it copies, and Ctrl+Q quits.
+                    if key.is_ctrl_c() {
+                        app.prevent_default();
+                    }
                     let quit = from_revue(key).is_some_and(|press| view.key(&press));
                     if quit {
                         app.quit();

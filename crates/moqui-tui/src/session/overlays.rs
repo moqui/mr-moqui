@@ -18,7 +18,7 @@
 use super::{DropDown, Intent, Login, Overlay, Picker, Session, SETUP_FIELDS};
 use crate::edit::{self, Limits};
 use crate::forms::{self, FocusKind};
-use crate::keys::{Action, Key, KeyPress};
+use crate::keys::{Action, Key, KeyPress, KeyScheme};
 use crate::link::{AdminAccount, AdminSetup, LinkCall, LinkError};
 use crate::model::{Choice, Widget};
 use crate::state::{Confirm, ConfirmKind, Purpose, Then};
@@ -78,6 +78,7 @@ impl Session {
             (ConfirmKind::Leave, "Discard") => {
                 self.edits.reset();
                 self.cursors.clear();
+                self.field_edits.clear();
                 self.run_then(confirm.then.clone());
             }
             (ConfirmKind::Leave, "Save") => {
@@ -263,6 +264,9 @@ impl Session {
         match &press.key {
             Key::Up => drop.at = drop.at.saturating_sub(1),
             Key::Down => drop.at = (drop.at + 1).min(last),
+            // emacs and fzf: Ctrl+P and Ctrl+N up and down
+            Key::Char('p') if press.ctrl => drop.at = drop.at.saturating_sub(1),
+            Key::Char('n') if press.ctrl => drop.at = (drop.at + 1).min(last),
             Key::PageUp => drop.at = drop.at.saturating_sub(10),
             Key::PageDown => drop.at = (drop.at + 10).min(last),
             Key::Home => drop.at = 0,
@@ -396,6 +400,9 @@ impl Session {
         let next = match &press.key {
             Key::Up => at.saturating_sub(1),
             Key::Down => (at + 1).min(last),
+            // Modern: Left and Right move as Up and Down do; Enter alone follows.
+            Key::Left if self.scheme == KeyScheme::Modern => at.saturating_sub(1),
+            Key::Right if self.scheme == KeyScheme::Modern => (at + 1).min(last),
             // a disabled item is no link: the drawer stays open on it
             Key::Enter | Key::Right if rows.get(at).is_some_and(|row| row.disabled) => return true,
             Key::Enter | Key::Right => {

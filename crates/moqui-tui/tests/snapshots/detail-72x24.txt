@@ -21,4 +21,4 @@
  Back to list
 ────────────────────────────────────────────────────────────────────────
  Updated
- F1=Help  F4=Prompt  Alt+Enter=Save  F3=Back  F5=Refresh  F9=Menu
+ F1=Help  F4=Prompt  Ctrl+S=Save  Backspace=Back  F5=Refresh  F9=Menu

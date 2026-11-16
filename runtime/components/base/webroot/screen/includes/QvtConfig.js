@@ -131,7 +131,8 @@ function build(ec, sri, options) {
             motionFull: ec.l10n.localize('Full'), readability: ec.l10n.localize('Readability'), lineRelaxed: ec.l10n.localize('Relaxed line spacing'),
             linksUnderline: ec.l10n.localize('Underline links'), corners: ec.l10n.localize('Corners'), cornersDefault: ec.l10n.localize('Rounded'),
             cornersSquare: ec.l10n.localize('Square'), cornersRound: ec.l10n.localize('More rounded'), resetDefaults: ec.l10n.localize('Reset to defaults'),
-            done: ec.l10n.localize('Done'),
+            done: ec.l10n.localize('Done'), terminalKeys: ec.l10n.localize('Terminal keys'), keysModern: ec.l10n.localize('Modern'),
+            keysClassic: ec.l10n.localize('Classic (green screen)'), terminalKeysHint: ec.l10n.localize('For the terminal client: moqui tui, and over SSH'),
             // the account menu's Notifications on this device (js/WebrootPush.js)
             pushNotifications: ec.l10n.localize('Notifications on this device'), pushBlocked: ec.l10n.localize("Blocked in the browser's site settings"),
             pushBlockedHelp: ec.l10n.localize("Notifications are blocked for this site; allow them in the browser's site settings"),

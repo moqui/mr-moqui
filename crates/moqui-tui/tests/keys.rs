@@ -18,9 +18,9 @@
 use std::collections::BTreeMap;
 
 use moqui_tui::{
-    gallery_link, merge_keys, Action, AdminSetup, Choice, FakeLink, Key, KeyMap, KeyPress, LinkCall, Login, Messages,
-    Overlay, Reply, ScreenLink, ScreenModel, Sendable, Session, ShellInfo, TransitionOutcome, ValidationError, Widget,
-    GALLERY_DETAIL_PATH, GALLERY_LIST_JSON, GALLERY_LIST_PATH,
+    gallery_link, merge_keys, scheme_keys, Action, AdminSetup, Choice, FakeLink, Key, KeyMap, KeyPress, KeyScheme,
+    LinkCall, Login, Messages, Overlay, Reply, ScreenLink, ScreenModel, Sendable, Session, ShellInfo,
+    TransitionOutcome, ValidationError, Widget, GALLERY_DETAIL_PATH, GALLERY_LIST_JSON, GALLERY_LIST_PATH,
 };
 
 const EDIT_JSON: &str = r#"{
@@ -213,7 +213,7 @@ fn a_second_submit_while_one_runs_is_not_sent() {
 #[test]
 fn merge_keys_skips_a_bad_chord_an_unknown_action_and_a_fixed_key_and_keeps_esc() {
     let (map, skipped) = merge_keys(
-        &KeyMap::baseline(),
+        &KeyMap::classic(),
         &[
             ("fly", "f2"),
             ("refresh", "not a chord"),
@@ -256,6 +256,226 @@ fn the_shell_data_brings_the_menu_and_the_theme_keys() {
     assert_eq!(started.key_skips().len(), 1);
     assert_eq!(started.path(), GALLERY_LIST_PATH);
     let _ = press(&mut session, &link, Key::Tab);
+}
+
+#[test]
+fn the_schemes_bind_the_arrows_back_and_f3_each_its_own_way() {
+    let modern = KeyMap::modern();
+    let classic = KeyMap::classic();
+    let plain = KeyPress::plain;
+    let shift_f3 = KeyPress {
+        shift: true,
+        ..plain(Key::F(3))
+    };
+    // Modern: the arrows and j/k move, Enter alone follows, Backspace goes back, F3 finds the next.
+    assert_eq!(modern.action(&plain(Key::Right)), Some(Action::Next));
+    assert_eq!(modern.action(&plain(Key::Left)), Some(Action::Prev));
+    assert_eq!(modern.action(&plain(Key::Char('j'))), Some(Action::Next));
+    assert_eq!(modern.action(&plain(Key::Char('k'))), Some(Action::Prev));
+    assert_eq!(modern.action(&plain(Key::Enter)), Some(Action::Activate));
+    assert_eq!(modern.action(&plain(Key::Backspace)), Some(Action::Back));
+    assert_eq!(modern.action(&plain(Key::F(3))), Some(Action::FindNext));
+    assert_eq!(modern.action(&shift_f3), Some(Action::FindPrev));
+    assert_eq!(
+        modern.action(&KeyPress::with_ctrl(Key::Char('a'))),
+        Some(Action::SelectAll)
+    );
+    assert_eq!(
+        modern.action(&KeyPress::with_ctrl(Key::Char('p'))),
+        Some(Action::Palette)
+    );
+    assert_eq!(modern.action(&plain(Key::F(12))), None);
+    assert_eq!(modern.hint(Action::Back).as_deref(), Some("Backspace=Back"));
+    // Classic: Right follows, Left and F3 go back, F12 cancels, and no Ctrl+A.
+    assert_eq!(classic.action(&plain(Key::Right)), Some(Action::Activate));
+    assert_eq!(classic.action(&plain(Key::Left)), Some(Action::Back));
+    assert_eq!(classic.action(&plain(Key::F(3))), Some(Action::Back));
+    assert_eq!(classic.action(&plain(Key::F(12))), Some(Action::Cancel));
+    assert_eq!(classic.action(&KeyPress::with_ctrl(Key::Char('a'))), None);
+    assert_eq!(classic.hint(Action::Back).as_deref(), Some("F3=Back"));
+    // Both: Ctrl+C copies, Home and End, Ctrl+PgUp and Ctrl+PgDn change the tab.
+    for map in [&modern, &classic] {
+        assert_eq!(map.action(&KeyPress::with_ctrl(Key::Char('c'))), Some(Action::Copy));
+        assert_eq!(map.action(&plain(Key::Home)), Some(Action::First));
+        assert_eq!(map.action(&plain(Key::End)), Some(Action::Last));
+        assert_eq!(map.action(&KeyPress::with_ctrl(Key::PageDown)), Some(Action::TabNext));
+        assert_eq!(map.action(&KeyPress::with_ctrl(Key::PageUp)), Some(Action::TabPrev));
+    }
+}
+
+#[test]
+fn a_theme_row_for_one_scheme_applies_to_that_scheme_only_and_wins() {
+    let rows = [
+        ("classic.back", "f3 | f11"),
+        ("back", "f2"),
+        ("modern.find-next", "f7"),
+        ("vi.back", "h"),
+    ];
+    let (modern, skipped) = scheme_keys(KeyScheme::Modern, &rows);
+    assert_eq!(modern.action(&KeyPress::plain(Key::F(2))), Some(Action::Back));
+    assert_eq!(modern.action(&KeyPress::plain(Key::F(7))), Some(Action::FindNext));
+    assert_eq!(modern.action(&KeyPress::plain(Key::F(3))), None);
+    assert_eq!(modern.action(&KeyPress::plain(Key::F(11))), None);
+    // vi is no scheme, so its row is an unknown action, logged as any other.
+    assert_eq!(skipped.len(), 1, "{skipped:?}");
+    assert_eq!(skipped[0].action, "vi.back");
+    let (classic, _) = scheme_keys(KeyScheme::Classic, &rows);
+    assert_eq!(classic.action(&KeyPress::plain(Key::F(11))), Some(Action::Back));
+    assert_eq!(classic.action(&KeyPress::plain(Key::F(3))), Some(Action::Back));
+    assert_eq!(classic.action(&KeyPress::plain(Key::F(2))), None);
+    assert_eq!(classic.action(&KeyPress::plain(Key::F(7))), Some(Action::PagePrev));
+    assert_eq!(KeyScheme::parse(" Classic "), Some(KeyScheme::Classic));
+    assert_eq!(KeyScheme::parse("vi"), None);
+}
+
+#[test]
+fn the_shell_data_and_an_override_pick_the_scheme() {
+    let link = gallery_link();
+    link.answer_shell(ShellInfo {
+        key_scheme: Some(KeyScheme::Classic),
+        ..ShellInfo::default()
+    });
+    let mut session = Session::start(GALLERY_LIST_PATH);
+    assert_eq!(session.key_scheme(), KeyScheme::Modern, "Modern until the shell says");
+    session.run_now(&link);
+    assert_eq!(session.key_scheme(), KeyScheme::Classic);
+    assert_eq!(session.keys().action(&KeyPress::plain(Key::F(3))), Some(Action::Back));
+    session.set_key_scheme_override(Some(KeyScheme::Modern));
+    assert_eq!(session.key_scheme(), KeyScheme::Modern);
+    assert_eq!(
+        session.keys().action(&KeyPress::plain(Key::F(3))),
+        Some(Action::FindNext)
+    );
+    session.set_key_scheme_override(None);
+    assert_eq!(session.key_scheme(), KeyScheme::Classic);
+}
+
+#[test]
+fn modern_esc_closes_what_is_open_then_opens_the_palette() {
+    let (mut session, link) = list_session();
+    assert_eq!(session.key_scheme(), KeyScheme::Modern);
+    press(&mut session, &link, Key::Char('/'));
+    assert!(matches!(session.top_overlay(), Some(Overlay::Search(_))));
+    press(&mut session, &link, Key::Escape);
+    assert!(session.top_overlay().is_none());
+    press(&mut session, &link, Key::Escape);
+    assert!(matches!(session.top_overlay(), Some(Overlay::Palette(_))));
+    press(&mut session, &link, Key::Escape);
+    assert!(session.top_overlay().is_none());
+    // Classic's Esc with nothing open opens nothing.
+    session.set_key_scheme_override(Some(KeyScheme::Classic));
+    press(&mut session, &link, Key::Escape);
+    assert!(session.top_overlay().is_none());
+}
+
+#[test]
+fn the_palette_keys_row_switches_the_scheme_and_keeps_it() {
+    let (mut session, link) = list_session();
+    link.answer_json("/apps/setPreference", BTreeMap::new(), serde_json::json!({}));
+    session.press(&KeyPress::with_ctrl(Key::Char('k')), &link);
+    typed(&mut session, &link, "keys");
+    let titles: Vec<String> = session.palette_rows().into_iter().map(|row| row.title).collect();
+    assert_eq!(titles, ["Keys: switch to Classic (green screen)"]);
+    press(&mut session, &link, Key::Enter);
+    assert_eq!(session.key_scheme(), KeyScheme::Classic);
+    assert!(session.message().starts_with("Keys: Classic"), "{}", session.message());
+    assert!(link.calls().iter().any(|call| matches!(
+        call,
+        LinkCall::Json { url, parameters, .. } if url == "/apps/setPreference"
+            && parameters.get("preferenceKey").map(String::as_str) == Some("TUI_KEYS")
+            && parameters.get("preferenceValue").map(String::as_str) == Some("classic")
+    )));
+    // and back: the row offers the other scheme
+    session.press(&KeyPress::with_ctrl(Key::Char('k')), &link);
+    typed(&mut session, &link, "keys");
+    let titles: Vec<String> = session.palette_rows().into_iter().map(|row| row.title).collect();
+    assert_eq!(titles, ["Keys: switch to Modern"]);
+}
+
+#[test]
+fn ctrl_c_off_a_text_field_copies_the_row_and_never_quits() {
+    let (mut session, link) = list_session();
+    assert!(session.focus_key("EnumList"));
+    assert!(!session.press(&KeyPress::with_ctrl(Key::Char('c')), &link));
+    let copied = session.take_copy().unwrap_or_default();
+    assert!(copied.starts_with("ENUM_00\t"), "{copied:?}");
+    assert!(!session.quitting());
+}
+
+#[test]
+fn modern_arrows_move_the_focus_and_home_and_end_go_to_a_lists_ends() {
+    let (mut session, link) = list_session();
+    assert!(session.focus_key("EnumList"));
+    press(&mut session, &link, Key::End);
+    assert_eq!(session.row_at("EnumList"), 9);
+    press(&mut session, &link, Key::Home);
+    assert_eq!(session.row_at("EnumList"), 0);
+    // j and k move through the rows, as Down and Up do.
+    press(&mut session, &link, Key::Char('j'));
+    press(&mut session, &link, Key::Char('j'));
+    press(&mut session, &link, Key::Char('k'));
+    assert_eq!(session.row_at("EnumList"), 1);
+    press(&mut session, &link, Key::Char('k'));
+    assert_eq!(session.row_at("EnumList"), 0);
+    press(&mut session, &link, Key::Right);
+    let after = session.focus_id().to_string();
+    assert_ne!(after, "EnumList", "Right moves on, it does not follow the row");
+    assert_eq!(session.path(), GALLERY_LIST_PATH);
+    press(&mut session, &link, Key::Left);
+    assert_eq!(session.focus_id(), "EnumList");
+    // Enter follows the row; Backspace off a text field goes back.
+    press(&mut session, &link, Key::Enter);
+    assert_ne!(session.path(), GALLERY_LIST_PATH);
+    for _ in 0..20 {
+        if !session.focused_is_text() {
+            break;
+        }
+        press(&mut session, &link, Key::Tab);
+    }
+    assert!(!session.focused_is_text());
+    press(&mut session, &link, Key::Backspace);
+    assert_eq!(session.path(), GALLERY_LIST_PATH);
+}
+
+#[test]
+fn a_field_selects_copies_pastes_and_undoes_and_esc_drops_the_selection_first() {
+    let (mut session, link) = edit_session();
+    assert!(session.focus_key("Edit.note"));
+    let ctrl = |session: &mut Session, ch| session.press(&KeyPress::with_ctrl(Key::Char(ch)), &link);
+    ctrl(&mut session, 'a');
+    typed(&mut session, &link, "Alice");
+    ctrl(&mut session, 'a');
+    assert_eq!(session.selection("Edit.note"), Some((0, 5)));
+    assert!(!ctrl(&mut session, 'c'), "Ctrl+C copies and does not quit");
+    assert_eq!(session.take_copy().as_deref(), Some("Alice"));
+    // Esc drops the selection, and only then is the screen's: in Modern, the palette.
+    press(&mut session, &link, Key::Escape);
+    assert_eq!(session.selection("Edit.note"), None);
+    assert!(session.top_overlay().is_none());
+    press(&mut session, &link, Key::End);
+    ctrl(&mut session, 'v');
+    assert_eq!(session.buffer("Edit.note"), "AliceAlice");
+    ctrl(&mut session, 'z');
+    assert_eq!(session.buffer("Edit.note"), "Alice");
+    // A paste from the terminal takes the place of the selection.
+    session.press(
+        &KeyPress {
+            shift: true,
+            ..KeyPress::plain(Key::Home)
+        },
+        &link,
+    );
+    session.paste("Bob");
+    assert_eq!(session.buffer("Edit.note"), "Bob");
+    ctrl(&mut session, 'z');
+    assert_eq!(session.buffer("Edit.note"), "Alice");
+    // the undo brings the selection back as it was
+    assert_eq!(session.selection("Edit.note"), Some((0, 5)));
+    // Classic leaves Ctrl+A alone.
+    session.set_key_scheme_override(Some(KeyScheme::Classic));
+    press(&mut session, &link, Key::End);
+    ctrl(&mut session, 'a');
+    assert_eq!(session.selection("Edit.note"), None);
 }
 
 const PARTY_FIND_JSON: &str = r#"{
@@ -308,8 +528,8 @@ fn a_record_header_level_loads_once_and_stays_for_its_tabs() {
     session.press(&KeyPress::with_alt(Key::Char('2')), &link);
     assert_eq!(session.paths(), ["/apps/app/Party", "/apps/app/Party/Roles"]);
     assert_eq!(levels(&link).len(), 3);
-    // F3 goes back to the screen before, asking for it again.
-    press(&mut session, &link, Key::F(3));
+    // Back (Alt+Left in either scheme) goes to the screen before, asking for it again.
+    session.press(&KeyPress::with_alt(Key::Left), &link);
     assert_eq!(session.path(), "/apps/app/Party/EditParty");
 }
 
@@ -475,7 +695,7 @@ fn save_on_a_leave_from_a_link_posts_the_edited_form_then_goes() {
 fn back_and_quit_ask_first_when_a_form_changed() {
     let (mut session, link) = edit_session();
     typed(&mut session, &link, "Al");
-    press(&mut session, &link, Key::F(3));
+    session.press(&KeyPress::with_alt(Key::Left), &link);
     assert_eq!(session.confirm_choice(), Some("Stay"));
     press(&mut session, &link, Key::Escape);
     assert!(!session.press(&KeyPress::with_ctrl(Key::Char('q')), &link));
@@ -523,7 +743,7 @@ fn paging_and_sort_ask_again_with_the_parameters_of_the_screen() {
     let mut session = Session::new(ScreenModel::from_json(GALLERY_LIST_JSON).unwrap());
     session.navigate("/Gallery/List?enumTypeId=ScreenThemeType", false);
     session.run_now(&link);
-    press(&mut session, &link, Key::F(8));
+    press(&mut session, &link, Key::PageDown);
     assert_eq!(session.page_index("EnumList"), 1);
     assert_eq!(session.list_page("EnumList")[0].cells[0].text(), "ENUM_10");
     while session.focus_id() != "EnumList" {

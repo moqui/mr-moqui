@@ -378,6 +378,7 @@ fn world_with(dir: &std::path::Path, conf: &str) -> World {
     theme_value(&world, "DEFAULT_QUASAR", 2, "STRT_TRAY_CHAT", "secret");
     theme_value(&world, "DEFAULT_QUASAR", 3, "STRT_QUICK_CREATE", "open/QuickCreate");
     theme_value(&world, "DEFAULT_QUASAR", 4, "STRT_CHATTER_SCREEN", "Chatter");
+    theme_value(&world, "DEFAULT_QUASAR", 5, "STRT_TUI_KEY_SCHEME", "Classic");
     theme_value(&world, "DEFAULT_QUASAR", 6, "STRT_TUI_BREAKPOINTS", "md = 110");
     theme_value(&world, "DEFAULT_QUASAR", 7, "STRT_TUI_BREAKPOINTS", "lg = wide");
     theme_value(&world, "DEFAULT_QUASAR", 8, "STRT_TUI_COLORS", "primary = #1976d2");
@@ -606,7 +607,8 @@ fn shell_data_lists_the_apps_the_user_may_open_with_their_menus_providers_theme_
     assert_eq!(
         data["tui"],
         json!({"breakpoints": {"md": 110}, "colors": {"primary": "#1976d2", "negative": "#c10015"},
-            "keys": {"back": "f3 | alt+left", "refresh": "f5"}, "drawerOpen": null, "mouse": null})
+            "keys": {"back": "f3 | alt+left", "refresh": "f5"}, "drawerOpen": null, "mouse": null,
+            "keyScheme": "classic"})
     );
     let text = logged(&lines);
     assert!(
@@ -1342,7 +1344,8 @@ fn publish_sends_the_counts_on_the_shell_counts_topic_once_per_window_and_after_
 
 /// The terminal keeps F9's drawer choice as the `TUI_DRAWER_OPEN` preference through webroot's `/apps/setPreference`
 /// (asked for as JSON, it answers 200 with an empty body and the `X-Moqui-Preferences` header), and the shell data gives
-/// it back as `tui.drawerOpen`: null until it is set. Alt+P's mouse choice, `TUI_MOUSE`, is `tui.mouse` the same way.
+/// it back as `tui.drawerOpen`: null until it is set. Alt+P's mouse choice, `TUI_MOUSE`, is `tui.mouse` the same way,
+/// and the palette's key scheme, `TUI_KEYS`, is `tui.keyScheme` when it names a scheme.
 #[test]
 fn the_drawer_choice_is_a_preference_the_shell_data_gives_back() {
     let world = World::open("");
@@ -1363,6 +1366,12 @@ fn the_drawer_choice_is_a_preference_the_shell_data_gives_back() {
     assert_eq!(set_key("TUI_MOUSE", "false").status, 200);
     let (_, data) = get(&world, &root, Some("plain"), "/shellData", &[]);
     assert_eq!(data["tui"]["mouse"], json!(false), "{data}");
+    assert_eq!(data["tui"]["keyScheme"], serde_json::Value::Null, "{data}");
+    for (value, expected) in [("classic", json!("classic")), ("vim", serde_json::Value::Null)] {
+        assert_eq!(set_key("TUI_KEYS", value).status, 200);
+        let (_, data) = get(&world, &root, Some("plain"), "/shellData", &[]);
+        assert_eq!(data["tui"]["keyScheme"], expected, "{data}");
+    }
     let set = |user: Option<&str>, value: &str| {
         let mut post = request("POST", "/apps/setPreference");
         if let Some(user) = user {

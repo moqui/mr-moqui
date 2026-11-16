@@ -185,6 +185,9 @@ along with this software (see the LICENSE.md file). If not, see
             resourceValue="m-theme-green-screen"/>
     <moqui.screen.ScreenThemeResource screenThemeId="GREEN_SCREEN_QUASAR" sequenceNum="110" resourceTypeEnumId="STRT_DEFAULT_COLOR_SCHEME"
             resourceValue="PHOSPHOR"/>
+    <!-- the terminal's green-screen keys (F3 back, F12 cancel, Right follows) for a user who has not chosen a scheme -->
+    <moqui.screen.ScreenThemeResource screenThemeId="GREEN_SCREEN_QUASAR" sequenceNum="120" resourceTypeEnumId="STRT_TUI_KEY_SCHEME"
+            resourceValue="classic"/>
     <moqui.screen.ScreenColorScheme colorSchemeId="PHOSPHOR" screenThemeId="GREEN_SCREEN_QUASAR" sequenceNum="1" description="Phosphor">
         <extraCss><![CDATA[
 /* a phosphor tube: the glow of the text and the scan lines in dark mode, inverse video on a filled button, green-bar (or amber-bar)

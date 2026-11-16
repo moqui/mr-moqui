@@ -193,6 +193,7 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="TUI Width Breakpoint (name = columns)" enumId="STRT_TUI_BREAKPOINTS" enumTypeId="ScreenThemeResourceType"/>
             <moqui.basic.Enumeration description="TUI Color Role (role = color)" enumId="STRT_TUI_COLORS" enumTypeId="ScreenThemeResourceType"/>
             <moqui.basic.Enumeration description="TUI Key Binding (action = chords)" enumId="STRT_TUI_KEYS" enumTypeId="ScreenThemeResourceType"/>
+            <moqui.basic.Enumeration description="TUI Key Scheme (modern or classic), for a user who has not chosen one" enumId="STRT_TUI_KEY_SCHEME" enumTypeId="ScreenThemeResourceType"/>
             <!-- Chat (org.moqui.chat.ChatServices): whether the current user may see the record a record room is bound to, so a
                 user who is not a member may read and join it; without one only members reach such a room -->
             <moqui.basic.Enumeration description="Record Visible Service (service name, called with recordEntityName, recordId and checkOnly, answers recordVisible)" enumId="STRT_RECORD_VISIBLE_SERVICE" enumTypeId="ScreenThemeResourceType"/>

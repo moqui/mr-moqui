@@ -691,6 +691,27 @@ test("the theme's appearance: its default scheme and the scheme's fonts, the use
     }
 });
 
+test("the Appearance dialog's Terminal keys: the shell data's scheme, saved as TUI_KEYS, and a theme may lock it", () => {
+    const savedConfig = qvt.config;
+    const dialog = qvt.components["m-appearance-dialog"];
+    const posts = [];
+    const vm = { version: 0, $root: { shellData: { tui: { keyScheme: null } }, setPreference(key, value) { posts.push([key, value]); } } };
+    const scheme = () => dialog.computed.terminalKeys.call(vm);
+    try {
+        assert.match(dialog.template, /v-if="allowed\('TUI_KEYS'\)" id="m-appearance-terminal-keys"/);
+        assert.equal(scheme(), "modern", "no choice and no theme scheme: Modern");
+        vm.$root.shellData.tui.keyScheme = "classic";
+        assert.equal(scheme(), "classic");
+        dialog.methods.setTerminalKeys.call(vm, "modern");
+        assert.deepEqual(posts, [["TUI_KEYS", "modern"]]);
+        assert.equal(scheme(), "modern");
+        qvt.config = { appearance: { policy: { lockedKeys: ["TUI_KEYS"] } } };
+        assert.ok(!moqui.appearanceAllowed("TUI_KEYS"));
+    } finally {
+        qvt.config = savedConfig;
+    }
+});
+
 test("the account menu's Theme: shown for two themes the policy leaves open; a pick is posted and the page reloads, the current one does nothing", async () => {
     const savedConfig = qvt.config, savedRequest = moqui.request, savedReload = moqui.reloadPage;
     const methods = qvt.rootOptions({ basePath: "/apps", linkBasePath: "/qapps", appRootPath: "" }).methods;

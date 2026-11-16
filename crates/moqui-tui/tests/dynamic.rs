@@ -18,7 +18,7 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use moqui_tui::{Choice, FakeLink, Key, KeyPress, LinkCall, Overlay, Session, TransitionOutcome};
+use moqui_tui::{Choice, FakeLink, Key, KeyPress, KeyScheme, LinkCall, Overlay, Session, TransitionOutcome};
 
 const DYN_JSON: &str = r#"{
   "v": 1,
@@ -272,6 +272,7 @@ fn click_to_edit_posts_the_value_to_its_transition() {
 #[test]
 fn a_row_form_posts_its_row_and_the_editor_closes() {
     let (mut session, link) = started("/lists", &[LISTS_JSON]);
+    session.set_key_scheme_override(Some(KeyScheme::Classic));
     focus(&mut session, &link, "Rows");
     press(&mut session, &link, Key::Enter);
     assert_eq!(session.top_overlay(), Some(&Overlay::Row("Rows".to_string(), 0)));
@@ -288,6 +289,26 @@ fn a_row_form_posts_its_row_and_the_editor_closes() {
     assert!(session.row_editing().is_none());
     // Right follows the row's link, as Lynx does.
     press(&mut session, &link, Key::Right);
+    assert!(calls(&link)
+        .iter()
+        .any(|call| matches!(call, LinkCall::Level { path, .. } if path == "/item")));
+}
+
+/// Modern: Enter follows a row's link even when the row has fields, `e` edits it, and Right moves on from the list.
+#[test]
+fn modern_enter_follows_a_row_with_fields_and_e_edits_it() {
+    let (mut session, link) = started("/lists", &[LISTS_JSON]);
+    focus(&mut session, &link, "Rows");
+    press(&mut session, &link, Key::Char('e'));
+    assert_eq!(session.top_overlay(), Some(&Overlay::Row("Rows".to_string(), 0)));
+    press(&mut session, &link, Key::Escape);
+    assert!(session.row_editing().is_none());
+    assert_eq!(session.focus_id(), "Rows");
+    press(&mut session, &link, Key::Right);
+    assert_ne!(session.focus_id(), "Rows", "Right moves the focus on");
+    press(&mut session, &link, Key::Left);
+    assert_eq!(session.focus_id(), "Rows");
+    press(&mut session, &link, Key::Enter);
     assert!(calls(&link)
         .iter()
         .any(|call| matches!(call, LinkCall::Level { path, .. } if path == "/item")));
@@ -316,8 +337,13 @@ fn enter_and_right_open_the_highlighted_task_instead_of_its_leading_done_action(
     })
     .to_string();
     let detail = r#"{"v":1,"screen":{"path":"/item"},"c":[]}"#;
-    for key in [Key::Enter, Key::Right] {
+    for (key, scheme) in [
+        (Key::Enter, KeyScheme::Modern),
+        (Key::Enter, KeyScheme::Classic),
+        (Key::Right, KeyScheme::Classic),
+    ] {
         let (mut session, link) = started("/tasks", &[&tasks, detail]);
+        session.set_key_scheme_override(Some(scheme));
         focus(&mut session, &link, "Tasks");
         press(&mut session, &link, Key::Down);
         press(&mut session, &link, Key::Up);

@@ -45,7 +45,10 @@ pub use forms::{
     field_keys, parameter_keys, ComponentInfo, DynamicInfo, Extra, FieldInfo, FocusItem, FocusKind, FormInfo, Index,
     LinkInfo, MenuInfo, RowInfo, Scope, TabInfo, TreeInfo, WizardInfo,
 };
-pub use keys::{merge_keys, Action, Key, KeyMap, KeyPress, MergeSkip, Mouse, MouseKind, Target, ACTIONS};
+pub use keys::{
+    merge_keys, scheme_keys, Action, Key, KeyMap, KeyPress, KeyScheme, MergeSkip, Mouse, MouseKind, Target, ACTIONS,
+    KEY_SCHEMES,
+};
 pub use layout::{
     display_width, dotted_label, frame, frame_with, label_column_width, layout, layout_levels, layout_nodes, outline,
     outline_of, ref_id, truncate_width, width_class, wizard_back, wizard_next, wrap, Breakpoints, Frame, LabelMode,

@@ -8,34 +8,36 @@
      Task                │ ┃ file.                                                                                                                                                │
      Board               │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
      Calendar            │ ┌─ Fields (4.5): every widget, titled by its element ──────────────────────────────────────────────────────────────────────────────────────────────────┐
-     Split               │ │ text-line mask=(999) 999… : [8015551234 _________]                        text-line input-type=num… : [        42]                                   │
-     Settings            │ │ text-area . . . . . . . . : │Plain text area.                             text-area editor-type=md  : │**Markdown** text area with a preview         │
-     Wizard              │ │                             │                                                                         │                                              │
-     Dialog              │ │                                                                                                       │                                              │
-     Report              │ │ text-area editor-type=ri… : │<h3>Rich text</h3><p>The <strong>Tiptap</strotext-area editor-type=ri… : │<p>A <strong>light</strong> editor for note…  │
-     Panel               │ │                             HTML is read-only in the terminal. Use the                                HTML is read-only in the terminal. Use the     │
-   ▶ Widgets             │ │                             browser form.                                                             browser form.                                  │
-     Editor              │ │ drop-down entity-options  : [Screen Theme Type [ScreenThemeType]      ▾]  drop-down allow-multiple  : [UserGroup, UserAccount      ▾]                │
-     Message             │ │ drop-down dynamic-option… : [           ▾]                                date-time type=date . . . : [2026-10-18________]                           │
-     Views               │ │ date-time type=time . . . : [09:30_____________]                          date-time type=date-time  : [2026-10-18 09:30__]                           │
-     Handheld            │ │ date-period . . . . . . . : [___________] – [___________]                 date-find type=date . . . : [___________] – [___________]                  │
-     Nav cards           │ │ range-find  . . . . . . . : [________] – [________]                       text-find . . . . . . . . : [____________________]                         │
- ▾ Home                  │ │ check (single)  . . . . . : [x] Active                                    check with options  . . . : [x] Email  [ ] SMS  [ ] Push                   │
-                         │ │ radio . . . . . . . . . . : (•) Task  ( ) Call  ( ) Event                 file  . . . . . . . . . . : [ choose… ]  upload in the browser             │
-                         │ │ display (label-wrapper) . : A read-only value with a label                display-entity Enumerati… : Screen Theme Type                              │
-                         │ │ password  . . . . . . . . : [______________________________]                                                                                         │
+     Split               │ │ text-line mask=(999) 999-9999 . . . . . . : [8015551234 _________]        text-line input-type=number . . . . . . . : [        42]                   │
+     Settings            │ │ text-area . . . . . . . . . . . . . . . . : │Plain text area.             text-area editor-type=md  . . . . . . . . : │**Markdown** text area with   │
+     Wizard              │ │                                             │                                                                         │                              │
+     Dialog              │ │                                                                                                                       │                              │
+     Report              │ │ text-area editor-type=rich mention-trans… : │<h3>Rich text</h3><p>The <strtext-area editor-type=rich-light  . . . . : │<p>A <strong>light</strong>…  │
+     Panel               │ │                                             HTML is read-only in the                                                  HTML is read-only in the       │
+   ▶ Widgets             │ │                                             terminal. Use the browser                                                 terminal. Use the browser      │
+     Editor              │ │                                             form.                                                                     form.                          │
+     Message             │ │ drop-down entity-options  . . . . . . . . : [Screen Theme Type [Scree… ▾] drop-down allow-multiple  . . . . . . . . : [UserGroup, UserAccount    ▾]  │
+     Views               │ │ drop-down dynamic-options server-search . : [                          ▾] date-time type=date . . . . . . . . . . . : [2026-10-18________]           │
+     Handheld            │ │ date-time type=time . . . . . . . . . . . : [09:30_____________]          date-time type=date-time  . . . . . . . . : [2026-10-18 09:30__]           │
+     Nav cards           │ │ date-period . . . . . . . . . . . . . . . : [___________] – [___________] date-find type=date . . . . . . . . . . . : [___________] – [___________]  │
+ ▾ Home                  │ │ range-find  . . . . . . . . . . . . . . . : [________] – [________]       text-find . . . . . . . . . . . . . . . . : [_________________]            │
+                         │ │ check (single)  . . . . . . . . . . . . . : [x] Active                    check with options  . . . . . . . . . . . : [x] Email  [ ] SMS  [ ] Push   │
+                         │ │ radio . . . . . . . . . . . . . . . . . . : (•) Task  ( ) Call  ( ) Event file  . . . . . . . . . . . . . . . . . . : [ choose… ]  upload in the brow│
+                         │ │ display (label-wrapper) . . . . . . . . . : A read-only value with a labeldisplay-entity EnumerationType  . . . . . : Screen Theme Type              │
+                         │ │                                                                                                                                                      │
+                         │ │ password  . . . . . . . . . . . . . . . . : [______________________________]                                                                         │
                          │ │ < Save >                                                                                                                                             │
                          │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
                          │ ┌─ Field rules (4.5): visible-when and require-when ───────────────────────────────────────────────────────────────────────────────────────────────────┐
-                         │ │ Kind  . . . . . . . . . . : [           ▾]                                                                                                           │
-                         │ │ Serial (required for equ… : [____________________]                                                                                                   │
-                         │ │ Detail (shown unless par… : [________________________________________]                                                                               │
+                         │ │ Kind  . . . . . . . . . . . . . . . . . . : [           ▾]                                                                                           │
+                         │ │ Serial (required for equipment) . . . . . : [____________________]                                                                                   │
+                         │ │ Detail (shown unless part, required for … : [________________________________________]                                                               │
                          │ │                                                                                                                                                      │
                          │ │ < Save >                                                                                                                                             │
                          │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
                          │ ┌─ Buttons (4.6): primary, tonal, flat, text ──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
                          │ │ Primary: a form's submit, outline until a field changes.                                                                                             │
-                         │ │ Type here to see the sub… : [________________________________________]                                                                               │
+                         │ │ Type here to see the submit turn primary  : [________________________________________]                                                               │
                          │ │ < Save >  [ Reset ]                                                                                                                                  │
                          │ │ Tonal (secondary): transition links by btn-type, a danger link with confirmation, a button-menu.                                                     │
                          │ │ Tonal primary  [ Tonal success ]  [ Tonal info ]  [ Tonal warning ]  [ Delete ]  [ More ▾ ]                                                          │
@@ -43,8 +45,6 @@
                          │ │ guide's icons), the second a Material Icons name (icon=edit), the third a Font Awesome class (icon=fa fa-pencil); a name is written as a q-icon and  │
                          │ │ a class as an i element.                                                                                                                             │
                          │ │ Edit (Material Symbols name)  Edit (Material name)  Edit (Font Awesome class)  Flat with text                                                        │
-                         │ │ Text links: link-type=anchor to a screen and to a transition that redirects.                                                                         │
-                         │ │ Text link to the Detail archetype  Text link through a transition  Plain URL in a new window                                                         │
 ─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  text-line mask=(999) 999-9999 · A masked text line
  F1=Help  Alt+Enter=Save  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

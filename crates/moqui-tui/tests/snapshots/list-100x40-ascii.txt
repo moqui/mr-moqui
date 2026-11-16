@@ -37,4 +37,4 @@
 
 ----------------------------------------------------------------------------------------------------
  Type
- F1=Help  F4=Prompt  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit
+ F1=Help  F4=Prompt  Backspace=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit
