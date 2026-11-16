@@ -58,6 +58,12 @@ pub struct Options {
     pub flush: Duration,
     /// Variables of every step, under the job's own (a `HOME` the steps can write).
     pub env: Vec<(String, String)>,
+    /// Whether a step inherits the runner's environment (a job's container, whose image sets it up). A registered
+    /// runner's steps do not ([`STEP_BASE_ENV`] and [`Self::pass_env`] only): the machine's environment is not the
+    /// job's (plans/Security-Review.md SEC-GIT-02).
+    pub inherit_env: bool,
+    /// Names of the runner's variables a step gets when it does not inherit the environment (`--pass-env`).
+    pub pass_env: Vec<String>,
 }
 
 impl Default for Options {
@@ -67,8 +73,43 @@ impl Default for Options {
             shell: "sh".to_string(),
             flush: Duration::from_millis(1000),
             env: Vec::new(),
+            inherit_env: true,
+            pass_env: Vec::new(),
         }
     }
+}
+
+/// The runner's variables a step of a registered runner gets, with the `LC_` ones; the job's variables come on top.
+pub const STEP_BASE_ENV: &[&str] =
+    &["PATH", "HOME", "USER", "LOGNAME", "LANG", "LANGUAGE", "TZ", "TMPDIR", "SHELL", "TERM"];
+
+/// Whether a variable of the runner is a credential of the runner (its job token, its runner token, a pool token, and
+/// the file that holds the runner token), which no step gets, whatever passes the environment on.
+fn runner_credential(name: &str) -> bool {
+    name.starts_with("MOQUI_CI_") && (name.ends_with("_TOKEN") || name.ends_with("_TOKEN_FILE"))
+}
+
+/// The runner's variables a step starts from: all of them in a job's container (`inherit_env`), else [`STEP_BASE_ENV`],
+/// the `LC_` ones and `pass_env`; never a runner credential, nor (without `inherit_env`) any other `MOQUI_CI_` one.
+pub fn step_base_env(
+    vars: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+    options: &Options,
+) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    vars.into_iter()
+        .filter(|(name, _)| {
+            let Some(name) = name.to_str() else {
+                return options.inherit_env;
+            };
+            if runner_credential(name) {
+                return false;
+            }
+            options.inherit_env
+                || (!name.starts_with("MOQUI_CI_")
+                    && (STEP_BASE_ENV.contains(&name)
+                        || name.starts_with("LC_")
+                        || options.pass_env.iter().any(|passed| passed == name)))
+        })
+        .collect()
 }
 
 /// The exit codes of `moqui ci-run`.
@@ -337,8 +378,10 @@ fn run_step(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        // a step does not need the job token: what it may reach it reaches through its own tools
-        .env_remove("MOQUI_CI_TOKEN");
+        // a step does not get the runner's tokens (what it may reach it reaches through its own tools), and on a
+        // registered runner not the machine's environment either: only what step_base_env lets through
+        .env_clear()
+        .envs(step_base_env(std::env::vars_os(), options));
     for (name, value) in env {
         spawn.env(name, value);
     }
