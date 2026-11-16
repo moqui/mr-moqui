@@ -14,8 +14,9 @@
 
 //! The container driver (plans/Dogfood.md D19, F8): the run services of the `docker` host type, over the Docker Engine
 //! API, which Podman serves on its socket too. An `InstanceHost` is reached over a Unix socket (`hostProtocol` `unix`,
-//! `hostAddress` the socket's path), plain HTTP, or HTTPS with a client certificate (`tlsCaCert`, `tlsClientCert`,
-//! `tlsClientKey`). A job's container, and each of its service containers, has no privilege, no capabilities, no host
+//! `hostAddress` the socket's path), HTTPS with a client certificate (`tlsCaCert`, `tlsClientCert`, `tlsClientKey`), or
+//! plain HTTP to this machine only (SEC-OUT-08). The hosted-instance services reach a host through this client too
+//! (`call#DockerApi`). A job's container, and each of its service containers, has no privilege, no capabilities, no host
 //! socket and no host path, a non-root user, an init that reaps orphans, a read-only root with a sized tmpfs at `/tmp`,
 //! its working directory on a sized tmpfs (or on the root filesystem the pool's `diskMb` sizes), and the pool's
 //! limits. Its names carry this server's id, and what it removes has this server's label
@@ -55,6 +56,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
     rust_service!(map, inspect_run_docker)?;
     rust_service!(map, remove_run_docker)?;
     rust_service!(map, cleanup_runs_docker)?;
+    rust_service!(map, call_docker_api)?;
     Ok(())
 }
 
@@ -79,11 +81,18 @@ impl DockerHost {
     ///
     /// # Errors
     ///
-    /// When the row names no address.
+    /// When the row names no address, or plain http to a host that is not this machine (SEC-OUT-08).
     pub fn of(host: &EntityValue) -> Result<Self, Error> {
+        Self::connect(host, None)
+    }
+
+    /// The client for an `InstanceHost` row, on `default_port` when the row has no `adminPort` (the hosted-instance
+    /// services' 2375). Plain http goes only to this machine's loopback ([`moqui_lib::net::loopback_host`]): the
+    /// Docker Engine API has no authentication of its own, and a registry login rides on an image pull.
+    fn connect(host: &EntityValue, default_port: Option<u16>) -> Result<Self, Error> {
         let address = field(host, "hostAddress")
             .ok_or_else(|| Error::new("the instance host has no hostAddress (a socket path or a host name)"))?;
-        let protocol = field(host, "hostProtocol").unwrap_or_else(|| "http".to_string());
+        let protocol = field(host, "hostProtocol").map_or_else(|| "http".to_string(), |text| text.to_ascii_lowercase());
         let key = format!("{protocol}:{address}");
         let mut client = RestClient::new().timeout(CALL_TIMEOUT);
         let base = match protocol.as_str() {
@@ -91,9 +100,24 @@ impl DockerHost {
                 client = client.unix_socket(address.trim_start_matches("unix://"));
                 "http://localhost".to_string()
             }
+            "http" if !moqui_lib::net::loopback_host(&address) => {
+                return Err(Error::new(format!(
+                    "the Docker host {address} is not reached over plain http, which goes only to this machine \
+                     (localhost, 127.0.0.0/8 or ::1): use https, with the host's tlsCaCert, tlsClientCert and \
+                     tlsClientKey, or a unix socket"
+                )))
+            }
             "http" | "https" => {
-                let port = field(host, "adminPort").map_or(String::new(), |port| format!(":{port}"));
-                format!("{protocol}://{address}{port}")
+                let port = field(host, "adminPort")
+                    .or_else(|| default_port.map(|port| port.to_string()))
+                    .map_or(String::new(), |port| format!(":{port}"));
+                // an IPv6 address is bracketed in a URL
+                let name = if address.parse::<std::net::Ipv6Addr>().is_ok() {
+                    format!("[{address}]")
+                } else {
+                    address.clone()
+                };
+                format!("{protocol}://{name}{port}")
             }
             other => return Err(Error::new(format!("hostProtocol {other} is not unix, http or https"))),
         };
@@ -895,6 +919,106 @@ fn cleanup_runs_docker(parameters: &Parameters, facade: &EntityFacade) -> Out {
     Ok([("removedCount".to_string(), Value::I64(removed))]
         .into_iter()
         .collect())
+}
+
+/// The permission `call#DockerApi` needs, as the hosted-instance services check it.
+const INSTANCE_ADMIN: &str = "INSTANCE_ADMIN";
+/// The hosted-instance services' port when the host row has none, as they had it.
+const INSTANCE_PORT: u16 = 2375;
+/// The longest `timeoutSeconds` a call may ask for.
+const MAX_CALL_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+
+/// `call#DockerApi`: one Docker Engine API call to an `InstanceHost`, for the hosted-instance services of
+/// `InstanceServices.xml` (`init#InstanceDocker` and the others), on the client the CI runs use ([`DockerHost`]):
+/// a unix socket, https with the row's TLS fields, or plain http to this machine only (SEC-OUT-08). Needs
+/// `INSTANCE_ADMIN` unless authorization is disabled. In: `instanceHostId`, `method`, `path` (under the API version),
+/// `query`, `body` (JSON text sent as it is, or a map or list), `registryAuth` (sent as `X-Registry-Auth`),
+/// `timeoutSeconds`. Out: `statusCode`, `reasonPhrase` and `responseBody` (an object or list when the answer is one in
+/// JSON, else its text). A refusal or a failure to connect is a message error and no `statusCode`.
+fn call_docker_api(parameters: &Parameters, facade: &EntityFacade) -> Out {
+    let authz_disabled = ExecutionContext::with_current(ExecutionContext::authz_disabled).unwrap_or(false);
+    if !authz_disabled && !moqui_core::user::has_permission(INSTANCE_ADMIN).unwrap_or(false) {
+        add_error(format!("Hosted instances need the {INSTANCE_ADMIN} permission"));
+        return Ok(BTreeMap::new());
+    }
+    let Some(host_id) = text(parameters, "instanceHostId") else {
+        add_error("instanceHostId is required");
+        return Ok(BTreeMap::new());
+    };
+    let method_name = text(parameters, "method").unwrap_or_else(|| "GET".to_string());
+    let Some(method) = Method::parse(&method_name) else {
+        add_error(format!("HTTP method {method_name} is not supported"));
+        return Ok(BTreeMap::new());
+    };
+    let path = text(parameters, "path").unwrap_or_default();
+    if !path.starts_with('/') || path.contains("..") || path.contains(['?', '#']) || path.contains(char::is_whitespace)
+    {
+        add_error(format!("Docker API path {path} is not a path under the API version"));
+        return Ok(BTreeMap::new());
+    }
+    let host = match super::host_row(facade, &host_id).and_then(|row| DockerHost::connect(&row, Some(INSTANCE_PORT))) {
+        Ok(host) => host,
+        Err(err) => {
+            add_error(format!("Docker host {host_id}: {}", err.message()));
+            return Ok(BTreeMap::new());
+        }
+    };
+    let query: Vec<String> = string_pairs(parameters.get("query"))
+        .into_iter()
+        .map(|(name, value)| format!("{}={}", encode(&name), encode(&value)))
+        .collect();
+    let target = if query.is_empty() {
+        path
+    } else {
+        format!("{path}?{}", query.join("&"))
+    };
+    let timeout = number(parameters, "timeoutSeconds")
+        .and_then(|seconds| u64::try_from(seconds).ok())
+        .filter(|seconds| *seconds > 0)
+        .map_or(CALL_TIMEOUT, |seconds| {
+            Duration::from_secs(seconds).min(MAX_CALL_TIMEOUT)
+        });
+    let url = format!("{}{API}{target}", host.base);
+    if let Err(refused) = moqui_core::entity::fence::check_effect(
+        moqui_core::entity::fence::Effect::RemoteCall,
+        &format!("HTTP {method} {}", moqui_lib::http::redacted(&url)),
+    ) {
+        add_error(refused.message());
+        return Ok(BTreeMap::new());
+    }
+    // sim mode sends nothing, as the script REST client
+    let sim = facade.sim_active();
+    let mut call = host.client.request(method, url).timeout(timeout);
+    if let Some(auth) = text(parameters, "registryAuth") {
+        call = call.header("X-Registry-Auth", auth);
+    }
+    match parameters.get("body") {
+        Some(Value::String(body)) if !body.trim().is_empty() => call = call.text("application/json", body.clone()),
+        Some(body @ (Value::Map(_) | Value::List(_))) => call = call.json(&moqui_lib::json::to_json(body)),
+        _ => {}
+    }
+    let response = match call.send(sim) {
+        Ok(response) => response,
+        Err(err) => {
+            tracing::error!("Error connecting to Docker host {host_id}: {err}");
+            add_error(format!("Error connecting to Docker host {host_id}: {}", err.message()));
+            return Ok(BTreeMap::new());
+        }
+    };
+    let body = match serde_json::from_str::<serde_json::Value>(response.body()) {
+        Ok(json @ (serde_json::Value::Object(_) | serde_json::Value::Array(_))) => moqui_lib::json::from_json(&json),
+        _ => Value::string(response.body()),
+    };
+    Ok([
+        ("statusCode".to_string(), Value::I64(i64::from(response.status()))),
+        (
+            "reasonPhrase".to_string(),
+            Value::string(moqui_core::outbound::reason_phrase(response.status())),
+        ),
+        ("responseBody".to_string(), body),
+    ]
+    .into_iter()
+    .collect())
 }
 
 #[cfg(test)]

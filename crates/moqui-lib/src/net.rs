@@ -113,6 +113,21 @@ pub fn link_local_address(address: std::net::IpAddr) -> bool {
     }
 }
 
+/// Whether `host` (a name or an address, bracketed or not) is this machine's loopback: `localhost`, `127.0.0.0/8`,
+/// `::1`, or `::ffff:127.x.y.z`, the IPv4-mapped form of a loopback address. A plain-text connection to such a host
+/// does not leave the machine. A name other than `localhost` is not looked up.
+pub fn loopback_host(host: &str) -> bool {
+    let name = host.trim().trim_start_matches('[').trim_end_matches(']');
+    if name.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    match name.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(v4)) => v4.is_loopback(),
+        Ok(std::net::IpAddr::V6(v6)) => v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback()),
+        Err(_) => false,
+    }
+}
+
 /// The IPv4 address an IPv6 address carries and is reached through: IPv4-mapped `::ffff:a.b.c.d`, NAT64
 /// `64:ff9b::a.b.c.d` and 6to4 `2002:aabb:ccdd::/48`.
 fn embedded_ipv4(v6: std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
@@ -196,6 +211,34 @@ mod tests {
             "2002:0808:0808::1",
         ] {
             assert!(!internal_address(ip.parse().unwrap()), "{ip}");
+        }
+    }
+
+    #[test]
+    fn loopback_hosts_are_this_machine_only() {
+        for host in [
+            "localhost",
+            "LocalHost",
+            "127.0.0.1",
+            "127.8.9.10",
+            "::1",
+            "[::1]",
+            "::ffff:127.0.0.1",
+            "[::ffff:7f00:1]",
+        ] {
+            assert!(loopback_host(host), "{host}");
+        }
+        for host in [
+            "192.0.2.10",
+            "10.0.0.1",
+            "docker.example.com",
+            "localhost.example.com",
+            "::",
+            "::ffff:10.0.0.1",
+            "64:ff9b::7f00:1",
+            "",
+        ] {
+            assert!(!loopback_host(host), "{host}");
         }
     }
 

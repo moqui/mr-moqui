@@ -127,8 +127,30 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <!-- The Docker Engine API, which Podman serves on its socket too (crates/moqui-git/src/ci/driver/docker.rs): the host
-        is reached over a Unix socket (hostProtocol unix, hostAddress the socket's path), HTTP, or HTTPS with the
-        host's tlsCaCert, tlsClientCert and tlsClientKey. -->
+        is reached over a Unix socket (hostProtocol unix, hostAddress the socket's path), HTTPS with the host's
+        tlsCaCert, tlsClientCert and tlsClientKey, or plain HTTP to this machine only (localhost, 127.0.0.0/8, ::1);
+        plain HTTP to another host is refused (plans/Security-Review-Medium.md SEC-OUT-08). -->
+    <service verb="call" noun="DockerApi" type="rust" location="moqui_git::ci::driver::docker::call_docker_api"
+            allow-remote="false">
+        <description>One Docker Engine API call to an InstanceHost, on the client the CI runs use: what the hosted-instance
+            services (init#InstanceDocker and the others) send. Needs the sealed INSTANCE_ADMIN unless authorization is
+            disabled. A refusal or a failure to connect is a message error and no statusCode.</description>
+        <in-parameters>
+            <parameter name="instanceHostId" required="true"/>
+            <parameter name="method" default-value="GET"/>
+            <parameter name="path" required="true"><description>Under the API version, such as /containers/create</description></parameter>
+            <parameter name="query" type="Map"><description>Query parameters, encoded here</description></parameter>
+            <parameter name="body" type="Object"><description>JSON text sent as it is, or a Map or List sent as JSON</description></parameter>
+            <parameter name="registryAuth"><description>Sent as X-Registry-Auth (an image pull's registry login)</description></parameter>
+            <parameter name="timeoutSeconds" type="Integer"><description>60 when empty, at most 3600</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="statusCode" type="Integer"/>
+            <parameter name="reasonPhrase"/>
+            <parameter name="responseBody" type="Object"><description>A Map or List when the answer is a JSON object or
+                array, else its text</description></parameter>
+        </out-parameters>
+    </service>
     <service verb="start" noun="RunDocker" type="rust" location="moqui_git::ci::driver::docker::start_run_docker">
         <implements service="org.moqui.dev.InstanceServices.start#InstanceRun"/></service>
     <service verb="inspect" noun="RunDocker" type="rust" location="moqui_git::ci::driver::docker::inspect_run_docker">
@@ -453,16 +475,10 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.message.addError(`No InstanceImage found for AppInstance ${appInstanceId}`); return;
             }
             const instanceImageType = instanceImage.findRelatedOne("imageType", null, null)
-            const dockerUri = (restClient, ...paths) => {
-                const uri = restClient.uri().protocol(instanceHost.hostProtocol || "http").host(String(instanceHost.hostAddress))
-                        .port(instanceHost.adminPort ? parseInt(instanceHost.adminPort, 10) : 2375)
-                for (const path of paths) uri.path(path)
-                return uri
-            }
-            const containerName = String(appInstance.instanceUuid || appInstance.instanceName)
-
-            const restClient = ec.service.rest().method("POST")
-            dockerUri(restClient, "containers", "create").parameter("name", String(appInstance.instanceName)).build()
+            // the host as its row says: a unix socket, https, or plain http to this machine only (SEC-OUT-08)
+            const docker = (method, path, more) => ec.service.sync().name("org.moqui.dev.InstanceServices.call#DockerApi")
+                    .parameters(Object.assign({instanceHostId: instanceHost.instanceHostId, method, path}, more || {})).call() || {}
+            const responseText = (response) => typeof response.responseBody === "string" ? response.responseBody : JSON.stringify(response.responseBody)
 
             const hostConfigMap = {RestartPolicy: {Name: "unless-stopped"}}
             const linkList = []
@@ -512,80 +528,55 @@ along with this software (see the LICENSE.md file). If not, see
             // the names only: an Env value may be a password (SEC-TLS-09)
             ec.logger.info(`Initializing docker container for ${appInstance.instanceName} with image ${jsonBody.Image}, env ${
                 envList.map((entry) => entry.split("=")[0]).join(", ")}, host config ${Object.keys(jsonBody.HostConfig || {}).join(", ")}`)
-            restClient.jsonObject(jsonBody)
 
-            // a registry login goes over https or a unix socket, or plain http only to this machine (SEC-OUT-08)
-            const hostProtocol = String(instanceHost.hostProtocol || "http").toLowerCase()
-            const hostAddress = String(instanceHost.hostAddress || "").replace(/^\[|\]$/g, "").toLowerCase()
-            const loopbackHost = hostAddress === "localhost" || hostAddress === "::1" || /^127\.\d+\.\d+\.\d+$/.test(hostAddress)
-            const hasRegistryLogin = !!(instanceImage.authTokenCmd || instanceImage.password)
-            if (hasRegistryLogin && hostProtocol === "http" && !loopbackHost) {
-                ec.message.addError(`The registry login of image ${instanceImage.instanceImageId} is not sent to Docker host ${hostAddress} over plain http: use https or a unix socket`)
-                return
+            let authTokenPass = null
+            if (instanceImage.authTokenCmd) {
+                // the conf's token-command the field names, run natively for an INSTANCE_ADMIN holder
+                authTokenPass = ec.service.sync().name("org.moqui.dev.InstanceServices.get#RegistryToken")
+                        .parameter("instanceImageId", instanceImage.instanceImageId).call()?.authToken ?? null
+                if (ec.message.hasError()) return
+            } else {
+                authTokenPass = instanceImage.password
+            }
+            // registryLocation is the registry's server address
+            const jsonAuth = {username: instanceImage.username, password: authTokenPass, email: instanceImage.emailAddress,
+                    serveraddress: instanceImage.registryLocation}
+            const imageCreate = docker("POST", "/images/create", {
+                query: {fromImage: String(instanceImage.imageName), repo: String(instanceImage.imageName)},
+                registryAuth: StringUtilities.base64Encode(JSON.stringify(jsonAuth)), timeoutSeconds: 1000})
+            // refused or not connected: call#DockerApi said why
+            if (imageCreate.statusCode == null) { connectSuccess = false; return }
+            if (imageCreate.statusCode != 200) {
+                ec.message.addMessage(`Error Image-pull-fail problem image not-exists either or credential is wrong (${imageCreate.statusCode}): ${imageCreate.reasonPhrase}`)
             }
 
-            try {
-                let authTokenPass = null
-                if (instanceImage.authTokenCmd) {
-                    // the conf's token-command the field names, run natively for an INSTANCE_ADMIN holder
-                    authTokenPass = ec.service.sync().name("org.moqui.dev.InstanceServices.get#RegistryToken")
-                            .parameter("instanceImageId", instanceImage.instanceImageId).call()?.authToken ?? null
-                    if (ec.message.hasError()) return
-                } else {
-                    authTokenPass = instanceImage.password
+            const created = docker("POST", "/containers/create", {query: {name: String(appInstance.instanceName)}, body: JSON.stringify(jsonBody)})
+            if (created.statusCode == null) { connectSuccess = false; return }
+            connectSuccess = true
+            if (created.statusCode == 201) {
+                instanceCreated = true
+                instanceExists = true
+
+                const jsonObj = created.responseBody || {}
+                instanceUuid = jsonObj.Id
+                warnings = jsonObj.Warnings
+
+                if (instanceUuid) {
+                    appInstance.instanceUuid = instanceUuid
+                    appInstance.update()
                 }
-                // registryLocation is the registry's server address
-                const jsonAuth = {username: instanceImage.username, password: authTokenPass, email: instanceImage.emailAddress,
-                        serveraddress: instanceImage.registryLocation}
-                const authEncoded = StringUtilities.base64Encode(JSON.stringify(jsonAuth))
-                const restClientImageCreate = ec.service.rest().method("POST").addHeader("X-Registry-Auth", authEncoded)
-                dockerUri(restClientImageCreate, "images", "create")
-                        .parameters({fromImage: String(instanceImage.imageName), repo: String(instanceImage.imageName)}).build()
-                restClientImageCreate.timeout(1000)
 
-                const restResponseImageCreate = restClientImageCreate.call()
-                if (restResponseImageCreate.statusCode != 200) {
-                    ec.message.addMessage(`Error Image-pull-fail problem image not-exists either or credential is wrong (${restResponseImageCreate.statusCode}): ${restResponseImageCreate.getReasonPhrase()}`)
-                }
-            } catch (e) {
-                connectSuccess = false
-                ec.logger.error(`Error connecting to Docker host: ${e}`)
-                ec.message.addError(`Error connecting to Docker host: ${e}`)
-            }
-
-            try {
-                const restResponse = restClient.call()
-                connectSuccess = true
-
-                if (restResponse.statusCode == 201) {
-                    instanceCreated = true
-                    instanceExists = true
-
-                    const jsonObj = restResponse.jsonObject()
-                    instanceUuid = jsonObj.Id
-                    warnings = jsonObj.Warnings
-
-                    if (instanceUuid) {
-                        appInstance.instanceUuid = instanceUuid
-                        appInstance.update()
-                    }
-
-                    ec.message.addMessage(`Created Docker container ${appInstance.instanceName} (${appInstance.instanceUuid})${warnings && warnings.length ? ' warnings: ' + JSON.stringify(warnings) : ''}`)
-                } else if (restResponse.statusCode == 409) {
-                    instanceExists = true
-                    ec.logger.warn(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) conflict [${restResponse.getReasonPhrase()}]:\n${restResponse.text()}`)
-                    ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) got a conflict on create [${restResponse.getReasonPhrase()}]`)
-                } else if (restResponse.statusCode == 404) {
-                    // POST /v1.24/images/create?fromImage=busybox&tag=latest HTTP/1.1
-                    ec.message.addMessage(ec.l10n.localize("Image not Found ,or may be Docker login fail"))
-                } else {
-                    ec.logger.error(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) ERROR [${restResponse.getReasonPhrase()}]:\n${restResponse.text()}`)
-                    ec.message.addMessage(`Error on create container for ${appInstance.instanceName} (${restResponse.statusCode}): ${restResponse.getReasonPhrase()}`)
-                }
-            } catch (e) {
-                connectSuccess = false
-                ec.logger.error(`Error connecting to Docker host: ${e}`)
-                ec.message.addError(`Error connecting to Docker host: ${e}`)
+                ec.message.addMessage(`Created Docker container ${appInstance.instanceName} (${appInstance.instanceUuid})${warnings && warnings.length ? ' warnings: ' + JSON.stringify(warnings) : ''}`)
+            } else if (created.statusCode == 409) {
+                instanceExists = true
+                ec.logger.warn(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) conflict [${created.reasonPhrase}]:\n${responseText(created)}`)
+                ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) got a conflict on create [${created.reasonPhrase}]`)
+            } else if (created.statusCode == 404) {
+                // POST /v1.24/images/create?fromImage=busybox&tag=latest HTTP/1.1
+                ec.message.addMessage(ec.l10n.localize("Image not Found ,or may be Docker login fail"))
+            } else {
+                ec.logger.error(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) ERROR [${created.reasonPhrase}]:\n${responseText(created)}`)
+                ec.message.addMessage(`Error on create container for ${appInstance.instanceName} (${created.statusCode}): ${created.reasonPhrase}`)
             }
             ]]></script></actions>
     </service>
@@ -601,38 +592,30 @@ along with this software (see the LICENSE.md file). If not, see
             instanceRunning = null
             const appInstance = ec.entity.find("moqui.server.instance.AppInstance").condition("appInstanceId", appInstanceId).one()
             const instanceHost = appInstance.findRelatedOne("instanceHost", null, null)
-            const dockerUri = (restClient, ...paths) => {
-                const uri = restClient.uri().protocol(instanceHost.hostProtocol || "http").host(String(instanceHost.hostAddress))
-                        .port(instanceHost.adminPort ? parseInt(instanceHost.adminPort, 10) : 2375)
-                for (const path of paths) uri.path(path)
-                return uri
+            if (instanceHost == null) {
+                ec.message.addError(`No InstanceHost found for AppInstance ${appInstanceId}`); return;
             }
             const containerName = String(appInstance.instanceUuid || appInstance.instanceName)
 
-            const restClient = ec.service.rest().method("POST")
-            dockerUri(restClient, "containers", containerName, "start").build()
-
-            try {
-                const restResponse = restClient.call()
-                if (restResponse.statusCode == 204) {
-                    instanceStarted = true
-                    instanceRunning = true
-                    ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) started`)
-                } else if (restResponse.statusCode == 304) {
-                    instanceStarted = false
-                    instanceRunning = true
-                    ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) already started`)
-                } else if (restResponse.statusCode == 404) {
-                    instanceStarted = false
-                    instanceRunning = false
-                    ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) does not exist, init first`)
-                } else {
-                    errorString = restResponse.getReasonPhrase()
-                    ec.message.addMessage(`Server error on Docker host: ${errorString}`)
-                }
-            } catch (e) {
-                ec.logger.error(`Error connecting to Docker host: ${e}`)
-                ec.message.addError(`Error connecting to Docker host: ${e}`)
+            // the host as its row says: a unix socket, https, or plain http to this machine only (SEC-OUT-08)
+            const response = ec.service.sync().name("org.moqui.dev.InstanceServices.call#DockerApi").parameters({
+                instanceHostId: instanceHost.instanceHostId, method: "POST",
+                path: `/containers/${encodeURIComponent(containerName)}/start`}).call() || {}
+            if (response.statusCode == 204) {
+                instanceStarted = true
+                instanceRunning = true
+                ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) started`)
+            } else if (response.statusCode == 304) {
+                instanceStarted = false
+                instanceRunning = true
+                ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) already started`)
+            } else if (response.statusCode == 404) {
+                instanceStarted = false
+                instanceRunning = false
+                ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) does not exist, init first`)
+            } else if (response.statusCode != null) {
+                errorString = response.reasonPhrase
+                ec.message.addMessage(`Server error on Docker host: ${errorString}`)
             }
         ]]></script></actions>
     </service>
@@ -648,38 +631,30 @@ along with this software (see the LICENSE.md file). If not, see
             instanceRunning = null
             const appInstance = ec.entity.find("moqui.server.instance.AppInstance").condition("appInstanceId", appInstanceId).one()
             const instanceHost = appInstance.findRelatedOne("instanceHost", null, null)
-            const dockerUri = (restClient, ...paths) => {
-                const uri = restClient.uri().protocol(instanceHost.hostProtocol || "http").host(String(instanceHost.hostAddress))
-                        .port(instanceHost.adminPort ? parseInt(instanceHost.adminPort, 10) : 2375)
-                for (const path of paths) uri.path(path)
-                return uri
+            if (instanceHost == null) {
+                ec.message.addError(`No InstanceHost found for AppInstance ${appInstanceId}`); return;
             }
             const containerName = String(appInstance.instanceUuid || appInstance.instanceName)
 
-            const restClient = ec.service.rest().method("POST")
-            dockerUri(restClient, "containers", containerName, "stop").build()
-
-            try {
-                const restResponse = restClient.call()
-                if (restResponse.statusCode == 204) {
-                    instanceStopped = true
-                    instanceRunning = false
-                    ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) stopped`)
-                } else if (restResponse.statusCode == 304) {
-                    instanceStopped = false
-                    instanceRunning = false
-                    ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) was not running`)
-                } else if (restResponse.statusCode == 404) {
-                    instanceStopped = false
-                    instanceRunning = false
-                    ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) does not exist, init first`)
-                } else {
-                    errorString = restResponse.getReasonPhrase()
-                    ec.message.addMessage(`Server error on Docker host: ${errorString}`)
-                }
-            } catch (e) {
-                ec.logger.error(`Error connecting to Docker host: ${e}`)
-                ec.message.addError(`Error connecting to Docker host: ${e}`)
+            // the host as its row says: a unix socket, https, or plain http to this machine only (SEC-OUT-08)
+            const response = ec.service.sync().name("org.moqui.dev.InstanceServices.call#DockerApi").parameters({
+                instanceHostId: instanceHost.instanceHostId, method: "POST",
+                path: `/containers/${encodeURIComponent(containerName)}/stop`}).call() || {}
+            if (response.statusCode == 204) {
+                instanceStopped = true
+                instanceRunning = false
+                ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) stopped`)
+            } else if (response.statusCode == 304) {
+                instanceStopped = false
+                instanceRunning = false
+                ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) was not running`)
+            } else if (response.statusCode == 404) {
+                instanceStopped = false
+                instanceRunning = false
+                ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) does not exist, init first`)
+            } else if (response.statusCode != null) {
+                errorString = response.reasonPhrase
+                ec.message.addMessage(`Server error on Docker host: ${errorString}`)
             }
         ]]></script></actions>
     </service>
@@ -695,34 +670,26 @@ along with this software (see the LICENSE.md file). If not, see
             instanceExists = null
             const appInstance = ec.entity.find("moqui.server.instance.AppInstance").condition("appInstanceId", appInstanceId).one()
             const instanceHost = appInstance.findRelatedOne("instanceHost", null, null)
-            const dockerUri = (restClient, ...paths) => {
-                const uri = restClient.uri().protocol(instanceHost.hostProtocol || "http").host(String(instanceHost.hostAddress))
-                        .port(instanceHost.adminPort ? parseInt(instanceHost.adminPort, 10) : 2375)
-                for (const path of paths) uri.path(path)
-                return uri
+            if (instanceHost == null) {
+                ec.message.addError(`No InstanceHost found for AppInstance ${appInstanceId}`); return;
             }
             const containerName = String(appInstance.instanceUuid || appInstance.instanceName)
 
-            const restClient = ec.service.rest().method("DELETE")
-            dockerUri(restClient, "containers", containerName).build()
-
-            try {
-                const restResponse = restClient.call()
-                if (restResponse.statusCode == 204) {
-                    instanceRemoved = true
-                    instanceExists = false
-                    ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) removed`)
-                } else if (restResponse.statusCode == 404) {
-                    instanceRemoved = false
-                    instanceExists = false
-                    ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) does not exist, init first`)
-                } else {
-                    errorString = restResponse.getReasonPhrase()
-                    ec.message.addMessage(`Server error on Docker host: ${errorString}`)
-                }
-            } catch (e) {
-                ec.logger.error(`Error connecting to Docker host: ${e}`)
-                ec.message.addError(`Error connecting to Docker host: ${e}`)
+            // the host as its row says: a unix socket, https, or plain http to this machine only (SEC-OUT-08)
+            const response = ec.service.sync().name("org.moqui.dev.InstanceServices.call#DockerApi").parameters({
+                instanceHostId: instanceHost.instanceHostId, method: "DELETE",
+                path: `/containers/${encodeURIComponent(containerName)}`}).call() || {}
+            if (response.statusCode == 204) {
+                instanceRemoved = true
+                instanceExists = false
+                ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) removed`)
+            } else if (response.statusCode == 404) {
+                instanceRemoved = false
+                instanceExists = false
+                ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) does not exist, init first`)
+            } else if (response.statusCode != null) {
+                errorString = response.reasonPhrase
+                ec.message.addMessage(`Server error on Docker host: ${errorString}`)
             }
         ]]></script></actions>
     </service>
@@ -755,25 +722,22 @@ along with this software (see the LICENSE.md file). If not, see
             const appInstance = ec.entity.find("moqui.server.instance.AppInstance").condition("appInstanceId", appInstanceId).one()
             const instanceHost = appInstance.findRelatedOne("instanceHost", null, null)
             if (instanceHost == null) { ec.message.addMessage(`No InstanceHost found for AppInstance ${appInstanceId}`); return; }
-            const dockerUri = (restClient, ...paths) => {
-                const uri = restClient.uri().protocol(instanceHost.hostProtocol || "http").host(String(instanceHost.hostAddress))
-                        .port(instanceHost.adminPort ? parseInt(instanceHost.adminPort, 10) : 2375)
-                for (const path of paths) uri.path(path)
-                return uri
-            }
             const containerName = String(appInstance.instanceUuid || appInstance.instanceName)
 
-            const restClient = ec.service.rest().method("GET")
-            dockerUri(restClient, "containers", containerName, "json").build()
-
-            try {
-                const restResponse = restClient.call()
+            // the host as its row says: a unix socket, https, or plain http to this machine only (SEC-OUT-08)
+            const response = ec.service.sync().name("org.moqui.dev.InstanceServices.call#DockerApi").parameters({
+                instanceHostId: instanceHost.instanceHostId, method: "GET",
+                path: `/containers/${encodeURIComponent(containerName)}/json`}).call() || {}
+            if (response.statusCode == null) {
+                // refused or not connected: call#DockerApi said why
+                connectSuccess = false
+            } else {
                 connectSuccess = true
 
-                if (restResponse.statusCode == 200) {
+                if (response.statusCode == 200) {
                     instanceExists = true
 
-                    inspectMap = restResponse.jsonObject()
+                    inspectMap = response.responseBody && typeof response.responseBody === "object" ? response.responseBody : {}
                     const stateMap = inspectMap.State || {}
                     instanceRunning = !!stateMap.Running
                     statusString = stateMap.Status == null ? null : String(stateMap.Status)
@@ -787,17 +751,13 @@ along with this software (see the LICENSE.md file). If not, see
                     }
 
                     ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) ${instanceRunning ? 'running' : 'NOT running'}, status ${statusString}, ${errorString ? 'error: ' + errorString + ', ' : ''}started at ${ec.l10n.format(startedAt, '')}${finishedAt ? ', finished at ' + ec.l10n.format(finishedAt, '') : ''}`)
-                } else if (restResponse.statusCode == 404) {
+                } else if (response.statusCode == 404) {
                     instanceExists = false
                     ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) does not exist`)
                 } else {
-                    errorString = restResponse.getReasonPhrase()
+                    errorString = response.reasonPhrase
                     ec.message.addMessage(`Server error on Docker host: ${errorString}`)
                 }
-            } catch (e) {
-                connectSuccess = false
-                ec.logger.error(`Error connecting to Docker host: ${e}`)
-                ec.message.addError(`Error connecting to Docker host: ${e}`)
             }
         ]]></script></actions>
     </service>
@@ -814,36 +774,30 @@ along with this software (see the LICENSE.md file). If not, see
             const appInstance = ec.entity.find("moqui.server.instance.AppInstance").condition("appInstanceId", appInstanceId).one()
             const instanceHost = appInstance.findRelatedOne("instanceHost", null, null)
             if (instanceHost == null) { ec.message.addMessage(`No InstanceHost found for AppInstance ${appInstanceId}`); return; }
-            const dockerUri = (restClient, ...paths) => {
-                const uri = restClient.uri().protocol(instanceHost.hostProtocol || "http").host(String(instanceHost.hostAddress))
-                        .port(instanceHost.adminPort ? parseInt(instanceHost.adminPort, 10) : 2375)
-                for (const path of paths) uri.path(path)
-                return uri
-            }
             const containerName = String(appInstance.instanceUuid || appInstance.instanceName)
 
-            const restClient = ec.service.rest().method("GET")
-            dockerUri(restClient, "containers", containerName, "logs").parameter("stdout", "true").parameter("tail", "50").build()
-
-            try {
-                const restResponse = restClient.call()
+            // the host as its row says: a unix socket, https, or plain http to this machine only (SEC-OUT-08)
+            const response = ec.service.sync().name("org.moqui.dev.InstanceServices.call#DockerApi").parameters({
+                instanceHostId: instanceHost.instanceHostId, method: "GET",
+                path: `/containers/${encodeURIComponent(containerName)}/logs`, query: {stdout: "true", tail: "50"}}).call() || {}
+            if (response.statusCode == null) {
+                // refused or not connected: call#DockerApi said why
+                connectSuccess = false
+            } else {
                 connectSuccess = true
 
-                if (restResponse.statusCode == 200) {
+                if (response.statusCode == 200) {
                     instanceExists = true
+                    const text = typeof response.responseBody === "string" ? response.responseBody : JSON.stringify(response.responseBody)
                     // drop the stream frame headers and the terminal color codes
-                    instanceLog = restResponse.text().replace(/\u0001\u0000{5}[\u0000\u0001][\u003c\ufffd]/g, "").replace(/\u001b\[[0-9]{0,2}m/g, "")
-                } else if (restResponse.statusCode == 404) {
+                    instanceLog = text.replace(/\u0001\u0000{5}[\u0000\u0001][\u003c\ufffd]/g, "").replace(/\u001b\[[0-9]{0,2}m/g, "")
+                } else if (response.statusCode == 404) {
                     instanceExists = false
                     ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) does not exist`)
                 } else {
-                    errorString = restResponse.getReasonPhrase()
+                    errorString = response.reasonPhrase
                     ec.message.addMessage(`Server error on Docker host: ${errorString}`)
                 }
-            } catch (e) {
-                connectSuccess = false
-                ec.logger.error(`Error connecting to Docker host: ${e}`)
-                ec.message.addError(`Error connecting to Docker host: ${e}`)
             }
         ]]></script></actions>
     </service>

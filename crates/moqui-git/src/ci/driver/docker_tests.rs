@@ -23,7 +23,10 @@ use serde_json::json;
 
 use moqui_lib::object::{to_plain_string, Value, ValueMap};
 
-use super::{cleanup_runs_docker, create_body, inspect_run_docker, remove_run_docker, start_run_docker, Hardening};
+use super::{
+    call_docker_api, cleanup_runs_docker, create_body, inspect_run_docker, remove_run_docker, start_run_docker,
+    Hardening,
+};
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 use moqui_core::entity::{EntityFacade, EntityValue};
 
@@ -201,6 +204,11 @@ impl Api {
     }
 
     fn tcp_with(conf: &str) -> Self {
+        Self::tcp_at("127.0.0.1", conf)
+    }
+
+    /// A fake API on a loopback port, the host row naming it as `address`.
+    fn tcp_at(address: &str, conf: &str) -> Self {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let seen: Seen = Seen::default();
@@ -210,7 +218,7 @@ impl Api {
                 serve(stream, &shared);
             }
         });
-        Self::with_conf("http", "127.0.0.1", Some(port), seen, conf)
+        Self::with_conf("http", address, Some(port), seen, conf)
     }
 
     /// Call a run service of the driver. Its result, and the errors it left.
@@ -646,6 +654,92 @@ fn a_host_row_that_cannot_be_reached_says_why() {
         errors.contains("the client certificate and key are not PEM"),
         "{errors}"
     );
+}
+
+/// SEC-OUT-08: plain http goes to this machine only. A host row with http to another address is refused before
+/// anything is sent, for a CI run and for `call#DockerApi`; `0.0.0.0`, which Linux connects to this machine, is not
+/// taken as loopback either.
+#[test]
+fn plain_http_to_another_host_is_refused_before_anything_is_sent() {
+    for address in ["192.0.2.10", "docker.example.com", "0.0.0.0", "::ffff:192.0.2.10"] {
+        let started = std::time::Instant::now();
+        let api = Api::new("http", address, Some(2375), Seen::default());
+        let (out, errors) = api.call(start_run_docker, &start_parameters("moqui-build:1"));
+        assert!(out.is_empty(), "{address}: {out:?}");
+        assert!(errors.contains("not reached over plain http"), "{address}: {errors}");
+        assert!(errors.contains("tlsClientCert"), "{address}: {errors}");
+        let (out, errors) = api.call(
+            call_docker_api,
+            &[("method", Value::string("GET")), ("path", Value::string("/version"))],
+        );
+        assert!(out.is_empty(), "{address}: {out:?}");
+        assert!(errors.contains("not reached over plain http"), "{address}: {errors}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "{address}: nothing waited on"
+        );
+    }
+    // an empty hostProtocol is http
+    let api = Api::new("", "192.0.2.10", Some(2375), Seen::default());
+    let (_, errors) = api.call(inspect_run_docker, &[("instanceRef", Value::string("a1"))]);
+    assert!(errors.contains("not reached over plain http"), "{errors}");
+}
+
+/// Loopback in any form takes plain http: `localhost`, 127.0.0.0/8 and the IPv4-mapped `::ffff:127.0.0.1`.
+#[test]
+fn plain_http_to_this_machine_is_accepted_in_its_mapped_form_too() {
+    for address in ["localhost", "::ffff:127.0.0.1"] {
+        let api = Api::tcp_at(address, r#"<git-ci server-id="this"/>"#);
+        let (out, errors) = api.call(inspect_run_docker, &[("instanceRef", Value::string("a1"))]);
+        assert!(errors.is_empty(), "{address}: {errors}");
+        assert_eq!(to_plain_string(&out["state"]), "running", "{address}");
+        assert_eq!(api.seen()[0].1, "/v1.40/containers/a1/json", "{address}");
+    }
+}
+
+/// `call#DockerApi` sends one call on the host's client and answers its status and parsed body; without
+/// `INSTANCE_ADMIN` (authorization on, no such user) it sends nothing.
+#[test]
+fn the_docker_api_call_answers_the_host_and_needs_instance_admin() {
+    let api = Api::tcp();
+    let (out, errors) = api.call(
+        call_docker_api,
+        &[
+            ("method", Value::string("post")),
+            ("path", Value::string("/containers/create")),
+            ("query", map(&[("name", "a b")])),
+            ("body", Value::string(r#"{"Image":"moqui-build:1"}"#)),
+            ("registryAuth", Value::string("e30=")),
+        ],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    assert_eq!(to_plain_string(&out["statusCode"]), "201");
+    assert_eq!(to_plain_string(&out["reasonPhrase"]), "Created");
+    let Some(Value::Map(body)) = out.get("responseBody") else {
+        panic!("{out:?}")
+    };
+    assert_eq!(to_plain_string(&body["Id"]), "c0");
+    let seen = api.seen();
+    assert_eq!(seen[0].0, "POST");
+    assert_eq!(seen[0].1, "/v1.40/containers/create?name=a%20b");
+    assert_eq!(seen[0].2["Image"], "moqui-build:1");
+    // a path that is not one under the API version
+    let (out, errors) = api.call(call_docker_api, &[("path", Value::string("/../version"))]);
+    assert!(out.is_empty() && errors.contains("is not a path"), "{errors}");
+
+    let api = Api::tcp();
+    let _entered = api.context.enter();
+    let parameters: BTreeMap<String, Value> = [
+        ("instanceHostId".to_string(), Value::string("H")),
+        ("path".to_string(), Value::string("/version")),
+    ]
+    .into_iter()
+    .collect();
+    let out = call_docker_api(&parameters, &api.entity).unwrap();
+    assert!(out.is_empty(), "{out:?}");
+    let errors = ExecutionContext::with_current(|ec| ec.message().errors_text().join("\n")).unwrap_or_default();
+    assert!(errors.contains("INSTANCE_ADMIN"), "{errors}");
+    assert!(api.seen().is_empty(), "nothing sent: {:?}", api.seen());
 }
 
 /// With `container-user="image"` the container runs as its image's user, which is inspected before it starts: an

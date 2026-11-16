@@ -280,7 +280,10 @@ a sealed permission (`user-facade` `authz`): only a holder grants it to a group.
 | --- | --- | --- |
 | `unix` | `/run/podman/podman.sock`, `/var/run/docker.sock`, `/run/user/1000/podman/podman.sock` | A socket on the server's machine: for a try on one machine only, since a runner is not to be on the server's |
 | `https` | a host name, with `adminPort` (2376) | TLS with `tlsCaCert`, `tlsClientCert` and `tlsClientKey` (PEM; the key encrypted) |
-| `http` | a host name, with `adminPort` (2375) | No authentication: loopback or a private link only |
+| `http` | `localhost`, `127.0.0.1` (127.0.0.0/8), `::1` or `::ffff:127.0.0.1`, with `adminPort` (2375) | No authentication: this machine only. Plain http to any other host is refused before anything is sent (SEC-OUT-08); reach it over `https`, or forward its socket |
+
+The hosted-instance services (`init#InstanceDocker` and the others) reach the same rows through `call#DockerApi`,
+on the same client and rule, with `adminPort` 2375 when the row has none.
 
 Docker: `dockerd --tlsverify --tlscacert=ca.pem --tlscert=server-cert.pem --tlskey=server-key.pem -H 0.0.0.0:2376`.
 Podman: `podman system service --time=0 tcp://0.0.0.0:2376` behind a TLS proxy, or the socket forwarded over SSH;
