@@ -506,7 +506,7 @@ fn a_file_root_is_not_served_in_production_and_a_data_root_is() {
     assert_eq!(refused["error"], refusal, "{refused}");
     assert_eq!(read["error"], refusal, "{read}");
     assert!(read.get("content").is_none(), "{read}");
-    assert!(file.get("fileLocation").is_none(), "{file:?}");
+    assert!(!file.contains_key("fileLocation"), "{file:?}");
     assert_eq!(get()["content"], "MOQUI_SECRET=x", "served on a dev instance");
     let made = mkdir();
     assert!(made.get("error").is_none(), "{made}");
