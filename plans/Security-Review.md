@@ -6,7 +6,7 @@ reviewer reported them and have not been read a second time; the Status column s
 (ten fixes: two pairs are one weakness) are fixed, each with its regression test; its section's **Fix** says how. On
 2026-11-16 the Medium findings were fixed in the same way, with follow-ups the same day: all 77 are fixed (SEC-RTE-02
 and SEC-OUT-08 finished later the same day), each entry's **Fix** in [Security-Review-Medium](Security-Review-Medium.md)
-saying how; 46 Low and Info findings were fixed with them and five in part. What is left is under
+saying how; 49 Low and Info findings were fixed with them and four in part. What is left is under
 [What is left](#what-is-left).
 
 This is the findings register of the security review that the pre-0.1.0 notice in the [README](../README.md) names:
@@ -172,14 +172,18 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
    each map file ends with its open questions. The thinnest: the BOSS business apps other than Commerce and order
    approval, parsers of untrusted input, the mobile app's native code, and the helper-read parts of the PASS services.
 3. **Fixes.** The High findings are fixed (2026-11-15, what they left on 2026-11-16), and the Medium ones
-   (2026-11-16) with 46 of the Low and Info ones. Of the Medium findings none is open, none deferred, none refuted and
+   (2026-11-16) with 49 of the Low and Info ones. Of the Medium findings none is open, none deferred, none refuted and
    none fixed only in part.
 
-   The Low and Info findings fixed in part are SEC-RTE-08 (a `read-only` transition such as `setPrefGoLast` or
-   `/sso/logout` still changes state on a GET), SEC-TLS-08 (the deploy fetch resolves the host again), SEC-COM-21 (no
-   protocol scope on an app password), SEC-DAT-09 (no page size cap on screens) and SEC-BAP-06 (no carrier host list).
-   Deferred: SEC-SCR-07 (`ec.service.rest()` refusing internal addresses on production needs an opt-in for its two
-   internal callers first), SEC-COM-19 and SEC-COM-26 (each a design of its own). The other Low and Info findings are
+   The Low and Info findings fixed in part are SEC-TLS-08 (the deploy fetch resolves the host again), SEC-COM-21 (no
+   protocol scope on an app password), SEC-DAT-09 (no page size cap on screens) and SEC-BAP-06 (no carrier host list);
+   SEC-RTE-08, SEC-ADM-09 and SEC-SCR-07 were finished later the same day. Deferred: SEC-COM-19 and SEC-COM-26 (each a
+   design of its own). Found while fixing and fixed the same day: an account-owned email server written or polled
+   through `PATCH email/servers/{id}`, `/rest/e1` and `servers/{id}/poll` (`update#RelayServer`,
+   `sensitive::account_owned_email_server`); IronStone's people search and mention ids outside the chat-target rule
+   (`ChatterServices` `search#Users`, `get#UserIdsParties`); an SSH upload-pack's limits held to the whole conversation
+   instead of each round; the TURN server's map of pending ALLOCATEs grown by forged requests; and a dependency's TURN
+   nonce handling, held at moqui's fork (docs/Build-Test.md, Forks) and tracked privately until disclosed upstream. The other Low and Info findings are
    not fixed. Later work beside them: DANE and TLS-RPT for MX delivery (SEC-MAIL-66 is fixed by `mail_mx_require_tls`
    for the domains it names; the default stays opportunistic).
 
@@ -246,7 +250,7 @@ Map file: [Attack-Surface-Routes.md](../docs/security/Attack-Surface-Routes.md).
 | SEC-RTE-05 | `runtime/components/base/webroot/screen/webroot.xml:257` | `/resources` runs elFinder write commands on a `GET` | Medium | fixed |
 | SEC-RTE-06 | `crates/moqui-entity/src/entity/query_rest.rs:208`, `:962` (`related_rows`) | Entity REST dependents read entities the restricted rule refuses | Medium | fixed |
 | SEC-RTE-07 | `crates/moqui-host/src/http.rs:1109`-`1124`, `:1203` | A multipart body is spooled to disk before any check | Medium | fixed |
-| SEC-RTE-08 | `crates/moqui-core/src/screen/render.rs:2667` (`csrf_rejected`), `:2070` (`insecure_transition`) | State changes on `GET` with no token | Low | partly fixed |
+| SEC-RTE-08 | `crates/moqui-core/src/screen/render.rs:2667` (`csrf_rejected`), `:2070` (`insecure_transition`) | State changes on `GET` with no token | Low | fixed |
 | SEC-RTE-09 | `crates/moqui-core/src/screen/url.rs:373` | `lastStandalone` takes the parents out of the user check | Low | reported (confirmed in code) |
 | SEC-RTE-10 | `crates/moqui-host/src/http.rs:957`, `:977`, `:1679` | `/health` and `/metrics` trust the TCP peer | Low | reported (to check) |
 | SEC-RTE-11 | `crates/moqui-core/src/screen/public_site.rs:96`-`102` | A restricted host still serves some framework paths | Low | reported (likely) |
@@ -272,7 +276,7 @@ Map file: [Attack-Surface-Admin.md](../docs/security/Attack-Surface-Admin.md). R
 | SEC-ADM-06 | `admin/Access.js:1093-1120` (`applyGrantProposal`) | `ADMIN_IDENTITY_MANAGE` assigns bundles though it is not sealed | Medium | fixed |
 | SEC-ADM-07 | `crates/moqui-core/src/service/user_keys.rs:216-229, 382-401, 137-176` | Long-lived credentials are minted from a session with no recent sign-in | Low | fixed |
 | SEC-ADM-08 | `base/tools/screen/System/Security/UserAccount/UserAccountDetail.xml:31-43` | Login-as leaves no evidence and has no bound | Low | fixed |
-| SEC-ADM-09 | `base/webroot/screen/webroot/sso.xml:40-45` | `/sso/logout` signs the browser out on a GET | Low | reported (confirmed in code) |
+| SEC-ADM-09 | `base/webroot/screen/webroot/sso.xml:40-45` | `/sso/logout` signs the browser out on a GET | Low | fixed |
 | SEC-ADM-10 | `admin/OperationLib.js:59-72` | Owner services run below `OperationServices` with inherited authorization | Low | reported (confirmed in code) |
 | SEC-ADM-11 | `crates/moqui-core/src/service/sso.rs:601-650, 762-777` | The SSO sync writes an unverified `email` claim to `UserAccount.emailAddress` | Low | reported (likely) |
 | SEC-ADM-12 | `UserServices.xml:404-462` | An anonymous reset can force a password change | Low | fixed |
@@ -620,7 +624,7 @@ Map file: [Attack-Surface-Scripts.md](../docs/security/Attack-Surface-Scripts.md
 | SEC-SCR-03 | crates/moqui-core/src/script/host/globals.rs:562-565 | `System.getProperty` returns secret properties and the whole environment to any script | Medium | fixed |
 | SEC-SCR-04 | crates/moqui-core/src/script/host/tools.rs:721 and :2603-2620 | `ec.resource.runTokenCommand` starts a host program from any server script | Medium | fixed |
 | SEC-SCR-06 | crates/moqui-core/src/script/oxide/resource.rs:227-237 (localized text expanded) | Records whose text is evaluated as script are writable without the script permission | Medium | fixed |
-| SEC-SCR-07 | crates/moqui-core/src/script/host/tools.rs:2720-2726 and the `RestClient` shim near :903 | `ec.service.rest()` reaches internal addresses unless the script opts out | Low | reported (confirmed in code) |
+| SEC-SCR-07 | crates/moqui-core/src/script/host/tools.rs:2720-2726 and the `RestClient` shim near :903 | `ec.service.rest()` reaches internal addresses unless the script opts out | Low | fixed |
 | SEC-SCR-08 | runtime/components/base/framework/template/screen/ScreenHtml.js:849 | The `editable` widget writes its text unescaped by default | Low | reported (to check) |
 | SEC-SCR-09 | crates/moqui-core/src/script/host/files.rs:455 | A thumbnail decodes an image with no limits of its own | Low | reported (to check) |
 | SEC-SCR-10 | crates/moqui-host/src/chromium.rs:312-327 | Chromium's DevTools port has no authentication on loopback | Low | reported (to check) |
