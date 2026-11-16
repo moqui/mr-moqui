@@ -182,3 +182,29 @@ fn update_dotenv_file_keeps_a_symlinked_env_a_symlink() {
     assert!(leftovers.is_empty());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[cfg(unix)]
+#[test]
+fn a_child_keeps_only_the_named_environment() {
+    let mut command = std::process::Command::new("env");
+    limit_child_env(&mut command, &[]);
+    command.env("MOQUI_LIB_CHILD_SET", "kept");
+    let named: Vec<String> = command
+        .get_envs()
+        .filter(|(_, value)| value.is_some())
+        .map(|(name, _)| name.to_string_lossy().to_string())
+        .collect();
+    assert!(
+        named.iter().all(|name| CHILD_ENV_NAMES.contains(&name.as_str()) || name == "MOQUI_LIB_CHILD_SET"),
+        "{named:?}"
+    );
+    // cargo runs the test with CARGO_PKG_NAME set; the child does not see it
+    let output = command.output().unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("MOQUI_LIB_CHILD_SET=kept") && !text.contains("CARGO_PKG_NAME="), "{text}");
+    // a name that ends in * passes the variables that start with the rest
+    let mut command = std::process::Command::new("env");
+    limit_child_env(&mut command, &["CARGO_PKG_*"]);
+    let text = String::from_utf8_lossy(&command.output().unwrap().stdout).to_string();
+    assert!(text.contains("CARGO_PKG_NAME=moqui-lib") && !text.contains("CARGO_MANIFEST_DIR="), "{text}");
+}

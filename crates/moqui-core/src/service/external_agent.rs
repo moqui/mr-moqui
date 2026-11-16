@@ -1,5 +1,9 @@
 //! Generic external executor bridge. Only server configuration selects an executable;
 //! request data is JSON on stdin, never shell syntax. One invocation, no retries.
+//! The child gets only the named environment (`moqui_lib::env::limit_child_env`) and the variables that
+//! `MOQUI_EXTERNAL_AGENT_ENV` names (comma separated, such as the adapter's own API key), never the server's secrets
+//! (plans/Security-Review-Low.md SEC-AI-12). The function checks no permission: a service defined on it must say who may
+//! call it (`authenticate` and its artifact authz).
 use crate::entity::EntityFacade;
 use moqui_lib::{
     error::Error,
@@ -43,7 +47,11 @@ fn invoke(argv: &[String], input: &Json, timeout: Duration) -> Result<Json, Erro
     if bytes.len() > MAX_BYTES {
         return Err(Error::new("External agent request too large"));
     }
-    let mut child = Command::new(executable)
+    let mut command = Command::new(executable);
+    let passed = std::env::var("MOQUI_EXTERNAL_AGENT_ENV").unwrap_or_default();
+    let passed: Vec<&str> = passed.split(',').map(str::trim).filter(|name| !name.is_empty()).collect();
+    moqui_lib::env::limit_child_env(&mut command, &passed);
+    let mut child = command
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -138,6 +146,17 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("fixture failure"));
+    }
+    #[test]
+    fn the_adapter_does_not_see_the_servers_environment() {
+        // cargo runs the test with CARGO_PKG_NAME set: the adapter does not see it, but PATH it does
+        let command = vec![
+            "sh".into(),
+            "-c".into(),
+            "cat >/dev/null; printf '{\"result\":{\"pkg\":\"%s\",\"path\":\"%s\"}}' \"$CARGO_PKG_NAME\" \"${PATH:+set}\"".into(),
+        ];
+        let seen = invoke(&command, &json!({}), Duration::from_secs(2)).unwrap();
+        assert_eq!(seen, json!({"pkg": "", "path": "set"}));
     }
     #[test]
     fn invalid_output_and_hung_adapters_fail() {
