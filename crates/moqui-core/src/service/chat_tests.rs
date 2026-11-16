@@ -1658,6 +1658,120 @@ fn files_go_with_their_message_and_go_away_with_it() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A file put over XMPP (attach#Upload makes the chat file on the upload's own location, under the upload root) goes
+/// with the last message that has it, with the upload rows that serve it; while another message has it, it stays
+/// (SEC-COM-14).
+#[test]
+fn a_file_put_over_xmpp_goes_with_the_last_message_that_has_it() {
+    let (ctx, facade, dir) = setup("xmppfile", crate::service::ServicePools::idle());
+    let _entered = ctx.enter();
+    install(&dir);
+    users(&facade, &["xfa", "xfb"]);
+    let (_root_lock, _root) = attachment_root(&dir);
+    std::fs::create_dir_all(dir.join("xmpp/7")).unwrap();
+    std::fs::write(dir.join("xmpp/7/photo.png"), b"png").unwrap();
+    moqui_lib::env::set_property("xmpp_upload_root", &format!("file:{}", dir.join("xmpp").display()));
+    let location = format!("file:{}", dir.join("xmpp/7/photo.png").display());
+    row(
+        &facade,
+        "moqui.xmpp.XmppUpload",
+        &[
+            ("xmppUploadId", text("XF1")),
+            ("tokenHash", text("xf-token-1")),
+            ("userId", text("xfa")),
+            ("location", text(&location)),
+        ],
+    );
+    login("xfa");
+    let chat = room("private", "Uploads", &["xfb"]);
+    let attach = |id: &str| {
+        row(
+            &facade,
+            "moqui.chat.ChatAttachment",
+            &[
+                ("chatAttachmentId", text(id)),
+                ("chatRoomId", text(&chat)),
+                ("location", text(&location)),
+                ("fileName", text("photo.png")),
+                ("uploadedByUserId", text("xfa")),
+            ],
+        );
+        out_number(
+            &ok(
+                "send#Message",
+                &[("chatRoomId", text(&chat)), ("chatAttachmentIdList", list(&[id]))],
+            ),
+            "eventSeq",
+        )
+    };
+    let first = attach("XFA1");
+    let second = attach("XFA2");
+    // the URL made to serve the first chat file to an XMPP client (get#AttachmentUrls)
+    row(
+        &facade,
+        "moqui.xmpp.XmppUpload",
+        &[
+            ("xmppUploadId", text("XF2")),
+            ("tokenHash", text("xf-token-2")),
+            ("location", text(&location)),
+            ("chatAttachmentId", text("XFA1")),
+        ],
+    );
+    let uploads = || {
+        let _authz = ctx.disable_authz();
+        let mut ids: Vec<String> = facade
+            .find("moqui.xmpp.XmppUpload")
+            .unwrap()
+            .eq("location", text(&location))
+            .list()
+            .unwrap()
+            .iter()
+            .map(|row| to_plain_string(row.get("xmppUploadId").unwrap()))
+            .collect();
+        ids.sort();
+        ids
+    };
+    ok("redact#Message", &[("chatRoomId", text(&chat)), ("eventSeq", int(first))]);
+    assert!(dir.join("xmpp/7/photo.png").exists(), "another message still has it");
+    assert_eq!(uploads(), ["XF1"], "the first chat file's own URL is gone");
+    ok("redact#Message", &[("chatRoomId", text(&chat)), ("eventSeq", int(second))]);
+    assert!(!dir.join("xmpp/7/photo.png").exists(), "the file is gone with the last message");
+    assert!(uploads().is_empty(), "its upload URL is gone");
+    moqui_lib::env::clear_property("xmpp_upload_root");
+    moqui_lib::env::clear_property("chat_attachment_root");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A chat message keeps an image only of this server's rich-text image route (SEC-COM-02): an outside image loses its
+/// `src` on a send and on an edit, so no reader's browser fetches it.
+#[test]
+fn a_message_keeps_only_this_servers_images() {
+    let (ctx, facade, dir) = setup("images", crate::service::ServicePools::idle());
+    let _entered = ctx.enter();
+    install(&dir);
+    users(&facade, &["ima", "imb"]);
+    login("ima");
+    let chat = room("private", "Images", &["imb"]);
+    let seq = send(
+        &chat,
+        r#"<p>look <img src="https://host.example/t.png?u=1" alt="x"><img src="/richTextImage/100200" alt="y"></p>"#,
+    );
+    let body = field(&one_event(&chat, seq), "body");
+    assert!(!body.contains("host.example"), "{body}");
+    assert!(body.contains(r#"src="/richTextImage/100200""#), "{body}");
+    ok(
+        "edit#Message",
+        &[
+            ("chatRoomId", text(&chat)),
+            ("eventSeq", int(seq)),
+            ("body", text(r#"<p>again <img src="//host.example/t.png"></p>"#)),
+        ],
+    );
+    let body = field(&one_event(&chat, seq), "body");
+    assert!(!body.contains("host.example"), "{body}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The agent entry point: an agent member's service gets each message from another member, with the message in its
 /// parameters, and answers in the room as the agent.
 #[test]

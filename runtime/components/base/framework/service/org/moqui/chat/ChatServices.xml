@@ -2885,10 +2885,10 @@ along with this software (see the LICENSE.md file). If not, see
             mentionedUserIdList = Array.from(ec.entity.find('moqui.chat.ChatEventMention').condition('chatRoomId', chatRoomId)
                     .condition('eventSeq', eventSeq).selectField('userId').list()).map((row) => row.userId)
             ec.entity.find('moqui.chat.ChatEventMention').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).deleteAll()
-            // the files: each one on its own; a file that cannot be removed is logged
-            const chatRoot = (System.getProperty('chat_attachment_root') || 'dbresource://chat').replace(/\/+$/, '') + '/'
+            // the files: each one on its own; a file that cannot be removed is logged. A file put over XMPP (attach#Upload) is
+            // under the upload root, and goes with the last chat file on it, with the uploads that serve it (SEC-COM-14).
             for (const file of ec.entity.find('moqui.chat.ChatAttachment').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).list()) {
-                try { if (file.location && String(file.location).startsWith(chatRoot)) ec.resource.getLocationReference(file.location).delete() }
+                try { ec.service.sync().name('org.moqui.chat.ChatServices.remove#AttachmentFile').parameter('chatAttachmentId', file.chatAttachmentId).call() }
                 catch (err) { ec.logger.warn(`Could not remove chat file ${file.location}: ${err && err.message ? err.message : err}`) }
                 file.delete()
             }
@@ -3301,6 +3301,30 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
+    <service verb="remove" noun="AttachmentFile" allow-remote="false">
+        <description>Internal: the stored file of a chat file that goes (clear#MessageContent, clean#PendingAttachments),
+            before its ChatAttachment row is deleted. A file under the chat root (chat_attachment_root) is deleted; a file
+            put over XMPP, under the upload root (xmpp_upload_root, attach#Upload), is deleted when no other chat file is on
+            it, with the XmppUpload rows of its location (SEC-COM-14). The XmppUpload rows made to serve this chat file to
+            XMPP clients (get#AttachmentUrls) go either way, so no upload URL outlives it.</description>
+        <in-parameters><parameter name="chatAttachmentId" required="true"/></in-parameters>
+        <actions><script><![CDATA[
+            const file = ec.entity.find('moqui.chat.ChatAttachment').condition('chatAttachmentId', chatAttachmentId).disableAuthz().one()
+            if (!file) return
+            const location = file.location ? String(file.location) : ''
+            const chatRoot = (System.getProperty('chat_attachment_root') || 'dbresource://chat').replace(/\/+$/, '') + '/'
+            const uploadRoot = (System.getProperty('xmpp_upload_root') || 'dbresource://xmpp-upload').replace(/\/+$/, '') + '/'
+            ec.entity.find('moqui.xmpp.XmppUpload').condition('chatAttachmentId', chatAttachmentId).disableAuthz().deleteAll()
+            if (location.startsWith(chatRoot)) {
+                ec.resource.getLocationReference(location).delete()
+            } else if (location.startsWith(uploadRoot) && !ec.entity.find('moqui.chat.ChatAttachment').condition('location', location)
+                    .condition('chatAttachmentId', 'not-equals', chatAttachmentId).disableAuthz().count()) {
+                ec.entity.find('moqui.xmpp.XmppUpload').condition('location', location).disableAuthz().deleteAll()
+                const ref = ec.resource.getLocationReference(location)
+                if (ref && ref.exists) ref.delete()
+            }
+        ]]></script></actions>
+    </service>
     <service verb="clean" noun="PendingAttachments" authenticate="anonymous-all">
         <description>Remove the chat files uploaded more than hours ago (24 by default) and never sent with a message. Each
             file is on its own: one that cannot be removed is logged and the rest go on.</description>
@@ -3308,13 +3332,12 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="removedCount" type="Integer"/></out-parameters>
         <actions><script><![CDATA[
             removedCount = 0
-            const chatRoot = (System.getProperty('chat_attachment_root') || 'dbresource://chat').replace(/\/+$/, '') + '/'
             const before = Number(ec.user.nowTimestamp) - Math.max(1, hours) * 3600000
             const rows = ec.entity.find('moqui.chat.ChatAttachment').condition('eventSeq', null).condition('uploadedDate', 'less', String(before))
                     .disableAuthz().list()
             for (const row of rows) {
                 try {
-                    if (row.location && String(row.location).startsWith(chatRoot)) ec.resource.getLocationReference(row.location).delete()
+                    ec.service.sync().name('org.moqui.chat.ChatServices.remove#AttachmentFile').parameter('chatAttachmentId', row.chatAttachmentId).call()
                     row.delete()
                     removedCount++
                 } catch (err) {
