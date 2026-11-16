@@ -697,8 +697,9 @@ fn run_entity(
 }
 
 /// Java's `MethodEntity` one and list: the search form conditions of the parameters. `one` is the first row found,
-/// without its null fields, or null; a list is at most 100 rows unless `pageNoLimit` is `true`, with its page numbers
-/// for the response headers. A master name gives the master graph of each row.
+/// without its null fields, or null; a list is at most 100 rows, or a page of at most `rest-max-page-size`
+/// (`pageNoLimit` is not taken), with its page numbers for the response headers. A master name gives the master graph
+/// of each row. Neither holds a password field, a restricted related entity, or an encrypted field's value.
 fn find_entity(
     facade: &EntityFacade,
     name: &str,
@@ -706,21 +707,36 @@ fn find_entity(
     operation: &str,
     params: &BTreeMap<String, Value>,
 ) -> Result<Value, Error> {
+    // as entity REST, never a read without a limit: `pageNoLimit` is not taken from a request (SEC-RTE-14)
+    let mut params = params.clone();
+    params.remove("pageNoLimit");
+    let params = &params;
     let find = facade
         .find(name)?
         .search_form_map(params, &BTreeMap::new(), "", "", false)?
         .find;
     let master = master_name.filter(|master| !master.is_empty());
+    // the answer holds no password field, and an encrypted field only as `<field>IsSet` (SEC-DAT-03, SEC-MAIL-04),
+    // in a master's related records too, where a restricted related entity is left out (SEC-RTE-06)
+    let access = sensitive::generic_access(facade, name);
     let as_value = |row: &crate::entity::EntityValue| -> Result<Value, Error> {
         match master {
-            Some(master) => Ok(crate::entity::query_rest::master_value(facade, row, master)?),
-            None => Ok(Value::Map(
-                row.fields()
+            Some(master) => Ok(crate::entity::query_rest::guarded_master_value(
+                facade,
+                row,
+                master,
+                crate::entity::query_rest::RecordGuard::Answer,
+            )?),
+            None => {
+                // an empty encrypted field is kept here so the answer says it is not set
+                let fields = row
+                    .fields()
                     .iter()
-                    .filter(|(_, value)| !value.is_null())
                     .map(|(name, value)| (name.to_string(), value.clone()))
-                    .collect(),
-            )),
+                    .filter(|(name, value)| !value.is_null() || access.encrypted.contains(name))
+                    .collect();
+                Ok(Value::Map(access.conceal(fields).into_iter().collect()))
+            }
         }
     };
     if operation == "one" {
@@ -729,13 +745,19 @@ fn find_entity(
             None => Ok(Value::Null),
         };
     }
-    let no_limit = params
-        .get("pageNoLimit")
-        .is_some_and(|value| to_plain_string(value) == "true");
-    let find = if find.limit_value().is_none() && !no_limit {
-        find.limit(100)
-    } else {
-        find
+    // at most 100 rows when no page is asked for, and a page asked for at most `rest-max-page-size`, as entity REST
+    let max_page = crate::entity::query_rest::rest_max_page_size();
+    let find = match find.limit_value() {
+        None => find.limit(100),
+        Some(limit) if limit > max_page => {
+            let index = params
+                .get("pageIndex")
+                .and_then(|value| to_plain_string(value).parse::<i64>().ok())
+                .unwrap_or(0)
+                .max(0);
+            find.offset(index.saturating_mul(max_page)).limit(max_page)
+        }
+        Some(_) => find,
     };
     let (limit, offset) = (find.limit_value(), find.offset_value());
     let total = find.clone().count()?;

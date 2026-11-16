@@ -34,7 +34,8 @@ use zip::{CompressionMethod, DateTime, ZipWriter};
 
 use super::facade::EntityFacade;
 use super::find::EntityFind;
-use super::query_rest::{csv_cell, data_body};
+use super::query_rest::{csv_cell, data_body, RecordGuard};
+use super::sensitive;
 use crate::transaction::TransactionAttribute;
 use moqui_db::sql::Condition;
 
@@ -103,6 +104,8 @@ pub struct EntityDataWriter {
     thru_date: Option<Value>,
     iso_date_time: bool,
     table_column_names: bool,
+    /// Every entity and field, for a full backup; else the restricted entities and the secret fields are left out.
+    full: bool,
 }
 
 impl EntityDataWriter {
@@ -121,6 +124,7 @@ impl EntityDataWriter {
             thru_date: None,
             iso_date_time: false,
             table_column_names: false,
+            full: false,
         }
     }
 
@@ -202,12 +206,50 @@ impl EntityDataWriter {
         self
     }
 
+    /// Every entity and every field: a full backup, for a caller that holds the sealed `ADMIN_BACKUP_DOWNLOAD`. Without
+    /// it the entities generic access does not read (identity-admin, secret-config, audit, a view over one) are not
+    /// written, and neither are the password and encrypted fields of the others (plans/Security-Review-Medium.md
+    /// SEC-TLS-05).
+    pub fn full(&mut self, full: bool) -> &mut Self {
+        self.full = full;
+        self
+    }
+
+    fn guard(&self) -> RecordGuard {
+        if self.full {
+            RecordGuard::Full
+        } else {
+            RecordGuard::File
+        }
+    }
+
+    /// The fields of `name` this writer leaves out: none for a full backup.
+    fn hidden_fields(&self, name: &str) -> Option<sensitive::GenericAccess> {
+        (!self.full).then(|| sensitive::generic_access(&self.facade, name))
+    }
+
     fn active_names(&self) -> Vec<String> {
-        self.entity_names
+        let mut refused = Vec::new();
+        let names = self
+            .entity_names
             .iter()
             .filter(|name| !self.skip_entity_names.contains(name))
+            .filter(|name| {
+                let read = self.full || !sensitive::is_restricted_entity_or_view(&self.facade, name);
+                if !read {
+                    refused.push(name.as_str());
+                }
+                read
+            })
             .cloned()
-            .collect()
+            .collect();
+        if !refused.is_empty() {
+            add_message(format!(
+                "Not written without a full backup (ADMIN_BACKUP_DOWNLOAD): {}",
+                refused.join(", ")
+            ));
+        }
+        names
     }
 
     /// `writer`: every record in one document. Returns the text and how many records it has. As Java, a failure (CSV
@@ -501,6 +543,7 @@ impl EntityDataWriter {
             master,
             &self.prefix,
             self.iso_date_time,
+            self.guard(),
         )
     }
 
@@ -508,6 +551,7 @@ impl EntityDataWriter {
     /// view's fields are its aliases, and an alias's column name is its name underscored, as Java's `FieldInfo`.
     fn csv_header(&self, name: &str) -> Result<String, Error> {
         let table_columns = self.table_column_names;
+        let hidden = self.hidden_fields(name);
         self.facade.with_entity(name, |entity, _, _| {
             let label = |name: &str| {
                 if !table_columns {
@@ -529,7 +573,12 @@ impl EntityDataWriter {
                 out.push_str(&label(field));
             }
             out.push('\n');
-            let fields: Vec<String> = entity.field_names().into_iter().map(label).collect();
+            let fields: Vec<String> = entity
+                .field_names()
+                .into_iter()
+                .filter(|field| !hidden.as_ref().is_some_and(|hidden| hidden.hidden(field)))
+                .map(label)
+                .collect();
             out.push_str(&fields.join(","));
             out.push('\n');
             Ok(out)
@@ -538,9 +587,11 @@ impl EntityDataWriter {
 
     fn csv_rows(&self, name: &str, rows: &[crate::entity::FieldMap]) -> Result<String, Error> {
         let iso = self.iso_date_time;
+        let hidden = self.hidden_fields(name);
         self.facade.with_entity(name, |entity, _, _| {
             let mut out = String::new();
-            let fields = entity.field_names();
+            let mut fields = entity.field_names();
+            fields.retain(|field| !hidden.as_ref().is_some_and(|hidden| hidden.hidden(field)));
             for row in rows {
                 for (index, field) in fields.iter().enumerate() {
                     if index > 0 {

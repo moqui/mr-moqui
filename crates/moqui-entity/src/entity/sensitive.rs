@@ -13,7 +13,9 @@
  */
 
 //! The sensitive entities and `UserAccount` fields of Java's `WebUtilities`: what generic entity REST, Service REST
-//! entity resources, the generic tools and the data loader keep away from a request.
+//! entity resources, the generic tools and the data loader keep away from a request. [`generic_access`] is the one
+//! rule they share for an entity: whether generic access reads it, writes it, and which of its fields are secret (the
+//! password fields, by name or origin) or encrypted, which no generic answer, condition, order or export holds.
 
 use std::collections::BTreeMap;
 
@@ -335,6 +337,12 @@ impl GenericAccess {
         USER_ACCOUNT_SECRET_FIELDS.contains(&field)
             || self.secret.iter().any(|name| name == field)
             || self.encrypted.iter().any(|name| name == field)
+    }
+
+    /// A password field, by name on any entity or by origin through a view.
+    #[must_use]
+    pub fn is_secret(&self, field: &str) -> bool {
+        USER_ACCOUNT_SECRET_FIELDS.contains(&field) || self.secret.iter().any(|name| name == field)
     }
 
     /// The fields of one record as generic access answers them: the password fields left out, and each encrypted

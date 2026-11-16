@@ -1738,6 +1738,9 @@ fn write_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let second = call.value(3).cloned();
     let facade = entity_facade()?;
     let mut writer = crate::entity::EntityDataWriter::new(&facade);
+    // the restricted entities and the secret fields only for a full backup: the sealed permission a backup archive
+    // needs (plans/Security-Review-Medium.md SEC-TLS-05)
+    writer.full(crate::user::has_permission("ADMIN_BACKUP_DOWNLOAD").unwrap_or(false));
     let Value::List(ops) = ops else {
         return Err(HostError::message("data writer calls are a list"));
     };
@@ -1851,6 +1854,7 @@ fn load_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
             .ok()
             .map(std::time::Duration::from_secs),
         restrict_sensitive_entities: flag("restrictSensitiveEntities"),
+        refuse_password_fields: false,
         csv_entity_name: Some(text("csvEntityName")).filter(|name| !name.is_empty()),
         csv_field_names: list("csvFieldNames"),
         csv_delimiter: text("csvDelimiter").chars().next(),

@@ -31,6 +31,8 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- not read-only: output file writes on the server, so it takes a POST with the session token (SEC-TLS-01) -->
     <transition name="export" authz-action="update">
         <actions>
+            <!-- as update: the parent's check is in its actions, which a transition does not run (SEC-TLS-05) -->
+            <set field="entityName" from="aen"/><if condition="WebUtilities.isRestrictedGenericEntity(aen)"><message error="true">Entity ${entityName} is not available through this tool</message><return/></if>
             <entity-find-one entity-name="${aen}" value-field="entityValue"/>
             <script><![CDATA[
                 const pkMap = entityValue.getPrimaryKeys()

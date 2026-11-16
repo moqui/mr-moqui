@@ -1397,6 +1397,61 @@ fn entity_rest_does_not_write_the_audit_log_or_the_monitor_rows() {
     ));
 }
 
+/// Entity REST's dependents leave out a restricted related entity (`UserLoginKey` below `UserAccount`), and an
+/// encrypted field is answered only as whether it is set (plans/Security-Review-Medium.md SEC-RTE-06, SEC-DAT-03).
+/// The data writer, without a full backup, leaves out the restricted entities and the password and encrypted fields
+/// (SEC-TLS-05).
+#[test]
+fn generic_reads_leave_out_restricted_related_rows_and_answer_encrypted_fields_as_set() {
+    let facade = crate::testing::open();
+    let mut account = facade.make_value("moqui.security.UserAccount").unwrap();
+    account.set("userId", Value::string("U1"));
+    account.set("username", Value::string("u1"));
+    account.set("currentPassword", Value::string("hash"));
+    account.create(&facade).unwrap();
+    let mut key = facade.make_value("moqui.security.UserLoginKey").unwrap();
+    key.set("loginKey", Value::string("key-hash"));
+    key.set("userId", Value::string("U1"));
+    key.create(&facade).unwrap();
+    let mut sync = facade.make_value("moqui.entity.sync.EntitySync").unwrap();
+    sync.set("entitySyncId", Value::string("S1"));
+    sync.set("targetUsername", Value::string("partner"));
+    sync.set("targetPassword", Value::string("sync-secret"));
+    sync.create(&facade).unwrap();
+
+    let mut dependents = BTreeMap::new();
+    dependents.insert("dependents".to_string(), Value::string("true"));
+    let user = facade.rest("get", "moqui.security.UserAccount/U1", &dependents).unwrap();
+    let text = format!("{user:?}");
+    assert!(text.contains("u1"), "{text}");
+    assert!(!text.contains("key-hash") && !text.contains("hash\""), "{text}");
+
+    let Value::List(rows) = facade.rest("get", "moqui.entity.sync.EntitySync", &BTreeMap::new()).unwrap() else {
+        panic!("a list");
+    };
+    let Value::Map(row) = &rows[0] else { panic!("a row") };
+    assert_eq!(row.get("targetUsername").and_then(Value::as_str), Some("partner"));
+    assert!(!row.contains_key("targetPassword"), "{row:?}");
+    assert_eq!(row.get("targetPasswordIsSet"), Some(&Value::Bool(true)), "{row:?}");
+
+    let export = |names: &[&str], full: bool| {
+        let mut writer = super::data_writer::EntityDataWriter::new(&facade);
+        for name in names {
+            writer.entity_name(name);
+        }
+        writer.full(full).dependent_levels(1).text().unwrap().0
+    };
+    let all = ["moqui.security.UserAccount", "moqui.security.UserLoginKey", "moqui.entity.sync.EntitySync"];
+    let text = export(&all, false);
+    assert!(text.contains("u1") && text.contains("partner"), "{text}");
+    assert!(
+        !text.contains("key-hash") && !text.contains("currentPassword") && !text.contains("sync-secret"),
+        "{text}"
+    );
+    let text = export(&["moqui.security.UserLoginKey", "moqui.entity.sync.EntitySync"], true);
+    assert!(text.contains("key-hash") && text.contains("sync-secret"), "{text}");
+}
+
 /// As Java's `getPlainValueMap`, a REST find of a view-entity gives its alias values, and the primary key aliases
 /// (here `enumId`, from the path or the parameters) find one row.
 #[test]
@@ -2128,6 +2183,29 @@ fn create_db_view(facade: &EntityFacade, name: &str, members: &[(&str, &str, &st
             ],
         );
     }
+}
+
+/// A `DbViewEntityAlias` function is one of the fixed list: another name was written into the SQL as a call of any
+/// database function (plans/Security-Review-Medium.md SEC-DAT-04).
+#[test]
+fn a_db_view_alias_takes_only_the_listed_functions() {
+    let facade = crate::testing::open();
+    for (name, function) in [("EnumPgRead", "pg_read_file"), ("EnumMax", "max")] {
+        create_db_view(&facade, name, &[("E", "moqui.basic.Enumeration", "")], &[("enumTypeId", "E", "enumTypeId")]);
+        create_row(
+            &facade,
+            "moqui.entity.view.DbViewEntityAlias",
+            &[
+                ("dbViewEntityName", name),
+                ("fieldAlias", "top"),
+                ("entityAlias", "E"),
+                ("fieldName", "description"),
+                ("functionName", function),
+            ],
+        );
+    }
+    assert!(facade.find("EnumPgRead").and_then(|find| find.list()).is_err());
+    assert!(facade.find("EnumMax").unwrap().list().is_ok());
 }
 
 /// A view's alias that renames a `UserAccount` password field is a secret whatever its name, and a view over a

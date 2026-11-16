@@ -258,6 +258,12 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="recordsWritten" type="Integer"/></out-parameters>
         <actions>
             <script><![CDATA[
+                // the zip is runtime/db/snapshot/<baseFilename>.zip: one path segment, as import, download and delete
+                // check, never a path out of that directory (plans/Security-Review-Low.md SEC-TLS-07, SEC-DAT-05)
+                if (baseFilename && !WebUtilities.isSafeSinglePathSegment(String(baseFilename))) {
+                    ec.message.addError(ec.l10n.localize("The snapshot name must be one file name, with no path"))
+                    return
+                }
                 const edw = ec.entity.makeDataWriter()
 
                 if (fromDate) edw.fromDate(fromDate)
