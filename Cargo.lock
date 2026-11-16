@@ -8090,8 +8090,7 @@ dependencies = [
 [[package]]
 name = "stun-proto"
 version = "2.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25cbfd0e9a3033f7cb5d9c4eb1155f18b2531f34bd75dae9032f0b77823c4190"
+source = "git+https://github.com/moqui/stun-proto?rev=051ca03ff92d04998cfec70a735d23369117b9c9#051ca03ff92d04998cfec70a735d23369117b9c9"
 dependencies = [
  "base64 0.22.1",
  "byteorder",
@@ -8108,8 +8107,7 @@ dependencies = [
 [[package]]
 name = "stun-types"
 version = "2.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd1108cee751e52425400125c21f66d0a78db0e053caefba1c41ced8a0717005"
+source = "git+https://github.com/moqui/stun-proto?rev=051ca03ff92d04998cfec70a735d23369117b9c9#051ca03ff92d04998cfec70a735d23369117b9c9"
 dependencies = [
  "byteorder",
  "crc",
@@ -8233,7 +8231,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
