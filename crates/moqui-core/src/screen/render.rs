@@ -2139,7 +2139,7 @@ pub(super) fn transition_authz_action(transition: &TransitionDef) -> String {
 
 /// Whether a transition runs something that can change data, as Java's `hasActionsOrSingleService`: its actions (or
 /// actions that did not compile), or the implicit saved find and column transitions, which write rows.
-fn runs_actions(transition: &TransitionDef) -> bool {
+pub(super) fn runs_actions(transition: &TransitionDef) -> bool {
     transition.service_actions.is_some()
         || transition.actions.is_some()
         || transition.actions_error.is_some()

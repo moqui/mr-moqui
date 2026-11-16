@@ -820,7 +820,7 @@ macro_rules! tools_js {
         this.methodName = "GET"; this.uriString = null; this.headerList = []; this.bodyText = null;
         this.bodyParameterList = []; this.contentTypeText = "application/json"; this.timeoutSeconds = 30;
         this.bodyBinary = null; this.bodyMultipart = null; this.bodyFromRequest = false; this.followRedirectsFlag = true; this.denyInternalFlag = false;
-        this.propertyHeaderList = [];
+        this.allowInternalFlag = false; this.propertyHeaderList = [];
     }
     RestClient.prototype.method = function (method) { this.methodName = String(method).toUpperCase(); return this; };
     RestClient.prototype.uri = function (uri) {
@@ -880,20 +880,24 @@ macro_rules! tools_js {
     RestClient.prototype.streamFrom = function () { this.bodyFromRequest = true; this.bodyText = null; this.bodyBinary = null; return this; };
     // false passes a redirect back as the 3xx response instead of following it; only send() reads it.
     RestClient.prototype.followRedirects = function (follow) { this.followRedirectsFlag = follow !== false; return this; };
-    // Refuse a host that is or resolves to an internal address, redirects included: for a URL from outside, such as a
-    // mail's link. Only call() reads it; send() refuses it rather than going out without the check.
+    // Refuse a host that is or resolves to an internal address (loopback, private, link-local), redirects included: for a
+    // URL from outside, such as a mail's link. It wins over allowInternal().
     RestClient.prototype.denyInternal = function () { this.denyInternalFlag = true; return this; };
+    // On a production instance a request to an internal address is refused unless the script allows it: for an address
+    // the conf or an administrator set, such as an upstream beside the server (SEC-SCR-07). Elsewhere it changes nothing.
+    // A link-local or metadata address is refused either way.
+    RestClient.prototype.allowInternal = function (allow) { this.allowInternalFlag = allow !== false; return this; };
     // As call(), with the headers only as given (no Content-Type or Accept added) and the body of the response left on
     // the server until text() or bytes() reads it, or response.forward(up) sends it on to the client as it comes.
     RestClient.prototype.send = function () {
         let uri = this.uriString;
         if (!uri) throw new Error("No URI set in RestClient");
-        if (this.denyInternalFlag) throw new Error("RestClient send() does not support denyInternal(), use call()");
         const query = restQuery(this.bodyParameterList);
         if (query) uri += (uri.includes("?") ? "&" : "?") + query;
         const sent = host.restOpen({ method: this.methodName, uri: uri, headers: this.headerList.slice(), body: this.bodyText,
             bodyBytes: this.bodyBinary, multipart: this.bodyMultipart, bodyFromRequest: this.bodyFromRequest, followRedirects: this.followRedirectsFlag,
-            timeoutSeconds: this.timeoutSeconds, propertyHeaders: this.propertyHeaderList.slice() });
+            timeoutSeconds: this.timeoutSeconds, denyInternal: this.denyInternalFlag, allowInternal: this.allowInternalFlag,
+            propertyHeaders: this.propertyHeaderList.slice() });
         return new RestResponse(this, sent);
     };
     RestClient.prototype.call = function () {
@@ -908,7 +912,8 @@ macro_rules! tools_js {
             (this.encodingText && !/charset=/i.test(this.contentTypeText) ? "; charset=" + this.encodingText : "")]);
         if (!hasHeader("accept")) headers.push(["Accept", this.contentTypeText]);
         const sent = host.restSend({ method: this.methodName, uri: uri, headers: headers, body: this.bodyText,
-            timeoutSeconds: this.timeoutSeconds, denyInternal: this.denyInternalFlag, propertyHeaders: this.propertyHeaderList.slice() });
+            timeoutSeconds: this.timeoutSeconds, denyInternal: this.denyInternalFlag, allowInternal: this.allowInternalFlag,
+            propertyHeaders: this.propertyHeaderList.slice() });
         return new RestResponse(this, sent);
     };
     ec.service.rest = () => new RestClient();
@@ -2614,8 +2619,9 @@ fn run_sql_update_conf(call: &mut Call<'_>) -> Result<Ret, HostError> {
 // ---- REST client ----
 
 /// Send one request of `ec.service.rest()`: `{method, uri, headers: [[name, value]], body, timeoutSeconds,
-/// denyInternal, propertyHeaders}`. Returns `{statusCode, reasonPhrase, text}`. Denied in sim mode, as a `remote-rest`
-/// call is. A header from a property (`addPropertyHeader`, `web::property_headers`) is checked and sent here.
+/// denyInternal, allowInternal, propertyHeaders}`. Returns `{statusCode, reasonPhrase, text}`. Denied in sim mode, as a
+/// `remote-rest` call is. Internal addresses are refused as [`super::web::rest_denies_internal`] says. A header from a
+/// property (`addPropertyHeader`, `web::property_headers`) is checked and sent here.
 fn rest_send(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let request = call.value_or_null(0);
     let Value::Map(request) = request else {
@@ -2662,14 +2668,10 @@ fn rest_send(call: &mut Call<'_>) -> Result<Ret, HostError> {
     ) {
         return Err(HostError::message(refused.message()));
     }
+    let deny_internal = super::web::rest_denies_internal(&request);
     // a header from a property (addPropertyHeader) goes to this URL only: sent without following a redirect
     let held = super::web::property_headers(&request, &url)?;
     if !held.is_empty() {
-        if matches!(request.get("denyInternal"), Some(Value::Bool(true))) {
-            return Err(HostError::message(
-                "RestClient call() does not take denyInternal() with addPropertyHeader",
-            ));
-        }
         headers.extend(held);
         return rest_send_held(
             method,
@@ -2677,6 +2679,7 @@ fn rest_send(call: &mut Call<'_>) -> Result<Ret, HostError> {
             headers,
             text("body").filter(|body| !body.is_empty()),
             timeout,
+            deny_internal,
         );
     }
     let response = crate::outbound::send(crate::outbound::Request {
@@ -2685,7 +2688,7 @@ fn rest_send(call: &mut Call<'_>) -> Result<Ret, HostError> {
         headers,
         body: text("body").filter(|body| !body.is_empty()),
         timeout,
-        deny_internal: matches!(request.get("denyInternal"), Some(Value::Bool(true))),
+        deny_internal,
     })
     .map_err(|err| {
         HostError::message(format!(
@@ -2706,6 +2709,7 @@ fn rest_send_held(
     headers: Vec<(String, String)>,
     body: Option<String>,
     timeout: Option<std::time::Duration>,
+    deny_internal: bool,
 ) -> Result<Ret, HostError> {
     use std::io::Read as _;
     let failed = |message: &str| {
@@ -2721,6 +2725,7 @@ fn rest_send_held(
         body: body.map(bytes::Bytes::from),
         timeout,
         follow_redirects: false,
+        deny_internal,
     })
     .map_err(|err| failed(err.message()))?;
     let mut bytes = Vec::new();

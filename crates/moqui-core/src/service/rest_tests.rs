@@ -222,6 +222,104 @@ fn entity_resources_keep_sensitive_entities_and_fields_out() {
     assert!(unauthorized(&err), "{err}");
 }
 
+/// A mail server a mail client account owns (`ownsEmailServer` Y) is changed through the account only: an ADMIN's
+/// generic entity REST (`/rest/e1`) and Service REST entity update or delete of it is refused and leaves it as it was,
+/// while a relay no account owns is still written.
+#[test]
+fn an_account_owned_email_server_is_not_written_by_generic_rest_even_by_admin() {
+    let dir = std::env::temp_dir().join(format!("moqui-rest-owned-server-{}", std::process::id()));
+    let _guard = DirGuard(dir.clone());
+    std::fs::create_dir_all(dir.join("service")).unwrap();
+    std::fs::write(
+        dir.join("service/own.rest.xml"),
+        r#"<resource name="own" require-authentication="false"><resource name="servers"><id name="emailServerId">
+                <method type="patch"><entity name="moqui.basic.email.EmailServer" operation="update"/></method>
+                <method type="delete"><entity name="moqui.basic.email.EmailServer" operation="delete"/></method>
+            </id></resource></resource>"#,
+    )
+    .unwrap();
+    let facade = crate::testing::open();
+    facade.set_disable_fk_create(true);
+    let ctx = ExecutionContextFactory::test_context();
+    install(ctx.factory(), &[dir.join("service/own.rest.xml")]);
+    ctx.factory().set_entity(facade.clone());
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    create(
+        &facade,
+        "moqui.security.UserAccount",
+        &[("userId", "OWNADMIN"), ("username", "ownadmin")],
+    );
+    let mut member = facade.make_value("moqui.security.UserGroupMember").unwrap();
+    member.set("userId", Value::string("OWNADMIN"));
+    member.set("userGroupId", Value::string("ADMIN"));
+    member.set(
+        "fromDate",
+        moqui_lib::object::basic_convert(&Value::I64(1_000), "Timestamp").value,
+    );
+    member.create(&facade).unwrap();
+    for id in ["OWNED", "RELAY"] {
+        create(
+            &facade,
+            "moqui.basic.email.EmailServer",
+            &[("emailServerId", id), ("storeHost", "imap.example.com")],
+        );
+    }
+    create(
+        &facade,
+        "moqui.basic.email.EmailAccount",
+        &[
+            ("emailAccountId", "ACCT"),
+            ("emailServerId", "OWNED"),
+            ("ownsEmailServer", "Y"),
+        ],
+    );
+    crate::user::internal_login_user("ownadmin").unwrap();
+    assert!(crate::user::is_in_group("ADMIN").unwrap());
+    let store_host = |id: &str| {
+        facade
+            .find("moqui.basic.email.EmailServer")
+            .unwrap()
+            .eq("emailServerId", Value::string(id))
+            .use_cache(false)
+            .one()
+            .unwrap()
+            .and_then(|row| row.get("storeHost").and_then(Value::as_str).map(str::to_string))
+    };
+    let unauthorized =
+        |err: &crate::context::Error| crate::context::ErrorKind::of(err) == crate::context::ErrorKind::Unauthorized;
+    let repoint = |id: &str| {
+        BTreeMap::from([
+            ("emailServerId".to_string(), Value::string(id)),
+            ("storeHost".to_string(), Value::string("127.0.0.1")),
+        ])
+    };
+
+    // /rest/e1
+    for verb in ["patch", "delete"] {
+        let err = facade
+            .rest(verb, "moqui.basic.email.EmailServer", &repoint("OWNED"))
+            .unwrap_err();
+        assert_eq!(
+            crate::context::ErrorKind::of(&err),
+            crate::context::ErrorKind::Unauthorized,
+            "{verb}: {err}"
+        );
+    }
+    // Service REST entity resources
+    let err = run(&["own", "servers", "OWNED"], "patch", &repoint("OWNED")).unwrap_err();
+    assert!(unauthorized(&err), "{err}");
+    let err = run(&["own", "servers", "OWNED"], "delete", &repoint("OWNED")).unwrap_err();
+    assert!(unauthorized(&err), "{err}");
+    assert_eq!(store_host("OWNED").as_deref(), Some("imap.example.com"));
+
+    facade
+        .rest("patch", "moqui.basic.email.EmailServer", &repoint("RELAY"))
+        .unwrap();
+    assert_eq!(store_host("RELAY").as_deref(), Some("127.0.0.1"));
+    crate::user::logout().unwrap();
+}
+
 /// A declared entity resource answers an encrypted field only as `<field>IsSet` (plans/Security-Review-Medium.md
 /// SEC-DAT-03, SEC-MAIL-04: `email/servers` gave mailbox passwords and refresh tokens), takes no condition on it
 /// (SEC-DAT-01), never reads without a limit (SEC-RTE-14), and does not write the entity audit log (SEC-RTE-03).

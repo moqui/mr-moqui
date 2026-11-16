@@ -427,3 +427,9 @@ sasl = { version = "0.5", default-features = false }
 # The browser's local database (plans/archive/Wasm.md). bundled compiles the SQLite amalgamation with the
 # target C compiler, which is emcc for wasm32-unknown-emscripten. SQLite is public domain.
 rusqlite = { version = "0.42", features = ["bundled"] }
+
+# A dependency of a dependency (turn-server-proto's) held at moqui's fork (docs/Build-Test.md Forks). stun-types comes
+# from the same workspace, so both are patched to keep one copy in the graph.
+[patch.crates-io]
+stun-proto = { git = "https://github.com/moqui/stun-proto", rev = "051ca03ff92d04998cfec70a735d23369117b9c9" }
+stun-types = { git = "https://github.com/moqui/stun-proto", rev = "051ca03ff92d04998cfec70a735d23369117b9c9" }

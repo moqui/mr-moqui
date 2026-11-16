@@ -1,6 +1,7 @@
 // The Service REST email/servers resource (tools moqui.rest.xml; org.moqui.mail.EmailServices find#RelayServers and
 // get#RelayServer, SEC-MAIL-04): a mail server that a mail client account owns (ownsEmailServer Y) is neither listed nor
 // answered, and no answer carries an encrypted field, only whether it is set.
+// PATCH email/servers/{id} (update#RelayServer) and its poll (poll#EmailServer) refuse such a server the same way.
 // Run: ./moq test framework --spec RelayServers
 const RELAY = "SPEC_RELAY_SHARED"
 const OWNED = "SPEC_RELAY_OWNED"
@@ -56,5 +57,31 @@ feature("an account's own server is neither listed nor answered; a relay is, wit
         relay.emailServer.mailPassword === undefined
         owned.errors.includes("not found")
         owned.emailServer == null
+    },
+})
+
+// update#RelayServer (PATCH email/servers/{id}) and poll#EmailServer (POST email/servers/{id}/poll): an account's own
+// server is answered as one that does not exist and left as it was; a relay is changed, with nothing secret answered
+feature("an account's own server is neither changed nor polled by id; a relay is changed", {
+    when() {
+        ec.user.internalLoginUser("john.doe")
+        const isAdmin = ec.user.isInGroup("ADMIN")
+        const before = sys(() => ec.entity.find("moqui.basic.email.EmailServer").condition("emailServerId", OWNED).useCache(false).one().storeHost)
+        const ownedUpdate = call("update#RelayServer", {emailServerId: OWNED, storeHost: "127.0.0.1", storePort: "9143"})
+        const ownedPoll = call("poll#EmailServer", {emailServerId: OWNED})
+        const relayUpdate = call("update#RelayServer", {emailServerId: RELAY, storeHost: "imap.example.net"})
+        const read = (id) => sys(() => ec.entity.find("moqui.basic.email.EmailServer").condition("emailServerId", id).useCache(false).one())
+        return {isAdmin, before, ownedUpdate, ownedPoll, relayUpdate, owned: read(OWNED), relay: read(RELAY)}
+    },
+    then({isAdmin, before, ownedUpdate, ownedPoll, relayUpdate, owned, relay}) {
+        isAdmin
+        ownedUpdate.errors.includes("not found")
+        owned.storeHost == before
+        owned.storePort == null
+        /No EmailServer found/.test(ownedPoll.errors)
+        relayUpdate.errors == ""
+        relay.storeHost == "imap.example.net"
+        relay.smtpHost == "smtp.example.com"
+        !JSON.stringify(relayUpdate).includes("spec-mailbox-secret")
     },
 })

@@ -1,0 +1,389 @@
+# MR Moqui — UI review: System monitoring and recovery
+
+**Status — 2026-11-16:** planned; every activity pending. Source inspection only; no review or test results claimed.
+
+Contents: [scope](#1-purpose-scope-and-sources) · [method](#2-review-method-and-refinement-criteria) ·
+[inventory](#3-screen-and-surface-inventory) · [activities](#4-end-to-end-activities) ·
+[verification](#5-existing-checks-and-future-verification) · [record](#6-coverage-findings-and-running-record) ·
+[decisions](#7-decisions).
+
+## 1. Purpose, scope and sources
+
+Review diagnosis as a chain of evidence: notice a symptom, narrow its range and source, explain the failing work,
+decide on a bounded response and verify recovery. Every chart or log link must retain enough context to continue
+that investigation. Monitor is a section of System, not a separate launcher app.
+
+Sources: [Monitoring guide](../docs/tools/Monitoring.md), [tools README](../runtime/components/base/tools/README.md),
+[monitoring build record](archive/Monitoring.md), [diagnostic settings](archive/Monitor-Settings.md),
+[archived review](archive/UI-Refinement.md), current `tools/screen/System/Monitor`, `tools/report/monitor-*.json`,
+framework monitor/report services and `MonitoringSecurityData.xml`.
+
+### Ownership and handoffs
+
+| Surface | Owner / boundary |
+| --- | --- |
+| Monitor root and all 24 child definitions | This plan |
+| Diagnostic settings and AI traces reached through Conf/Logging and Llm/Traces | This plan owns behavior; core System/AI plans inspect their wrapper entry and return |
+| System Home/Health, job-run context | [System](ui-review-system.md); this plan owns the diagnosis after following the link |
+| Shared Explore/report/Definition/Drill/LogContext/Split controls | [Dashboards](ui-review-dashboards.md) owns generic behavior; inspect Monitor's includes and supplied context here |
+| AI runs, evaluations and provider setup | [AI/integrations](ui-review-system-ai-integrations.md); retain run/trace identity across the handoff |
+
+No business-app monitoring data or real incident response is required. Recovery acts only on disposable local
+fixtures and an explicitly prepared adapter; a manual instruction must not be reported as executed recovery.
+
+## 2. Review method and refinement criteria
+
+Apply the [common review protocol](ui-review-shared-gallery.md#common-review-protocol) and
+[verification policy](ui-review-shared-gallery.md#verification-policy-for-later-execution). The details below add this
+area's fixtures, dependencies and judgment criteria.
+
+### Environment, identities and records
+
+- Use `SYSTEM_APP` for Monitor access; there is no separate Monitor app group. Prepare `review.monitor.reader`
+  from a view-only System grant and specialized holders of `MONITOR_REPLAY`, `MONITOR_INCIDENT`, `MONITOR_RECOVER`,
+  `MONITOR_RECOVER_ADMIN`, `MONITOR_SETTINGS`, `MONITOR_INGEST` and `MONITOR_PRIVATE_NETWORK` as needed. Keep the
+  missing-permission counterpart otherwise identical. The policy administrator and action approver are distinct.
+  Both recovery operators also need `MONITOR_INCIDENT` to read Recovery/IncidentDetail; granting
+  `MONITOR_RECOVER` or `MONITOR_RECOVER_ADMIN` alone does not make their starting page available. Record that
+  read prerequisite separately from the action permission when pairing successful and refused operations.
+- Seed local telemetry with related logs/spans/errors, a multi-service trace, resource metrics, one browser session,
+  a synthetic business operation, two releases and a regression. Keep empty/disabled telemetry available as a separate
+  startup/configuration case. Record source IDs, event times and trace links, not assumed “recent” demo dates.
+- Prepare source-scoped ingestion keys, local synthetic endpoints, fake browser replay, a harmless recovery adapter
+  with success/refusal/failure states, and a manual policy. Generated tokens are evidence-redacted and revoked after use.
+- Network checks and ingestion operate only on local fixtures. A loopback target may require MONITOR_PRIVATE_NETWORK;
+  a production URL is not a substitute. Temporary settings, policies, emergency-stop state and scheduled checks must
+  be restored; do not change telemetry out from under another review without sequencing its consumers.
+
+### Area-specific criteria
+
+- Scope (instance/service/source), time range, timezone, trace/run/error identity and units survive every drill.
+  Charts remain readable with real labels and zero/unknown values, not just sample placeholders.
+- Diagnostic text keeps precision useful for short events; raw data stays inspectable without overwhelming the
+  primary timeline. Replays keep masking and access controls in the displayed frames and downloaded events.
+- Manual, proposed, approved, executing, refused, failed and completed recovery are distinct. An approval records
+  whose action and what target it covers; no UI shortcut bypasses a current permission or policy check.
+- Expiring settings show effective and on-disk values together. A request acknowledged or check skipped is not a
+  fresh measurement, and a failed telemetry source must not blank unrelated evidence.
+
+### Ordered waves
+
+| Wave | Activities | Continuation |
+| --- | --- | --- |
+| 1. Diagnose a symptom | MON-01–05 | Overview → log/trace/error → metric comparison → service/operation |
+| 2. Gather evidence | MON-06–08 | Browser replay, sources/keys, synthetic checks |
+| 3. Respond and verify | MON-09, MON-11 | Release regression → incident → bounded recovery → repeat diagnosis |
+| 4. Tune and reconcile | MON-10, MON-12 | Temporary settings/expiry and alternate mounts/modes |
+
+Generate replay/check events before freezing the investigation range. Recovery uses a separate fixture from the
+failure needed for comparison. Settings overrides run in a serialized batch and are reverted before baseline retests.
+
+## 3. Screen and surface inventory
+
+This inventory accounts for **25 XML definitions** assigned to this file; screen containers and helper
+definitions are included. Routes below are Material paths unless labelled otherwise; app routes have Standard
+`/apps` counterparts. A file's physical presence does not prove access or a supported interaction in every mode.
+Each row maps to §4; helper inspection does not replace its parent workflow. Counts describe definitions, not user
+activities. Dialogs, templates and non-XML surfaces follow the route tables.
+
+### tools: `System`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/Monitor` | [Monitor.xml](../runtime/components/base/tools/screen/System/Monitor.xml) | Default: `Overview`. | MON-01, MON-12 |
+
+### tools: `System/Monitor`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/Monitor/AgentTraces` | [AgentTraces.xml](../runtime/components/base/tools/screen/System/Monitor/AgentTraces.xml) | Context: `from`, `thru`, `provider`, `model`, `agent`, `errorsOnly`. | MON-12 |
+| `/qapps/system/Monitor/Artifacts` | [Artifacts.xml](../runtime/components/base/tools/screen/System/Monitor/Artifacts.xml) | Includes `component://tools/screen/Dashboards/Dashboard.xml`. | MON-05 |
+| `/qapps/system/Monitor/Browser` | [Browser.xml](../runtime/components/base/tools/screen/System/Monitor/Browser.xml) | Includes `component://tools/screen/Dashboards/Dashboard.xml`. | MON-06 |
+| `/qapps/system/Monitor/Checks` | [Checks.xml](../runtime/components/base/tools/screen/System/Monitor/Checks.xml) | Inspect the route and its visible controls through the activity. | MON-08 |
+| `/qapps/system/Monitor/ErrorDetail` | [ErrorDetail.xml](../runtime/components/base/tools/screen/System/Monitor/ErrorDetail.xml) | Context: `fingerprint`, `from`, `thru`. | MON-03 |
+| `/qapps/system/Monitor/Errors` | [Errors.xml](../runtime/components/base/tools/screen/System/Monitor/Errors.xml) | Context: `from`, `thru`, `queryString`, `pageIndex`, `pageSize`, `order`. | MON-03 |
+| `/qapps/system/Monitor/IncidentDetail` | [IncidentDetail.xml](../runtime/components/base/tools/screen/System/Monitor/IncidentDetail.xml) | Authored text: `qvt,html,html-print`, `tui`. Hidden/helper entry; enter through its parent action and inspect direct access. Context: `incidentId`. | MON-09, MON-11 |
+| `/qapps/system/Monitor/Incidents` | [Incidents.xml](../runtime/components/base/tools/screen/System/Monitor/Incidents.xml) | Authored text: `qvt,html,html-print`, `tui`. Context: `statusId`, `serviceName`. | MON-09 |
+| `/qapps/system/Monitor/LogContext` | [LogContext.xml](../runtime/components/base/tools/screen/System/Monitor/LogContext.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. Includes `component://tools/screen/Dashboards/LogContext.xml`. | MON-02 |
+| `/qapps/system/Monitor/Logs` | [Logs.xml](../runtime/components/base/tools/screen/System/Monitor/Logs.xml) | Includes `component://tools/screen/Dashboards/Explore.xml`. | MON-02 |
+| `/qapps/system/Monitor/Metrics` | [Metrics.xml](../runtime/components/base/tools/screen/System/Monitor/Metrics.xml) | Includes `component://tools/screen/Dashboards/Explore.xml`. Context: `metricName`, `groupBy`, `metricStat`. | MON-04 |
+| `/qapps/system/Monitor/Operations` | [Operations.xml](../runtime/components/base/tools/screen/System/Monitor/Operations.xml) | Includes `component://tools/screen/Dashboards/Dashboard.xml`. | MON-05 |
+| `/qapps/system/Monitor/Overview` | [Overview.xml](../runtime/components/base/tools/screen/System/Monitor/Overview.xml) | Includes `component://tools/screen/Dashboards/Dashboard.xml`. | MON-01 |
+| `/qapps/system/Monitor/Recovery` | [Recovery.xml](../runtime/components/base/tools/screen/System/Monitor/Recovery.xml) | Context: `editPolicyId`, `editAdapterId`. | MON-11 |
+| `/qapps/system/Monitor/ReleaseDetail` | [ReleaseDetail.xml](../runtime/components/base/tools/screen/System/Monitor/ReleaseDetail.xml) | Authored text: `qvt,html,html-print`, `tui`. Hidden/helper entry; enter through its parent action and inspect direct access. Context: `serviceName`, `version`. | MON-09 |
+| `/qapps/system/Monitor/Releases` | [Releases.xml](../runtime/components/base/tools/screen/System/Monitor/Releases.xml) | Context: `serviceName`. | MON-09 |
+| `/qapps/system/Monitor/ReplayDetail` | [ReplayDetail.xml](../runtime/components/base/tools/screen/System/Monitor/ReplayDetail.xml) | Authored text: `html,html-print,text`, `qvt`, `tui`. Hidden/helper entry; enter through its parent action and inspect direct access. Context: `replayId`. | MON-06 |
+| `/qapps/system/Monitor/Replays` | [Replays.xml](../runtime/components/base/tools/screen/System/Monitor/Replays.xml) | Authored text: `qvt,html,html-print`, `tui`. Context: `userId`, `visitId`. | MON-06 |
+| `/qapps/system/Monitor/Services` | [Services.xml](../runtime/components/base/tools/screen/System/Monitor/Services.xml) | Includes `component://tools/screen/Dashboards/Dashboard.xml`. | MON-05 |
+| `/qapps/system/Monitor/Settings` | [Settings.xml](../runtime/components/base/tools/screen/System/Monitor/Settings.xml) | Context: `changeKey`. | MON-10 |
+| `/qapps/system/Monitor/Sources` | [Sources.xml](../runtime/components/base/tools/screen/System/Monitor/Sources.xml) | Inspect the route and its visible controls through the activity. | MON-07 |
+| `/qapps/system/Monitor/Split` | [Split.xml](../runtime/components/base/tools/screen/System/Monitor/Split.xml) | Includes `component://tools/screen/Dashboards/Split.xml`. | MON-02, MON-04 |
+| `/qapps/system/Monitor/TraceDetail` | [TraceDetail.xml](../runtime/components/base/tools/screen/System/Monitor/TraceDetail.xml) | Authored text: `html,html-print,text`, `qvt`, `tui`. Context: `traceId`, `from`, `thru`. | MON-02, MON-03 |
+| `/qapps/system/Monitor/Traces` | [Traces.xml](../runtime/components/base/tools/screen/System/Monitor/Traces.xml) | Context: `from`, `thru`, `queryString`, `pageIndex`, `pageSize`, `order`, `spanKind`, `serviceName`, `spanName`, `statusCode`, `minDuration`, `maxDuration`, `userId`. | MON-02 |
+
+### Embedded surfaces, dialogs, outputs and reconciliation
+
+| Supporting surface | Activity / inspection |
+| --- | --- |
+| Overview/Services/Artifacts/Browser/Operations report embeds and panel menus | MON-01/05/06; inspect/export uses the owning transition, not a Material wrapper URL |
+| Logs uses Explore, Metrics picker, LogContext and Split helpers | MON-02/04; shared report controls, Monitor-specific range/source/navigation |
+| TraceDetail span timeline and raw/context disclosure; ErrorDetail grouping | MON-02/03; long labels, overlapping spans, precision and keyboard selection |
+| Replay events fetch/player, masking, trace links and missing-event states | MON-06; a rendered ReplayDetail shell is not replay playback |
+| Sources key create/revoke and one-time secret, counters/partition operation | MON-07; Sources is not a general database-maintenance screen |
+| Checks create/edit/delete, Check/Scrape now, private-network consent | MON-08; distinguish stored definition, scheduled execution and latest result |
+| Incident cause/evidence/notes/decisions/actions; Recovery policies/adapters/emergency stop | MON-09/11; use actual controls and result states |
+| Monitor/Settings and Conf/Logging include; AgentTraces and Llm/Traces include | MON-10/12; wrappers listed in companion inventories and checked for context/access |
+
+The archived review's replay/release/incident pages were partly inspected or rendered without complete interaction.
+Their later fixes are history, not evidence for these workflows. No obsolete standalone Monitor launcher or old
+Monitor-only artifact group is assumed.
+
+## 4. End-to-end activities
+
+Use visible controls and inspect intermediate states, confirmation and the resulting data/output. Unless narrowed
+below, each activity has Material light/dark, actual supported TUI and a brief Standard/output branch. Select narrow
+and keyboard checks where layout/interaction differs. Record each unattempted branch in §6; a service call or render
+alone does not complete the activity. Names beginning `review.` are fixture proposals, not shipped accounts.
+
+### MON-01 — Start from a symptom and retain its investigation range
+
+- **Actor/start:** Monitor reader; known local error/latency symptom and a matching System attention item.
+- **Objective/steps:** System Home/Health → Monitor/Overview → choose instance/range → inspect suspicious panel
+  → follow relevant logs/metrics/traces → return; inspect/export embedded panel.
+- **Expected:** Source, time range and units agree across entry and destination; panel actions keep the owning
+  dashboard/transition; unavailable metrics are clear.
+- **Recovery:** Telemetry off, no matching events, one failed panel and stale asynchronous result preserve
+  independent diagnostics.
+- **Screens/modes:** Monitor/Overview and embeds; System Home handoff, browser/TUI/Standard and narrow
+  chart/header inspection.
+
+### MON-02 — Follow a log to its trace and surrounding context
+
+- **Actor/start:** Reader with a correlated multi-span trace and log entries before/after a selected event.
+- **Objective/steps:** Logs → search/filter → choose row → LogContext → trace → TraceDetail → select span/raw
+  data → related logs → Back; compare with Split.
+- **Expected:** The same trace/event/range is retained; surrounding context explains ordering and precision; raw
+  data is reachable by keyboard.
+- **Recovery:** Malformed query, missing trace/span, expired retention, failed fetch and interrupted search keep
+  editable input and explain absent evidence.
+- **Screens/modes:** Logs, LogContext, Traces, TraceDetail, Split; server transitions and actual TUI links,
+  readable long span labels.
+
+### MON-03 — Explain an error group and its affected work
+
+- **Actor/start:** Reader with repeated instances of one error and an unrelated error.
+- **Objective/steps:** Errors → filter/count → ErrorDetail → inspect occurrence/context → TraceDetail/logs →
+  related service/release → return to error group.
+- **Expected:** Group, occurrence count, sample and selected trace are distinguishable; data supports the
+  displayed explanation rather than inferred causality.
+- **Recovery:** No occurrences in range, stale/deleted group, redacted detail and unavailable stack retain a
+  usable return path.
+- **Screens/modes:** Errors, ErrorDetail, TraceDetail, Services and release handoff; browser/TUI/Standard tables
+  and keyboard disclosure.
+
+### MON-04 — Compare a metric over meaningful ranges
+
+- **Actor/start:** Reader with known metric units, service tags and a changed rate between two periods.
+- **Objective/steps:** Metrics → select metric/group → change interval/range → inspect point → compare in Split
+  → follow correlated context → inspect/export.
+- **Expected:** Metric name, unit, aggregation and both windows stay visible; zero and no reading differ;
+  abbreviated ticks retain useful full timestamp tooltips.
+- **Recovery:** Unknown metric, empty comparison, incompatible grouping, delayed earlier query and missing
+  export backend do not silently replace current data.
+- **Screens/modes:** Metrics, Split, context links and embedded charts; browser visual/keyboard plus
+  TUI/Standard numeric fallback.
+
+### MON-05 — Move from service pressure to a specific operation
+
+- **Actor/start:** Reader of service/artifact/operation telemetry; disposable service call recorded by Tools.
+- **Objective/steps:** Services → select service → Traces/Errors → Artifacts → inspect relevant
+  entity/screen/service → Operations → follow a linked execution → return to Tools detail.
+- **Expected:** Summary and individual execution agree on identity/range; links retain the investigation context
+  and respect destination access.
+- **Recovery:** No instrumented operation, unavailable telemetry kind, missing Tools grant and failed summary do
+  not masquerade as healthy zero work.
+- **Screens/modes:** Services, Artifacts, Operations and Tools Service/Schema/Database embeds; scoped handoff,
+  not a second service-run review.
+
+### MON-06 — Replay a captured browser failure safely
+
+- **Actor/start:** MONITOR_REPLAY holder and reader without it; synthetic browser session with masked sensitive
+  fields and a trace.
+- **Objective/steps:** Browser → Replays filter → ReplayDetail → load/play/seek → inspect event gap/error →
+  follow trace → return to same session/time.
+- **Expected:** Playback corresponds to the selected session; masking persists in events and frames; trace links
+  relate to the captured action; visible controls do not imply absent events exist.
+- **Recovery:** Missing/revoked replay, oversized/dropped capture, failed event fetch, no player support and
+  changed permission keep private data unavailable and name the gap.
+- **Screens/modes:** Browser, Replays, ReplayDetail/events and TraceDetail; browser playback, TUI/Standard
+  truthful metadata/delegation.
+
+### MON-07 — Admit a telemetry source and revoke its key
+
+- **Actor/start:** MONITOR_INGEST holder with source-scoped permissions; local collector/fixture sender and
+  reader.
+- **Objective/steps:** Sources → create key for fixture source → capture token once securely → send a known
+  local event → inspect source/counters → revoke → verify refused later send; inspect partition controls without
+  using shared data.
+- **Expected:** Source and key scope are clear; secret is shown once; accepted/dropped/export counters describe
+  actual events and revocation is observable.
+- **Recovery:** Invalid source, expired/revoked key, refused ingestion, unsupported partition backend and
+  canceled action retain clear state without revealing tokens.
+- **Screens/modes:** Sources and relevant log/metric destination; supporting local HTTP injection is fixture
+  setup, visible source lifecycle is the reviewed activity.
+- **Partition branch:** Inspect the Move telemetry tables into day partitions confirmation, its table/row counts,
+  retained-old-table message and independent failures. Successful execution needs a separate disposable PostgreSQL
+  fixture with an eligible unpartitioned table; otherwise record this as supporting inspection with execution
+  blocked. Recheck the same telemetry query afterward, and keep the no-table-needed outcome distinct from a move.
+
+### MON-08 — Run a synthetic check and follow its result
+
+- **Actor/start:** Check operator with MONITOR_PRIVATE_NETWORK for local targets and a counterpart without it;
+  harmless responsive and failing endpoints.
+- **Objective/steps:** Checks → create/edit synthetic check and scrape target → Test/Run now → inspect last
+  run/state → follow trace/metrics → disable/delete fixture.
+- **Expected:** Target, schedule, last execution and requested run are distinct; private-network restriction is
+  explained; each failed target is named independently.
+- **Recovery:** Invalid address, timeout, no consent, disabled definition, skipped interval and canceled delete
+  retain the previous valid result with its time.
+- **Screens/modes:** Checks forms, trace/metric/dashboard links; browser/TUI/Standard, keyboard long
+  configuration dialogs.
+
+### MON-09 — Review a release regression and open an evidence-based incident
+
+- **Actor/start:** MONITOR_INCIDENT holder and missing-permission reader; two synthetic releases with known
+  change/error and one incident.
+- **Objective/steps:** Releases → ReleaseDetail compare → inspect regression/new error → create/open Incidents →
+  IncidentDetail → inspect evidence/cause → confirm/reject cause → add note/status → follow related traces.
+- **Expected:** Comparison windows and release identities remain clear; suspected and confirmed cause differ;
+  incident evidence links back to its source and changes retain actor context.
+- **Recovery:** No comparable release, stale regression, missing evidence, refused status and canceled dismissal
+  leave an honest unresolved record.
+- **Screens/modes:** Releases, ReleaseDetail, Incidents, IncidentDetail; actual notes/decisions, TUI/Standard
+  and narrow chronology.
+
+### MON-10 — Apply an expiring diagnostic setting and restore the baseline
+
+- **Actor/start:** MONITOR_SETTINGS holder and view-only counterpart; copied configuration and short-lived
+  harmless override.
+- **Objective/steps:** Monitor/Settings → inspect effective/on-disk values → change target/rule with expiry →
+  visit affected diagnostics → open Conf/Logging → revert one/all or observe expiry → inspect baseline.
+- **Expected:** Override scope, expiry and source are explicit; rejected values stay editable; reversion/expiry
+  restores the intended value and both entry routes agree.
+- **Recovery:** Invalid value/target, denied save, expired override, concurrent change and unavailable setting
+  preserve the current baseline and report the exact result.
+- **Screens/modes:** Monitor/Settings, Conf/Logging wrapper, System Conf/View; keyboard/narrow forms and actual
+  TUI/Standard edits.
+
+### MON-11 — Approve and verify a bounded recovery
+
+- **Actor/start:** MONITOR_RECOVER_ADMIN policy administrator, MONITOR_RECOVER approver and reader; disposable
+  safe adapter plus manual and failing outcomes.
+- **Objective/steps:** Recovery → inspect/edit policy/adapter → incident recommendation → approve/refuse →
+  inspect action state → complete/cancel/revert where offered → revisit original symptom; test emergency stop
+  then restore.
+- **Expected:** Policy, approval, execution and manual instruction remain distinct; target is named; adapter
+  outcome and verified symptom determine completion.
+- **Recovery:** Stale recommendation, lost permission, emergency stop, failed adapter, uncertain result and
+  canceled confirmation do not trigger unintended retries or claim repair.
+- **Screens/modes:** Recovery, IncidentDetail decision/action forms, diagnostics retest; local adapter only,
+  TUI/Standard supported actions.
+
+### MON-12 — Reconcile alternate mounts and restricted diagnostics
+
+- **Actor/start:** Specialized holders, ordinary Monitor reader and outsider with earlier known-good records.
+- **Objective/steps:** Open Llm/Traces (the AgentTraces include) → filter provider/model/agent/errors/time →
+  TraceDetail → return → Usage and cost or AI dashboard; correlate the fixture's AI run where its links/IDs allow.
+  Open Conf/Logging → settings →
+  return; inspect remaining helper routes/output bytes and selected denial counterparts.
+- **Expected:** Wrappers retain the same identity/range/permissions as their owned diagnostics; no access comes
+  solely from hiding a tab or a supplied mount map.
+- **Recovery:** Revoked permission, unsupported telemetry feature, missing target and failed include are
+  explicitly unresolved rather than inferred passing coverage.
+- **Screens/modes:** AgentTraces, aliases, helpers and every remaining inventory entry; cross-plan handoff with
+  AI-03 and SYS-06.
+- **Sampling branch:** Compare calls/tokens and the slowest-call duration with the known fixture spans; inspect
+  the newest-call/trace limits and sampling/loss notices. These summaries cover the displayed traces, not a full
+  billing ledger, and contain no prompts/replies. Missing telemetry is not proof that no provider call occurred.
+
+## 5. Existing checks and future verification
+
+This is an available-test map, not a results ledger. Read assertions and suite setup before selecting a run; static
+shape checks, offline component fixtures, live browser walks and service rules provide different evidence.
+
+| Component / suite | Existing specs | Coverage and limits |
+| --- | --- | --- |
+| tools / server | [MonitorChecks](../runtime/components/base/tools/test/MonitorChecks.spec.js), [MonitorSettings](../runtime/components/base/tools/test/MonitorSettings.spec.js) | Private-network refusal/holder and setting permission/override/revert rules; not the full UI activity. |
+| tools / server | [AdminOverview](../runtime/components/base/tools/test/AdminOverview.spec.js), [SystemAttention](../runtime/components/base/tools/test/SystemAttention.spec.js) | Diagnostic date/readability/recovery form and attention boundaries; not causal investigation. |
+| tools / acceptance client | [Monitoring](../runtime/components/base/tools/test/acceptance/client/Monitoring.spec.js) | Live logs-to-trace/context, metrics, check and panel controls; Browser/Replays/Releases/Incidents/Recovery portions include render-only checks. |
+| webroot / client | [WebrootRum](../runtime/components/base/webroot/test/client/WebrootRum.spec.js), [WebrootReport](../runtime/components/base/webroot/test/client/WebrootReport.spec.js) | Offline telemetry/report client behavior, not capture/playback or full incident resolution. |
+
+Future acceptance candidates: **MonitorDiagnosisWalk** (MON-01–05), **MonitorReplayWalk** (MON-06),
+**MonitorSourcesChecksWalk** (MON-07–08), **MonitorIncidentRecoveryWalk** (MON-09/11) and **MonitorSettingsWalk**
+(MON-10/12). Extend the existing Monitoring acceptance spec for overlapping paths. These all belong to the System
+review's shared sweep ownership; do not add a separate Monitor regression sweep. Missing telemetry/adapter/media
+fixtures remain blocked branches rather than reasons to weaken assertions.
+
+Follow the [verification policy](ui-review-shared-gallery.md#verification-policy-for-later-execution). Proposed
+walk names above describe future acceptance work, not tests created or authorized to run by this document. Keep
+focused bug/rule checks in regression and reuse existing sweeps/walks instead of adding duplicates.
+
+## 6. Coverage, findings and running record
+
+### Activity coverage ledger
+
+Statuses: **pending**, **inspected**, **exercised** (pass/fail/partial named separately), **blocked**, **deferred**
+(with reason). Existing tests and the archived review do not advance these statuses. Every branch is pending until
+execution records it; “exercised” never implies that all modes and recovery paths passed.
+
+| Activity | Status | Outcome / remaining branches | Evidence / findings |
+| --- | --- | --- | --- |
+| MON-01 — Start from a symptom and retain its investigation range | pending | All steps, modes and recovery branches pending. | — |
+| MON-02 — Follow a log to its trace and surrounding context | pending | All steps, modes and recovery branches pending. | — |
+| MON-03 — Explain an error group and its affected work | pending | All steps, modes and recovery branches pending. | — |
+| MON-04 — Compare a metric over meaningful ranges | pending | All steps, modes and recovery branches pending. | — |
+| MON-05 — Move from service pressure to a specific operation | pending | All steps, modes and recovery branches pending. | — |
+| MON-06 — Replay a captured browser failure safely | pending | All steps, modes and recovery branches pending. | — |
+| MON-07 — Admit a telemetry source and revoke its key | pending | All steps, modes and recovery branches pending. | — |
+| MON-08 — Run a synthetic check and follow its result | pending | All steps, modes and recovery branches pending. | — |
+| MON-09 — Review a release regression and open an evidence-based incident | pending | All steps, modes and recovery branches pending. | — |
+| MON-10 — Apply an expiring diagnostic setting and restore the baseline | pending | All steps, modes and recovery branches pending. | — |
+| MON-11 — Approve and verify a bounded recovery | pending | All steps, modes and recovery branches pending. | — |
+| MON-12 — Reconcile alternate mounts and restricted diagnostics | pending | All steps, modes and recovery branches pending. | — |
+
+### Findings register
+
+Use `MON-UI-001` onward. P1 blocks work or essential understanding; P2 causes substantial friction or misleading
+presentation; P3 is a localized refinement. Label evidence as observed behavior, static suspicion or design judgment.
+
+| ID / severity | Actor, activity step, route, mode / viewport | Reproduction and impact | Evidence / owning layer | State / correction / retest |
+| --- | --- | --- | --- | --- |
+| — | — | No findings recorded. | — | — |
+
+### Bounded batch record
+
+For each later batch record:
+
+- Intent, activities and branch limits; runtime/build/components, identities/grants, fixture IDs and dates.
+- Observed steps and outcomes; evidence filenames, console/network/output observations and findings.
+- Workarounds and blocked/deferred branches, with prerequisites and follow-up.
+- In refinement only: decisions, owning files/components, correction, focused verification commands/results and retest.
+- Temporary settings/grants/files/jobs restored, remaining cleanup and companion handoffs.
+
+No execution batches have been started.
+
+## 7. Decisions
+
+- IDs are `MON`. This plan owns diagnostic behavior even when embedded elsewhere; app entry/context checks remain
+  with their consuming plan.
+- Synthetic fixtures establish causally related events and known outcomes; merely finding a recent log or drawing
+  a chart is insufficient.
+- Recovery remains bounded to local disposable targets. Unavailable actual replay or backend behavior is reported
+  separately from a successful page render.
+
+- Preparing or auditing these plans changes documentation only. Application/API changes, test runs, runtime walks
+  and fixture creation belong to separate review/refinement execution.
+- Current code, mounts and grants take precedence over older plans. Historical outcomes, permissions and exceptions
+  are not inherited. Preserve routes, stored preferences and public contracts in any later refinement.
+- Finish a review with explicit branch outcomes and a candid unresolved ledger; missing prerequisites do not become
+  passes. Building absent features is outside this review.

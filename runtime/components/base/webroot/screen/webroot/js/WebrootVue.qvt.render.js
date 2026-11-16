@@ -11017,7 +11017,7 @@
               ]), 1040, ["label", "prefix", "model-value", "onUpdate:modelValue", "type", "for", "name", "size", "maxlength", "form", "loading", "rules", "disable", "bg-color", "mask", "fill-mask", "reverse-fill-mask", "autocomplete"]))
             }
         } },
-        "m-tree-item": { hash: "f60fcdc3", make: function (Vue) {
+        "m-tree-item": { hash: "cca8c87d", make: function (Vue) {
             const { normalizeClass: _normalizeClass, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createBlock: _createBlock, createElementVNode: _createElementVNode, renderList: _renderList, Fragment: _Fragment, vShow: _vShow, withDirectives: _withDirectives } = Vue
 
             return function render(_ctx, _cache) {
@@ -11044,13 +11044,14 @@
                         key: 0,
                         href: _ctx.linkHref,
                         "load-id": _ctx.model.a_attr.loadId,
+                        "load-method": _ctx.model.a_attr.loadMethod,
                         class: _normalizeClass({'text-success':_ctx.selected})
                       }, {
                         default: _withCtx(() => [
                           _createTextVNode(_toDisplayString(_ctx.model.text), 1)
                         ]),
                         _: 1
-                      }, 8, ["href", "load-id", "class"]))
+                      }, 8, ["href", "load-id", "load-method", "class"]))
                     : (_openBlock(), _createElementBlock("span", {
                         key: 1,
                         class: _normalizeClass({'text-success':_ctx.selected})

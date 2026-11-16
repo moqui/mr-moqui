@@ -587,6 +587,15 @@ fn multipart_body(parts: &moqui_lib::object::ValueMap) -> Result<(String, bytes:
 }
 
 /// `RestClient.send()`: the request sent, the status and headers back, the body kept on the server by its number.
+/// Whether a request of `ec.service.rest()` (`call()` or `send()`) refuses internal addresses (loopback, private,
+/// link-local), redirects included: when the script said `denyInternal()`, which wins, or on a production instance unless
+/// it said `allowInternal()` (plans/Security-Review-Low.md SEC-SCR-07). A link-local or metadata address is refused
+/// either way (`outbound`).
+pub(super) fn rest_denies_internal(request: &moqui_lib::object::ValueMap) -> bool {
+    let flag = |name: &str| matches!(request.get(name), Some(Value::Bool(true)));
+    flag("denyInternal") || (!flag("allowInternal") && crate::web::is_production())
+}
+
 fn rest_open(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let Value::Map(request) = call.value_or_null(0) else {
         return Err(HostError::message("rest request is not an object"));
@@ -645,6 +654,7 @@ fn rest_open(call: &mut Call<'_>) -> Result<Ret, HostError> {
         body,
         timeout,
         follow_redirects,
+        deny_internal: rest_denies_internal(&request),
     })
     .map_err(|err| {
         HostError::message(format!(

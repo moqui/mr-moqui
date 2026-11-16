@@ -743,7 +743,9 @@ along with this software (see the LICENSE.md file). If not, see
             form-list cell) and a hidden-form-link (flat) keep their kind and take only the color.
         </xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="dynamic-load-id" type="xs:string"><xs:annotation><xs:documentation>
-            If specified URL will be loaded into the dynamic-container with this ID.
+            If specified URL will be loaded into the dynamic-container with this ID. In a tree, a link through a transition
+            that is not read-only is sent as a POST with the session token and its parameters in the body, then the
+            container's own screen loads again (a GET of it with URL parameters is refused).
         </xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="background-submit" type="boolean" default="false"><xs:annotation><xs:documentation>
             For a link that posts through a hidden form (link-type hidden-form or hidden-form-link, or auto for a transition

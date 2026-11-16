@@ -238,7 +238,8 @@ along with this software (see the LICENSE.md file). If not, see
                 roleEnumId: memberRow.roleEnumId ?? null,
                 agentRef: memberRow.agentRef ?? null, joinedDate: toMillis(memberRow.joinedDate), leftDate: toMillis(memberRow.leftDate),
                 lastReadEventSeq: Number(memberRow.lastReadEventSeq || 0), notificationLevelEnumId: memberRow.notificationLevelEnumId ?? null,
-                isPinned: memberRow.isPinned === 'Y', isMuted: memberRow.isMuted === 'Y'}
+                isPinned: memberRow.isPinned === 'Y', isMuted: memberRow.isMuted === 'Y',
+                archivedEventSeq: memberRow.archivedEventSeq != null ? Number(memberRow.archivedEventSeq) : null}
         ]]></script></actions>
     </service>
 
@@ -1130,7 +1131,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="find" noun="Rooms">
         <description>The current user's rooms (another user's only with authorization disabled), pinned first, then by the
             last event. Each: the room's fields, displayName (a direct room's: the other members' names), isMember, my
-            roleEnumId, notificationLevelEnumId, isPinned, isMuted, lastReadEventSeq, unreadCount (messages from others after
+            roleEnumId, notificationLevelEnumId, isPinned, isMuted, archivedByMe (my own archive, until a newer message), lastReadEventSeq, unreadCount (messages from others after
             my read marker), mentionCount, lastMessage {eventSeq, senderUserId, senderName, sentDate, snippet}, bridged (a
             connector is mapped to it), encrypted (C7: lastMessage then has no snippet and encrypted true), notConnected (one of them is not connected) and bridgeNetworkNames, and for a
             direct room otherUserIdList and, with one other member, otherUserId and presence (as get#UserStatuses gives it).
@@ -1238,6 +1239,8 @@ along with this software (see the LICENSE.md file). If not, see
                     isMember: !!member, roleEnumId: member ? member.roleEnumId ?? null : null,
                     notificationLevelEnumId: member ? member.notificationLevelEnumId ?? null : null,
                     isPinned: !!member && member.isPinned === 'Y', isMuted: !!member && member.isMuted === 'Y',
+                    archivedEventSeq: member && member.archivedEventSeq != null ? Number(member.archivedEventSeq) : null,
+                    archivedByMe: !!member && member.archivedEventSeq != null && Number(row.lastMessageSeq || 0) <= Number(member.archivedEventSeq),
                     lastReadEventSeq: lastRead, unreadCount: unreadCount, mentionCount: mentionCount,
                     lastMessage: row.lastMessageSeq != null ? {eventSeq: Number(row.lastMessageSeq), senderUserId: row.lastMessageUserId ?? null,
                         senderName: row.lastMessageUserId ? names[row.lastMessageUserId] || row.lastMessageUserId
@@ -1891,12 +1894,14 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="set" noun="Notification">
         <description>The current user's own settings in a room: notificationLevelEnumId (or its code: all, mentions,
-            none), isMuted and isPinned. A setting not given stays. The user's other tabs hear of it on chatUser:userId.</description>
+            none), isMuted, isPinned and archived (the user's own archive: the room leaves the user's main list until a
+            message newer than the room's last event now). A setting not given stays. The user's other tabs hear of it on chatUser:userId.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="notificationLevelEnumId"/>
             <parameter name="isMuted" type="Boolean"/>
             <parameter name="isPinned" type="Boolean"/>
+            <parameter name="archived" type="Boolean"/>
         </in-parameters>
         <actions><script><![CDATA[
             const LEVELS = {all: 'CnlAll', mentions: 'CnlMentions', none: 'CnlNone'}
@@ -1912,8 +1917,13 @@ along with this software (see the LICENSE.md file). If not, see
             }
             if (isMuted != null) row.set('isMuted', isMuted ? 'Y' : 'N')
             if (isPinned != null) row.set('isPinned', isPinned ? 'Y' : 'N')
+            if (archived != null) {
+                const room = archived ? ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).selectField('lastEventSeq').one() : null
+                row.set('archivedEventSeq', archived ? Number((room && room.lastEventSeq) || 0) : null)
+            }
             row.update()
-            const settings = {notificationLevelEnumId: row.notificationLevelEnumId ?? null, isMuted: row.isMuted === 'Y', isPinned: row.isPinned === 'Y'}
+            const settings = {notificationLevelEnumId: row.notificationLevelEnumId ?? null, isMuted: row.isMuted === 'Y', isPinned: row.isPinned === 'Y',
+                archivedEventSeq: row.archivedEventSeq != null ? Number(row.archivedEventSeq) : null}
             ec.service.sync().name('org.moqui.chat.ChatServices.record#UserChange').parameters({userIdList: [me], changeKind: 'settings',
                 chatRoomId: chatRoomId, change: settings, pushMessage: Object.assign({kind: 'room', action: 'settings', chatRoomId: chatRoomId}, settings)}).call()
             ec.service.sync().name('org.moqui.chat.ChatServices.publish#ChatCounts').parameter('userIdList', [me]).call()

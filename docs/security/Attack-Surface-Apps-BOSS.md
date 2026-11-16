@@ -238,11 +238,11 @@ What a member of `ADMIN` reaches here that the BOSS screens do not offer: Mantle
 
 ## Integrations and stored credentials
 
-The server-side requests Mantle makes are listed here by where the address and the credential come from. The request client and its `denyInternal` option are under [The internal-address guard](Attack-Surface-Outbound.md#the-internal-address-guard): a script's `ec.service.rest()` request reaches a private or loopback address unless the script asks for `denyInternal`.
+The server-side requests Mantle makes are listed here by where the address and the credential come from. The request client and its `denyInternal` and `allowInternal` options are under [The internal-address guard](Attack-Surface-Outbound.md#the-internal-address-guard): a script's `ec.service.rest()` request reaches a private or loopback address on a production instance only when the script asks for `allowInternal`, and elsewhere unless it asks for `denyInternal` (SEC-SCR-07).
 
 | Integration | Code | Address | Credential | Private addresses |
 |---|---|---|---|---|
-| Authorize.Net | `mr-mantle/service/mantle/ext/account/gateway/AuthorizeNet.js` | `sendUrl` of the gateway's `moqui.service.message.SystemMessageRemote`; the hosted-page and Accept.js addresses are constants chosen by `usageCode` | The remote's `username` (API login id) and `password` (transaction key) | Refused only when the remote's `allowPrivateNetwork` is `N` |
+| Authorize.Net | `mr-mantle/service/mantle/ext/account/gateway/AuthorizeNet.js` | `sendUrl` of the gateway's `moqui.service.message.SystemMessageRemote`; the hosted-page and Accept.js addresses are constants chosen by `usageCode` | The remote's `username` (API login id) and `password` (transaction key) | The remote's `allowPrivateNetwork`: `N` refuses (`denyInternal`), `Y` allows (`allowInternal`), empty refuses on production only |
 | PayTrace | `gateway/PayTrace.js` | The remote's `sendUrl` as the API base | The remote's `username` and `password`, sent as OAuth client credentials | The same rule |
 | Shippo API | `mr-mantle/service/mantle/ext/shipment/Shippo.js` `send` | The remote's `sendUrl` as the API base | The remote's `password` (API token) | The same rule |
 | Shippo label file | `Shippo.js` `download` | The label URL of a Shippo answer | None | `https` only, `denyInternal` (redirects too); any host |
