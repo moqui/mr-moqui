@@ -225,14 +225,12 @@ fn child_nodes(
                     };
                     let load_id = link_node.attribute("dynamic-load-id").unwrap_or_default();
                     let mut attrs = IndexMap::default();
-                    attrs.insert(
-                        "href".to_string(),
-                        Value::string(if load_id.is_empty() {
-                            url_text.clone()
-                        } else {
-                            load_href(&load_id, &url_text)
-                        }),
-                    );
+                    attrs.insert("href".to_string(), Value::string(url_text.clone()));
+                    // a link that loads a container through a transition that changes data is a POST with the session token
+                    // and its parameters in the body (SEC-RTE-08); the client then reloads the container
+                    if !load_id.is_empty() && url.is_transition && !url.read_only {
+                        attrs.insert("loadMethod".to_string(), Value::string("post"));
+                    }
                     attrs.insert("loadId".to_string(), Value::string(load_id));
                     attrs.insert("urlText".to_string(), Value::string(url_text));
                     link = Some(attrs);
@@ -273,32 +271,4 @@ fn child_nodes(
         }
     }
     Ok(out)
-}
-
-/// The `javascript:` href that loads `url_text` into the element `load_id`, as Java's ScreenTree makes it. Both values are
-/// JSON strings in the script, and a browser percent-decodes a `javascript:` URL before it runs it, so each `%` is encoded.
-fn load_href(load_id: &str, url_text: &str) -> String {
-    let quote = |text: &str| serde_json::Value::from(text).to_string().replace('%', "%25");
-    format!(
-        "javascript:{{$('#' + {}).load({}); void(0);}}",
-        quote(load_id),
-        quote(url_text)
-    )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::load_href;
-
-    #[test]
-    fn load_href_quotes_the_url_as_a_js_string() {
-        assert_eq!(
-            load_href("Tree", "/apps/x/Edit/a');alert(1);//?q=%22"),
-            r#"javascript:{$('#' + "Tree").load("/apps/x/Edit/a');alert(1);//?q=%2522"); void(0);}"#
-        );
-        assert_eq!(
-            load_href("T", "/a?x=\"b\""),
-            r#"javascript:{$('#' + "T").load("/a?x=\"b\""); void(0);}"#
-        );
-    }
 }

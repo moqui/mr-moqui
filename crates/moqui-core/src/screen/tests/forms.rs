@@ -1229,6 +1229,60 @@ fn a_tree_answers_its_node_data() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A tree link that loads a container (`dynamic-load-id`) through a transition that changes data is marked
+/// `loadMethod: post`, so the client sends it as a POST with its parameters in the body and the session token; the same
+/// link as a GET with its query is refused and runs nothing (SEC-RTE-08, Tools' DataDocFields `createFieldDynamic`). A
+/// link through a read-only transition stays a load by GET, and no href is a `javascript:` URL.
+#[test]
+fn a_tree_link_that_loads_through_a_writing_transition_is_a_post() {
+    let dir = std::env::temp_dir().join(format!("moqui-forms-tree-post-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let root = dir.join("Tree.xml").to_string_lossy().into_owned();
+    std::fs::write(
+        &root,
+        r#"<screen require-authentication="false">
+    <transition name="add"><actions><script>ec.web.sendJsonResponse({added: code})</script></actions>
+        <default-response type="none"/></transition>
+    <transition name="look" read-only="true"><default-response url="."/></transition>
+    <widgets>
+        <tree name="Places">
+            <tree-node name="Country">
+                <link url="add" text="+ ${nodeList_entry}" id="${nodeList_entry}" dynamic-load-id="Fields"><parameter name="code" from="nodeList_entry"/></link>
+            </tree-node>
+            <tree-node name="Look">
+                <link url="look" text="${nodeList_entry}" id="L${nodeList_entry}" dynamic-load-id="Fields"><parameter name="code" from="nodeList_entry"/></link>
+            </tree-node>
+            <tree-sub-node node-name="Country" list="countries"><actions><script>countries = ['FR']</script></actions></tree-sub-node>
+            <tree-sub-node node-name="Look" list="looks"><actions><script>looks = ['IS']</script></actions></tree-sub-node>
+        </tree>
+    </widgets>
+</screen>"#,
+    )
+    .unwrap();
+    let world = World::open("");
+    let mut get = request("GET", "/actions/Places");
+    get.query.push(("treeNodeId".to_string(), "#".to_string()));
+    let response = serve_at(&world.factory, get, &root);
+    assert_eq!(response.status, 200, "{}", response.body_text());
+    let top: serde_json::Value = serde_json::from_str(&response.body_text()).unwrap();
+    assert_eq!(top[0]["a_attr"]["loadMethod"], "post", "{top}");
+    assert_eq!(top[0]["a_attr"]["loadId"], "Fields", "{top}");
+    assert_eq!(top[0]["a_attr"]["href"], "/add?code=FR", "{top}");
+    assert!(top[1]["a_attr"].get("loadMethod").is_none(), "{top}");
+    assert!(!top.to_string().contains("javascript:"), "{top}");
+
+    let mut by_get = request("GET", "/add");
+    by_get.query.push(("code".to_string(), "FR".to_string()));
+    let refused = serve_at(&world.factory, by_get, &root);
+    assert_eq!(refused.status, 400, "{}", refused.body_text());
+    assert!(!refused.body_text().contains("added"), "{}", refused.body_text());
+    let posted = serve_at(&world.factory, form_post("/add", "code=FR"), &root);
+    assert_eq!(posted.status, 200, "{}", posted.body_text());
+    assert!(posted.body_text().contains("\"added\""), "{}", posted.body_text());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A template file under a screen that says `include-child-content` renders inside the screen with the request in its
 /// context; under another screen it is refused. A binary file is still sent.
 #[test]
