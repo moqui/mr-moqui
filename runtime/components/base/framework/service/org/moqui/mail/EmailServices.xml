@@ -232,7 +232,12 @@ along with this software (see the LICENSE.md file). If not, see
             server that no mail client account owns (a caller not in ADMIN is refused, Unauthorized); a server an account
             owns is answered as one that does not exist, as get#RelayServer does. As Admin's Connections, a relay whose mail
             goes out through the edge node (smtpHost edge:) or that signs in with OAuth (EatOAuth2) is not changed here, and
-            neither is set here: the edge setup and the OAuth sign-in do that. Nothing is answered, a secret least of all.</description>
+            neither is set here: the edge setup and the OAuth sign-in do that. Admin's endpoint-change rule holds here too
+            (ConfigurationConnections.js, design §8.1): a change of a host, port, TLS setting, user or kind of sign-in clears
+            each stored password not given again in the same change, saves the relay disabled with its test mark cleared and
+            waiting for a test (moqui.server.ConnectionCheck, adapter relay), so a passing test in Admin's Connections enables
+            it, and on a production instance sets allowPrivateNetwork N unless the change gives it; such a change asking
+            disabled N is refused. Nothing is answered, a secret least of all.</description>
         <in-parameters>
             <parameter name="emailServerId" required="true"/>
             <parameter name="smtpHost"/><parameter name="smtpPort"/><parameter name="smtpStartTls"/><parameter name="smtpSsl"/>
@@ -266,8 +271,32 @@ along with this software (see the LICENSE.md file). If not, see
             if (given.includes('authTypeEnumId') && authTypeEnumId === 'EatOAuth2') {
                 ec.message.addError('A server signs in with OAuth only through its account sign-in'); return }
             if (!given.length) return
+            // the endpoint-change rule, as Admin's Connections: a password is never sent to an endpoint it was not entered for
+            const ENDPOINT = ['smtpHost', 'smtpPort', 'smtpStartTls', 'smtpSsl', 'storeHost', 'storePort', 'storeProtocol',
+                'mailUsername', 'smtpUsername', 'authTypeEnumId']
+            const SECRETS = ['mailPassword', 'smtpPassword']
+            const textOf = (value) => String(value ?? '').trim()
+            const endpointChanged = given.some((name) => ENDPOINT.includes(name) && textOf(context.get(name)) !== textOf(row[name]))
+            if (endpointChanged && given.includes('disabled') && disabled !== 'Y') {
+                ec.message.addError('The server changed: test it as it is now in Admin Connections, and the test enables it'); return }
+            const wasEnabled = row.disabled !== 'Y'
             for (const name of given) row.set(name, context.get(name))
+            let secretCleared = false
+            if (endpointChanged) {
+                for (const name of SECRETS) if (!given.includes(name) && textOf(row[name])) { row.set(name, null); secretCleared = true }
+                row.set('disabled', 'Y')
+                if (!given.includes('allowPrivateNetwork') && String(System.getProperty('instance_purpose') ?? '').trim() === 'production')
+                    row.set('allowPrivateNetwork', 'N')
+            }
             row.update()
+            if (endpointChanged) {
+                const key = {adapterKey: 'relay', connectionKey: emailServerId}
+                const check = ec.entity.find('moqui.server.ConnectionCheck').condition(key).useCache(false).disableAuthz().one()
+                const fields = Object.assign({}, key, {testedConfigHash: null, testedDate: null, testedByUserId: null,
+                    pendingTest: (wasEnabled || check?.pendingTest === 'Y') ? 'Y' : 'N'})
+                if (secretCleared) fields.secretCleared = 'Y'
+                ec.service.sync().name('store#moqui.server.ConnectionCheck').parameters(fields).disableAuthz().call()
+            }
         ]]></script></actions>
     </service>
 
