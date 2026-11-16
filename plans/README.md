@@ -7,6 +7,21 @@ Design, status and review documents for MR Moqui. User guides for built features
 - [Future-Plans.md](Future-Plans.md): the plans for after v0.1.0 (Comms' next steps first), and a digest of the unbuilt proposals.
 - [Performance-Summary.md](Performance-Summary.md): digest of the performance plan, the recorded numbers and the Mantle USL audit.
 
+**UI review plans**
+
+Full screen inventories, user workflows, verification maps and running records for the framework apps, without
+addons. The [shared review protocol](ui-review-shared-gallery.md#common-review-protocol) applies to the whole set.
+
+- [Shared shell and Gallery](ui-review-shared-gallery.md): authentication, navigation, preferences, shared controls,
+  Assist, tray, terminal and the screen archetypes.
+- [Dashboards](ui-review-dashboards.md): datasets, analysis, dashboards, CalcGrid, alerts, report delivery and playlists.
+- System: [administration](ui-review-system.md), [monitoring and recovery](ui-review-system-monitoring.md), and
+  [AI and integrations](ui-review-system-ai-integrations.md), including the Voice and Chat Bridges mounts.
+- [Tools](ui-review-tools.md): data, SQL, schema, database maintenance, ETL, services and load testing.
+- [BasicComms](ui-review-basic-comms.md): mail, chat, devices, calls, guests, voicemail and recordings.
+- Dev AIDE: [workspace and collaboration](ui-review-dev-aide-workspace.md) and
+  [artifact authoring](ui-review-dev-aide-authoring.md), including the guided terminal editors.
+
 **Phase 13: LLM, A2A and Assist**
 - [LLM-A2A-Assist.md](LLM-A2A-Assist.md): the design and implementation plan for the agent runtime, the Assist drawer, chat and triggered agents, A2A, MCP and the OpenAI-compatible gateway, with the review of the Java prototype it replaces and the ideas taken from other assistants. Built: 13.1 to 13.14. The Constitution default JSON has English, Spanish, Simplified Chinese and 37 anchored references for review; its localized runtime, Assist rules view, on-demand references, trusted viewer and Admin integration (13.15, §7.10) are proposed. Open work is in Remaining-Work.
 
@@ -70,5 +85,8 @@ Design, status and review documents for MR Moqui. User guides for built features
 - **Archiving a document.** `git mv` it; add `> Archived <date>: ...` under the title saying its state and where the live part went; grep the repository for its path (Markdown links, plain `plans/...` text, and `//!` doc comments under `crates/`) and fix each; move anything still open into Remaining-Work (for v0.1.0) or Future-Plans (after it) with a link back; move a parity review's accepted differences into Parity-Diffs and leave a pointer in the review; update this README.
 - **Summaries.** Remaining-Work is the one list of open items for the first release; Future-Plans holds the open items for after v0.1.0 (an archived plan's next steps move there) and digests the proposals; Performance-Summary digests the performance set. A summary links to the detail and does not restate it.
 - **Reviews going forward.** Name a parity review `<Area>-Parity-Review.md` and any other `<Area>-Review.md`. Keep the shape of the entity and service review: a summary with counts, a phase table per area with `ID | Rust location | Java location | Divergence | Severity | Intentional?`, a `####` section per open finding, a "checked and found equivalent" list, and an `## Accepted differences` table that moves to Parity-Diffs at archive time with its IDs.
+- **UI reviews.** Use `ui-review-<area>.md`: scope/sources, method, screen/surface inventory, end-to-end activities,
+  verification, coverage/findings/batch record and decisions. The inventory maps every surface to an activity;
+  available tests and historical results do not establish completed review coverage.
 - **User guides** for built features go in `../docs/`, not here. A plan may link to its guide.
 - **Names.** Kebab-Case file names, no dates in names; dates go in the status line.

@@ -1,0 +1,743 @@
+# MR Moqui — UI review: System AI and integrations
+
+**Status — 2026-11-16:** planned; every activity pending. Source inspection only; no review or test results claimed.
+
+Contents: [scope](#1-purpose-scope-and-sources) · [method](#2-review-method-and-refinement-criteria) ·
+[inventory](#3-screen-and-surface-inventory) · [activities](#4-end-to-end-activities) ·
+[verification](#5-existing-checks-and-future-verification) · [record](#6-coverage-findings-and-running-record) ·
+[decisions](#7-decisions).
+
+## 1. Purpose, scope and sources
+
+Review the administrator's configuration-to-use loop for AI, messaging, protocols, voice and edge connectivity.
+A configured row is only the beginning: follow a local request through its consumer, status, evidence and recovery.
+Keep each integration's successful path separate from its unavailable-provider presentation.
+
+Sources: [tools README](../runtime/components/base/tools/README.md),
+[BasicComms README](../runtime/components/base/basic-comms/README.md), [Constitution](../docs/ai/Constitution.md),
+[Comms](../docs/tools/Comms.md), [SIP](../docs/interfaces/SIP.md), [Chat bridges](../docs/interfaces/Chat-Bridges.md),
+[LLM/Assist design](LLM-A2A-Assist.md), [edge build record](archive/Edge-Node.md), [edge follow-up](Edge-Node2.md),
+current System subtrees below, BasicComms's System mounts, and framework agent/admin/edge/voice/chat services.
+Current source controls take precedence over design paragraphs still labelled unbuilt.
+
+### Ownership and handoffs
+
+| Surface | Owner / handoff |
+| --- | --- |
+| Llm, Constitution, Integrations, Protocols, EdgeClients, EdgeNode, EntitySync | This plan, under `/qapps/system` |
+| Voice and ChatBridges | This plan; source belongs to basic-comms and is mounted by its MoquiConf.xml |
+| Llm/Traces include of Monitor/AgentTraces | [Monitor](ui-review-system-monitoring.md) owns diagnostic interaction; AI-03 checks run/context handoff |
+| Assist tool consent, chat/mail/call usage | [Shared/Gallery](ui-review-shared-gallery.md) and [BasicComms](ui-review-basic-comms.md); only inspect this plan's side of each handoff |
+| Core configuration, certificates, web protection, jobs, audit and user sessions | [System](ui-review-system.md) |
+| Developer group-server setup and hosting interaction | [Dev AIDE Workspace](ui-review-dev-aide-workspace.md), not an AI model endpoint |
+
+ApprovalDetail is an audit view: decisions occur through the owning approval channel, not an invented admin Approve
+button. Monitor diagnostic policy and agent tool policy are different controls and are reviewed separately.
+
+## 2. Review method and refinement criteria
+
+Apply the [common review protocol](ui-review-shared-gallery.md#common-review-protocol) and
+[verification policy](ui-review-shared-gallery.md#verification-policy-for-later-execution). The details below add this
+area's fixtures, dependencies and judgment criteria.
+
+### Environment, identities and records
+
+- Prepare instance administrator, view-only System reader, no-System user and narrow action holders from current
+  service guards. Keep `MONITOR_EVAL` (edit/score) separate from `MONITOR_EVAL_RUN` (start/cancel experiments), and
+  use an explicit `ADMIN_CONSTITUTION_GLOBAL` holder for global edits. Agent ownership/audited reads, gateway client
+  identity and integration/voice authority must be recorded from their loaded grants, not inferred from navigation.
+- Use deterministic local model/A2A/MCP/gateway endpoints, synthetic tool requests, a harmless trigger and a small
+  service-target evaluation dataset. Prepare successful, failed, waiting-approval and canceled runs. No real token
+  billing, internet tool or production endpoint is a fixture. Record credentials only in disposable secret storage.
+- Prepare local message transport/mail capture, registered connections/message types, failed/unknown delivery,
+  synthetic SIP/media/bridge counterparts, queue agents and callers, and two isolated runtimes for edge/sync. Capture
+  fixture IDs and relationship ownership before a run; do not reuse a delivery or queue record across activities.
+- Check binary features/listeners/provider registration before attempting success. Voice/emergency exercises never
+  dial a real number. Certificate/ACME belongs to SYS-19. Network/discovery actions stay within the local fixture.
+  Pairing, configuration apply, listener restart and shared policy changes are serialized; restore all and revoke
+  fixture keys/pairing codes at the end.
+
+Use the exact seeded capability names below when preparing the narrow actors; the System screen grant and the
+service's record/owner checks are additional requirements, not replaced by these permissions.
+
+| Proposed identity | Explicit capability / boundary |
+| --- | --- |
+| `review.ai.user` | `AgentUse`; own Assist/chat-agent runs |
+| `review.ai.admin` | `AgentAdmin`; model/agent/skill/quota configuration. This does not imply `AgentAudit` |
+| `review.ai.auditor` | `AgentAudit`; logged reads of other users' conversations/runs/approvals |
+| `review.ai.gateway` | `LlmGatewayUse`; separately configured gateway client and key |
+| `review.ai.remote` | `A2aServerUse` or `McpServerUse` for the respective local inbound fixture; remote-client configuration remains an administrator task |
+| `review.ai.eval` / `review.ai.evalrun` | `MONITOR_EVAL` versus `MONITOR_EVAL_RUN`, with the edit permission added when the runner also authors the dataset |
+| `review.ai.constitution` | `ADMIN_CONSTITUTION_GLOBAL`; global document and trusted origins |
+| `review.integration.connection` | `ADMIN_CONNECTION_VIEW`, `ADMIN_CONNECTION_MANAGE`; registered connections/relays |
+| `review.integration.operations` | `ADMIN_OPERATION_VIEW`, `ADMIN_OPERATION_MANAGE`; registered message/mail recovery |
+| `review.voice.admin` / `review.bridge.admin` | `VoiceAdmin` / `ChatBridgeAdmin`; ordinary callers/room members remain separate counterparts |
+
+These names come from `AgentTypeData.xml`, `AgentEvalData.xml`, `SecurityTypeData.xml`, `VoiceSetupData.xml` and
+`ChatBridgeSetupData.xml`. Record any additional operation-specific grant in the batch instead of broadening every
+fixture to ADMIN.
+
+### Area-specific criteria
+
+- Effective configuration, capability, enabled state and tested success must be distinguishable. Secrets are never
+  returned in edit forms, audit detail, prompts, errors or exports after their intended one-time reveal.
+- A conversation/run/call/approval/trace keeps its identifiers and audience across links. Audit access to another
+  user's content is explicit; a list of runs is not blanket permission to inspect their payloads.
+- Recovery names the failed item, sender/receiver, attempt and outcome. Independent messages/targets can continue;
+  a single approval, pairing or delivery must retain operation identity through retry.
+- Phone routing must explain where a call will go and whose policy applies. Edge setup must show before/after
+  topology, effective routes and unverified requirements; a paired link alone does not prove every protocol works.
+
+### Ordered waves
+
+| Wave | Activities | Continuation |
+| --- | --- | --- |
+| 1. Establish AI behavior | AI-01–07 | Model/binding → prompt/tool/skill → run/approval/audit |
+| 2. Operate AI | AI-08–11 | Trigger/eval/gateway/usage/Constitution with local fixtures |
+| 3. Messages and mail | AI-12–15 | Connection → message/delivery → protocol/queue recovery |
+| 4. Voice and bridges | AI-16–18 | Configure → BasicComms consumer → status/failure |
+| 5. Edge and synchronization | AI-19–21 | Pair/apply/test → route/queue → record sync |
+| 6. Reconcile | AI-22 | Access, aliases, output and remaining helper branches |
+
+Prepare tools/skills before generating their runs; capture the approval before deciding it through SH-13. Keep
+fixture runs until eval/audit review finishes. Edge setup consumes pairing codes and can alter protocol configuration,
+so it uses its own runtime or follows mail/voice restoration.
+
+## 3. Screen and surface inventory
+
+This inventory accounts for **102 XML definitions** assigned to this file; screen containers and helper
+definitions are included. Routes below are Material paths unless labelled otherwise; app routes have Standard
+`/apps` counterparts. A file's physical presence does not prove access or a supported interaction in every mode.
+Each row maps to §4; helper inspection does not replace its parent workflow. Counts describe definitions, not user
+activities. Dialogs, templates and non-XML surfaces follow the route tables.
+
+### basic-comms: `System`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/ChatBridges` | [ChatBridges.xml](../runtime/components/base/basic-comms/screen/System/ChatBridges.xml) | Mounted into System by basic-comms/MoquiConf.xml. | AI-18 |
+| `/qapps/system/Voice` | [Voice.xml](../runtime/components/base/basic-comms/screen/System/Voice.xml) | Default: `Status`. Mounted into System by basic-comms/MoquiConf.xml. | AI-16, AI-17 |
+
+### basic-comms: `System/Voice`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/Voice/CallerIds` | [CallerIds.xml](../runtime/components/base/basic-comms/screen/System/Voice/CallerIds.xml) | Mounted into System by basic-comms/MoquiConf.xml. | AI-16 |
+| `/qapps/system/Voice/Emergency` | [Emergency.xml](../runtime/components/base/basic-comms/screen/System/Voice/Emergency.xml) | Mounted into System by basic-comms/MoquiConf.xml. | AI-16 |
+| `/qapps/system/Voice/Fraud` | [Fraud.xml](../runtime/components/base/basic-comms/screen/System/Voice/Fraud.xml) | Mounted into System by basic-comms/MoquiConf.xml. | AI-16 |
+| `/qapps/system/Voice/IvrMenus` | [IvrMenus.xml](../runtime/components/base/basic-comms/screen/System/Voice/IvrMenus.xml) | Mounted into System by basic-comms/MoquiConf.xml. | AI-17 |
+| `/qapps/system/Voice/Numbers` | [Numbers.xml](../runtime/components/base/basic-comms/screen/System/Voice/Numbers.xml) | Mounted into System by basic-comms/MoquiConf.xml. | AI-16, AI-17 |
+| `/qapps/system/Voice/Phones` | [Phones.xml](../runtime/components/base/basic-comms/screen/System/Voice/Phones.xml) | Mounted into System by basic-comms/MoquiConf.xml.  Context: `includeRevoked`. | AI-16 |
+| `/qapps/system/Voice/Queues` | [Queues.xml](../runtime/components/base/basic-comms/screen/System/Voice/Queues.xml) | Mounted into System by basic-comms/MoquiConf.xml. | AI-17 |
+| `/qapps/system/Voice/RingGroups` | [RingGroups.xml](../runtime/components/base/basic-comms/screen/System/Voice/RingGroups.xml) | Mounted into System by basic-comms/MoquiConf.xml. | AI-17 |
+| `/qapps/system/Voice/Schedules` | [Schedules.xml](../runtime/components/base/basic-comms/screen/System/Voice/Schedules.xml) | Mounted into System by basic-comms/MoquiConf.xml. | AI-17 |
+| `/qapps/system/Voice/Status` | [Status.xml](../runtime/components/base/basic-comms/screen/System/Voice/Status.xml) | Mounted into System by basic-comms/MoquiConf.xml. | AI-16 |
+| `/qapps/system/Voice/Trunks` | [Trunks.xml](../runtime/components/base/basic-comms/screen/System/Voice/Trunks.xml) | Mounted into System by basic-comms/MoquiConf.xml. | AI-16 |
+
+### tools: `System`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/Constitution` | [Constitution.xml](../runtime/components/base/tools/screen/System/Constitution.xml) | Default: `Rules`. | AI-11 |
+| `/qapps/system/EdgeClients` | [EdgeClients.xml](../runtime/components/base/tools/screen/System/EdgeClients.xml) | Default: `Clients`. | AI-20 |
+| `/qapps/system/EdgeNode` | [EdgeNode.xml](../runtime/components/base/tools/screen/System/EdgeNode.xml) | Default: `Status`. | AI-19, AI-20 |
+| `/qapps/system/EntitySync` | [EntitySync.xml](../runtime/components/base/tools/screen/System/EntitySync.xml) | Default: `EntitySyncList`. | AI-21 |
+| `/qapps/system/Integrations` | [Integrations.xml](../runtime/components/base/tools/screen/System/Integrations.xml) | Default: `Connections`. | AI-12, AI-13 |
+| `/qapps/system/Llm` | [Llm.xml](../runtime/components/base/tools/screen/System/Llm.xml) | Default: `Dashboard`. | AI-01 |
+| `/qapps/system/Protocols` | [Protocols.xml](../runtime/components/base/tools/screen/System/Protocols.xml) | Default: `Home`. | AI-14, AI-15 |
+
+### tools: `System/Constitution`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/Constitution/Edit` | [Edit.xml](../runtime/components/base/tools/screen/System/Constitution/Edit.xml) | Context: `locale`, `ruleId`. | AI-11 |
+| `/qapps/system/Constitution/Json` | [Json.xml](../runtime/components/base/tools/screen/System/Constitution/Json.xml) | Inspect the route and its visible controls through the activity. | AI-11 |
+| `/qapps/system/Constitution/Origins` | [Origins.xml](../runtime/components/base/tools/screen/System/Constitution/Origins.xml) | Inspect the route and its visible controls through the activity. | AI-11 |
+| `/qapps/system/Constitution/Preview` | [Preview.xml](../runtime/components/base/tools/screen/System/Constitution/Preview.xml) | Context: `locale`. | AI-11 |
+| `/qapps/system/Constitution/Rules` | [Rules.xml](../runtime/components/base/tools/screen/System/Constitution/Rules.xml) | Authored text: `html,html-print,text`, `qvt`, `tui`. Context: `locale`. | AI-11 |
+
+### tools: `System/EdgeClients`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/EdgeClients/Balancing` | [Balancing.xml](../runtime/components/base/tools/screen/System/EdgeClients/Balancing.xml) | Authored text: `qvt`, `tui`. | AI-20 |
+| `/qapps/system/EdgeClients/Clients` | [Clients.xml](../runtime/components/base/tools/screen/System/EdgeClients/Clients.xml) | Authored text: `qvt`, `tui`. | AI-20 |
+| `/qapps/system/EdgeClients/Domains` | [Domains.xml](../runtime/components/base/tools/screen/System/EdgeClients/Domains.xml) | Authored text: `qvt`, `tui`. | AI-20 |
+| `/qapps/system/EdgeClients/EdgeCluster` | [EdgeCluster.xml](../runtime/components/base/tools/screen/System/EdgeClients/EdgeCluster.xml) | Authored text: `qvt`, `tui`. | AI-20 |
+| `/qapps/system/EdgeClients/Ports` | [Ports.xml](../runtime/components/base/tools/screen/System/EdgeClients/Ports.xml) | Authored text: `qvt`, `tui`. | AI-20 |
+
+### tools: `System/EdgeNode`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/EdgeNode/Pair` | [Pair.xml](../runtime/components/base/tools/screen/System/EdgeNode/Pair.xml) | Default: `EdgeUrl`. Hidden/helper entry; enter through its parent action and inspect direct access. Context: `url`. | AI-19 |
+| `/qapps/system/EdgeNode/Status` | [Status.xml](../runtime/components/base/tools/screen/System/EdgeNode/Status.xml) | Authored text: `qvt`, `tui`. Hidden/helper entry; enter through its parent action and inspect direct access. | AI-20 |
+
+### tools: `System/EdgeNode/Pair`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/EdgeNode/Pair/Apply` | [Apply.xml](../runtime/components/base/tools/screen/System/EdgeNode/Pair/Apply.xml) | Authored text: `qvt`, `tui`. | AI-19 |
+| `/qapps/system/EdgeNode/Pair/Connect` | [Connect.xml](../runtime/components/base/tools/screen/System/EdgeNode/Pair/Connect.xml) | Context: `url`. | AI-19 |
+| `/qapps/system/EdgeNode/Pair/Discover` | [Discover.xml](../runtime/components/base/tools/screen/System/EdgeNode/Pair/Discover.xml) | Inspect the route and its visible controls through the activity. | AI-19 |
+| `/qapps/system/EdgeNode/Pair/EdgeUrl` | [EdgeUrl.xml](../runtime/components/base/tools/screen/System/EdgeNode/Pair/EdgeUrl.xml) | Context: `url`. | AI-19 |
+| `/qapps/system/EdgeNode/Pair/Test` | [Test.xml](../runtime/components/base/tools/screen/System/EdgeNode/Pair/Test.xml) | Authored text: `qvt`, `tui`. | AI-19 |
+
+### tools: `System/EntitySync`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/EntitySync/EntitySyncDetail` | [EntitySyncDetail.xml](../runtime/components/base/tools/screen/System/EntitySync/EntitySyncDetail.xml) | Context: `entitySyncId`. | AI-21 |
+| `/qapps/system/EntitySync/EntitySyncHistory` | [EntitySyncHistory.xml](../runtime/components/base/tools/screen/System/EntitySync/EntitySyncHistory.xml) | Context: `entitySyncId`. | AI-21 |
+| `/qapps/system/EntitySync/EntitySyncList` | [EntitySyncList.xml](../runtime/components/base/tools/screen/System/EntitySync/EntitySyncList.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. | AI-21 |
+
+### tools: `System/Integrations`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/Integrations/ConnectionDetail` | [ConnectionDetail.xml](../runtime/components/base/tools/screen/System/Integrations/ConnectionDetail.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. Context: `adapterKey`, `connectionKey`. | AI-12 |
+| `/qapps/system/Integrations/Connections` | [Connections.xml](../runtime/components/base/tools/screen/System/Integrations/Connections.xml) | Authored text: `html`, `qvt`, `tui`. Context: `text`, `adapterKey`, `state`, `pageIndex`. | AI-12 |
+| `/qapps/system/Integrations/MessageTypeDetail` | [MessageTypeDetail.xml](../runtime/components/base/tools/screen/System/Integrations/MessageTypeDetail.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. Context: `systemMessageTypeId`. | AI-12 |
+| `/qapps/system/Integrations/MessageTypes` | [MessageTypes.xml](../runtime/components/base/tools/screen/System/Integrations/MessageTypes.xml) | Authored text: `html`, `qvt`, `tui`. Context: `term`, `direction`, `pageIndex`. | AI-12 |
+| `/qapps/system/Integrations/SystemMessageDetail` | [SystemMessageDetail.xml](../runtime/components/base/tools/screen/System/Integrations/SystemMessageDetail.xml) | Authored text: `html`, `qvt`, `tui`. Hidden/helper entry; enter through its parent action and inspect direct access. Context: `systemMessageId`, `showContent`. | AI-13 |
+| `/qapps/system/Integrations/SystemMessages` | [SystemMessages.xml](../runtime/components/base/tools/screen/System/Integrations/SystemMessages.xml) | Authored text: `html`, `qvt`, `tui`. Context: `state`, `systemMessageTypeId`, `systemMessageRemoteId`, `direction`, `reference`, `fromDate`, `thruDate`, `pageIndex`, `bulkIds`, `bulkAction`, `bulkReason`. | AI-13 |
+
+### tools: `System/Integrations/SystemMessageDetail`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/Integrations/SystemMessageDetail/EditMessageText` | [EditMessageText.xml](../runtime/components/base/tools/screen/System/Integrations/SystemMessageDetail/EditMessageText.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. Context: `systemMessageId`. | AI-13 |
+
+### tools: `System/Llm`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/Llm/Approvals` | [Approvals.xml](../runtime/components/base/tools/screen/System/Llm/Approvals.xml) | Default: `ApprovalList`. | AI-04 |
+| `/qapps/system/Llm/Calls` | [Calls.xml](../runtime/components/base/tools/screen/System/Llm/Calls.xml) | Default: `CallList`. | AI-03 |
+| `/qapps/system/Llm/Conversations` | [Conversations.xml](../runtime/components/base/tools/screen/System/Llm/Conversations.xml) | Default: `ConversationList`. | AI-03 |
+| `/qapps/system/Llm/Dashboard` | [Dashboard.xml](../runtime/components/base/tools/screen/System/Llm/Dashboard.xml) | Inspect the route and its visible controls through the activity. | AI-01 |
+| `/qapps/system/Llm/Evals` | [Evals.xml](../runtime/components/base/tools/screen/System/Llm/Evals.xml) | Default: `Experiments`. | AI-09 |
+| `/qapps/system/Llm/Gateway` | [Gateway.xml](../runtime/components/base/tools/screen/System/Llm/Gateway.xml) | Default: `ClientList`. | AI-10 |
+| `/qapps/system/Llm/Inbox` | [Inbox.xml](../runtime/components/base/tools/screen/System/Llm/Inbox.xml) | Inspect the route and its visible controls through the activity. | AI-01, AI-08 |
+| `/qapps/system/Llm/Lessons` | [Lessons.xml](../runtime/components/base/tools/screen/System/Llm/Lessons.xml) | Inspect the route and its visible controls through the activity. | AI-08 |
+| `/qapps/system/Llm/Models` | [Models.xml](../runtime/components/base/tools/screen/System/Llm/Models.xml) | Default: `ModelList`. | AI-02 |
+| `/qapps/system/Llm/PromptPreview` | [PromptPreview.xml](../runtime/components/base/tools/screen/System/Llm/PromptPreview.xml) | Context: `agentId`, `surface`, `variant`, `modelId`, `userId`, `samplePath`. | AI-02, AI-07, AI-11 |
+| `/qapps/system/Llm/Remote` | [Remote.xml](../runtime/components/base/tools/screen/System/Llm/Remote.xml) | Default: `AgentList`. | AI-06 |
+| `/qapps/system/Llm/Runs` | [Runs.xml](../runtime/components/base/tools/screen/System/Llm/Runs.xml) | Default: `RunList`. | AI-03 |
+| `/qapps/system/Llm/Skills` | [Skills.xml](../runtime/components/base/tools/screen/System/Llm/Skills.xml) | Default: `SkillList`. | AI-05 |
+| `/qapps/system/Llm/Tools` | [Tools.xml](../runtime/components/base/tools/screen/System/Llm/Tools.xml) | Default: `ExposureList`. | AI-07 |
+| `/qapps/system/Llm/Traces` | [Traces.xml](../runtime/components/base/tools/screen/System/Llm/Traces.xml) | Wrapper of Monitor/AgentTraces; MON-12 owns diagnostics, AI-03 owns run/context handoff. Includes `component://tools/screen/System/Monitor/AgentTraces.xml`. Context: `from`, `thru`, `provider`, `model`, `agent`, `errorsOnly`. | AI-03, AI-22 |
+| `/qapps/system/Llm/Triggers` | [Triggers.xml](../runtime/components/base/tools/screen/System/Llm/Triggers.xml) | Default: `TriggerList`. | AI-08 |
+| `/qapps/system/Llm/Usage` | [Usage.xml](../runtime/components/base/tools/screen/System/Llm/Usage.xml) | Inspect the route and its visible controls through the activity. | AI-01, AI-10 |
+
+### tools: `System/Llm/Approvals`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/Llm/Approvals/ApprovalDetail` | [ApprovalDetail.xml](../runtime/components/base/tools/screen/System/Llm/Approvals/ApprovalDetail.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. Context: `approvalId`. | AI-04 |
+| `/qapps/system/Llm/Approvals/ApprovalList` | [ApprovalList.xml](../runtime/components/base/tools/screen/System/Llm/Approvals/ApprovalList.xml) | Inspect the route and its visible controls through the activity. | AI-04 |
+
+### tools: `System/Llm/Calls`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/Llm/Calls/CallDetail` | [CallDetail.xml](../runtime/components/base/tools/screen/System/Llm/Calls/CallDetail.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. Context: `callId`. | AI-03 |
+| `/qapps/system/Llm/Calls/CallList` | [CallList.xml](../runtime/components/base/tools/screen/System/Llm/Calls/CallList.xml) | Inspect the route and its visible controls through the activity. | AI-03 |
+
+### tools: `System/Llm/Conversations`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/Llm/Conversations/ConversationDetail` | [ConversationDetail.xml](../runtime/components/base/tools/screen/System/Llm/Conversations/ConversationDetail.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. Context: `conversationId`. | AI-03 |
+| `/qapps/system/Llm/Conversations/ConversationList` | [ConversationList.xml](../runtime/components/base/tools/screen/System/Llm/Conversations/ConversationList.xml) | Inspect the route and its visible controls through the activity. | AI-03 |
+
+### tools: `System/Llm/Evals`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/Llm/Evals/Compare` | [Compare.xml](../runtime/components/base/tools/screen/System/Llm/Evals/Compare.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. Context: `baseId`, `otherId`. | AI-09 |
+| `/qapps/system/Llm/Evals/DatasetDetail` | [DatasetDetail.xml](../runtime/components/base/tools/screen/System/Llm/Evals/DatasetDetail.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. Context: `datasetId`. | AI-09 |
+| `/qapps/system/Llm/Evals/Datasets` | [Datasets.xml](../runtime/components/base/tools/screen/System/Llm/Evals/Datasets.xml) | Inspect the route and its visible controls through the activity. | AI-09 |
+| `/qapps/system/Llm/Evals/ExperimentDetail` | [ExperimentDetail.xml](../runtime/components/base/tools/screen/System/Llm/Evals/ExperimentDetail.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. Context: `experimentId`. | AI-09 |
+| `/qapps/system/Llm/Evals/Experiments` | [Experiments.xml](../runtime/components/base/tools/screen/System/Llm/Evals/Experiments.xml) | Context: `datasetId`. | AI-09 |
+| `/qapps/system/Llm/Evals/Runs` | [Runs.xml](../runtime/components/base/tools/screen/System/Llm/Evals/Runs.xml) | Context: `agentId`, `runId`, `scoredOnly`. | AI-09 |
+| `/qapps/system/Llm/Evals/Scorers` | [Scorers.xml](../runtime/components/base/tools/screen/System/Llm/Evals/Scorers.xml) | Inspect the route and its visible controls through the activity. | AI-09 |
+
+### tools: `System/Llm/Gateway`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/Llm/Gateway/AliasList` | [AliasList.xml](../runtime/components/base/tools/screen/System/Llm/Gateway/AliasList.xml) | Inspect the route and its visible controls through the activity. | AI-10 |
+| `/qapps/system/Llm/Gateway/ClientDetail` | [ClientDetail.xml](../runtime/components/base/tools/screen/System/Llm/Gateway/ClientDetail.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. Context: `clientId`. | AI-10 |
+| `/qapps/system/Llm/Gateway/ClientList` | [ClientList.xml](../runtime/components/base/tools/screen/System/Llm/Gateway/ClientList.xml) | Inspect the route and its visible controls through the activity. | AI-10 |
+
+### tools: `System/Llm/Models`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/Llm/Models/EndpointDetail` | [EndpointDetail.xml](../runtime/components/base/tools/screen/System/Llm/Models/EndpointDetail.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. Context: `endpointId`. | AI-02 |
+| `/qapps/system/Llm/Models/ModelDetail` | [ModelDetail.xml](../runtime/components/base/tools/screen/System/Llm/Models/ModelDetail.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. Context: `modelId`. | AI-02 |
+| `/qapps/system/Llm/Models/ModelList` | [ModelList.xml](../runtime/components/base/tools/screen/System/Llm/Models/ModelList.xml) | Inspect the route and its visible controls through the activity. | AI-02 |
+
+### tools: `System/Llm/Remote`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/Llm/Remote/AgentDetail` | [AgentDetail.xml](../runtime/components/base/tools/screen/System/Llm/Remote/AgentDetail.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. Context: `remoteId`. | AI-06 |
+| `/qapps/system/Llm/Remote/AgentList` | [AgentList.xml](../runtime/components/base/tools/screen/System/Llm/Remote/AgentList.xml) | Inspect the route and its visible controls through the activity. | AI-06 |
+| `/qapps/system/Llm/Remote/McpServerDetail` | [McpServerDetail.xml](../runtime/components/base/tools/screen/System/Llm/Remote/McpServerDetail.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. Context: `mcpServerId`, `listNow`. | AI-06 |
+| `/qapps/system/Llm/Remote/McpServerList` | [McpServerList.xml](../runtime/components/base/tools/screen/System/Llm/Remote/McpServerList.xml) | Inspect the route and its visible controls through the activity. | AI-06 |
+
+### tools: `System/Llm/Runs`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/Llm/Runs/RunDetail` | [RunDetail.xml](../runtime/components/base/tools/screen/System/Llm/Runs/RunDetail.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. Context: `runId`. | AI-03 |
+| `/qapps/system/Llm/Runs/RunList` | [RunList.xml](../runtime/components/base/tools/screen/System/Llm/Runs/RunList.xml) | Inspect the route and its visible controls through the activity. | AI-03 |
+
+### tools: `System/Llm/Skills`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/Llm/Skills/RetrievalTest` | [RetrievalTest.xml](../runtime/components/base/tools/screen/System/Llm/Skills/RetrievalTest.xml) | Context: `query`, `page`, `userId`, `agentId`, `surface`. | AI-05 |
+| `/qapps/system/Llm/Skills/SkillDetail` | [SkillDetail.xml](../runtime/components/base/tools/screen/System/Llm/Skills/SkillDetail.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. Context: `skillId`. | AI-05 |
+| `/qapps/system/Llm/Skills/SkillList` | [SkillList.xml](../runtime/components/base/tools/screen/System/Llm/Skills/SkillList.xml) | Inspect the route and its visible controls through the activity. | AI-05 |
+
+### tools: `System/Llm/Tools`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/Llm/Tools/ExposureDetail` | [ExposureDetail.xml](../runtime/components/base/tools/screen/System/Llm/Tools/ExposureDetail.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. Context: `toolName`. | AI-07 |
+| `/qapps/system/Llm/Tools/ExposureList` | [ExposureList.xml](../runtime/components/base/tools/screen/System/Llm/Tools/ExposureList.xml) | Inspect the route and its visible controls through the activity. | AI-07 |
+| `/qapps/system/Llm/Tools/Policies` | [Policies.xml](../runtime/components/base/tools/screen/System/Llm/Tools/Policies.xml) | Context: `agentId`. | AI-07 |
+
+### tools: `System/Llm/Triggers`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/Llm/Triggers/TriggerDetail` | [TriggerDetail.xml](../runtime/components/base/tools/screen/System/Llm/Triggers/TriggerDetail.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. Context: `triggerId`. | AI-08 |
+| `/qapps/system/Llm/Triggers/TriggerList` | [TriggerList.xml](../runtime/components/base/tools/screen/System/Llm/Triggers/TriggerList.xml) | Inspect the route and its visible controls through the activity. | AI-08 |
+
+### tools: `System/Protocols`
+
+| Route / surface | XML source | Default / variants / boundary | Activities |
+| --- | --- | --- | --- |
+| `/qapps/system/Protocols/Home` | [Home.xml](../runtime/components/base/tools/screen/System/Protocols/Home.xml) | Authored text: `html`, `qvt`, `tui`. | AI-14, AI-15 |
+| `/qapps/system/Protocols/MailQueue` | [MailQueue.xml](../runtime/components/base/tools/screen/System/Protocols/MailQueue.xml) | Authored text: `html`, `qvt`, `tui`. Context: `state`, `binding`, `emailServerId`, `fromDate`, `thruDate`, `pageIndex`. | AI-15 |
+| `/qapps/system/Protocols/MailRelayDetail` | [MailRelayDetail.xml](../runtime/components/base/tools/screen/System/Protocols/MailRelayDetail.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. Context: `connectionKey`. | AI-14, AI-15 |
+| `/qapps/system/Protocols/MailRelays` | [MailRelays.xml](../runtime/components/base/tools/screen/System/Protocols/MailRelays.xml) | Authored text: `html`, `qvt`, `tui`. Context: `text`. | AI-14, AI-15 |
+| `/qapps/system/Protocols/ServerConfiguration` | [ServerConfiguration.xml](../runtime/components/base/tools/screen/System/Protocols/ServerConfiguration.xml) | Authored text: `html`, `qvt`, `tui`. Context: `protocolKey`. | AI-14, AI-15 |
+
+### Embedded surfaces, dialogs, outputs and reconciliation
+
+| Supporting surface | Activity / inspection |
+| --- | --- |
+| Model/endpoint credentials, bindings, capability probe and PromptPreview sections | AI-02/07/11; explicit versus detected capability and effective policy |
+| Run steps/events/tool calls, conversation messages, call request/response, approval changes/decision metadata | AI-03/04; audited/redacted detail, no synthetic admin approval control |
+| Skill sections/retrieval/use history; remote A2A/MCP discovery/allowlist | AI-05–07; listing a tool is distinct from exposing/allowing it |
+| Trigger event/breaker/run controls, Inbox, Lessons review | AI-08; eligible actor and proposed/accepted state |
+| Eval dataset/items/scorers/live attachment/experiment result review/compare | AI-09; dataset version at start, partial/canceled result and human score |
+| Gateway clients/key/aliases and Usage quota/rollup | AI-10; gateway credentials distinct from upstream endpoint secrets |
+| Constitution Rules/Edit/Json/Origins/Preview; trusted reference viewer in Assist | AI-11; shipped/custom/revision/locale and exact trusted origins |
+| Connections shared ConnectionParts; message type registration/raw forms; payload download/edit, per-item and bulk recovery | AI-12/13; owner semantics and staged incoming message lifecycle |
+| Protocol readiness, MailRelayDetail included forms, MailQueue settle/retry | AI-14/15; hosted account SMTP ownership is not a general relay |
+| Voice row dialogs: trunks/numbers/caller IDs, fraud, emergency, devices, ring groups/schedules/IVR/queues and audio | AI-16/17; each child screen explicitly inventoried below |
+| ChatBridges status/disable/retry and room bridge settings in BasicComms | AI-18 and COM-08; admin/room ownership boundary |
+| Edge Pair wizard's five steps, Apply confirmation, route/domain/port/cluster/queue controls | AI-19/20; System certificates/protection linked, not duplicated |
+| EntitySync selection/artifacts/history/reset | AI-21; explicit fixture records, not production resynchronization |
+
+The archived review deferred deep LLM/edge/voice/bridge work. New Constitution/eval/protocol/routing controls are
+included from source. Design-only fleet/sealed-secret features and absent provider integrations remain out of scope.
+Successful local simulation and a successful external provider must never be conflated.
+
+## 4. End-to-end activities
+
+Use visible controls and inspect intermediate states, confirmation and the resulting data/output. Unless narrowed
+below, each activity has Material light/dark, actual supported TUI and a brief Standard/output branch. Select narrow
+and keyboard checks where layout/interaction differs. Record each unattempted branch in §6; a service call or render
+alone does not complete the activity. Names beginning `review.` are fixture proposals, not shipped accounts.
+
+### AI-01 — Orient to AI health and outstanding work
+
+- **Actor/start:** System reader and AI administrator; local failed and active runs/calls.
+- **Objective/steps:** Llm/Dashboard → inspect failure counts → Calls/Runs/Inbox → selected detail → Usage →
+  return; compare with an empty/disabled-provider setup.
+- **Expected:** Counts, status, actor and provider identity agree with destination records; unavailable
+  configuration is actionable without implying a working model.
+- **Recovery:** No model, unknown quota, missing run and independent backend failure leave other summaries
+  usable.
+- **Screens/modes:** Llm root/Dashboard, Inbox, Calls/Runs/Usage; browser/TUI/Standard and narrow summary
+  layout.
+
+### AI-02 — Configure and test a model binding
+
+- **Actor/start:** Endpoint/model administrator and view-only reader; deterministic local model server and
+  invalid-key fixture.
+- **Objective/steps:** Models → create EndpointDetail/set secret/test → create ModelDetail → probe
+  capabilities/set explicit capability → bind use case → PromptPreview → harmless Assist request → inspect
+  CallDetail.
+- **Expected:** Endpoint, model, binding and effective capability are clear; secrets do not reappear; probe
+  failure is distinct from saved configuration; call uses selected binding.
+- **Recovery:** Wrong key, invalid endpoint, unavailable model, unsupported capability, stale edit and canceled
+  delete retain understandable state.
+- **Screens/modes:** ModelList/ModelDetail/EndpointDetail, PromptPreview, Calls; actual local reply required,
+  SH-13 owns Assist interaction.
+
+### AI-03 — Trace a conversation through its run and provider call
+
+- **Actor/start:** Run owner and authorized audit reader; local conversation with tool step and known trace.
+- **Objective/steps:** Conversations/List → Detail → RunDetail → steps/events/tool calls → Calls/CallDetail →
+  model → Llm/Traces → Monitor trace → return.
+- **Expected:** IDs and timestamps join the same execution; another user content is withheld or explicitly
+  audited; cancel is shown only for a valid current run.
+- **Recovery:** Missing/expired trace, redacted body, canceled run, failed call and revoked audit authority do
+  not expose content or lose the originating conversation.
+- **Screens/modes:** Conversations, Runs, Calls, Traces wrapper; MON-12 owns AgentTraces behavior; TUI/Standard
+  long payload disclosures.
+
+### AI-04 — Inspect the lifecycle of a tool approval
+
+- **Actor/start:** Run owner, actual approver through Assist and authorized audit reader; harmless proposed
+  write with preview.
+- **Objective/steps:** Approvals/List → Detail inspect target/change/expiry → Run → open owning approval channel
+  → reject one proposal, approve a fresh one → reopen audit detail and run outcome.
+- **Expected:** Proposed, decided and executed are distinct; decision actor/channel/time match the actual
+  consent and exact operation; detail remains an audit surface.
+- **Recovery:** Expired/stale approval, changed arguments, canceled consent, duplicate response and lost
+  permission cannot approve a different action.
+- **Screens/modes:** Approvals/ApprovalList/ApprovalDetail, RunDetail and SH-13 consent handoff; no invented
+  Approve button in System.
+
+### AI-05 — Maintain a skill and evaluate retrieval
+
+- **Actor/start:** Skill administrator and reader; disposable local skill source with several sections and known
+  query.
+- **Objective/steps:** Skills/List → sync/create → SkillDetail edit/inspect sections → RetrievalTest → run query
+  → inspect matched section → follow use to RunDetail → revise and retry.
+- **Expected:** Source, version/sections and matched evidence are visible; retrieval results do not imply the
+  skill ran; use history links to the right execution.
+- **Recovery:** Malformed source, empty retrieval, unavailable embedding, failed sync item and denied edit leave
+  the other skills usable.
+- **Screens/modes:** Skills containers, SkillList/Detail/RetrievalTest and RunDetail; browser/TUI/Standard, long
+  section content.
+
+### AI-06 — Connect a remote agent or MCP server locally
+
+- **Actor/start:** Remote administrator with separate local A2A/MCP fixtures, reader and restricted tool user.
+- **Objective/steps:** Remote AgentList → AgentDetail configure/test; McpServerList → Detail set credential/list
+  tools → explicitly allow selected tool → inspect exposure/policy → run harmless request.
+- **Expected:** Discovered, allowed and exposed tools are distinct; remote identity/capability and credentials
+  are clear; only intended tool is usable.
+- **Recovery:** Unreachable fixture, bad credential, malformed discovery, removed tool and refused invocation
+  preserve safe configuration and useful error detail.
+- **Screens/modes:** Remote AgentList/Detail, McpServerList/Detail and Tools exposure handoff;
+  browser/TUI/Standard, no internet endpoints.
+
+### AI-07 — Explain effective tools and prompt policy
+
+- **Actor/start:** Tool/policy administrator, ordinary agent user and refusal counterpart; harmless local
+  tool/skill/model.
+- **Objective/steps:** Tools/ExposureList → Detail configure → Policies choose agent/add rule → PromptPreview
+  inspect included sections/tools → Assist request → compare allowed/refused tool outcome.
+- **Expected:** Prompt and policy show the actual effective limits; naming/exposure is not permission; a refused
+  invocation identifies the relevant rule without leaking secret arguments.
+- **Recovery:** Unknown service/tool, invalid policy, missing capability, stale prompt and canceled delete
+  retain readable configuration.
+- **Screens/modes:** ExposureList/Detail, Policies, PromptPreview, model/skill links and SH-13;
+  browser/TUI/Standard.
+
+### AI-08 — Follow a trigger, its breaker and a proposed lesson
+
+- **Actor/start:** Trigger operator and reader; local event with deterministic agent reply and a separate
+  failing event.
+- **Objective/steps:** Triggers/List → Detail configure/fire → inspect events/run → Inbox item → Run → Lessons
+  inspect/review proposed lesson → return; inspect/reset a prepared breaker.
+- **Expected:** Trigger status, event, run and resulting proposal remain linked; reset is distinguishable from
+  rerun; review state changes only by its eligible actor.
+- **Recovery:** Repeated event, disabled trigger, open breaker, missing owner, failed run and rejected lesson
+  preserve evidence and do not create unbounded retries.
+- **Screens/modes:** TriggerList/Detail, Inbox, Lessons and Runs; actual fixture events, TUI/Standard review
+  controls.
+
+### AI-09 — Build and compare a bounded evaluation
+
+- **Actor/start:** MONITOR_EVAL editor/scorer, separate MONITOR_EVAL_RUN holder and reader; small service-target
+  local dataset.
+- **Objective/steps:** Evals/Datasets → DatasetDetail add/edit items/attach scorer → Scorers configure →
+  Experiments start → ExperimentDetail follow results → review a result → Compare two runs → Runs save/score a
+  selected agent run.
+- **Expected:** Experiment records dataset version at start; score meaning, failures and human review are
+  visible; totals do not hide partial/canceled items.
+- **Recovery:** Invalid scorer/item, denied start, changed dataset mid-run, failed result and canceled
+  experiment preserve completed evidence and name unresolved items.
+- **Screens/modes:** All Evals children, including Compare/Runs; no paid model needed, browser/TUI/Standard and
+  wide comparison readability.
+
+### AI-10 — Operate a gateway client and explain usage
+
+- **Actor/start:** Gateway administrator, local gateway client and System reader; limited alias/quota and known
+  requests.
+- **Objective/steps:** Gateway/ClientList → ClientDetail set key/limits → AliasList configure → send local
+  client request → inspect CallList/Detail → Usage quotas/rollup → disable/revoke fixture access.
+- **Expected:** Client key is distinct from upstream credential; alias resolves as configured; usage and quota
+  periods explain allowed/refused calls without a misleading zero.
+- **Recovery:** Unknown alias, expired key, limit exceeded, failed upstream and delayed rollup retain request
+  identity and clear accounting limits.
+- **Screens/modes:** Gateway ClientList/Detail/AliasList, Usage, Calls; local request is fixture stimulus,
+  visible management is the activity.
+
+### AI-11 — Customize and verify the Constitution
+
+- **Actor/start:** ADMIN_CONSTITUTION_GLOBAL holder and non-holder; disposable instance document and trusted
+  local HTTPS reference fixture.
+- **Objective/steps:** Constitution/Rules → Customize → Edit rule/reference/locale → Preview → Json
+  inspect/download → Origins add exact origin → Assist reference viewer → reset to shipped document after
+  comparison.
+- **Expected:** Shipped versus custom and revision are clear; preview reflects the same rules; trusted origins
+  and language fallback are explainable; reset is explicit.
+- **Recovery:** Invalid JSON/rule, stale hash, denied edit, bad origin, missing locale and canceled reset keep
+  the last good document and restrict unsafe references.
+- **Screens/modes:** Rules/Edit/Json/Origins/Preview plus SH-13 reference viewer; browser/TUI/Standard,
+  inspected JSON bytes.
+
+### AI-12 — Configure a registered connection and inspect its contract
+
+- **Actor/start:** Connection operator and reader; local gateway/remote/mail/printer fixture registered by its
+  owner.
+- **Objective/steps:** Integrations/Connections → create/select → ConnectionDetail configure/test where offered
+  → inspect mappings → MessageTypes/detail → verify owner/allowed use → follow consumer.
+- **Expected:** Connection kind, owner, enabled state and tested outcome are distinct; a mail-account-owned
+  server is not presented as an instance relay.
+- **Recovery:** Unsupported kind, invalid mapping, rejected secret, failed test and stale record keep editable
+  non-secret values and a useful return path.
+- **Screens/modes:** Connections/ConnectionDetail, MessageTypes/MessageTypeDetail, included ConnectionParts;
+  System/Comms consumer handoffs, TUI/Standard.
+
+### AI-13 — Recover a message without repeating completed work
+
+- **Actor/start:** Message operator and reader; local registered transport with staged, failed, acknowledged and
+  partial-batch messages.
+- **Objective/steps:** SystemMessages → inspect/filter → SystemMessageDetail → view/download payload → inspect
+  attempts/history/ack/children → choose eligible recovery → preview bulk recovery → apply → inspect each
+  result; edit only a disposable staged incoming message.
+- **Expected:** Owner, direction, attempt and status are clear; acknowledgment is not confused with sending;
+  independent successful messages remain complete and payload edits identify the selected message.
+- **Recovery:** Malformed payload, unavailable owner, stale recovery, denied send, canceled bulk action and
+  unknown outcome do not manufacture a successful retry.
+- **Screens/modes:** SystemMessages, SystemMessageDetail/EditMessageText, MessageTypeDetail; actual local
+  transport evidence and payload bytes, TUI/Standard.
+
+### AI-14 — Understand protocol readiness and configure a relay
+
+- **Actor/start:** Protocol/relay operator and reader; local mail relay/listener and missing/disabled/failed
+  feature cases.
+- **Objective/steps:** Protocols/Home → ServerConfiguration inspect effective source → run explicitly local
+  check → MailRelays → Detail configure/test → consumer sends captured mail → readiness refresh.
+- **Expected:** Not-built, disabled, failed-start and running states differ; checked public/network behavior is
+  separate from local configuration; relay ownership and recipients are clear.
+- **Recovery:** Bad relay settings, protocol off, refused outgoing check, missing trust prerequisites and failed
+  startup remain visible without contacting unrelated endpoints.
+- **Screens/modes:** Home, ServerConfiguration, MailRelays/Detail and System readiness/BasicComms handoff;
+  browser/TUI/Standard.
+
+### AI-15 — Resolve failed and uncertain mail outcomes
+
+- **Actor/start:** Mail outcome operator, owner and reader; one failed recipient and one unknown outcome with
+  local capture.
+- **Objective/steps:** MailQueue → filter owner/status → inspect privacy-preserving metadata → follow owner
+  record → retry failed recipient → settle uncertain result only with evidence → inspect owner delivery and
+  queue.
+- **Expected:** Queue does not expose message body/address to unrelated admins; retries target failed recipients
+  only; settled unknown outcomes have explicit evidence and actor context.
+- **Recovery:** Owner unavailable, revoked authority, duplicate retry, stale outcome and canceled settlement
+  keep successful recipients untouched and unresolved outcomes honest.
+- **Screens/modes:** MailQueue, owner delivery detail and BasicComms/Reports handoff; no real outbound send,
+  TUI/Standard forms.
+
+### AI-16 — Prepare local voice endpoints and outbound policy
+
+- **Actor/start:** Voice administrator and permitted/denied call users; local SIP/media simulator, disposable
+  numbers/devices and no emergency dialing.
+- **Objective/steps:** Voice/Status → Trunks configure → Numbers route → CallerIds grant → Fraud policy/user
+  limit → Emergency inspect/configure location → Phones inspect/revoke test device → BasicComms dialer → verify
+  result.
+- **Expected:** Effective endpoint, caller identity, device and limits explain the offered call; configured
+  emergency information is not claimed as a tested emergency service.
+- **Recovery:** Unavailable media/SIP, invalid number, forbidden caller ID, fraud block, missing location and
+  revoked device leave explicit limits.
+- **Screens/modes:** Status, Trunks, Numbers, CallerIds, Fraud, Emergency, Phones; COM-12/14 user call/device
+  work, TUI/Standard admin forms.
+
+### AI-17 — Route an incoming call through a schedule, IVR and queue
+
+- **Actor/start:** Voice administrator, two local agents and synthetic caller; separate open/closed schedule
+  states.
+- **Objective/steps:** Schedules define rule → RingGroups add members/voicemail/greeting → IvrMenus
+  options/prompt → Queues agents/audio → Numbers route → local incoming call → inspect chosen
+  destination/voicemail and queue status.
+- **Expected:** Schedule, option and member/agent state explain the route; uploaded audio is the selected
+  prompt; unanswered calls follow the configured fallback visibly.
+- **Recovery:** No available agent, invalid route/option, missing audio, canceled delete, failed transfer and
+  closed schedule are intelligible without silently dropping the caller.
+- **Screens/modes:** Schedules, RingGroups, IvrMenus, Queues, Numbers and COM-14/15; local media only, browser
+  admin/TUI/Standard and captured outcomes.
+
+### AI-18 — Diagnose and retry a chat bridge
+
+- **Actor/start:** Bridge administrator and two room users; local bridge counterpart with one failed delivery.
+- **Objective/steps:** System/ChatBridges inspect connection/problem → open BasicComms room bridge settings →
+  send local message → inspect bridge result → disable/enable as appropriate → retry failed item → inspect room
+  timeline.
+- **Expected:** Bridge identity, room mapping and delivery attempt are clear; repeated retry does not duplicate
+  completed delivery; room membership still controls content.
+- **Recovery:** Remote unavailable, invalid mapping, permission loss, ended bridge and stale retry keep
+  independent bridges usable and retain failure evidence.
+- **Screens/modes:** ChatBridges and COM-08 room settings, browser/TUI/Standard admin controls and local
+  transport only.
+
+### AI-19 — Pair an edge node and inspect every setup step
+
+- **Actor/start:** Administrator of two disposable local runtimes; single-use pairing code and isolated
+  configuration.
+- **Objective/steps:** EdgeNode/Pair EdgeUrl → check → Connect → Discover select services → Apply
+  inspect/confirm → Test → Status; follow resulting System certificate/protocol requirements and return.
+- **Expected:** Each step states what is discovered versus changed; pairing identity, configuration changes and
+  tests agree; unverified external DNS/certificate requirements remain explicit.
+- **Recovery:** Invalid/reused code, wrong server, failed discovery, canceled apply, partial configuration and
+  failed test preserve a recoverable state without double pairing.
+- **Screens/modes:** All Pair wizard steps, Status and SYS-19/AI-14 handoffs; browser/TUI/Standard forms, no
+  public edge service.
+
+### AI-20 — Inspect edge routes, queues and member state
+
+- **Actor/start:** Paired local runtimes from AI-19 with synthetic queued delivery/member conflict;
+  administrator and reader.
+- **Objective/steps:** EdgeClients/Clients → inspect/ping/revoke disposable client/member → Domains/Ports
+  configure local route → Balancing/EdgeCluster inspect → Status pause/resume/resync or drain as appropriate →
+  verify delivery/route.
+- **Expected:** Domain, client, member and queue cursor are distinguishable; route/conflict and effective
+  balance settings explain destination; draining is not offline.
+- **Recovery:** Duplicate domain/port, unreachable member, queue cap, failed delivery, stale takeover and
+  canceled revoke retain safe routes and name each unresolved item.
+- **Screens/modes:** Clients, Domains, Ports, Balancing, EdgeCluster, EdgeNode/Status; local topology only,
+  keyboard/TUI/Standard tables.
+
+### AI-21 — Synchronize a bounded set of fixture records
+
+- **Actor/start:** Sync operator and reader; two isolated runtimes with dedicated framework fixture entity
+  rows/artifact selection.
+- **Objective/steps:** EntitySyncList → create/detail → select artifacts → inspect included entities → execute
+  via configured job/transport → History → correct a failed fixture → eligible reset/retry → compare records.
+- **Expected:** Selection, run state and history identify what transferred; a reset is not presented as
+  completed synchronization; independent failures are named.
+- **Recovery:** Unavailable peer, invalid selection, duplicate attempt, denied reset and partial run retain
+  history and protect already-completed items.
+- **Screens/modes:** EntitySync/List/Detail/History, job/transport handoff and actual fixture readback; no full
+  database resync.
+
+### AI-22 — Reconcile integration access and remaining modes
+
+- **Actor/start:** Administrator, narrow operators, run owner/audit reader and outsider with valid records from
+  earlier waves.
+- **Objective/steps:** Inspect every remaining route/helper; pair selected direct payload, credential-edit, run
+  and configuration refusals with holder success; follow configuration → consumer → diagnosis → Back.
+- **Expected:** All inventory entries have explicit coverage; aliases retain context and privileges;
+  credentials/private payloads stay out of restricted responses and downloaded evidence.
+- **Recovery:** Missing providers, binary features, external media/DNS or authorization remain blocked/partial
+  branches with prerequisites, never inferred success.
+- **Screens/modes:** All owned subtrees, BasicComms mounts and Llm/Traces handoff; no duplicate consumer or
+  Monitor full walks.
+
+## 5. Existing checks and future verification
+
+This is an available-test map, not a results ledger. Read assertions and suite setup before selecting a run; static
+shape checks, offline component fixtures, live browser walks and service rules provide different evidence.
+
+| Component / suite | Existing specs | Coverage and limits |
+| --- | --- | --- |
+| tools / server | [Constitution](../runtime/components/base/tools/test/Constitution.spec.js) | Global permission/stale hash, customize/edit/reset and trusted-origin rules; only limited rendered Rules checks. |
+| framework / server | [AgentEvals](../runtime/components/base/framework/test/AgentEvals.spec.js) | Versioned dataset, service-target scoring, human review and experiment permission rules; not full visual authoring. |
+| framework / server | [AdminConnectionServices](../runtime/components/base/framework/test/AdminConnectionServices.spec.js), [AdminRecovery](../runtime/components/base/framework/test/AdminRecovery.spec.js), [AdminProtocols](../runtime/components/base/framework/test/AdminProtocols.spec.js), [AdminMailOutcomes](../runtime/components/base/framework/test/AdminMailOutcomes.spec.js) | Registered connection/recovery bounds, protocol readiness/confirmed checks, per-recipient retry/unknown settlement; service evidence. |
+| framework / server | [Voice](../runtime/components/base/framework/test/Voice.spec.js), [SipDevice](../runtime/components/base/framework/test/SipDevice.spec.js), [Voicemail](../runtime/components/base/framework/test/Voicemail.spec.js), [EdgeVoice](../runtime/components/base/framework/test/EdgeVoice.spec.js), [EdgeScreens](../runtime/components/base/framework/test/EdgeScreens.spec.js) | Voice/device/voicemail/edge behavior and selected screens; not every routing/provider UI path. |
+| basic-comms / server | [BasicCommsBridges](../runtime/components/base/basic-comms/test/BasicCommsBridges.spec.js), [BasicCommsCalls](../runtime/components/base/basic-comms/test/BasicCommsCalls.spec.js) | Consumer-side bridge/call behavior; System admin screens need their own interaction coverage. |
+| tools / acceptance client | [Monitoring](../runtime/components/base/tools/test/acceptance/client/Monitoring.spec.js) | AI trace display and diagnostic handoff portions only; no full LLM configuration/approval/eval walk. |
+
+Future acceptance candidates: **SystemAiConfigurationWalk** (AI-01–07/11), **SystemAiOperationsWalk** (AI-08–10),
+**SystemIntegrationRecoveryWalk** (AI-12–15), **SystemVoiceBridgeWalk** (AI-16–18), **SystemEdgePairWalk**
+(AI-19–20) and **SystemEntitySyncWalk** (AI-21), with selected access branches in each. Place voice/bridge screen
+checks with their owning basic-comms component; System's tools inventory retains their mounted routes. Reuse the
+single System acceptance sweep, never a new regression sweep for each subsection.
+
+Follow the [verification policy](ui-review-shared-gallery.md#verification-policy-for-later-execution). Proposed
+walk names above describe future acceptance work, not tests created or authorized to run by this document. Keep
+focused bug/rule checks in regression and reuse existing sweeps/walks instead of adding duplicates.
+
+## 6. Coverage, findings and running record
+
+### Activity coverage ledger
+
+Statuses: **pending**, **inspected**, **exercised** (pass/fail/partial named separately), **blocked**, **deferred**
+(with reason). Existing tests and the archived review do not advance these statuses. Every branch is pending until
+execution records it; “exercised” never implies that all modes and recovery paths passed.
+
+| Activity | Status | Outcome / remaining branches | Evidence / findings |
+| --- | --- | --- | --- |
+| AI-01 — Orient to AI health and outstanding work | pending | All steps, modes and recovery branches pending. | — |
+| AI-02 — Configure and test a model binding | pending | All steps, modes and recovery branches pending. | — |
+| AI-03 — Trace a conversation through its run and provider call | pending | All steps, modes and recovery branches pending. | — |
+| AI-04 — Inspect the lifecycle of a tool approval | pending | All steps, modes and recovery branches pending. | — |
+| AI-05 — Maintain a skill and evaluate retrieval | pending | All steps, modes and recovery branches pending. | — |
+| AI-06 — Connect a remote agent or MCP server locally | pending | All steps, modes and recovery branches pending. | — |
+| AI-07 — Explain effective tools and prompt policy | pending | All steps, modes and recovery branches pending. | — |
+| AI-08 — Follow a trigger, its breaker and a proposed lesson | pending | All steps, modes and recovery branches pending. | — |
+| AI-09 — Build and compare a bounded evaluation | pending | All steps, modes and recovery branches pending. | — |
+| AI-10 — Operate a gateway client and explain usage | pending | All steps, modes and recovery branches pending. | — |
+| AI-11 — Customize and verify the Constitution | pending | All steps, modes and recovery branches pending. | — |
+| AI-12 — Configure a registered connection and inspect its contract | pending | All steps, modes and recovery branches pending. | — |
+| AI-13 — Recover a message without repeating completed work | pending | All steps, modes and recovery branches pending. | — |
+| AI-14 — Understand protocol readiness and configure a relay | pending | All steps, modes and recovery branches pending. | — |
+| AI-15 — Resolve failed and uncertain mail outcomes | pending | All steps, modes and recovery branches pending. | — |
+| AI-16 — Prepare local voice endpoints and outbound policy | pending | All steps, modes and recovery branches pending. | — |
+| AI-17 — Route an incoming call through a schedule, IVR and queue | pending | All steps, modes and recovery branches pending. | — |
+| AI-18 — Diagnose and retry a chat bridge | pending | All steps, modes and recovery branches pending. | — |
+| AI-19 — Pair an edge node and inspect every setup step | pending | All steps, modes and recovery branches pending. | — |
+| AI-20 — Inspect edge routes, queues and member state | pending | All steps, modes and recovery branches pending. | — |
+| AI-21 — Synchronize a bounded set of fixture records | pending | All steps, modes and recovery branches pending. | — |
+| AI-22 — Reconcile integration access and remaining modes | pending | All steps, modes and recovery branches pending. | — |
+
+### Findings register
+
+Use `AI-UI-001` onward. P1 blocks work or essential understanding; P2 causes substantial friction or misleading
+presentation; P3 is a localized refinement. Label evidence as observed behavior, static suspicion or design judgment.
+
+| ID / severity | Actor, activity step, route, mode / viewport | Reproduction and impact | Evidence / owning layer | State / correction / retest |
+| --- | --- | --- | --- | --- |
+| — | — | No findings recorded. | — | — |
+
+### Bounded batch record
+
+For each later batch record:
+
+- Intent, activities and branch limits; runtime/build/components, identities/grants, fixture IDs and dates.
+- Observed steps and outcomes; evidence filenames, console/network/output observations and findings.
+- Workarounds and blocked/deferred branches, with prerequisites and follow-up.
+- In refinement only: decisions, owning files/components, correction, focused verification commands/results and retest.
+- Temporary settings/grants/files/jobs restored, remaining cleanup and companion handoffs.
+
+No execution batches have been started.
+
+## 7. Decisions
+
+- IDs are `AI` across this combined integration file; waves keep the large inventory reviewable without another
+  document split. Monitor owns traces, System owns certificates/web protection and BasicComms owns user operation.
+- List/detail/helper routes are reviewed through their actual default children. Approval audit views do not gain
+  mutation controls merely because the review needs an approval outcome.
+- External prerequisites remain explicit blocked branches; no paid provider, real call, public pairing or external
+  message is authorized by this plan.
+
+- This is a planning record only. No application/API change, test run, runtime walk, fixture creation or commit is
+  part of the document-writing task. Review/refinement execution is separate.
+- Current code, mounts and grants take precedence over older plans. Historical outcomes, permissions and exceptions
+  are not inherited. Preserve routes, stored preferences and public contracts in any later refinement.
+- Finish a review with explicit branch outcomes and a candid unresolved ledger; missing prerequisites do not become
+  passes. Building absent features is outside this review.
