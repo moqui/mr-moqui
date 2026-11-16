@@ -54,6 +54,7 @@ fn serve_request(
         path: text("path"),
         headers,
         body: text("body").into_bytes(),
+        upload: None,
         secure: true,
         client_ip: "127.0.0.1".to_string(),
     };

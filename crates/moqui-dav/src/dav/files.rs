@@ -561,7 +561,7 @@ fn put(context: &Context<'_>, drive: &Drive, path: &str) -> DavResponse {
         .header("content-type")
         .unwrap_or("application/octet-stream")
         .to_string();
-    let file = UploadedFile::in_memory("file", &name, &content_type, context.request.body.clone());
+    let file = context.request.put_file(&name, &content_type);
     if let Err(err) = upload(drive, &parent, file) {
         return DavResponse::text(status_of_error(&err), &err);
     }

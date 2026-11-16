@@ -79,8 +79,13 @@
     <default-property name="webapp_upload_executable_allow" value="false"/>
     <!-- Largest multipart/form-data request body, in bytes or with a k, m or g suffix (other request bodies stop at
         webapp_max_body). An upload is read as it arrives, a file over 256 KiB into a file in runtime/tmp/upload, and is
-        cut off when nothing arrives for webapp_upload_idle_timeout seconds. -->
+        cut off when nothing arrives for webapp_upload_idle_timeout seconds. An upload with no user (no session signed
+        in, no key, no Basic credentials that hold) stops at webapp_max_body, but under webapp_anonymous_upload_paths
+        (path prefixes, comma separated: the public share's file drop). The files of the uploads being read hold at
+        most webapp_max_spool bytes together; an upload past it is answered 503. -->
     <default-property name="webapp_max_upload" value="2147483648"/>
+    <default-property name="webapp_anonymous_upload_paths" value="/s/"/>
+    <default-property name="webapp_max_spool" value="4294967296"/>
     <default-property name="webapp_upload_idle_timeout" value="60"/>
 
     <!--
@@ -870,7 +875,8 @@
                         http2-max-streams="${webapp_http2_max_streams}"/>
                 <requests methods="GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS" max-uri-length="8192"
                         max-header-bytes="65536" max-headers="100" max-body="${webapp_max_body}"
-                        max-upload="${webapp_max_upload}" body-timeout="${webapp_body_timeout}"
+                        max-upload="${webapp_max_upload}" anonymous-upload-paths="${webapp_anonymous_upload_paths}"
+                        body-timeout="${webapp_body_timeout}"
                         upload-idle-timeout="${webapp_upload_idle_timeout}" request-timeout="${webapp_request_timeout}"/>
                 <overload queue-timeout="10" retry-after="5"/>
 

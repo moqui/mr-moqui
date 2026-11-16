@@ -39,6 +39,9 @@ use super::{
 use moqui_core::context::ExecutionContextFactory;
 use xml::{Element, CALDAV, CARDDAV, CS, DAV, ICAL};
 
+/// The largest calendar or contact object a client may PUT (1 MiB holds thousands of events or cards).
+const MAX_OBJECT: usize = 1024 * 1024;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
     Calendar,
@@ -578,8 +581,9 @@ fn object(context: &Context<'_>, adapter: &Adapter, method: &str, collection_id:
             if !name.ends_with(adapter.kind.extension()) {
                 return DavResponse::text(403, &format!("a name here ends with {}", adapter.kind.extension()));
             }
-            let Ok(data) = String::from_utf8(context.request.body.clone()) else {
-                return DavResponse::status(415);
+            let data = match object_text(context.request) {
+                Ok(data) => data,
+                Err(refused) => return refused,
             };
             let mut parameters = vec![
                 ("collectionId", Value::string(collection_id)),
@@ -641,6 +645,19 @@ fn object(context: &Context<'_>, adapter: &Adapter, method: &str, collection_id:
         "PROPPATCH" => proppatch(&href, context.body.as_ref()),
         _ => DavResponse::status(405),
     }
+}
+
+/// A `PUT` object's text. The adapter parses the whole object, every event or card in it, so a calendar or contact
+/// object has a limit of its own ([`MAX_OBJECT`]), far below a drive file's (SEC-FIL-67).
+fn object_text(request: &super::DavRequest) -> Result<String, DavResponse> {
+    if request.put_size() > MAX_OBJECT as u64 {
+        return Err(DavResponse::text(
+            413,
+            &format!("a calendar or contact object is at most {MAX_OBJECT} bytes"),
+        ));
+    }
+    let bytes = request.put_bytes().map_err(|err| failed(&err))?;
+    String::from_utf8(bytes).map_err(|_| DavResponse::status(415))
 }
 
 #[cfg(test)]

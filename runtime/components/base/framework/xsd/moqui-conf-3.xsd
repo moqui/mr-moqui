@@ -613,6 +613,10 @@ along with this software (see the LICENSE.md file). If not, see
                         The largest request body this servlet takes, such as 100m, in place of the web-protection max-body;
                         for a proxy that passes on a bulk load. Not for a multipart upload, whose limit is max-upload.
                         No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="max-upload" type="xs:string"><xs:annotation><xs:documentation>
+                        The largest multipart/form-data body this servlet takes, such as 10m, in place of the
+                        web-protection max-upload; it stops the read, before the file is spooled. No Java counterpart.
+                    </xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="load-on-startup" type="xs:nonNegativeInteger" default="1"><xs:annotation>
                         <xs:documentation>Not read by this server.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="async-supported" type="boolean" default="false"><xs:annotation><xs:documentation>
@@ -761,7 +765,13 @@ along with this software (see the LICENSE.md file). If not, see
                         Largest request body that is not multipart, bytes or with a k, m or g suffix (webapp_max_body,
                         10m); larger is answered 413.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="max-upload" type="xs:string"><xs:annotation><xs:documentation>
-                        Largest multipart/form-data body (webapp_max_upload, 2g).</xs:documentation></xs:annotation></xs:attribute>
+                        Largest multipart/form-data body (webapp_max_upload, 2g). A request with no user (no session
+                        signed in, no api_key or login_key, no Basic credentials that hold) takes max-body instead,
+                        unless its path is one of anonymous-upload-paths.</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="anonymous-upload-paths" type="xs:string"><xs:annotation><xs:documentation>
+                        Path prefixes, comma separated, of the uploads taken without a user, such as a public share's
+                        file drop (webapp_anonymous_upload_paths, /s/); an upload there may be max-upload with no user.
+                    </xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="body-timeout" type="xs:string"><xs:annotation><xs:documentation>
                         Seconds for a whole request body that is not an upload (webapp_body_timeout, 60); then 408.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="upload-idle-timeout" type="xs:string"><xs:annotation><xs:documentation>

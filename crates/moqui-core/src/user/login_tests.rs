@@ -371,6 +371,30 @@ fn attempts_during_a_lock_window_do_not_restart_it_and_internal_logins_do_not_co
     session::reset_session();
 }
 
+/// SEC-RTE-07: a request's own credentials name their user before the body is read, with no login: Basic with the
+/// account password (only where the caller takes it), and nothing for wrong or missing ones.
+#[test]
+fn credentials_name_their_user_without_a_login() {
+    use base64::Engine as _;
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    create_user(&facade, "ada", "Secret1!", |_| {});
+    let basic = |password: &str| {
+        format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode(format!("ada:{password}"))
+        )
+    };
+    let right = basic("Secret1!");
+    assert_eq!(credential_user(None, None, Some(&right), true).unwrap().as_deref(), Some("ada"));
+    assert_eq!(credential_user(None, None, Some(&right), false).unwrap(), None);
+    assert_eq!(credential_user(None, None, Some(&basic("wrong")), true).unwrap(), None);
+    assert!(crate::web::take_auth_failure(), "a wrong password counts, as a login with it would");
+    assert_eq!(credential_user(None, None, None, true).unwrap(), None);
+    assert_eq!(credential_user(Some("no-such-key"), None, None, true).unwrap(), None);
+    assert!(session::current_username().unwrap().is_none(), "nobody is logged in");
+}
+
 /// SEC-WEB-02, SEC-ADM-02: the old password of a password change is behind the login gate. A wrong one counts and is
 /// noted; during the lock window even the right one is refused, counted and noted; an unknown user is refused; a reset
 /// password in date is taken, an ended one is not.

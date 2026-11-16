@@ -557,6 +557,25 @@ fn a_users_file_asked_inline_is_shown_only_when_passive_and_then_sandboxed() {
     assert_eq!(user_file_inline("image/png", false), (false, false));
 }
 
+/// SEC-RTE-07: a multipart body that may pass `webapp_max_body` has an anonymous cap of `webapp_max_body`, but on the
+/// paths that take uploads with no user, which a climbing path does not reach.
+#[test]
+fn an_anonymous_upload_stops_at_the_body_limit_but_on_the_open_paths() {
+    use super::{anonymous_upload_limit, open_upload_path, DEFAULT_MAX_BODY};
+    let mut upload = super::WebRequest::new("POST", "/apps/files/upload");
+    upload.set_header("content-type", "multipart/form-data; boundary=x");
+    assert_eq!(anonymous_upload_limit(None, &upload), Some(DEFAULT_MAX_BODY));
+    let mut form = super::WebRequest::new("POST", "/apps/files/save");
+    form.set_header("content-type", "application/x-www-form-urlencoded");
+    assert_eq!(anonymous_upload_limit(None, &form), None);
+    assert!(open_upload_path("/s/, /drop/", "/s/abc/upload"));
+    assert!(open_upload_path("/s/, /drop/", "/drop/x"));
+    assert!(!open_upload_path("/s/, /drop/", "/apps/s/x"));
+    assert!(!open_upload_path("/s/", "/s/../apps/upload"));
+    assert!(!open_upload_path("/s/", "/s/%2E%2E/apps/upload"));
+    assert!(!open_upload_path("", "/s/abc/upload"));
+}
+
 /// SEC-WEB-04: a request another site started is told by `Sec-Fetch-Site`, else by a `Referer` of another host; a
 /// request with neither, as a client that is not a browser sends, is not.
 #[test]

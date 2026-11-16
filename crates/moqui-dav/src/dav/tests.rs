@@ -105,6 +105,7 @@ impl Client<'_> {
                 .map(|(key, value)| (key.to_ascii_lowercase(), (*value).to_string()))
                 .collect(),
             body: body.as_bytes().to_vec(),
+            upload: None,
             secure: true,
             client_ip: "127.0.0.1".to_string(),
         };
@@ -607,6 +608,71 @@ fn head_answers_without_reading_the_file_and_get_streams_it() {
         got.status != 200 || got.body_bytes().is_err(),
         "the content cannot be read: {got:?}"
     );
+}
+
+/// SEC-FIL-04: what the head answers is answered before the body is read (no credentials, OPTIONS), a PUT's
+/// credentials are checked first without a login, and a PUT's body is the file the host spooled, not a copy in memory.
+#[test]
+fn the_head_is_answered_before_the_body_and_a_put_takes_its_spooled_file() {
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    let factory = context.factory();
+    user(&facade, "alice");
+    let (_, password) = app_password("alice", "Laptop");
+    let head = |method: &str, authorization: Option<String>| DavRequest {
+        method: method.into(),
+        path: "/dav/files/alice/My%20files/big.bin".into(),
+        headers: authorization
+            .map(|value| ("authorization".to_string(), value))
+            .into_iter()
+            .collect(),
+        secure: true,
+        client_ip: "127.0.0.1".into(),
+        ..DavRequest::default()
+    };
+    let anonymous = super::answer_before_body(factory, &head("PUT", None));
+    assert_eq!(anonymous.map(|answer| answer.status), Some(401));
+    let options = super::answer_before_body(factory, &head("OPTIONS", None));
+    assert_eq!(options.map(|answer| answer.status), Some(200));
+    let good = head("PUT", Some(basic("alice", &password)));
+    assert!(super::answer_before_body(factory, &good).is_none());
+    assert!(super::credentials_hold(factory, &good).is_ok());
+    let wrong = head("PUT", Some(basic("alice", "abcd-efgh-jkmn-pqrs-tuvw")));
+    assert_eq!(super::credentials_hold(factory, &wrong).unwrap_err().status, 401);
+    let web = head("PUT", Some(basic("alice", "web-Password-1")));
+    assert_eq!(
+        super::credentials_hold(factory, &web).unwrap_err().status,
+        401,
+        "the account password only with account-password"
+    );
+    assert_eq!(moqui_core::user::current_user_id().unwrap(), None, "nothing logged in");
+
+    let spool_dir = std::env::temp_dir().join(format!("moqui-dav-put-{}", std::process::id()));
+    let spool = moqui_core::web::multipart::Spool {
+        dir: spool_dir.clone(),
+        memory_limit: 16,
+        field_limit: 16,
+        max_total: u64::MAX,
+    };
+    let mut body = moqui_core::web::multipart::BodySpool::new(spool);
+    body.write(&[7_u8; 5000]).unwrap();
+    let mut put = good;
+    put.upload = Some(body.finish("put", "application/octet-stream").unwrap());
+    assert_eq!(serve(factory, &put).status, 201);
+    let _ = moqui_core::user::logout();
+    drop(put);
+    assert_eq!(
+        std::fs::read_dir(&spool_dir).unwrap().count(),
+        0,
+        "the spool file goes with the request"
+    );
+    let alice = Client {
+        factory,
+        authorization: Some(basic("alice", &password)),
+    };
+    let got = alice.send("GET", "/dav/files/alice/My%20files/big.bin", &[], "");
+    assert_eq!(got.body_bytes().unwrap(), vec![7_u8; 5000]);
+    let _ = std::fs::remove_dir_all(&spool_dir);
 }
 
 /// SEC-FIL-03: a user's file is sent as the screen download sends one: never sniffed and sandboxed, and an HTML file

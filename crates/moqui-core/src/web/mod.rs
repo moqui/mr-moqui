@@ -1878,6 +1878,10 @@ pub fn body_limit(request: &WebRequest) -> usize {
 /// [`body_limit`] by the conf of `factory`.
 pub fn body_limit_for(factory: Option<&crate::context::ExecutionContextFactory>, request: &WebRequest) -> usize {
     if is_multipart(request) {
+        // a servlet that takes smaller uploads says so (`max-upload`), as the PASS API does (SEC-PSA-07)
+        if let Some(max) = factory.and_then(|factory| factory.webapp_scripts().max_upload_for(&request.path)) {
+            return max;
+        }
         parse_size(&protection_setting(
             factory,
             "requests",
@@ -1892,6 +1896,45 @@ pub fn body_limit_for(factory: Option<&crate::context::ExecutionContextFactory>,
         }
         parse_size(&protection_setting(factory, "requests", "max-body", "webapp_max_body")).unwrap_or(DEFAULT_MAX_BODY)
     }
+}
+
+/// The cap on a `multipart/form-data` body sent with no user (no session signed in, no key, no Basic credentials that
+/// hold): `max-body` (`webapp_max_body`), when that is below the request's [`body_limit_for`] and the path is not one
+/// that takes uploads without a user (`web-protection` `requests` `anonymous-upload-paths`,
+/// `webapp_anonymous_upload_paths`: path prefixes, comma separated, such as a public share's file drop). None when no
+/// such cap applies. The host asks who sent the request only when the body may be larger, so an anonymous request
+/// cannot have the server spool up to `max-upload` before anything is checked (SEC-RTE-07).
+pub fn anonymous_upload_limit(
+    factory: Option<&crate::context::ExecutionContextFactory>,
+    request: &WebRequest,
+) -> Option<usize> {
+    if !is_multipart(request) {
+        return None;
+    }
+    let anonymous =
+        parse_size(&protection_setting(factory, "requests", "max-body", "webapp_max_body")).unwrap_or(DEFAULT_MAX_BODY);
+    if body_limit_for(factory, request) <= anonymous {
+        return None;
+    }
+    let paths = protection_setting(
+        factory,
+        "requests",
+        "anonymous-upload-paths",
+        "webapp_anonymous_upload_paths",
+    );
+    (!open_upload_path(&paths, &request.path)).then_some(anonymous)
+}
+
+/// Whether `path` is under one of `paths` (prefixes, comma separated) and does not climb out of it: a `..` segment,
+/// also percent-encoded, could start with an open prefix and reach another screen.
+fn open_upload_path(paths: &str, path: &str) -> bool {
+    let climbs = path.split('/').any(|part| part == "..") || path.to_ascii_lowercase().contains("%2e");
+    !climbs
+        && paths
+            .split(',')
+            .map(str::trim)
+            .filter(|prefix| !prefix.is_empty())
+            .any(|prefix| path.starts_with(prefix))
 }
 
 /// The `webroot` webapp's `web-protection` setting: the attribute `name` of its child `child` (empty for

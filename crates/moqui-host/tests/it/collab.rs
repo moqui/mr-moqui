@@ -211,6 +211,31 @@ fn dav_routes_and_coediting_over_the_socket() {
     );
     assert_eq!(status, 207, "{body}");
     assert!(body.contains("/dav/files/john.doe/My%20files/"), "{body}");
+    // SEC-FIL-04: a PUT whose credentials do not hold is answered from its head (no body is sent here), a PUT's body is
+    // spooled and stored, and another method's body stops at 1 MiB
+    let wrong = format!("Basic {}", b64().encode("john.doe:abcd-efgh-jkmn-pqrs-tuvw"));
+    let (status, _, _) = exchange(
+        http,
+        &format!(
+            "PUT /dav/files/john.doe/My%20files/big.bin HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\
+             Authorization: {wrong}\r\nContent-Length: 100000000\r\n\r\n"
+        ),
+    );
+    assert_eq!(status, 401);
+    let file = "x".repeat(300_000);
+    let big = "/dav/files/john.doe/My%20files/big.txt";
+    let (status, _, body) = exchange(http, &request("PUT", big, &[("Authorization", &auth)], &file));
+    assert_eq!(status, 201, "{body}");
+    let (status, _, body) = exchange(http, &request("GET", big, &[("Authorization", &auth)], ""));
+    assert_eq!((status, body.len()), (200, file.len()));
+    let (status, _, _) = exchange(
+        http,
+        &format!(
+            "PROPFIND /dav/ HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nAuthorization: {auth}\r\n\
+             Content-Length: 2000000\r\n\r\n"
+        ),
+    );
+    assert_eq!(status, 413);
 
     // two sessions join the page
     let first = login(http);

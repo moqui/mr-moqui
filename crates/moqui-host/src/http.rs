@@ -1109,12 +1109,18 @@ async fn dispatch_screen(
     web.query = moqui_core::web::form_pairs(parts.uri.query().unwrap_or(""));
     web.raw_query = parts.uri.query().map(str::to_string);
     // The limit is `webapp_max_body` (10 MiB), or `webapp_max_upload` for a multipart body, and it stops the read.
-    let limit = moqui_core::web::body_limit_for(Some(&state.factory), &web);
+    let mut limit = moqui_core::web::body_limit_for(Some(&state.factory), &web);
     let declared = parts
         .headers
         .get(axum::http::header::CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<usize>().ok());
+    // an upload that may be larger than an anonymous request may send needs a user (SEC-RTE-07)
+    if let Some(anonymous) = moqui_core::web::anonymous_upload_limit(Some(&state.factory), &web) {
+        if declared.is_none_or(|length| length > anonymous) && !upload_has_user(&state, &parts.headers, client).await {
+            limit = anonymous;
+        }
+    }
     if declared.is_some_and(|length| length > limit) {
         return plain(413, &format!("request body is larger than {limit} bytes"));
     }
@@ -1215,6 +1221,7 @@ async fn read_multipart(
     let refused = |err: MultipartError| match err {
         MultipartError::FieldTooLarge(_) => BodyRefused::TooLarge(limit),
         MultipartError::Io(why) => BodyRefused::Failed(why),
+        MultipartError::SpoolFull => BodyRefused::SpoolFull,
         other => BodyRefused::Malformed(other.to_string()),
     };
     let spool = Spool::under(state.factory.runtime_dir());
@@ -1258,6 +1265,63 @@ async fn read_multipart(
     }
 }
 
+/// A body that is one file (a DAV `PUT`) read as it arrives, up to `limit` bytes, as an upload's file part is: in
+/// memory up to 256 KiB, then spooled to `runtime/tmp/upload`, never held whole (SEC-FIL-04). Each chunk must come
+/// within `webapp_upload_idle_timeout`. A body refused or cut short leaves no file.
+pub(crate) async fn read_to_spool(
+    state: &HttpState,
+    body: axum::body::Body,
+    limit: usize,
+    file_name: &str,
+    content_type: &str,
+) -> Result<moqui_core::web::multipart::UploadedFile, BodyRefused> {
+    use futures_util::StreamExt as _;
+    use moqui_core::web::multipart::{BodySpool, MultipartError, Spool};
+
+    let refused = |err: MultipartError| match err {
+        MultipartError::SpoolFull => BodyRefused::SpoolFull,
+        other => BodyRefused::Failed(other.to_string()),
+    };
+    let mut spool = BodySpool::new(Spool::under(state.factory.runtime_dir()));
+    let mut stream = body.into_data_stream();
+    let mut pending: Vec<u8> = Vec::with_capacity(UPLOAD_FEED);
+    let mut total = 0usize;
+    loop {
+        let next = match state.limits.upload_idle {
+            Some(idle) => tokio::time::timeout(idle, stream.next())
+                .await
+                .map_err(|_| BodyRefused::TimedOut)?,
+            None => stream.next().await,
+        };
+        let done = match next {
+            Some(Ok(chunk)) => {
+                total += chunk.len();
+                if total > limit {
+                    return Err(BodyRefused::TooLarge(limit));
+                }
+                pending.extend_from_slice(&chunk);
+                false
+            }
+            Some(Err(_)) => return Err(BodyRefused::Malformed("the upload was cut short".to_string())),
+            None => true,
+        };
+        if pending.len() >= UPLOAD_FEED || done {
+            let chunk = std::mem::replace(&mut pending, Vec::with_capacity(UPLOAD_FEED));
+            let (back, fed) = tokio::task::spawn_blocking(move || {
+                let fed = spool.write(&chunk);
+                (spool, fed)
+            })
+            .await
+            .map_err(|err| BodyRefused::Failed(err.to_string()))?;
+            spool = back;
+            fed.map_err(refused)?;
+        }
+        if done {
+            return spool.finish(file_name, content_type).map_err(refused);
+        }
+    }
+}
+
 /// Why [`read_body`] or [`read_multipart`] stopped.
 pub(crate) enum BodyRefused {
     /// More than this many bytes.
@@ -1267,6 +1331,8 @@ pub(crate) enum BodyRefused {
     Malformed(String),
     /// An upload that could not be spooled.
     Failed(String),
+    /// The uploads being read fill the spool (`webapp_max_spool`).
+    SpoolFull,
 }
 
 impl BodyRefused {
@@ -1276,8 +1342,55 @@ impl BodyRefused {
             Self::TimedOut => plain(408, "the request body did not arrive in time"),
             Self::Malformed(why) => plain(400, why),
             Self::Failed(why) => internal_error(why),
+            Self::SpoolFull => plain(503, "the server is taking too many uploads; try again later"),
         }
     }
+}
+
+/// Whether the request names a user before its body is read: a session cookie of a signed-in session, or its own
+/// credentials (`api_key`, `login_key`, Basic) that hold, checked without logging in
+/// (`moqui_core::user::credential_user`). Asked of an upload that may be larger than an anonymous one (SEC-RTE-07);
+/// a refused credential counts for web protection as a refused login does.
+async fn upload_has_user(state: &HttpState, headers: &axum::http::HeaderMap, client: std::net::IpAddr) -> bool {
+    let header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string)
+    };
+    let session = crate::notws::session_cookie(headers);
+    let (api_key, login_key, authorization) = (header("api_key"), header("login_key"), header("authorization"));
+    if session.is_none() && api_key.is_none() && login_key.is_none() && authorization.is_none() {
+        return false;
+    }
+    let factory = Arc::clone(&state.factory);
+    let guard = Arc::clone(&state.guard);
+    let found = admission::run(
+        Arc::clone(&state.factory),
+        Arc::clone(&state.guard),
+        state.guard.conf().queue_timeout,
+        move || {
+            if let Some(session) = session {
+                if matches!(crate::notws::user_of(&factory, &session), Ok(Some(_))) {
+                    return true;
+                }
+            }
+            let user = moqui_core::user::with_client_ip(&client.to_string(), || {
+                moqui_core::user::credential_user(
+                    api_key.as_deref(),
+                    login_key.as_deref(),
+                    authorization.as_deref(),
+                    true,
+                )
+            });
+            if moqui_core::web::take_auth_failure() {
+                guard.record(client, Event::AuthFailure);
+            }
+            matches!(user, Ok(Some(_)))
+        },
+    )
+    .await;
+    matches!(found, Ok(true))
 }
 
 /// The request body, up to `limit` bytes and within `webapp_body_timeout`.
