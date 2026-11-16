@@ -2465,8 +2465,10 @@ pub(super) fn test_failure(step: &str, place: &str, text: &str, own: &[String]) 
 pub(super) fn test_failure_kind(text: &str) -> &'static str {
     let lower = text.to_ascii_lowercase();
     let has = |words: &[&str]| words.iter().any(|word| lower.contains(word));
-    if lower.contains(INTERNAL_SERVER) || has(&["allowed-hosts", "link-local address", "internal address"]) {
-        "the server's address is not allowed here"
+    if has(&["allowed-hosts"]) {
+        "the host is not in email-client allowed-hosts"
+    } else if lower.contains(INTERNAL_SERVER) || has(&["link-local address", "internal address"]) {
+        "the host is an internal address, which this server may not use"
     } else if has(&["resolve", "looked up", "lookup", "not known", "no address"]) {
         "the host name was not found"
     } else if has(&["tls", "certificate", "handshake", "ssl"]) {
