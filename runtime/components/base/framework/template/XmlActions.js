@@ -169,7 +169,10 @@
         ]);
     };
 
-    const searchFormLines = (listName, node) => {
+    // A find whose entity-name is expanded (a generic tool's ${aen}) has its entity named by the request: its search form
+    // takes no condition on an encrypted field (EntityFind.generic_input, plans/Security-Review-Medium.md SEC-DAT-01).
+    const searchFormLines = (listName, node, findNode) => {
+        const generic = String(attr(findNode, "entity-name") || "").includes("${") ? "true" : "false";
         const input = has(node, "input-fields-map") ? attr(node, "input-fields-map") : "context";
         let defs = "null";
         const defaults = child(node, "default-parameters");
@@ -186,7 +189,7 @@
         return js`
             if (true) {
                 ${requireLine}
-                ${listName}_xafind = ${listName}_xafind.searchFormMap(${input}, ${defs}, ${jsString(attr(node, "skip-fields"))}, ${jsString(attr(node, "default-order-by"))}, ${paginate});
+                ${listName}_xafind = ${listName}_xafind.searchFormMap(${input}, ${defs}, ${jsString(attr(node, "skip-fields"))}, ${jsString(attr(node, "default-order-by"))}, ${paginate}, ${generic});
             }
         `;
     };
@@ -571,7 +574,7 @@
             // Keep the find in context too: later screen sections read its executed SQL.
             return js`
                 ${list}_xafind = ${findPrefix(node)};
-                ${sfi ? searchFormLines(list, sfi) : ""}
+                ${sfi ? searchFormLines(list, sfi, node) : ""}
                 ${pageLines}
                 ${list} = ${run};
                 ${dateFilters}
@@ -597,7 +600,7 @@
             if (!sfi) return `${attr(node, "count-field")} = ${find}.count();`;
             return js`
                 var _count_xafind = ${find};
-                ${searchFormLines("_count", sfi)}
+                ${searchFormLines("_count", sfi, node)}
                 ${attr(node, "count-field")} = _count_xafind.count();
             `;
         }),

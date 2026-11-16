@@ -868,6 +868,12 @@ interface MoquiUserFacade {
     getVisitUserId(): string | null;
     /** Whether the login key logged its user in; a key that does not adds an error message. */
     loginUserKey(loginKey: string): boolean;
+    /** The old password of a password change, behind the login gate: true when it is the current password or the reset password still in date. A null or unknown userId, a locked or terminated account and a wrong password are all false and take as long; a wrong one counts as a failed login. */
+    checkOldPassword(userId: string | null, oldPassword: string | null): boolean;
+    /** Whether this request comes from this machine (a loopback peer straight to the listener, no proxy's forwarding header), so the first administrator's form needs no setup secret. */
+    readonly initialAdminLocal: boolean;
+    /** Whether this request may create the first administrator: initialAdminLocal, or setupSecret is the one-time secret of the server's startup log. */
+    initialAdminAllowed(setupSecret: string | null): boolean;
     /** With nobody logged in the session becomes anonymous; whether this call did that. */
     loginAnonymousIfNoUser(): boolean;
     /** Such as "This Month (2026-11-01 to 2026-11-30)". */
@@ -1765,6 +1771,8 @@ interface MoquiWebUtilities {
     isSameOriginRedirect(url: string, host?: string | null): boolean;
     lastPathSegment(path: string): string;
     isRestrictedGenericEntity(entityName: string): boolean;
+    /** isRestrictedGenericEntity, or an entity only its own services write: a generic tool's write refuses it. */
+    isGenericWriteRefused(entityName: string): boolean;
     /** The response text of a POST of the body, or of a GET with none. */
     simpleHttpStringRequest(location: string, requestBody?: string | null, contentType?: string | null): string | null;
     /** The response text of a POST of the parameters as a form. */

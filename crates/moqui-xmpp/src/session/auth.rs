@@ -283,14 +283,27 @@ impl Session {
                 let username = jids::unescape_node(pending.scram.username());
                 let credential = pending.credential_ids.get(index).filter(|id| !id.is_empty()).cloned();
                 match self.account_of(&username).await {
-                    Some(account) => {
+                    Some(account) if self.signed_in(&account, credential.as_deref()).await => {
                         self.succeed(pending.sasl2, account, credential, server_final, pending.request)
                             .await
                     }
-                    None => self.sasl_failure(pending.sasl2, "not-authorized").await,
+                    _ => self.sasl_failure(pending.sasl2, "not-authorized").await,
                 }
             }
             Err(_) => self.sasl_failure(pending.sasl2, "not-authorized").await,
+        }
+    }
+
+    /// Whether the account may sign in from this session's peer by the app password the session verified itself
+    /// (SCRAM, FAST): the backend's [`crate::backend::Backend::sign_in`], which checks the account's `ipAllowed` and
+    /// records the sign-in (SEC-COM-11, SEC-COM-22). PLAIN is checked and recorded by its own service.
+    async fn signed_in(&self, account: &Account, credential: Option<&str>) -> bool {
+        match self.server.backend.sign_in(&account.username, self.peer, credential).await {
+            Ok(()) => true,
+            Err(err) => {
+                tracing::warn!("XMPP sign-in of {} from {} refused: {err}", account.username, self.peer);
+                false
+            }
         }
     }
 
@@ -381,6 +394,9 @@ impl Session {
             return self.sasl_failure(true, "not-authorized").await;
         };
         let credential = Some(backend::text(&token, "appPasswordId")).filter(|id| !id.is_empty());
+        if !self.signed_in(&account, credential.as_deref()).await {
+            return self.sasl_failure(true, "not-authorized").await;
+        }
         let responder = fast::responder(&backend::text(&token, "token"), &binding);
         if request.invalidate_token {
             let _ = self

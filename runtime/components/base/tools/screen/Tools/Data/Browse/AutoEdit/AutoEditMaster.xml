@@ -24,13 +24,15 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="edit"><default-response url="."/></transition>
     <transition name="update">
         <actions>
-            <set field="entityName" from="aen"/><if condition="WebUtilities.isRestrictedGenericEntity(aen)"><message error="true">Entity ${entityName} is not available through this tool</message><return/></if>
+            <set field="entityName" from="aen"/><if condition="WebUtilities.isGenericWriteRefused(aen)"><message error="true">Entity ${entityName} is not available through this tool</message><return/></if>
             <service-call name="update#${aen}" in-map="true"/></actions>
         <default-response url="." parameter-map="ec.entity.getEntityDefinition(aen).getPrimaryKeys(context)"/>
     </transition>
     <!-- not read-only: output file writes on the server, so it takes a POST with the session token (SEC-TLS-01) -->
     <transition name="export" authz-action="update">
         <actions>
+            <!-- as update: the parent's check is in its actions, which a transition does not run (SEC-TLS-05) -->
+            <set field="entityName" from="aen"/><if condition="WebUtilities.isRestrictedGenericEntity(aen)"><message error="true">Entity ${entityName} is not available through this tool</message><return/></if>
             <entity-find-one entity-name="${aen}" value-field="entityValue"/>
             <script><![CDATA[
                 const pkMap = entityValue.getPrimaryKeys()

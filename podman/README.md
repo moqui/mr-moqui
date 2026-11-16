@@ -48,14 +48,14 @@ A system-wide Podman uses `sudo systemctl start podman.socket` instead. Each com
 | `moqui-mysql-opensearch-compose.yml` | moqui, MySQL 9.5, and OpenSearch 3.4.0. |
 
 ```sh
-cp podman/env.example podman/.env   # then change the passwords
+cp podman/env.example podman/.env   # then set the passwords
 podman compose -f podman/moqui-compose.yml up -d
 podman exec moqui-moqui-1 curl -fsS http://127.0.0.1:8080/health
 ```
 
 `/health` answers `{"ready":true}` only for loopback and for addresses in `webapp_status_ips` (default `127.0.0.1`). The check above runs inside the container, so it is loopback. A curl from the host to the published port is seen as the Podman bridge address and gets 404 until that address is added to `webapp_status_ips`.
 
-`podman/.env` supplies `MOQUI_DB_NAME`, `MOQUI_DB_USER`, `MOQUI_DB_PASSWORD`, and `MOQUI_DB_ROOT_PASSWORD`. The defaults are `moqui` / `moquiroot`, for a local try. Postgres `5432` and MySQL `3306` publish on `127.0.0.1` only. OpenSearch is not published.
+`podman/.env` supplies `MOQUI_DB_NAME`, `MOQUI_DB_USER`, `MOQUI_DB_PASSWORD`, and `MOQUI_DB_ROOT_PASSWORD`. The name and user default to `moqui`; the passwords have no default, and an external-database stack refuses to start until `MOQUI_DB_PASSWORD` (and, for MySQL, `MOQUI_DB_ROOT_PASSWORD`) is set. The database ports are not published; each file has a commented `ports` line that publishes Postgres `5432` or MySQL `3306` on `127.0.0.1` when you need to reach it from the host. OpenSearch is not published.
 
 An empty `entity_ds_sslmode` means verified TLS. The database containers do not serve a certificate this client can verify, so the external stacks set `entity_ds_sslmode=disable` on the compose network. For a real server with TLS, set `verify-full` and `entity_ds_sslrootcert` to its CA file.
 

@@ -151,3 +151,58 @@ fn a_document_definition_write_drops_the_cached_info() {
     let after = super::document::document_info(&facade, "CACHED").unwrap();
     assert!(!std::sync::Arc::ptr_eq(&before, &after), "the field write was seen");
 }
+
+/// An encrypted field is left out of a document, whose rows are read with authorization off, decrypted and indexed
+/// (plans/Security-Review-Medium.md SEC-DAT-02); an alias function from a `DataDocumentField` row is one of the fixed
+/// list, not any SQL function (SEC-DAT-04).
+#[test]
+fn a_document_leaves_out_encrypted_fields_and_takes_only_the_listed_functions() {
+    let facade = crate::testing::open();
+    create_row(
+        &facade,
+        "moqui.entity.document.DataDocument",
+        &[
+            ("dataDocumentId", "SYNCS"),
+            ("primaryEntityName", "moqui.entity.sync.EntitySync"),
+        ],
+    );
+    for (seq, path) in [("01", "entitySyncId"), ("02", "targetUsername"), ("03", "targetPassword")] {
+        create_row(
+            &facade,
+            "moqui.entity.document.DataDocumentField",
+            &[("dataDocumentId", "SYNCS"), ("fieldSeqId", seq), ("fieldPath", path)],
+        );
+    }
+    let info = super::document::document_info(&facade, "SYNCS").unwrap();
+    let aliases: Vec<&str> = info.root.fields.iter().map(|field| field.alias.as_str()).collect();
+    assert_eq!(aliases, ["entitySyncId", "targetUsername"]);
+    assert_eq!(info.omitted, ["targetPassword (moqui.entity.sync.EntitySync)"]);
+
+    create_row(
+        &facade,
+        "moqui.entity.document.DataDocument",
+        &[
+            ("dataDocumentId", "FUNCS"),
+            ("primaryEntityName", "moqui.test.TestEntity"),
+        ],
+    );
+    create_row(
+        &facade,
+        "moqui.entity.document.DataDocumentField",
+        &[
+            ("dataDocumentId", "FUNCS"),
+            ("fieldSeqId", "01"),
+            ("fieldPath", "testMedium"),
+            ("functionName", "pg_read_file"),
+        ],
+    );
+    let err = super::document::document_info(&facade, "FUNCS").unwrap_err();
+    assert!(err.to_string().contains("pg_read_file"), "{err}");
+    let mut field = facade.make_value("moqui.entity.document.DataDocumentField").unwrap();
+    field.set("dataDocumentId", moqui_lib::object::Value::string("FUNCS"));
+    field.set("fieldSeqId", moqui_lib::object::Value::string("01"));
+    field.set("functionName", moqui_lib::object::Value::string("max"));
+    field.update(&facade).unwrap();
+    let info = super::document::document_info(&facade, "FUNCS").unwrap();
+    assert_eq!(info.root.fields[0].function.as_deref(), Some("max"));
+}

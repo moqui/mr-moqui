@@ -31,7 +31,7 @@ default properties, so set it with `-D` or in the environment.
 | --- | --- |
 | `MoquiConf.xml` | Puts `screen/Disabled.xml` in place of Tools' SQL, Data Load, Export and Snapshots, Database Speed Test, Activity, Queries and Connections, Service Run, and Load testing (Tools › Load and its screens), and leaves them out of the menus. Speed Test and the Data Load check run as the screen renders, so VIEW-only would not stop them. |
 | `MoquiConf.xml` | Turns off SSH (`ssh-server enabled="false"`), WebDAV, the MCP server and client, A2A both ways and the LLM gateway, whatever their properties say. Mail connects only to `localhost`, so no one syncs a real mailbox into Comms, where every visitor would read it. |
-| `data/DemoSecurityData.xml` (seed) | ADMIN is VIEW-only on Tools, System (Monitor with it), the `/moqui` REST API, EntitySync and SystemMessage services, the `/resources` command service (so refused), git repositories (no push or mirrors), report git sync and report webhooks. ADMIN loses the search and dashboard proxies, `ADMIN_PASSWORD` (another user's password without the old one), SFTP and git over SSH, telemetry ingest, and report files written on the server. |
+| `data/DemoSecurityData.xml` (seed) | ADMIN is VIEW-only on Tools, System (Monitor with it), the `/moqui` REST API, EntitySync and SystemMessage services, the `/resources` command service (so refused), git repositories (no push or mirrors), report git sync and report webhooks, the data load wrap and the Dev AIDE's project list. ADMIN loses the search and dashboard proxies, `ADMIN_PASSWORD` (another user's password without the old one), SFTP and git over SSH, telemetry ingest, report files written on the server, recovery and runtime settings, the Admin app's writes (grants and memberships, accounts, backups and their downloads, connections, imports and exports, settings, jobs, the agents' Constitution), the agents' and eval administration, chat bridges, phone trunks, CI runners, session replays and hosted mail accounts. |
 | `data/DemoUserData.xml` (demo) | John Doe leaves ADMIN_ADV: no login as another user, SQL, SSH admin shell or load testing. ADMIN_ADV is a privileged group, so a member of ADMIN cannot add him back. |
 | `service/Demo.secas.xml` | Before a password change or reset, a sign-in factor, or a change of username, disabled or require-password-change, `demo.DemoServices.refuse#SharedAccountChange` stops it for a user in `demo_shared_user_ids` (default `EX_JOHN_DOE`). |
 
@@ -39,8 +39,10 @@ The security data is `seed`, not `demo` as in Moqui Java's `moqui-demo`: each se
 seed and then this, so the lock-down holds. The John Doe row is `demo` because a seed load without the demo users would
 fail its foreign key.
 
-Still open: every app, Tools views (Data's Grid and Browse show every entity), the System views, Dashboards and reports,
-Assist, and the browser terminal (`/termws`, the same screens checked as the user). `/notws` and PDF stay on.
+Still open: every app, Tools views (Data's Grid and Browse show every entity), the System views, the Admin app's views,
+Dashboards, CalcGrid and reports, Comms, Assist, and the browser terminal (`/termws`, the same screens checked as the user).
+`/notws` and PDF stay on. `test/Demo.spec.js` lists what ADMIN keeps, and fails when the base seed gives ADMIN a grant or
+permission the demo data neither ends nor names there.
 
 ## Running a demo server
 

@@ -49,6 +49,9 @@ const ENTITY_SYNC: &str = "moqui.entity.sync.EntitySync";
 const ARTIFACT_DETAIL: &str = "moqui.entity.sync.EntitySyncArtifactDetail";
 const DAY_MILLIS: i64 = 24 * 60 * 60 * 1000;
 const DEFAULT_DELAY_MILLIS: i64 = 300_000;
+/// The most records one `get#EntitySyncData` reads, whatever `recordThreshold` asks: the answer is one string in memory
+/// (plans/Security-Review-Low.md SEC-DAT-08).
+const MAX_RECORD_THRESHOLD: i64 = 10_000;
 
 /// `run#EntitySync`.
 pub(super) fn run_sync(
@@ -232,6 +235,10 @@ pub(super) fn put_data(
         // A sync partner is not an admin: the loader refuses identity-admin and secret-config records, root or
         // nested, and service elements.
         restrict_sensitive_entities: true,
+        // ... and a UserAccount record that sets a password hash
+        refuse_password_fields: true,
+        // ... and a service job, which runs with authorization off
+        refused_packages: vec!["moqui.service.job".to_string()],
         ..LoadOptions::default()
     };
     let loaded = load_entity_xml_text(facade, PUT_DATA, &text, &options)?;
@@ -254,7 +261,9 @@ pub(super) fn get_data(
     let last_success = millis_of(parameters.get("lastSuccessfulSyncTime"));
     // A split of zero would not move forward.
     let split = integer_of(parameters.get("syncSplitMillis")).unwrap_or(1000).max(1);
-    let threshold = integer_of(parameters.get("recordThreshold")).unwrap_or(1000);
+    let threshold = integer_of(parameters.get("recordThreshold"))
+        .unwrap_or(1000)
+        .min(MAX_RECORD_THRESHOLD);
     let delay = integer_of(parameters.get("delayBufferMillis")).unwrap_or(DEFAULT_DELAY_MILLIS);
 
     // Without a lastSuccessfulSyncTime this gets everything up to now less delayBufferMillis in one split, as the Java.
@@ -272,6 +281,12 @@ pub(super) fn get_data(
     while record_count < threshold && split_thru <= max_sync {
         for entry in &entries {
             let entity_name = map_text(entry, "entityName");
+            // a sync partner is not an admin: never the entities generic access does not read (login keys, sign-in
+            // factors, secret configuration, the audit entities), and a replica holds no password field
+            if crate::entity::sensitive::is_restricted_entity_or_view(facade, &entity_name) {
+                tracing::error!("get#EntitySyncData: entity {entity_name} is not available to a sync partner, skipped");
+                continue;
+            }
             let mut find = facade
                 .find(&entity_name)?
                 .condition(Condition::greater("lastUpdatedStamp", stamp(split_from)))
@@ -387,11 +402,12 @@ fn write_records(
     let mut held = Vec::new();
     while let Some(value) = cursor.next_value()? {
         if beside {
-            xml.push_str(&crate::entity::query_rest::xml_element(
+            xml.push_str(&crate::entity::query_rest::guarded_xml_element(
                 facade,
                 entity_name,
                 value.fields(),
                 levels,
+                crate::entity::query_rest::RecordGuard::Replica,
             )?);
         } else {
             held.push(value);
@@ -399,11 +415,12 @@ fn write_records(
     }
     cursor.close()?;
     for value in held {
-        xml.push_str(&crate::entity::query_rest::xml_element(
+        xml.push_str(&crate::entity::query_rest::guarded_xml_element(
             facade,
             entity_name,
             value.fields(),
             levels,
+            crate::entity::query_rest::RecordGuard::Replica,
         )?);
     }
     Ok(())

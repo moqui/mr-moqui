@@ -423,7 +423,10 @@ pub(crate) async fn listen(
             limits,
             guard: Arc::clone(&guard),
         }));
-    let web = WebApp::new(app, limits, Arc::clone(&guard));
+    let web = WebApp {
+        allowed_hosts: serve::allowed_hosts_property(),
+        ..WebApp::new(app, limits, Arc::clone(&guard))
+    };
     // git at a page's URL on a public-site host (docs/interfaces/Git-Hosting.md, Clone URLs)
     #[cfg(feature = "git")]
     let web = {

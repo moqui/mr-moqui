@@ -165,6 +165,9 @@ the user services call.
 | `loginRules` | The login policy of the conf: `{maxFailures, disableMinutes, historyLimit, emailExpireHours, emailRequireChange}` |
 | `hashPassword(password)` | A new argon2 password hash |
 | `passwordsMatch(plain, stored, hashType, salt, base64)` | Whether the plain text matches a stored hash, argon2 or a legacy digest; an empty stored hash never matches |
+| `checkOldPassword(userId, oldPassword)` | The old password of a password change (`update#Password`), behind the gate of a password login (lock window, terminate date, one check at a time): true when it is the current password or the reset password while in date. A null or unknown user, a locked or terminated account and a wrong password are all false and take as long; a wrong one counts as a failed login |
+| `initialAdminLocal` | Whether this request comes from this machine (a loopback peer straight to the listener, no proxy's forwarding header), so the first administrator's form needs no setup secret |
+| `initialAdminAllowed(setupSecret)` | Whether this request may create the first administrator: `initialAdminLocal`, or `setupSecret` is the one-time secret the server wrote to its startup log while no account exists (dashes, spaces and case aside) |
 | `singleUseCodeHash(code)` | The stored form of a single-use code |
 | `randomCode(width)` | A random number of `width` digits (6) as text, zero padded |
 | `randomString(length)` | Random URL-safe text of the length |
@@ -523,7 +526,7 @@ the find as it was, so it can run again.
 | `conditionToField(field, operator, toField)` | One field against another |
 | `conditionDate(fromField, thruField, moment)` | Rows in effect at the moment (now when empty): from is null or not after it, thru is null or after it |
 | `havingCondition(condition)` | A condition on an aggregate alias of a view entity; null is skipped |
-| `searchFormMap(inputs, defaultParameters, skipFields, defaultOrderBy, alwaysPaginate)` | The conditions, order and page a search form's inputs give (`name`, `name_op`, `name_not`, `name_ic`, `name_from`, `name_thru`, `orderByField`, `pageIndex`, `pageSize`); what it applied is put in the context |
+| `searchFormMap(inputs, defaultParameters, skipFields, defaultOrderBy, alwaysPaginate, genericInput)` | The conditions, order and page a search form's inputs give (`name`, `name_op`, `name_not`, `name_ic`, `name_from`, `name_thru`, `orderByField`, `pageIndex`, `pageSize`); what it applied is put in the context. The inputs take no condition or order on a password field, nor an order on an encrypted field or a `skipFields` one; an encrypted field takes only an `equals`, and none at all with `genericInput` (a find whose entity the request named) |
 | `searchFormInputs(inputFieldsMapName, defaultOrderBy, alwaysPaginate)` | `searchFormMap` over the context, or over the map of that name in it |
 | `searchFormInputs(inputFieldsMapName, defaultParameters, defaultOrderBy, alwaysPaginate)` | The same with default parameters |
 | `requireSearchFormParameters(require)` | The find gives nothing unless the search form inputs give a condition |
@@ -1316,7 +1319,7 @@ Members Moqui Java does not have.
 |---|---|
 | `ec` | `search`, `llm` |
 | `ec.context` | Property reads and writes, `in`, `delete`, `Object.keys` |
-| `ec.user` | `machineTimeZone`, `passwordRules`, `loginRules`, `endVisit`, `hashPassword`, `passwordsMatch`, `singleUseCodeHash`, `randomCode`, `randomString`, `totpSecret`, `totpCodeValid`, `totpUri`, `timestampMillis` |
+| `ec.user` | `machineTimeZone`, `passwordRules`, `loginRules`, `endVisit`, `hashPassword`, `passwordsMatch`, `checkOldPassword`, `initialAdminLocal`, `initialAdminAllowed`, `singleUseCodeHash`, `randomCode`, `randomString`, `totpSecret`, `totpCodeValid`, `totpUri`, `timestampMillis` |
 | `ec.l10n` | `getAvailableTimeZones`, `getAvailableLocales`, the time zone argument of `format` |
 | `ec.resource` | `makeChangeSet`, `putContent`, `getLastChange`, `getChildChanges`, `getChangeLog`, `getTreeSize`, `restoreVersion`, `getVersionBytes`, `textDiff`, `readLines`, `digest`, `digestText`, `hmac`, `gunzip`, `extractArchive`, `writeZip`, `writeTarGz`, `extractText`, `readSheetPreview`, `makeThumbnail`, `makePdfPreview`, `imageAvailable`, `makeGrant`, `checkGrant`, `runTokenCommand`, `markdownHtml`, `code128Svg`, `barcodeSvg`, `parseGs1`, `isValidGs1CheckDigit`, `theme`; version notes on a reference's `putText`, `putBytes` and `putStream`, and `getVersionDiff` |
 | `ec.artifactExecution` | `runAsSystem`, `runAsUser`, `isPermitted`, `isPermittedOwn` |

@@ -1522,6 +1522,10 @@ fn serve_thread(
             );
         }
     }
+    // While no account exists, the setup secret that creates the first administrator from another machine (SEC-WEB-08)
+    if !matches!(bind, ListenBind::None) {
+        moqui_core::user::log_initial_admin_setup(&factory);
+    }
     let (cluster_address, posts) = match process.cluster_edge.as_ref() {
         Some(cluster) => (cluster.address(), cluster.posts()),
         None if matches!(bind, ListenBind::None) => (unbound, std::sync::Arc::default()),

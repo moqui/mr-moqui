@@ -222,6 +222,79 @@ fn entity_resources_keep_sensitive_entities_and_fields_out() {
     assert!(unauthorized(&err), "{err}");
 }
 
+/// A declared entity resource answers an encrypted field only as `<field>IsSet` (plans/Security-Review-Medium.md
+/// SEC-DAT-03, SEC-MAIL-04: `email/servers` gave mailbox passwords and refresh tokens), takes no condition on it
+/// (SEC-DAT-01), never reads without a limit (SEC-RTE-14), and does not write the entity audit log (SEC-RTE-03).
+#[test]
+fn entity_resources_answer_encrypted_fields_as_set_and_read_a_page_at_most() {
+    let dir = std::env::temp_dir().join(format!("moqui-rest-encrypted-{}", std::process::id()));
+    let _guard = DirGuard(dir.clone());
+    std::fs::create_dir_all(dir.join("service")).unwrap();
+    std::fs::write(
+        dir.join("service/enc.rest.xml"),
+        r#"<resource name="enc" require-authentication="false">
+                <resource name="syncs"><method type="get"><entity name="moqui.entity.sync.EntitySync" operation="list"/></method>
+                    <id name="entitySyncId"><method type="get"><entity name="moqui.entity.sync.EntitySync" operation="one"/></method></id></resource>
+                <resource name="enums"><method type="get"><entity name="moqui.basic.Enumeration" operation="list"/></method></resource>
+                <resource name="audit"><method type="post"><entity name="moqui.entity.EntityAuditLog" operation="create"/></method></resource>
+            </resource>"#,
+    )
+    .unwrap();
+    let facade = crate::testing::open();
+    let ctx = ExecutionContextFactory::test_context();
+    install(ctx.factory(), &[dir.join("service/enc.rest.xml")]);
+    ctx.factory().set_entity(facade.clone());
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    create(
+        &facade,
+        "moqui.entity.sync.EntitySync",
+        &[("entitySyncId", "S1"), ("targetUsername", "partner"), ("targetPassword", "sync-secret")],
+    );
+    create(&facade, "moqui.entity.sync.EntitySync", &[("entitySyncId", "S2")]);
+
+    let listed = run(&["enc", "syncs"], "get", &BTreeMap::new()).unwrap();
+    assert!(!format!("{listed:?}").contains("sync-secret"), "{listed:?}");
+    let one = run(&["enc", "syncs", "S2"], "get", &BTreeMap::new()).unwrap();
+    let Value::Map(one) = &one else { panic!("one {one:?}") };
+    assert_eq!(one.get("targetPasswordIsSet"), Some(&Value::Bool(false)), "{one:?}");
+    let one = run(&["enc", "syncs", "S1"], "get", &BTreeMap::new()).unwrap();
+    let Value::Map(one) = &one else { panic!("one {one:?}") };
+    assert_eq!(one.get("targetPasswordIsSet"), Some(&Value::Bool(true)), "{one:?}");
+    assert!(!one.contains_key("targetPassword"), "{one:?}");
+    let mut guess = BTreeMap::new();
+    guess.insert("targetPassword".to_string(), Value::string("wrong"));
+    let Value::List(rows) = run(&["enc", "syncs"], "get", &guess).unwrap() else {
+        panic!("a list")
+    };
+    assert_eq!(rows.len(), 2, "no condition on an encrypted field");
+
+    create(&facade, "moqui.basic.EnumerationType", &[("enumTypeId", "RT14")]);
+    for index in 0..120 {
+        create(
+            &facade,
+            "moqui.basic.Enumeration",
+            &[("enumId", format!("RT14_{index}").as_str()), ("enumTypeId", "RT14")],
+        );
+    }
+    let mut all = BTreeMap::new();
+    all.insert("pageNoLimit".to_string(), Value::string("true"));
+    all.insert("enumTypeId".to_string(), Value::string("RT14"));
+    let Value::List(rows) = run(&["enc", "enums"], "get", &all).unwrap() else {
+        panic!("a list")
+    };
+    assert_eq!(rows.len(), 100, "pageNoLimit is not taken from a request");
+
+    let mut audit = BTreeMap::new();
+    audit.insert("changedEntityName".to_string(), Value::string("moqui.security.UserAccount"));
+    let err = run(&["enc", "audit"], "post", &audit).unwrap_err();
+    assert_eq!(
+        crate::context::ErrorKind::of(&err),
+        crate::context::ErrorKind::Unauthorized,
+        "{err}"
+    );
+}
+
 #[test]
 fn service_metadata_resolves_named_resources_ids_and_extra_paths_without_executing() {
     let dir = std::env::temp_dir().join(format!("moqui-rest-metadata-{}", std::process::id()));

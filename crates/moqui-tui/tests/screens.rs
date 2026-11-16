@@ -358,6 +358,7 @@ fn the_setup_dialog_is_drawn_with_its_fields_and_rules() {
         min_length: 12,
         min_digits: 1,
         min_others: 1,
+        secret_required: false,
     });
     let mut session = Session::start(GALLERY_LIST_PATH);
     session.set_login_name(Some("admin".to_string()));

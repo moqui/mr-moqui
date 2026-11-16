@@ -494,6 +494,40 @@ fn controller_status(body: &str) -> Ran {
     }
 }
 
+/// Why the decision an action names does not allow it to run, or None when it does: the decision is of the same
+/// incident, action, target and adapter, and Approved (by an operator, or by an automatic policy); a Blocked decision
+/// allows only what changes nothing (escalation).
+fn refused_by_decision(
+    entity: &EntityFacade,
+    row: &EntityValue,
+    action: Option<Action>,
+) -> Result<Option<String>, Error> {
+    let decision_id = field(row, "decisionId");
+    let decision = if decision_id.is_empty() {
+        None
+    } else {
+        entity
+            .find(super::DECISION)?
+            .eq("decisionId", Value::string(&decision_id))
+            .one()?
+    };
+    let Some(decision) = decision else {
+        return Ok(Some("the action names no recovery decision".to_string()));
+    };
+    if ["incidentId", "action", "target", "adapterId"]
+        .iter()
+        .any(|name| field(&decision, name) != field(row, name))
+    {
+        return Ok(Some(format!("the action is not the one decision {decision_id} chose")));
+    }
+    let allowed = match field(&decision, "statusId").as_str() {
+        "Approved" => true,
+        "Blocked" => !action.is_some_and(Action::changes_system),
+        _ => false,
+    };
+    Ok((!allowed).then(|| format!("decision {decision_id} is not approved")))
+}
+
 /// Move an active action on: try a webhook again, poll a controller's status, time out past the deadline.
 pub(crate) fn advance(
     ec: &ExecutionContext,
@@ -523,7 +557,18 @@ pub(crate) fn advance(
     }
     let attempts = millis(row.get("attempts")).unwrap_or(0);
     match status.as_str() {
-        "Persisted" if attempts < MAX_ATTEMPTS => attempt(ec, entity, row, incident, contact, None, now),
+        "Persisted" if attempts < MAX_ATTEMPTS => {
+            // a row written around the services (a generic write, a load) has no decision that allows it, and an
+            // allowed one does not run while the emergency stop is on (plans/Security-Review-Medium.md SEC-TLS-11)
+            let action = Action::parse(&field(row, "action"));
+            if let Some(refused) = refused_by_decision(entity, row, action)? {
+                return apply(ec, entity, row, Ran::Failed(refused), now, attempts);
+            }
+            if action.is_some_and(Action::changes_system) && super::stopped(entity)? {
+                return Ok(());
+            }
+            attempt(ec, entity, row, incident, contact, None, now)
+        }
         "Running" => {
             let adapter_id = field(row, "adapterId");
             let Some(adapter) = adapters(entity)?.into_iter().find(|adapter| adapter.id == adapter_id) else {

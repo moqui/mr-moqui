@@ -70,7 +70,21 @@ function requesterKey() {
         return 'client:' + clientId + ':' + forwarded.slice(0, 64)
     return request.remoteAddr || 'service'
 }
+/* Each action's limits: attempts per requester in ten minutes, and per address (an email or a user name) in its window.
+   A sign-in ('session': startSession and completeSession) counts per requester, so one client cannot try one password
+   on many accounts, and per user name, so many clients cannot try many passwords on one (SEC-PSA-01); a person's few
+   sign-ins and second-factor steps stay well inside both. */
+const THROTTLE = {
+    verification: { requester: 20 },
+    session: {
+        requester: 20,
+        address: 10,
+        addressWindow: 600000,
+        message: 'Wait before signing in again',
+    },
+}
 function throttle(action, address) {
+    const limits = THROTTLE[action] || {}
     const key = action + ':ip:' + requesterKey()
     const attempt = (key, limit, windowMillis) =>
         ec.service
@@ -81,15 +95,19 @@ function throttle(action, address) {
             .requireNewTransaction(true)
             .call().result.allowed
     if (
-        !attempt(key, action === 'verification' ? 20 : 10, 600000) ||
+        !attempt(key, limits.requester || 10, 600000) ||
         (address &&
             !attempt(
                 action + ':address:' + String(address).trim().toLowerCase(),
-                3,
-                3600000,
+                limits.address || 3,
+                limits.addressWindow || 3600000,
             ))
     )
-        fail('Tarpit', 'Wait before requesting more account instructions')
+        fail(
+            'Tarpit',
+            limits.message ||
+                'Wait before requesting more account instructions',
+        )
 }
 function verified() {
     const ua = ec.user.userAccount
@@ -533,8 +551,15 @@ function execute(op, p) {
             throttle('verification')
             return verifyRegistration(p)
         }
-        if (op === 'startSession' || op === 'completeSession')
+        if (op === 'startSession' || op === 'completeSession') {
+            throttle(
+                'session',
+                p.username ||
+                    ec.web?.sessionAttributes?.moquiPreAuthcUsername ||
+                    null,
+            )
             return startSession(p)
+        }
         if (op === 'issueDelegation') return issueDelegation(p)
         if (op === 'requestRecovery') {
             throttle('recovery', p.emailAddress)

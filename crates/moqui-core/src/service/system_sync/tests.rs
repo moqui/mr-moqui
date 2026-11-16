@@ -126,6 +126,48 @@ fn errors(context: &ExecutionContext) -> String {
     context.message().errors().join("\n")
 }
 
+/// A sync partner is not an admin: `get#EntitySyncData` gives no restricted entity and no password field, and
+/// `put#EntitySyncData` takes no `UserAccount` password (plans/Security-Review-Low.md SEC-DAT-08).
+#[test]
+fn entity_sync_data_keeps_login_keys_and_password_hashes_from_a_partner() {
+    let setup = setup("entity-sync");
+    let _entered = setup.context.enter();
+    let _authz = setup.context.disable_authz();
+    let facade = &setup.facade;
+    seed(
+        facade,
+        "moqui.security.UserAccount",
+        &[("userId", "U1"), ("username", "u1"), ("currentPassword", "stored-hash")],
+    );
+    seed(facade, "moqui.security.UserLoginKey", &[("loginKey", "key-hash"), ("userId", "U1")]);
+    let include = |name: &str| {
+        Value::Map([("entityName".to_string(), Value::string(name))].into_iter().collect())
+    };
+    let mut parameters = params(&[("delayBufferMillis", "-60000")]);
+    parameters.insert(
+        "entityIncludeList".to_string(),
+        Value::List(vec![include("moqui.security.UserAccount"), include("moqui.security.UserLoginKey")]),
+    );
+    let out = super::entity_sync::get_data(&parameters, facade).unwrap();
+    let data = out.get("entityData").map(to_plain_string).unwrap_or_default();
+    assert!(data.contains("u1"), "{data}");
+    assert!(!data.contains("stored-hash") && !data.contains("key-hash"), "{data}");
+
+    let put = params(&[(
+        "entityData",
+        r#"<entity-facade-xml><moqui.security.UserAccount userId="U9" username="u9" currentPassword="chosen"/></entity-facade-xml>"#,
+    )]);
+    let err = super::entity_sync::put_data(&put, facade).unwrap_err();
+    assert!(err.to_string().contains("password"), "{err}");
+    // nor a service job, which runs with authorization off
+    let job = params(&[(
+        "entityData",
+        r#"<entity-facade-xml><moqui.service.job.ServiceJob jobName="SyncPlanted" serviceName="org.moqui.impl.BasicServices.noop#Service"/></entity-facade-xml>"#,
+    )]);
+    let err = super::entity_sync::put_data(&job, facade).unwrap_err();
+    assert!(err.to_string().contains("moqui.service.job.ServiceJob"), "{err}");
+}
+
 #[test]
 fn a_queued_message_is_sent_received_and_consumed_by_the_direct_local_sender() {
     let setup = setup("direct");

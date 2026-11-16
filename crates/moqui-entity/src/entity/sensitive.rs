@@ -13,7 +13,9 @@
  */
 
 //! The sensitive entities and `UserAccount` fields of Java's `WebUtilities`: what generic entity REST, Service REST
-//! entity resources, the generic tools and the data loader keep away from a request.
+//! entity resources, the generic tools and the data loader keep away from a request. [`generic_access`] is the one
+//! rule they share for an entity: whether generic access reads it, writes it, and which of its fields are secret (the
+//! password fields, by name or origin) or encrypted, which no generic answer, condition, order or export holds.
 
 use std::collections::BTreeMap;
 
@@ -97,6 +99,21 @@ const HOST_CONFIG_ENTITY_KEYS: &[&str] = &[
     "databasetype",
 ];
 
+/// Entities the generic tools, REST and request loads read but never write, an ADMIN's included: the entity audit log
+/// (`EntityAuditLog`), the evidence of every audited change, which the framework and the services that record their own
+/// changes write (SEC-RTE-03); and Monitor's recovery actions, adapters, policies and emergency stop, its instance drains
+/// and its ingest keys, whose `MONITOR_*` permissions only their own services check, so a generic write of a row would
+/// run a recovery action, plant a working ingest key or lift the stop without them (SEC-TLS-11).
+const SERVICE_WRITTEN_ENTITY_KEYS: &[&str] = &[
+    "entityauditlog",
+    "recoveryaction",
+    "recoveryadapter",
+    "recoverypolicy",
+    "recoverycontrol",
+    "instancedrain",
+    "ingestkey",
+];
+
 /// The text after the last `.`, in lower case.
 fn simple_entity_key(entity_name: &str) -> String {
     let name = entity_name.trim();
@@ -135,6 +152,17 @@ pub fn is_restricted_generic_entity(entity_name: &str) -> bool {
         || is_secret_config_entity(entity_name)
         || is_audit_entity(entity_name)
         || is_host_config_entity(entity_name)
+}
+
+/// The entities only their own services write, though the generic tools read them ([`SERVICE_WRITTEN_ENTITY_KEYS`]).
+pub fn is_service_written_entity(entity_name: &str) -> bool {
+    SERVICE_WRITTEN_ENTITY_KEYS.contains(&simple_entity_key(entity_name).as_str())
+}
+
+/// Entities the generic tools, REST and request loads do not write: the restricted ones
+/// ([`is_restricted_generic_entity`]) and those only their own services write ([`is_service_written_entity`]).
+pub fn is_generic_write_refused(entity_name: &str) -> bool {
+    is_restricted_generic_entity(entity_name) || is_service_written_entity(entity_name)
 }
 
 /// The hosted-instance configuration entities that name a command, a script or a service ([`HOST_CONFIG_ENTITY_KEYS`]).
@@ -263,6 +291,96 @@ pub fn secret_fields(facade: &crate::entity::EntityFacade, entity_name: &str) ->
     }
 }
 
+/// The fields of `entity_name` stored encrypted (`encrypt="true"`): on a view, each column alias of an encrypted member
+/// field, which the view inherits.
+#[must_use]
+pub fn encrypted_fields(facade: &crate::entity::EntityFacade, entity_name: &str) -> Vec<String> {
+    let Some(entity) = definition_of(facade, entity_name) else {
+        return Vec::new();
+    };
+    if entity.is_view {
+        entity
+            .aliases
+            .iter()
+            .filter(|alias| alias.encrypt)
+            .map(|alias| alias.name.clone())
+            .collect()
+    } else {
+        entity
+            .fields
+            .iter()
+            .filter(|field| field.encrypt)
+            .map(|field| field.name.clone())
+            .collect()
+    }
+}
+
+/// What generic entity access (entity REST, Service REST entity resources, search forms, data documents, the data
+/// writer, Dev AIDE's export) may do with one entity: the one rule they share.
+#[derive(Debug, Clone, Default)]
+pub struct GenericAccess {
+    /// Not restricted, nor a view over a restricted entity ([`is_restricted_entity_or_view`]).
+    pub read: bool,
+    /// Neither restricted nor written only by its own services ([`is_generic_write_refused`]).
+    pub write: bool,
+    /// The password fields, by name or by origin through a view ([`secret_fields`]): never answered, never a condition.
+    pub secret: Vec<String>,
+    /// The encrypted fields ([`encrypted_fields`]): answered only as whether one is set, never a condition.
+    pub encrypted: Vec<String>,
+}
+
+impl GenericAccess {
+    /// A field generic access never answers in clear or takes a condition or order on: a password field (by name on
+    /// any entity, or by origin through a view) or an encrypted one.
+    #[must_use]
+    pub fn hidden(&self, field: &str) -> bool {
+        USER_ACCOUNT_SECRET_FIELDS.contains(&field)
+            || self.secret.iter().any(|name| name == field)
+            || self.encrypted.iter().any(|name| name == field)
+    }
+
+    /// A password field, by name on any entity or by origin through a view.
+    #[must_use]
+    pub fn is_secret(&self, field: &str) -> bool {
+        USER_ACCOUNT_SECRET_FIELDS.contains(&field) || self.secret.iter().any(|name| name == field)
+    }
+
+    /// The fields of one record as generic access answers them: the password fields left out, and each encrypted
+    /// field replaced by `<field>IsSet`, true when it has a value.
+    #[must_use]
+    pub fn conceal(&self, fields: Vec<(String, Value)>) -> Vec<(String, Value)> {
+        let mut out = Vec::with_capacity(fields.len());
+        for (name, value) in fields {
+            if self.encrypted.iter().any(|field| *field == name) {
+                out.push((format!("{name}IsSet"), Value::Bool(!moqui_lib::object::is_empty(&value))));
+            } else if !self.hidden(&name) {
+                out.push((name, value));
+            }
+        }
+        out
+    }
+
+    /// The fields of one record as a file of records (an export) holds them: the password and encrypted fields left
+    /// out.
+    #[must_use]
+    pub fn drop_hidden(&self, fields: Vec<(String, Value)>) -> Vec<(String, Value)> {
+        fields.into_iter().filter(|(name, _)| !self.hidden(name)).collect()
+    }
+}
+
+/// [`GenericAccess`] of `entity_name`.
+#[must_use]
+pub fn generic_access(facade: &crate::entity::EntityFacade, entity_name: &str) -> GenericAccess {
+    let full_name = definition_of(facade, entity_name).map_or_else(|| entity_name.to_string(), |entity| entity.full_name);
+    let read = !is_restricted_entity_or_view(facade, entity_name);
+    GenericAccess {
+        read,
+        write: read && !is_generic_write_refused(entity_name) && !is_generic_write_refused(&full_name),
+        secret: secret_fields(facade, entity_name),
+        encrypted: encrypted_fields(facade, entity_name),
+    }
+}
+
 fn restricted_definition(
     facade: &crate::entity::EntityFacade,
     entity: &moqui_db::model::EntityDefinition,
@@ -342,8 +460,8 @@ mod tests {
     use moqui_lib::object::Value;
 
     use super::{
-        is_audit_entity, is_host_config_entity, is_identity_admin_entity, is_restricted_generic_entity,
-        is_secret_config_entity, is_user_account_entity, simple_entity_key, strip_user_account_secrets,
+        is_audit_entity, is_generic_write_refused, is_host_config_entity, is_identity_admin_entity, is_restricted_generic_entity,
+        is_secret_config_entity, is_service_written_entity, is_user_account_entity, simple_entity_key, strip_user_account_secrets,
     };
 
     #[test]
@@ -394,6 +512,22 @@ mod tests {
         assert!(!is_secret_config_entity("moqui.database.DatabaseConnection"));
         assert!(is_restricted_generic_entity("moqui.database.DatabaseConnection"));
         assert!(!is_audit_entity("moqui.entity.EntityAuditLog"));
+        // read by the generic tools, written only by their own services (SEC-RTE-03, SEC-TLS-11)
+        for name in [
+            "moqui.entity.EntityAuditLog",
+            "moqui.monitor.RecoveryAction",
+            "moqui.monitor.RecoveryAdapter",
+            "moqui.monitor.RecoveryPolicy",
+            "moqui.monitor.RecoveryControl",
+            "moqui.monitor.InstanceDrain",
+            "moqui.monitor.IngestKey",
+        ] {
+            assert!(!is_restricted_generic_entity(name), "{name}");
+            assert!(is_service_written_entity(name) && is_generic_write_refused(name), "{name}");
+        }
+        assert!(is_generic_write_refused("moqui.security.UserLoginKey"));
+        assert!(!is_generic_write_refused("moqui.monitor.MonitorIncident"));
+        assert!(!is_generic_write_refused("moqui.basic.Enumeration"));
         // the ETL mappings and runs: an expression planted in one runs as its user
         for name in [
             "moqui.etl.EtlMapping",

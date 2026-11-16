@@ -120,7 +120,7 @@ fn screen_path_first(path: &str) -> String {
 /// The names of the screen path a request path resolves to, as the screen URL reads it (`url::cleanup_path_names`,
 /// Java's `cleanupPathNameList`): empty names, `.` and `~name=value` drop, `..` pops, and each other name is
 /// percent-decoded (`/%61pps` is the apps).
-pub(super) fn screen_path_names(path: &str) -> Vec<String> {
+pub fn screen_path_names(path: &str) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
     for name in path.split('/') {
         match name {

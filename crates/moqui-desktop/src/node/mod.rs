@@ -267,11 +267,13 @@ impl Node {
 /// The listeners of a node that only this computer reaches: HTTP on 127.0.0.1 at `port`, no public HTTPS, the cluster
 /// listener on loopback at a port of the kernel's choosing, and no OpenSearch (search runs on Postgres). The edge link
 /// dials out, so nothing listens for it. The node in process sets them as process properties; the sidecar gets them
-/// as `-D name=value`.
+/// as `-D name=value`. The HTTP listener answers only for its own loopback names, so a page of another site that
+/// rebinds its name to 127.0.0.1 is refused (`webapp_allowed_hosts`, SEC-CLI-01).
 pub(crate) fn listen_properties(port: u16) -> Vec<(&'static str, String)> {
     vec![
         ("webapp_http_bind", "127.0.0.1".to_string()),
         ("webapp_http_port", port.to_string()),
+        ("webapp_allowed_hosts", format!("127.0.0.1:{port},localhost:{port}")),
         ("webapp_https_listen_port", "off".to_string()),
         ("cluster_bind_address", "127.0.0.1".to_string()),
         ("cluster_https_port", "0".to_string()),

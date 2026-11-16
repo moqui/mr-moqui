@@ -71,6 +71,9 @@ pub(crate) struct WebApp {
     /// router, which answers Not Found (plans/Edge-Node2.md §4.2).
     #[cfg(feature = "grpc")]
     pub refusing_host: Option<RefusingHost>,
+    /// The `Host` names a request straight to a listener must give (`webapp_allowed_hosts`); `None` takes any
+    /// ([`host_allowed`]).
+    pub allowed_hosts: Option<Arc<Vec<String>>>,
 }
 
 impl WebApp {
@@ -79,6 +82,7 @@ impl WebApp {
             router,
             limits,
             guard,
+            allowed_hosts: None,
             edge: None,
             #[cfg(feature = "git")]
             site_host: None,
@@ -539,6 +543,29 @@ pub(crate) fn request_deadline(
     limit.filter(|_| !streaming && !exempt && !forwarded)
 }
 
+/// Whether a request that named `host` (its `Host` header, port included) may be served: always, unless the listeners
+/// answer only for some host names ([`WebApp::allowed_hosts`], `webapp_allowed_hosts`) and it came to one of them. The
+/// Desktop node's loopback listener names its own, so a page another site loads under a name that resolves to
+/// 127.0.0.1 (DNS rebinding) is refused before it reaches a screen (SEC-CLI-01).
+pub(crate) fn host_allowed(web: &WebApp, host: &str, via: moqui_core::web::RequestVia) -> bool {
+    let Some(allowed) = web.allowed_hosts.as_deref() else {
+        return true;
+    };
+    !matches!(via, moqui_core::web::RequestVia::Direct) || allowed.iter().any(|name| name.eq_ignore_ascii_case(host.trim()))
+}
+
+/// The host names of `webapp_allowed_hosts` (comma separated, each as a `Host` header gives it, `127.0.0.1:8080`);
+/// `None` when it is empty, and every host name is served.
+pub(crate) fn allowed_hosts_property() -> Option<Arc<Vec<String>>> {
+    let names: Vec<String> = moqui_lib::env::get_prop_or_env("webapp_allowed_hosts")
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect();
+    (!names.is_empty()).then(|| Arc::new(names))
+}
+
 /// Serve one request with `web`, from `peer`: the URI length and web protection checks, then on an edge node the
 /// forward of a terminate host down its link, else the router, either under the request deadline. The listeners'
 /// connections and the edge link's down connection call it (plans/archive/Edge-Node.md §5.3).
@@ -582,19 +609,21 @@ where
         request.extensions_mut().insert(HttpsRequest);
     }
     let limits = &web.limits;
+    let raw_host = request
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .or_else(|| request.uri().authority().map(axum::http::uri::Authority::as_str))
+        .unwrap_or_default()
+        .to_string();
     // the host a request is for, for the web protection rules of that host (plans/Edge-Node2.md §4.3)
-    let host = crate::guard::request_host(
-        request
-            .headers()
-            .get(axum::http::header::HOST)
-            .and_then(|value| value.to_str().ok())
-            .or_else(|| request.uri().authority().map(axum::http::uri::Authority::as_str))
-            .unwrap_or_default(),
-    );
+    let host = crate::guard::request_host(&raw_host);
     // a CI token whose answer says it was found good is recorded for web protection, here and on an edge node in front
     let ci_token = crate::guard::ci_credential(request.uri().path(), request.headers());
     let uri_length = request.uri().path_and_query().map_or(0, |whole| whole.as_str().len());
-    let refused = if uri_length > limits.max_uri {
+    let refused = if !host_allowed(web, &raw_host, peer.via) {
+        Some(plain(421, "this server does not answer for that host name"))
+    } else if uri_length > limits.max_uri {
         Some(plain(414, "the request URI is too long"))
     } else {
         // a WebSocket over HTTP/2 extended CONNECT is checked as the GET of an HTTP/1.1 upgrade

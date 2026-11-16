@@ -270,7 +270,8 @@ where
     }
 }
 
-/// Where a tunnel goes on this node.
+/// Where a tunnel goes on this node. Made once per tunnel and moved to its serve, so the web app is not boxed.
+#[allow(clippy::large_enum_variant)]
 enum Destination {
     Https(LocalWeb),
     /// The SSH server, as a connection from the client the edge node names.

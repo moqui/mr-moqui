@@ -433,7 +433,7 @@ pub(super) fn store_record(facade: &EntityFacade, options: &LoadOptions, record:
         return super::check::check_record(facade, &record);
     }
     if options.restrict_sensitive_entities {
-        refuse_restricted(facade, &record)?;
+        refuse_restricted(facade, &record, options)?;
     }
     // Inside an outer transaction a failed record marks it rollback-only and gives back its join, so the
     // owner's rollback still ends the frame.
@@ -446,23 +446,45 @@ pub(super) fn store_record(facade: &EntityFacade, options: &LoadOptions, record:
 
 /// Refuses the record when it or any nested record, by relationship name, short alias, or entity name, resolves to
 /// a restricted entity ([`is_restricted_entity`]). Checked before anything of the tree is written.
-fn refuse_restricted(facade: &EntityFacade, record: &Record) -> Result<(), Error> {
+fn refuse_restricted(facade: &EntityFacade, record: &Record, options: &LoadOptions) -> Result<(), Error> {
     let full_name = canonical_name(facade, &record.entity).unwrap_or_else(|_| record.entity.clone());
     if is_restricted_entity(&full_name) {
         return Err(Error::new(format!(
             "Entity {full_name} is not allowed in this data load"
         )));
     }
+    // a package this load does not take (a sync partner's: the service jobs, which run with authorization off)
+    if options
+        .refused_packages
+        .iter()
+        .any(|package| full_name.starts_with(&format!("{package}.")))
+    {
+        return Err(Error::new(format!(
+            "Entity {full_name} is not allowed in this data load"
+        )));
+    }
+    // the password fields are not taken on a generic write: a load would set any user's password hash
+    // (plans/Security-Review-Low.md SEC-DAT-08, through put#EntitySyncData)
+    if options.refuse_password_fields
+        && crate::entity::sensitive::is_user_account_entity(&full_name)
+        && crate::entity::sensitive::USER_ACCOUNT_SECRET_FIELDS
+            .iter()
+            .any(|field| record.fields.get(*field).is_some_and(|value| !moqui_lib::object::is_empty(value)))
+    {
+        return Err(Error::new(format!(
+            "The password fields of {full_name} are not allowed in this data load"
+        )));
+    }
     for child in &record.children {
-        refuse_restricted(facade, child)?;
+        refuse_restricted(facade, child, options)?;
     }
     Ok(())
 }
 
-/// `WebUtilities.isRestrictedGenericEntity` of an entity name, or of the noun of a `verb#noun` service name.
+/// `WebUtilities.isGenericWriteRefused` of an entity name, or of the noun of a `verb#noun` service name: a load writes.
 pub fn is_restricted_entity(entity_name: &str) -> bool {
     let noun = entity_name.rsplit('#').next().unwrap_or(entity_name);
-    crate::entity::sensitive::is_restricted_generic_entity(noun)
+    crate::entity::sensitive::is_generic_write_refused(noun)
 }
 
 fn write_tree(facade: &EntityFacade, options: &LoadOptions, record: Record, ancestor: &FieldMap) -> Result<u64, Error> {
@@ -512,7 +534,7 @@ pub(super) fn store_value(facade: &EntityFacade, options: &LoadOptions, record: 
         return super::check::check_record(facade, &record);
     }
     if options.restrict_sensitive_entities {
-        refuse_restricted(facade, &record)?;
+        refuse_restricted(facade, &record, options)?;
     }
     let Record { entity, fields, .. } = record;
     let entity = entity.as_str();

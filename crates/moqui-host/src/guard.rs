@@ -335,6 +335,14 @@ fn wildcard_match(pattern: &str, text: &str) -> bool {
     pattern[p..].iter().all(|byte| *byte == b'*')
 }
 
+/// The path a screen is found at, as the screen walk reads a request path (`moqui_core::screen::screen_path_names`):
+/// empty names, `.` and `~name=value` drop, `..` pops, and each other name is percent-decoded. A path rule or a rate
+/// limit matches this as well as the path as sent, so `/Login/./login`, `/x/../Login/login` and `/~a=b/Login/login`
+/// are the `/Login/login` they reach (SEC-WEB-07).
+fn screen_path(path: &str) -> String {
+    format!("/{}", moqui_core::screen::screen_path_names(path).join("/"))
+}
+
 /// `%XX` escapes decoded, a bad one kept as written; `+` is a plus in a path.
 fn decode_path(path: &str) -> String {
     if !path.contains('%') {
@@ -1005,7 +1013,10 @@ impl Guard {
             return Err(self.deny(key, client, "requests methods", response));
         }
         let decoded = decode_path(path);
-        if let Some(rule) = self.path_rule(host, &decoded) {
+        // the path as sent and the screen path it reaches: a rule or a limit that names either applies
+        let resolved = screen_path(path);
+        let resolved = Some(resolved).filter(|resolved| *resolved != decoded);
+        if let Some(rule) = self.path_rule(host, &decoded, resolved.as_deref()) {
             return Err(self.deny(key, client, &rule, refusal(404, "not found", false, None)));
         }
         // a CI token found good is limited per token by the CI endpoints, not per address here; the raw path, as the
@@ -1020,7 +1031,9 @@ impl Guard {
             client_state.arrivals.resize(limits.len(), 0);
             let mut next = Vec::with_capacity(limits.len());
             for (index, limit) in limits.iter().enumerate() {
-                if !limit.applies(host, method, &decoded, credentials) {
+                if !limit.applies(host, method, &decoded, credentials)
+                    && !resolved.as_deref().is_some_and(|resolved| limit.applies(host, method, resolved, credentials))
+                {
                     next.push(None);
                     continue;
                 }
@@ -1060,18 +1073,20 @@ impl Guard {
             return Ok(());
         }
         let decoded = decode_path(path);
-        if let Some(rule) = self.path_rule(host, &decoded) {
+        let resolved = screen_path(path);
+        if let Some(rule) = self.path_rule(host, &decoded, Some(resolved.as_str())) {
             return Err(self.deny(self.key(client), client, &rule, refusal(404, "not found", false, None)));
         }
         Ok(())
     }
 
-    /// The label of a path rule for `host` that denies `decoded`.
-    fn path_rule(&self, host: &str, decoded: &str) -> Option<String> {
+    /// The label of a path rule for `host` that denies `decoded`, or `resolved` (the screen path it reaches).
+    fn path_rule(&self, host: &str, decoded: &str, resolved: Option<&str>) -> Option<String> {
+        let denies = |glob: &Glob| glob.matches(decoded) || resolved.is_some_and(|resolved| glob.matches(resolved));
         self.conf()
             .path_rules
             .iter()
-            .find(|rule| rule.hosts.matches(host) && rule.globs.iter().any(|glob| glob.matches(decoded)))
+            .find(|rule| rule.hosts.matches(host) && rule.globs.iter().any(denies))
             .map(|rule| rule.label.clone())
     }
 

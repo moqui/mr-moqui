@@ -63,6 +63,9 @@ pub struct AdminSetup {
     pub min_length: u32,
     pub min_digits: u32,
     pub min_others: u32,
+    /// The client is not on the server's machine, so the account takes the setup secret the server wrote to its
+    /// startup log (`secretRequired`).
+    pub secret_required: bool,
 }
 
 impl AdminSetup {
@@ -87,9 +90,11 @@ pub struct AdminAccount {
     pub verify: String,
     pub full_name: String,
     pub email: String,
+    /// The setup secret of the server's startup log; empty when the setup asked for none.
+    pub setup_secret: String,
 }
 
-/// The passwords are never in a log line.
+/// The passwords and the setup secret are never in a log line.
 impl std::fmt::Debug for AdminAccount {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AdminAccount")
@@ -854,6 +859,7 @@ impl ScreenLink for FakeLink {
         self.record(LinkCall::CreateInitialAdmin(AdminAccount {
             password: String::new(),
             verify: String::new(),
+            setup_secret: String::new(),
             ..account.clone()
         }))?;
         let mut answers = self.answers();

@@ -772,6 +772,55 @@ fn a_service_over_its_hit_limit_is_locked() {
     assert!(err.retry_after().is_some_and(|seconds| seconds > 0), "{err}");
 }
 
+/// SEC-WEB-14: with nobody signed in the tarpit counts and locks per client address (an IPv6 one by its /64), so one
+/// client past the limit does not lock the artifact for every signed-out visitor.
+#[test]
+fn an_anonymous_tarpit_lock_is_the_client_addresss() {
+    let subject = super::anonymous_tarpit_subject;
+    assert_eq!(subject(""), "");
+    assert!(subject("203.0.113.5").starts_with("_ANON_") && subject("203.0.113.5").len() == 22);
+    assert_ne!(subject("203.0.113.5"), subject("203.0.113.6"));
+    assert_eq!(subject("::ffff:203.0.113.5"), subject("203.0.113.5"));
+    assert_eq!(subject("2001:db8:1:2:aaaa::1"), subject("2001:db8:1:2:bbbb::9"));
+    assert_ne!(subject("2001:db8:1:2::1"), subject("2001:db8:1:3::1"));
+
+    let world = world();
+    let _entered = world.context.enter();
+    let service = "test.Anonymous#Row";
+    {
+        let _guard = world.context.disable_authz();
+        grant(&world, "TARPIT_ANON", "AT_SERVICE", service, "AUTHZT_ALLOW", "N");
+        create(
+            &world.facade,
+            "moqui.security.ArtifactTarpit",
+            &[
+                ("userGroupId", "ALL_USERS"),
+                ("artifactGroupId", "TARPIT_ANON"),
+                ("maxHitsCount", "1"),
+                ("maxHitsDuration", "60"),
+                ("tarpitDuration", "120"),
+            ],
+        );
+    }
+    let hit = |client: &str| {
+        let _web = crate::web::install(Default::default());
+        let mut request = crate::web::WebRequest::new("POST", "/x");
+        request.peer_ip = client.to_string();
+        crate::web::set_request_info(&request);
+        let result = world
+            .context
+            .push_checked("AT_SERVICE", service, "all", Authz::NotRequired, Tarpit::Count, None);
+        if result.is_ok() {
+            world.context.pop().unwrap();
+        }
+        result.err().map(|err| err.kind())
+    };
+    assert_eq!(hit("203.0.113.5"), None);
+    assert_eq!(hit("203.0.113.5"), None, "the second hit passes the limit and sets the lock");
+    assert_eq!(hit("203.0.113.5"), Some(crate::context::ErrorKind::Tarpit));
+    assert_eq!(hit("203.0.113.6"), None, "another client is not locked");
+}
+
 /// plans/archive/TX-Cache.md: the tarpit's lock rows and the check views are read once, not on every counted hit or every new
 /// session (a stateless client starts one per request); a lock written moves the authorization generation, so the next
 /// hit reads the locks again and is refused.

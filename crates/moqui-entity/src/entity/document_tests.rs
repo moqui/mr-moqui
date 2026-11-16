@@ -141,6 +141,7 @@ fn order_info() -> DocumentInfo {
         root: node("Order", vec![field("orderId")], vec![items, payments]),
         conditions: Vec::new(),
         has_expression: false,
+        omitted: Vec::new(),
     }
 }
 

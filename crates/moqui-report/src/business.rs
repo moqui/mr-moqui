@@ -37,7 +37,7 @@ const OPERATORS: &[&str] = &[
     "is-null",
     "is-not-null",
 ];
-const FUNCTIONS: &[&str] = &["min", "max", "sum", "avg", "count", "count-distinct", "upper", "lower"];
+const FUNCTIONS: &[&str] = moqui_core::entity::derived::ROW_VIEW_FUNCTIONS;
 
 /// A business dataset is one whose definition says `signal: "business"`, whatever else its body names: a body that says so
 /// without a document is still held to admission (and is never admissible), so the signal alone cannot be dropped to escape it.
@@ -793,7 +793,8 @@ fn recompile(ec: &ExecutionContext, document: &str) -> Result<(), Error> {
     let entities = entity(ec)?;
     let info = moqui_core::entity::document::document_info(&entities, document)
         .map_err(|error| fail(format!("document {document} does not resolve: {error}")))?;
-    let mut encrypted = Vec::new();
+    // the document leaves an encrypted field out (SEC-DAT-02); a dataset refuses it, so its steward sees why
+    let mut encrypted = info.omitted.clone();
     let mut failure = None;
     info.walk(|_, node| {
         for field in node.fields.iter().filter(|field| !field.is_expression) {

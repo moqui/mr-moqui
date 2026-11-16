@@ -176,7 +176,14 @@ pub const SCRIPTS_REFUSED: &str = "An expression in an ETL mapping needs the GRO
 ///
 /// An error naming the entity's use.
 pub fn refuse_restricted(entity_name: &str, what: &str) -> Result<(), Error> {
-    if moqui_core::entity::sensitive::is_restricted_generic_entity(entity_name) {
+    use moqui_core::entity::sensitive;
+    // a target is written: the entities only their own services write are refused there too
+    let refused = if what == "target" {
+        sensitive::is_generic_write_refused(entity_name)
+    } else {
+        sensitive::is_restricted_generic_entity(entity_name)
+    };
+    if refused {
         return Err(Error::new(format!("{entity_name} is not available as an ETL {what}")));
     }
     Ok(())

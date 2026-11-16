@@ -267,6 +267,45 @@ fn recovery_decides_waits_for_approval_acts_through_its_adapters_and_verifies() 
     // A second pass with nothing changed makes no new decision.
     call("org.moqui.monitor.MonitorServices.run#Recovery", json!({}));
     assert_eq!(decisions(&shop)[0]["decisionId"], proposed["decisionId"]);
+    // An action row written around the services, naming the decision that waits for approval, does not run: the pass
+    // re-checks the decision before a first attempt (plans/Security-Review-Medium.md SEC-TLS-11).
+    {
+        let _authz = context.disable_authz();
+        let entity = factory.entity().unwrap();
+        let mut forged = entity.make_value("moqui.monitor.RecoveryAction").unwrap();
+        for (name, value) in [
+            ("actionId", "FORGED"),
+            ("decisionId", proposed["decisionId"].as_str().unwrap()),
+            ("incidentId", shop.as_str().unwrap()),
+            ("action", "isolate-instance"),
+            ("target", "shop-a"),
+            ("adapterId", "IN_PROCESS"),
+            ("scopeKey", "forged"),
+            ("idempotencyKey", "forged"),
+            ("statusId", "Persisted"),
+        ] {
+            forged.set(name, Value::string(value));
+        }
+        forged.set("attempts", Value::I64(0));
+        forged.set("createdDate", Value::Timestamp(jiff::Timestamp::from_millisecond(now).unwrap()));
+        forged.set("deadlineDate", Value::Timestamp(jiff::Timestamp::from_millisecond(now + 60 * MINUTE).unwrap()));
+        forged.create(&entity).unwrap();
+    }
+    call("org.moqui.monitor.MonitorServices.run#Recovery", json!({}));
+    assert_eq!(drained("shop-a"), None, "a forged action does not run");
+    let forged = actions(&shop).into_iter().find(|row| row["actionId"] == "FORGED").unwrap();
+    assert_eq!(forged["statusId"], "Failed", "{forged}");
+    {
+        let _authz = context.disable_authz();
+        // out of the way of the approved action's checks below
+        let entity = factory.entity().unwrap();
+        entity
+            .find("moqui.monitor.RecoveryAction")
+            .unwrap()
+            .eq("actionId", Value::string("FORGED"))
+            .delete_all()
+            .unwrap();
+    }
 
     call(
         "org.moqui.monitor.MonitorServices.approve#RecoveryDecision",
