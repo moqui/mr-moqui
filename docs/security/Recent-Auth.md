@@ -4,8 +4,10 @@ Some actions need the user to have signed in a moment ago, not just to hold a si
 identity, starting or deleting a key backup (or its keys, or giving it another public key), removing a device that
 holds encryption keys, issuing single use codes, adding or ending a second factor, making an SSH key, an access token
 or an app password, and changing the account's own email address (where a password reset is mailed) or its provider
-link (`externalUserId`). A stolen session (a cookie
-taken from a browser left signed in) then cannot do them alone. The check is reusable for any sensitive action.
+link (`externalUserId`). An administrator's actions on another account need it too: setting its password, issuing its
+codes, adding or ending its factors, changing its email address or provider link, revoking its keys and Login as. A
+stolen session (a cookie taken from a browser left signed in) then cannot do them alone. The check is reusable for any
+sensitive action.
 
 ## What counts as a sign-in
 
@@ -35,16 +37,24 @@ The code is `crates/moqui-core/src/user/login.rs` (`recent_auth`, `last_auth_mil
 | `check#RecentAuth` | `recent` within `maxAgeSeconds` (300 by default), `authAgeSeconds`, and how the user confirms who they are: `method` `password` (with `secondFactor`) or `sso` (an account without a password: `authFlowId`, `authFlowList`). With `required`, not recent is an error |
 | `reauthenticate#User` | The signed-in user's password, then the code of their second factor. A wrong password or code counts as a failed login. A checked password waits five minutes for its code, which may then come alone. The login, the session and its id do not change |
 | `send#ReauthCode` | A code to the user's own email or SMS factor, once the password was checked; one each half minute in a session |
-
-| `require#RecentAuth` | Refuses unless the user signed in within the last five minutes: the error "Confirm it is you: sign in again to do this", `reasonCode` `reauthRequired`, and the response header `X-Moqui-Reauth: required`. A caller with authorization disabled (a job, a setup service) passes |
+| `require#RecentAuth` | Refuses unless the user signed in within the last five minutes: the error "Confirm it is you: sign in again to do this", `reasonCode` `reauthRequired`, and the response header `X-Moqui-Reauth: required`. A caller with authorization disabled (a job, a setup service) passes. It guards the caller's own credentials and factors, and an administrator's actions on another account |
 
 A service that guards an action calls `check#RecentAuth` or `require#RecentAuth` and refuses when it is not recent.
 The ChatKeys services answer `reasonCode` `reauthRequired` ([Chat keys](../interfaces/Chat-Keys.md)). The account
 services go through `org.moqui.impl.UserServices.check#AccountAction` with `recentAuth`: the factor and code services
 on the user's own account, and `update#UserAccount` when it changes the user's own `emailAddress` or `externalUserId`
 (a cleared value counts); `user_keys.rs` calls `require_recent_auth` for `create#UserSshKey`, `create#UserAccessToken`
-and `create#UserAppPassword`. An administrator acting on another account is held by permission and by the access that
-account holds, not by a recent sign-in.
+and `create#UserAppPassword`.
+
+An administrator's actions on another account are guarded too, after the permission and the check of the access that
+account holds (`heldBeyond`): setting its password (`update#Password` with `ADMIN_PASSWORD`), issuing its codes, adding
+or ending its factors, changing its email address or provider link (`update#UserAccount`), revoking its keys, tokens,
+app passwords, SSH keys and phones (`revoke#AccountAccess`, any kind but sessions), and Login as (Tools
+`UserAccountDetail.xml` and mr-boss Admin's `UserDetail.xml` `loginAs`, which log in only when it is recent). Ending
+another account's sessions alone is not guarded: it signs the user out and takes nothing over. `reset#Password` is not
+either: anyone may ask it, and it only mails the account's own address. A caller with authorization disabled (a job, a
+setup service, a lifecycle's scheduled step) passes; Mantle's account lifecycle "disable now", run by an administrator
+in a request, needs a recent sign-in.
 
 ## In the browser
 
@@ -93,5 +103,7 @@ link) is no sign-in and calls nothing. Test: `cargo test -p moqui-core service::
 - `./moq test framework --spec RecentAuth,ChatKeys,ChatKeyBackup`: each guarded action refused with the same parameters
   after an internal login or an account switch and allowed after `reauthenticate#User` or a password login; the second
   factor's code, a wrong one counted; a code sent only after the password, not twice in half a minute; the age.
+- `./moq test framework --spec CredentialGuards,AdminSessions`: a stale administrator refused another account's codes,
+  password, email and credential revoke, each allowed after `reauthenticate#User`; the owner's own features unchanged.
 
 **Not checked live:** a real SSO provider's `prompt=login`, `max_age` and `auth_time`.

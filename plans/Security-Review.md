@@ -4,9 +4,9 @@ Status 2026-11-15: first pass done, in two rounds. The attack surface map was sp
 code has been read at least in part by a reviewer; the suspected weaknesses are listed here. Most are as their
 reviewer reported them and have not been read a second time; the Status column says which. The twelve High findings
 (ten fixes: two pairs are one weakness) are fixed, each with its regression test; its section's **Fix** says how. On
-2026-11-16 the Medium findings were fixed in the same way: 74 of the 77 are fixed and three in part (SEC-RTE-02,
-SEC-OUT-08, SEC-PSS-61), each entry's **Fix** in [Security-Review-Medium](Security-Review-Medium.md) saying how and
-what is left; 44 Low and Info findings were fixed with them and five in part. What is left is under
+2026-11-16 the Medium findings were fixed in the same way, with follow-ups the same day: 75 of the 77 are fixed and two
+in part (SEC-RTE-02, SEC-OUT-08), each entry's **Fix** in [Security-Review-Medium](Security-Review-Medium.md) saying how
+and what is left; 46 Low and Info findings were fixed with them and five in part. What is left is under
 [What is left](#what-is-left).
 
 This is the findings register of the security review that the pre-0.1.0 notice in the [README](../README.md) names:
@@ -59,7 +59,7 @@ that builds this document are in `plans/security-review-evidence/`, which is not
 
 No finding is rated Critical. These are the ones to look at first; each High one has its section below, each Medium one in
 [Security-Review-Medium](Security-Review-Medium.md). Every High one below is fixed (2026-11-15), and every Medium one
-(2026-11-16), three of them in part.
+(2026-11-16), two of them in part.
 
 - **A disabled account comes back** (SEC-WEB-01, SEC-ADM-01; High; confirmed by the lead). An account disabled for
   good becomes a five-minute lock after four failed sign-in attempts, and a password change writes `disabled=N`. An
@@ -172,20 +172,20 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
    each map file ends with its open questions. The thinnest: the BOSS business apps other than Commerce and order
    approval, parsers of untrusted input, the mobile app's native code, and the helper-read parts of the PASS services.
 3. **Fixes.** The High findings are fixed (2026-11-15, what they left on 2026-11-16), and the Medium ones
-   (2026-11-16) with 44 of the Low and Info ones. Of the Medium findings none is open, none deferred and none refuted;
-   three are fixed in part, each for a decision or a design:
+   (2026-11-16) with 46 of the Low and Info ones. Of the Medium findings none is open, none deferred and none refuted;
+   two are fixed in part, each for a decision or a design:
    - SEC-RTE-02: a server-static screen's `actions` package still holds its whole context; sending only the names its
      template reads needs the template's reads recorded (a design).
    - SEC-OUT-08: the Docker services other than the registry login still default to plain http on 2375 to any host;
      requiring https or a unix socket would stop existing hosts (a product decision).
-   - SEC-PSS-61: a public event reservation is still attached to the directory party of an unverified address; waiting
-     for the address to be confirmed changes the registration flow (the owner's decision).
 
-   The Low and Info findings fixed in part are SEC-TLS-08 (the deploy fetch resolves the host again), SEC-MAIL-66 (the
-   clear-text fall back), SEC-COM-21 (no protocol scope on an app password), SEC-DAT-09 (no page size cap on screens)
-   and SEC-BAP-06 (no carrier host list). Deferred: SEC-SCR-07 (`ec.service.rest()` refusing internal addresses on
-   production needs an opt-in for its two internal callers first), SEC-COM-19 and SEC-COM-26 (each a design of its
-   own). The other Low and Info findings are not fixed.
+   The Low and Info findings fixed in part are SEC-RTE-08 (a `read-only` transition such as `setPrefGoLast` or
+   `/sso/logout` still changes state on a GET), SEC-TLS-08 (the deploy fetch resolves the host again), SEC-COM-21 (no
+   protocol scope on an app password), SEC-DAT-09 (no page size cap on screens) and SEC-BAP-06 (no carrier host list).
+   Deferred: SEC-SCR-07 (`ec.service.rest()` refusing internal addresses on production needs an opt-in for its two
+   internal callers first), SEC-COM-19 and SEC-COM-26 (each a design of its own). The other Low and Info findings are
+   not fixed. Later work beside them: DANE and TLS-RPT for MX delivery (SEC-MAIL-66 is fixed by `mail_mx_require_tls`
+   for the domains it names; the default stays opportunistic).
 
 ## Counts
 
@@ -250,7 +250,7 @@ Map file: [Attack-Surface-Routes.md](../docs/security/Attack-Surface-Routes.md).
 | SEC-RTE-05 | `runtime/components/base/webroot/screen/webroot.xml:257` | `/resources` runs elFinder write commands on a `GET` | Medium | fixed |
 | SEC-RTE-06 | `crates/moqui-entity/src/entity/query_rest.rs:208`, `:962` (`related_rows`) | Entity REST dependents read entities the restricted rule refuses | Medium | fixed |
 | SEC-RTE-07 | `crates/moqui-host/src/http.rs:1109`-`1124`, `:1203` | A multipart body is spooled to disk before any check | Medium | fixed |
-| SEC-RTE-08 | `crates/moqui-core/src/screen/render.rs:2667` (`csrf_rejected`), `:2070` (`insecure_transition`) | State changes on `GET` with no token | Low | reported (confirmed in code) |
+| SEC-RTE-08 | `crates/moqui-core/src/screen/render.rs:2667` (`csrf_rejected`), `:2070` (`insecure_transition`) | State changes on `GET` with no token | Low | partly fixed |
 | SEC-RTE-09 | `crates/moqui-core/src/screen/url.rs:373` | `lastStandalone` takes the parents out of the user check | Low | reported (confirmed in code) |
 | SEC-RTE-10 | `crates/moqui-host/src/http.rs:957`, `:977`, `:1679` | `/health` and `/metrics` trust the TCP peer | Low | reported (to check) |
 | SEC-RTE-11 | `crates/moqui-core/src/screen/public_site.rs:96`-`102` | A restricted host still serves some framework paths | Low | reported (likely) |
@@ -376,7 +376,7 @@ Map file: [Attack-Surface-Mail.md](../docs/security/Attack-Surface-Mail.md). Rev
 | SEC-MAIL-08 | `crates/moqui-mail/src/delivery.rs` `deliver_one` (753-772) | A message is dropped when its Message-ID is already in the account | Low | reported (confirmed in code) |
 | SEC-MAIL-09 | `crates/moqui-core/src/service/mail_capture.rs` (`decide`, `enabled`) | The mail capture can be on in production | Low | fixed |
 | SEC-MAIL-65 | runtime/components/base/framework/service/org/moqui/impl/UserServices.xml:441-459 | Reset passwords and verification tokens are kept in clear in EmailMessage.body | Low | reported (confirmed in code) |
-| SEC-MAIL-66 | crates/moqui-mail/src/mx.rs:977-1010 (`hosts`), 1053-1075, 1138-1160 (`session`), 1313-1326 (`sts::fetch`) | Edge MX delivery connects to whatever address a recipient domain's DNS names, and falls back to clear text | Low | partly fixed |
+| SEC-MAIL-66 | crates/moqui-mail/src/mx.rs:977-1010 (`hosts`), 1053-1075, 1138-1160 (`session`), 1313-1326 (`sts::fetch`) | Edge MX delivery connects to whatever address a recipient domain's DNS names, and falls back to clear text | Low | fixed |
 | SEC-MAIL-67 | crates/moqui-mail/src/auth.rs:405-418 (`signing_domain`), 493-512 (`sign_for`), 763-790 (`verify_internal`) | A mail user's hosted domain is one the node signs for and then verifies as its own | Low | reported (to check) |
 | SEC-MAIL-10 | `runtime/components/base/basic-comms/screen/BasicComms/Inbox/Mail.qvue:1880` | Mail forged as from the reader loads remote images without asking | Info | reported (to check) |
 | SEC-MAIL-68 | runtime/components/base/framework/service/org/moqui/mail/EmailClientServices.xml:5002-5034 (`create#EmailIdentity`), 3357-3359 (`save#Draft`) | An identity's address is any text with an @ | Info | reported (confirmed in code) |
@@ -523,7 +523,7 @@ Map file: [Attack-Surface-Apps-PASS-Commerce.md](../docs/security/Attack-Surface
 | SEC-PSS-21 | `request/SupportPortal.js:758-765`, `:775`, `:833` | `createCustomerCase` leaves the staged upload on disk when the operation is a repeat | Medium | fixed |
 | SEC-PSS-41 | `service/mantle/marketing/MarketingPortal.js` reserveRegistration (starts 1058), registrationView (starts 961), subscriberOf (198-231) | An anonymous event reservation answers the directory name of the party that owns a typed email address | Medium | fixed |
 | SEC-PSS-42 | `service/mantle/forum/Forum.js` publishSitePage (starts 3275), getSitePage (starts 1976) | A site owner can publish any wiki page of an unrestricted space as the site's public page | Medium | fixed |
-| SEC-PSS-61 | runtime/components/addon/mr-mantle/service/mantle/marketing/MarketingPortal.js:198 (subscriberOf), :1019, :1058 | An anonymous event reservation answers the stored name of the party that owns a typed email address | Medium | partly fixed |
+| SEC-PSS-61 | runtime/components/addon/mr-mantle/service/mantle/marketing/MarketingPortal.js:198 (subscriberOf), :1019, :1058 | An anonymous event reservation answers the stored name of the party that owns a typed email address | Medium | fixed |
 | SEC-PSS-02 | `M/order/ShopCheckout.js:1212` | The checkout return key and the cart recovery token are query parameters the request log keeps | Low | reported (confirmed in code) |
 | SEC-PSS-03 | `M/product/ShopFulfillment.js:490-506`, `:573-588` | A ten-minute download capability is accepted as an order link and can issue its successor | Low | reported (confirmed in code) |
 | SEC-PSS-04 | `M/party/ShopCustomer.js:114-160` | A guest order with a typed email is merged into the account that verifies that email | Low | reported (to check) |
