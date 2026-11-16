@@ -1358,7 +1358,10 @@ async fn upload_has_user(state: &HttpState, headers: &axum::http::HeaderMap, cli
             .and_then(|value| value.to_str().ok())
             .map(str::to_string)
     };
-    let session = crate::notws::session_cookie(headers);
+    // the session id of a signed cookie this node made
+    let session = crate::notws::session_cookie(headers)
+        .and_then(|cookie| moqui_core::user::verify_session_cookie(&cookie).ok().flatten())
+        .filter(|id| !id.is_empty());
     let (api_key, login_key, authorization) = (header("api_key"), header("login_key"), header("authorization"));
     if session.is_none() && api_key.is_none() && login_key.is_none() && authorization.is_none() {
         return false;

@@ -220,4 +220,20 @@ fn large_files_stream_with_ranges_and_validators() {
         let text = String::from_utf8_lossy(&response);
         assert!(text.starts_with("HTTP/1.1 413"), "{authorization:?}: {text}");
     }
+    // a signed-in browser session's upload is read (its screen then asks for the session token)
+    let cookie = crate::common::sign_in(address, "john.doe", "moqui");
+    let head = format!(
+        "POST {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nCookie: {cookie}\r\n\
+         Content-Type: multipart/form-data; boundary={boundary}\r\nContent-Length: {}\r\n\r\n",
+        body.len()
+    );
+    let mut stream = TcpStream::connect(address).unwrap();
+    stream.write_all(head.as_bytes()).unwrap();
+    for piece in body.chunks(256 * 1024) {
+        stream.write_all(piece).unwrap();
+    }
+    let mut response = Vec::new();
+    std::io::Read::read_to_end(&mut stream, &mut response).unwrap();
+    let text = String::from_utf8_lossy(&response);
+    assert!(!text.starts_with("HTTP/1.1 413"), "a session's upload: {text}");
 }
