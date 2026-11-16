@@ -49,7 +49,7 @@ pub fn report_save_location_problem(location: &str, roots: &str) -> Option<Strin
     let path = lower.split_once("://").map_or(lower.as_str(), |(_, rest)| rest);
     let path = path.split_once(':').filter(|(scheme, _)| !scheme.contains('/')).map_or(path, |(_, rest)| rest);
     let segments: Vec<&str> = path.split('/').collect();
-    if segments.iter().any(|segment| *segment == "..") {
+    if segments.contains(&"..") {
         return Some(format!("the save location {location} has a .. segment"));
     }
     if segments.iter().any(|segment| *segment == "conf" || *segment == ".env" || segment.ends_with(".env")) {

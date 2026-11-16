@@ -355,7 +355,7 @@ impl GenericAccess {
     pub fn conceal(&self, fields: Vec<(String, Value)>) -> Vec<(String, Value)> {
         let mut out = Vec::with_capacity(fields.len());
         for (name, value) in fields {
-            if self.encrypted.iter().any(|field| *field == name) {
+            if self.encrypted.contains(&name) {
                 out.push((format!("{name}IsSet"), Value::Bool(!moqui_lib::object::is_empty(&value))));
             } else if !self.hidden(&name) {
                 out.push((name, value));

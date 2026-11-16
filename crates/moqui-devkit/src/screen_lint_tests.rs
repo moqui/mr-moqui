@@ -398,7 +398,7 @@ fn templates_and_screen_extends_are_scanned() {
         r#"<screen-extend><widgets-extend name="Main"><container><display text="x" align="right"/></container></widgets-extend></screen-extend>"#,
     )
     .unwrap();
-    let report = lint_screens(&[dir.clone()]).unwrap();
+    let report = lint_screens(std::slice::from_ref(&dir)).unwrap();
     let of = |suffix: &str| report.files.iter().find(|file| file.path.ends_with(suffix));
     let parts = of("template/Parts.xml").expect("the template was not scanned");
     assert_eq!(

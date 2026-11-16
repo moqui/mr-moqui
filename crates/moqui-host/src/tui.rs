@@ -214,7 +214,7 @@ pub struct Link<T> {
 }
 
 enum NavigationReply {
-    Screen(ScreenModel),
+    Screen(Box<ScreenModel>),
     Attachment(RawBody),
 }
 
@@ -302,7 +302,7 @@ impl<T: Transport> Link<T> {
             if page.is_empty() {
                 *lock(&self.last_path) = model.screen.path.clone();
             }
-            return Ok(NavigationReply::Screen(model));
+            return Ok(NavigationReply::Screen(Box::new(model)));
         }
         Err(LinkError::Remote(format!("{path} redirected too many times")))
     }
@@ -674,14 +674,14 @@ impl<T: Transport> ScreenLink for Link<T> {
     /// browser follows it.
     fn level(&self, path: &str, parameters: &BTreeMap<String, String>) -> Result<ScreenModel, LinkError> {
         match self.navigation_reply(path, parameters, "")? {
-            NavigationReply::Screen(model) => Ok(model),
+            NavigationReply::Screen(model) => Ok(*model),
             NavigationReply::Attachment(_) => Err(LinkError::Remote("The server returned a file, not a screen".into())),
         }
     }
 
     fn navigation(&self, path: &str, parameters: &BTreeMap<String, String>) -> Reply {
         match self.navigation_reply(path, parameters, "") {
-            Ok(NavigationReply::Screen(model)) => Reply::Level(Ok(model)),
+            Ok(NavigationReply::Screen(model)) => Reply::Level(Ok(*model)),
             Ok(NavigationReply::Attachment(body)) => Reply::Raw(Ok(body)),
             Err(err) => Reply::Level(Err(err)),
         }
@@ -690,7 +690,7 @@ impl<T: Transport> ScreenLink for Link<T> {
     /// A level above the leaf, naming the leaf `page` it is loaded for.
     fn parent(&self, path: &str, page: &str, parameters: &BTreeMap<String, String>) -> Reply {
         match self.navigation_reply(path, parameters, page) {
-            Ok(NavigationReply::Screen(model)) => Reply::Level(Ok(model)),
+            Ok(NavigationReply::Screen(model)) => Reply::Level(Ok(*model)),
             Ok(NavigationReply::Attachment(_)) => Reply::Level(Err(LinkError::Remote(
                 "The server returned a file, not a screen".into(),
             ))),

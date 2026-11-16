@@ -300,7 +300,7 @@ fn request_input_takes_no_condition_or_order_on_a_secret_or_encrypted_field() {
     assert!(conditions(&generic).is_empty());
     let screen = sync().search_form_map(&guess, &BTreeMap::new(), "", "", false).unwrap();
     assert_eq!(conditions(&screen).len(), 1, "a screen's own find keeps an equals");
-    assert!(screen.context.get("orderByField").is_none(), "no order by an encrypted field");
+    assert!(!screen.context.contains_key("orderByField"), "no order by an encrypted field");
     let pattern = sync()
         .search_form_map(
             &input(&[("targetPassword", "gu"), ("targetPassword_op", "begins")]),
@@ -320,7 +320,7 @@ fn request_input_takes_no_condition_or_order_on_a_secret_or_encrypted_field() {
             false,
         )
         .unwrap();
-    assert!(conditions(&skipped).is_empty() && skipped.context.get("orderByField").is_none());
+    assert!(conditions(&skipped).is_empty() && !skipped.context.contains_key("orderByField"));
     let by_code = sync()
         .search_form_map(&BTreeMap::new(), &input(&[("targetPassword", "known")]), "", "", false)
         .unwrap();
