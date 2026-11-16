@@ -27,6 +27,9 @@ in [Security-Review-Low](Security-Review-Low.md).
    item is from reading code, with the lines quoted.
 4. For two map files (Web and Data) a second reader checked the report against the code, wrote what held into the map
    and gave each weakness a verdict. The lead read the code for the findings marked "(lead)".
+5. In a second round, on a smaller budget, one reader for each remaining slice read the code and wrote what is
+   reachable straight into the slice's map file, with the suspected weaknesses in a short report. Those map files and
+   findings have had no second reading.
 
 Status values:
 
@@ -69,6 +72,9 @@ No finding is rated Critical. These are the ones to look at first; each High one
   reported): a message waiting in the Outbox then leaves the send queries.
 - **Any Comms user can host a mail account at any unclaimed address** and receive its mail once inbound SMTP is on
   (SEC-MAIL-01; High; reported).
+- **A request's file name is expanded as script when a screen is mailed** (SEC-MAIL-61; High; reported, not run),
+  and **mr-marble's party mail screen returns any stored message's body by its id** as inline HTML (SEC-MAIL-63;
+  High; reported).
 - **Stored credentials are readable** by an administrator through REST and exports, where the map said write-only
   (SEC-DAT-03, confirmed by the lead; SEC-TLS-05), and a find by request parameters takes conditions on password-hash
   and encrypted fields (SEC-DAT-01).
@@ -88,8 +94,8 @@ No finding is rated Critical. These are the ones to look at first; each High one
 | 4 Tools, System, Monitor, Dashboards | `components/base/tools`, `moqui-tools`, `moqui-report`, telemetry | Partial: `moqui-calc`, `moqui-collab`, most of `moqui-report` and `moqui-tools`, backups and most Dashboards screens not reached | Tools: not yet |
 | 5 LLM, A2A, MCP, Assist | `moqui-llm`, `moqui-host/src/llm` | Partial: the run loop, several tools, the MCP server tool path, gateway quotas and evals not read | AI: not yet |
 | 6 Git hosting and pipelines | `moqui-git`, `git_http`, `ci_run` | Read; the gix transports and several service files not reached | Git: not yet |
-| 7 Mail | `moqui-mail`, `moqui-host/src/smtp*` | Narrowed at the stop: the inbound listener, the sends that inbound mail causes, mailbox reads, message rendering and stored credentials read; MX delivery, the SPF, DKIM and DMARC code, MIME limits, `send#EmailTemplate` and system mail with links not reached | Mail: not yet |
-| 8 Files, DAV, SSH, terminal | `moqui-dav`, `moqui-host/src/ssh`, `term` | Narrowed at the stop: public shares, the drive access checks, DAV sign-in, paths and file methods, elFinder with `/resources`, and SSH sign-in with the channel gates read; SFTP, CalDAV and CardDAV with their parsers, the admin shell, the terminal, image decoding and the tar extractor not reached | Files, SSH: not yet |
+| 7 Mail | `moqui-mail`, `moqui-host/src/smtp*` | Read in two rounds; not reached: the SMTP queue beyond its header, mail DNS, the DMARC and ARC decision, IMAP and POP size limits, the OAuth exchange, account owner transfer | Mail: written by its reviewer |
+| 8 Files, DAV, SSH, terminal | `moqui-dav`, `moqui-host/src/ssh`, `term` | Read in two rounds; not reached: the shell's interactive prompt, the host session environment, parts of `ssh/server.rs`, the SFTP drives backend and the SFTP client, DAV locks and free-busy, the `pim` parser bodies | Files, SSH: written by their reviewer |
 | 9 Calls, chat, SIP, XMPP | `components/base/basic-comms`, `moqui-rtc`, `moqui-sip`, `moqui-xmpp`, `moqui-channels` | Partial: chat bridges and SMS, Web Push and FCM, recording and captions only sampled | Comms: not yet |
 | 10 Cluster and edge node | `moqui-host/src/cluster*`, `edge*`, `grpc_listen` | Read; pools, takeover, the front node and the bodies of the delegated call and SIP services not checked | Cluster-Edge: not yet |
 | 11 Clients | `moqui-desktop`, `moqui-mobile`, `moqui-client*`, `moqui-browser`, the browser shell | Not started | Clients: moved text only |
@@ -97,10 +103,10 @@ No finding is rated Critical. These are the ones to look at first; each High one
 | 13 Script engine, templates, parsers | `moqui-core/src/script`, `resource` | Not started | Scripts: not created |
 | 13a Outbound requests, processes, packaging | `moqui-lib/src/net.rs`, `http.rs`, `podman/`, `systemd/` | Not started | Outbound, Process: moved text only |
 | 13b Development tools | `components/dev`, `moqui-devkit` | Not started | Dev: not created |
-| 14 PASS frontend | `mr-pass` | Read; the HTML-injection sweep of the apps other than Smithy not finished | Apps-PASS: not yet |
-| 15 PASS authority and public accounts | `mr-mantle/script/Pass*`, `org/moqui/public` | Read; 47 operations sampled, first caller check only | Apps-PASS: not yet |
-| 16 PASS application services | `mr-mantle/service/mantle` portal services | Narrowed at the stop: Shop, the payment REST and the webhook consumers read by the reviewer; Billing, Supplier, Support, Sites and a sample of Sales and Marketing read by two helper readers whose items the reviewer did not check | Apps-PASS: not yet |
-| 17 Forum and Smithy | `mr-mantle/service/mantle/forum`, `smithy` | Narrowed at the stop: Smithy's read paths of private repositories and confidential issues, Forum category visibility, the opt-out and held mail read; the rest of both not reached | Apps-PASS: not yet |
+| 14 PASS frontend | `mr-pass` | Read; the HTML-injection sweep of the apps other than Smithy not finished | Apps-PASS: the frontend as a whole written by slice 16's reviewer; the rest of this report not yet |
+| 15 PASS authority and public accounts | `mr-mantle/script/Pass*`, `org/moqui/public` | Read; 47 operations sampled, first caller check only | Apps-PASS: the authority as a whole written by slice 16's reviewer; the rest of this report not yet |
+| 16 PASS application services | `mr-mantle/service/mantle` portal services | Read in two rounds; the first round's helper readers' items were read again only where they went into the map; not reached: several relay and result pages, the gateway's setup services, parts of the theme code | Apps-PASS: written by its reviewer (the authority, Shop, Billing, Supplier, Support, Sites) |
+| 17 Forum and Smithy | `mr-mantle/service/mantle/forum`, `smithy` | Read in two rounds; not reached: the delivery worker, the Forum import and integrations, repository transfer, branch rules, releases, the templates (how cleaned HTML reaches a page), the git authorization hook | Apps-PASS: written by its reviewer (Forum, Smithy) |
 | 18 BOSS access model; Admin, Commons, People, Accounting | `mr-boss` | Not started | Apps-BOSS: moved text only |
 | 19 BOSS business apps; the Mantle REST root | `mr-boss`, `mr-mantle` | Not started | Apps-BOSS: moved text only |
 | 20 The two secrets plans | `plans/Sealed-Secrets.md`, `plans/Vault-Instances.md` | Read whole against the code | the plans: edited in place |
@@ -167,22 +173,22 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 | Tools, System, Monitor and Dashboards (`TLS`) | 0 | 2 | 7 | 8 | 2 | 0 | 19 |
 | LLM, A2A, MCP and Assist (`AI`) | 0 | 0 | 2 | 10 | 1 | 0 | 13 |
 | Git hosting and pipelines (`GIT`) | 0 | 2 | 5 | 12 | 2 | 0 | 21 |
-| Mail (`MAIL`) | 0 | 1 | 3 | 5 | 1 | 0 | 10 |
-| Files, DAV, SSH and the terminal (`FIL`) | 0 | 0 | 5 | 3 | 3 | 0 | 11 |
+| Mail (`MAIL`) | 0 | 3 | 5 | 8 | 2 | 0 | 18 |
+| Files, DAV, SSH and the terminal (`FIL`) | 0 | 0 | 6 | 6 | 6 | 0 | 18 |
 | Calls, chat and messaging (`COM`) | 0 | 0 | 7 | 17 | 6 | 0 | 30 |
 | Cluster and edge node (`CLU`) | 0 | 0 | 0 | 6 | 1 | 0 | 7 |
 | Data layer and stored secrets (`DAT`) | 0 | 0 | 4 | 7 | 2 | 0 | 13 |
 | PASS frontend (mr-pass) (`PSF`) | 0 | 0 | 1 | 5 | 3 | 0 | 9 |
 | PASS authority and public accounts (`PSA`) | 0 | 0 | 1 | 10 | 2 | 0 | 13 |
-| PASS application services (Mantle) (`PSS`) | 0 | 0 | 4 | 16 | 2 | 0 | 22 |
-| Forum and Smithy (`PFS`) | 0 | 0 | 0 | 2 | 1 | 0 | 3 |
-| **All** | 0 | 8 | 54 | 126 | 28 | 0 | 216 |
+| PASS application services (Mantle) (`PSS`) | 0 | 0 | 5 | 20 | 4 | 0 | 29 |
+| Forum and Smithy (`PFS`) | 0 | 0 | 1 | 5 | 2 | 0 | 8 |
+| **All** | 0 | 10 | 59 | 139 | 35 | 0 | 243 |
 
 ## Findings by area
 
 ### Web authentication and controls
 
-Map file: [Attack-Surface-Web.md](../docs/security/Attack-Surface-Web.md). Reviewer report: `security-review-evidence/slice-1.md`.
+Map file: [Attack-Surface-Web.md](../docs/security/Attack-Surface-Web.md). Reviewer report: `security-review-evidence/slice-1.md` (and `slice-1b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -203,7 +209,7 @@ Map file: [Attack-Surface-Web.md](../docs/security/Attack-Surface-Web.md). Revie
 
 ### Routes, screens and REST
 
-Map file: [Attack-Surface-Routes.md](../docs/security/Attack-Surface-Routes.md). Reviewer report: `security-review-evidence/slice-2.md`.
+Map file: [Attack-Surface-Routes.md](../docs/security/Attack-Surface-Routes.md). Reviewer report: `security-review-evidence/slice-2.md` (and `slice-2b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -228,7 +234,7 @@ Map file: [Attack-Surface-Routes.md](../docs/security/Attack-Surface-Routes.md).
 
 ### Administration, identity and sign-in
 
-Map file: [Attack-Surface-Admin.md](../docs/security/Attack-Surface-Admin.md). Reviewer report: `security-review-evidence/slice-3.md`.
+Map file: [Attack-Surface-Admin.md](../docs/security/Attack-Surface-Admin.md). Reviewer report: `security-review-evidence/slice-3.md` (and `slice-3b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -248,7 +254,7 @@ Map file: [Attack-Surface-Admin.md](../docs/security/Attack-Surface-Admin.md). R
 
 ### Tools, System, Monitor and Dashboards
 
-Map file: [Attack-Surface-Tools.md](../docs/security/Attack-Surface-Tools.md). Reviewer report: `security-review-evidence/slice-4.md`.
+Map file: [Attack-Surface-Tools.md](../docs/security/Attack-Surface-Tools.md). Reviewer report: `security-review-evidence/slice-4.md` (and `slice-4b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -274,7 +280,7 @@ Map file: [Attack-Surface-Tools.md](../docs/security/Attack-Surface-Tools.md). R
 
 ### LLM, A2A, MCP and Assist
 
-Map file: [Attack-Surface-AI.md](../docs/security/Attack-Surface-AI.md). Reviewer report: `security-review-evidence/slice-5.md`.
+Map file: [Attack-Surface-AI.md](../docs/security/Attack-Surface-AI.md). Reviewer report: `security-review-evidence/slice-5.md` (and `slice-5b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -294,7 +300,7 @@ Map file: [Attack-Surface-AI.md](../docs/security/Attack-Surface-AI.md). Reviewe
 
 ### Git hosting and pipelines
 
-Map file: [Attack-Surface-Git.md](../docs/security/Attack-Surface-Git.md). Reviewer report: `security-review-evidence/slice-6.md`.
+Map file: [Attack-Surface-Git.md](../docs/security/Attack-Surface-Git.md). Reviewer report: `security-review-evidence/slice-6.md` (and `slice-6b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -322,24 +328,32 @@ Map file: [Attack-Surface-Git.md](../docs/security/Attack-Surface-Git.md). Revie
 
 ### Mail
 
-Map file: [Attack-Surface-Mail.md](../docs/security/Attack-Surface-Mail.md). Reviewer report: `security-review-evidence/slice-7.md`.
+Map file: [Attack-Surface-Mail.md](../docs/security/Attack-Surface-Mail.md). Reviewer report: `security-review-evidence/slice-7.md` (and `slice-7b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
 | SEC-MAIL-01 | `runtime/components/base/framework/service/org/moqui/mail/EmailClientServices.xml` `create#EmailAccount` (207-306), `update#EmailAccount` (308-452) | Any mail user can take the inbound mail of an address nobody has claimed | High | reported (confirmed in code) |
+| SEC-MAIL-61 | runtime/components/base/webroot/template/screen/BasicTransitions.xml:20-22 | A request's fileName runs as a server-side expression through emailScreenAsync | High | reported (likely) |
+| SEC-MAIL-63 | runtime/components/addon/mr-marble/screen/SimpleScreens/Party/PartyEmails.xml:23-26 | mr-marble PartyEmails serves any EmailMessage body as inline text/html | High | reported (confirmed in code) |
 | SEC-MAIL-02 | `crates/moqui-mail/src/inbound.rs:1018-1031` (`connect_tcp`), `crates/moqui-mail/src/sync.rs:462-530` (`open_imap`), `crates/moqui-mail/src/implementation.rs` `smtp_transport` (1888-1934), `require_host` (979-998) | A mail account's server settings make the server connect to internal addresses | Medium | reported (confirmed in code) |
 | SEC-MAIL-03 | `crates/moqui-core/src/web/mod.rs:1289-1340` (`view_email_message`, `mark_email_message_viewed`) | An anonymous GET changes the status of any mailbox or Outbox message | Medium | reported (confirmed in code) |
 | SEC-MAIL-04 | `runtime/components/base/tools/service/moqui.rest.xml:122-131` | The tools REST resource returns mailbox passwords and OAuth refresh tokens | Medium | reported (confirmed in code) |
+| SEC-MAIL-62 | runtime/components/base/webroot/template/screen/BasicTransitions.xml:20-28 (and 29-37) | A GET mails a screen's full export to an address the request names | Medium | reported (confirmed in code) |
+| SEC-MAIL-64 | runtime/components/addon/mr-marble/screen/SimpleScreens/Party/PartyEmails.xml:20 | mr-marble sendEmailMessage transitions send any stored message again | Medium | reported (confirmed in code) |
 | SEC-MAIL-05 | `EmailClientServices.xml` `send#OutOfOfficeReplies` (5197-5412), `run#EmailRules` `forward` (4532-4571) | Out-of-office replies and rule forwards have no total limit and trust the From header | Low | reported (likely) |
 | SEC-MAIL-06 | `crates/moqui-mail/src/delivery.rs:601-725` | The "delivered" notice is backscatter with the sender's headers | Low | reported (confirmed in code) |
 | SEC-MAIL-07 | `crates/moqui-host/src/smtp.rs` session loop (1169-1206), `rcpt` (1354-1450) | Internet mode has no cap on messages a session, refused recipients, or stored bytes | Low | reported (confirmed in code) |
 | SEC-MAIL-08 | `crates/moqui-mail/src/delivery.rs` `deliver_one` (753-772) | A message is dropped when its Message-ID is already in the account | Low | reported (confirmed in code) |
 | SEC-MAIL-09 | `crates/moqui-core/src/service/mail_capture.rs` (`decide`, `enabled`) | The mail capture can be on in production | Low | reported (confirmed in code) |
+| SEC-MAIL-65 | runtime/components/base/framework/service/org/moqui/impl/UserServices.xml:441-459 | Reset passwords and verification tokens are kept in clear in EmailMessage.body | Low | reported (confirmed in code) |
+| SEC-MAIL-66 | crates/moqui-mail/src/mx.rs:977-1010 (`hosts`), 1053-1075, 1138-1160 (`session`), 1313-1326 (`sts::fetch`) | Edge MX delivery connects to whatever address a recipient domain's DNS names, and falls back to clear text | Low | reported (confirmed in code) |
+| SEC-MAIL-67 | crates/moqui-mail/src/auth.rs:405-418 (`signing_domain`), 493-512 (`sign_for`), 763-790 (`verify_internal`) | A mail user's hosted domain is one the node signs for and then verifies as its own | Low | reported (to check) |
 | SEC-MAIL-10 | `runtime/components/base/basic-comms/screen/BasicComms/Inbox/Mail.qvue:1880` | Mail forged as from the reader loads remote images without asking | Info | reported (to check) |
+| SEC-MAIL-68 | runtime/components/base/framework/service/org/moqui/mail/EmailClientServices.xml:5002-5034 (`create#EmailIdentity`), 3357-3359 (`save#Draft`) | An identity's address is any text with an @ | Info | reported (confirmed in code) |
 
 ### Files, DAV, SSH and the terminal
 
-Map file: [Attack-Surface-Files.md](../docs/security/Attack-Surface-Files.md). Reviewer report: `security-review-evidence/slice-8.md`.
+Map file: [Attack-Surface-Files.md](../docs/security/Attack-Surface-Files.md). Reviewer report: `security-review-evidence/slice-8.md` (and `slice-8b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -348,16 +362,23 @@ Map file: [Attack-Surface-Files.md](../docs/security/Attack-Surface-Files.md). R
 | SEC-FIL-03 | `crates/moqui-dav/src/dav/files.rs:415-490` | DAV sends a user's HTML or SVG file inline from the application's origin | Medium | reported (confirmed in code) |
 | SEC-FIL-04 | `crates/moqui-host/src/dav_http.rs:47-59,79` | DAV buffers up to 256 MiB per request before it checks credentials | Medium | reported (likely) |
 | SEC-FIL-08 | `webroot.xml:257-272` | `/resources` lets `ADMIN` read any file the server's user can read, in production too | Medium | reported (to check) |
+| SEC-FIL-61 | crates/moqui-host/src/ssh/server.rs:1010 | SFTP holds up to `sftp-max-file` in memory per channel, and the handler does not count channels | Medium | reported (likely) |
 | SEC-FIL-05 | `runtime/components/base/framework/service/org/moqui/resource/FileServices.xml:2669-2702` | No attempt limit on a public link's password | Low | reported (to check) |
 | SEC-FIL-06 | `FileServices.xml:2834-2870`, `:1250` | Anonymous file drop has no size, count or type limit of its own | Low | reported (likely) |
 | SEC-FIL-07 | `FileServices.xml:307,341` | Three `FileServices` parameters name a server path and are not checked in the service | Low | reported (confirmed in code) |
+| SEC-FIL-62 | crates/moqui-host/src/command/shell.rs:87 | The admin shell's `service`, `entity`, `cache` and `js` commands leave no audit record | Low | reported (confirmed in code) |
+| SEC-FIL-63 | crates/moqui-host/src/command/shell.rs:185 | Admin shell error text and C1 controls reach the administrator's terminal unescaped | Low | reported (likely) |
+| SEC-FIL-67 | crates/moqui-dav/src/pim/rrule.rs:35 | Calendar and contact objects have no parser limit of their own; the bound is the 256 MiB DAV body | Low | reported (to check) |
 | SEC-FIL-09 | `runtime/components/addon/mr-boss/screen/PublicShare.xml:28,56` | `PublicShare.xml` `open` and `upload` name no method | Info | reported (confirmed in code) |
 | SEC-FIL-10 | `FileServices.xml:2649-2655` | A link or share stays valid after its maker loses access | Info | reported (confirmed in code) |
 | SEC-FIL-11 | `crates/moqui-host/src/ssh/server.rs:746-763`, `:1073`, `:1196` | SSH permissions are fixed for the life of a connection | Info | reported (confirmed in code) |
+| SEC-FIL-64 | crates/moqui-host/src/term/registry.rs:96 | A terminal ticket is reusable for 300 seconds and travels in the `/termws` query string | Info | reported (confirmed in code) |
+| SEC-FIL-65 | crates/moqui-host/src/term/access.rs:247 | `terminal` `command-line` and `host-sessions` are on in production for any value but `dev` or `false` | Info | reported (confirmed in code) |
+| SEC-FIL-66 | crates/moqui-host/src/term/hold.rs:139 | The `term-hold` socket checks file modes only; a connection starts any program | Info | reported (confirmed in code) |
 
 ### Calls, chat and messaging
 
-Map file: [Attack-Surface-Comms.md](../docs/security/Attack-Surface-Comms.md). Reviewer report: `security-review-evidence/slice-9.md`.
+Map file: [Attack-Surface-Comms.md](../docs/security/Attack-Surface-Comms.md). Reviewer report: `security-review-evidence/slice-9.md` (and `slice-9b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -394,7 +415,7 @@ Map file: [Attack-Surface-Comms.md](../docs/security/Attack-Surface-Comms.md). R
 
 ### Cluster and edge node
 
-Map file: [Attack-Surface-Cluster-Edge.md](../docs/security/Attack-Surface-Cluster-Edge.md). Reviewer report: `security-review-evidence/slice-10.md`.
+Map file: [Attack-Surface-Cluster-Edge.md](../docs/security/Attack-Surface-Cluster-Edge.md). Reviewer report: `security-review-evidence/slice-10.md` (and `slice-10b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -408,7 +429,7 @@ Map file: [Attack-Surface-Cluster-Edge.md](../docs/security/Attack-Surface-Clust
 
 ### Data layer and stored secrets
 
-Map file: [Attack-Surface-Data.md](../docs/security/Attack-Surface-Data.md). Reviewer report: `security-review-evidence/slice-12.md`.
+Map file: [Attack-Surface-Data.md](../docs/security/Attack-Surface-Data.md). Reviewer report: `security-review-evidence/slice-12.md` (and `slice-12b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -428,7 +449,7 @@ Map file: [Attack-Surface-Data.md](../docs/security/Attack-Surface-Data.md). Rev
 
 ### PASS frontend (mr-pass)
 
-Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PASS.md). Reviewer report: `security-review-evidence/slice-14.md`.
+Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PASS.md). Reviewer report: `security-review-evidence/slice-14.md` (and `slice-14b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -444,7 +465,7 @@ Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PAS
 
 ### PASS authority and public accounts
 
-Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PASS.md). Reviewer report: `security-review-evidence/slice-15.md`.
+Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PASS.md). Reviewer report: `security-review-evidence/slice-15.md` (and `slice-15b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -464,7 +485,7 @@ Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PAS
 
 ### PASS application services (Mantle)
 
-Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PASS.md). Reviewer report: `security-review-evidence/slice-16.md`.
+Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PASS.md). Reviewer report: `security-review-evidence/slice-16.md` (and `slice-16b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -472,6 +493,7 @@ Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PAS
 | SEC-PSS-21 | `request/SupportPortal.js:758-765`, `:775`, `:833` | `createCustomerCase` leaves the staged upload on disk when the operation is a repeat | Medium | reported (confirmed in code; a helper reader's item, not checked by the slice's reviewer) |
 | SEC-PSS-41 | `service/mantle/marketing/MarketingPortal.js` reserveRegistration (starts 1058), registrationView (starts 961), subscriberOf (198-231) | An anonymous event reservation answers the directory name of the party that owns a typed email address | Medium | reported (confirmed in code; a helper reader's item, not checked by the slice's reviewer) |
 | SEC-PSS-42 | `service/mantle/forum/Forum.js` publishSitePage (starts 3275), getSitePage (starts 1976) | A site owner can publish any wiki page of an unrestricted space as the site's public page | Medium | reported (likely; a helper reader's item, not checked by the slice's reviewer) |
+| SEC-PSS-61 | runtime/components/addon/mr-mantle/service/mantle/marketing/MarketingPortal.js:198 (subscriberOf), :1019, :1058 | An anonymous event reservation answers the stored name of the party that owns a typed email address | Medium | reported (confirmed in code) |
 | SEC-PSS-02 | `M/order/ShopCheckout.js:1212` | The checkout return key and the cart recovery token are query parameters the request log keeps | Low | reported (confirmed in code) |
 | SEC-PSS-03 | `M/product/ShopFulfillment.js:490-506`, `:573-588` | A ten-minute download capability is accepted as an order link and can issue its successor | Low | reported (confirmed in code) |
 | SEC-PSS-04 | `M/party/ShopCustomer.js:114-160` | A guest order with a typed email is merged into the account that verifies that email | Low | reported (to check) |
@@ -488,18 +510,29 @@ Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PAS
 | SEC-PSS-43 | `service/mantle/forum/Forum.js` redeemInvitation (starts 2323) | Redeeming an invitation reactivates a member the site's staff suspended or removed | Low | reported (confirmed in code; a helper reader's item, not checked by the slice's reviewer) |
 | SEC-PSS-44 | `service/mantle/party/ConsentServices.xml` create#UnsubscribeToken (starts 1289), resolve#UnsubscribeToken (1428), apply#UnsubscribePreferences (1506) | A list link's token does not expire by default, is not single use, has no lookup limit and also subscribes | Low | reported (confirmed in code; a helper reader's item, not checked by the slice's reviewer) |
 | SEC-PSS-45 | `service/mantle/public/AccountHub.js:360-368` | PASS's one-click unsubscribe is not a confirmed unsubscribe on a list that asks confirmation | Low | reported (likely; a helper reader's item, not checked by the slice's reviewer) |
+| SEC-PSS-62 | crates/moqui-core/src/script/theme/markup.rs:124 (DENIED_ELEMENTS), :175 (DENIED_ATTRIBUTES), :628 (check_url, navigation) | A theme may hold a `<meta>` element and links to any host | Low | reported (to check) |
+| SEC-PSS-65 | runtime/components/addon/mr-mantle/service/mantle/party/PortalMedia.js:20 | `PortalMedia.sniff` reads the whole staged upload into memory to compare eight bytes | Low | reported (confirmed in code) |
+| SEC-PSS-66 | runtime/components/addon/mr-mantle/service/mantle/party/ExternalAccess.js:386 | `check()` skips the organization comparison when its caller names none, and the intake form's check names none | Low | reported (to check) |
+| SEC-PSS-67 | runtime/components/addon/mr-mantle/service/mantle/party/ShopCustomer.js:587, :751, :779 | Shop's address and card setup operations have no per-requester limit | Low | reported (confirmed in code) |
 | SEC-PSS-07 | `M/order/ShopCheckoutServices.xml:167` (`run#Step`), `:181`, `:201`, `:216` | Internal step and job services are `anonymous-all` | Info | reported (confirmed in code) |
 | SEC-PSS-46 | `service/mantle/marketing/MarketingPortal.js` requestSubscription (starts 419), reserveRegistration (starts 1058) | The neutral limits of public subscription and registration can be used to shut out a site or an address | Info | reported (confirmed in code; a helper reader's item, not checked by the slice's reviewer) |
+| SEC-PSS-63 | crates/moqui-core/src/script/theme/expr.rs:140 | The theme expression check does not see a property name built at run time | Info | reported (confirmed in code) |
+| SEC-PSS-64 | runtime/components/addon/mr-pass/screen/Shop/ShopCheckout.js:891 | The checkout relay writes the answered form address without the host check the card relay makes | Info | reported (confirmed in code) |
 
 ### Forum and Smithy
 
-Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PASS.md). Reviewer report: `security-review-evidence/slice-17.md`.
+Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PASS.md). Reviewer report: `security-review-evidence/slice-17.md` (and `slice-17b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
+| SEC-PFS-61 | `runtime/components/addon/mr-mantle/service/mantle/smithy/SmithyGit.js:385-415` | A Smithy access token made for git is the account's whole login key, with no scope | Medium | reported (confirmed in code) |
 | SEC-PFS-01 | `mr-mantle/service/mantle/work/GitServices.xml:1119, 1128, 1189` | The framework's review-thread REST gives party ids and party names of a Smithy repository's commenters | Low | reported (confirmed in code) |
 | SEC-PFS-02 | `mr-mantle/service/mantle/forum/Forum.js:2494-2599` | Staged forum uploads have no count or total size limit per member | Low | reported (likely) |
+| SEC-PFS-62 | `runtime/components/addon/mr-mantle/service/mantle/smithy/SmithyGit.js:225` | The webhook secret is inside the stored hash of `storeWebhook`'s receipt | Low | reported (confirmed in code) |
+| SEC-PFS-63 | `runtime/components/addon/mr-mantle/service/mantle/smithy/SmithyGit.js:290-306` | For an account with no password, "sign in again" is any sign-in of the account in the last 15 minutes | Low | reported (confirmed in code) |
+| SEC-PFS-64 | `runtime/components/addon/mr-mantle/service/mantle/forum/Forum.js:5113-5143` | Mail is taken as authenticated on a DKIM pass for any parent of the From domain | Low | reported (to check) |
 | SEC-PFS-03 | `mr-mantle/service/mantle/smithy/SmithyGitServices.xml:9, 39, 53, 72, 89, 102, 117` | Hook and worker services are `anonymous-all` with the user named in a parameter | Info | reported (to check) |
+| SEC-PFS-65 | `runtime/components/addon/mr-mantle/service/mantle/smithy/SmithyGit.js:185-200, 216` | `findWebhooks` answers a webhook's whole URL, which may hold a credential | Info | reported (confirmed in code) |
 
 ## Critical and High findings
 
@@ -604,4 +637,26 @@ High; reported (confirmed in code).
 - **Evidence:** `const KINDS = ['EakHosted', 'EakExternal', 'EakShared']; if (!KINDS.includes(accountKindEnumId)) {...}` then `account.setFields({ownerUserId: ownerUserId, ... accountKindEnumId: accountKindEnumId, ... emailAddress: emailAddress, ...})` with no other check of `emailAddress`; `delivery.rs:108-110` `KINDS.contains(&kind) && status != "EasRemoved" && !has_store_server`; `delivery.rs:327-329` `ids.sort_by(|left, right| made_order(left, right)); Ok(first_claim(ids, address, "its address"))`; `docs/interfaces/Mail-Inbound.md:51` `The accounts are made as usual (create#EmailAccount with accountKindEnumId EakHosted or EakShared, the BOSS MailAccounts wizard).` (doc)
 - **Not confirmed:** whether an app (mr-boss) replaces the wizard with one that limits kinds or domains; the edge node's `RecipientMap` is said by its comment to answer "by the same rules" and was not traced; `create#EmailIdentity` (an identity's address is matched second) was not read; `mail_dkim_domains` empty signs for "the hosted and shared accounts' domains" (a comment), so a claimed domain may also be signed for, not traced.
 - **Suggested fix:** Let only a holder of a mail-administration permission make or re-address an account the listener delivers to, or require the address's domain to be in a configured list of hosted domains and the local part to be approved.
+
+#### SEC-MAIL-61. A request's fileName runs as a server-side expression through emailScreenAsync
+
+High; reported (likely).
+
+- **Where:** runtime/components/base/webroot/template/screen/BasicTransitions.xml:20-22; runtime/components/base/framework/service/org/moqui/mail/EmailServices.xml:242-264; crates/moqui-mail/src/implementation.rs:1059, 1206, 1265; crates/moqui-core/src/script/runtime.rs:401-410
+- **Reached by:** any signed-in user authorized for a screen that includes `emailScreenAsync` (five mr-marble accounting screens: AssetOnHand, AssetOnHandSummary, AssetStatusByReceipt, ShipmentPackageSummary, FindTransactionEntry), with `GET .../emailScreenAsync?toAddresses=a@b.c&screenRenderMode=csv&fileName=${...}`; also a cross-site link such a user opens, since the transition is `read-only` and a GET is not token-checked.
+- **What happens:** Every request parameter is a context name and the transition passes the whole context to `send#ScreenRenderEmail`, which declares `fileName` and puts it in the attachment map it hands to `send#EmailTemplate`. `send_template` expands the attachment's file name with `moqui_core::script::expand`, which runs each `${expression}` in the script runtime, so text the request wrote is evaluated as JavaScript on the server with `ec` in scope, in an async service call.
+- **Evidence:** `in-map="Object.assign({}, context, {screenLocation: sri.getActiveScreenDef().location, bodyParameters: ec.web.requestParameters})"`; `<set field="attachments" from="[{fileName: fileName, attachmentLocation: screenLocation, screenRenderMode: screenRenderMode}]"/>`; `let filename = expand_text(&map_text(map, "fileName"))?;` and `let filename = expand_text(&filename)?;`; `/// Expand a template. \`${expression}\` runs in this runtime.`; render.rs:821-826 `for (name, value) in job.parameters { ... script::set_context_name(name, value.clone())?; }`
+- **Not confirmed:** not run. Whether `Object.assign` over `context` copies the request's names (the form's own `toAddresses`, `title` and `screenRenderMode` travel the same way); whether service parameter validation changes a `${` in a plain text parameter (a grep of `crates/moqui-core/src/service` for a `${` check found only `remote.rs`); what the script runtime lets an expression do (the Scripts slice); which of the two expand sites the map attachment reaches.
+- **Suggested fix:** Never expand a caller's `fileName`: expand only an `EmailTemplateAttachment` row's own name, and treat a call's as literal text. Give the transition a fixed parameter list (`toAddresses`, `screenRenderMode`, `title`) instead of the whole context.
+
+#### SEC-MAIL-63. mr-marble PartyEmails serves any EmailMessage body as inline text/html
+
+High; reported (confirmed in code).
+
+- **Where:** runtime/components/addon/mr-marble/screen/SimpleScreens/Party/PartyEmails.xml:23-26; crates/moqui-core/src/web/mod.rs:1253-1277
+- **Reached by:** any signed-in user authorized for the mr-marble Party screens, `GET .../PartyEmails/EmailMessage?partyId=x&emailMessageId=N` (ids are sequenced); for the script part, anyone who can mail any mailbox on the server and get such a user to open the link.
+- **What happens:** The transition finds the message by the request's id alone, with no party or account check, and answers its `body`. That is every user's mailbox mail and system mail: a password reset mail's stored body holds the reset password in clear (C65), so a party-screen user can ask for an administrator's reset anonymously and read it. The answer is `text/html` with `Content-Disposition: inline` on the application's origin, so HTML mail from outside (stored as received, not cleaned on the server) runs its script in the victim's session.
+- **Evidence:** `<transition name="EmailMessage" read-only="true"><parameter name="emailMessageId"/><actions>` `<entity-find-one entity-name="moqui.basic.email.EmailMessage" value-field="emailMessage"/>` `<script>ec.web.sendTextResponse(emailMessage?.body, "text/html", null)</script>`; mod.rs `None => headers.push(("Content-Disposition".to_string(), "inline".to_string()))`, `send_bytes_with_headers(200, headers, text.as_bytes().to_vec())`
+- **Not confirmed:** whether a response-wide content security policy or `nosniff` header is added in `send_bytes_with_headers` (not read); whether the entity find is refused for a non-admin by an artifact authorization on `moqui.basic.email.EmailMessage` (the screen's own list reads the same entity, and `moqui.*` entities have no row filter); who is granted the SimpleScreens Party screens.
+- **Suggested fix:** Remove the transition, or find the message with the screen's own party condition and show it through the `html-view` widget (sandboxed frame, cleaned) instead of as a document.
 

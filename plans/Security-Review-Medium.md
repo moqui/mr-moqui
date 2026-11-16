@@ -400,6 +400,28 @@ Medium; reported (confirmed in code).
 - **Not confirmed:** that the row's values are decrypted at this point was not traced in the entity facade; it is inferred from `implementation.rs:1849-1855`, where `field_text(server, "smtpPassword")` of a found row is used as the SMTP password. Whether `EmailServerAccessToken` or `EmailOAuthProvider` (client secret) is reachable through another declared resource or the generic entity tools was not checked (`is_restricted_generic_entity` covers `emailserver` and `systemmessageremote` only by name).
 - **Suggested fix:** Leave every `encrypt="true"` field out of generic entity REST answers (answer whether one is set), and remove the `servers` entity resource or limit it to servers no account owns.
 
+#### SEC-MAIL-62. A GET mails a screen's full export to an address the request names
+
+Medium; reported (confirmed in code).
+
+- **Where:** runtime/components/base/webroot/template/screen/BasicTransitions.xml:20-28 (and 29-37); runtime/components/base/framework/service/org/moqui/mail/EmailServices.xml:242-264
+- **Reached by:** an outsider who gets a signed-in user of one of the five mr-marble accounting screens to open a link (`.../FindTransactionEntry/emailScreenAsync?toAddresses=attacker@x&screenRenderMode=csv`); or that user directly.
+- **What happens:** The transition is `read-only="true"` with a service call, so a GET with URL parameters runs it and no session token is checked. It renders the active screen with `pageNoLimit=true` as xlsx or csv and mails it through the `SYSTEM` server to `toAddresses`, `ccAddresses` and `bccAddresses` from the request, with `emailTemplateId` also the request's. One click sends every general ledger entry or the whole asset list to an outside address; `emailScreenUserAsync` fixes only `toAddresses` and leaves cc and bcc to the request.
+- **Evidence:** `<transition name="emailScreenAsync" read-only="true">`; `<parameter name="toAddresses" required="true">`, `<parameter name="emailTemplateId" default-value="SCREEN_RENDER"/>`; `<if condition="!bodyParameters.pageNoLimit"><set field="bodyParameters.pageNoLimit" value="true"/></if>`; `in-map="Object.assign({}, context, {..., toAddresses: ec.user.userAccount?.emailAddress})"` (the user variant)
+- **Not confirmed:** whether a mail server is set for `SYSTEM` on a given instance (with none the send is captured, not sent); the user the async render runs as and its authorization; a rate limit.
+- **Suggested fix:** Make both transitions POST-only with the session token, pass named parameters only (no `emailTemplateId`, cc or bcc from the request), and send only to the user's own address unless the user holds a permission for outside recipients.
+
+#### SEC-MAIL-64. mr-marble sendEmailMessage transitions send any stored message again
+
+Medium; reported (confirmed in code).
+
+- **Where:** runtime/components/addon/mr-marble/screen/SimpleScreens/Party/PartyEmails.xml:20; Order/OrderDetail.xml:73; Shipment/ShipmentDetail.xml:63; Accounting/Invoice/EditInvoice.xml:70; crates/moqui-mail/src/implementation.rs:253-312
+- **Reached by:** any signed-in user authorized for one of those four screens, POST `.../sendEmailMessage` with `emailMessageId=N`.
+- **What happens:** The transition passes the request's parameters to `send#EmailMessage`, which checks no owner and refuses only `ES_DRAFT` and `ES_CANCELLED`. Any other message is sent through its own server or its mail account's server: another user's Sent mail goes to its recipients a second time from that user's account and credentials, a scheduled message goes now, a received message is sent out again from the account under the original sender's From, and old system mail (a reset, an invoice) is mailed again.
+- **Evidence:** `<transition name="sendEmailMessage"><service-call name="org.moqui.mail.EmailServices.send#EmailMessage"/>`; `if status == "ES_DRAFT" { return fail(...) } if status == "ES_CANCELLED" { return fail(...) }` then `let account_id = field_text(&message, "emailAccountId"); let client = !account_id.is_empty();` and the server lookup, with no user or access check in between.
+- **Not confirmed:** the service's artifact authorization for a marble user (it is called below the screen's inherited grant). `send_message` was read to its end (253-417): there is no later status or owner check; a server's `allowedToDomains` drops recipients outside it, and only a Ready or Bounced message's status changes after the send.
+- **Suggested fix:** Check in `send#EmailMessage` that the message is system mail the caller may send (no `emailAccountId`, status Ready or Bounced) or is of an account the caller has send level on; have the marble transitions check the message belongs to the order, invoice, shipment or party shown.
+
 ## Files, DAV, SSH and the terminal
 
 #### SEC-FIL-01. `/resources` runs elFinder write commands on a GET with no session token
@@ -456,6 +478,17 @@ Medium; reported (to check).
 - **Evidence:** `webroot.xml:258` `<parameter name="resourceRoot"/>`; `elfinder.rs:756-759` `"get" => { let entry = self.entry(&location)?; response.insert("content".to_string(), Value::string(self.read_text(&entry)?)); }` with no `write_refused` call; `elfinder.rs:781` `writes_restricted` is the only production rule.
 - **Not confirmed:** `context/locate.rs` `file_path` was not read, so whether a `file:` location may be absolute or leave the runtime directory is not confirmed. The map already says the route "reads and writes the `resourceRoot` it is given (`component://`, `file:` included)".
 - **Suggested fix:** In production accept only `dbresource://` and `git://` roots for every command, or require a sealed permission for `file:`, `runtime://` and `component://` roots.
+
+#### SEC-FIL-61. SFTP holds up to `sftp-max-file` in memory per channel, and the handler does not count channels
+
+Medium; reported (likely).
+
+- **Where:** crates/moqui-host/src/ssh/server.rs:1010 ; crates/moqui-host/src/ssh/sftp_fs.rs:216
+- **Reached by:** any account that can log in over SSH (key, password or app password) while the SSH listener is on; `dav-server` `sftp-drives` is true by default, so no permission is needed.
+- **What happens:** A file opened for writing is kept in memory until it is closed, capped at `sftp-max-file` (256 MiB) per channel. `channel_open_session` accepts every session channel of a logged-in connection and each may start the `sftp` subsystem, so one connection can hold many times 256 MiB, and a user has 4 connections. The server's memory is the limit.
+- **Evidence:** `server.rs:1016-1021` `if !self.let_in() { reply.reject(...) } self.channels.insert(channel.id(), channel); reply.accept().await;` (no count); `sftp_fs.rs:216-218` `fn room(&self) -> usize { self.max_file.saturating_sub(self.held) }`; `sftp_fs.rs:50-53` `Write { location: String, bytes: Vec<u8> }`
+- **Not confirmed:** Whether russh limits channels per connection by itself (the crate was not read); `grep` for `channels.len()` and `MAX_CHANNELS` in `server.rs` found nothing. The write path (lines 462-535, 557-578) was read only by its messages.
+- **Suggested fix:** Cap session channels per connection (a handful) and count write buffers per user or per process instead of per channel, or spool a write to a temporary file.
 
 ## Calls, chat and messaging
 
@@ -676,4 +709,28 @@ Medium; reported (likely; a helper reader's item, not checked by the slice's rev
 - **Evidence:** `WikiServices.xml:1802` `canView = adminGroup || ((space.restrictView !== 'Y' || ...) && (!page || page.restrictView !== 'Y' || ...))`; `:1807` `canUpdate = canView && !readOnly && (canAdmin || ((space.restrictUpdate !== 'Y' || spaceUser?.allowUpdate === 'Y') && (!page || page.restrictUpdate !== 'Y' || pageUser?.allowUpdate === 'Y')))`
 - **Not confirmed:** how guessable `wikiPageId` and the published version name are (not traced); whether deployments make non-staff accounts site owners; whether internal wiki spaces are created restricted by default (the entity fields have no default: `ResourceEntities.xml:789-790`). `updateSite` has the related gap: an owner sets `publishingWikiSpaceId` to any existing space (`one('moqui.resource.wiki.WikiSpace', {wikiSpaceId: p.publishingWikiSpaceId})`, NotFound otherwise).
 - **Suggested fix:** Require the page to be in a space bound to the site (the site's publishing space or a site page space) and require an internal party or an explicit wiki grant, not the wiki's default-open update rule.
+
+#### SEC-PSS-61. An anonymous event reservation answers the stored name of the party that owns a typed email address
+
+Medium; reported (confirmed in code).
+
+- **Where:** runtime/components/addon/mr-mantle/service/mantle/marketing/MarketingPortal.js:198 (subscriberOf), :1019, :1058; runtime/components/addon/mr-mantle/service/mantle/work/EventRegistrationPlaces.js:76, :394
+- **Reached by:** anonymous, the PASS operation `reserveRegistration` (a `TOKEN_WRITES` name) with `buyerEmail`, on any site with a published, open event offer.
+- **What happens:** The buyer is the first existing directory party with that current email address, else a new person; the first place's attendee is that party, and the answer to the same request names the attendee with `partyName(attendeePartyId)`, the stored first and last name or organization name (or the party id), not the name typed. A visitor learns whether an address is known to the organization and the name kept for it, and the reservation, its order and its capability are attached to that existing party. This confirms the first report's unchecked `SITES-C1`.
+- **Evidence:** `if (party && party.disabled !== "Y" && !party.mergedToPartyId && !party.privateOwnerUserId) return {partyId: party.partyId, contactMechId: info.contactMechId}`; `attendeePartyId: firstPlace ? p.buyer.partyId : null,`; `attendeeName: row.attendeePartyId ? P.partyName(row.attendeePartyId) : "",`; `if (person) return [person.firstName, person.lastName].filter(Boolean).join(" ") || partyId`
+- **Not confirmed:** the guard found is the limits only (`regLimits`: 10 a client in ten minutes, 500 a site an hour, 5 an address an hour); the receipt and ticket mail were not read for the same name; `completeRegistration`'s attendee match was not read.
+- **Suggested fix:** Keep the typed name on the reservation and show that; do not attach an unverified address to an existing party until the address is confirmed.
+
+## Forum and Smithy
+
+#### SEC-PFS-61. A Smithy access token made for git is the account's whole login key, with no scope
+
+Medium; reported (confirmed in code).
+
+- **Where:** `runtime/components/addon/mr-mantle/service/mantle/smithy/SmithyGit.js:385-415`; `crates/moqui-core/src/service/user_keys.rs:216-247`; `runtime/components/base/framework/entity/SecurityEntities.xml:430`
+- **Reached by:** whoever obtains a token an account made on `Account/GitAccess` (a CI variable, a git credential file, a remote URL), with a `login_key` header on any request the framework signs in.
+- **What happens:** `createAccessToken` calls the framework's `create#UserAccessToken`, which makes an ordinary `UserLoginKey` (a `description`, an empty `scope`) valid 90 days or up to 366. Nothing limits it to git: it is the account's key on the framework's REST of the business host, and in local mode on every PASS page, where the authority's login-key rule does not run. A staff or `ADMIN` account that makes one for git hands out all of its rights.
+- **Evidence:** `user_keys.rs:227` `let token = crate::user::get_login_key(Some(days * 24.0))?;` and `:238` `// a description marks the key as an access token`; `SecurityEntities.xml:430` `Empty: the account's key.`; `PassAuthority.js:378` `// ... an access token is for git and the framework's REST (design-smithy §5.5)`
+- **Not confirmed:** what else the framework refuses to a key of kind `token` (only the authority's `run()` was read); whether a write on a local-mode PASS page by header key passes the session token check (another slice reports the header login there).
+- **Suggested fix:** Give an access token a scope (git over HTTP and the git REST) that every other login path refuses, as `create#UserScopedKey` does for `gateway`; or refuse to make one for an account with a staff group.
 
