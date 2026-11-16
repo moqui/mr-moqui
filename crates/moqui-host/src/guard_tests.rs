@@ -75,6 +75,32 @@ fn off_without_trusted_proxies_unless_enabled() {
     }
 }
 
+/// SEC-WEB-07: a rate limit and a path rule match the screen path a request reaches as well as the path as sent, so a
+/// `.`, `..`, empty, `~name=value` or escaped name does not take the request around them.
+#[test]
+fn a_limit_and_a_path_rule_match_the_screen_path_a_request_reaches() {
+    let guard = guard(
+        r#"<web-protection enabled="true">
+                <rate-limit name="login" path="/Login/**" methods="POST" requests="1" seconds="60" burst="1"/>
+                <path-rule name="tools" action="deny" path="/tools/**"/>
+            </web-protection>"#,
+        "",
+    );
+    for (client, path) in [
+        ("203.0.113.11", "/Login/./login"),
+        ("203.0.113.12", "/x/../Login/login"),
+        ("203.0.113.13", "//Login//login"),
+        ("203.0.113.14", "/~a=b/Login/login"),
+        ("203.0.113.15", "/%4Cogin/login"),
+    ] {
+        assert_eq!(status(&guard, client, "POST", "/Login/login"), 200, "{path}");
+        assert_eq!(status(&guard, client, "POST", path), 429, "{path}");
+    }
+    assert_eq!(status(&guard, "203.0.113.16", "GET", "/apps/../tools/x"), 404);
+    assert_eq!(status(&guard, "203.0.113.16", "GET", "/~x=1/tools"), 404);
+    assert_eq!(status(&guard, "203.0.113.16", "GET", "/tools-not/x"), 200);
+}
+
 #[test]
 fn a_rate_limit_answers_429_past_its_burst_and_only_where_it_applies() {
     let guard = guard(
