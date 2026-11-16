@@ -116,3 +116,5 @@ Desktop.ini
 /crates/moqui-client-tauri/Cargo.lock
 # Local screenshots used during UI review; keep evidence outside repository history.
 /plans/ui-refinement-evidence/
+# Reviewer reports and prompts of the security review (plans/Security-Review.md); working record, not history.
+/plans/security-review-evidence/

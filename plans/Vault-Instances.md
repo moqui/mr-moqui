@@ -1,9 +1,13 @@
 # Vaults and Instances
 
-Status 2026-11-14: plan; nothing built. It expands the user's notes of Nov 14, 2026 and their answers the same day
-([§9](#9-decisions)). [Sealed-Secrets](Sealed-Secrets.md) keeps the server's own keys. This plan keeps the keys people
-hold, and the keys of the instances a server manages, and it covers the deployment side of a sealed start: how a
-managed instance gets its secrets, unseals, keeps its recovery shares and rotates its credentials.
+Status 2026-11-14: plan; nothing built. Reviewed 2026-11-15 against the code in the security review: the facts of §2
+are corrected, the design of §3.2, §3.3, §3.5, §3.7 to §3.10, §3.12, §4.2, §4.4 to §4.6 and §4.9 changed (signing
+keys and signed wraps, the signed lease, machine access, recovery shares, the manager's limits), and the choices left
+to the owner are in [Open points](#open-points-from-the-security-review). It expands the user's notes of Nov 14, 2026
+and their answers the same day ([§9](#9-decisions)). [Sealed-Secrets](Sealed-Secrets.md) keeps the server's own keys.
+This plan keeps the keys people hold, and the keys of the instances a server manages, and it covers the deployment
+side of a sealed start: how a managed instance gets its secrets, unseals, keeps its recovery shares and rotates its
+credentials.
 
 The plan has two parts, and they share one problem: secrets that a person must open.
 
@@ -24,7 +28,8 @@ repository.
 Sections: [1 three tiers](#1-three-tiers-of-secrets) · [2 what is there now](#2-what-is-there-now) ·
 [3 vaults](#3-vaults) · [4 instances](#4-instances) · [5 screens](#5-screens) · [6 phases](#6-phases) ·
 [7 tests](#7-tests) · [8 other plans and docs](#8-other-plans-and-docs) · [9 decisions](#9-decisions) ·
-[10 not in scope](#10-not-in-scope) · [11 inspiration](#11-inspiration)
+[open points](#open-points-from-the-security-review) · [10 not in scope](#10-not-in-scope) ·
+[11 inspiration](#11-inspiration)
 
 ## 1. Three tiers of secrets
 
@@ -50,19 +55,19 @@ credential-vault implementation" (`boss/plan/design-admin.md`, Credentials) stil
 
 | Area | Now | Where |
 |---|---|---|
-| Instance tables | `moqui.server.instance`: `InstanceHost`, `InstanceHostType` (services by name, with the CI run services DG5 added), `InstanceImage`, `InstanceImageType` with its env, link, volume and host config templates, `DatabaseHost`, `DatabaseType`, `AppInstance` with its env, links, volumes and host config. Ported from Moqui Java. The seeds name Moqui Java's images (`moqui/moquidemo` and others), its volume paths (`runtime/elasticsearch`, `runtime/txlog`) and a `LocalMySQL` admin password | `fw/entity/ServerEntities.xml` |
-| Instance services | `provision#AppInstance` creates the database and user, then inits and starts the container. The Docker services (`init#InstanceDocker` and the rest) are JS over the Engine API v1.24, on plain HTTP (port 2375 by default); they do not use the host's TLS fields. `create#DatabasePostgres` and `create#DatabaseMySQL` run SQL with the database host's admin login | `fw/service/org/moqui/dev/InstanceServices.xml` |
+| Instance tables | `moqui.server.instance`: `InstanceHost`, `InstanceHostType` (services by name, with the CI run services DG5 added), `InstanceImage`, `InstanceImageType` with its env, link, volume and host config templates, `DatabaseHost`, `DatabaseType`, `AppInstance` with its env, links, volumes and host config. Ported from Moqui Java. The seeds name Moqui Java's images (`moqui/moquidemo` and others), its volume paths (`runtime/elasticsearch`, `runtime/txlog`) and a `LocalMySQL` admin password, the literal `moquiroot` | `fw/entity/ServerEntities.xml` |
+| Instance services | `provision#AppInstance` creates the database and user, then inits and starts the container. The Docker services (`init#InstanceDocker` and the rest) are JS over the Engine API v1.24, on plain HTTP (port 2375 by default); they do not use the host's TLS fields. `create#DatabasePostgres` and `create#DatabaseMySQL` run SQL with the database host's admin login. `get#AppInstanceEnv` returns that admin password in its `adminMap` out-parameter | `fw/service/org/moqui/dev/InstanceServices.xml` |
 | CI driver | Rust, on Docker and Podman: a Unix socket, HTTP, or HTTPS with the host's `tlsCaCert`, `tlsClientCert` and `tlsClientKey`; runs that end, with limits; a `fake` host type for tests | `crates/moqui-git/src/ci/driver/docker.rs`, `fake.rs` |
 | Instance screens | System › Instance: InstanceList, InstanceDetail | `tools/screen/System/Instance/` |
 | Secrets in instance rows | `InstanceHost.password` and `tlsClientKey`, `InstanceImage.password`, `DatabaseHost.adminPassword`, `InstanceImageTypeEnv.envValue` and `AppInstanceEnv.envValue` are `encrypt="true"` fields. Any find decrypts them, and the env values reach the container as environment variables, which `docker inspect` and `/proc/*/environ` show | `fw/entity/ServerEntities.xml` |
-| CI secrets and environments | `GitCiSecret` (encrypted, scoped to protected refs, tags or an environment), `GitCiEnvironment` (`targetUrl`, an encrypted `targetToken`, `requiredPipeline`, `approvalRequired`), `GitDeployment`. Nothing queues or performs a deploy yet | `fw/entity/GitCiEntities.xml`; [Pipelines](../docs/interfaces/Pipelines.md#not-built) |
-| Deploy plan | Environments, the deploy event, the gate and the approval | [Dogfood §8.6](Dogfood.md#86-deploys), DG10 |
+| CI secrets and environments | `GitCiSecret` (encrypted, scoped to protected refs, tags or an environment), `GitCiEnvironment` (`targetUrl`, an encrypted `targetToken`, `requiredPipeline`, `approvalRequired`), `GitDeployment`. A deployment of a component repository is built: `request#GitDeployment` queues the environment's pipeline for the branch's head with the `deploy` event; when that run passes, the deployment waits for `decide#GitDeployment` if the environment requires approval or no branch rule protects the branch (never the requester); then the deploy step posts an attestation to the target's Component-Deploy REST (`deploy#AttestedComponent`, called with no user signed in). The attestation is JSON signed with HMAC-SHA256 under `targetToken`: the audience (the target's URL), the repository URL, branch, commit, component, pipeline and run, environment, deployment id, time and data types. The target holds the same secret as `component_deploy_attestation_key`, checks the signature, the age and the audience, fetches the branch and deploys that commit. A CI job's secrets reach its container as environment variables | `fw/entity/GitCiEntities.xml`, `fw/service/org/moqui/git/GitCiServices.xml`, `crates/moqui-git/src/ci/deploy.rs`, `attest.rs`, `trust.rs`; [Pipelines](../docs/interfaces/Pipelines.md#deployments) |
+| Deploy plan | Environments, the deploy event, the gate and the approval: built for a component repository, as above. Not built: an owner's environment, a private repository's fetch by the target, a tag, a framework archive or image, and deploys to managed instances | [Dogfood §8.6](Dogfood.md#86-deploys), DG10; [Pipelines](../docs/interfaces/Pipelines.md#not-built) |
 | Component deploy | Fetch, preview and deploy from git; the database storage reaches every cluster member | [Component-Deploy](../docs/tools/Component-Deploy.md#deploying-from-git) |
 | Monitor | OTLP in with `service.instance.id`; Services and Releases by instance; regressions compared across instances; `RecoveryPolicy`, `RecoveryAdapter` (`in-process`, `webhook`, `manual`), `RecoveryAction`; `InstanceDrain`; `ScrapeTarget`; `IngestKey`; annotations by `POST /v1/annotations` | `fw/entity/MonitorEntities.xml`; [Monitoring](../docs/tools/Monitoring.md#recovery) |
-| Edge link | A local node dials its edge node's HTTPS port. Pairing runs on a separate ALPN over the web certificate, then both link keys are pinned. gRPC runs both ways on HTTP/2, with generations, PINGs and redial with backoff | `host/edge_link/`; [Run-Deploy](../docs/Run-Deploy.md#a-local-server-with-an-edge-node) |
+| Edge link | A local node dials its edge node's HTTPS port. Pairing runs on a separate ALPN over the web certificate, then both link keys are pinned. gRPC runs both ways on HTTP/2, with generations, PINGs and redial with backoff. The members of a local cluster share the pairing's key in the `.env` they share, and each member also has an Ed25519 key of its own in `runtime/db/edge_member_key`, which the edge node pins on the member's first link | `host/edge_link/` (`member_key.rs`); [Run-Deploy](../docs/Run-Deploy.md#a-local-server-with-an-edge-node) |
 | Client crypto | Chat's crypto device (matrix-sdk-crypto in wasm, loaded only when asked). Its store is encrypted under a key the server derives, so it is not zero-knowledge. Room keys are backed up to a recovery key the user keeps | `runtime/components/base/webroot/screen/webroot/js/WebrootCrypto.js`, `crates/moqui-core/src/service/chat_keys.rs`; [Chat-Keys](../docs/interfaces/Chat-Keys.md) |
 | Device key stores | Desktop: the OS key store, or a file only the user can read. Android: an AES-GCM Keystore key | `crates/moqui-desktop/src/client/keystore.rs`, `crates/moqui-mobile/gen/android/app/src/main/java/org/moqui/mobile/KeyVault.kt` |
-| Crypto crates | `argon2`, `aes-gcm`, `hkdf` and `curve25519-dalek` are in the workspace | `Cargo.toml` |
+| Crypto crates | `argon2`, `aes-gcm`, `hkdf`, `curve25519-dalek` and `chacha20poly1305` are in the workspace. No HPKE, Shamir, `zeroize`, `secrecy` or `subtle` crate is a workspace dependency. An age implementation already wraps a file key to X25519 recipients (X25519, HKDF, ChaCha20-Poly1305) | `Cargo.toml`, `crates/moqui-lib/src/age.rs` |
 | Passkeys | Not built | [Dogfood §15](Dogfood.md#15-later), Remaining-Work |
 
 ## 3. Vaults
@@ -104,21 +109,36 @@ item body: the item's JSON, encrypted whole
   - One item can be sent to another person ([§3.3](#33-tables), deliveries).
 - **AEAD everywhere.** Each wrapped key and each body is AES-256-GCM with a random 96-bit nonce. Its associated data
   names what it is: the vault id, the item id, the key version and the purpose (`vault-key`, `item-key`, `body`). As
-  with Sealed-Secrets' `v2` format, a value copied to another row does not open. Bodies are padded to 256-byte steps,
-  and an item is at most 64 KiB.
-- **Public-key wraps** use HPKE (RFC 9180, base mode: DHKEM(X25519), HKDF-SHA256, AES-256-GCM).
+  with Sealed-Secrets' `v2` format, a value copied to another row does not open. For an operational item, the
+  associated data of the item-key wrap and of the body also names the item's type, binding and clear name. An item
+  whose binding, type or name column is changed, or whose wrap is put under another binding, does not open. Bodies
+  are padded to 256-byte steps, and an item is at most 64 KiB.
+- **Public-key wraps** use HPKE (RFC 9180, base mode: DHKEM(X25519), HKDF-SHA256, AES-256-GCM). The HPKE `info`
+  carries the same names as the associated data above.
+- **Signatures.** Base mode names no sender: anyone who has a public key can write a valid wrap to it. So each
+  public-key wrap is signed by its maker's signing key (Ed25519, [§3.5](#35-the-personal-key)) over the wrap and its
+  names: a member's wrap of the vault key, a new key version with its member list, the deposit public key, a recovery
+  key and a vault's wrap to it, and a delivery. A lease is signed by the server's lease key
+  ([§3.7](#37-leases-operational-items-used-on-the-server)). A client refuses a wrap or a lease whose signature is
+  missing or wrong, or whose signer it cannot place ([§3.9](#39-members-removal-and-rotation)).
 - **Argon2id** for passwords and passphrases: at least m=64 MiB, t=3 and p=1, so a phone can open a vault in about a
-  second. The parameters are stored with each wrap. A client that finds them under the current minimum wraps again with
-  the current ones on the next open, which is the lesson of the LastPass breach ([Sealed-Secrets §8](Sealed-Secrets.md#8-inspiration)).
-- **The deposit key** (operational only) is a key pair. Its public half is stored in the clear on the vault, and its
-  private half is wrapped by the vault key. The server makes a new item with no lease (a password it generates while
-  provisioning) by wrapping the item key to the deposit key. It can write the item but cannot read it back.
-- **One implementation.** A small crate with no I/O, `crates/moqui-vault`: the formats, the KDFs, the wraps, the item
-  AEAD, the lease seal and zeroized key types. The browser module must build without the framework, which is why it
-  is its own crate. V0 adds it by the Crate-Split rules ([Practices-Rust](../docs/dev/Practices-Rust.md)). It is
-  linked natively into the server, the desktop and mobile shells and the `moqui` command, and built to a small wasm
-  module for the browser, since WebCrypto has no Argon2id. A vault written on a phone opens the same way in a browser
-  and on the server.
+  second. The parameters are stored with each wrap, and the crate has three numbers for them:
+  - the **floor**, m=64 MiB, t=3 and p=1: no client writes less, so a wrap under it is refused;
+  - the **target**, which starts at the floor and is raised over time: a client that finds a wrap under it wraps again
+    with the target on that open, which is the lesson of the LastPass breach ([Sealed-Secrets §8](Sealed-Secrets.md#8-inspiration));
+  - the **ceiling**: a wrap over it is refused, since the server stores the parameters and a huge value stalls a phone.
+- **The deposit key** (operational only) is a key pair. Its public half is stored in the clear on the vault, signed by
+  the member with the manage role who made it, and its private half is wrapped by the vault key. The server makes a
+  new item with no lease (a password it generates while provisioning) by wrapping the item key to the deposit key,
+  after it checks that signature against the vault's signed member list. It can write the item but cannot read it
+  back. A member's client checks the deposit key's signature on each open
+  ([§3.12](#312-what-the-server-sees-and-the-limits) has the limit).
+- **One implementation.** A small crate with no I/O, `crates/moqui-vault`: the formats, the KDFs, the wraps, the
+  signatures, the item AEAD, the lease seal and zeroized key types. The browser module must build without the
+  framework, which is why it is its own crate. V0 adds it by the Crate-Split rules
+  ([Practices-Rust](../docs/dev/Practices-Rust.md)). It is linked natively into the server, the desktop and mobile
+  shells and the `moqui` command, and built to a small wasm module for the browser, since WebCrypto has no Argon2id.
+  A vault written on a phone opens the same way in a browser and on the server.
 
 ### 3.3 Tables
 
@@ -127,15 +147,16 @@ item, many to one with the vault, as the user asked.
 
 | Entity | What it holds |
 |---|---|
-| `Vault` | `vaultId`, `vaultKindEnumId` (personal, operational), `lockEnumId` (single-secret, shared-key), `ownerUserId`, `keyVersion`, `revision`. A single-secret vault: its wrapped vault key and KDF parameters. An operational vault: `vaultName` and the deposit public key, in the clear. A personal vault's name is encrypted, as part of a small header body |
-| `VaultItem` | `vaultItemId`, `vaultId`, `wrappedItemKey`, `itemKeyWrapEnumId` (vault, deposit), `keyVersion`, `bodyCipher`, `revision`, dates, `createdByUserId`. Operational only, in the clear: `itemTypeEnumId` and `bindingKey` (`AppInstance:<id>:dbPassword`), which is unique in its vault, so a service finds an item without opening the vault |
+| `Vault` | `vaultId`, `vaultKindEnumId` (personal, operational), `lockEnumId` (single-secret, shared-key), `ownerUserId`, `keyVersion`, `revision`. A single-secret vault: its wrapped vault key and KDF parameters. An operational vault: `vaultName` and the deposit public key with its maker's signature, in the clear. Each key version: the member list (users, roles, personal key ids) and the signature of the member who made it ([§3.9](#39-members-removal-and-rotation)). A personal vault's name is encrypted, as part of a small header body |
+| `VaultItem` | `vaultItemId`, `vaultId`, `wrappedItemKey`, `itemKeyWrapEnumId` (vault, deposit), `keyVersion`, `bodyCipher`, `revision`, dates, `createdByUserId`. Operational only, in the clear: `itemTypeEnumId` and `bindingKey` (`AppInstance:<id>:dbPassword`), which is unique in its vault, so a service finds an item without opening the vault, and the item's name. All three are in the associated data ([§3.2](#32-keys-and-formats)) |
 | `VaultItemHistory` | Earlier revisions of an item, with their wrapped key and body: a password's history, and a rotation's way back ([§4.7](#47-rotation)). Kept for a retention period |
-| `VaultMember` | `vaultId`, `userId`, `roleEnumId`, the vault key wrapped to the member's personal key, `personalKeyId`, from and thru dates |
-| `VaultPersonalKey` | `personalKeyId`, `userId`, the public key; the private key wrapped by the key passphrase (with its KDF parameters) and by the user's recovery code; `statusId` |
-| `VaultRecoveryKey`, `VaultRecoveryHolder` | An organization's recovery key: its public key, and its private key wrapped to each holder's personal key |
-| `VaultDelivery` | A sealed value sent to one user: HPKE to the recipient's personal key, from a user or an instance, with its purpose. The recipient's client files it into a vault |
-| `VaultLease` | A lease ([§3.7](#37-leases-operational-items-used-on-the-server)): the vault, the item bindings, the operation, the cluster member that runs it, the lease's public key, the item keys sealed to it once approved, who approved, the time limit and the state. It never holds a key that opens anything by itself |
-| `VaultMachineAccess` | An environment's machine access ([§3.8](#38-machine-access)): named item keys wrapped by a server key |
+| `VaultMember` | `vaultId`, `userId`, `roleEnumId`, the vault key wrapped to the member's personal key, `personalKeyId`, the key version, who made the wrap and their signature, from and thru dates |
+| `VaultPersonalKey` | `personalKeyId`, `userId`, the two public keys (X25519 to receive, Ed25519 to sign); the two private keys wrapped together by the key passphrase (with its KDF parameters) and by the user's recovery code; `statusId` |
+| `VaultKeyCheck` | A key that was checked ([§3.5](#35-the-personal-key)): the checker's `userId` and personal key, the checked key (a `personalKeyId` with both its public keys, or the server's lease key), the date and the checker's signature |
+| `VaultRecoveryKey`, `VaultRecoveryHolder` | An organization's recovery key: its public key with its maker's signature, and its private key wrapped to each holder's personal key, each wrap signed by its maker |
+| `VaultDelivery` | A sealed value sent to one user: HPKE to the recipient's personal key, from a user or an instance, with its purpose and its sender's signature (a user's signing key, or an instance's link key). The recipient's client checks the signature and files it into a vault |
+| `VaultLease` | A lease ([§3.7](#37-leases-operational-items-used-on-the-server)): the vault, the item bindings, the operation, the cluster member that runs it, the lease's public key, the server's signature over all of these, the item keys sealed to it once approved, who approved with their signature, the time limit and the state. It never holds a key that opens anything by itself |
+| `VaultMachineAccess` | An environment's machine access ([§3.8](#38-machine-access)): named item keys, each sealed by the vault crate's AEAD under a server key, with the environment, vault and item ids as associated data. The column is not an entity `encrypt="true"` field |
 | `VaultEvent` | Each event of [§3.13](#313-events-and-the-access-report). Rows, not log lines, kept as long as the audit log |
 
 ### 3.4 Item types
@@ -151,20 +172,24 @@ In a personal vault the type and name are inside the body. In an operational vau
 
 ### 3.5 The personal key
 
-- Each member of a shared-key vault, personal or operational, has a **personal key**: an X25519 key pair. Its private
-  half is wrapped by the **key passphrase**, which is independent of the sign-in password and never reaches the server
+- Each member of a shared-key vault, personal or operational, has a **personal key**: an X25519 key pair to receive
+  wraps and an Ed25519 key pair to sign what the member makes ([§3.2](#32-keys-and-formats)). Its private halves are
+  wrapped together by the **key passphrase**, which is independent of the sign-in password and never reaches the server
   (the user's answer, [§9](#9-decisions)). The server stores no hash of it: a wrong passphrase is a failed unwrap in
   the client.
 - Setting up a personal key gives a **recovery code** to print or save, and asks the user to type part of it back.
   Changing the passphrase rewraps one value.
 - A user who loses both the passphrase and the recovery code makes a new personal key. Their single-secret vaults are
   unaffected. For their shared-key vaults, another member or the recovery key ([§3.10](#310-recovery)) wraps the vault
-  key to the new personal key.
+  key to the new personal key, after the new key's fingerprint is checked.
 - The server sends a wrapped private key only to its signed-in user, so an online guess needs a sign-in first. A
   database thief can still guess offline, so the passphrase has a length and strength check in the client.
 - **Fingerprints.** When a member is added, the dialog shows the new member's key fingerprint as a phrase to compare
-  with them by another channel. A server that swapped in a key of its own would otherwise get the vault key. A key that
-  has been checked is remembered, signed by the checker's key.
+  with them by another channel. A server that swapped in a key of its own would otherwise get the vault key. The
+  fingerprint covers both public keys. A key that has been checked is remembered as a `VaultKeyCheck` row, signed by
+  the checker's signing key, and a client verifies that signature before it relies on the check.
+- **A changed key is checked again.** A check is for one key. When a member's personal key changes, nothing is wrapped
+  to the new key, by a member or by the recovery key, until its fingerprint is checked again.
 - **Device memory** (V5): the desktop and mobile apps can keep the personal key unlocked for a set time, wrapped by a
   key in the OS key store and opened with the device's lock or biometrics. In a browser the key stays only in the
   worker's memory, until the vault locks or the tab closes. A passkey slot (WebAuthn PRF) comes once passkeys are
@@ -177,7 +202,8 @@ In a personal vault the type and name are inside the body. In an operational vau
   platform allows.
 - A vault locks after 15 minutes idle (a setting), on sign-out, on the device's lock and when the tab closes.
 - The browser module is loaded only by the vault screens, with integrity hashes, and those screens get a strict content
-  security policy. The desktop and mobile apps carry their own copy of the module and do not take it from the server.
+  security policy. The hashes come from the same server, so they guard against a cache or a proxy, not the server.
+  The desktop and mobile apps carry their own copy of the module and do not take it from the server.
 - Search runs in the client over the open vault (names, URLs, tags). The server has no index of personal items.
 - Private contacts are `contact` items. Commons › Contacts merges them in, in the client, while the vault is open, and
   marks them. They never reach CardDAV, mail address completion or the server's search.
@@ -189,11 +215,14 @@ In normal use a member never sees an operational value. The server decrypts it f
 1. An operation (a provision, a deploy run, a rotation, a recovery action) asks for a **lease**: the vault, the items
    it needs by binding, the operation and a time limit. The default limit is the operation's own, at most 4 hours (an
    environment setting). The server makes an ephemeral X25519 key pair for the lease and holds it in memory only, on
-   the cluster member that runs the operation.
-2. A member with the approve role approves in their client, with a recent sign-in (`check#RecentAuth`). The client opens
-   the member's personal key (asking for the key passphrase if it is locked), unwraps the vault key, unwraps the item
-   keys the lease names, and seals them to the lease's public key. They are written to the lease row, which is safe:
-   only the lease's private key, in one member's memory, opens them.
+   the cluster member that runs the operation. It signs the lease with its lease key: the lease id, the vault, each
+   item's id, type, binding and name, the operation, the cluster member, the time limit and the lease's public key.
+2. A member with the approve role approves in their client, with a recent sign-in (`check#RecentAuth`). The client
+   checks the lease's signature, opens the member's personal key (asking for the key passphrase if it is locked),
+   unwraps the vault key, unwraps the item keys the lease names, and seals them to the lease's public key, with the
+   member's signature. Each item key is unwrapped with the type, binding and name the lease gives as associated data
+   ([§3.2](#32-keys-and-formats)), so an item that is not the one the lease names does not unwrap. The sealed keys are
+   written to the lease row, which is safe: only the lease's private key, in one member's memory, opens them.
 3. The server opens the sealed item keys and decrypts the items when the operation uses them. Each use is an event.
 4. The lease ends when the operation ends, at its time limit, on Revoke, or on a seal. The lease's keys and the item keys
    are zeroized (the key types of [Sealed-Secrets §3.5](Sealed-Secrets.md#35-memory)), and nothing stored can open them
@@ -202,6 +231,16 @@ In normal use a member never sees an operational value. The server decrypts it f
 - **What it gains.** The member's passphrase, their personal key and the vault key never reach the server. A server
   that is compromised during a lease gets that lease's items and no others.
 - Before approving, the member sees what the lease names: each item's name and binding, the operation and the time limit.
+  The dialog shows them from the signed lease, never from a column, and the unwrap of step 2 proves each one.
+- **The lease key** is an Ed25519 key of the server: the `vault-lease` purpose key of the keyring
+  ([Sealed-Secrets §3.1](Sealed-Secrets.md#31-key-hierarchy)), and until Sealed-Secrets S4 a generated secret, kept as
+  today's generated secrets are. A member checks its fingerprint once, as they check a member's key, and the check is
+  a `VaultKeyCheck` row. A client refuses a lease that is not signed, or signed by a key its user has not checked, and
+  shows a changed lease key as a changed member key is shown. A writer of the database cannot put its own public key
+  on a lease.
+- **A leased value stays in the operation.** It is never a parameter of a queued or scheduled service call, and never
+  a log or event field. A restart of the cluster member ends its leases, since their private keys are in memory only:
+  the operation fails and asks for a new lease.
 - **Approving a deploy is opening its lease:** one step, as Dogfood §8.6 and `GitCiEnvironment.approvalRequired` have
   it.
 - **Reveal.** A member with the reveal role can see one value. The server sends that item's ciphertext to the member's
@@ -220,9 +259,18 @@ Some environments need unattended work: the demo that deploys main after every g
 TLS key the engine uses for queued jobs. An environment may hold **machine access** to the items its operations need
 (the user's answer: allowed per environment).
 
-- A member gives it in their client: they unwrap the named item keys and seal them to the manager's machine key. That
-  key is the `vault-machine` purpose key of the keyring ([Sealed-Secrets §3.1](Sealed-Secrets.md#31-key-hierarchy), S1).
-  Until S1 it is an `encrypt="true"` field under today's field key, and the screen says so.
+- A member gives it in their client: they unwrap the named item keys and seal them to a lease the server makes for
+  the grant ([§3.7](#37-leases-operational-items-used-on-the-server)). The server then seals each item key under its
+  machine key, with the vault crate's AEAD (AES-256-GCM) and the environment, vault and item ids as associated data,
+  so a row copied to another environment or item does not open.
+- **The machine key** is the `vault-machine` purpose key of the keyring
+  ([Sealed-Secrets §3.1](Sealed-Secrets.md#31-key-hierarchy), S1). Until S1 it is derived by HKDF from today's field
+  pass (`entity_ds_crypt_pass`) with the label `vault-machine`, and the screen says that this pass is on the server's
+  disk.
+- The sealed item keys are not an entity `encrypt="true"` field. Today's field format has no MAC and no associated
+  data ([Sealed-Secrets §2](Sealed-Secrets.md#2-what-is-there-now)), and the entity facade decrypts such a field on
+  every find. The facade never decrypts this column, so no find, cache, export or sync holds an item key in the clear.
+  Only the lease code of the vault services opens it.
 - It covers named items only, for the environment's own operations. The environment and the vault both show it, with
   the warning that these items are now as strong as the server's own keys.
 - A lease under machine access is recorded as any other lease, with "machine" as its approver.
@@ -233,10 +281,15 @@ TLS key the engine uses for queued jobs. An environment may hold **machine acces
 - **Roles.** A personal shared-key vault has manage, write and read. An operational vault has manage, approve and
   reveal. Every member holds the vault key, so the roles are rules on what the server serves and accepts: wraps,
   bodies, writes and leases.
-- **Add.** A member who can manage wraps the vault key to the new member's personal key, after the fingerprint check.
+- **Add.** A member who can manage wraps the vault key to the new member's personal key, after the fingerprint check,
+  and signs the wrap and the new member list.
 - **Remove.** The remover's client deletes the member's wrap and rotates the vault key: a new key version, every item
-  key rewrapped under it, and every remaining member's wrap remade. These are a few kilobytes, done in one
-  transaction. A write at the old version is then refused.
+  key rewrapped under it, and every remaining member's wrap remade, with the new member list, all signed by the
+  remover. These are a few kilobytes, done in one transaction. A write at the old version is then refused.
+- **Which key version a client accepts.** Each key version carries its member list and the signature of the member who
+  made it. A client accepts a version, and a wrap of it, only when the signer held the manage role in the version
+  before, back to the vault's maker, and the client's user has checked the signer's key or a key in that chain. A
+  server or a database writer cannot then give a member a vault key of its own choice.
 - A removed member may have kept item keys or values. So removal from an operational vault offers to rotate the
   credentials themselves at their source ([§4.7](#47-rotation)), which is the real revocation.
 
@@ -251,6 +304,12 @@ TLS key the engine uses for queued jobs. An environment may hold **machine acces
 - An organization **recovery key** is a key pair. Its public half wraps the vault key of each shared-key vault that has
   recovery on, and its private half is wrapped to each holder's personal key. A holder needs the sealed permission
   `VAULT_RECOVERY` and a recent sign-in. Every recovery is an event and a notice to all the vault's members.
+- **The recovery key is signed.** Its public half is signed by the holder who made it. A member who turns recovery on
+  for a vault checks that holder's key as they check a new member's ([§3.5](#35-the-personal-key)), then signs the
+  vault's wrap to the recovery key. A client refuses a recovery key with no signature it can check, so a server cannot
+  hand out a recovery key of its own.
+- Each holder holds the whole private key. [§3.12](#312-what-the-server-sees-and-the-limits) states that limit, and
+  splitting the key is an [open point](#open-points-from-the-security-review).
 - A vault shows whether recovery is on, and a person asked to join sees it before they accept.
 - An operational vault must have recovery on or at least two members. Making one, and removing a member, refuse to
   leave it with neither.
@@ -296,12 +355,29 @@ The limits, which the vault's About and [Attack-Surface](../docs/security/Attack
 - **The web form runs code the server sends.** A compromised server can send code that takes the passphrase, which is
   the limit of every web password manager. The desktop and mobile apps carry their own code and are the strong form.
 - **Script in a page of the same origin** while a vault is open can ask the worker for items, as with chat's crypto
-  device.
+  device. Every screen of every app on this server shares the origin, so a script injected into any of them reaches an
+  open vault ([open point](#open-points-from-the-security-review)).
 - **The server can withhold or roll back ciphertext.** The apps remember the highest revision they have seen of each
   item and warn when a lower one comes back.
 - **The server cannot help with personal items:** no server search, no CardDAV, and no restore without the keys. A
   database backup holds ciphertext only. The user's own backup is an encrypted export file, made in the client.
-- **Root on a running server during a lease** sees the leased items, which is Sealed-Secrets' limit.
+- **Root on a running server during a lease** sees the leased items, which is Sealed-Secrets' limit. It also holds the
+  lease key and the machine key, so it can sign a lease for any item and wait for an approver who does not read the
+  dialog. A compromised manager gets more from the instances it manages ([§4.9](#49-where-the-manager-runs)).
+- **A database writer** with no code on the server cannot point a lease, a wrap, a deposit or a delivery at a key of
+  its own: each needs a signature it cannot make. It can still delete rows and put back older ones. The server itself
+  has no memory outside its database, so a writer who replaces a manager's signing key and signs the vault's records
+  again gets each item the server deposits after that. The next member's client to open the vault finds a key it has
+  not checked and refuses, and the items deposited since are rotated.
+- **A fingerprint that is accepted without comparing it** gives a server the swap [§3.5](#35-the-personal-key)
+  describes. The signatures bind a wrap to a key, and only the check binds the key to a person.
+- **One recovery holder with a copy of the database** opens every vault that has recovery on. The `VAULT_RECOVERY`
+  permission, the recent sign-in, the event and the notice are rules the server keeps, not cryptography. For a
+  personal shared-key vault with recovery on, that holder is an administrator who can open it.
+- **A removed member who kept the vault key** and later gets a copy of the database reads each item whose item key has
+  not changed since. The server can also put back a removed member's wrap or an older key version, and a browser with
+  no memory cannot tell. Rotating the credentials at their source ([§4.7](#47-rotation)) is the remedy for an
+  operational vault; a personal shared-key vault has none yet ([open point](#open-points-from-the-security-review)).
 - **A database thief can guess passwords offline** against the Argon2id wraps. That is why there are the strength checks
   and the generated-key option.
 
@@ -359,7 +435,10 @@ state and raises the alerts of [§4.8](#48-monitor). It changes nothing by itsel
 
   M1 checks each mechanism on both hosts.
 - The only start value that comes near a secret is a managed MR Moqui instance's one-time pairing token. It works once,
-  within 15 minutes, for that instance only.
+  within 15 minutes, for that instance only. It is given as a file too, by the mechanisms above, since `docker inspect`
+  shows a command as it shows the environment.
+- This rule is for instances. A CI job's secrets are environment variables of its container today
+  ([§2](#2-what-is-there-now)); whether they become files is an [open point](#open-points-from-the-security-review).
 
 ### 4.3 Provisioning
 
@@ -390,9 +469,13 @@ The user's answer: a link like the edge link, with SSH as a fallback, or as the 
 - **Transport.** The managed instance dials the manager's HTTPS port with an ALPN of its own (`moqui-manage/1`) and keeps
   one link open, with gRPC both ways on HTTP/2. PINGs, redial with backoff and generations work as in `host/edge_link/`,
   and M2 decides how much of that code the two links share.
-- **Pairing.** At provision, the pairing token in the start command does it. An instance the manager did not make (an
-  existing server being adopted) pairs with a code made in System › Instances, as an edge client pairs. Both link keys
-  are then pinned, by SHA-256 of the public key.
+- **Pairing.** At provision, the pairing token does it, given to the new container as a file
+  ([§4.2](#42-one-driver-secrets-as-files)). An instance the manager did not make (an existing server being adopted)
+  pairs with a code made in System › Instances, as an edge client pairs. Both link keys are then pinned, by SHA-256 of
+  the public key. At pairing the instance also takes and pins the signing keys of its environment's approvers
+  ([§3.5](#35-the-personal-key)), which it uses to check its recovery holders' keys
+  ([§4.5](#45-sealed-start-of-a-managed-instance)). A changed set of approvers reaches the instance signed by an
+  approver it has pinned.
 - **A manager behind a firewall** is reached through its own edge node, by a passthrough host name, the way a local
   node's web access is. The manager still opens no inbound port.
 - **While the instance is sealed**, dialing out opens no listener ([Sealed-Secrets §3.3](Sealed-Secrets.md#33-sealed-start)).
@@ -418,6 +501,10 @@ The user's answer: a link like the edge link, with SSH as a fallback, or as the 
 - **The link key on the instance** must work while the instance is sealed, so it cannot be under the root key. It sits
   in `runtime/` with mode 0600, or in `systemd-creds` on a host with a TPM. With it, the instance can ask the manager
   only for what a sealed instance may ask ([§4.5](#45-sealed-start-of-a-managed-instance)).
+- **The limit of that key.** Without a TPM it is a usable key on disk, an exception to Sealed-Secrets' goal that the
+  plan names. Under the automatic unseal policy, a stolen disk with the link key and `seal.json` gets the root key from
+  the manager until someone revokes the instance. The manager alerts on an unseal from an address the instance has not
+  used before ([§4.8](#48-monitor)), and production uses the approval policy or a TPM-bound link key.
 
 ### 4.5 Sealed start of a managed instance
 
@@ -427,8 +514,11 @@ Sealed-Secrets S3 and S11 make the seal; this section is its deployment side.
   names:
   - `transit` against the manager, the default for a container, which usually has no TPM;
   - `tpm` on an SSH host type with one;
-  - `passphrase` or `shamir` for the highest care. The passphrase is then a vault item used under a lease, or the
-    holders' shares are entered through the manager's screen.
+  - `passphrase` or `shamir` for the highest care. The passphrase is then a vault item used under a lease. Shares are
+    never typed into the manager: a holder enters a share on the instance's operator socket, or runs `moqui vault` on
+    their own machine, which seals the share to a key the sealed instance makes for that unseal and signs with its
+    link key. The manager relays the sealed share over the link and cannot open it
+    ([Sealed-Secrets §6](Sealed-Secrets.md#6-decisions): never HTTP).
 - **Transit by the manager.** The manager keeps one transit key for each instance, in its own keyring. It is a platform
   secret, because an unattended unseal needs it. Unsealing works like this:
   1. The instance sends its wrapped root key over the link, with an ephemeral public key.
@@ -441,14 +531,25 @@ Sealed-Secrets S3 and S11 make the seal; this section is its deployment side.
   - approval: each unseal waits for a member's approval, for production, where an unexpected restart deserves a look.
 
   Either way, each unseal is a Monitor event. A stolen disk and its link key can only ask the manager, which can
-  refuse, require approval, or revoke.
+  refuse, require approval, or revoke. Under the automatic policy the manager answers it until the instance is revoked
+  ([§4.4](#44-the-manager-link), the limit of the link key). The policy is a rule the manager keeps: a compromised
+  manager holds the transit keys whatever the policy says ([§4.9](#49-where-the-manager-runs)).
 - **Recovery shares.** Sealed-Secrets makes them at init, 3 of 5 by default. The environment names the holders.
-  1. The instance takes each holder's public key, with its fingerprint, over the link.
-  2. It seals each share to one holder and sends it as a delivery.
-  3. The holder's client files it into their personal vault ("Recovery share 2 of 5, prod-1").
+  1. The instance takes each holder's public keys over the link, each with a key check (`VaultKeyCheck`) signed by one
+     of the environment's approvers. It verifies that signature with the approvers' signing keys it pinned at pairing
+     ([§4.4](#44-the-manager-link)) and refuses a holder's key without one. Nobody is present on the instance to
+     compare a fingerprint, so the approver's check stands in for it.
+  2. It seals each share to one holder and sends it as a delivery, signed with its link key.
+  3. The holder's client checks the delivery's signature against the instance's pinned link key, files the share into
+     their personal vault ("Recovery share 2 of 5, prod-1") and sends back a confirmation signed with the holder's
+     signing key.
+  4. Init completes when every share is confirmed or printed. An unconfirmed share is reported, and the instance
+     makes a new set when a holder is replaced.
 
-  No place holds two shares, and the manager sees none. A holder with no personal key gets their share on the
-  operator socket, printed, as Sealed-Secrets has it.
+  No place holds two shares, and the manager sees none: it cannot put a key of its own in a holder's place without an
+  approver's signature. A holder with no personal key gets their share on the operator socket, printed, as
+  Sealed-Secrets has it. What a manager that was already compromised at pairing can do is in
+  [§4.9](#49-where-the-manager-runs).
 - **The recovery bundle** (`export-seal`) goes to the manager over the link. It is kept as an operational item beside
   the instance's backups, and it holds only wrapped values.
 - **Bootstrap secrets.** The bootstrap bundle carries the instance's database password and the other secrets it needs
@@ -461,6 +562,20 @@ Sealed-Secrets S3 and S11 make the seal; this section is its deployment side.
 ### 4.6 Deploys
 
 This builds Dogfood §8.6 and DG10 for managed instances.
+
+What is built today is the deployment of a component repository to a target that is not managed here
+([§2](#2-what-is-there-now)): `request#GitDeployment`, the environment's pipeline as the gate, `decide#GitDeployment`,
+and an attestation signed with `targetToken` and posted to the target's `deploy#AttestedComponent`. M3 keeps the
+request, the gate and the decision, and changes what follows them:
+
+- **A `GitCiEnvironment` that names an `InstanceEnvironment`** deploys by the steps below, over the manager link or
+  SSH. No attestation is posted, and the managed instance needs no `component_deploy_attestation_key`: the link's
+  pinned keys name the caller, and the manager checks the passed run itself. `decide#GitDeployment` is the approval
+  of step 3, so one decision approves the deployment and opens its lease.
+- **A target that is not managed here** keeps the attested call. Its `targetToken` becomes an operational vault item
+  ([§4.1](#41-the-model)), so signing an attestation needs the deployment's lease or the environment's machine access.
+  The token is a secret both ends share, which signs but does not encrypt, and the target deploys with no second
+  person: its gate is the signature and the passed run it names.
 
 1. **Trigger.** A deploy event from a pipeline (`GitDeployment`), or one made by hand: a new image version, or a
    component update.
@@ -516,6 +631,7 @@ own procedure, and comes later.
   - an instance sealed longer than a set time;
   - a link down;
   - an unseal;
+  - an unseal from an address the instance has not used before;
   - a failing check;
   - a failed deploy;
   - an item past its rotation age;
@@ -534,7 +650,19 @@ own procedure, and comes later.
 - For a fleet in production, run it as an ops instance of its own, in the inner zone and without the business apps.
   It holds every managed instance's transit key and the deposit keys of their vaults, so it should hold as little else
   as it can.
-- It seals with `tpm`, `passphrase` or `shamir`, and never by transit to an instance it manages.
+- It seals with `tpm`, `kms`, `passphrase` or `shamir` ([Sealed-Secrets §3.3](Sealed-Secrets.md#33-sealed-start)), and
+  never by transit to an instance it manages.
+- **What a compromised manager gets.** More than its leases. It sees each managed instance's root key at that
+  instance's next unseal, and it can unwrap the root key in any recovery bundle it reads, since it holds the transit
+  key. With a root key and that instance's database or backup it reads every bootstrap secret and every row, with no
+  lease and whatever the unseal policy says. "A compromised server gets that lease's items and no others"
+  ([§3.7](#37-leases-operational-items-used-on-the-server)) is true of vault items and not of managed instances. The
+  recovery bundle is deposited ([§3.2](#32-keys-and-formats)), so the manager does not read it back without a lease.
+  Where an instance's backups are kept, and whether the transit key needs a lease under the approval policy, are
+  [open points](#open-points-from-the-security-review).
+- **A manager that is compromised when an instance pairs** gives that instance approvers' signing keys of its own
+  choice, and then gets its recovery shares. The holders' confirmations ([§4.5](#45-sealed-start-of-a-managed-instance))
+  show a holder who received nothing. A manager compromised later cannot change the pinned approvers.
 - **Zones.** The manager is in the inner zone, and it may manage outer instances (PASS, edge nodes). Their transit keys
   open only their own root keys, so an outer instance gets no inner key ([Sealed-Secrets §1](Sealed-Secrets.md#1-deployment-zones)).
 
@@ -546,11 +674,12 @@ own procedure, and comes later.
   An instance's page shows its state, link, seal, dependencies, secret bindings (never values), actions and versions,
   with Deploy, Rotate, Restart, Drain and Remove. Each of these asks for a lease when it needs one.
 - **System › Vaults:** operational vaults, their members and roles, items (names, bindings, types, revisions, rotation
-  age; no values), leases (waiting, open, ended), machine access, recovery keys and holders, and events.
+  age; no values), leases (waiting, open, ended), the lease key's fingerprint, machine access, recovery keys and
+  holders, and events.
 - **The lease dialog** opens from a notification, a deploy's page, an instance's page or a Monitor incident. It lists
   what the lease names and asks for the key passphrase when the personal key is locked.
 - **Vault key** in the user's settings: set up the personal key and its recovery code, change the passphrase, see the
-  fingerprint and the devices that remember the key.
+  fingerprint, the keys this user has checked, and the devices that remember the key.
 
 **Commons** (mr-boss, `boss/screen/Commons/`):
 
@@ -568,18 +697,18 @@ phases), and [Attack-Surface](../docs/security/Attack-Surface.md) says what chan
 
 | Phase | Work | Tests (suite) |
 |---|---|---|
-| **V0** | The vault crate (`crates/moqui-vault`, by the Crate-Split rules): the formats, Argon2id and HKDF, the HPKE wraps, item AEAD with associated data, the lease seal, zeroized key types; the native build and a small wasm build for the browser | Known-answer vectors give the same bytes natively and in wasm; a wrong password or key fails; a wrapped key or body moved to another item, vault or version fails; KDF parameters under the minimum are refused (regression: the crate's tests, and a client spec that loads the wasm module) |
-| **V1** | Framework tables and services (`moqui.security.vault`): personal keys, vaults of both locks, items with history, members, deliveries, events; what the server serves and to whom | No row of a personal vault holds an item's name, type or value in the clear; a non-member gets no wrap and no body; a delivery goes only to its recipient; a removed member has no wrap, and a write at the old key version is refused; each change writes its event (regression) |
-| **V2** | Operational vaults: the deposit key, leases (the ephemeral key, approval with sealed item keys, use, end, revoke), reveal by role, machine access per environment, the lease dialog, `moqui vault approve` | A lease opens only the items it names, and nothing it held opens after it ends; an approval without the approve role or a recent sign-in is refused; a lease whose event cannot be written does not open; a lease approved through one cluster member runs on another; machine access opens only its items for its environment (regression) |
+| **V0** | The vault crate (`crates/moqui-vault`, by the Crate-Split rules): the formats, Argon2id and HKDF, the HPKE wraps, Ed25519 signatures on wraps and leases, item AEAD with associated data (an operational item's type, binding and name in it), the lease seal, the machine-access seal, zeroized key types; the native build and a small wasm build for the browser | Known-answer vectors give the same bytes natively and in wasm; a wrong password or key fails; a wrapped key or body moved to another item, vault or version fails; an operational item key unwrapped under another binding, type or name fails; a wrap or a lease with a missing or wrong signature fails; KDF parameters under the floor or over the ceiling are refused, and parameters under the target open and are wrapped again (regression: the crate's tests, and a client spec that loads the wasm module) |
+| **V1** | Framework tables and services (`moqui.security.vault`): personal keys with both key pairs, key checks, vaults of both locks, items with history, members with signed wraps and signed key versions, signed deliveries, events; what the server serves and to whom | No row of a personal vault holds an item's name, type or value in the clear; a non-member gets no wrap and no body; a delivery goes only to its recipient; a removed member has no wrap, and a write at the old key version is refused; a client refuses a wrap or a key version that no member with the manage role signed, and a delivery whose signature is wrong; nothing is wrapped to a changed personal key before it is checked again; each change writes its event (regression) |
+| **V2** | Operational vaults: the signed deposit key, the lease key and signed leases (the ephemeral key, approval with sealed item keys, use, end, revoke), reveal by role, machine access per environment under the vault crate's AEAD, the lease dialog, `moqui vault approve` | A lease opens only the items it names, and nothing it held opens after it ends; an approval without the approve role or a recent sign-in is refused; a lease whose event cannot be written does not open; a lease approved through one cluster member runs on another; machine access opens only its items for its environment, and its sealed keys moved to another environment's row do not open; a client refuses a lease whose public key or item list was changed after it was signed, and one signed by a lease key its user has not checked; a binding pointed at another item fails at the unwrap; the server refuses a deposit key with no manager's signature; a leased value is not in a job's stored parameters; a restart ends the member's leases (regression) |
 | **V3** | Commons › Vault (mr-boss): the module in a worker, item types and forms, single-secret creation with §3.11's steps, shared-key vaults with members and fingerprints, deliveries, private contacts in Contacts, import from Bitwarden and KeePass exports in the client, encrypted export, lock on idle | A single-secret vault refuses a member and a recovery key; a private contact never reaches CardDAV (regression, mr-boss); a value shows only when asked for, and the page locks when idle (one client spec). `VaultPersonal`: both locks, a share, a removal, a recovery (acceptance) |
 | **V4** | Recovery keys and holders; recovery on shared-key vaults; BOSS Admin › Security | A holder recovers a vault to a member's new personal key, and every member is told; a single-secret vault never gets a recovery wrap; recovery without `VAULT_RECOVERY` or a recent sign-in is refused; an operational vault cannot drop to one member with recovery off (regression) |
 | **V5** | The vault in the desktop and mobile shells, with the native crate; device memory in the OS key store; the passkey slot once passkeys are built | Device memory ends at its time limit and when the device is revoked (regression, the shells' crates). Hand checks in [Mobile-Desktop-Exit-Checks](Mobile-Desktop-Exit-Checks.md) |
 | **M1** | Instances on one driver: the Rust driver for containers that stay; `InstanceKind` for `mr-moqui`, `postgres`, `mysql` and `opensearch`; the reshaped tables; secrets as bindings and files; provisioning under a lease; MR Moqui's own image and volume; System › Instances | Against the fake host type: a provision deposits its items and puts no secret in any container's environment, labels or command; a provision without a lease or machine access is refused; dependencies are made first (regression). Against real Docker and Podman: opt-in, as CI's driver tests are |
-| **M2** | The manager link: pairing at provision and by code, the calls, the bootstrap bundle (to `runtime/.env` until Sealed-Secrets S4, then to `seal.json` and `SecretValue`); SSH as the other transport | An unpinned key is refused; a pairing token works once; a sealed instance can make only the three sealed calls; a call not on the list is refused on the instance (regression, with a two-runtime link test as `edge_link`'s) |
+| **M2** | The manager link: pairing at provision (the token as a file) and by code, the approvers' signing keys pinned at pairing, the calls, the bootstrap bundle (to `runtime/.env` until Sealed-Secrets S4, then to `seal.json` and `SecretValue`); SSH as the other transport | An unpinned key is refused; a pairing token works once and is in no container's command, environment or labels; a sealed instance can make only the three sealed calls; a call not on the list is refused on the instance (regression, with a two-runtime link test as `edge_link`'s) |
 | **M3** | Environments and deploys (Dogfood DG10): `InstanceEnvironment` and `GitCiEnvironment`'s link to it, the deploy event, the gate, approval with its lease, rolling deploys with drain, rollback to recorded versions, annotations | The gate refuses a commit with no passed run; a deploy uses only its lease's items; members change one at a time, each drained; a rollback across a schema hash change is refused (regression). `InstanceDeploy` on a real Podman host: provision Postgres and MR Moqui, deploy a component and an image, roll back (acceptance) |
 | **M4** | Monitor: the instance identity, the fleet screen, scrape targets per kind, the shipped alert rules, the `instance` recovery adapter | A provision sets the instance id and an ingest key; the adapter's restart and rollback take the deploy path and wait for a lease in approval mode; a sealed instance raises its alert (regression) |
 | **M5** | Rotation: rotation ages, `rotate#Credential` per kind, the put over the link or SSH, item history, rotation on member removal, the incident list | A rotation changes the source, then the instances, then the item, and puts the old value back when the check fails; an item past its age shows on the fleet screen (regression) |
-| **M6** | Managed sealed start (needs Sealed-Secrets S3 and S11): transit by the manager, the unseal policy, recovery shares to holders' personal vaults, the recovery bundle as an operational item | Transit unseals an instance only for its pinned link key and not after a revoke; the approval policy waits; each share is sealed to one holder only (regression). `ManagedSealedStart`: a restart unseals by transit; with the manager down the instance stays sealed and the alert fires; shares unseal it (acceptance) |
+| **M6** | Managed sealed start (needs Sealed-Secrets S3 and S11): transit by the manager, the unseal policy, recovery shares to holders' personal vaults with approver-signed holder keys and holders' confirmations, a share sealed to the instance by `moqui vault`, the recovery bundle as an operational item | Transit unseals an instance only for its pinned link key and not after a revoke; the approval policy waits; each share is sealed to one holder only; a holder's key with no pinned approver's signature is refused; a share sealed for one unseal does not open at another, and the manager's relay holds ciphertext only; an unseal from a new address raises its alert (regression). `ManagedSealedStart`: a restart unseals by transit; with the manager down the instance stays sealed and the alert fires; shares unseal it (acceptance) |
 
 The order:
 
@@ -588,7 +717,10 @@ The order:
 - M4 and M5 follow M2, and M5 also needs V2.
 - M6 follows M2 and Sealed-Secrets S3 and S11.
 - V3 needs only V1, so it can run beside the M phases. V4 follows V1, and V5 follows V3.
-- Machine access waits for nothing: it uses today's field key until Sealed-Secrets S1.
+- Machine access waits for nothing: until Sealed-Secrets S1 its key is derived from today's field pass
+  ([§3.8](#38-machine-access)). Whether it waits for S1 instead is an
+  [open point](#open-points-from-the-security-review).
+- The lease key is a generated secret until Sealed-Secrets S4, then a purpose key of the keyring.
 
 ## 7. Tests
 
@@ -644,6 +776,31 @@ The order:
 | Argon2id | At least 64 MiB, t=3 and p=1, raised on a later open | Phones must open a vault; Sealed-Secrets' 256 MiB is for a server's passphrase |
 | Secrets to containers | Files, never environment, labels or command | `docker inspect` and `/proc/*/environ` show the environment |
 | Where the manager runs | Framework code; a separate ops instance for a production fleet | It holds every managed instance's transit key |
+| A sender for every wrap | A personal key is two key pairs (X25519 to receive, Ed25519 to sign). Each member wrap, key version, deposit key, recovery key and delivery is signed by its maker, and a client accepts a key version only from a signer with the manage role | Security review, 2026-11-15: HPKE base mode names no sender, so a server or a database writer could wrap a vault key, a deposit key or a recovery key of its own. HPKE stays |
+| Key checks | A `VaultKeyCheck` row signed by the checker; a changed key is checked again before anything is wrapped to it | Security review, 2026-11-15: an X25519 key cannot sign and no table held the check, and a new personal key was the path for a server to swap a key |
+| The lease | Signed by the server's lease key, which members check once; it names each item's id, type, binding and name, and those are in the item's associated data | Security review, 2026-11-15: a database writer could replace a lease's public key, or point a harmless binding at another item, and read what the approver sealed |
+| Leased values | Never a parameter of a queued or scheduled call, never a log or event field; a restart ends the lease | Security review, 2026-11-15: "nothing stored can open them again" was about keys, not the values an operation passes on |
+| Machine access storage | The vault crate's AEAD with the environment, vault and item ids as associated data, in a column the entity facade never decrypts; the key from today's field pass by HKDF until S1 | Security review, 2026-11-15: an entity `encrypt="true"` field has no associated data, so a row moved to another environment would open, and every find and export would hold the item keys in the clear |
+| Argon2id numbers | A floor that is refused, a target that is wrapped again to, a ceiling that is refused | Security review, 2026-11-15: "under the minimum wraps again" and "under the minimum is refused" could not both hold |
+| Recovery shares of a managed instance | Holders' keys carry an approver's signed check, and the instance pins the approvers' signing keys at pairing; holders confirm; a share is entered on the operator socket or sealed to the instance by `moqui vault`, never typed into the manager | Security review, 2026-11-15: the manager chose the holders' keys, and a share typed into its screen crossed HTTP and was seen by it, against Sealed-Secrets §6 |
+| The pairing token | A file, as the other secrets are | Security review, 2026-11-15: a start command is as visible in `docker inspect` as the environment |
+| Deploys to a managed instance | The request, gate and decision of the built `GitDeployment` path, then the roll over the link in place of the attested call | Security review, 2026-11-15: §2 did not know the attested deploy was built. One decision approves the deployment and opens its lease |
+| The manager's own seal | `tpm`, `kms`, `passphrase` or `shamir` | Sealed-Secrets §3.3 has `kms` for cloud hosts, and this plan left it out |
+
+## Open points from the security review
+
+The security review of 2026-11-15 found these. Each is the owner's to decide, so the design above stays as it is.
+
+| Point | What the review found | Options |
+|---|---|---|
+| Splitting the organization recovery key, and recovery by default (§3.10, §1) | The recovery private key is wrapped whole to each holder. One holder who also reads the database opens every vault with recovery on; the permission, the recent sign-in and the notice are server rules. For a personal shared-key vault this is against §1's "its administrators cannot open it" | (a) Keep one holder is enough, with the limit stated in §3.12. (b) Split the private key k of n across the holders, with the Shamir code Sealed-Secrets S3 needs, so a recovery takes k holders' clients. (c) With either, recovery off by default for a personal shared-key vault and on by default for an operational one |
+| HPKE beside the age recipient wraps (§3.2) | `crates/moqui-lib/src/age.rs` already wraps a key to an X25519 recipient (X25519, HKDF, ChaCha20-Poly1305). HPKE is a second public-key construction, and no HPKE crate is in the workspace | (a) HPKE for vaults and age for files, two constructions. (b) The age recipient wrap for vault wraps too, with the names in the HKDF info: one construction, not RFC 9180. (c) HPKE for both, with age kept only as a file format |
+| Machine access before Sealed-Secrets S1 (§3.8, §6) | Until S1 the machine key comes from `entity_ds_crypt_pass`, which is in `.env`. §3.8 now seals the item keys with the vault crate's AEAD under a key derived from that pass, which keeps them out of finds and exports and binds them to their environment, but a reader of `.env` and the database still opens them | (a) As §3.8 has it: machine access waits for nothing. (b) Machine access needs S1, and V2 ships leases only |
+| Vault screens on their own origin (§3.6, §3.12) | Every screen of every app shares the origin, so a script injection anywhere on the server reaches an open vault's worker | (a) Keep one origin and the limit of §3.12. (b) Serve Commons › Vault and the lease dialog from their own host name, with their own session hand-off, which costs a second certificate name and a sign-in step |
+| Which sign-ins may fetch a wrapped personal key (§3.5) | "An online guess needs a sign-in first" does not say which kind. An app password, a login key or a stolen device key would fetch the wrapped key for an offline guess | (a) Any session of the user. (b) Only a password and second factor, or SSO, session and a paired device's key, never an app password, an API key or a scoped key (Sealed-Secrets §3.6, credential scope). (c) As (b), with a recent sign-in as well |
+| Vault-key rotation on removal (§3.9, `VaultItemHistory`) | Nothing says the server checks `Vault.revision` and `keyVersion` when a rotation commits, so two managers can interleave. A remover can commit bad wraps for some members. Item keys do not change, so a removed member with a later database copy reads items not re-keyed since. The server can put back an old key version | (a) A compare-and-swap on `Vault.revision` for the whole change. (b) The previous version's wraps kept until each member has opened the new one. (c) A new item key at an item's first write after a key-version change, and an offer at removal to re-encrypt every body now. (d) Clients that have memory keep the highest key version and a hash of the signed member list. These can be taken together |
+| The transit key and backups on the manager (§4.5, §4.9) | The transit key is a platform secret of the manager, so a compromised manager gets each instance's root key under either unseal policy, and with a backup every row | (a) As written, with the limit of §4.9. (b) Under the approval policy the transit key is an operational item, so each unseal needs a lease and a member's key. (c) With either, a managed instance's backups go to a store the manager cannot read |
+| CI job secrets as environment variables (§4.2) | A `GitCiSecret` reaches its job's container as an environment variable. §4.2's rule is for instances | (a) Keep the environment for CI jobs, whose containers end with the job. (b) Files for CI jobs too, when the driver gains them in M1 |
 
 ## 10. Not in scope
 

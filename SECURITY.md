@@ -12,6 +12,14 @@ For most use cases we recommend using code directly from the master branch in ea
 
 ## Reporting a Vulnerability
 
+**Before 0.1.0.** MR Moqui is not ready for production: run it only on development machines, with no real business
+data or credentials. A security review is under way, and until 0.1.0 its findings, open vulnerabilities included, are
+recorded openly in this repository ([plans/Security-Review.md](plans/Security-Review.md),
+[docs/security/](docs/security/Attack-Surface.md)). With no production systems to protect, the repository is the
+project's internal disclosure, and a finding may be reported in an issue or a pull request. From 0.1.0 the policy
+below applies, as it does for Moqui Java: a private report to the board, kept in the board's private repository until
+it is fixed.
+
 To report security issues that should not be disclosed publicly before they are fixed, please use the private **[moqui-board@googlegroups.com](mailto:moqui-board@googlegroups.com)** mailing list. Anyone can send messages to it. Only members of the group can read them.
 
 ## Issues and Pull Requests
