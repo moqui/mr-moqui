@@ -52,15 +52,10 @@ pub(super) fn serve_frame(
     mode: &str,
 ) -> bool {
     let tui = mode == "tui";
-    if !(tui || mode == "qvt") || !job.method.eq_ignore_ascii_case("get") {
+    if !(tui || mode == "qvt") {
         return false;
     }
-    let Some(page_path) = job
-        .request
-        .header(PAGE_PATH_HEADER)
-        .map(str::trim)
-        .filter(|path| !path.is_empty())
-    else {
+    let Some(page_path) = page_path_of(job) else {
         return false;
     };
     // A screen on the level's path that grants anonymous access may let the level's own render through where the check
@@ -100,6 +95,33 @@ pub(super) fn serve_frame(
     }
     web::send_bytes_with_headers(200, headers, body.into_bytes());
     true
+}
+
+/// The page path a GET request names in [`PAGE_PATH_HEADER`], when it names one.
+fn page_path_of<'a>(job: &Job<'a>) -> Option<&'a str> {
+    if !job.method.eq_ignore_ascii_case("get") {
+        return None;
+    }
+    job.request
+        .header(PAGE_PATH_HEADER)
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+}
+
+/// The page a tui parent level that renders as itself is loaded for: the page the request names, when it is strictly
+/// below the level on the same screens ([`page_below`]). Its path is the one the level's menu items are on the path of
+/// (`inPath`), as in a render of the whole path; the leaf is not in the level's own path. None for another mode, where
+/// the client marks its tabs itself (qvt) or the levels render inline (html).
+pub(super) fn level_page(
+    factory: &ExecutionContextFactory,
+    job: &Job<'_>,
+    info: &ScreenUrlInfo,
+    mode: &str,
+) -> Option<Arc<ScreenUrlInfo>> {
+    if mode != "tui" || info.target_transition_name.is_some() || info.file_resource.is_some() {
+        return None;
+    }
+    page_below(factory, job.root, info, page_path_of(job)?)
 }
 
 /// The page `path` names, when it is a screen strictly below the level `info` on the same screens: the level's names
@@ -266,7 +288,7 @@ fn tab_items(state: &RenderState, info: &ScreenUrlInfo, page: &ScreenUrlInfo) ->
     let next = page.full_path.get(names.len()).cloned().unwrap_or_default();
     let parent_path: String = names
         .iter()
-        .map(|name| format!("/{}", moqui_lib::string::url_encode_if_needed(name)))
+        .map(|name| format!("/{}", super::url::encode_path_name(name)))
         .collect();
     let strip = super::sri::strip_controls;
     let text = |entry: &moqui_lib::object::ValueMap, name: &str| {

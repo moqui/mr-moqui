@@ -111,7 +111,8 @@ fn menu_entry(
     if !url.exists {
         return Ok(None);
     }
-    let in_path = state.url_info.full_path.starts_with(&url.minimal_names);
+    // on the page's path for a tui parent level loaded for a page below it, whose leaf its own path does not name
+    let in_path = state.in_path_names().starts_with(&url.minimal_names);
     // The page and sort of the list being shown are not another screen's (a link or the current URL keeps them).
     if !in_path {
         url.drop_list_state();

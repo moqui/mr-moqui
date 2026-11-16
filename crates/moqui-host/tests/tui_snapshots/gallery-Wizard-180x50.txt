@@ -10,10 +10,13 @@
      Calendar            │ Step 1 of 3 · Customer  ● Customer ─ ○ Options ─ ○ Review
      Split               │ [ Next ]
      Settings            │ ┌─ Customer ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-   • Wizard              │ │ Who the customer is and how to reach them.                                                                                                           │
-     Dialog              │ │ Customer name  : [Acme Co. _______________________________]               Contact  . . . : [Jane Doe______________________]                          │
-     Report              │ │ Email  . . . . : [jane.doe@acme.example_________]                         Phone  . . . . : [+1 555 0100_________]                                    │
-     Panel               │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+   ▾ Wizard              │ │ Who the customer is and how to reach them.                                                                                                           │
+     • Customer          │ │ Customer name  : [Acme Co. _______________________________]               Contact  . . . : [Jane Doe______________________]                          │
+       Options           │ │ Email  . . . . : [jane.doe@acme.example_________]                         Phone  . . . . : [+1 555 0100_________]                                    │
+       Review            │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Dialog              │
+     Report              │
+     Panel               │
      Widgets             │
      Editor              │
      Message             │
@@ -21,9 +24,6 @@
      Handheld            │
      Nav cards           │
  ◂ Home                  │
-                         │
-                         │
-                         │
                          │
                          │
                          │

@@ -918,6 +918,9 @@ fn inline_of(node: &Node) -> Option<Inline> {
 fn place_one(node: &Node, ctx: &Ctx<'_>, width: u16) -> Vec<Piece> {
     match node {
         Node::Row { c, .. } => place_row(c, ctx, width),
+        Node::Container { row: true, c, .. } if c.iter().any(|kid| matches!(kid, Node::Section { .. })) => {
+            place_nodes(&row_flow(c), ctx, width)
+        }
         Node::Section { c, .. }
         | Node::Container { c, .. }
         | Node::Fragment { c, .. }
@@ -1065,6 +1068,19 @@ fn place_one(node: &Node, ctx: &Ctx<'_>, width: u16) -> Vec<Piece> {
                 .unwrap_or_default()
         }
     }
+}
+
+/// The children of a row container with the sections in them opened: a section is a grouping, not a block, so the
+/// widgets of each (a `section-iterate` of buttons, one link per iteration) flow in the container's line as its own do.
+fn row_flow(children: &[Node]) -> Vec<Node> {
+    let mut out = Vec::new();
+    for child in children {
+        match child {
+            Node::Section { c, .. } => out.extend(row_flow(c)),
+            other => out.push(other.clone()),
+        }
+    }
+    out
 }
 
 /// Tabs over the active subscreen; a wizard's steps with Back and Next; a stack's trail. A popup panel shows no bar: its

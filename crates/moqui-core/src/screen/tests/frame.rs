@@ -262,6 +262,20 @@ fn a_tui_parent_level_is_the_frame_of_a_page_below_it_with_the_tabs_the_user_may
         "{}",
         staff.body_text()
     );
+    // its menu items are on the page's path, which its own path stops above: the page's tab is the active one
+    let body: serde_json::Value = serde_json::from_str(&staff.body_text()).unwrap();
+    let tabs = body["c"]
+        .as_array()
+        .and_then(|nodes| nodes.iter().find(|node| node["t"] == "subscreens"))
+        .map(|node| node["items"].clone());
+    assert_eq!(
+        tabs,
+        Some(serde_json::json!([
+            { "title": "Cases", "url": "/App/Area/Cases", "active": true, "disabled": false },
+            { "title": "Other", "url": "/App/Area/Other", "active": false, "disabled": false }
+        ])),
+        "{body}"
+    );
     for (path, page) in [
         ("/App/Area.tui", None),
         ("/App/Area.tui", Some("/App/Area/Other")),

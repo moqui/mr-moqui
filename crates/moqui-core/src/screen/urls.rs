@@ -1030,7 +1030,7 @@ pub fn is_anchor_link(link: &NodeLit, url: &UrlInstance) -> bool {
 /// on the path of the request.
 pub fn active_in_current_menu(state: &RenderState) -> bool {
     let def = sri::active_def(state);
-    let path = &state.url_info.full_path;
+    let path = state.in_path_names();
     def.subscreens
         .items
         .iter()

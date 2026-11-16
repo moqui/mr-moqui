@@ -1966,7 +1966,9 @@ fn the_envelope_gives_each_levels_menu_title() {
     .unwrap();
     std::fs::write(
         dir.join("FindBom.xml"),
-        r#"<screen require-authentication="false" allow-extra-path="true"><widgets><label text="Content"/></widgets></screen>"#,
+        r#"<screen require-authentication="false" allow-extra-path="true"><widgets><label text="Content"/>
+            <label text="extra ${sri.getScreenUrlInfo().extraPathNameList.join('|')}"/>
+            <label text="url ${sri.getCurrentScreenUrl().path}"/></widgets></screen>"#,
     )
     .unwrap();
     let context = ExecutionContextFactory::test_context();
@@ -1979,8 +1981,9 @@ fn the_envelope_gives_each_levels_menu_title() {
             .unwrap()
     };
     let output = render("BillsOfMaterials/FindBom");
-    // an extra path's name (a wiki page) is its name decoded, a `+` kept as written
-    let extra = render("BillsOfMaterials/FindBom/Getting%20started+more");
+    // an extra path's name (a wiki page) is its name decoded, a `+` kept as written and an encoded `/` inside its name;
+    // a link built back from the names encodes each once
+    let extra = render("BillsOfMaterials/FindBom/Getting%20started+more/a%2Fb/100%25");
     let _ = std::fs::remove_dir_all(&dir);
     let doc = document(&output);
     assert_eq!(doc["screen"]["pathList"], json!(["BillsOfMaterials", "FindBom"]), "{doc}");
@@ -1989,8 +1992,14 @@ fn the_envelope_gives_each_levels_menu_title() {
     assert_eq!(model.screen.path_titles, ["Bills of Materials", "Find BOM"]);
     let extra = document(&extra);
     assert_eq!(
-        extra["screen"]["pathTitles"][2],
-        json!("Getting started+more"),
+        extra["screen"]["pathTitles"],
+        json!(["Bills of Materials", "Find BOM", "Getting started+more", "a/b", "100%"]),
+        "{extra}"
+    );
+    let text = extra.to_string();
+    assert!(text.contains("extra Getting started+more|a/b|100%"), "{extra}");
+    assert!(
+        text.contains("url /BillsOfMaterials/FindBom/Getting%20started+more/a%2Fb/100%25"),
         "{extra}"
     );
 }

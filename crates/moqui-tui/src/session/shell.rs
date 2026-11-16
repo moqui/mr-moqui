@@ -1506,6 +1506,7 @@ fn menu_level(entry: &serde_json::Value) -> Option<super::MenuLevel> {
         .collect();
     Some(super::MenuLevel {
         path: path.split(['?', '#']).next().unwrap_or(&path).to_string(),
+        title: json_text(entry, "title"),
         items,
         active_title,
     })

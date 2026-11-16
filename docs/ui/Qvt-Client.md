@@ -1410,7 +1410,7 @@ level at the path itself (no walk down the default subscreens), which is how the
   validationErrors: [{form, field, message}]}, focus, c}`. `pathTitles` is each name's menu title (the name itself where there is none); `parameters` are the request's, credential names stripped; `messages` the flash of
   the last transition; `focus` the first `focus-field` as `form.field`; `c` the level's nodes. A client refuses a `v` it does not know.
 - **Nodes** carry `t` and an `id`. Ids are stable across renders and unique in the document: an element's own id or name, else its element
-  path, with `~2`, `~3` for a repeat (an iterated section, a section included twice). Structure: `section`, `container`, `box` (`title`, `type`,
+  path, with `~2`, `~3` for a repeat (an iterated section, a section included twice). Structure: `section`, `container` (`row` when its style has the `row` class: the widgets of its sections flow on its line), `box` (`title`, `type`,
   `initial` open or closed for a collapsible box; a `region` named `toolbar` first in `c`), `row` and `col` (`xs` to `lg` spans), `panel`
   (`region`s `header`, `left`, `center`, `right`, `footer`, a side's `size` in px), `split` (`sideWidth`, `selectParameter`, `selected` while that
   parameter has a value, which puts `main` first when the panes stack, `region`s `side` and `main`), `dialog` (`title`, `button`, its body in `c`; `list` when it is a row action of that list), `dynamicDialog` (`url`, `button`,

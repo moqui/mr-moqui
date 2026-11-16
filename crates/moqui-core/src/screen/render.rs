@@ -367,6 +367,9 @@ pub struct RenderState {
     pub macro_location: String,
     /// Index into `url_info.path_defs` of the screen being rendered.
     pub screen_path_index: Cell<usize>,
+    /// The full path of the page a tui parent level is loaded for, below `url_info`'s path ([`super::frame::level_page`]):
+    /// the menu items' `inPath` is on it. Unset for any other render.
+    pub page_path: std::cell::OnceCell<Vec<String>>,
     /// Set by actions that sent their own response, so the screen is not rendered.
     pub dont_do_render: Cell<bool>,
     /// Locations of screens that are skipped because a required parameter is missing.
@@ -411,6 +414,12 @@ pub struct RenderState {
 }
 
 impl RenderState {
+    /// The path the menu items' `inPath` is on: the page's when this is a tui parent level loaded for it, else the
+    /// rendered path.
+    pub(crate) fn in_path_names(&self) -> &[String] {
+        self.page_path.get().unwrap_or(&self.url_info.full_path)
+    }
+
     pub(super) fn new(
         factory: &Arc<ExecutionContextFactory>,
         facade: &Arc<ScreenFacade>,
@@ -448,6 +457,7 @@ impl RenderState {
             xlsx: RefCell::new(super::xlsx::XlsxBook::default()),
             macro_location,
             screen_path_index: Cell::new(0),
+            page_path: std::cell::OnceCell::new(),
             dont_do_render: Cell::new(false),
             stopped: RefCell::new(Vec::new()),
             override_def: RefCell::new(None),
@@ -856,11 +866,15 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
     if super::frame::serve_frame(factory, job, &info, &mode) {
         return Ok(());
     }
+    let page = super::frame::level_page(factory, job, &info, &mode);
     let (content_type, encoding) = output_type(&facade, &info, &mode);
     let state = Rc::new(RenderState::new(factory, &facade, info, mode, content_type, encoding));
     state
         .mode_by_option
         .set(job.render_mode.is_some_and(|mode| !mode.is_empty()));
+    if let Some(page) = page {
+        let _ = state.page_path.set(page.full_path.clone());
+    }
     let _active = ActiveGuard::install(Rc::clone(&state));
     // A screen marked server-static for qvt is sent as a template that holds no request data, from the cache.
     // Record history after the send: a later failure must not record a screen the user did not get.
@@ -1284,8 +1298,8 @@ pub(super) fn json_envelope(
 
 /// The menu title of each name of `pathList`, for the breadcrumb: the parent's `subscreens-item` menu-title, else the
 /// screen's default-menu-title, localized and expanded as the menus title them (menu.rs). A name with no screen (a wiki
-/// page, a transition), or whose title is empty or does not expand, keeps its name, percent-decoded (`Getting%20started`
-/// is `Getting started`; a `+` in a path is itself).
+/// page, a transition), or whose title is empty or does not expand, keeps its name, which the screen URL decoded
+/// (`Getting%20started` is `Getting started`).
 fn path_titles(info: &ScreenUrlInfo) -> Vec<String> {
     let strip = super::sri::strip_controls;
     info.full_path
@@ -1302,7 +1316,6 @@ fn path_titles(info: &ScreenUrlInfo) -> Vec<String> {
             };
             match title {
                 Some(title) => strip(&title),
-                None if name.contains('%') => strip(&crate::web::percent_decode(&name.replace('+', "%2B"))),
                 None => strip(name),
             }
         })

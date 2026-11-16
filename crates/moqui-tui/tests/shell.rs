@@ -961,7 +961,8 @@ fn the_drawer_nests_the_deeper_levels_of_the_path() {
             "/apps/people",
             vec![
                 item("Employees", "/apps/people/Employees", Vec::new()),
-                item("Payroll", "/apps/people/Payroll", Vec::new()),
+                // the url of a screen with a default subscreen goes on to it, as the server's pathWithParams does
+                item("Payroll", "/apps/people/Payroll/Runs/Open", Vec::new()),
                 item("Time & leave", "/apps/people/Time", Vec::new()),
             ],
         )],
@@ -977,7 +978,7 @@ fn the_drawer_nests_the_deeper_levels_of_the_path() {
                 { "title": "Employees", "path": "/apps/people/Employees" },
                 { "title": "Payroll", "path": "/apps/people/Payroll", "active": true } ] },
             { "title": "Payroll", "path": "/apps/people/Payroll", "subscreens": [
-                { "title": "Runs", "path": "/apps/people/Payroll/Runs", "active": true },
+                { "title": "Runs", "path": "/apps/people/Payroll/Runs", "pathWithParams": "/apps/people/Payroll/Runs/Open", "active": true },
                 { "title": "Pay grades", "path": "/apps/people/Payroll/Grades", "group": "Setup" },
                 { "title": "Locked", "path": "/apps/people/Payroll/Locked", "disableLink": true } ] },
             { "title": "Runs", "path": "/apps/people/Payroll/Runs", "subscreens": [
@@ -1017,7 +1018,8 @@ fn the_drawer_nests_the_deeper_levels_of_the_path() {
         .collect();
     assert_eq!(
         marked,
-        ["/apps/people", "/apps/people/Payroll", "/apps/people/Payroll/Runs/Open"],
+        // Payroll's row and its Runs row both go on to the default subscreen
+        ["/apps/people", "/apps/people/Payroll/Runs/Open", "/apps/people/Payroll/Runs/Open"],
         "{rows:?}"
     );
     // F9 focuses the drawer; the arrows reach a nested row and Enter follows it

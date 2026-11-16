@@ -374,7 +374,7 @@ width, or when the long form would cut the breadcrumb, the middle form with thre
 word's first letter and the two consonants after it) takes over, then the short form `T3 C1 N2`, then the user and the
 clock give way. The breadcrumb names each level by its menu title (`Bills of Materials`, not `BillsOfMaterials`), the
 envelope's `pathTitles` beside `pathList`; a level whose title is empty or does not expand, and an extra path's name (a
-wiki page), keeps its name, percent-decoded (`Getting started`). A level named as the one after it (a screen whose
+wiki page), keeps its name, which the screen URL decoded (`Getting started`). A level named as the one after it (a screen whose
 default subscreen is its own list) is one crumb, as in the browser.
 
 A list with `views` (`view-board`, `view-calendar`, `view-tree`; style guide §8.2) opens in the view the user chose last
@@ -392,7 +392,10 @@ line, with a line under it to edit it in the browser. A text area longer than it
 rows scrolls with its cursor, and PgUp, PgDn and the wheel move it by its rows; `▲` and `▼` on its bar say there is
 more above or below. The preview scrolls the same way.
 
-A row of buttons wider than the screen goes on as many lines as it needs.
+A row of buttons wider than the screen goes on as many lines as it needs. In a container whose style has the `row`
+class (`row:true` in the document) a section is a grouping, not a block: the buttons of its sections (a
+`section-iterate` of one link each, Product 360's tabs) flow on the container's line as its own buttons do. Elsewhere
+each section starts its own line.
 
 Leaving a changed form (a link, Back, Ctrl+Q) asks: Stay, Discard or Save. A button or link with a `confirmation` asks
 No or Yes, starting at No.
@@ -412,7 +415,10 @@ A successful write and F5 refresh the current screen and its cached parent scree
 reflect child-screen changes. Moving between child tabs, or resizing the terminal, reuses those parents. Each parent
 screen is asked for naming the screen below it it is loaded for (`X-Moqui-Page-Path`): one the user may not open alone,
 above a screen they may open (a self-service area under an app's area), answers as that screen's frame, its tab bar of
-the subscreens they may open and nothing else of its own ([Attack-Surface](../security/Attack-Surface-Web.md#parent-frames)). Internal
+the subscreens they may open and nothing else of its own ([Attack-Surface](../security/Attack-Surface-Web.md#parent-frames)).
+A parent that renders as itself takes the menu items' `inPath` (`sri.getMenuItems()`, its tab bar's active tab) from
+that screen's path, when it is on the parent's screens below it, as a render of the whole path does: a screen that marks
+its current tab by `tab.inPath` (Product 360) marks it in the terminal too. Internal
 links under `/qapps` use the terminal's `/apps` mount, a download reached by following a link included; explicitly
 opening a link in the browser preserves its browser address, as do external links. A form's or transition's own
 JSON request keeps its authored route.

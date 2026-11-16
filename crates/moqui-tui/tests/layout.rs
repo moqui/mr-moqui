@@ -264,6 +264,35 @@ fn a_row_of_buttons_wraps() {
     assert!(narrow.contains("inline app0 app1 app2 app3\ninline app4"), "{narrow}");
 }
 
+/// A section is a grouping, not a block: in a row container (`style="row"`) the buttons of its sections (a section-iterate
+/// of tabs, one link in a section per iteration, as Product 360's) flow on one line; elsewhere each section is its own.
+#[test]
+fn the_sections_of_a_row_container_flow_on_its_line() {
+    let tabs = |row: &str| {
+        let sections: Vec<String> = ["Summary", "Prices", "Stock"]
+            .iter()
+            .map(|name| {
+                format!(
+                    r#"{{"t":"section","id":"Tab.{name}","name":"ProductTabActive","c":[
+                        {{"t":"link","id":"tab{name}","text":"{name}","kind":"anchor-button","url":"/p/{name}"}}]}}"#
+                )
+            })
+            .collect();
+        screen(&format!(
+            r#"{{"t":"container","id":"ProductTabs"{row},"c":[
+                {{"t":"section","id":"ProductTab","name":"ProductTab","iterate":true,"c":[{}]}}]}}"#,
+            sections.join(",")
+        ))
+    };
+    let row = outline(&tabs(r#","row":true"#), 120);
+    assert_eq!(
+        row, "class=md canvas=120\ninline tabSummary tabPrices tabStock\n",
+        "{row}"
+    );
+    let stacked = outline(&tabs(""), 120);
+    assert_eq!(stacked.matches("inline ").count(), 3, "{stacked}");
+}
+
 /// A form field whose widget is a link carries the field's title (`label`): it is a line of the form with that label in
 /// the label column and the link as its value, not one of the buttons under the form.
 #[test]

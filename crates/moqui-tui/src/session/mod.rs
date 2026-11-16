@@ -2355,6 +2355,8 @@ fn menu_level(items: &[MenuItem], depth: usize, children: bool, rows: &mut Vec<D
 pub struct MenuLevel {
     /// The screen's path, with no query.
     pub path: String,
+    /// The screen's title, which its drawer row has.
+    pub title: String,
     pub items: Vec<MenuItem>,
     /// The title of the subscreen on the path, empty when none is.
     pub active_title: String,
@@ -2376,9 +2378,18 @@ pub fn drawer_rows_with_levels(menu: &[MenuItem], levels: &[MenuLevel]) -> Vec<D
     };
     for level in levels {
         let path = level.path.trim_end_matches('/');
+        // the level's row: its url is the level's path, or goes on to a default subscreen under it (the server's
+        // pathWithParams, /apps/People/Payroll/PayRuns for the level /apps/People/Payroll) and it has the level's title
+        let candidate = |row: &DrawerRow| row.depth >= 1 && !row.url.is_empty();
+        let under = format!("{path}/");
         let Some(at) = rows
             .iter()
-            .rposition(|row| row.depth >= 1 && !row.url.is_empty() && path_of(&row.url) == path)
+            .rposition(|row| candidate(row) && path_of(&row.url) == path)
+            .or_else(|| {
+                rows.iter().rposition(|row| {
+                    candidate(row) && row.title == level.title && path_of(&row.url).starts_with(&under)
+                })
+            })
         else {
             continue;
         };

@@ -2087,12 +2087,26 @@ pub fn form_pairs(text: &str) -> Vec<(String, String)> {
 
 /// Decode `+` and `%XX`. A malformed escape is kept as written.
 pub fn percent_decode(text: &str) -> String {
+    String::from_utf8_lossy(&decode_bytes(text, true)).into_owned()
+}
+
+/// Decode `%XX` in a name of a URL path, as a servlet decodes its path: a `+` is itself, and a malformed escape is kept
+/// as written. A name whose bytes do not decode to UTF-8 is kept as written.
+pub fn percent_decode_path(text: &str) -> String {
+    if !text.contains('%') {
+        return text.to_string();
+    }
+    String::from_utf8(decode_bytes(text, false)).unwrap_or_else(|_| text.to_string())
+}
+
+/// The bytes of `text` with `%XX` decoded, and `+` as a space when `plus` (a form value).
+fn decode_bytes(text: &str, plus: bool) -> Vec<u8> {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut index = 0;
     while index < bytes.len() {
         match bytes[index] {
-            b'+' => {
+            b'+' if plus => {
                 out.push(b' ');
                 index += 1;
             }
@@ -2112,7 +2126,7 @@ pub fn percent_decode(text: &str) -> String {
             }
         }
     }
-    String::from_utf8_lossy(&out).into_owned()
+    out
 }
 
 fn hex_pair(high: u8, low: u8) -> Option<u8> {

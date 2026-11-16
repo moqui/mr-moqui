@@ -134,7 +134,7 @@ pub(super) fn subscreen_entry(
     next_item: &str,
     in_menu: bool,
 ) -> Result<Option<Value>, Error> {
-    let screen_path = format!("{parent_path}/{}", moqui_lib::string::url_encode_if_needed(&item.name));
+    let screen_path = format!("{parent_path}/{}", super::url::encode_path_name(&item.name));
     let mut names = parent_names.to_vec();
     names.push(item.name.clone());
     let mut url = urls::resolve_names_at(state, names, 0, true)?;
@@ -290,7 +290,7 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
         let path_item = &full_path[index];
         let next_item = &full_path[index + 1];
         current_path.push('/');
-        current_path.push_str(&moqui_lib::string::url_encode_if_needed(path_item));
+        current_path.push_str(&super::url::encode_path_name(path_item));
         let Some(ssi) = cur_screen.subscreens.get(path_item).cloned() else {
             break;
         };
@@ -372,7 +372,7 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
         last_url.add_parameter(&name, &value);
     }
     current_path.push('/');
-    current_path.push_str(&moqui_lib::string::url_encode_if_needed(&last_item));
+    current_path.push_str(&super::url::encode_path_name(&last_item));
     let last_path = current_path.clone();
     let query = last_url.parameter_string();
     if !query.is_empty() {
@@ -401,7 +401,7 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
     }
     let extra_encoded: Vec<Value> = extra
         .iter()
-        .map(|name| text(&moqui_lib::string::url_encode_if_needed(name)))
+        .map(|name| text(&super::url::encode_path_name(name)))
         .collect();
     let mut entry = Item::default();
     entry.insert("name".into(), text(&last_item));

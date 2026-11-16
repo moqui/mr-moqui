@@ -133,7 +133,8 @@ impl ScreenUrlInfo {
         // a render from overlaid text resolves its own path, with the overlaid definitions
         let cache = cache && !super::overlay::active();
         // A path that took no conditional default resolves the same way every time, as Java's `screen.url` cache.
-        let key = format!("{root_location}\u{1}{}\u{1}{last_standalone}", segments.join("/"));
+        // the names encoded, so a decoded name that holds a `/` is not the two names it would join to
+        let key = format!("{root_location}\u{1}{}\u{1}{last_standalone}", encode_path(segments));
         if cache {
             if let Some(cached) = facade.cached_url(factory, &key) {
                 return Ok(cached);
@@ -551,7 +552,7 @@ pub fn prepare_screen_path(
         screen_path.truncate(path_len);
     }
     if let Some(trimmed) = screen_path.strip_prefix("//") {
-        let names = cleanup_path_names(trimmed.split('/'), &mut inline);
+        let names = cleanup_path_names(&[], trimmed.split('/'), &mut inline);
         let facade = ScreenFacade::of(factory);
         let key = format!("{root_location}\u{1}{screen_path}");
         let expanded = if let Some(cached) = facade.cached_sparse(factory, &key) {
@@ -570,14 +571,9 @@ pub fn prepare_screen_path(
         };
         return Ok(ScreenPath { names, inline, cache });
     }
-    let mut names = if screen_path.starts_with('/') {
-        Vec::new()
-    } else {
-        from.to_vec()
-    };
-    names.extend(screen_path.split('/').map(str::to_string));
+    let from = if screen_path.starts_with('/') { &[] } else { from };
     Ok(ScreenPath {
-        names: cleanup_path_names(names.iter().map(String::as_str), &mut inline),
+        names: cleanup_path_names(from, screen_path.split('/'), &mut inline),
         inline,
         cache,
     })
@@ -640,13 +636,17 @@ fn screen_path_alias(factory: &ExecutionContextFactory, alias_path: &str) -> Res
     Ok(open.into_iter().next().map(|(_, screen)| screen))
 }
 
-/// Drop empty segments and `.`, pop for `..`, and store `~name=value` in `inline`. A tilde that is not `name=value`
-/// is dropped. Java's `cleanupPathNameList`.
+/// The names of `from` (clean, decoded path names) followed by `input`'s: drop empty segments and `.`, pop for `..`, and
+/// store `~name=value` in `inline`. A tilde that is not `name=value` is dropped. Java's `cleanupPathNameList`. Each name
+/// of `input` is then percent-decoded on its own, as a servlet path is decoded (`Getting%20started` is
+/// `Getting started`, and a `%2F` stays inside its name); `from`'s are decoded already, so a name that holds an escape
+/// as text is not decoded twice. The checks for `.`, `..` and `~` read the name as written.
 fn cleanup_path_names<'a>(
+    from: &[String],
     input: impl IntoIterator<Item = &'a str>,
     inline: &mut BTreeMap<String, String>,
 ) -> Vec<String> {
-    let mut clean = Vec::new();
+    let mut clean = from.to_vec();
     for path_name in input {
         if path_name.is_empty() || path_name == "." {
             continue;
@@ -666,7 +666,7 @@ fn cleanup_path_names<'a>(
             }
             continue;
         }
-        clean.push(path_name.to_string());
+        clean.push(crate::web::percent_decode_path(path_name));
     }
     clean
 }
@@ -802,16 +802,24 @@ pub fn encode_path(names: &[String]) -> String {
     let mut out = String::new();
     for name in names {
         out.push('/');
-        for byte in name.bytes() {
-            if byte.is_ascii_alphanumeric() || b"-._~:@!$'()*+,;=".contains(&byte) {
-                out.push(char::from(byte));
-            } else {
-                out.push_str(&format!("%{byte:02X}"));
-            }
-        }
+        out.push_str(&encode_path_name(name));
     }
     if out.is_empty() {
         out.push('/');
+    }
+    out
+}
+
+/// One name of a URL path, percent-encoding what a path name cannot hold: a space is `%20`, a `/` in the name `%2F`,
+/// and a `%` `%25`, so the name the screen URL decodes ([`prepare_screen_path`]) is this one again.
+pub fn encode_path_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for byte in name.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~:@!$'()*+,;=".contains(&byte) {
+            out.push(char::from(byte));
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
     }
     out
 }

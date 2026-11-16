@@ -296,6 +296,9 @@ pub enum Node {
     },
     Container {
         id: String,
+        /// The container's style has the `row` class: the widgets of the sections in it flow in its own line.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        row: bool,
         #[serde(default)]
         c: Vec<Node>,
     },

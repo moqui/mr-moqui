@@ -1671,7 +1671,9 @@ $closeRender();
         "subscreens-menu": stmt((node) => `{
             ${menuItems}$emit({t:"subscreens",id:$uid(${jsString(attr(node, "id") || "subscreens")}),kind:${jsString(attr(node, "type") || "tab")},items:$items,c:[]});
         }\n`),
-        "container": group("container"),
+        // a container whose style has the `row` class lays its children out in a row: the client flows the widgets of the
+        // sections in it (a section-iterate of buttons) on one line, as the widgets of the container itself
+        "container": group("container", (node) => ((attr(node, "style") || "").split(/\s+/).includes("row") ? ",row:true" : "")),
         "container-box": stmt((node) => {
             const header = child(node, "box-header");
             const title = header ? attr(header, "title") : "";

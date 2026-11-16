@@ -262,7 +262,7 @@ fn relative_names(base: &[String], path: &str) -> Vec<String> {
 fn encoded(names: &[String]) -> String {
     names
         .iter()
-        .map(|name| format!("/{}", moqui_lib::string::url_encode_if_needed(name)))
+        .map(|name| format!("/{}", super::url::encode_path_name(name)))
         .collect()
 }
 
