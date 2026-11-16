@@ -1288,7 +1288,9 @@
         (smart HTTP) and over the SSH server (SSH_GIT), checked against AT_GIT_REPOSITORY (docs/interfaces/Git-Hosting.md).
         public-url, lfs-token-key and lfs-token-key-previous: see the git_ properties.
         max-concurrent clones and pushes run at once, on threads of their own, with max-queued waiting. max-request
-        bytes of an upload-pack request, max-push-size bytes of a push, max-object-size bytes of one pushed object;
+        bytes of an upload-pack request, max-push-size bytes of a push (each as sent and as a gzip body inflates, and
+        over SSH for the whole conversation), at most fetch-max-lines lines (wants, haves, capabilities) in
+        fetch-max-request-bytes of an upload-pack request, max-object-size bytes of one pushed object;
         idle-timeout seconds of silence in a request body end it. pack-threads (all cores when empty) compress and index
         packs. Credentials over plain HTTP are refused unless allow-http. lfs-max-object-size: the largest Git LFS
         object, at /git/<repositoryId>.git/info/lfs. eca-max-commits: the most commits one change raises gitECA commit
@@ -1299,7 +1301,10 @@
         and blame-max-lines lines, at most blame-max-commits commits of history and blame-max-diffs comparisons of two
         versions, for at most blame-max-seconds; get#GitArchive writes a tree of at most archive-max-bytes of content
         and archive-max-files entries (files, links, directories), at most archive-max-concurrent archives at once, and
-        keeps at most archive-max-disk-bytes of archive files (runtime/tmp/git-archive). More is refused.
+        keeps at most archive-max-disk-bytes of archive files (runtime/tmp/git-archive). More is refused. get#GitBlob
+        reads a file of at most blob-max-bytes (else answers its size and tooLarge), get#GitCommitDiff and
+        get#GitCommit diff at most commit-max-diff-files files, and a get#GitLog page with a path compares at most
+        log-max-commits commits.
         The storage of db kind repositories (docs/interfaces/Git-Hosting.md, Storage): objects are rows of zlib streams, or of
         deltas against another object, as a pack has them: db-delta-depth deltas at most from an object to a whole
         one, and objects up to db-delta-max-size bytes as deltas; an object over db-large-object bytes is a content
@@ -1340,10 +1345,12 @@
     <git-server public-url="${git_public_url}" lfs-token-key="${git_lfs_token_key}"
             lfs-token-key-previous="${git_lfs_token_key_previous}"
             max-concurrent="4" anonymous-max-concurrent="" max-queued="16" max-request="67108864" max-push-size="2147483648"
+            fetch-max-lines="1000000" fetch-max-request-bytes="67108864"
             max-object-size="536870912" idle-timeout="120" pack-threads="" allow-http="false"
             lfs-max-object-size="5368709120" lfs-upload-check-service="" outbound-check-service="" eca-max-commits="10000"
             webhook-private-network="false" blame-max-bytes="1048576" blame-max-lines="50000"
             blame-max-commits="10000" blame-max-diffs="2000" blame-max-seconds="10"
+            blob-max-bytes="16777216" commit-max-diff-files="300" log-max-commits="10000"
             archive-max-bytes="268435456" archive-max-files="50000" archive-max-disk-bytes="2147483648"
             archive-max-concurrent="2"
             db-delta-depth="50" db-delta-max-size="16777216" db-large-object="8388608" db-write-format="v2"

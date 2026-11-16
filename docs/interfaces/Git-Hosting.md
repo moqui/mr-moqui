@@ -248,7 +248,10 @@ fetches, edit pushes new refs and fast-forwards on a drive that is not read only
 - Clones and pushes run on a pool of their own (`git-server` `max-concurrent`, 4, and `git-server` `max-queued` waiting), not on the
   request workers of the screens, and are exempt from `webapp_request_timeout`; `git-server` `idle-timeout` (120 seconds) of
   silence in a request body ends it. Limits: `git-server` `max-request` (64 MB) for a fetch request, `git-server` `max-push-size` (2 GB),
-  `git-server` `max-object-size` (512 MB) for one pushed object; `git-server` `pack-threads` (all cores when empty) compress and index.
+  each counted as sent and, for a `Content-Encoding: gzip` body, as inflated, and over SSH for the whole conversation's input
+  (more is refused, not cut short); `git-server` `fetch-max-lines` (1,000,000 want, have, shallow, deepen and argument lines,
+  each capability on a want line counted as one) in `fetch-max-request-bytes` (64 MB) of a fetch request (a v0 conversation,
+  a v2 command), else `GitFetchRequestTooLarge`; `git-server` `max-object-size` (512 MB) for one pushed object; `git-server` `pack-threads` (all cores when empty) compress and index.
 
 ## gitECA rules
 
@@ -396,7 +399,7 @@ Mantle-free: Mantle links merge requests to work items and comments to lines.
 | `find#GitRepositories` | the repositories the user may view, paged, by id list, text and kind; archived ones only with `includeArchived` or `archivedOnly`; each with its open merge requests |
 | `find#GitUpdates` | a repository's push log, newest first: every push (refused ones too), mirror fetch, import and write, its refs and the state of its gitECA rules |
 | `get#GitTree` | a directory at a revision, directories first, each entry with its size (a file in LFS: its content's) and last commit, from the path index of the branch the revision names (or of the commit) |
-| `get#GitRefs`, `get#GitLog`, `get#GitCommit`, `get#GitCommitDiff`, `get#GitBlob` | as before ([Revision-Management](../data/Revision-Management.md)) |
+| `get#GitRefs`, `get#GitLog`, `get#GitCommit`, `get#GitCommitDiff`, `get#GitBlob` | as before ([Revision-Management](../data/Revision-Management.md)); `get#GitBlob` reads a file of at most `git-server` `blob-max-bytes` (16 MiB, an LFS file's content counted) and answers a larger one's `size` and `tooLarge` only (a `git://` location streams it, as a screen's raw download does); a commit's diff diffs its first `commit-max-diff-files` (300) files and lists the rest with `tooLarge`; a `get#GitLog` page with a `path` compares at most `log-max-commits` (10,000) commits at it and ends there, with `hasMore` when it found any |
 | `get#GitBlame` | for each line of a file at a revision, the commit that last changed it ([below](#blame-and-archive)) |
 | `get#GitArchive` | a tree at a revision as a zip or tar.gz file to serve ([below](#blame-and-archive)) |
 | `get#GitCommitRefs` | the branches and tags that contain a commit ([below](#reachability)) |
@@ -645,6 +648,7 @@ merge request`). Match the start of the error; the text after it may change.
 | `GitReviewPushTooLarge`, `GitReviewQuota` | a push to `refs/for/`, `commit#GitFiles` (`asProposal`) | over the caps for a user with no push right |
 | `GitReviewRefusals` | a push to `refs/for/`, `commit#GitFiles` (`asProposal`) | too many of the account's pushes for review and proposals were refused this hour (`review-max-refused`) |
 | `GitReviewPushTooWide` | a push to `refs/for/` | it builds on more commits of the repository than `review-max-built-on` |
+| `GitFetchRequestTooLarge` | a fetch or clone | more want, have or argument lines than the server takes (`fetch-max-lines`, `fetch-max-request-bytes`) |
 | `GitPushRequestTooLarge` | a push | more commands, shallow lines or push options than the server takes (`push-max-commands`, `review-max-commands`) |
 | `GitNeedsSharedStorage` | a write, `init#GitRepository`, `fetch#GitRepository`, `fork#GitRepository` | a new `local` or `remote` repository on a cluster member without `git-server` `shared-storage` ([shared storage](#shared-storage-in-a-cluster)) |
 | `GitLeaseBusy` | a push, a write, `fork#GitRepository`, `delete#GitRepository` | another cluster member writes the repository past `shared-lock-wait-seconds` |

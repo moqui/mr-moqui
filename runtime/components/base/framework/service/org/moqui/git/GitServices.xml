@@ -213,7 +213,8 @@ along with this software (see the LICENSE.md file). If not, see
                 of a merge request that is not hidden reaches it: the repository's store may hold more (its fork
                 network's commits), which are answered as not there. The same in every get#Git* service.</description></parameter>
             <parameter name="path"><description>Only the commits that changed this path against their first
-                parent</description></parameter>
+                parent. A page compares at most git-server log-max-commits (10,000) commits at the path, and ends
+                there: hasMore when it found any</description></parameter>
             <parameter name="afterCommitId"><description>Start after this commit: the last commitId of the previous
                 page</description></parameter>
             <parameter name="limit" type="Integer" default="50"><description>At most 500</description></parameter>
@@ -242,14 +243,16 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="commit" type="Map"><description>As each map of get#GitLog commitList</description></parameter>
             <parameter name="fileList" type="List"><description>Maps: path, changeType (added, modified, deleted),
-                oldObjectId, newObjectId, and with stats binary, tooLarge, insertions, deletions</description></parameter>
+                oldObjectId, newObjectId, and with stats binary, tooLarge, insertions, deletions (no counts past the
+                first 300 files, as get#GitCommitDiff)</description></parameter>
             <parameter name="insertions" type="Integer"/>
             <parameter name="deletions" type="Integer"/>
         </out-parameters>
     </service>
     <service verb="get" noun="GitCommitDiff" type="rust" location="moqui_git::service::get_commit_diff">
         <description>The line diff of each file a commit changed, or of one file. A binary file, or a side over 1 MB,
-            has no diff.</description>
+            has no diff; past the first git-server commit-max-diff-files (300, as a comparison) a file is listed with
+            tooLarge and no diff.</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="commitId" required="true"/>
@@ -264,7 +267,9 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="get" noun="GitBlob" type="rust" location="moqui_git::service::get_blob">
-        <description>The file at a path in a revision; no out parameters when it is not a file there.</description>
+        <description>The file at a path in a revision; no out parameters when it is not a file there. A file over
+            git-server blob-max-bytes (16 MiB; an LFS file's content counted) is not read: size and tooLarge only (read
+            it as a git:// location, which streams it).</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="revision"/>
@@ -273,7 +278,8 @@ along with this software (see the LICENSE.md file). If not, see
                 merge requests too (set#MergeRequestHidden); with authorization disabled only</description></parameter>
         </in-parameters>
         <out-parameters>
-            <parameter name="size" type="Integer"/>
+            <parameter name="size" type="Long"/>
+            <parameter name="tooLarge" type="Boolean"><description>Over blob-max-bytes: no text or bytes</description></parameter>
             <parameter name="binary" type="Boolean"/>
             <parameter name="text"><description>A UTF-8 file without NUL bytes</description></parameter>
             <parameter name="bytes" type="Object"><description>Any other file</description></parameter>

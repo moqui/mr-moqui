@@ -21,6 +21,7 @@ use gix::objs::Kind;
 use gix::ObjectId;
 
 use super::diff::{self, FileChange, FileDiff};
+use super::hosting::MAX_COMPARE_FILES;
 use super::ops::{self, CommitDetails, TagDetails};
 use super::revwalk::{self, Walk};
 use super::GitProvider;
@@ -83,6 +84,13 @@ pub(crate) struct RepositoryRefs {
     pub branch: String,
     pub head: Option<ObjectId>,
     pub refs: Vec<RefInfo>,
+}
+
+/// A file read at a revision, or only its size when it is over the size asked for.
+#[derive(Clone, Debug)]
+pub(crate) enum FileAt {
+    Content(Vec<u8>),
+    TooLarge(u64),
 }
 
 /// A page of a log.
@@ -218,6 +226,12 @@ impl GitProvider {
         walk.push(start, false)?;
         let mut skipping = after.map(str::trim).filter(|after| !after.is_empty());
         let mut commits = Vec::new();
+        // each commit compared at the path reads its tree and its parent's: a page compares at most
+        // `git-server` `log-max-commits` (10,000), and ends there; it says more follow when it found any, so the next
+        // page goes on after the last
+        let mut compares_left = Some(crate::number_setting("log-max-commits", 10_000))
+            .filter(|most| *most > 0)
+            .unwrap_or(10_000);
         while let Some(commit) = walk.next()? {
             if let Some(after) = skipping {
                 if commit.id.to_string().starts_with(after) {
@@ -225,8 +239,15 @@ impl GitProvider {
                 }
                 continue;
             }
-            if !path.is_empty() && !changed_path(store, &commit, path)? {
-                continue;
+            if !path.is_empty() {
+                if compares_left == 0 {
+                    let more = !commits.is_empty();
+                    return Ok(LogPage { commits, more });
+                }
+                compares_left -= 1;
+                if !changed_path(store, &commit, path)? {
+                    continue;
+                }
             }
             if commits.len() == limit {
                 return Ok(LogPage { commits, more: true });
@@ -265,11 +286,24 @@ impl GitProvider {
             return Ok(None);
         };
         let mut diffs = Vec::new();
+        // as a comparison: the first files are diffed (`git-server` `commit-max-diff-files`, 300), the rest only listed
+        // (as too large to show)
+        let most = Some(crate::number_setting("commit-max-diff-files", MAX_COMPARE_FILES))
+            .filter(|most| *most > 0)
+            .unwrap_or(MAX_COMPARE_FILES);
         for change in diff::commit_changes(store, &ops::read_commit(store, &id)?)? {
             if path.is_some_and(|path| path != change.path) {
                 continue;
             }
-            let file = diff::file_diff(store, &change)?;
+            let file = if diffs.len() < most {
+                diff::file_diff(store, &change)?
+            } else {
+                FileDiff {
+                    binary: false,
+                    too_large: true,
+                    diff: None,
+                }
+            };
             diffs.push((change, file));
         }
         Ok(Some(diffs))
@@ -282,16 +316,35 @@ impl GitProvider {
         revision: &str,
         path: &[String],
     ) -> Result<Option<Vec<u8>>, Error> {
+        match self.file_at(repository_id, revision, path, u64::MAX)? {
+            Some(FileAt::Content(bytes)) => Ok(Some(bytes)),
+            Some(FileAt::TooLarge(_)) | None => Ok(None),
+        }
+    }
+
+    /// The file at `path` in the commit `revision` names: its bytes when it is at most `most` bytes (an LFS file's
+    /// content counted), else its size only.
+    pub(crate) fn file_at(
+        &self,
+        repository_id: &str,
+        revision: &str,
+        path: &[String],
+        most: u64,
+    ) -> Result<Option<FileAt>, Error> {
         let repo = self.repo(repository_id)?;
-        match self.resolve_commit(repository_id, revision)? {
-            Some(id) => {
-                let commit = ops::read_commit(repo.store.as_ref(), &id)?;
-                match ops::resolve(repo.store.as_ref(), &commit.tree, path)? {
-                    Some((mode, blob)) if !mode.is_tree() => self.file_content(&repo, &blob).map(Some),
-                    _ => Ok(None),
+        let Some(id) = self.resolve_commit(repository_id, revision)? else {
+            return Ok(None);
+        };
+        let commit = ops::read_commit(repo.store.as_ref(), &id)?;
+        match ops::resolve(repo.store.as_ref(), &commit.tree, path)? {
+            Some((mode, blob)) if !mode.is_tree() => {
+                let size = self.file_size(&repo, &blob)?;
+                if size > most {
+                    return Ok(Some(FileAt::TooLarge(size)));
                 }
+                self.file_content(&repo, &blob).map(|bytes| Some(FileAt::Content(bytes)))
             }
-            None => Ok(None),
+            _ => Ok(None),
         }
     }
 }

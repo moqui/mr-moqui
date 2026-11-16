@@ -45,6 +45,8 @@ mod images_tests;
 mod import_source_tests;
 mod repository;
 pub(crate) mod mirror;
+#[cfg(test)]
+mod read_limits_tests;
 pub(crate) mod rest;
 pub mod review;
 #[cfg(test)]
@@ -646,15 +648,23 @@ fn get_commit_diff(
 }
 
 /// `get#GitBlob`: the file at a path in a revision. Out: `size`, `binary`, and `text` for a UTF-8 file without NUL
-/// bytes (else `bytes`); nothing when it is not a file there.
+/// bytes (else `bytes`); nothing when it is not a file there. A file over `git-server` `blob-max-bytes` (16 MiB, an
+/// LFS file's content counted) is not read: `size` and `tooLarge` only (a `git://` location streams it).
 fn get_blob(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Result<BTreeMap<String, Value>, LibError> {
     let Some((provider, id)) = viewable(parameters) else {
         return Ok(BTreeMap::new());
     };
     let _hidden = hidden_guard(parameters);
     let revision = text(parameters, "revision").unwrap_or_default();
-    match provider.blob_at(&id, &revision, &path_segments(parameters, "path")) {
-        Ok(Some(bytes)) => {
+    let most = Some(crate::number_setting("blob-max-bytes", 16u64 * 1024 * 1024))
+        .filter(|most| *most > 0)
+        .unwrap_or(16 * 1024 * 1024);
+    match provider.file_at(&id, &revision, &path_segments(parameters, "path"), most) {
+        Ok(Some(crate::browse::FileAt::TooLarge(size))) => Ok(out([
+            ("size", Value::I64(i64::try_from(size).unwrap_or(i64::MAX))),
+            ("tooLarge", Value::Bool(true)),
+        ])),
+        Ok(Some(crate::browse::FileAt::Content(bytes))) => {
             let size = count(bytes.len());
             let binary = bytes.iter().take(8000).any(|byte| *byte == 0);
             let content = match (binary, String::from_utf8(bytes)) {
