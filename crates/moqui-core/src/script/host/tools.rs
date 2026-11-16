@@ -820,6 +820,7 @@ macro_rules! tools_js {
         this.methodName = "GET"; this.uriString = null; this.headerList = []; this.bodyText = null;
         this.bodyParameterList = []; this.contentTypeText = "application/json"; this.timeoutSeconds = 30;
         this.bodyBinary = null; this.bodyMultipart = null; this.bodyFromRequest = false; this.followRedirectsFlag = true; this.denyInternalFlag = false;
+        this.propertyHeaderList = [];
     }
     RestClient.prototype.method = function (method) { this.methodName = String(method).toUpperCase(); return this; };
     RestClient.prototype.uri = function (uri) {
@@ -848,6 +849,14 @@ macro_rules! tools_js {
     RestClient.prototype.addHeader = function (name, value) { this.headerList.push([String(name), String(value)]); return this; };
     RestClient.prototype.addHeaders = function (map) {
         for (const [name, value] of Object.entries(map || {})) this.addHeader(name, value);
+        return this;
+    };
+    // A header whose value is the property propertyName, read by the host when the request is sent and never given to the
+    // script (a credential at another server, which System.getProperty does not return): sent only to a URL under the
+    // base URL in the property baseUrlPropertyName (same scheme, host and port; a path at or below the base's) and
+    // never on a redirect; else the call fails and nothing is sent.
+    RestClient.prototype.addPropertyHeader = function (headerName, propertyName, baseUrlPropertyName) {
+        this.propertyHeaderList.push([String(headerName ?? ""), String(propertyName ?? ""), String(baseUrlPropertyName ?? "")]);
         return this;
     };
     RestClient.prototype.contentType = function (contentType) { this.contentTypeText = String(contentType); return this; };
@@ -884,7 +893,7 @@ macro_rules! tools_js {
         if (query) uri += (uri.includes("?") ? "&" : "?") + query;
         const sent = host.restOpen({ method: this.methodName, uri: uri, headers: this.headerList.slice(), body: this.bodyText,
             bodyBytes: this.bodyBinary, multipart: this.bodyMultipart, bodyFromRequest: this.bodyFromRequest, followRedirects: this.followRedirectsFlag,
-            timeoutSeconds: this.timeoutSeconds });
+            timeoutSeconds: this.timeoutSeconds, propertyHeaders: this.propertyHeaderList.slice() });
         return new RestResponse(this, sent);
     };
     RestClient.prototype.call = function () {
@@ -899,7 +908,7 @@ macro_rules! tools_js {
             (this.encodingText && !/charset=/i.test(this.contentTypeText) ? "; charset=" + this.encodingText : "")]);
         if (!hasHeader("accept")) headers.push(["Accept", this.contentTypeText]);
         const sent = host.restSend({ method: this.methodName, uri: uri, headers: headers, body: this.bodyText,
-            timeoutSeconds: this.timeoutSeconds, denyInternal: this.denyInternalFlag });
+            timeoutSeconds: this.timeoutSeconds, denyInternal: this.denyInternalFlag, propertyHeaders: this.propertyHeaderList.slice() });
         return new RestResponse(this, sent);
     };
     ec.service.rest = () => new RestClient();
@@ -2605,7 +2614,8 @@ fn run_sql_update_conf(call: &mut Call<'_>) -> Result<Ret, HostError> {
 // ---- REST client ----
 
 /// Send one request of `ec.service.rest()`: `{method, uri, headers: [[name, value]], body, timeoutSeconds,
-/// denyInternal}`. Returns `{statusCode, reasonPhrase, text}`. Denied in sim mode, as a `remote-rest` call is.
+/// denyInternal, propertyHeaders}`. Returns `{statusCode, reasonPhrase, text}`. Denied in sim mode, as a `remote-rest`
+/// call is. A header from a property (`addPropertyHeader`, `web::property_headers`) is checked and sent here.
 fn rest_send(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let request = call.value_or_null(0);
     let Value::Map(request) = request else {
@@ -2652,6 +2662,23 @@ fn rest_send(call: &mut Call<'_>) -> Result<Ret, HostError> {
     ) {
         return Err(HostError::message(refused.message()));
     }
+    // a header from a property (addPropertyHeader) goes to this URL only: sent without following a redirect
+    let held = super::web::property_headers(&request, &url)?;
+    if !held.is_empty() {
+        if matches!(request.get("denyInternal"), Some(Value::Bool(true))) {
+            return Err(HostError::message(
+                "RestClient call() does not take denyInternal() with addPropertyHeader",
+            ));
+        }
+        headers.extend(held);
+        return rest_send_held(
+            method,
+            &url,
+            headers,
+            text("body").filter(|body| !body.is_empty()),
+            timeout,
+        );
+    }
     let response = crate::outbound::send(crate::outbound::Request {
         method,
         url: url.clone(),
@@ -2667,6 +2694,54 @@ fn rest_send(call: &mut Call<'_>) -> Result<Ret, HostError> {
             err.message()
         ))
     })?;
+    Ok(rest_answer(response))
+}
+
+/// [`rest_send`] of a request that carries a header from a property: sent with no redirect followed (a 3xx comes back
+/// as the answer), so the header reaches the URL that was checked and no other; the body read whole, up to the limit
+/// of `text()` after `send()`.
+fn rest_send_held(
+    method: crate::outbound::Method,
+    url: &str,
+    headers: Vec<(String, String)>,
+    body: Option<String>,
+    timeout: Option<std::time::Duration>,
+) -> Result<Ret, HostError> {
+    use std::io::Read as _;
+    let failed = |message: &str| {
+        HostError::message(format!(
+            "Error calling HTTP request to {}: {message}",
+            crate::outbound::redacted(url)
+        ))
+    };
+    let opened = crate::outbound::open(crate::outbound::OpenRequest {
+        method,
+        url: url.to_string(),
+        headers,
+        body: body.map(bytes::Bytes::from),
+        timeout,
+        follow_redirects: false,
+    })
+    .map_err(|err| failed(err.message()))?;
+    let mut bytes = Vec::new();
+    opened
+        .reader
+        .take(super::web::MAX_READ_BODY + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|err| failed(&err.to_string()))?;
+    if bytes.len() as u64 > super::web::MAX_READ_BODY {
+        return Err(failed("the response body is larger than the limit"));
+    }
+    Ok(rest_answer(crate::outbound::Response {
+        status: opened.status,
+        body: String::from_utf8_lossy(&bytes).into_owned(),
+        bytes,
+        headers: opened.headers,
+    }))
+}
+
+/// The script's view of a response: `{statusCode, reasonPhrase, text, bytes, headers: [[name, value]]}`.
+fn rest_answer(response: crate::outbound::Response) -> Ret {
     let mut map = indexmap::IndexMap::default();
     map.insert("statusCode".to_string(), Value::I64(i64::from(response.status)));
     map.insert(
@@ -2691,7 +2766,7 @@ fn rest_send(call: &mut Call<'_>) -> Result<Ret, HostError> {
                 .collect(),
         ),
     );
-    Ok(Ret::Value(Value::Map(map)))
+    Ret::Value(Value::Map(map))
 }
 
 /// The XML of the form named after `#` in a screen location: `component://.../Screen.xml#FormName`.

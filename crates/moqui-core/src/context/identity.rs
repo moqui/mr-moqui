@@ -40,25 +40,17 @@ pub fn secret_parameter(key: &str) -> bool {
             .any(|end| lower.ends_with(end))
 }
 
-/// The secret properties a script may still read with `System.getProperty`: the PASS frontend's credential at its
-/// authority, which mr-pass's REST transport sends as a header (this deployment's client secret at another server, not a
-/// key of this one).
-const SCRIPT_READABLE_SECRETS: &[&str] = &["pass_client_secret"];
-
 /// Whether `System.getProperty` refuses the property `name` to a script (plans/Security-Review-Medium.md SEC-SCR-03): a
 /// `default-property` the conf marks `is-secret="true"` (`conf_secrets`), a name [`secret_parameter`] calls a secret's
 /// (password, secret, token, credential, a `_key` ending), and a name that ends in `_pass` or `_pw` or holds `crypt`;
-/// each in lower case with `.` read as `_`, as the lookup reads a name both ways. [`SCRIPT_READABLE_SECRETS`] stay
-/// readable. A script that needs a secret uses a named host function (`System.isPropertySet`,
-/// `System.propertyMatches`, `System.secretCodeHash`).
+/// each in lower case with `.` read as `_`, as the lookup reads a name both ways. A script that needs a secret uses a
+/// named host function (`System.isPropertySet`, `System.propertyMatches`, `System.secretCodeHash`), and one that sends
+/// a credential at another server (`pass_client_secret`) names it to `RestClient.addPropertyHeader`, which never gives
+/// it to the script.
 pub(crate) fn script_refused_property(name: &str, conf_secrets: &std::collections::BTreeSet<String>) -> bool {
     let lower = name.trim().to_ascii_lowercase();
     let under = lower.replace('.', "_");
-    if SCRIPT_READABLE_SECRETS.contains(&under.as_str()) {
-        return false;
-    }
-    conf_secrets.contains(name.trim())
-        || conf_secrets.contains(&under)
+    conf_secret(name, conf_secrets)
         || secret_parameter(&lower)
         || secret_parameter(&under)
         || under.ends_with("_pass")
@@ -66,11 +58,29 @@ pub(crate) fn script_refused_property(name: &str, conf_secrets: &std::collection
         || under.contains("crypt")
 }
 
+/// Whether the conf marks the property `name` `is-secret="true"`: one of this server's own keys (the crypt pass, the
+/// session key, the DKIM and cluster keys), as written or with `.` read as `_`.
+fn conf_secret(name: &str, conf_secrets: &std::collections::BTreeSet<String>) -> bool {
+    let under = name.trim().to_ascii_lowercase().replace('.', "_");
+    conf_secrets.contains(name.trim()) || conf_secrets.contains(&under)
+}
+
 /// The `default-property` names the current conf marks `is-secret="true"`, kept until a conf reload.
 struct ConfSecrets(std::collections::BTreeSet<String>);
 
 /// [`script_refused_property`] with the current factory's conf (none outside a context).
 pub(crate) fn script_refused_property_here(name: &str) -> bool {
+    with_conf_secrets(|secrets| script_refused_property(name, secrets))
+}
+
+/// Whether the current factory's conf marks the property `name` `is-secret="true"` (none outside a context): a key of
+/// this server, which `RestClient.addPropertyHeader` never sends.
+pub(crate) fn conf_secret_here(name: &str) -> bool {
+    with_conf_secrets(|secrets| conf_secret(name, secrets))
+}
+
+/// `check` on the `is-secret` property names of the current factory's conf (an empty set outside a context).
+fn with_conf_secrets<T>(check: impl FnOnce(&std::collections::BTreeSet<String>) -> T) -> T {
     let secrets = crate::context::ExecutionContext::with_current(|ec| {
         ec.factory().conf_derived(|factory| {
             let names = moqui_lib::node::MNode::parse_shared("moqui-conf", &factory.conf_text())
@@ -85,8 +95,8 @@ pub(crate) fn script_refused_property_here(name: &str) -> bool {
         })
     });
     match secrets {
-        Some(secrets) => script_refused_property(name, &secrets.0),
-        None => script_refused_property(name, &std::collections::BTreeSet::new()),
+        Some(secrets) => check(&secrets.0),
+        None => check(&std::collections::BTreeSet::new()),
     }
 }
 
@@ -166,13 +176,17 @@ mod tests {
             "GITHUB_TOKEN",
             "PGPASSWORD",
             "smtp_pw",
+            // the PASS frontend's credential at its authority: sent by RestClient.addPropertyHeader, never read
+            "pass_client_secret",
+            "PASS_CLIENT_SECRET",
         ] {
             assert!(super::script_refused_property(name, &conf), "{name}");
         }
+        assert!(super::conf_secret("FCM.SERVICE.ACCOUNT", &conf));
+        assert!(!super::conf_secret("pass_client_secret", &conf));
         for name in [
             "pass_backend_url",
             "pass_client_id",
-            "pass_client_secret",
             "pass_client_web_sites",
             "instance_purpose",
             "webapp_http_host",

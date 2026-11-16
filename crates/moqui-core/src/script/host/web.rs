@@ -469,7 +469,77 @@ fn header_pairs(value: &Value) -> Vec<(String, String)> {
 }
 
 /// The largest body `text()` or `bytes()` reads from a response `send()` kept; `response.forward` has no limit.
-const MAX_READ_BODY: u64 = 32 * 1024 * 1024;
+pub(super) const MAX_READ_BODY: u64 = 32 * 1024 * 1024;
+
+/// The headers `RestClient.addPropertyHeader(headerName, propertyName, baseUrlPropertyName)` named for a request to
+/// `url` (`propertyHeaders`: `[[headerName, propertyName, baseUrlPropertyName]]`), each with the property's value read
+/// here, so the script never sees it (a credential at another server, such as mr-pass's `pass_client_secret`;
+/// plans/Security-Review-Medium.md SEC-SCR-03). A header goes only to a URL under the base URL the other property holds
+/// (`moqui_lib::http::url_under_base`: the same scheme, host and port, a path at or below the base's). Refused, with
+/// nothing sent: a property that is not set, a base that is not set or is itself a secret, a URL outside the base, and a
+/// property the conf marks `is-secret` (this server's own keys). The caller sends the request without following a
+/// redirect, so the header goes to that URL alone.
+pub(super) fn property_headers(
+    request: &moqui_lib::object::ValueMap,
+    url: &str,
+) -> Result<Vec<(String, String)>, HostError> {
+    let Some(Value::List(entries)) = request.get("propertyHeaders") else {
+        return Ok(Vec::new());
+    };
+    const ARGUMENTS: &str = "addPropertyHeader takes a header name and two property names";
+    let mut headers = Vec::new();
+    for entry in entries {
+        let Value::List(parts) = entry else {
+            return Err(HostError::message(ARGUMENTS));
+        };
+        let [header, property, base] = parts.as_slice() else {
+            return Err(HostError::message(ARGUMENTS));
+        };
+        let (header, property, base) = (
+            moqui_lib::object::to_plain_string(header).trim().to_string(),
+            moqui_lib::object::to_plain_string(property).trim().to_string(),
+            moqui_lib::object::to_plain_string(base).trim().to_string(),
+        );
+        if header.is_empty() || property.is_empty() || base.is_empty() {
+            return Err(HostError::message(ARGUMENTS));
+        }
+        if crate::context::identity::conf_secret_here(&property) {
+            return Err(HostError::message(format!(
+                "addPropertyHeader does not send the property {property}: it is a key of this server"
+            )));
+        }
+        if crate::context::identity::script_refused_property_here(&base) {
+            return Err(HostError::message(format!(
+                "addPropertyHeader: {base} is a secret, not a base URL"
+            )));
+        }
+        let base_url = moqui_lib::env::get_prop_or_env(&base);
+        if base_url.trim().is_empty() {
+            return Err(HostError::message(format!(
+                "addPropertyHeader: the base URL property {base} is not set"
+            )));
+        }
+        if !crate::outbound::url_under_base(url, &base_url) {
+            return Err(HostError::message(format!(
+                "addPropertyHeader: {} is not under the base URL in {base}; {header} not sent",
+                crate::outbound::redacted(url)
+            )));
+        }
+        let value = moqui_lib::env::get_prop_or_env(&property);
+        if value.trim().is_empty() || value.trim() == "CHANGEME" {
+            return Err(HostError::message(format!(
+                "addPropertyHeader: the property {property} is not set"
+            )));
+        }
+        if value.contains(['\r', '\n', '\0']) {
+            return Err(HostError::message(format!(
+                "addPropertyHeader: the property {property} is not a header value"
+            )));
+        }
+        headers.push((header, value));
+    }
+    Ok(headers)
+}
 
 /// A bounded multipart body rebuilt from spooled uploads. Raw multipart requests are not retained after parsing.
 fn multipart_body(parts: &moqui_lib::object::ValueMap) -> Result<(String, bytes::Bytes), HostError> {
@@ -532,6 +602,10 @@ fn rest_open(call: &mut Call<'_>) -> Result<Ret, HostError> {
         .filter(|url| !url.is_empty())
         .ok_or_else(|| HostError::message("no URI specified for REST call"))?;
     let mut headers = request.get("headers").map(header_pairs).unwrap_or_default();
+    // a header from a property: sent to this URL only, so no redirect is followed
+    let held = property_headers(&request, &url)?;
+    let follow_redirects = held.is_empty() && !matches!(request.get("followRedirects"), Some(Value::Bool(false)));
+    headers.extend(held);
     let body = if let Some(Value::Map(parts)) = request.get("multipart") {
         let (content_type, body) = multipart_body(parts)?;
         headers.retain(|(name, _)| {
@@ -570,7 +644,7 @@ fn rest_open(call: &mut Call<'_>) -> Result<Ret, HostError> {
         headers,
         body,
         timeout,
-        follow_redirects: !matches!(request.get("followRedirects"), Some(Value::Bool(false))),
+        follow_redirects,
     })
     .map_err(|err| {
         HostError::message(format!(

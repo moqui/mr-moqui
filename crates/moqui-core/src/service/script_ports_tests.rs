@@ -194,6 +194,96 @@ fn the_rest_client_sends_what_its_builder_says_and_reads_the_reply() {
     facade.set_sim_active(false);
 }
 
+/// SEC-SCR-03: a credential at another server (mr-pass's `pass_client_secret`) is not readable by a script; the script
+/// names it to `addPropertyHeader`, and the host sends it only to a URL under the base URL property, with no redirect
+/// followed: refused for a path or host that only starts with the base's, another host, a user part naming another
+/// host, and a property that is not set, before anything is sent.
+#[test]
+fn a_property_header_goes_only_under_its_base_and_the_script_never_reads_it() {
+    let (_facade, context) = setup();
+    let _entered = context.enter();
+    let (listener, port) = loopback();
+    // the first reply a redirect on the same host (Location in the reason line), which is not followed: the server
+    // takes two connections and then closes, so a followed redirect would fail the call
+    let server = serve(
+        listener,
+        vec![
+            (302, "Found\r\nLocation: /rest/s1/next", "{}"),
+            (200, "OK", r#"{"ok":true}"#),
+        ],
+    );
+    moqui_lib::env::set_property("pass_client_secret", "front-secret-for-header".to_string());
+    moqui_lib::env::set_property("script_ports_pass_base", format!("http://127.0.0.1:{port}/rest"));
+    moqui_lib::env::set_property("script_ports_named_base", "http://pass.test:8443/rest".to_string());
+    crate::script::run_actions(&format!(
+        r#"<actions><script><![CDATA[
+            readValue = String(System.getProperty("pass_client_secret"))
+            isSet = System.isPropertySet("pass_client_secret")
+            const client = (uri) => ec.service.rest().uri(uri).method("GET").followRedirects(false)
+                .addHeader("x-pass-client", "front")
+                .addPropertyHeader("x-pass-client-secret", "pass_client_secret", "script_ports_pass_base")
+            redirected = client("http://127.0.0.1:{port}/rest/s1/pass").call().statusCode
+            sent = client("http://127.0.0.1:{port}/rest/s1/again").send().statusCode
+            const refusal = (uri, property, base) => {{
+                try {{
+                    ec.service.rest().uri(uri).addPropertyHeader("x-pass-client-secret", property || "pass_client_secret",
+                        base || "script_ports_pass_base").call()
+                    return "sent"
+                }} catch (e) {{ return String(e.message || e) }}
+            }}
+            pathPrefix = refusal("http://127.0.0.1:{port}/restricted")
+            hostPrefix = refusal("http://127.0.0.10:{port}/rest/s1")
+            namedPrefix = refusal("http://pass.test.evil.test:8443/rest/s1", null, "script_ports_named_base")
+            userPart = refusal("http://pass.test:8443@evil.test:8443/rest/s1", null, "script_ports_named_base")
+            otherHost = refusal("http://other.test:8443/rest/s1", null, "script_ports_named_base")
+            notSet = refusal("http://127.0.0.1:{port}/rest/s1", "script_ports_unset_value")
+            secretBase = refusal("http://127.0.0.1:{port}/rest/s1", null, "pass_client_secret")
+        ]]></script></actions>"#
+    ))
+    .unwrap();
+    let requests = server.join().unwrap();
+    let value = |name: &str| crate::script::context_value(name).map(|value| to_plain_string(&value));
+    assert_eq!(
+        value("readValue").as_deref(),
+        Some("null"),
+        "System.getProperty gives no value"
+    );
+    assert_eq!(value("isSet").as_deref(), Some("true"));
+    assert_eq!(
+        value("redirected").as_deref(),
+        Some("302"),
+        "the redirect comes back, not followed"
+    );
+    assert_eq!(value("sent").as_deref(), Some("200"));
+    assert_eq!(requests.len(), 2, "{requests:?}");
+    assert!(requests[0].starts_with("GET /rest/s1/pass "), "{}", requests[0]);
+    assert!(requests[1].starts_with("GET /rest/s1/again "), "{}", requests[1]);
+    for request in &requests {
+        let lower = request.to_ascii_lowercase();
+        assert!(
+            lower.contains("x-pass-client-secret: front-secret-for-header"),
+            "{request}"
+        );
+        assert!(lower.contains("x-pass-client: front"), "{request}");
+    }
+    for name in ["pathPrefix", "hostPrefix", "namedPrefix", "userPart", "otherHost"] {
+        let refusal = value(name).unwrap_or_default();
+        assert!(refusal.contains("is not under the base URL"), "{name}: {refusal}");
+        assert!(!refusal.contains("front-secret-for-header"), "{name}: {refusal}");
+    }
+    assert!(
+        value("notSet").unwrap_or_default().contains("is not set"),
+        "{:?}",
+        value("notSet")
+    );
+    assert!(
+        value("secretBase").unwrap_or_default().contains("not a base URL"),
+        "{:?}",
+        value("secretBase")
+    );
+    moqui_lib::env::set_property("pass_client_secret", String::new());
+}
+
 #[test]
 fn recaptcha_without_a_secret_is_skipped_and_without_a_token_fails() {
     let (_facade, context) = setup();

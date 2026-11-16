@@ -837,6 +837,30 @@ pub fn host_and_port(url: &str) -> Option<(String, u16)> {
     Some((host.trim_start_matches('[').trim_end_matches(']').to_string(), port))
 }
 
+/// Whether `url` is at or under the base URL `base`, as the URL parser reads both: the same scheme, host and port (the
+/// scheme's default when none is written), no user or password in `url`, and its path the base's path or below it
+/// (`/a` holds `/a` and `/a/b`, not `/ab`; dot segments are resolved first). The base's query and fragment are not
+/// read. So `https://pass.example.com.evil/` and `https://pass.example.com@evil/` are not under
+/// `https://pass.example.com`. False when either does not parse, has no host, or is not http or https.
+pub fn url_under_base(url: &str, base: &str) -> bool {
+    let (Ok(url), Ok(base)) = (reqwest::Url::parse(url.trim()), reqwest::Url::parse(base.trim())) else {
+        return false;
+    };
+    let web = |parsed: &reqwest::Url| matches!(parsed.scheme(), "http" | "https") && parsed.host_str().is_some();
+    if !web(&url) || !web(&base) || !url.username().is_empty() || url.password().is_some() {
+        return false;
+    }
+    if url.scheme() != base.scheme()
+        || url.host_str() != base.host_str()
+        || url.port_or_known_default() != base.port_or_known_default()
+    {
+        return false;
+    }
+    let base_path = base.path().trim_end_matches('/');
+    let path = url.path();
+    base_path.is_empty() || path == base_path || path.strip_prefix(base_path).is_some_and(|rest| rest.starts_with('/'))
+}
+
 /// Whether the host of `url` is an internal IP address written out (a name is not: only a lookup tells). The URL
 /// parser has already put an IPv4 host in dotted form, however it was written.
 pub fn internal_literal(url: &reqwest::Url) -> bool {
