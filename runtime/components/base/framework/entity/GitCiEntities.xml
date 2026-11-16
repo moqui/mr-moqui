@@ -273,6 +273,9 @@ along with this software (see the LICENSE.md file). If not, see
             registers with (poolKind registered)</description></field>
         <field name="registrationTokenExpireDate" type="date-time"><description>After it the token registers
             nothing (create#RunnerPoolToken validDays, git-ci pool-token-days)</description></field>
+        <field name="allowedAddresses" type="text-long"><description>poolKind registered: the address ranges its
+            runners come from (CIDRs, comma separated: 203.0.113.0/24, 2001:db8::/32, or one address). A register, claim
+            or rotate from another address is refused. Empty is any address.</description></field>
         <relationship type="one-nofk" related="moqui.server.instance.InstanceHost"/>
         <index name="GIT_POOL_NAME"><index-field name="poolName"/></index>
     </entity>
@@ -287,6 +290,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="currentJobRunId" type="id"/>
         <field name="registeredDate" type="date-time"/>
         <field name="lastContactDate" type="date-time"/>
+        <field name="tokenExpireDate" type="date-time"><description>After it the runner token is refused (git-ci
+            runner-token-days); the runner rotates its token before (POST /ci/runner/rotate). A runner registered before
+            tokens expired counts from its registeredDate.</description></field>
+        <field name="lastAddress" type="text-short"><description>The address of its last register, claim or rotate</description></field>
         <relationship type="one" related="moqui.resource.GitRunnerPool"/>
         <index name="GIT_RUNNER_TOKEN"><index-field name="tokenHash"/></index>
     </entity>

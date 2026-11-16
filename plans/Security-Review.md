@@ -65,7 +65,7 @@ not.
   `EntityExport` is a `read-only` transition, so it runs on a GET with URL parameters and no session token, and it
   evaluates its `filterMap` parameter as script with the full `ec`, which can start a process on the host.
 - **State changes on GET** (SEC-WEB-04, SEC-TLS-04, SEC-RTE-04, SEC-RTE-05, and the same rule behind several others;
-  Medium; the rule confirmed by the lead). The session token is checked on POST, PUT, PATCH and DELETE only. A
+  Medium; the rule confirmed by the lead; fixed 2026-11-16: such a GET another site started is refused). The session token is checked on POST, PUT, PATCH and DELETE only. A
   transition with actions and the default method runs on a GET with no query string, and a `read-only` transition
   takes URL parameters, on a `SameSite=Lax` cookie. Reported as reachable this way: clearing caches, reloading the
   conf, logout, mailing a rendered report to a given address, the `/resources` file commands, and 57 PASS transitions.
@@ -165,10 +165,8 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 2. **What each slice did not reach.** The coverage table names it, each report's "Read" section has the detail, and
    each map file ends with its open questions. The thinnest: the BOSS business apps other than Commerce and order
    approval, parsers of untrusted input, the mobile app's native code, and the helper-read parts of the PASS services.
-3. **Fixes.** The High findings are fixed (2026-11-15); the Medium, Low and Info ones are not. Left of the High fixes:
-   a CI runner token has no expiry or bound source, and a registered runner's step that runs as the runner's user
-   can read the token file (SEC-GIT-02); `DataDocument.documentTitle` is still a template, an administrator's
-   (SEC-SCR-05).
+3. **Fixes.** The High findings are fixed (2026-11-15, what they left on 2026-11-16); the Medium, Low and Info ones
+   are not.
 
 ## Counts
 
@@ -208,7 +206,7 @@ Map file: [Attack-Surface-Web.md](../docs/security/Attack-Surface-Web.md). Revie
 | SEC-WEB-01 | `crates/moqui-core/src/user/login.rs:1303-1310`, `:1511-1520`, `:1736-1746` | An account disabled for good comes back by itself: four failed logins and a wait, or a password change | High | fixed |
 | SEC-WEB-02 | `runtime/components/base/framework/service/org/moqui/impl/UserServices.xml:166-283` | The password change form checks `oldPassword` with no lockout | Medium | confirmed (second check) |
 | SEC-WEB-03 | `crates/moqui-core/src/user/login.rs:1303-1310`, `:449-470`, `:1736-1746` | A locked account stays locked while anything keeps trying, its own API key included | Medium | confirmed (second check) |
-| SEC-WEB-04 | `crates/moqui-core/src/screen/render.rs:2667-2672`, `:2070-2098` | Transitions with the default method run their actions on a GET with no token | Medium | confirmed (lead) |
+| SEC-WEB-04 | `crates/moqui-core/src/screen/render.rs:2667-2672`, `:2070-2098` | Transitions with the default method run their actions on a GET with no token | Medium | fixed |
 | SEC-WEB-08 | `Login.xml:116-120` | The first caller creates the administrator | Medium | confirmed (second check) |
 | SEC-WEB-05 | `crates/moqui-core/src/user/login.rs:54-61`, `:403-416`, `:514-516` | Several sign-ins keep the session id; the forced password change flow never changes it | Low | reported (confirmed in code) |
 | SEC-WEB-06 | `crates/moqui-core/src/user/login.rs:1042-1071`, `:1227-1245` | Logout keeps the session and its attributes; a password change ends nothing | Low | reported (confirmed in code) |
@@ -229,8 +227,8 @@ Map file: [Attack-Surface-Routes.md](../docs/security/Attack-Surface-Routes.md).
 | SEC-RTE-01 | `crates/moqui-core/src/web/mod.rs:1306` (`mark_email_message_viewed`) | `GET /email/{id}` lets anyone move mail to Viewed | High | fixed |
 | SEC-RTE-02 | `crates/moqui-core/src/screen/statics.rs:767` (`screen_package`), `:545` (`unwrap_context`) | `GET <screen>/actions` answers the screen's whole context | Medium | reported (confirmed in code) |
 | SEC-RTE-03 | `crates/moqui-entity/src/entity/query_rest.rs:214` | Any signed-in user can write `EntityAuditLog` rows through entity REST | Medium | reported (confirmed in code) |
-| SEC-RTE-04 | `runtime/components/base/webroot/template/screen/BasicTransitions.xml:20` | `emailScreenAsync` mails a full report to a request-given address by `GET` | Medium | reported (confirmed in code) |
-| SEC-RTE-05 | `runtime/components/base/webroot/screen/webroot.xml:257` | `/resources` runs elFinder write commands on a `GET` | Medium | reported (confirmed in code) |
+| SEC-RTE-04 | `runtime/components/base/webroot/template/screen/BasicTransitions.xml:20` | `emailScreenAsync` mails a full report to a request-given address by `GET` | Medium | fixed |
+| SEC-RTE-05 | `runtime/components/base/webroot/screen/webroot.xml:257` | `/resources` runs elFinder write commands on a `GET` | Medium | fixed |
 | SEC-RTE-06 | `crates/moqui-entity/src/entity/query_rest.rs:208`, `:962` (`related_rows`) | Entity REST dependents read entities the restricted rule refuses | Medium | reported (likely) |
 | SEC-RTE-07 | `crates/moqui-host/src/http.rs:1109`-`1124`, `:1203` | A multipart body is spooled to disk before any check | Medium | reported (confirmed in code) |
 | SEC-RTE-08 | `crates/moqui-core/src/screen/render.rs:2667` (`csrf_rejected`), `:2070` (`insecure_transition`) | State changes on `GET` with no token | Low | reported (confirmed in code) |
@@ -274,7 +272,7 @@ Map file: [Attack-Surface-Tools.md](../docs/security/Attack-Surface-Tools.md). R
 | SEC-TLS-01 | `runtime/components/base/tools/screen/Tools/Data/Export.xml:18` and `:54-61` | Export's `filterMap` runs a caller's script, by GET, with no script permission | High | fixed |
 | SEC-TLS-02 | `runtime/components/base/framework/service/org/moqui/dev/InstanceServices.xml:444-447`, `:195`, `:206`, `:295` | Hosted-instance rows give host command execution and script execution to a Tools and System holder | High | fixed |
 | SEC-TLS-03 | `crates/moqui-core/src/script/host/tools.rs:721`, `:1272`, `:2602-2621` | `runTokenCommand` is on `ec.resource` for every script | Medium | reported (confirmed in code) |
-| SEC-TLS-04 | `crates/moqui-core/src/screen/definition.rs:387`, `render.rs:2076-2099`, `:2668-2673` | State-changing transitions that run on a cross-site GET | Medium | confirmed (lead) |
+| SEC-TLS-04 | `crates/moqui-core/src/screen/definition.rs:387`, `render.rs:2076-2099`, `:2668-2673` | State-changing transitions that run on a cross-site GET | Medium | fixed |
 | SEC-TLS-05 | `runtime/components/base/tools/screen/Tools/Data/Export.xml:26-45` | Export and Snapshots read the entities the other generic tools refuse | Medium | reported (likely) |
 | SEC-TLS-06 | `crates/moqui-report/src/schedule.rs:75-76`, `:1370-1392` | A scheduled report writes to any server path | Medium | reported (likely) |
 | SEC-TLS-11 | `crates/moqui-report/src/recovery/mod.rs:485-492`, `crates/moqui-report/src/recovery/execute.rs:526` and `:176-199`, `crates/moqui-entity/src/entity/sensitive.rs:66-76` | (telemetry reader) Monitor's permissions are checked only in its services; a generic write to a `moqui.monitor` row goes around them | Medium | reported (likely) |
@@ -349,9 +347,9 @@ Map file: [Attack-Surface-Mail.md](../docs/security/Attack-Surface-Mail.md). Rev
 | SEC-MAIL-61 | runtime/components/base/webroot/template/screen/BasicTransitions.xml:20-22 | A request's fileName runs as a server-side expression through emailScreenAsync | High | fixed |
 | SEC-MAIL-63 | runtime/components/addon/mr-marble/screen/SimpleScreens/Party/PartyEmails.xml:23-26 | mr-marble PartyEmails serves any EmailMessage body as inline text/html | High | fixed |
 | SEC-MAIL-02 | `crates/moqui-mail/src/inbound.rs:1018-1031` (`connect_tcp`), `crates/moqui-mail/src/sync.rs:462-530` (`open_imap`), `crates/moqui-mail/src/implementation.rs` `smtp_transport` (1888-1934), `require_host` (979-998) | A mail account's server settings make the server connect to internal addresses | Medium | reported (confirmed in code) |
-| SEC-MAIL-03 | `crates/moqui-core/src/web/mod.rs:1289-1340` (`view_email_message`, `mark_email_message_viewed`) | An anonymous GET changes the status of any mailbox or Outbox message | Medium | reported (confirmed in code) |
+| SEC-MAIL-03 | `crates/moqui-core/src/web/mod.rs:1289-1340` (`view_email_message`, `mark_email_message_viewed`) | An anonymous GET changes the status of any mailbox or Outbox message | Medium | fixed |
 | SEC-MAIL-04 | `runtime/components/base/tools/service/moqui.rest.xml:122-131` | The tools REST resource returns mailbox passwords and OAuth refresh tokens | Medium | reported (confirmed in code) |
-| SEC-MAIL-62 | runtime/components/base/webroot/template/screen/BasicTransitions.xml:20-28 (and 29-37) | A GET mails a screen's full export to an address the request names | Medium | reported (confirmed in code) |
+| SEC-MAIL-62 | runtime/components/base/webroot/template/screen/BasicTransitions.xml:20-28 (and 29-37) | A GET mails a screen's full export to an address the request names | Medium | fixed |
 | SEC-MAIL-64 | runtime/components/addon/mr-marble/screen/SimpleScreens/Party/PartyEmails.xml:20 | mr-marble sendEmailMessage transitions send any stored message again | Medium | reported (confirmed in code) |
 | SEC-MAIL-05 | `EmailClientServices.xml` `send#OutOfOfficeReplies` (5197-5412), `run#EmailRules` `forward` (4532-4571) | Out-of-office replies and rule forwards have no total limit and trust the From header | Low | reported (likely) |
 | SEC-MAIL-06 | `crates/moqui-mail/src/delivery.rs:601-725` | The "delivered" notice is backscatter with the sender's headers | Low | reported (confirmed in code) |
@@ -370,7 +368,7 @@ Map file: [Attack-Surface-Files.md](../docs/security/Attack-Surface-Files.md). R
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
-| SEC-FIL-01 | `runtime/components/base/webroot/screen/webroot.xml:257` | `/resources` runs elFinder write commands on a GET with no session token | Medium | reported (confirmed in code) |
+| SEC-FIL-01 | `runtime/components/base/webroot/screen/webroot.xml:257` | `/resources` runs elFinder write commands on a GET with no session token | Medium | fixed |
 | SEC-FIL-02 | `crates/moqui-host/src/ssh/server.rs:905-925`, `:746-763` | An app password opens the admin shell and the SFTP root over SSH, past the second factor | Medium | reported (confirmed in code) |
 | SEC-FIL-03 | `crates/moqui-dav/src/dav/files.rs:415-490` | DAV sends a user's HTML or SVG file inline from the application's origin | Medium | reported (confirmed in code) |
 | SEC-FIL-04 | `crates/moqui-host/src/dav_http.rs:47-59,79` | DAV buffers up to 256 MiB per request before it checks credentials | Medium | reported (likely) |
@@ -467,7 +465,7 @@ Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PAS
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
 | SEC-PSF-01 | `service/pass/Facade.js:25-32` | In local mode a login key in a header drives every PASS page, without the session token | Medium | reported (likely) |
-| SEC-PSF-02 | 57 transitions (list in A8), for example `screen/Forum/HeldMail.xml:13`, `screen/Shop/Checkout.xml:7,37,43`, `screen/Forum/Topics/TopicDetail.xml:37` | Write transitions without `method="post"` run on a GET that carries no query string, with no session token | Low | reported (confirmed in code) |
+| SEC-PSF-02 | 57 transitions (list in A8), for example `screen/Forum/HeldMail.xml:13`, `screen/Shop/Checkout.xml:7,37,43`, `screen/Forum/Topics/TopicDetail.xml:37` | Write transitions without `method="post"` run on a GET that carries no query string, with no session token | Low | fixed |
 | SEC-PSF-03 | `service/pass/RouteServices.xml:46-49` | Bearer values in PASS URLs that the log and Visit redaction do not cover | Low | reported (confirmed in code) |
 | SEC-PSF-04 | `screen/Shared/Headers.js:8-16`. | The shell's CSP has no `default-src` and allows `'unsafe-eval'` and every same-origin script | Low | reported (confirmed in code) |
 | SEC-PSF-05 | `service/pass/Transport.js:264-287`. | The REST transport sends the client secret and visitors' delegations to whatever scheme `pass_backend_url` names | Low | reported (confirmed in code) |
@@ -555,7 +553,7 @@ Map file: [Attack-Surface-Apps-BOSS.md](../docs/security/Attack-Surface-Apps-BOS
 | --- | --- | --- | --- | --- |
 | SEC-BOS-01 | crates/moqui-core/src/user/filter.rs:144 and runtime/components/addon/mr-boss/data/BossAccountingSetupData.xml:209 | Organization row filters do not apply below a sub-area ALWAYS grant | Medium | reported (confirmed in code) |
 | SEC-BOS-02 | runtime/components/addon/mr-mantle/service/mantle/ledger/AccountingPolicy.js:83 and runtime/components/addon/mr-mantle/service/mantle/party/PartyServices.xml:626 | App administrators and ACCOUNTING_ADMIN are not bound to an organization | Medium | reported (confirmed in code) |
-| SEC-BOS-03 | runtime/components/addon/mr-boss/screen/AcceptInvitation.xml:35 | An invitation is accepted by a bare GET for a signed-in user | Medium | reported (likely) |
+| SEC-BOS-03 | runtime/components/addon/mr-boss/screen/AcceptInvitation.xml:35 | An invitation is accepted by a bare GET for a signed-in user | Medium | fixed |
 | SEC-BOS-04 | runtime/components/addon/mr-boss/screen/Unsubscribe.xml:53 | Unsubscribe and public-share changes run on a bare GET | Low | reported (confirmed in code) |
 | SEC-BOS-05 | runtime/components/addon/mr-boss/screen/PublishedCalendar.xml:27 and PublishedCalendar.qvue:120 | A published calendar's password travels in the query string | Low | reported (confirmed in code) |
 | SEC-BOS-06 | runtime/components/addon/mr-mantle/service/mantle/account/PaymentRuns.js:354 and InvoiceWorkflow.js:142 | Accounting separation of duties is a preference, and two bundles hold both sides | Low | reported (to check) |
@@ -742,7 +740,7 @@ High; reported (confirmed in code); fixed.
 
 High; reported (confirmed in code); fixed.
 
-- **Fix:** Fixed 2026-11-15: a registered runner's steps start from a cleared environment (`PATH`, `HOME`, `LANG` and the like, the `LC_` variables, `--pass-env` names, then the job's own), no runner, pool or job token is passed in any mode (`runner::step_base_env`), and `poll` reads its token from `--token-file` or `MOQUI_CI_RUNNER_TOKEN_FILE` (the variable still works, with a warning). Left: runner tokens have no expiry or bound source; a step run as the runner's user can still read the token file (docs/interfaces/Pipelines.md says to run steps as another user). Test: `ci/runner/tests.rs`.
+- **Fix:** Fixed 2026-11-15: a registered runner's steps start from a cleared environment (`PATH`, `HOME`, `LANG` and the like, the `LC_` variables, `--pass-env` names, then the job's own), no runner, pool or job token is passed in any mode (`runner::step_base_env`), and `poll` reads its token from `--token-file` or `MOQUI_CI_RUNNER_TOKEN_FILE` (the variable still works, with a warning). On 2026-11-16: a runner token expires (`git-ci` `runner-token-days`, 90) and the runner rotates it halfway (`POST /ci/runner/rotate`, the token file rewritten); a pool's `allowedAddresses` refuses a register, claim or rotate from another address; and `poll --step-user USER` (a root runner) runs each step as another user, who owns the checkout but cannot read the token file. Tests: `ci/runner/tests.rs`, `server/ci_tests.rs` `a_runner_token_expires_rotates_and_comes_only_from_the_pools_addresses`, `ci_run.rs` `a_rotated_token_replaces_the_token_file`.
 - **Where:** `crates/moqui-host/src/ci_run.rs:134`, `:151`; `crates/moqui-git/src/ci/runner/mod.rs:332-344`; `crates/moqui-git/src/ci/registered.rs:206-322`; `crates/moqui-git/src/ci/runner_http.rs:253`
 - **Reached by:** any account whose push or merge request runs a job in a pool of registered runners: with no `run-check-service`, an account with the update right on any repository that names the pool; a step of its `ci.xml` reads the variable.
 - **What happens:** `moqui ci-run poll` reads `MOQUI_CI_RUNNER_TOKEN` from its environment and runs each step with that environment; only `MOQUI_CI_TOKEN` is taken out. A step sends the runner token elsewhere. The token has no expiry. With it, `POST /ci/runner/claim` from any address takes the next queued job of the pool whenever the runner is idle, and the job token it answers reads that job's repository at its commit and, through `GET jobs/<id>/job`, its secrets. A developer who pushes to an unprotected branch so gets the secrets scoped to protected branches and environments, and those of the other repositories the pool serves. The documentation says nothing isolates a job from the machine; it does not say the runner's token is in a step's environment.
@@ -802,7 +800,7 @@ High; reported (confirmed in code); fixed.
 
 High; reported (likely); fixed.
 
-- **Fix:** Fixed 2026-11-15: the Smithy deployment and push mirror notices pass a fixed title template and put the values in the message; a caller's `link()` is a URL taken as written, no longer expanded (`notify/message.rs`), which also covers the wiki review, chat, event and record links built from caller values. `DataDocument.documentTitle` (`PartyServices.xml`) is an administrator's configured template, as in Java, and stays. Tests: `notify/tests.rs` `a_callers_link_is_not_expanded`, `SmithyDeployments.spec.js`.
+- **Fix:** Fixed 2026-11-15: the Smithy deployment and push mirror notices pass a fixed title template and put the values in the message; a caller's `link()` is a URL taken as written, no longer expanded (`notify/message.rs`), which also covers the wiki review, chat, event and record links built from caller values. `DataDocument.documentTitle` (`PartyServices.xml`, and search hits) is a configured template, as in Java; on 2026-11-16 writing one with `${`, or a `DataDocumentLink` `linkUrl` or `label` with `${` or a `linkCondition`, came to need `DATABASE_ADMIN`, as a field expression does (`Security.eecas.xml` `DataDocumentTitleTemplate`, `DataDocumentLinkTemplate`). Tests: `notify/tests.rs` `a_callers_link_is_not_expanded`, `SmithyDeployments.spec.js`, `DocumentExpression.spec.js`.
 - **Where:** crates/moqui-core/src/notify/message.rs:322 and :899-911; runtime/components/addon/mr-mantle/service/mantle/smithy/SmithyPipelines.js:1279; mantle/smithy/SmithyImport.js:2052; mantle/party/PartyServices.xml:1609
 - **Reached by:** a user who can set a deployment environment's name, a repository path, a push mirror URL or a data document's title (a repository maintainer or lower), then waits for the notification to be sent.
 - **What happens:** The text given to `.title()` is a template: `${...}` in it runs on the script runtime when the message is sent. These callers concatenate record values into it, so a value such as an environment name holding `${...}` runs as a server script in the sending service's context. Other callers (`Voice.js`, `PurchaseApprovals.js`) pass a fixed template and say why in a comment.

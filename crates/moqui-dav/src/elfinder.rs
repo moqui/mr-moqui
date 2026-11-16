@@ -577,8 +577,17 @@ impl Connector {
             response.clear();
             response.insert("error".to_string(), Value::string(message));
         };
+        // `/resources` is a read-only transition, so a GET with URL parameters runs any command: a write command (put,
+        // rm, rename, mkdir, mkfile, upload) another site started, by a link the browser follows with the session's
+        // Lax cookie, is refused; the file manager's own requests are the page's (plans/Security-Review.md SEC-RTE-05,
+        // SEC-FIL-01)
+        let cross_site = moqui_core::web::current_request()
+            .is_some_and(|request| moqui_core::web::started_by_another_site(&request));
         let write_refused = |response: &mut moqui_lib::object::ValueMap| {
-            if self.writes_restricted() {
+            if cross_site {
+                fail(response, "A file change does not run from a request another site started");
+                true
+            } else if self.writes_restricted() {
                 fail(response, "Write not allowed for this resource root");
                 true
             } else {

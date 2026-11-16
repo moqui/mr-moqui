@@ -654,6 +654,25 @@ pub(crate) fn set_request(request: std::sync::Arc<WebRequest>, body: bytes::Byte
 }
 
 /// The request of this thread's web slot, None with no socket.
+/// Whether another site started `request`, as a link or a redirect on another site makes a browser send a top-level GET
+/// with its `SameSite=Lax` cookie: `Sec-Fetch-Site` is not `same-origin` or `none` (typed in, a bookmark), or, from a
+/// browser that sends no `Sec-Fetch-Site`, the `Referer` names another host. A request with neither, as a client that is
+/// not a browser sends, is not (plans/Security-Review.md SEC-WEB-04). A state change on a GET is refused when this
+/// holds.
+pub fn started_by_another_site(request: &WebRequest) -> bool {
+    if let Some(site) = request.header("sec-fetch-site").map(str::trim).filter(|site| !site.is_empty()) {
+        return !site.eq_ignore_ascii_case("same-origin") && !site.eq_ignore_ascii_case("none");
+    }
+    let Some(referer) = request.header("referer").map(str::trim).filter(|referer| !referer.is_empty()) else {
+        return false;
+    };
+    let referer_host = referer
+        .split_once("://")
+        .map_or("", |(_, rest)| rest.split(['/', '?', '#']).next().unwrap_or(""));
+    let host = request.header("host").unwrap_or("").trim();
+    referer_host.is_empty() || host.is_empty() || !referer_host.eq_ignore_ascii_case(host)
+}
+
 pub fn current_request() -> Option<std::sync::Arc<WebRequest>> {
     WEB.with(|slot| slot.borrow().as_ref().and_then(|web| web.request.clone()))
 }

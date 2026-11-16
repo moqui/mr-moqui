@@ -156,3 +156,22 @@ fn a_step_gets_no_runner_token_and_on_a_registered_runner_only_the_base_environm
         ["PATH", "HOME", "LC_ALL", "CARGO_HOME", "AWS_SECRET_ACCESS_KEY", "MOQUI_CI_SERVER_URL"]
     );
 }
+
+/// SEC-GIT-02: `--step-user` runs the steps as another user, out of reach of the runner's token file: only a root runner
+/// can, and never as root.
+#[test]
+fn a_step_user_needs_a_root_runner_and_is_not_root() {
+    use super::{step_user_of, StepUser};
+
+    assert_eq!(
+        step_user_of("ci", "0\n", "1001\n", "1002\n"),
+        Ok(StepUser {
+            name: "ci".into(),
+            uid: 1001,
+            gid: 1002
+        })
+    );
+    assert!(step_user_of("ci", "1000\n", "1001\n", "1002\n").unwrap_err().contains("root"));
+    assert!(step_user_of("nobody-here", "0\n", "", "").unwrap_err().contains("no such user"));
+    assert!(step_user_of("root", "0\n", "0\n", "0\n").unwrap_err().contains("is root"));
+}

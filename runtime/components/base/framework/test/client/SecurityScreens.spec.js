@@ -72,6 +72,53 @@ feature("Tools Data Export does not run on a GET with URL parameters", {
     },
 })
 
+// plans/Security-Review.md SEC-WEB-04: a transition that changes data does not run on a GET another site started (a
+// link the browser follows with the Lax cookie); the app's own link still does. Logout is the one that needs no
+// parameter: refused cross-site, the session stays signed in.
+feature("a GET of a writing transition that another site started is refused; the app's own runs", {
+    when() {
+        requireFixture(USER, PASSWORD)
+        const s = formSession(USER, PASSWORD)
+        const before = s.get("/apps/tools/Home")
+        const crossSite = s.get("/Login/logout", { headers: { "Sec-Fetch-Site": "cross-site" } })
+        const otherReferer = s.get("/Login/logout", { headers: { Referer: "https://evil.example/page" } })
+        const still = s.get("/apps/tools/Home")
+        const own = s.get("/Login/logout", { headers: { "Sec-Fetch-Site": "same-origin" } })
+        const after = s.get("/apps/tools/Home")
+        return { before, crossSite, otherReferer, still, own, after }
+    },
+    then({ before, crossSite, otherReferer, still, own, after }) {
+        before.status == 200
+        crossSite.status == 403
+        otherReferer.status == 403
+        still.status == 200
+        own.status != 403
+        after.status != 200 || after.text.toLowerCase().includes("login")
+    },
+})
+
+// plans/Security-Review.md SEC-RTE-05, SEC-FIL-01: /resources is read-only, so its file changes are refused when another
+// site started the request; a read is not
+feature("a /resources file change another site started is refused", {
+    when() {
+        const s = formSession(USER, PASSWORD)
+        const page = s.get("/apps/system/Resource")
+        if (page.status == 401 || page.status == 403) skip("user cannot open System Resource")
+        const opened = s.get("/resources?cmd=open&init=1", { headers: { "Sec-Fetch-Site": "same-origin" } })
+        let hash = null
+        try { hash = opened.json()?.cwd?.hash } catch (e) { hash = null }
+        if (!hash) skip("no root folder to name")
+        const made = s.get(`/resources?cmd=mkdir&target=${encodeURIComponent(hash)}&name=spec-cross-site`,
+            { headers: { "Sec-Fetch-Site": "cross-site" } })
+        const crossRead = s.get("/resources?cmd=open&init=1", { headers: { "Sec-Fetch-Site": "cross-site" } })
+        return { made: made.text.toLowerCase(), crossRead }
+    },
+    then({ made, crossRead }) {
+        made.includes("another site")
+        crossRead.status == 200
+    },
+})
+
 // test_a01_more.py: test_login_form_action_is_login_path
 feature("A01 the login form posts to the login path", {
     when() { return { body: session().get("/Login").text } },

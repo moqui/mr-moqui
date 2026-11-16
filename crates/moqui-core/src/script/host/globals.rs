@@ -65,6 +65,8 @@ const GLOBALS_JS: &str = concat!(
         assertPrivilegedGroupMembership: hidden.assertPrivilegedGroupMembership,
         assertSealedPermissionGrant: hidden.assertSealedPermissionGrant,
         assertDocumentExpression: hidden.assertDocumentExpression,
+        assertDocumentTemplate: hidden.assertDocumentTemplate,
+        assertDocumentCondition: hidden.assertDocumentCondition,
         assertSealedGroupMembership: hidden.assertSealedGroupMembership,
         privilegedGroups: hidden.privilegedGroups,
         sealedPermissions: hidden.sealedPermissions,
@@ -297,6 +299,8 @@ pub(crate) static SHIM: Shim = Shim {
         method!("UserSecurityChecks", "assertPrivilegedGroupMembership", [OptValue], None, assert_privileged_group),
         method!("UserSecurityChecks", "assertSealedPermissionGrant", [OptValue], None, assert_sealed_grant),
         method!("UserSecurityChecks", "assertDocumentExpression", [OptValue], None, assert_document_expression),
+        method!("UserSecurityChecks", "assertDocumentTemplate", [OptValue], None, assert_document_template),
+        method!("UserSecurityChecks", "assertDocumentCondition", [OptValue], None, assert_document_condition),
         method!(
             "UserSecurityChecks",
             "assertSealedGroupMembership",
@@ -335,6 +339,18 @@ fn assert_sealed_grant(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// `UserSecurityChecks.assertDocumentExpression(fieldPath)`.
 fn assert_document_expression(call: &mut Call<'_>) -> Result<Ret, HostError> {
     crate::service::assert_document_expression(&super::entity_facade()?, &id_text(call, 0)).map_err(lib)?;
+    Ok(Ret::Undefined)
+}
+
+/// `UserSecurityChecks.assertDocumentTemplate(text)`: a document title or link text with `${` needs `DATABASE_ADMIN`.
+fn assert_document_template(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    crate::service::assert_document_template(&super::entity_facade()?, &id_text(call, 0)).map_err(lib)?;
+    Ok(Ret::Undefined)
+}
+
+/// `UserSecurityChecks.assertDocumentCondition(condition)`: a document link condition needs `DATABASE_ADMIN`.
+fn assert_document_condition(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    crate::service::assert_document_condition(&super::entity_facade()?, &id_text(call, 0)).map_err(lib)?;
     Ok(Ret::Undefined)
 }
 

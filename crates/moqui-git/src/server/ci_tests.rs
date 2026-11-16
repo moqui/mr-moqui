@@ -2675,6 +2675,120 @@ fn retention_removes_what_expired_and_secrets_are_scoped_and_never_read_back() {
     }
 }
 
+/// SEC-GIT-02 (plans/Security-Review.md): a runner token expires (`runner-token-days`; a runner registered before tokens
+/// expired counts from its registration) and is rotated by the runner, which ends the old one at once; a pool's
+/// `allowedAddresses` refuses a register, claim or rotate from another address, and a list it cannot read is refused
+/// when stored.
+#[test]
+fn a_runner_token_expires_rotates_and_comes_only_from_the_pools_addresses() {
+    let fixture = ci_fixture("ci-runner-token", "success", "");
+    ok(
+        &fixture,
+        WRITER,
+        &format!("{SERVICES}.store#RunnerPool"),
+        &[
+            ("runnerPoolId", s("P_TOK")),
+            ("poolName", s("tok")),
+            ("poolKind", s("registered")),
+            ("allowedImages", s("*")),
+        ],
+    );
+    let pool_token = to_plain_string(
+        &ok(
+            &fixture,
+            WRITER,
+            &format!("{SERVICES}.create#RunnerPoolToken"),
+            &[("runnerPoolId", s("P_TOK"))],
+        )["token"],
+    );
+    let post = |path: &str, bearer: &str, from: &str| -> (u16, serde_json::Value) {
+        let body = r#"{"name":"mini"}"#;
+        let request = RunnerHttpRequest {
+            method: "POST".into(),
+            path: path.into(),
+            query: String::new(),
+            authorization: Some(format!("Bearer {bearer}")),
+            content_length: Some(body.len() as u64),
+            secure: true,
+            client_ip: from.into(),
+        };
+        let _entered = fixture.context.enter();
+        let mut response = MemoryResponse::default();
+        let mut input = body.as_bytes();
+        runner_http::serve(&request, &mut input, &mut response);
+        (response.status, json_of(&response))
+    };
+    let runner_row = |token: &str| {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        fixture
+            .entity
+            .find("moqui.resource.GitRunner")
+            .unwrap()
+            .eq("tokenHash", Value::string(crate::ci::token::hash(token)))
+            .one()
+            .unwrap()
+            .expect("the runner of the token")
+    };
+    let set_runner = |runner_id: &str, fields: Vec<(&str, Value)>| {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        crate::ci::set_fields(&fixture.entity, "moqui.resource.GitRunner", "runnerId", runner_id, None, fields).unwrap();
+    };
+    let day = 86_400_000_i64;
+
+    let (status, registered) = post("register", &pool_token, "127.0.0.1");
+    assert_eq!(status, 200, "{registered}");
+    let first = registered["token"].as_str().unwrap().to_string();
+    let runner_id = registered["runnerId"].as_str().unwrap().to_string();
+    let row = runner_row(&first);
+    let expires = crate::ci::millis(&row, "tokenExpireDate").expect("an expiry");
+    assert!((expires - crate::ci::now_millis() - 90 * day).abs() < 60_000, "90 days");
+    assert_eq!(text(&row, "lastAddress"), "127.0.0.1");
+
+    // rotate: the new token works, the old one is refused at once
+    let (status, rotated) = post("rotate", &first, "127.0.0.1");
+    assert_eq!(status, 200, "{rotated}");
+    let second = rotated["token"].as_str().unwrap().to_string();
+    assert!(rotated["expiresAt"].as_i64().is_some() && rotated["rotateAfter"].as_i64().is_some(), "{rotated}");
+    assert_eq!(post("claim", &first, "127.0.0.1").0, 401);
+    assert_eq!(post("claim", &second, "127.0.0.1").0, 200);
+
+    // past its expiry: refused, and the answer says so
+    set_runner(&runner_id, vec![("tokenExpireDate", moqui_core::user::stamp_value(crate::ci::now_millis() - 1_000))]);
+    let (status, expired) = post("claim", &second, "127.0.0.1");
+    assert_eq!(status, 401);
+    assert!(expired["error"].as_str().unwrap_or("").contains("expired"), "{expired}");
+    assert_eq!(post("rotate", &second, "127.0.0.1").0, 401);
+    // a runner registered before tokens expired counts from its registration
+    let registered_at = |days_ago: i64| moqui_core::user::stamp_value(crate::ci::now_millis() - days_ago * day);
+    set_runner(&runner_id, vec![("tokenExpireDate", Value::Null), ("registeredDate", registered_at(100))]);
+    assert_eq!(post("claim", &second, "127.0.0.1").0, 401);
+    set_runner(&runner_id, vec![("registeredDate", registered_at(1))]);
+    assert_eq!(post("claim", &second, "127.0.0.1").0, 200);
+
+    // the pool's addresses: another address is refused for every runner call, a listed one is taken
+    let (_, errors) = call(
+        &fixture,
+        WRITER,
+        &format!("{SERVICES}.store#RunnerPool"),
+        &[("runnerPoolId", s("P_TOK")), ("allowedAddresses", s("203.0.113.0/24, not-an-address"))],
+    );
+    assert!(errors.contains("not-an-address"), "{errors}");
+    ok(
+        &fixture,
+        WRITER,
+        &format!("{SERVICES}.store#RunnerPool"),
+        &[("runnerPoolId", s("P_TOK")), ("allowedAddresses", s("203.0.113.0/24, 2001:db8::/32"))],
+    );
+    assert_eq!(post("claim", &second, "127.0.0.1").0, 403);
+    assert_eq!(post("rotate", &second, "198.51.100.7").0, 403);
+    assert_eq!(post("register", &pool_token, "127.0.0.1").0, 403);
+    assert_eq!(post("claim", &second, "203.0.113.9").0, 200);
+    assert_eq!(post("claim", &second, "2001:db8::5").0, 200);
+    assert_eq!(text(&runner_row(&second), "lastAddress"), "2001:db8::5");
+}
+
 #[test]
 fn a_registered_runner_registers_asks_for_a_job_and_runs_it() {
     if !git_available() {
@@ -2731,8 +2845,10 @@ fn a_registered_runner_registers_asks_for_a_job_and_runs_it() {
     assert_eq!(status, 200, "{registered}");
     let runner_token = registered["token"].as_str().unwrap().to_string();
     assert!(runner_token.starts_with("mqcr_"));
-    // nothing to run yet; a pool token is not a runner token
-    assert_eq!(post("claim", &runner_token, "{}"), (200, serde_json::json!({})));
+    // nothing to run yet, and when to rotate the token; a pool token is not a runner token
+    let (status, nothing) = post("claim", &runner_token, "{}");
+    assert_eq!(status, 200);
+    assert!(nothing.get("jobRunId").is_none() && nothing["rotateAfter"].as_i64().is_some(), "{nothing}");
     assert_eq!(post("claim", &pool_token, "{}").0, 401);
 
     define(&fixture, "app", "db");
@@ -2763,7 +2879,9 @@ fn a_registered_runner_registers_asks_for_a_job_and_runs_it() {
         ("running".into(), "P_MAC".into(), job_run_id.clone())
     );
     // one job at a time
-    assert_eq!(post("claim", &runner_token, "{}"), (200, serde_json::json!({})));
+    let (status, busy) = post("claim", &runner_token, "{}");
+    assert_eq!(status, 200);
+    assert!(busy.get("jobRunId").is_none(), "{busy}");
     let (code, _) = run_job(&fixture, &base, &job_run_id, &job_token);
     assert_eq!(code, 0);
     assert_eq!(text(&job_named(&fixture, &run_id, "build"), "statusId"), "success");

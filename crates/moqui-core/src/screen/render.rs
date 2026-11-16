@@ -1759,6 +1759,13 @@ fn run_transition(
             web::send_json_error(401, "Session token is missing or is not valid");
             return Ok(());
         }
+        if !job.header_authenticated && !job.new_session && cross_site_write(job, &transition)? {
+            web::send_json_error(
+                403,
+                "A screen transition that changes data does not run on a GET another site started; use the page's button",
+            );
+            return Ok(());
+        }
         // a cookie session that presented its token: a person at a browser, who may decide an agent's approval
         if !job.header_authenticated && session_token_presented(job)? {
             gate::note_session_token_checked();
@@ -2718,6 +2725,26 @@ pub(super) fn is_empty(value: Option<&Value>) -> bool {
         Some(Value::String(text)) => text.is_empty(),
         Some(_) => false,
     }
+}
+
+/// A GET (or HEAD) of a transition that runs actions and is not read-only, started by another site
+/// ([`web::started_by_another_site`]) and carrying no session token: refused, since a GET is not token-checked and a
+/// cross-site link carries the `SameSite=Lax` cookie (plans/Security-Review.md SEC-WEB-04, SEC-TLS-04). The app's own
+/// links and a typed URL still run, as does a request with no browser's headers.
+fn cross_site_write(job: &Job<'_>, transition: &TransitionDef) -> Result<bool, Error> {
+    if matches!(
+        job.method.to_ascii_lowercase().as_str(),
+        "post" | "put" | "patch" | "delete"
+    ) {
+        return Ok(false);
+    }
+    if transition.read_only || !runs_actions(transition) {
+        return Ok(false);
+    }
+    if !web::started_by_another_site(job.request) {
+        return Ok(false);
+    }
+    Ok(!session_token_presented(job)?)
 }
 
 fn csrf_rejected(job: &Job<'_>, transition: &TransitionDef) -> Result<bool, Error> {

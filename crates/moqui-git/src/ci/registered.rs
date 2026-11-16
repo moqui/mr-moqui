@@ -181,8 +181,108 @@ pub fn register_in(
     row.set("statusId", Value::string("active"));
     row.set("registeredDate", moqui_core::user::now_value());
     row.set("lastContactDate", moqui_core::user::now_value());
+    row.set(
+        "tokenExpireDate",
+        token_expiry(super::now_millis()).map_or(Value::Null, moqui_core::user::stamp_value),
+    );
     row.create(entity)?;
     Ok(field(&row, "runnerId").map(|id| (id, plain)))
+}
+
+/// How long a runner token is good for (`git-ci` `runner-token-days`).
+pub const DEFAULT_RUNNER_TOKEN_DAYS: u64 = 90;
+
+/// The days a runner token is good for: `git-ci` `runner-token-days` (90); `None` when it is 0, no expiry.
+pub fn runner_token_days() -> Option<u64> {
+    match super::setting("runner-token-days").trim().parse::<u64>() {
+        Ok(0) => None,
+        Ok(days) => Some(days),
+        Err(_) => Some(DEFAULT_RUNNER_TOKEN_DAYS),
+    }
+}
+
+fn days_millis(days: u64) -> i64 {
+    i64::try_from(days).unwrap_or(i64::MAX / 86_400_000).saturating_mul(86_400_000)
+}
+
+/// When a runner token made at `now` (epoch milliseconds) expires; `None` with no expiry.
+fn token_expiry(now: i64) -> Option<i64> {
+    runner_token_days().map(|days| now.saturating_add(days_millis(days)))
+}
+
+/// When a runner's token expires: its `tokenExpireDate`, else (a runner registered before tokens expired)
+/// `runner-token-days` after its `registeredDate`; `None` with no expiry, or for a row with neither date, which only a
+/// direct write of the row makes (registration sets both).
+pub fn runner_token_expires(runner: &EntityValue) -> Option<i64> {
+    super::millis(runner, "tokenExpireDate").or_else(|| {
+        let days = runner_token_days()?;
+        Some(super::millis(runner, "registeredDate")?.saturating_add(days_millis(days)))
+    })
+}
+
+/// When a runner rotates a token that expires at `expires`: halfway through its life.
+pub fn rotate_after(expires: Option<i64>) -> Option<i64> {
+    let expires = expires?;
+    Some(expires.saturating_sub(days_millis(runner_token_days()?) / 2))
+}
+
+/// Give the active runner `runner_id` a new token, which replaces its old one at once: the new token, shown once, and
+/// when it expires. `None` when the runner is not active (revoked meanwhile).
+///
+/// # Errors
+///
+/// When its row cannot be written, or the system has no random bytes.
+pub fn rotate(entity: &EntityFacade, runner_id: &str) -> Result<Option<(String, Option<i64>)>, Error> {
+    let _rows = crate::rows_guard();
+    let (plain, hashed) = token::new_token(token::RUNNER_PREFIX)?;
+    let expires = token_expiry(super::now_millis());
+    let rotated = super::set_fields(
+        entity,
+        RUNNER,
+        "runnerId",
+        runner_id,
+        Some("active"),
+        vec![
+            ("tokenHash", Value::string(hashed)),
+            ("tokenExpireDate", expires.map_or(Value::Null, moqui_core::user::stamp_value)),
+        ],
+    )?;
+    Ok(rotated.then_some((plain, expires)))
+}
+
+/// Whether pool `pool_id` takes a runner request from `client_ip`: its `allowedAddresses` ranges, any address when it
+/// has none. A list that names no range it can read takes no address, so a mistyped list does not open the pool.
+///
+/// # Errors
+///
+/// When the pool cannot be read.
+pub fn pool_admits(entity: &EntityFacade, pool_id: &str, client_ip: &str) -> Result<bool, Error> {
+    let _rows = crate::rows_guard();
+    let Some(pool) = super::one(entity, RUNNER_POOL, "runnerPoolId", pool_id)? else {
+        return Ok(false);
+    };
+    let Some(allowed) = field(&pool, "allowedAddresses") else {
+        return Ok(true);
+    };
+    let ranges = moqui_core::web::address::parse_cidrs(&allowed, &format!("runner pool {pool_id} allowedAddresses"));
+    let address = client_ip
+        .trim()
+        .parse::<std::net::IpAddr>()
+        .ok()
+        .or_else(|| client_ip.trim().parse::<std::net::SocketAddr>().ok().map(|socket| socket.ip()));
+    Ok(address.is_some_and(|address| ranges.iter().any(|range| range.contains(address))))
+}
+
+/// Note where runner `runner_id` was last heard from.
+///
+/// # Errors
+///
+/// When its row cannot be written.
+pub fn note_address(entity: &EntityFacade, runner_id: &str, client_ip: &str) -> Result<(), Error> {
+    let _rows = crate::rows_guard();
+    let address: String = client_ip.chars().take(60).collect();
+    super::set_fields(entity, RUNNER, "runnerId", runner_id, None, vec![("lastAddress", Value::string(address))])?;
+    Ok(())
 }
 
 /// A job a runner was given.

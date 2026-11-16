@@ -338,9 +338,21 @@ runner token takes any job of the pool and, through that job's token, its secret
 (plans/Security-Review.md SEC-GIT-02): a registered runner's step does not inherit the machine's environment, only
 `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LANGUAGE`, `TZ`, `TMPDIR`, `SHELL`, `TERM`, the `LC_` variables and the names
 `--pass-env NAME,...` gives, and then the job's own variables; no runner, pool or job token is passed on in any
-case. A step that can read the runner's files can still read the token file: run the steps as another user than the
-runner (a `--shell` that switches user), or keep such a pool for one owner's trusted runs. A runner token has no
-expiry yet; revoke a runner (`revoke#Runner`) whose machine was shared.
+case. A step that runs as the runner's user can still read the token file. On unix, `--step-user USER` runs the steps as
+another user: the runner runs as root (its token file root's alone, mode 600), the checkout, its caches and the steps'
+`home` beside it are handed to USER (`chown -R`) before the first step, each step runs as USER (`USER` and `LOGNAME`
+are USER's), and after the job the processes of USER that started during it are killed. Without it, keep such a pool
+for one owner's trusted runs.
+
+A runner token expires `git-ci` `runner-token-days` (90; 0 is never) after it was made; a runner registered before
+tokens expired counts from its registration. A claim's answer says when to rotate (`rotateAfter`, halfway), and `poll`
+then calls `POST /ci/runner/rotate`, which answers a new token and ends the old one at once, and writes the new token
+to its token file (a new file, mode 600, renamed over the old one). A token given in the environment cannot be
+rotated: `poll` says so, and the runner registers again once it expires. An expired token is a 401 that says so.
+A pool's `allowedAddresses` (CIDRs, comma separated, by `store#RunnerPool`) are the addresses its runners register,
+claim and rotate from; another address is a 403, noted as a failed sign-in, and an entry that is not an address or a
+range is refused when the pool is stored. `GitRunner.lastAddress` is where a runner was last heard from. Revoke a
+runner (`revoke#Runner`) whose machine was shared.
 
 `poll` asks for a job every few seconds; when its pool has room it is given
 the oldest queued job of the pool with a job token, runs it in a directory of its own, and asks again. A runner runs
@@ -417,7 +429,8 @@ token in `Authorization: Bearer`, taken only over HTTPS, from loopback, or with 
 | `GET jobs/{jobRunId}/caches?key=` | job | The cache archive, or 404 |
 | `POST jobs/{jobRunId}/result` | job | `{status: success, failure or error, exitCode, message}`. The job ends and the token is dead. |
 | `POST register` | pool | `{name, platform}`: a new runner, `{runnerId, token}` |
-| `POST claim` | runner | A queued job of the runner's pool, `{jobRunId, token}`, or `{}` |
+| `POST claim` | runner | A queued job of the runner's pool, `{jobRunId, token}`, or `{}`; with `rotateAfter` (epoch milliseconds) when the token expires |
+| `POST rotate` | runner | A new runner token, `{token, expiresAt, rotateAfter}`; the one it was called with is dead at once |
 
 Every job endpoint checks that the token's job run is the one in the path (403 otherwise) and still running (410
 after it ended or passed its time; 401 for a token that is not a job token of this server), and counts the job's requests (`runner-max-requests-per-minute`, 429 over it). A JSON body is at most
@@ -716,6 +729,7 @@ the client's address arrives).
 | `max-artifact-bytes`, `max-report-bytes`, `max-cache-bytes`, `max-artifacts` | 1 GB, 16 MB, 2 GB, 100 | Uploads (`max-artifacts` counts caches too) |
 | `max-repository-upload-bytes`, `max-owner-upload-bytes` | 0, 0 | What a repository and an owner keep of uploads; 0: no cap |
 | `max-services`, `schedule-min-minutes`, `pool-token-days` | 4, 15, 7 | Services of a job; the least time between a schedule's runs; how long a pool token registers |
+| `runner-token-days` | 90 | How long a registered runner's token is good for; rotated halfway; 0 is no expiry |
 | `artifact-retention-days`, `max-artifact-retention-days`, `log-retention-days`, `cache-retention-days` | 30, 365, 90, 30 | |
 | `lost-seconds`, `queue-timeout-minutes` | 180, 1440 | |
 | `runner-max-requests-per-minute`, `runner-command`, `start-inline` | 1200, `moqui ci-run`, true | |

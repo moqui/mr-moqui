@@ -58,6 +58,7 @@ fn pool_value(pool: &EntityValue) -> Value {
         copy("maxMinutes"),
         copy("egressRule"),
         copy("serverUrl"),
+        copy("allowedAddresses"),
         (
             "hasRegistrationToken",
             Value::Bool(field(pool, "registrationTokenHash").is_some()),
@@ -146,9 +147,25 @@ fn store_runner_pool(parameters: &Parameters, facade: &EntityFacade) -> Out {
         "cpuLimit",
         "egressRule",
         "serverUrl",
+        "allowedAddresses",
     ] {
         if parameters.contains_key(name) {
             pool.set(name, opt(text(parameters, name)));
+        }
+    }
+    // each entry an address or a range: a list with one it cannot read would take fewer addresses than meant, or none
+    if let Some(allowed) = field(&pool, "allowedAddresses") {
+        let bad: Vec<&str> = allowed
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty() && moqui_core::web::address::Cidr::parse(entry).is_none())
+            .collect();
+        if !bad.is_empty() {
+            add_error(format!(
+                "allowedAddresses holds what is not an address or address range (203.0.113.0/24): {}",
+                bad.join(", ")
+            ));
+            return none();
         }
     }
     for name in ["maxConcurrent", "memoryMb", "diskMb", "pidsLimit", "maxMinutes"] {

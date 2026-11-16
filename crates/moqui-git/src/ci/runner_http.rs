@@ -18,7 +18,8 @@
 //! `jobs/<its job run>/...`, while that job runs: the job (its steps, variables and, for a trusted run, its secrets),
 //! log lines, step results, uploads (artifacts, reports, caches, streamed to content blobs with a size limit), cache
 //! downloads and the final result, after which the token is dead. A pool token registers a runner (`register`) and a
-//! runner token asks for a job (`claim`). Requests of a job are counted per minute.
+//! runner token asks for a job (`claim`) and replaces itself (`rotate`), from an address its pool takes. Requests of a
+//! job are counted per minute.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -492,6 +493,7 @@ pub fn serve(request: &RunnerHttpRequest, body: &mut dyn Read, out: &mut dyn Htt
                     return Err(Refused::new(401, "the pool token is not valid"));
                 };
                 moqui_core::web::note_token_verified();
+                admitted(&entity, &pool_id, &request.client_ip)?;
                 let max = super::number_setting("runner-max-registrations-per-minute", DEFAULT_MAX_REGISTRATIONS);
                 if over_limit(&format!("register:{pool_id}"), max) {
                     return Err(Refused::new(429, "too many registrations of this pool in a minute"));
@@ -500,6 +502,7 @@ pub fn serve(request: &RunnerHttpRequest, body: &mut dyn Read, out: &mut dyn Htt
                 let name = body["name"].as_str().unwrap_or("runner");
                 match super::registered::register_in(&entity, &pool_id, name, body["platform"].as_str())? {
                     Some((runner_id, runner_token)) => {
+                        super::registered::note_address(&entity, &runner_id, &request.client_ip)?;
                         Ok(Some(json!({ "runnerId": runner_id, "token": runner_token })))
                     }
                     None => Err(Refused::new(
@@ -510,20 +513,40 @@ pub fn serve(request: &RunnerHttpRequest, body: &mut dyn Read, out: &mut dyn Htt
             }
             ("POST", "claim") => {
                 // the token first, so only a good one is counted
-                let Some((runner_id, pool_id)) = token::runner_of(&entity, &bearer)? else {
-                    moqui_core::web::note_auth_failure();
-                    return Err(Refused::new(401, "the runner token is not valid"));
-                };
-                moqui_core::web::note_token_verified();
+                let (runner_id, pool_id, expires) = good_runner(&entity, &bearer, &request.client_ip)?;
                 if over_rate(&format!("runner:{runner_id}")) {
                     return Err(Refused::new(429, "too many requests of this runner in a minute"));
                 }
-                Ok(Some(
-                    match super::registered::claim_for(&entity, &runner_id, &pool_id)? {
-                        Some(claimed) => json!({ "jobRunId": claimed.job_run_id, "token": claimed.job_token }),
-                        None => json!({}),
-                    },
-                ))
+                // when the runner should rotate its token (POST rotate), halfway through the token's life
+                let rotate_after = super::registered::rotate_after(expires);
+                let mut answer = match super::registered::claim_for(&entity, &runner_id, &pool_id)? {
+                    Some(claimed) => json!({ "jobRunId": claimed.job_run_id, "token": claimed.job_token }),
+                    None => json!({}),
+                };
+                if let Some(rotate_after) = rotate_after {
+                    answer["rotateAfter"] = json!(rotate_after);
+                }
+                Ok(Some(answer))
+            }
+            ("POST", "rotate") => {
+                // a new runner token for the runner, which replaces the one it called with at once
+                let (runner_id, _, _) = good_runner(&entity, &bearer, &request.client_ip)?;
+                if over_rate(&format!("runner:{runner_id}")) {
+                    return Err(Refused::new(429, "too many requests of this runner in a minute"));
+                }
+                match super::registered::rotate(&entity, &runner_id)? {
+                    Some((runner_token, expires)) => {
+                        let mut answer = json!({ "token": runner_token });
+                        if let Some(expires) = expires {
+                            answer["expiresAt"] = json!(expires);
+                        }
+                        if let Some(rotate_after) = super::registered::rotate_after(expires) {
+                            answer["rotateAfter"] = json!(rotate_after);
+                        }
+                        Ok(Some(answer))
+                    }
+                    None => Err(Refused::new(401, "the runner token is not valid")),
+                }
             }
             _ => Err(Refused::new(404, "not a runner endpoint")),
         }
@@ -539,6 +562,44 @@ pub fn serve(request: &RunnerHttpRequest, body: &mut dyn Read, out: &mut dyn Htt
             respond(out, status, &json!({ "error": message }));
         }
     }
+}
+
+/// The active runner of a runner token, from an address its pool takes, noted as heard from there: its id, its pool,
+/// and when the token expires. A token that is no active runner's is 401, an expired one 401 that says so, and an
+/// address the pool's `allowedAddresses` do not hold 403; each is noted as a failed sign-in.
+fn good_runner(entity: &EntityFacade, bearer: &str, client_ip: &str) -> Result<(String, String, Option<i64>), Refused> {
+    let (runner_id, pool_id, expires) = match token::runner_token(entity, bearer)? {
+        token::RunnerToken::Active {
+            runner_id,
+            pool_id,
+            expires,
+        } => (runner_id, pool_id, expires),
+        token::RunnerToken::Expired => {
+            moqui_core::web::note_auth_failure();
+            return Err(Refused::new(
+                401,
+                "the runner token expired: register the runner again with a new pool token",
+            ));
+        }
+        token::RunnerToken::Unknown => {
+            moqui_core::web::note_auth_failure();
+            return Err(Refused::new(401, "the runner token is not valid"));
+        }
+    };
+    moqui_core::web::note_token_verified();
+    admitted(entity, &pool_id, client_ip)?;
+    super::registered::note_address(entity, &runner_id, client_ip)?;
+    Ok((runner_id, pool_id, expires))
+}
+
+/// Refuse a runner request from an address pool `pool_id` does not take (`allowedAddresses`), as a failed sign-in.
+fn admitted(entity: &EntityFacade, pool_id: &str, client_ip: &str) -> Result<(), Refused> {
+    if super::registered::pool_admits(entity, pool_id, client_ip)? {
+        return Ok(());
+    }
+    moqui_core::web::note_auth_failure();
+    tracing::warn!(pool = pool_id, address = client_ip, "a runner request from an address its pool does not take was refused");
+    Err(Refused::new(403, "the runner pool does not take requests from this address"))
 }
 
 /// A response kept in memory: for a caller in this process (a test's runner).

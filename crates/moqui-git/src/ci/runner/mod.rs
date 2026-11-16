@@ -64,6 +64,78 @@ pub struct Options {
     pub inherit_env: bool,
     /// Names of the runner's variables a step gets when it does not inherit the environment (`--pass-env`).
     pub pass_env: Vec<String>,
+    /// The user the steps run as (`ci-run poll --step-user`, unix, the runner running as root): the workspace and the
+    /// step home are handed to it before the first step, and the runner's files (its token file) are out of its reach.
+    pub step_user: Option<StepUser>,
+}
+
+/// Another user a registered runner runs its steps as.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StepUser {
+    pub name: String,
+    pub uid: u32,
+    pub gid: u32,
+}
+
+/// The step user `name`, from what `id -u` says of the runner and `id -u name` and `id -g name` of the user: refused
+/// unless the runner is root (only root runs a process as another user), the name resolves, and it is not root.
+///
+/// # Errors
+///
+/// Why the user cannot be the step user.
+pub fn step_user_of(name: &str, runner_uid: &str, uid: &str, gid: &str) -> Result<StepUser, String> {
+    if runner_uid.trim() != "0" {
+        return Err("--step-user needs the runner to run as root, which starts each step as that user".into());
+    }
+    let (Ok(uid), Ok(gid)) = (uid.trim().parse::<u32>(), gid.trim().parse::<u32>()) else {
+        return Err(format!("--step-user {name}: no such user"));
+    };
+    if uid == 0 {
+        return Err(format!("--step-user {name} is root: give a user of its own"));
+    }
+    Ok(StepUser {
+        name: name.to_string(),
+        uid,
+        gid,
+    })
+}
+
+/// [`step_user_of`] for this machine (`id`).
+///
+/// # Errors
+///
+/// Why the user cannot be the step user; on a system that is not unix, always.
+pub fn step_user(name: &str) -> Result<StepUser, String> {
+    #[cfg(unix)]
+    {
+        step_user_of(
+            name,
+            &output_of("id", &["-u"]),
+            &output_of("id", &["-u", name]),
+            &output_of("id", &["-g", name]),
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = name;
+        Err("--step-user is for unix".into())
+    }
+}
+
+/// Hand `path` over to the step user (`chown -R`), so the steps write the checkout and their home.
+fn hand_over(path: &Path, user: &StepUser) -> Result<(), String> {
+    let status = Command::new("chown")
+        .arg("-R")
+        .arg(format!("{}:{}", user.uid, user.gid))
+        .arg(path)
+        .stdin(Stdio::null())
+        .status()
+        .map_err(|err| format!("chown did not run: {err}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("chown of {} to {} failed: {status}", path.display(), user.name))
+    }
 }
 
 impl Default for Options {
@@ -75,6 +147,7 @@ impl Default for Options {
             env: Vec::new(),
             inherit_env: true,
             pass_env: Vec::new(),
+            step_user: None,
         }
     }
 }
@@ -312,12 +385,17 @@ fn started_within(listing: &str, within_seconds: u64, keep: &[u32]) -> Vec<u32> 
 /// Kill the processes of this runner's user that a job left running, between the jobs of a registered runner
 /// (`moqui ci-run poll`): those started since the job began (`job_seconds` ago), in a group of their own or not, so
 /// they do not see the next job (docs/interfaces/Pipelines.md, "Registered runners"); never the runner, the processes
-/// it runs under, or one started before the job (a `tee` the runner's output goes through). Never as root. How many
-/// were killed.
-pub fn end_leftovers(job_seconds: u64) -> usize {
+/// it runs under, or one started before the job (a `tee` the runner's output goes through). Never as root: with a
+/// `step_user` the processes of that user, which the runner (root) can end. How many were killed.
+pub fn end_leftovers(job_seconds: u64, step_user: Option<&StepUser>) -> usize {
     #[cfg(unix)]
     {
-        let uid = output_of("id", &["-u"]).trim().to_string();
+        // the step user's processes when the steps ran as one (the runner is root then), else the runner's own user's,
+        // never root's
+        let uid = match step_user {
+            Some(user) => user.uid.to_string(),
+            None => output_of("id", &["-u"]).trim().to_string(),
+        };
         if uid.is_empty() || uid == "0" {
             return 0;
         }
@@ -350,7 +428,7 @@ pub fn end_leftovers(job_seconds: u64) -> usize {
     }
     #[cfg(not(unix))]
     {
-        let _ = job_seconds;
+        let _ = (job_seconds, step_user);
         0
     }
 }
@@ -389,6 +467,10 @@ fn run_step(
     {
         use std::os::unix::process::CommandExt;
         spawn.process_group(0);
+        // as the step user: std drops root's supplementary groups when it sets the uid
+        if let Some(user) = &options.step_user {
+            spawn.uid(user.uid).gid(user.gid).env("USER", &user.name).env("LOGNAME", &user.name);
+        }
     }
     let mut child = spawn
         .spawn()
@@ -560,6 +642,17 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
             Ok(401 | 403 | 410) => return Err(Stop::Gone),
             Ok(status) => log.line(None, &format!("Cache {key} was not read: {status}"))?,
             Err(err) => log.line(None, &format!("Cache {key} was not read: {err}"))?,
+        }
+    }
+    // the steps' user owns what they work in: the checkout with its caches, and the home the runner gave them
+    if let Some(user) = &options.step_user {
+        let home = options.env.iter().find(|(name, _)| name == "HOME").map(|(_, home)| PathBuf::from(home));
+        for path in std::iter::once(options.workspace.clone()).chain(home) {
+            if let Err(err) = hand_over(&path, user) {
+                log.line(None, &format!("The workspace was not handed to {}: {err}", user.name))?;
+                log.flush()?;
+                return Err(Stop::Error(err));
+            }
         }
     }
     // the job's variables, then what every job has, then its secrets

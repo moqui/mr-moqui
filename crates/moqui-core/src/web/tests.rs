@@ -556,3 +556,27 @@ fn a_users_file_asked_inline_is_shown_only_when_passive_and_then_sandboxed() {
     assert_eq!(user_file_inline("application/pdf", true), (true, false));
     assert_eq!(user_file_inline("image/png", false), (false, false));
 }
+
+/// SEC-WEB-04: a request another site started is told by `Sec-Fetch-Site`, else by a `Referer` of another host; a
+/// request with neither, as a client that is not a browser sends, is not.
+#[test]
+fn a_request_another_site_started_is_told_by_its_fetch_site_or_referer() {
+    let request = |headers: &[(&str, &str)]| {
+        let mut request = super::WebRequest::new("GET", "/Login/logout");
+        request.set_header("Host", "app.example.com");
+        for (name, value) in headers {
+            request.set_header(*name, *value);
+        }
+        super::started_by_another_site(&request)
+    };
+    assert!(request(&[("Sec-Fetch-Site", "cross-site")]));
+    assert!(request(&[("Sec-Fetch-Site", "same-site")]));
+    assert!(!request(&[("Sec-Fetch-Site", "same-origin")]));
+    assert!(!request(&[("Sec-Fetch-Site", "none")]));
+    // the fetch site wins over a referer
+    assert!(!request(&[("Sec-Fetch-Site", "same-origin"), ("Referer", "https://evil.example/")]));
+    assert!(request(&[("Referer", "https://evil.example/page")]));
+    assert!(request(&[("Referer", "https://app.example.com.evil.example/")]));
+    assert!(!request(&[("Referer", "https://APP.example.com/apps/tools")]));
+    assert!(!request(&[]));
+}

