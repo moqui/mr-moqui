@@ -30,7 +30,10 @@
 //! - **TLS policy.** MTA-STS (RFC 8461): the `_mta-sts` TXT record names the policy's id; the policy (64 KiB at most) is
 //!   fetched over HTTPS and kept until its `max_age` (fetched again when the id changes). With `mode: enforce` only MX
 //!   hosts the policy names are used, and STARTTLS with a certificate valid for the host is required, else the try
-//!   waits. DANE is later work.
+//!   waits. The recipient domains in `mail_mx_require_tls` (comma-separated, `*` for all; empty by default) require it
+//!   too, whatever their policy: an MX that offers no STARTTLS, or whose handshake or certificate fails, gets nothing
+//!   in clear text; the try waits as for a 4xx and the message bounces after `mail_delivery_days` (SEC-MAIL-66). DANE
+//!   is later work.
 //! - **Answers.** A 2xx after the data is sent; a 5xx (to RCPT, or to the data) refuses that recipient for good; a 4xx,
 //!   a host not reached or a lost connection waits for the next try: 5 minutes (`mail_delivery_retry_seconds`), twice
 //!   as long each time, to 4 hours, until `mail_delivery_days` (5) after the row was made, when the recipients still
@@ -971,6 +974,34 @@ fn override_for(domain: &str) -> Option<(String, u16)> {
     any
 }
 
+/// `mail_mx_require_tls`: whether mail to `domain` goes only over TLS with a certificate valid for the MX host, whatever
+/// MTA-STS says (plans/Security-Review-Medium.md SEC-MAIL-66): the recipient domains listed, comma-separated, `*` for
+/// every one. Empty (the default) leaves the opportunistic STARTTLS of other domains as it is.
+fn tls_required(domain: &str) -> bool {
+    moqui_lib::env::get_prop_or_env("mail_mx_require_tls")
+        .split(',')
+        .map(|name| name.trim().trim_end_matches('.').to_ascii_lowercase())
+        .any(|name| name == "*" || (!name.is_empty() && name == domain))
+}
+
+/// Why a session must have verified TLS, for its refusals; `None` when STARTTLS is opportunistic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TlsRule {
+    /// The domain's MTA-STS policy is `enforce`.
+    MtaSts,
+    /// The domain is in `mail_mx_require_tls`.
+    Required,
+}
+
+impl TlsRule {
+    fn source(self) -> &'static str {
+        match self {
+            Self::MtaSts => "MTA-STS requires it",
+            Self::Required => "mail_mx_require_tls requires it",
+        }
+    }
+}
+
 /// The hosts to try for `domain`, by preference: (host name, its addresses, port).
 type Hosts = Vec<(String, Vec<IpAddr>, u16)>;
 
@@ -1064,7 +1095,13 @@ pub fn deliver_domain(
         Ok(hosts) => hosts,
         Err(answer) => return all(answer),
     };
-    let secure = policy.as_ref().is_some_and(|policy| policy.enforce);
+    let secure = if policy.as_ref().is_some_and(|policy| policy.enforce) {
+        Some(TlsRule::MtaSts)
+    } else if tls_required(domain) {
+        Some(TlsRule::Required)
+    } else {
+        None
+    };
     let mut reasons: Vec<String> = Vec::new();
     for (host, ips, port) in &hosts {
         if let Err(err) = moqui_core::entity::fence::check_effect(moqui_core::entity::fence::Effect::Mail, host) {
@@ -1098,12 +1135,12 @@ fn reply_text(err: &lettre::transport::smtp::Error) -> String {
     err.to_string()
 }
 
-/// Where one session goes: the MX host's name (for TLS), its address, whether MTA-STS requires a valid certificate,
-/// and when the try must end.
+/// Where one session goes: the MX host's name (for TLS), its address, whether TLS with a valid certificate is required
+/// (MTA-STS enforce, `mail_mx_require_tls`), and when the try must end.
 struct Target<'a> {
     host: &'a str,
     address: SocketAddr,
-    secure: bool,
+    secure: Option<TlsRule>,
     deadline: Instant,
 }
 
@@ -1150,7 +1187,7 @@ fn session(
     }
     within!();
     if connection.can_starttls() {
-        let parameters = if secure {
+        let parameters = if secure.is_some() {
             TlsParameters::builder(host.to_string()).build_rustls()
         } else {
             // opportunistic: encrypted, whatever certificate the server shows
@@ -1161,17 +1198,18 @@ fn session(
         }
         .map_err(|err| format!("TLS parameters: {err}"))?;
         if let Err(err) = connection.starttls(&parameters, &client) {
-            if secure {
+            if let Some(rule) = secure {
                 connection.abort();
-                return Err(format!("STARTTLS failed, and MTA-STS requires it: {err}"));
+                return Err(format!("STARTTLS failed, and {}: {err}", rule.source()));
             }
             tracing::warn!("MX {host} [{address}]: STARTTLS failed ({err}); sending without TLS");
             connection.abort();
             connection = connect()?;
         }
-    } else if secure {
+    } else if let Some(rule) = secure {
+        // never in clear text: the try waits, and the message bounces after mail_delivery_days
         connection.abort();
-        return Err("no STARTTLS, and MTA-STS requires it".to_string());
+        return Err(format!("no STARTTLS, and {}", rule.source()));
     }
     let sender = match mail_from.trim() {
         "" => None,

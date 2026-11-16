@@ -142,8 +142,12 @@ fn mx_session(stream: TcpStream, taken: &Mutex<Vec<String>>) {
     }
 }
 
+/// Held by a test while it sets and uses the process-wide `mail_mx_override`.
+static OVERRIDE: Mutex<()> = Mutex::new(());
+
 #[test]
 fn a_session_answers_each_recipient_and_a_host_not_reached_waits() {
+    let _override = OVERRIDE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let (port, taken) = fake_mx();
     let closed = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     moqui_lib::env::set_property(
@@ -194,6 +198,39 @@ fn a_session_answers_each_recipient_and_a_host_not_reached_waits() {
     );
 }
 
+/// SEC-MAIL-66: a recipient domain in `mail_mx_require_tls` gets nothing in clear text from an MX that offers no
+/// STARTTLS (the try waits, to bounce after `mail_delivery_days`); a domain not listed is still delivered to it, as
+/// before. `*` lists every domain.
+#[test]
+fn a_domain_that_requires_tls_gets_no_clear_text_and_another_still_does() {
+    let _override = OVERRIDE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (port, taken) = fake_mx();
+    moqui_lib::env::set_property(
+        "mail_mx_override",
+        format!("tls-required.test=127.0.0.1:{port},tls-free.test=127.0.0.1:{port}"),
+    );
+    moqui_lib::env::set_property("mail_mx_require_tls", "other.test, TLS-Required.test.".to_string());
+    let raw = b"From: a@example.com\r\nSubject: Hi\r\n\r\nHello\r\n";
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let to = |domain: &str| deliver_domain(domain, "a@example.com", &[format!("ok@{domain}")], raw, deadline);
+    let required = to("tls-required.test");
+    let free = to("tls-free.test");
+    moqui_lib::env::set_property("mail_mx_require_tls", "*".to_string());
+    let all = to("tls-free.test");
+    moqui_lib::env::set_property("mail_mx_require_tls", String::new());
+    assert!(
+        matches!(&required[0].1, Answer::Later(reply) if reply.contains("no STARTTLS, and mail_mx_require_tls requires it")),
+        "{required:?}"
+    );
+    assert!(
+        matches!(&free[0].1, Answer::Sent(reply) if reply.starts_with("250")),
+        "{free:?}"
+    );
+    assert!(matches!(&all[0].1, Answer::Later(_)), "{all:?}");
+    let taken = taken.lock().unwrap().clone();
+    assert_eq!(taken.len(), 1, "only the domain not listed was sent the message");
+}
+
 /// SEC-OUT-04, SEC-MAIL-66: an MX host's internal addresses are never tried, and a domain whose hosts have only
 /// internal ones is refused, so a recipient domain's DNS cannot point the node at its own network.
 #[test]
@@ -230,7 +267,7 @@ fn a_null_mx_refuses_and_enforce_needs_the_policys_hosts_and_starttls() {
     let target = Target {
         host: "mx.test",
         address: SocketAddr::from(([127, 0, 0, 1], port)),
-        secure: true,
+        secure: Some(TlsRule::MtaSts),
         deadline: Instant::now() + Duration::from_secs(30),
     };
     let refused = session(

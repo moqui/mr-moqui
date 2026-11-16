@@ -206,6 +206,10 @@
         for the hosted and shared accounts' domains. On an edge node: edge_mail_mta (moqui for the MTA in moqui, set in
         conf/edge/MoquiEdgeConf.xml; empty or postfix is E5a's relay to Postfix), mail_delivery_retry_seconds (the first retry wait, doubled each
         time to 4 hours) and mail_delivery_days (when a message not delivered goes back as a bounce).
+        mail_mx_require_tls: the recipient domains whose MX gets mail only over STARTTLS with a certificate valid for the
+        host, comma-separated, * for every domain (as an MTA-STS enforce policy, whatever the domain publishes); an MX with
+        no STARTTLS, or a failed handshake or certificate, is tried again later and the message bounces after
+        mail_delivery_days, never sent in clear text. Empty: STARTTLS when offered, any certificate, else clear text.
         mail_mx_override (testing and staging only): domain=host:port pairs, * for any, in place of the MX.
         mail_dns_offline (testing only): true makes no DNS query.
     -->
@@ -218,6 +222,7 @@
     <default-property name="mail_arc_trusted_sealers" value=""/>
     <default-property name="mail_delivery_retry_seconds" value="300"/>
     <default-property name="mail_delivery_days" value="5"/>
+    <default-property name="mail_mx_require_tls" value=""/>
     <default-property name="mail_mx_override" value=""/>
     <default-property name="mail_dns_offline" value=""/>
 
