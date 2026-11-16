@@ -2070,7 +2070,7 @@ impl Session {
                 .filter(|text| !text.is_empty() && !messages.errors.contains(text)),
         );
         if !errors.is_empty() {
-            self.set_message(errors.join("; "), true);
+            self.set_message(distinct_join(&errors), true);
         } else if !messages.info.is_empty() {
             self.set_message(distinct_join(&messages.info), false);
         }
