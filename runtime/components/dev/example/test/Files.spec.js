@@ -137,3 +137,63 @@ feature("drive files are search documents, found by name", {
         asEditor.resultList.length == 1
     },
 })
+
+// export#Drive of a folder drive by its manager, with authorization on: a named zip goes under runtime/drive-export, and a
+// location with a scheme, an absolute path or '..' is refused (G10; the git drives' targetPath is export#GitRepository's)
+feature("a folder drive's named export goes under runtime/drive-export; any other location is refused", {
+    when() {
+        const GROUP = "FILES_SPEC_EXPORT"
+        const make = (entityName, fields) => {
+            const {fromDate, ...keys} = fields
+            if (ec.entity.find(entityName).condition(keys).count() > 0) return
+            const row = ec.entity.makeValue(entityName)
+            row.setFields(fields, true, null, null)
+            row.create()
+        }
+        // the drive services as a screen grants them
+        make("moqui.security.UserGroup", { userGroupId: GROUP, description: "Files spec export" })
+        make("moqui.security.ArtifactGroup", { artifactGroupId: GROUP, description: "Files spec export" })
+        make("moqui.security.ArtifactGroupMember", { artifactGroupId: GROUP, artifactTypeEnumId: "AT_SERVICE", inheritAuthz: "Y",
+            nameIsPattern: "Y", artifactName: "org\\.moqui\\.resource\\.FileServices\\..*" })
+        make("moqui.security.ArtifactAuthz", { artifactAuthzId: GROUP, userGroupId: GROUP, artifactGroupId: GROUP,
+            authzTypeEnumId: "AUTHZT_ALWAYS", authzActionEnumId: "AUTHZA_ALL" })
+        make("moqui.security.UserGroupMember", { userGroupId: GROUP, userId: "filesOwner", fromDate: 0 })
+        ec.user.internalLoginUser("filesOwner")
+        const exported = (targetLocation) => {
+            ec.artifactExecution.enableAuthz()
+            try {
+                const out = ec.service.sync().name(`${SERVICES}.export#Drive`).parameters({ driveId: folderDriveId, targetLocation }).call() || {}
+                return { location: out.exportLocation ?? null, errors: [...ec.message.errors].join(" | ") }
+            } catch (err) {
+                return { location: null, errors: String(err.message || err) }
+            } finally {
+                ec.message.clearErrors()
+                ec.artifactExecution.disableAuthz()
+            }
+        }
+        const named = exported("spec/files-export.zip")
+        const zipThere = named.location ? ec.resource.getLocationReference(named.location).exists : false
+        if (named.location) ec.resource.getLocationReference(named.location).delete()
+        const outcome = {
+            named, zipThere,
+            absolute: exported("/tmp/files-spec-export.zip"),
+            scheme: exported("component://example/files-export.zip"),
+            up: exported("spec/../../conf/files-export.zip"),
+        }
+        ec.entity.find("moqui.security.UserGroupMember").condition("userGroupId", GROUP).deleteAll()
+        ec.entity.find("moqui.security.ArtifactAuthz").condition("artifactAuthzId", GROUP).deleteAll()
+        ec.entity.find("moqui.security.ArtifactGroupMember").condition("artifactGroupId", GROUP).deleteAll()
+        ec.entity.find("moqui.security.ArtifactGroup").condition("artifactGroupId", GROUP).deleteAll()
+        ec.entity.find("moqui.security.UserGroup").condition("userGroupId", GROUP).deleteAll()
+        return outcome
+    },
+    then({ named, zipThere, absolute, scheme, up }) {
+        named.errors == ""
+        named.location == "runtime://drive-export/spec/files-export.zip"
+        zipThere
+        absolute.location == null
+        absolute.errors.includes("runtime/drive-export")
+        scheme.errors.includes("runtime/drive-export")
+        up.errors.includes("runtime/drive-export")
+    },
+})

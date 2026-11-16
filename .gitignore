@@ -11,6 +11,9 @@
 /runtime/opensearch*
 /runtime/chromium*
 /runtime/save
+# exports a user names: a drive's zip (FileServices.export#Drive), a repository (GitServices.export#GitRepository)
+/runtime/drive-export
+/runtime/git-export
 # the Dev AIDE's worktrees for agents' sessions (plans/design-dev-aide.md 21.8)
 /runtime/worktrees
 /myaddons.xml

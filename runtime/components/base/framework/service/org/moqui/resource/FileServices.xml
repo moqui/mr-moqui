@@ -674,7 +674,11 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="export" noun="Drive">
         <description>A copy of a drive: a git drive in the database as a bare repository on disk
             (GitServices.export#GitRepository, exportPath), a git drive on disk is already one (its path), a folder drive
-            as a zip (exportLocation, under runtime/tmp/drive-export unless targetLocation is given). Manage permission.</description>
+            as a zip (exportLocation, under runtime/tmp/drive-export unless targetLocation is given). Manage permission.
+            targetPath goes to export#GitRepository, which holds it under runtime/git-export. targetLocation, with
+            authorization on, is a relative path of letters, digits, '.', '_' and '-' segments under runtime/drive-export
+            (an absolute path, a location with a scheme or '..' is refused); with authorization disabled (a job, a setup
+            service) it is any location, as the caller answers for it.</description>
         <in-parameters>
             <parameter name="driveId" required="true"/>
             <parameter name="targetPath"/>
@@ -716,7 +720,18 @@ along with this software (see the LICENSE.md file). If not, see
                 }
             }
             walk('', 0)
-            exportLocation = targetLocation || `runtime://tmp/drive-export/${driveId}-${Date.now()}.zip`
+            // a drive manager's named zip goes under runtime/drive-export, never to a place on the server they name
+            // (a component, the conf, another drive)
+            let target = targetLocation ? String(targetLocation) : ''
+            if (target && !ec.artifactExecution.authzDisabled()) {
+                const segments = target.split('/')
+                if (!segments.every(segment => /^[A-Za-z0-9._-]+$/.test(segment) && segment !== '.' && segment !== '..')) {
+                    ec.message.addError(ec.l10n.localize("An export location is a relative path under runtime/drive-export, of letters, digits, '.', '_' and '-' segments"))
+                    return
+                }
+                target = `runtime://drive-export/${target}`
+            }
+            exportLocation = target || `runtime://tmp/drive-export/${driveId}-${Date.now()}.zip`
             const written = ec.resource.writeZip(exportLocation, entries)
             fileCount = written.count
             for (const failure of written.failures) ec.message.addMessage(`Not exported: ${failure.path}: ${failure.error}`, 'warning')
