@@ -209,6 +209,10 @@ along with this software (see the LICENSE.md file). If not, see
             artifactGroupId="GitRepositories" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     <moqui.security.UserPermission userPermissionId="LOAD_RUNNER" description="Tools: Load testing (run load scripts against this or an allowed server)"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="LOAD_RUNNER" fromDate="0"/>
+    <!-- System › Instance (org.moqui.dev.InstanceServices): runs an image's authTokenCmd, starts containers and makes
+        databases on the hosts the rows name. Sealed; each service asks it (plans/Security-Review.md SEC-TLS-02). -->
+    <moqui.security.UserPermission userPermissionId="INSTANCE_ADMIN" description="System: Hosted instances (start containers and databases on the configured hosts and run their commands)"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="INSTANCE_ADMIN" fromDate="0"/>
     <!-- Admin P18 (mr-boss plan/impl-admin.md P18; docs/security/Shared-Devices.md): the shared-device services,
         org.moqui.admin.DeviceServices, for every signed-in user: find#RouteGroups and find#Devices check ADMIN_ACCESS_VIEW
         and register#Device, issue#DeviceCode and revoke#Device ADMIN_ACCESS_MANAGE themselves; inheritable, so their own reads and writes are

@@ -179,6 +179,10 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="appInstanceId"/></out-parameters>
         <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
             <entity-find-one entity-name="moqui.server.instance.InstanceImage" value-field="instanceImage"/>
             <if condition="instanceImage == null"><return error="true" message="InstanceImage not found with ID ${instanceImageId}"/></if>
             <set field="imageType" from="instanceImage.imageType"/>
@@ -228,6 +232,10 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="instanceRunning" type="Boolean"/>
         </out-parameters>
         <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
             <service-call name="org.moqui.dev.InstanceServices.create#AppDatabase" in-map="context" out-map="context"/>
             <service-call name="org.moqui.dev.InstanceServices.init#AppInstance" in-map="context" out-map="context"/>
             <service-call name="org.moqui.dev.InstanceServices.start#AppInstance" in-map="context" out-map="context"/>
@@ -247,7 +255,11 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="moquiStatusMap" type="Map"/>
             <parameter name="instanceLog"/>
         </out-parameters>
-        <actions><script><![CDATA[
+        <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if><script><![CDATA[
             const dbFuture = ec.service.async().name("org.moqui.dev.InstanceServices.check#AppDatabase").parameter("appInstanceId", appInstanceId).callFuture()
             const instFuture = ec.service.async().name("org.moqui.dev.InstanceServices.check#AppInstance").parameter("appInstanceId", appInstanceId).callFuture()
             const msFuture = ec.service.async().name("org.moqui.dev.InstanceServices.check#MoquiServer").parameter("appInstanceId", appInstanceId).callFuture()
@@ -264,7 +276,11 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="moquiConnectSuccess" type="Boolean"/>
             <parameter name="moquiStatusMap" type="Map"/>
         </out-parameters>
-        <actions><script><![CDATA[
+        <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if><script><![CDATA[
             const appInstance = ec.entity.find("moqui.server.instance.AppInstance").condition("appInstanceId", appInstanceId).one()
             const restClient = ec.service.rest().method("GET").uri().host(String(appInstance.hostName)).path("status").build()
 
@@ -288,46 +304,77 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="init" noun="AppInstance">
         <implements service="org.moqui.dev.InstanceServices.init#Instance"/>
         <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
             <entity-find-one entity-name="moqui.server.instance.AppInstance" value-field="appInstance"/>
             <set field="hostType" from="appInstance?.instanceHost?.hostType"/>
             <if condition="hostType == null"><return error="true" message="No InstanceHostType found for AppInstance with ID ${appInstanceId}"/></if>
             <!-- runs on a worker and is not waited on: creating a container pulls its image, which can take minutes -->
+            <!-- a row names the service: only one of these services, so a host type row cannot run any other -->
+            <if condition="!String(hostType.initService || '').startsWith('org.moqui.dev.InstanceServices.')">
+                <return error="true" message="InstanceHostType ${hostType.hostTypeId} names an init service outside org.moqui.dev.InstanceServices"/></if>
             <script>ec.service.async().name(hostType.initService).parameter("appInstanceId", appInstanceId).call()</script>
         </actions>
     </service>
     <service verb="start" noun="AppInstance">
         <implements service="org.moqui.dev.InstanceServices.start#Instance"/>
         <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
             <entity-find-one entity-name="moqui.server.instance.AppInstance" value-field="appInstance"/>
             <set field="hostType" from="appInstance?.instanceHost?.hostType"/>
             <if condition="hostType == null"><return error="true" message="No InstanceHostType found for AppInstance with ID ${appInstanceId}"/></if>
+            <if condition="!String(hostType.startService || '').startsWith('org.moqui.dev.InstanceServices.')">
+                <return error="true" message="The startService of this instance is outside org.moqui.dev.InstanceServices"/></if>
             <service-call name="${hostType.startService}" in-map="context" out-map="context"/>
         </actions>
     </service>
     <service verb="stop" noun="AppInstance">
         <implements service="org.moqui.dev.InstanceServices.stop#Instance"/>
         <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
             <entity-find-one entity-name="moqui.server.instance.AppInstance" value-field="appInstance"/>
             <set field="hostType" from="appInstance?.instanceHost?.hostType"/>
             <if condition="hostType == null"><return error="true" message="No InstanceHostType found for AppInstance with ID ${appInstanceId}"/></if>
+            <if condition="!String(hostType.stopService || '').startsWith('org.moqui.dev.InstanceServices.')">
+                <return error="true" message="The stopService of this instance is outside org.moqui.dev.InstanceServices"/></if>
             <service-call name="${hostType.stopService}" in-map="context" out-map="context"/>
         </actions>
     </service>
     <service verb="remove" noun="AppInstance">
         <implements service="org.moqui.dev.InstanceServices.remove#Instance"/>
         <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
             <entity-find-one entity-name="moqui.server.instance.AppInstance" value-field="appInstance"/>
             <set field="hostType" from="appInstance?.instanceHost?.hostType"/>
             <if condition="hostType == null"><return error="true" message="No InstanceHostType found for AppInstance with ID ${appInstanceId}"/></if>
+            <if condition="!String(hostType.removeService || '').startsWith('org.moqui.dev.InstanceServices.')">
+                <return error="true" message="The removeService of this instance is outside org.moqui.dev.InstanceServices"/></if>
             <service-call name="${hostType.removeService}" in-map="context" out-map="context"/>
         </actions>
     </service>
     <service verb="check" noun="AppInstance">
         <implements service="org.moqui.dev.InstanceServices.check#Instance"/>
         <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
             <entity-find-one entity-name="moqui.server.instance.AppInstance" value-field="appInstance"/>
             <set field="hostType" from="appInstance?.instanceHost?.hostType"/>
             <if condition="hostType == null"><return message="No InstanceHostType found for AppInstance with ID ${appInstanceId}"/></if>
+            <if condition="!String(hostType.checkService || '').startsWith('org.moqui.dev.InstanceServices.')">
+                <return error="true" message="The checkService of this instance is outside org.moqui.dev.InstanceServices"/></if>
             <service-call name="${hostType.checkService}" in-map="context" out-map="context"/>
         </actions>
     </service>
@@ -335,18 +382,30 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="create" noun="AppDatabase">
         <implements service="org.moqui.dev.InstanceServices.create#Database"/>
         <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
             <entity-find-one entity-name="moqui.server.instance.AppInstance" value-field="appInstance"/>
             <set field="databaseType" from="appInstance.database?.type"/>
             <if condition="databaseType == null"><return error="true" message="No DatabaseType found for AppInstance with ID ${appInstanceId}"/></if>
+            <if condition="!String(databaseType.createService || '').startsWith('org.moqui.dev.InstanceServices.')">
+                <return error="true" message="The createService of this instance is outside org.moqui.dev.InstanceServices"/></if>
             <service-call name="${databaseType.createService}" in-map="context" out-map="context"/>
         </actions>
     </service>
     <service verb="check" noun="AppDatabase">
         <implements service="org.moqui.dev.InstanceServices.check#Database"/>
         <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
             <entity-find-one entity-name="moqui.server.instance.AppInstance" value-field="appInstance"/>
             <set field="databaseType" from="appInstance.database?.type"/>
             <if condition="databaseType == null"><return message="No DatabaseType found for AppInstance with ID ${appInstanceId}"/></if>
+            <if condition="!String(databaseType.checkService || '').startsWith('org.moqui.dev.InstanceServices.')">
+                <return error="true" message="The checkService of this instance is outside org.moqui.dev.InstanceServices"/></if>
             <service-call name="${databaseType.checkService}" in-map="context" out-map="context"/>
         </actions>
     </service>
@@ -363,7 +422,11 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- see https://docs.docker.com/engine/reference/api/docker_remote_api_v1.24/#/create-a-container -->
         <!-- https://docs.docker.com/engine/api/v1.24/#create-an-image -->
         <implements service="org.moqui.dev.InstanceServices.init#Instance"/>
-        <actions><script><![CDATA[
+        <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if><script><![CDATA[
             connectSuccess = null
             instanceCreated = false
             instanceExists = null
@@ -511,7 +574,11 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="start" noun="InstanceDocker">
         <!-- see https://docs.docker.com/engine/reference/api/docker_remote_api_v1.24/#/start-a-container -->
         <implements service="org.moqui.dev.InstanceServices.start#Instance"/>
-        <actions><script><![CDATA[
+        <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if><script><![CDATA[
             instanceStarted = false
             instanceRunning = null
             const appInstance = ec.entity.find("moqui.server.instance.AppInstance").condition("appInstanceId", appInstanceId).one()
@@ -554,7 +621,11 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="stop" noun="InstanceDocker">
         <!-- see https://docs.docker.com/engine/reference/api/docker_remote_api_v1.24/#/stop-a-container -->
         <implements service="org.moqui.dev.InstanceServices.stop#Instance"/>
-        <actions><script><![CDATA[
+        <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if><script><![CDATA[
             instanceStopped = false
             instanceRunning = null
             const appInstance = ec.entity.find("moqui.server.instance.AppInstance").condition("appInstanceId", appInstanceId).one()
@@ -597,7 +668,11 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="remove" noun="InstanceDocker">
         <!-- see https://docs.docker.com/engine/reference/api/docker_remote_api_v1.24/#/remove-a-container -->
         <implements service="org.moqui.dev.InstanceServices.remove#Instance"/>
-        <actions><script><![CDATA[
+        <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if><script><![CDATA[
             instanceRemoved = false
             instanceExists = null
             const appInstance = ec.entity.find("moqui.server.instance.AppInstance").condition("appInstanceId", appInstanceId).one()
@@ -636,6 +711,10 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="check" noun="InstanceDocker">
         <implements service="org.moqui.dev.InstanceServices.check#Instance"/>
         <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
             <service-call name="org.moqui.dev.InstanceServices.get#DockerStatus" in-map="context" out-map="context"/>
             <service-call name="org.moqui.dev.InstanceServices.get#DockerLog" in-map="context" out-map="context"/>
         </actions>
@@ -643,7 +722,11 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="get" noun="DockerStatus">
         <!-- see https://docs.docker.com/engine/reference/api/docker_remote_api_v1.24/#/inspect-a-container -->
         <implements service="org.moqui.dev.InstanceServices.check#Instance"/>
-        <actions><script><![CDATA[
+        <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if><script><![CDATA[
             connectSuccess = null
             instanceExists = null
             instanceRunning = null
@@ -704,7 +787,11 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- see https://docs.docker.com/engine/reference/api/docker_remote_api_v1.24/#/inspect-a-container -->
         <in-parameters><parameter name="appInstanceId"/></in-parameters>
         <out-parameters><parameter name="instanceLog"/></out-parameters>
-        <actions><script><![CDATA[
+        <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if><script><![CDATA[
             instanceLog = null
             const appInstance = ec.entity.find("moqui.server.instance.AppInstance").condition("appInstanceId", appInstanceId).one()
             const instanceHost = appInstance.findRelatedOne("instanceHost", null, null)
@@ -752,6 +839,10 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="adminMap" type="Map"/>
         </out-parameters>
         <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
             <entity-find-one entity-name="moqui.server.instance.AppInstance" value-field="appInstance"/>
             <set field="databaseHost" from="appInstance.database"/>
             <if condition="databaseHost == null"><return message="No DatabaseHost found for AppInstance ${appInstanceId}"/></if>
@@ -769,6 +860,10 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="check" noun="DatabaseMySQL">
         <implements service="org.moqui.dev.InstanceServices.check#Database"/>
         <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
             <service-call name="org.moqui.dev.InstanceServices.get#AppInstanceEnv" in-map="context" out-map="context"/>
             <if condition="!envMap || !Object.keys(envMap).length"><return/></if>
             <!-- connect with the mysql database which is always there in MySQL -->
@@ -803,6 +898,10 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="create" noun="DatabaseMySQL">
         <implements service="org.moqui.dev.InstanceServices.create#Database"/>
         <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
             <service-call name="org.moqui.dev.InstanceServices.get#AppInstanceEnv" in-map="context" out-map="context"/>
             <if condition="!envMap || !Object.keys(envMap).length"><return/></if>
             <!-- connect with the mysql database which is always there in MySQL -->
@@ -852,6 +951,10 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="check" noun="DatabasePostgres">
         <implements service="org.moqui.dev.InstanceServices.check#Database"/>
         <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
             <service-call name="org.moqui.dev.InstanceServices.get#AppInstanceEnv" in-map="context" out-map="context"/>
             <if condition="!envMap || !Object.keys(envMap).length"><return/></if>
 
@@ -885,6 +988,10 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="create" noun="DatabasePostgres">
         <implements service="org.moqui.dev.InstanceServices.create#Database"/>
         <actions>
+            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
+                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
+            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
+                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
             <log message="Creating database in Postgres!"/>
             <service-call name="org.moqui.dev.InstanceServices.get#AppInstanceEnv" in-map="context" out-map="context"/>
             <if condition="!envMap || !Object.keys(envMap).length"><return/></if>

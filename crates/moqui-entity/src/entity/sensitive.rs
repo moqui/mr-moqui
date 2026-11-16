@@ -79,6 +79,24 @@ const AUDIT_ENTITY_KEYS: &[&str] = &[
     "etlrunerror",
 ];
 
+/// Hosted-instance configuration (`moqui.server.instance`): an image's `authTokenCmd` runs as a host process, a type's
+/// `envValue`, `volumeName` and `hostConfigValue` are expanded as script, and a host type or database type names the
+/// services that run; so these rows are not written through the generic tools, REST or request loads, where an `ADMIN`
+/// without the sealed `INSTANCE_ADMIN` could plant a command for a holder to run (plans/Security-Review.md SEC-TLS-02).
+/// The `AppInstance*` rows, which hold no command, stay available.
+const HOST_CONFIG_ENTITY_KEYS: &[&str] = &[
+    "instancehost",
+    "instancehosttype",
+    "instanceimage",
+    "instanceimagetype",
+    "instanceimagetypeenv",
+    "instanceimagetypelink",
+    "instanceimagetypevolume",
+    "instanceimagetypehostconfig",
+    "databasehost",
+    "databasetype",
+];
+
 /// The text after the last `.`, in lower case.
 fn simple_entity_key(entity_name: &str) -> String {
     let name = entity_name.trim();
@@ -113,7 +131,15 @@ pub fn is_audit_entity(entity_name: &str) -> bool {
 /// Entities the generic tools and loads do not take from a request entity name: identity-admin, secret-config and
 /// audit. `UserAccount` stays available there.
 pub fn is_restricted_generic_entity(entity_name: &str) -> bool {
-    is_identity_admin_entity(entity_name) || is_secret_config_entity(entity_name) || is_audit_entity(entity_name)
+    is_identity_admin_entity(entity_name)
+        || is_secret_config_entity(entity_name)
+        || is_audit_entity(entity_name)
+        || is_host_config_entity(entity_name)
+}
+
+/// The hosted-instance configuration entities that name a command, a script or a service ([`HOST_CONFIG_ENTITY_KEYS`]).
+pub fn is_host_config_entity(entity_name: &str) -> bool {
+    HOST_CONFIG_ENTITY_KEYS.contains(&simple_entity_key(entity_name).as_str())
 }
 
 /// How deep [`secret_fields`] and [`is_restricted_entity_or_view`] follow views of views.
@@ -316,8 +342,8 @@ mod tests {
     use moqui_lib::object::Value;
 
     use super::{
-        is_audit_entity, is_identity_admin_entity, is_restricted_generic_entity, is_secret_config_entity,
-        is_user_account_entity, simple_entity_key, strip_user_account_secrets,
+        is_audit_entity, is_host_config_entity, is_identity_admin_entity, is_restricted_generic_entity,
+        is_secret_config_entity, is_user_account_entity, simple_entity_key, strip_user_account_secrets,
     };
 
     #[test]
@@ -379,6 +405,16 @@ mod tests {
         ] {
             assert!(is_audit_entity(name) && is_restricted_generic_entity(name), "{name}");
         }
+        // the hosted-instance configuration: a command, a script or a service name runs from it (SEC-TLS-02)
+        for name in [
+            "moqui.server.instance.InstanceImage",
+            "moqui.server.instance.InstanceHostType",
+            "moqui.server.instance.InstanceImageTypeEnv",
+            "moqui.server.instance.DatabaseType",
+        ] {
+            assert!(is_host_config_entity(name) && is_restricted_generic_entity(name), "{name}");
+        }
+        assert!(!is_restricted_generic_entity("moqui.server.instance.AppInstanceEnv"));
         assert!(is_user_account_entity("moqui.security.UserAccount"));
         assert!(is_user_account_entity("users"));
         assert!(!is_user_account_entity("moqui.security.UserAccountX"));
