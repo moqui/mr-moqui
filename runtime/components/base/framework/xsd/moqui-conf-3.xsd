@@ -1428,7 +1428,6 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:attribute name="auth-scheme" type="xs:string"><xs:annotation><xs:documentation>The prefix of the key,
                     Bearer by default; none for anthropic-messages</xs:documentation></xs:annotation></xs:attribute>
                 <xs:attribute name="connect-timeout" type="xs:string" default="10"/>
-                <xs:attribute name="max-delta-depth" type="non-neg-int-expandable" default="4095"><xs:annotation><xs:documentation>The most deltas from a pushed or fetched object to a whole one (4095 is the deepest git writes); a deeper chain is refused (GitDeltaTooDeep).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="idle-timeout" type="xs:string" default="120"><xs:annotation><xs:documentation>
                     Seconds without a byte of the response before the call fails as retryable.</xs:documentation></xs:annotation></xs:attribute>
                 <xs:attribute name="max-concurrent" type="xs:string"/>
@@ -1804,6 +1803,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="max-object-size" type="non-neg-int-expandable" default="536870912"><xs:annotation><xs:documentation>Bytes of one pushed object.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="idle-timeout" type="non-neg-int-expandable" default="120"><xs:annotation><xs:documentation>Seconds of silence in a request body that end it.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="pack-threads" type="xs:string"><xs:annotation><xs:documentation>Threads that compress and index one pack (each push and clone has its own); 2 when empty.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-delta-depth" type="non-neg-int-expandable" default="4095"><xs:annotation><xs:documentation>The most deltas from a pushed or fetched object to a whole one (4095 is the deepest git writes); a deeper chain is refused (GitDeltaTooDeep).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="allow-http" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Take credentials over plain HTTP.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="lfs-max-object-size" type="non-neg-int-expandable" default="5368709120"><xs:annotation><xs:documentation>The largest Git LFS object, in bytes.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="outbound-check-service" type="xs:string"><xs:annotation><xs:documentation>A service asked before a repository's webhook deliveries are queued and before its push mirror pushes (org.moqui.git.GitServices.check#GitOutbound): allowed false holds them, so an application that hides or suspends a repository stops what it would tell or copy elsewhere. None when empty.</xs:documentation></xs:annotation></xs:attribute>
