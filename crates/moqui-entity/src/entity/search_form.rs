@@ -74,33 +74,41 @@ impl EntityFind {
             .map(str::to_string)
             .collect();
         let fields = self.search_fields()?;
-        // The input is a request's: no condition or order on a password field or an encrypted one, whose row count or
-        // order would read the stored hash a prefix at a time or confirm a guessed secret (plans/Security-Review-Medium.md
-        // SEC-DAT-01). The caller's own defaults and default order may name one.
+        // The input is a request's (plans/Security-Review-Medium.md SEC-DAT-01): a password field takes no condition or
+        // order from it, whose row count or order would read the stored hash a prefix at a time; an encrypted field takes
+        // no order, no condition on a generic find (its entity named by the request, `generic_input`), and only an
+        // `equals` on a screen's or script's own find, whose author chose the entity. The caller's own defaults and
+        // default order may name any field.
         let access = super::sensitive::generic_access(&self.facade, self.entity_name());
         let mut input_skip = skip.clone();
-        input_skip.extend(
-            fields
-                .iter()
-                .filter(|field| access.hidden(&field.name))
-                .map(|field| field.name.clone()),
-        );
+        let mut equals_only = BTreeSet::new();
+        for field in &fields {
+            if access.is_secret(&field.name) || (self.generic_input && access.hidden(&field.name)) {
+                input_skip.insert(field.name.clone());
+            } else if access.hidden(&field.name) {
+                equals_only.insert(field.name.clone());
+            }
+        }
         let mut context = BTreeMap::new();
         let mut added = false;
         if !input.is_empty() {
-            added = self.process_input(input, &input_skip, &fields)?;
+            added = self.process_input(input, &input_skip, &equals_only, &fields)?;
         }
         self.has_search_parameters = added;
         if !added && !defaults.is_empty() {
-            self.process_input(defaults, &skip, &fields)?;
+            self.process_input(defaults, &skip, &BTreeSet::new(), &fields)?;
             context.extend(defaults.clone());
         }
+        // nor an order from the input on a field it takes no condition on (a skip-fields one too, SEC-AI-08)
         let order_by = input
             .get("orderByField")
             .map(to_plain_string)
             .map(|text| {
                 text.split(',')
-                    .filter(|part| !access.hidden(&order_field_name(part)))
+                    .filter(|part| {
+                        let name = order_field_name(part);
+                        !access.hidden(&name) && !skip.contains(&name)
+                    })
                     .collect::<Vec<_>>()
                     .join(",")
             })
@@ -200,6 +208,7 @@ impl EntityFind {
         &mut self,
         input: &BTreeMap<String, Value>,
         skip: &BTreeSet<String>,
+        equals_only: &BTreeSet<String>,
         fields: &[SearchField],
     ) -> Result<bool, Error> {
         let mut added = false;
@@ -209,6 +218,18 @@ impl EntityFind {
                 continue;
             }
             let op_key = format!("{name}_op");
+            if equals_only.contains(name) {
+                // an encrypted field: only an equals of the whole value (sealed with the field's IV), no pattern,
+                // range or period, which would test its ciphertext
+                let op = input.get(&op_key).map(to_plain_string).unwrap_or_default();
+                if input.contains_key(name) && (op.is_empty() || op == "equals") {
+                    if let Some(condition) = text_condition(name, field, input) {
+                        self.add(field, condition);
+                        added = true;
+                    }
+                }
+                continue;
+            }
             if input.contains_key(name) || input.contains_key(&op_key) {
                 if let Some(condition) = text_condition(name, field, input) {
                     self.add(field, condition);

@@ -85,6 +85,9 @@ pub struct EntityFind {
     /// The fields whose equality (or `IS NULL`) came from a map ([`Self::condition_from_map`]), which a find one with
     /// the whole primary key leaves out.
     map_fields: Vec<String>,
+    /// Set by [`Self::generic_input`]: the entity of this find came from a request (entity REST, a Service REST entity
+    /// resource, a generic tool), so `search_form_map` takes no condition at all on an encrypted field.
+    pub(super) generic_input: bool,
 }
 
 /// The lock calls of a find that are on ([`EntityFind::for_update`], [`EntityFind::for_no_key_update`]).
@@ -120,6 +123,7 @@ impl EntityFind {
             query_texts: Arc::new(Mutex::new(Vec::new())),
             bulk_chunk: None,
             map_fields: Vec::new(),
+            generic_input: false,
         }
     }
 
@@ -238,6 +242,15 @@ impl EntityFind {
             }
         }
         add_condition(&mut self.conditions, condition);
+        self
+    }
+
+    /// The entity of this find came from a request, not from the code that runs it: generic entity REST, a Service REST
+    /// entity resource, a generic tool's `${aen}`. Its `search_form_map` then takes no condition on an encrypted field,
+    /// where a screen's own search form may take an `equals` on one (plans/Security-Review-Medium.md SEC-DAT-01).
+    #[must_use]
+    pub fn generic_input(mut self, generic: bool) -> Self {
+        self.generic_input = generic;
         self
     }
 

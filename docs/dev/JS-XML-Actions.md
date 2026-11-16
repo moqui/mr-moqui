@@ -205,7 +205,7 @@ it uses the fields of the context; `auto-field-map` may also be an expression fo
 | `<limit-range start size/>` | `.offset(start).limit(size)` |
 | `<limit-view view-index view-size/>` | `.offset((index - 1) * size).limit(size)` |
 | `<use-iterator/>` | `.iterator()` in place of `.list()`, unless the find is cached |
-| `<search-form-inputs input-fields-map default-order-by skip-fields paginate require-parameters>` | `.searchFormMap(inputMap, defaults, skipFields, defaultOrderBy, paginate)`, the input map being the context when not given. `<default-parameters>` gives the defaults |
+| `<search-form-inputs input-fields-map default-order-by skip-fields paginate require-parameters>` | `.searchFormMap(inputMap, defaults, skipFields, defaultOrderBy, paginate, genericInput)`, the input map being the context when not given, `genericInput` true when the `entity-find`'s `entity-name` is expanded (`${aen}`). `<default-parameters>` gives the defaults |
 
 A find with `search-form-inputs` that paginates also sets `<list>Count`, `<list>PageIndex`, `<list>PageSize`,
 `<list>PageMaxIndex`, `<list>PageRangeLow` and `<list>PageRangeHigh`, which a form-list's pagination reads.

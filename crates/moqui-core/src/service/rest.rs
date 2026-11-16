@@ -713,6 +713,7 @@ fn find_entity(
     let params = &params;
     let find = facade
         .find(name)?
+        .generic_input(true)
         .search_form_map(params, &BTreeMap::new(), "", "", false)?
         .find;
     let master = master_name.filter(|master| !master.is_empty());
@@ -774,6 +775,7 @@ fn find_entity(
 fn count_entity(facade: &EntityFacade, name: &str, params: &BTreeMap<String, Value>) -> Result<Value, Error> {
     let count = facade
         .find(name)?
+        .generic_input(true)
         .search_form_map(params, &BTreeMap::new(), "", "", false)?
         .find
         .count()?;

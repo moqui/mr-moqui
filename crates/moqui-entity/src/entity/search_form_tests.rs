@@ -264,9 +264,11 @@ fn defaults_apply_only_without_input_and_order_and_paging_are_read() {
     assert!(conditions(&skipped).is_empty());
 }
 
-/// A request's input takes no condition or order on a password field or an encrypted one: the row count of
-/// `currentPassword_op=begins` read the stored hash a prefix at a time, and an `equals` on an encrypted field confirmed
-/// a guessed secret (plans/Security-Review-Medium.md SEC-DAT-01). The caller's defaults still may.
+/// A request's input takes no condition or order on a password field: the row count of `currentPassword_op=begins`
+/// read the stored hash a prefix at a time (plans/Security-Review-Medium.md SEC-DAT-01). An encrypted field takes no
+/// order, no pattern, and on a generic find (its entity named by the request) no condition at all, where an `equals`
+/// confirmed a guessed secret; a screen's own find keeps its `equals`. A skip-fields field takes no order either
+/// (SEC-AI-08). The caller's defaults still may name any field.
 #[test]
 fn request_input_takes_no_condition_or_order_on_a_secret_or_encrypted_field() {
     let facade = crate::testing::open();
@@ -290,10 +292,35 @@ fn request_input_takes_no_condition_or_order_on_a_secret_or_encrypted_field() {
     assert_eq!(account.context.get("orderByField").and_then(Value::as_str), Some("username"));
 
     let sync = || facade.find("moqui.entity.sync.EntitySync").unwrap();
-    let guessed = sync()
-        .search_form_map(&input(&[("targetPassword", "guess")]), &BTreeMap::new(), "", "", false)
+    let guess = input(&[("targetPassword", "guess"), ("orderByField", "targetPassword")]);
+    let generic = sync()
+        .generic_input(true)
+        .search_form_map(&guess, &BTreeMap::new(), "", "", false)
         .unwrap();
-    assert!(conditions(&guessed).is_empty());
+    assert!(conditions(&generic).is_empty());
+    let screen = sync().search_form_map(&guess, &BTreeMap::new(), "", "", false).unwrap();
+    assert_eq!(conditions(&screen).len(), 1, "a screen's own find keeps an equals");
+    assert!(screen.context.get("orderByField").is_none(), "no order by an encrypted field");
+    let pattern = sync()
+        .search_form_map(
+            &input(&[("targetPassword", "gu"), ("targetPassword_op", "begins")]),
+            &BTreeMap::new(),
+            "",
+            "",
+            false,
+        )
+        .unwrap();
+    assert!(conditions(&pattern).is_empty(), "no pattern on an encrypted field");
+    let skipped = sync()
+        .search_form_map(
+            &input(&[("description", "x"), ("orderByField", "description")]),
+            &BTreeMap::new(),
+            "description",
+            "",
+            false,
+        )
+        .unwrap();
+    assert!(conditions(&skipped).is_empty() && skipped.context.get("orderByField").is_none());
     let by_code = sync()
         .search_form_map(&BTreeMap::new(), &input(&[("targetPassword", "known")]), "", "", false)
         .unwrap();

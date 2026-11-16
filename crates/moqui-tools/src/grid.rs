@@ -1008,6 +1008,7 @@ fn entity_find(
     }
     let find = facade.find(&entity.full_name).map_err(|err| find_refusal(&err))?;
     let mut find = find
+        .generic_input(true)
         .search_form_map(conditions, &BTreeMap::new(), "", "", false)
         .map_err(|err| refusal(err.message().to_string()))?
         .find;

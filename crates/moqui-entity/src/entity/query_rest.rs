@@ -629,6 +629,7 @@ fn list_find(
 ) -> Result<super::find::EntityFind, Error> {
     let find = facade
         .find(entity_name)?
+        .generic_input(true)
         .search_form_map(parameters, &BTreeMap::new(), "", "", false)?
         .find;
     Ok(match find.limit_value() {
