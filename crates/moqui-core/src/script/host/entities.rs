@@ -166,7 +166,7 @@ pub(crate) static FIND: HostClass = HostClass {
         method!(
             "EntityFind",
             "searchFormMap",
-            [OptValue, OptValue, OptValue, OptValue, OptValue],
+            [OptValue, OptValue, OptValue, OptValue, OptValue, OptValue],
             Release,
             search_form_map
         ),
@@ -1219,7 +1219,9 @@ fn having_condition(call: &mut Call<'_>) -> Result<Ret, HostError> {
     })
 }
 
-/// `searchFormMap(inputFields, defaultParameters, skipFields, defaultOrderBy, paginate)`. The defaults and `orderByField`
+/// `searchFormMap(inputFields, defaultParameters, skipFields, defaultOrderBy, paginate, genericInput)`; `genericInput`
+/// true for a find whose entity the request named (a generic tool's `${aen}`), which takes no condition on an encrypted
+/// field ([`crate::entity::EntityFind::generic_input`]). The defaults and `orderByField`
 /// it applied are put in the context, so the form shows them (the engine's tracked values are written back and released
 /// first, so a later read sees them).
 fn search_form_map(call: &mut Call<'_>) -> Result<Ret, HostError> {
@@ -1234,7 +1236,9 @@ fn search_form_map(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let input = map_arg(0)?;
     let defaults = map_arg(1)?;
     let paginate = matches!(call.value(4), Some(Value::Bool(true)));
+    let generic = matches!(call.value(5), Some(Value::Bool(true)));
     let found = peek_find(call)?
+        .generic_input(generic)
         .search_form_map(&input, &defaults, &text_arg(2), &text_arg(3), paginate)
         .map_err(lib)?;
     for (name, value) in found.context {

@@ -93,6 +93,34 @@ fn check_data_file(
     Ok(out)
 }
 
+/// Entities whose rows hold credentials, which only the full tier with `ADMIN` exports (get#Credentials and
+/// store#Credential keep them for `ADMIN`).
+const CREDENTIAL_ENTITIES: &[&str] = &[
+    "moqui.dev.DevAideCredential",
+    "moqui.dev.DevAideServer",
+    "moqui.dev.DevAideTaskSource",
+];
+
+/// Why `export#Records` does not export `name` for this caller, or None: below the full tier with `ADMIN`, never a
+/// restricted entity (login keys, sign-in factors, secret configuration, the audit entities, a view over one), a
+/// `moqui.security` entity, Dev AIDE's credential entities, or an entity with an encrypted field
+/// (plans/Security-Review-Medium.md SEC-DEV-01). The text never holds a password or encrypted field for anyone: the
+/// data writer leaves them out without a full backup.
+fn export_refused(context: &Context, name: &str) -> Option<String> {
+    let full_name = info::definition_info(&context.facade, name)
+        .and_then(|detail| detail.get("fullEntityName").map(moqui_lib::object::to_plain_string))
+        .filter(|full| !full.is_empty())
+        .unwrap_or_else(|| name.to_string());
+    let admin = context.tier == Tier::Full && moqui_core::user::is_in_group("ADMIN").unwrap_or(false);
+    let access = moqui_core::entity::sensitive::generic_access(&context.facade, name);
+    if !access.read {
+        return Some(format!("{full_name} is not exported by Dev AIDE"));
+    }
+    let credentials = full_name.starts_with("moqui.security.") || CREDENTIAL_ENTITIES.contains(&full_name.as_str());
+    (!admin && (credentials || !access.encrypted.is_empty()))
+        .then(|| format!("{full_name} holds credentials or encrypted fields: its records are exported by ADMIN only"))
+}
+
 /// `export#Records`: the records of an entity (`filter`, a JSON object of field values, narrows) as the elements of a
 /// data file, for the view to insert into its buffer (12); at most a thousand.
 fn export_records(
@@ -102,6 +130,9 @@ fn export_records(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
     let name = entity_name_in(parameters);
+    if let Some(refused) = export_refused(&context, &name) {
+        return Err(LibError::new(refused));
+    }
     let filter: BTreeMap<String, Value> = match parameters.get("filter") {
         Some(Value::String(raw)) if !raw.trim().is_empty() => {
             serde_json::from_str::<serde_json::Map<String, Json>>(raw)

@@ -34,3 +34,34 @@ feature("a script filter is refused without running; a JSON filter selects the r
         !json.output.includes("\"enumTypeId\": \"StatusType\"") && !json.output.includes("\"enumTypeId\":\"StatusType\"")
     },
 })
+
+// plans/Security-Review-Medium.md SEC-TLS-05: AutoEditMaster's export refuses the entities its update refuses (the
+// parent screen's check is in its actions, which a transition does not run). plans/Security-Review-Low.md SEC-TLS-07:
+// a snapshot's baseFilename is one path segment, so the zip is never written outside runtime/db/snapshot.
+feature("a record export refuses a restricted entity, and a snapshot name with a path is refused", {
+    when() {
+        const record = ec.screen.makeTest().rootScreen("component://tools/screen/Tools.xml").render(
+            "Data/Browse/AutoEdit/AutoEditMaster/export",
+            { aen: "moqui.security.UserLoginKey", loginKey: "none", fileType: "JSON", output: "browser" }, "post")
+        ec.message.clearErrors()
+        const escaped = "runtime://db/EntityExportSpecEscape.zip"
+        // the job runs it as its user (Snapshots' exportSnapshot); the check is the service's own, so authz is off here
+        ec.artifactExecution.disableAuthz()
+        try {
+            ec.service.sync().name("org.moqui.impl.EntityServices.export#EntityDataSnapshot")
+                .parameters({ entitiesToInclude: ["moqui.basic.Uom"], baseFilename: "../EntityExportSpecEscape" }).call()
+        } finally {
+            ec.artifactExecution.enableAuthz()
+        }
+        const errors = ec.message.getErrorsString()
+        ec.message.clearErrors()
+        const written = !!ec.resource.getLocationReference(escaped)?.getExists()
+        if (written) ec.resource.getLocationReference(escaped).delete()
+        return { record, errors, written }
+    },
+    then({ record, errors, written }) {
+        record.errorMessages.join(" ").includes("not available through this tool")
+        errors.includes("one file name")
+        !written
+    },
+})

@@ -75,6 +75,7 @@ pub fn write_data(facade: &EntityFacade, entity_name: &str, records: &[BTreeMap<
             &crate::entity::field_map(record.clone()),
             levels,
             master.as_deref(),
+            None,
         )?);
     }
     let xml = render_xml(&nodes, &prefix, iso);
@@ -109,7 +110,19 @@ pub fn xml_element(
     fields: &crate::entity::FieldMap,
     levels: i64,
 ) -> Result<String, Error> {
-    let node = render_record(facade, entity_name, fields, levels, None)?;
+    guarded_xml_element(facade, entity_name, fields, levels, RecordGuard::Full)
+}
+
+/// [`xml_element`] kept to what `guard` lets out: a sync partner's replica.
+pub fn guarded_xml_element(
+    facade: &EntityFacade,
+    entity_name: &str,
+    fields: &crate::entity::FieldMap,
+    levels: i64,
+    guard: RecordGuard,
+) -> Result<String, Error> {
+    let guard = GuardCache::new(guard);
+    let node = render_record(facade, entity_name, fields, levels, None, guard.as_ref())?;
     let element = node.entity_key.replace('#', "-");
     let mut out = String::new();
     write_xml_node(&mut out, &node, &element, 1, "", false);
@@ -126,7 +139,7 @@ pub fn xml_text(
     master: Option<&str>,
     prefix: &str,
 ) -> Result<(String, u64), Error> {
-    let node = render_record(facade, entity_name, fields, levels, master)?;
+    let node = render_record(facade, entity_name, fields, levels, master, None)?;
     let count = xml_record_count(&node);
     Ok((xml_body(std::slice::from_ref(&node), prefix, false), count))
 }
@@ -211,10 +224,11 @@ pub fn rest(
                 format!("Entity {full_name} is not available through generic entity REST"),
             ));
         }
-    } else if sensitive::is_identity_admin_entity(&full_name)
-        || sensitive::is_user_account_entity(&full_name)
-        || sensitive::is_audit_entity(&full_name)
-        || (sensitive::is_secret_config_entity(&full_name) && !(crate::hooks::get().in_group)("ADMIN")?)
+    } else if sensitive::is_user_account_entity(&full_name)
+        // the restricted entities, and those only their own services write (the entity audit log, Monitor's recovery
+        // and ingest rows); a secret-config entity by ADMIN only
+        || (sensitive::is_generic_write_refused(&full_name)
+            && !(sensitive::is_secret_config_entity(&full_name) && (crate::hooks::get().in_group)("ADMIN")?))
     {
         return Err(kinded(
             ErrorKind::Unauthorized,
@@ -371,6 +385,59 @@ struct RenderCtx<'a> {
     preserve_keys: bool,
     seen: &'a mut HashSet<String>,
     depth: u32,
+    guard: Option<&'a GuardCache>,
+}
+
+/// How a record graph is kept to what generic access may see ([`sensitive::GenericAccess`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RecordGuard {
+    /// Every field and related record, for code (a script's master graph, a sync, a full backup).
+    Full,
+    /// An answer (entity REST, a Service REST entity resource): a restricted related entity is left out, the password
+    /// fields too, and an encrypted field is answered as `<field>IsSet` (plans/Security-Review-Medium.md SEC-RTE-06,
+    /// SEC-DAT-03).
+    Answer,
+    /// A file of records (an export): a restricted related entity, the password fields and the encrypted fields are
+    /// left out, so the file still loads (SEC-TLS-05).
+    File,
+    /// A replica for a sync partner: a restricted related entity and the password fields are left out; the encrypted
+    /// fields stay, as the partner's copy of the records needs them (plans/Security-Review-Low.md SEC-DAT-08).
+    Replica,
+}
+
+/// The guard of one render, with the [`sensitive::GenericAccess`] of each entity met.
+struct GuardCache {
+    kind: RecordGuard,
+    access: std::cell::RefCell<std::collections::HashMap<String, Rc<sensitive::GenericAccess>>>,
+}
+
+impl GuardCache {
+    fn new(kind: RecordGuard) -> Option<Self> {
+        (kind != RecordGuard::Full).then(|| Self {
+            kind,
+            access: std::cell::RefCell::default(),
+        })
+    }
+
+    fn access(&self, facade: &EntityFacade, entity_name: &str) -> Rc<sensitive::GenericAccess> {
+        if let Some(found) = self.access.borrow().get(entity_name) {
+            return Rc::clone(found);
+        }
+        let access = Rc::new(sensitive::generic_access(facade, entity_name));
+        self.access
+            .borrow_mut()
+            .insert(entity_name.to_string(), Rc::clone(&access));
+        access
+    }
+
+    fn fields(&self, access: &sensitive::GenericAccess, fields: Vec<(String, Value)>) -> Vec<(String, Value)> {
+        match self.kind {
+            RecordGuard::Full => fields,
+            RecordGuard::Answer => access.conceal(fields),
+            RecordGuard::File => access.drop_hidden(fields),
+            RecordGuard::Replica => fields.into_iter().filter(|(name, _)| !access.is_secret(name)).collect(),
+        }
+    }
 }
 
 struct BuiltView {
@@ -498,6 +565,7 @@ fn take_pk_path(
 
 fn find_rest(facade: &EntityFacade, target: &Resolved, parameters: &BTreeMap<String, Value>) -> Result<Value, Error> {
     let snap = load_snap(facade, &target.entity_name)?;
+    let guard = GuardCache::new(RecordGuard::Answer);
     if pk_complete(&snap, parameters) {
         let mut find = facade.find(&snap.full_name)?;
         for name in snap.pk_names() {
@@ -521,6 +589,7 @@ fn find_rest(facade: &EntityFacade, target: &Resolved, parameters: &BTreeMap<Str
             found.fields(),
             target.levels,
             target.master.as_deref(),
+            guard.as_ref(),
         )?;
         return Ok(node_to_value(&node));
     }
@@ -539,6 +608,7 @@ fn find_rest(facade: &EntityFacade, target: &Resolved, parameters: &BTreeMap<Str
             row.fields(),
             target.levels,
             target.master.as_deref(),
+            guard.as_ref(),
         )?;
         items.push(node_to_value(&node));
     }
@@ -559,6 +629,7 @@ fn list_find(
 ) -> Result<super::find::EntityFind, Error> {
     let find = facade
         .find(entity_name)?
+        .generic_input(true)
         .search_form_map(parameters, &BTreeMap::new(), "", "", false)?
         .find;
     Ok(match find.limit_value() {
@@ -602,6 +673,11 @@ fn page_numbers(page: &Page, parameters: &BTreeMap<String, Value>, total: i64) -
 }
 
 /// The conf's `entity-facade` `rest-max-page-size`, else [`DEFAULT_MAX_PAGE_SIZE`].
+/// Service REST entity lists are capped at it too.
+pub fn rest_max_page_size() -> i64 {
+    max_page_size()
+}
+
 fn max_page_size() -> i64 {
     (crate::hooks::get().conf_setting)("entity-facade", "rest-max-page-size")
         .parse::<i64>()
@@ -629,14 +705,26 @@ fn key_text(snap: &EntitySnap, parameters: &BTreeMap<String, Value>) -> String {
 
 /// A master graph for a script find, using the same expansion and authorization as entity REST.
 pub fn master_value(facade: &EntityFacade, record: &EntityValue, master: &str) -> Result<Value, Error> {
+    guarded_master_value(facade, record, master, RecordGuard::Full)
+}
+
+/// [`master_value`] kept to what `guard` lets generic access see: a Service REST entity resource's answer.
+pub fn guarded_master_value(
+    facade: &EntityFacade,
+    record: &EntityValue,
+    master: &str,
+    guard: RecordGuard,
+) -> Result<Value, Error> {
     let mut seen = HashSet::new();
     let parent_pks = HashSet::new();
+    let guard = GuardCache::new(guard);
     let mut ctx = RenderCtx {
         expand: Expand::Master(master),
         parent_pks: &parent_pks,
         preserve_keys: true,
         seen: &mut seen,
         depth: 0,
+        guard: guard.as_ref(),
     };
     render(facade, record.entity_name(), record.fields(), &mut ctx).map(|node| node_to_value(&node))
 }
@@ -725,6 +813,7 @@ fn render_record(
     fields: &crate::entity::FieldMap,
     levels: i64,
     master: Option<&str>,
+    guard: Option<&GuardCache>,
 ) -> Result<RecordNode, Error> {
     let parent = HashSet::new();
     let mut seen = HashSet::new();
@@ -739,6 +828,7 @@ fn render_record(
         preserve_keys: false,
         seen: &mut seen,
         depth: 0,
+        guard,
     };
     render(facade, entity_name, fields, &mut ctx)
 }
@@ -755,6 +845,7 @@ fn render(
         fields: Vec::new(),
         nested: Vec::new(),
     };
+    let access = ctx.guard.map(|guard| guard.access(facade, &snap.full_name));
     for name in &snap.fields {
         if !ctx.preserve_keys && ctx.parent_pks.contains(name) {
             continue;
@@ -762,10 +853,16 @@ fn render(
         let Some(value) = fields.get(name.as_str()) else {
             continue;
         };
-        if value.is_null() {
+        // an answer says whether an encrypted field is set, so an empty one is kept for that
+        let answered_empty = ctx.guard.is_some_and(|guard| guard.kind == RecordGuard::Answer)
+            && access.as_ref().is_some_and(|access| access.encrypted.contains(name));
+        if value.is_null() && !answered_empty {
             continue;
         }
         node.fields.push((name.clone(), value.clone()));
+    }
+    if let (Some(guard), Some(access)) = (ctx.guard, access.as_ref()) {
+        node.fields = guard.fields(access, std::mem::take(&mut node.fields));
     }
     let seen_id = seen_key(&snap, fields);
     if ctx.depth >= MAX_DEPTH || !ctx.seen.insert(seen_id) {
@@ -907,6 +1004,13 @@ fn push_related(
     ctx: &mut RenderCtx<'_>,
 ) -> Result<(), Error> {
     let one = relationship.relationship_type.starts_with("one");
+    // a related entity generic access does not read (`UserLoginKey` below `UserAccount`) is not read here either
+    if ctx
+        .guard
+        .is_some_and(|guard| !guard.access(facade, &relationship.related).read)
+    {
+        return Ok(());
+    }
     let rows = related_rows(facade, relationship, fields, one)?;
     if rows.is_empty() {
         return Ok(());
@@ -931,6 +1035,7 @@ fn push_related(
             preserve_keys: ctx.preserve_keys,
             seen: ctx.seen,
             depth,
+            guard: ctx.guard,
         };
         records.push(render(facade, &child_name, &child_fields, &mut child_ctx)?);
     }
@@ -1687,10 +1792,12 @@ pub(crate) fn data_body(
     master: Option<&str>,
     prefix: &str,
     iso: bool,
+    guard: RecordGuard,
 ) -> Result<(String, u64), Error> {
     let mut nodes = Vec::with_capacity(records.len());
+    let guard = GuardCache::new(guard);
     for record in records {
-        nodes.push(render_record(facade, entity_name, record, levels, master)?);
+        nodes.push(render_record(facade, entity_name, record, levels, master, guard.as_ref())?);
     }
     if !json {
         let count = nodes.iter().map(xml_record_count).sum();

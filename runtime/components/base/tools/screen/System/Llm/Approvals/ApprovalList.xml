@@ -23,7 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
     <widgets>
         <form-list name="ApprovalList" list="approvalList" skip-form="true" header-dialog="true" show-csv-button="true">
             <entity-find entity-name="moqui.agent.AgentApproval" list="approvalList" use-clone="true">
-                <search-form-inputs default-order-by="-createdDate">
+                <search-form-inputs default-order-by="-createdDate" skip-fields="argumentsJson,snapshotJson,recordRefsJson,previewJson,feedback,resultJson">
                     <default-parameters createdDate_poffset="-1" createdDate_period="7d"/></search-form-inputs>
                 <select-field field-name="approvalId,runId,userId,agentId,classificationEnumId,targetKind,targetName,statusId,decisionUserId,decisionChannel,decisionDate,createdDate,expireDate,policy"/>
             </entity-find>

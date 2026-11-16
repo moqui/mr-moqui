@@ -572,6 +572,32 @@ fn a_paginated_search_sets_the_page_keys_of_the_list() -> Result<(), Error> {
     Ok(())
 }
 
+/// A search form on a find whose entity-name is expanded (a generic tool's `${aen}`) takes no condition on an encrypted
+/// field; a screen's own find, its entity written in the screen, keeps an `equals` (plans/Security-Review-Medium.md
+/// SEC-DAT-01).
+#[test]
+fn a_generic_finds_search_form_takes_no_condition_on_an_encrypted_field() -> Result<(), Error> {
+    clear_context_stack();
+    let facade = open_facade();
+    let ctx = ExecutionContextFactory::test_context();
+    ctx.factory().set_entity(facade.clone());
+    let _guard = ctx.enter();
+    let mut row = facade.make_value("moqui.entity.sync.EntitySync").expect("make row");
+    row.set("entitySyncId", Value::string("S1"));
+    row.set("targetPassword", Value::string("right"));
+    row.create(&facade).expect("create row");
+    set_context_name("aen", Value::string("moqui.entity.sync.EntitySync"))?;
+    set_context_name("targetPassword", Value::string("wrong"))?;
+    run_actions(
+        r#"<actions><entity-find entity-name="${aen}" list="generic"><search-form-inputs paginate="false"/></entity-find>
+            <entity-find entity-name="moqui.entity.sync.EntitySync" list="own"><search-form-inputs paginate="false"/></entity-find></actions>"#,
+    )?;
+    assert!(eval_condition("generic.length === 1")?, "a generic find ignores the condition");
+    assert!(eval_condition("own.length === 0")?, "a screen's own find takes the equals");
+    clear_context_stack();
+    Ok(())
+}
+
 fn macro_names() -> Result<Vec<String>, Error> {
     crate::script::oxide::walker::action_macro_names(super::TEMPLATE_SUPPORT, super::XML_ACTIONS)
 }

@@ -113,3 +113,29 @@ feature("Export writes an entity's records as a data file's elements, and Check 
         differing.messages.some((text) => text.includes("description"))
     },
 })
+
+// plans/Security-Review-Medium.md SEC-DEV-01: export#Records refuses a restricted entity, a moqui.security entity, Dev
+// AIDE's credential entities and an entity with an encrypted field below the full tier with ADMIN, and its text never
+// holds a password or encrypted field.
+feature("Export refuses credential entities below ADMIN and never writes a password field", {
+    when() {
+        ec.user.internalLoginUser("dev.extender")
+        const account = errorsOf("export#Records", { entityName: "moqui.security.UserAccount", filter: JSON.stringify({ userId: "devExtender" }) })
+        const sync = errorsOf("export#Records", { entityName: "moqui.entity.sync.EntitySync" })
+        const plain = errorsOf("export#Records", { entityName: "moqui.basic.EnumerationType", filter: JSON.stringify({ enumTypeId: "ComparisonOperator" }) })
+        login("john.doe")
+        const key = errorsOf("export#Records", { entityName: "moqui.security.UserLoginKey" })
+        const admin = svc("export#Records", { entityName: "moqui.security.UserAccount", filter: JSON.stringify({ username: "john.doe" }) })
+        ec.message.clearErrors()
+        return { account, sync, plain, key, admin }
+    },
+    then({ account, sync, plain, key, admin }) {
+        account.includes("ADMIN only")
+        sync.includes("ADMIN only")
+        plain == ""
+        key.includes("not exported")
+        admin.count == 1
+        admin.records.includes("john.doe")
+        !admin.records.includes("currentPassword")
+    },
+})

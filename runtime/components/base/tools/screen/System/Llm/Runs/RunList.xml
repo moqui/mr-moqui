@@ -23,7 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
     <widgets>
         <form-list name="RunList" list="runList" skip-form="true" header-dialog="true" show-csv-button="true">
             <entity-find entity-name="moqui.agent.AgentRun" list="runList" use-clone="true">
-                <search-form-inputs default-order-by="-submittedDate">
+                <search-form-inputs default-order-by="-submittedDate" skip-fields="statusReason,resultJson,errorText,capsText">
                     <default-parameters submittedDate_poffset="-1" submittedDate_period="7d"/></search-form-inputs>
                 <select-field field-name="runId,conversationId,userId,agentId,surfaceEnumId,statusId,pauseKindEnumId,submittedDate,endedDate,stepCount,toolCallCount,inputTokens,outputTokens,cost,errorCode,leaseOwner"/>
             </entity-find>

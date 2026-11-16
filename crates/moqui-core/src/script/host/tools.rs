@@ -1066,6 +1066,8 @@ macro_rules! tools_js {
     };
     // Entities the generic tools (auto screens, data edit, data import) do not take from a request entity name
     wu.isRestrictedGenericEntity = host.isRestrictedGenericEntity;
+    // ... and the entities their writes refuse besides: those only their own services write
+    wu.isGenericWriteRefused = host.isGenericWriteRefused;
 })"#
     };
 }
@@ -1201,6 +1203,12 @@ static METHODS: &[Method] = &[
         "isRestrictedGenericEntity",
         [OptValue],
         is_restricted_generic_entity
+    ),
+    method!(
+        "tools",
+        "isGenericWriteRefused",
+        [OptValue],
+        is_generic_write_refused
     ),
     method!(
         "tools",
@@ -1730,6 +1738,9 @@ fn write_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let second = call.value(3).cloned();
     let facade = entity_facade()?;
     let mut writer = crate::entity::EntityDataWriter::new(&facade);
+    // the restricted entities and the secret fields only for a full backup: the sealed permission a backup archive
+    // needs (plans/Security-Review-Medium.md SEC-TLS-05)
+    writer.full(crate::user::has_permission("ADMIN_BACKUP_DOWNLOAD").unwrap_or(false));
     let Value::List(ops) = ops else {
         return Err(HostError::message("data writer calls are a list"));
     };
@@ -1843,6 +1854,8 @@ fn load_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
             .ok()
             .map(std::time::Duration::from_secs),
         restrict_sensitive_entities: flag("restrictSensitiveEntities"),
+        refuse_password_fields: false,
+        refused_packages: Vec::new(),
         csv_entity_name: Some(text("csvEntityName")).filter(|name| !name.is_empty()),
         csv_field_names: list("csvFieldNames"),
         csv_delimiter: text("csvDelimiter").chars().next(),
@@ -3203,6 +3216,16 @@ fn is_restricted_generic_entity(call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(Ret::from(match with_ec(|ec| ec.factory().entity())? {
         Some(facade) => crate::entity::sensitive::is_restricted_entity_or_view(&facade, &name),
         None => crate::entity::sensitive::is_restricted_generic_entity(&name),
+    }))
+}
+
+/// `isRestrictedGenericEntity`, or an entity only its own services write (the entity audit log, Monitor's recovery and
+/// ingest rows): what a generic tool's write refuses.
+fn is_generic_write_refused(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let name = text_of(call.value(0).cloned().as_ref());
+    Ok(Ret::from(match with_ec(|ec| ec.factory().entity())? {
+        Some(facade) => !crate::entity::sensitive::generic_access(&facade, &name).write,
+        None => crate::entity::sensitive::is_generic_write_refused(&name),
     }))
 }
 

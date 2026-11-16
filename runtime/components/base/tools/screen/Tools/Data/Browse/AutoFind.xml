@@ -23,11 +23,11 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="entityDetail"><default-response url="../../../Schema/Entity"/></transition>
 
     <transition name="create"><actions>
-        <set field="entityName" from="aen"/><if condition="WebUtilities.isRestrictedGenericEntity(aen)"><message error="true">Entity ${entityName} is not available through this tool</message><return/></if>
+        <set field="entityName" from="aen"/><if condition="WebUtilities.isGenericWriteRefused(aen)"><message error="true">Entity ${entityName} is not available through this tool</message><return/></if>
         <service-call name="create#${aen}" in-map="true"/></actions>
         <default-response url="."/></transition>
     <transition name="deleteRecord"><actions>
-        <set field="entityName" from="aen"/><if condition="WebUtilities.isRestrictedGenericEntity(aen)"><message error="true">Entity ${entityName} is not available through this tool</message><return/></if>
+        <set field="entityName" from="aen"/><if condition="WebUtilities.isGenericWriteRefused(aen)"><message error="true">Entity ${entityName} is not available through this tool</message><return/></if>
         <service-call name="delete#${aen}" in-map="context"/></actions>
         <default-response url="."/></transition>
     <transition name="getFormXml" read-only="true">
