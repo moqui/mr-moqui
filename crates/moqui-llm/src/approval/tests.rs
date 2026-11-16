@@ -46,8 +46,14 @@ struct Bed {
 
 fn bed(name: &str) -> Bed {
     let endpoint = format!("approval-{name}");
+    // entity authorization on where a test checks a user's permission for an entity (the test conf has it off)
+    let authz = if name == "decider" {
+        r#"<artifact-execution-facade><artifact-execution type="AT_ENTITY" authz-enabled="true"/></artifact-execution-facade>"#
+    } else {
+        ""
+    };
     let conf = format!(
-        r#"<moqui-conf><llm-facade>
+        r#"<moqui-conf>{authz}<llm-facade>
             <endpoint id="{endpoint}" protocol="fake"/>
             <model id="{endpoint}" endpoint="{endpoint}" name="fake-1" context-window="32768"/>
             <bind feature="assist" model="{endpoint}" reasoning="none"/>
@@ -954,4 +960,56 @@ fn a_resumed_write_that_panics_after_it_began_is_an_unknown_outcome() {
         "{}",
         result_text(&bed)
     );
+}
+
+/// SEC-AI-01 (the user's decision on question 12): a room member who is not the requester approves a write only when
+/// they may make it themselves, checked as that member: a service write by their own permission (one member may update
+/// enumerations, the other may not); a tool's write, with no check of the decider's, by no member.
+#[test]
+fn a_member_approves_only_a_write_they_may_make_themselves() {
+    let bed = bed("decider");
+    let _entered = bed.ctx.enter();
+    {
+        let _authz = bed.ctx.disable_authz();
+        row(
+            &bed.facade,
+            "moqui.security.ArtifactGroupMember",
+            &[
+                ("artifactGroupId", "DECIDE_ENUM"),
+                ("artifactName", "moqui.basic.Enumeration"),
+                ("artifactTypeEnumId", "AT_ENTITY"),
+            ],
+        );
+        for (group, user, kind) in [
+            ("DECIDE_YES", USER, "AUTHZT_ALLOW"),
+            ("DECIDE_NO", OTHER, "AUTHZT_DENY"),
+        ] {
+            row(&bed.facade, "moqui.security.UserGroup", &[("userGroupId", group)]);
+            let mut member = bed.facade.make_value("moqui.security.UserGroupMember").unwrap();
+            member.set("userGroupId", Value::string(group));
+            member.set("userId", Value::string(user));
+            member.set("fromDate", Value::I64(0));
+            member.create(&bed.facade).unwrap();
+            row(
+                &bed.facade,
+                "moqui.security.ArtifactAuthz",
+                &[
+                    ("artifactAuthzId", group),
+                    ("userGroupId", group),
+                    ("artifactGroupId", "DECIDE_ENUM"),
+                    ("authzTypeEnumId", kind),
+                    ("authzActionEnumId", "AUTHZA_ALL"),
+                ],
+            );
+        }
+    }
+    let may = |user: &str, kind: TargetKind, name: &str| {
+        moqui_core::user::as_user(user, || decider_may_write(&bed.factory, kind, name, &json!({})))
+            .expect("the user")
+            .is_ok()
+    };
+    assert!(may(USER, TargetKind::Service, "update#moqui.basic.Enumeration"));
+    assert!(!may(OTHER, TargetKind::Service, "update#moqui.basic.Enumeration"));
+    assert!(!may(USER, TargetKind::Tool, "test#key"));
+    assert!(!may(USER, TargetKind::Service, "no.such.Services.do#Nothing"));
 }

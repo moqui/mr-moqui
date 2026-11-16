@@ -1261,8 +1261,11 @@ tasks, `ec.llm.summarize`/`classify`/`extract`/`startRun`, `propose#AiFieldValue
   from a browser session by its cookie with the session token (`approval::Decider::from_request` with channel `chat`, so a
   header login, an agent's context and internal code are refused); an agent member, the chat or run-as user of any agent,
   or a user who may not post never decides (not found). The write runs as the requester. A member who is not the
-  requester approves the write as it stands or rejects it: edited arguments, Edit in screen and a question's answer
-  stay the requester's, and a member's rejection keeps no feedback and gives the agent no task (it reads only that
+  requester approves only a write they may make themselves (SEC-AI-01, the user's decision): a screen write's path as
+  that member (`path_permitted`), a service's own permission (`user_permitted`); another system's tool, an add-on's
+  tool and a change set have no such check and only the requester approves them. The approval keeps both users
+  (`userId` the requester, `decisionUserId` the decider). A member approves the write as it stands or rejects it:
+  edited arguments, Edit in screen and a question's answer stay the requester's, and a member's rejection keeps no feedback and gives the agent no task (it reads only that
   another member rejected it, and asks the requester). The plan's section 1 said the card is "for the sender only": the card is a room
   message every member sees, naming the requester, and it is the decision that question 12 opens to the room. A card
   shows the changed fields' current and proposed values to the room, as the agent's reply would.

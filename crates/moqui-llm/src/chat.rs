@@ -34,7 +34,9 @@
 //! card's button ([`decide_chat_card`], `chatAssistCard` in webroot.xml), with the decision rules of
 //! [`crate::approval::Decider`] otherwise: only a browser session by its cookie with the session token, never a
 //! header login, an agent's own context or internal code; an agent member, or the chat or run-as user of any agent,
-//! never decides. The write still runs as the requester. Edit in screen (a hand-off to the deciding user's own page)
+//! never decides. A member who is not the requester approves only a write they may make themselves (the screen path or
+//! the service for that member, SEC-AI-01); another system's tool or a change set only its requester approves. The
+//! write still runs as the requester, and the approval keeps both (`userId`, `decisionUserId`). Edit in screen (a hand-off to the deciding user's own page)
 //! and a question's answer stay the requester's. This reconciles plan section 1 ("the approval card … appears in the
 //! room for the sender only"): the card is a room message every member sees, which names the requester; it is the
 //! decision that question 12 opens to the room.
@@ -1112,7 +1114,8 @@ pub(crate) fn room_approval(
 }
 
 /// `decide#ChatCard`: the current user's press of a button on an agent's card in a room (`content.assist`): approve or
-/// reject an approval (any human who may post in the room, answered question 12), or answer a question (the requester
+/// reject an approval (any human who may post in the room, answered question 12; one who is not the requester approves
+/// only a write they may make themselves, SEC-AI-01), or answer a question (the requester
 /// only). Only from an interactive browser session, as every decision. Out: `status`.
 fn decide_chat_card(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let (Some(room_id), Some(factory)) = (param(parameters, "chatRoomId"), factory()) else {
