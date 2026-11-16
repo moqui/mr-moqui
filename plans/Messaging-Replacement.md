@@ -3,7 +3,8 @@
 Plan, 2026-11-16. Nothing built. Companion to [Chat-Messaging-App.md](Chat-Messaging-App.md) (the app itself) and
 [RCS.md](RCS.md).
 
-The goal: one MR Moqui app replaces GroupMe, iMessage, Google Messages (SMS, MMS and RCS), Signal and Cheogram. The user
+The goal: one MR Moqui app replaces GroupMe, iMessage, Google Messages (SMS, MMS and RCS), Signal and Cheogram, and also
+Android's own Phone and Contacts apps (§4.7, §4.8). The user
 keeps talking to the same people on the same networks. The people on the other side change nothing. The app also keeps
 every protocol MR Moqui speaks today, so people on XMPP apps, SIP phones, mail and the web reach the user too.
 
@@ -213,6 +214,50 @@ that adds it. "New" means this plan adds it (§6).
 | Stickers, reactions, replies, threads | Stickers new; the rest built | Partly |
 | Push without Google (UnifiedPush) | UnifiedPush option | Chat-Messaging-App §7.4 |
 
+### 4.7 Android Phone app
+
+The app can become the Android default phone app (the `ROLE_DIALER` role). It then handles every call on the phone:
+the SIM's carrier calls and the server's calls (Moqui calls and the Telnyx number).
+
+| Feature | Equivalent | Status |
+|---|---|---|
+| Dialer keypad, `tel:` links | Dialer screen (exists on the web), `tel:` and `DIAL` intents | Dialer built; intents new |
+| In-call screen for SIM calls | An `InCallService`: the same call screen as Moqui calls (Chat-Messaging-App §8) for carrier calls | New |
+| Pick the line per call | SIM line, the Telnyx number (through `place#PhoneCall`), or a Moqui call to a user. Default by contact, last used | New |
+| Incoming carrier calls | Ring screen over the lock screen (exists for Moqui calls), with the caller's contact name | Ring built; carrier calls new |
+| Call log | One history: SIM calls (Android `CallLog`), Telnyx calls and Moqui calls (server call history), merged and by person | New |
+| Voicemail | Server voicemail in the number's room (built). The carrier's voicemail: dial-in only (visual voicemail of carriers is closed) | Server voicemail built |
+| Spam and unknown callers | Android `CallScreeningService`: block numbers on the block list (§4.2), silence unknown callers as an option | New |
+| Hold, mute, speaker, Bluetooth, merge, swap | Android Telecom for SIM calls; the server for Telnyx and Moqui calls | Partly built |
+| Emergency calls | Always on the SIM and the carrier, through Android, never through the server. The app must not block or delay them | Required |
+| Calls from the Contacts app and the car | Android `PhoneAccount` for the Telnyx number and Moqui calls, so other apps and cars can call through them | Chat-Messaging-App §9 |
+
+**Build:** a cargo feature `sim-dialer`, like `sim-sms`, with its Android parts in an optional plugin crate. The default
+APK has no `CALL_PHONE`, `READ_CALL_LOG` or `ANSWER_PHONE_CALLS` permissions. Google Play allows call log permissions only
+for the default phone app, so the call log is in this build only. `sim-sms` and `sim-dialer` can ship in one "phone" APK.
+
+**Done when:** with the role given, a carrier call in and out, a Telnyx call in and out, and a Moqui call all use the
+app's screens and appear in one call log; an emergency number goes to the carrier at once.
+
+### 4.8 Android Contacts app
+
+| Feature | Equivalent | Status |
+|---|---|---|
+| Contact list and details | A Contacts screen in the app: name, photo, numbers, emails, and each network the person is on (§1 unified contacts) | New |
+| Contacts synced to the server | The server's CardDAV contact books (Mantle's `ContactDavServices`, [Sync](../docs/interfaces/Sync.md)): personal books read and write, shared books read only | Built on the server |
+| Contacts in other Android apps | A built-in Android sync adapter: an Android account "MR Moqui" that syncs the CardDAV books into Android's contact store, both ways. The phone app, the keyboard and the car see them | New |
+| Existing phone contacts | Import once from the phone's other accounts into the personal book, with duplicates merged | New |
+| Caller name and photo | From the synced contacts, for SIM, Telnyx and Moqui calls and for texts | New |
+| Favorites, groups | Favorites (starred), contact groups as CardDAV categories | New |
+| Share a contact | A vCard message in chat; save a received vCard | New |
+| Network per person | Link a contact to an MR Moqui user, an XMPP address, a Signal or GroupMe identity, a phone number (§1) | New |
+
+**Build:** the contact sync is in the default APK (`READ_CONTACTS` and `WRITE_CONTACTS`, asked on first use, with a
+reason). It also works today with an outside CardDAV app, such as DAVx5, and an app password.
+
+**Done when:** a contact made in the app shows in Android's contact list and on the server; a contact changed on the
+server shows on the phone within a minute; a call and a text from that contact show its name and photo.
+
 ## 5. Moving history in
 
 | From | How | Notes |
@@ -245,15 +290,18 @@ Each import is idempotent (an outside message id per network), so it can run aga
 | 13 | Telnyx RCS adapter | RCS.md |
 | 14 | Matrix appservice API (C6c), then `mautrix-gmessages` for personal RCS | §3.2 |
 | 15 | History imports | §5 |
+| 16 | Default phone app (`sim-dialer`): SIM calls, line choice, one call log, call screening | §4.7 |
+| 17 | Contacts: Contacts screen, Android sync adapter on CardDAV, phone import, caller names | §4.8 |
 
 **Order** (after phases 1 to 3 of [Chat-Messaging-App](Chat-Messaging-App.md): phone layout, notifications, calls):
-1. The number on Telnyx, block and spam (the user stops using Google Messages and Cheogram).
-2. GroupMe adapter (official API, low risk).
-3. Signal adapter.
-4. iMessage adapter (needs a Mac).
-5. Disappearing messages, invite links, scheduled send, SMS members.
-6. RCS: Telnyx business adapter, then C6c and the personal RCS bridge if §3.4 picks B or C.
-7. The rest of §6.
+1. The number on Telnyx, block and spam, contacts sync (the user stops using Google Messages and Cheogram).
+2. Default phone app and the merged call log (the user stops using the Phone app).
+3. GroupMe adapter (official API, low risk).
+4. Signal adapter.
+5. iMessage adapter (needs a Mac).
+6. Disappearing messages, invite links, scheduled send, SMS members.
+7. RCS: Telnyx business adapter, then C6c and the personal RCS bridge if §3.4 picks B or C.
+8. The rest of §6.
 
 **Done when** for each network: the user sends and gets text, a photo and a reaction with a real person on that network,
 and the room shows the right network and E2EE label.
@@ -266,3 +314,4 @@ and the room shows the right network and E2EE label.
   chats.
 - Sidecars (signal-cli, BlueBubbles, mautrix): on the same server, or on a separate machine?
 - Stories: wanted?
+- After the port, does the phone keep a SIM line (for carrier calls and emergency calls), or only data?
