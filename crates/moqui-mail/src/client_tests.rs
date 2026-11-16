@@ -2307,6 +2307,18 @@ fn the_automatic_reply_goes_once_to_each_sender_it_is_for() {
     for id in ["alice", "bob"] {
         user(&facade, id);
     }
+    // only a mail administrator makes an account delivered here (SEC-MAIL-01): bob is refused, alice is one
+    login("bob");
+    call(
+        "create#EmailAccount",
+        &[
+            ("accountKindEnumId", text("EakShared")),
+            ("emailAddress", text("orders@acme.example.com")),
+        ],
+    );
+    let refused = errors();
+    assert!(refused.contains("Only a mail administrator"), "{refused}");
+    super::sync_tests::mail_admin(&facade, "alice");
     login("alice");
     let account = out_text(
         &ok(
