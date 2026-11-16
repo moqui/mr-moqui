@@ -52,6 +52,8 @@ pub mod review;
 #[cfg(test)]
 mod script_ports_tests;
 #[cfg(test)]
+mod trust_tests;
+#[cfg(test)]
 mod wiki_tests;
 
 /// The Rust services of `org.moqui.git.GitServices` and of [`hosting`].
@@ -143,12 +145,25 @@ pub(super) fn add_message(text: impl Into<String>) {
     ExecutionContext::with_current(|ctx| ctx.message().add_message(text));
 }
 
-/// The provider and the required `repositoryId`, or the error recorded.
+/// Whether the service runs with authorization disabled: the framework's own call (a rule, a job, an async call) or
+/// an application's that decided who may.
+pub(super) fn internal_call() -> bool {
+    ExecutionContext::with_current(ExecutionContext::authz_disabled).unwrap_or(false)
+}
+
+/// The provider and the required `repositoryId`, or the error recorded. With `AT_GIT_REPOSITORY` authorization off in
+/// the conf every repository check would pass, so, as the git server, a call with authorization on is refused then.
 pub(super) fn provider_and_id(parameters: &BTreeMap<String, Value>, need_id: bool) -> Option<(GitProvider, String)> {
     let Some(provider) = ExecutionContext::with_current(|ec| crate::provider(ec.factory())).flatten() else {
         add_error("git resources are not installed (resource-reference scheme=\"git\" in the conf)");
         return None;
     };
+    let checked = ExecutionContext::with_current(|ec| ec.factory().artifact_flag(GIT_ARTIFACT_TYPE, "authz-enabled"))
+        .unwrap_or(false);
+    if !checked && !internal_call() {
+        add_error("the git services are off: AT_GIT_REPOSITORY authorization is not enabled in the conf");
+        return None;
+    }
     let id = text(parameters, "repositoryId").unwrap_or_default();
     if need_id && id.is_empty() {
         add_error("repositoryId is required");
@@ -168,12 +183,13 @@ pub(super) fn count(value: usize) -> Value {
     Value::I64(i64::try_from(value).unwrap_or(i64::MAX))
 }
 
-/// `fetch#GitRepository`: fetch a remote mirror's branch. Out: `headCommitId`.
+/// `fetch#GitRepository`: fetch a remote mirror's branch. Out: `headCommitId`. Needs the delete right on the
+/// repository (it reaches out of the server with the repository's credential), or authorization disabled.
 fn fetch_repository(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
-    let Some((provider, id)) = provider_and_id(parameters, true) else {
+    let Some((provider, id)) = hosting::allowed(parameters, "delete") else {
         return Ok(BTreeMap::new());
     };
     match provider.fetch(&id) {
@@ -185,12 +201,14 @@ fn fetch_repository(
     }
 }
 
-/// `push#GitMirror`: push a repository to its push mirror. Out: `pushResult`, empty when it has none.
+/// `push#GitMirror`: push a repository to its push mirror. Out: `pushResult`, empty when it has none. Needs the
+/// delete right on the repository, as its `GitRepositoryMirror` rows do, or authorization disabled (the rule's async
+/// call).
 fn push_mirror(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
-    let Some((provider, id)) = provider_and_id(parameters, true) else {
+    let Some((provider, id)) = hosting::allowed(parameters, "delete") else {
         return Ok(BTreeMap::new());
     };
     match provider.push_mirror(&id) {
@@ -238,6 +256,14 @@ fn init_repository(
     let Some((provider, id)) = provider_and_id(parameters, true) else {
         return Ok(BTreeMap::new());
     };
+    // the commit of .gitattributes asks what setup#GitLfs asks, before anything is made
+    let content = flag(parameters, "contentRepository");
+    if content {
+        if let Err(err) = moqui_core::user::authorize_own(GIT_ARTIFACT_TYPE, &id, "update") {
+            add_error(err.message());
+            return Ok(BTreeMap::new());
+        }
+    }
     match provider.init(&id) {
         Ok(done) => add_message(done),
         Err(err) => {
@@ -245,7 +271,7 @@ fn init_repository(
             return Ok(BTreeMap::new());
         }
     }
-    if flag(parameters, "contentRepository") {
+    if content {
         if let Err(err) = provider.setup_lfs(&id, &crate::attributes::DEFAULT_LFS_PATTERNS) {
             add_error(err.message());
         }
@@ -296,15 +322,45 @@ fn setup_lfs(
     }
 }
 
+/// Where a caller with authorization on exports to: a `targetPath` of safe relative segments under it, so an export
+/// writes no other directory of the server and no repository it holds.
+pub(crate) const EXPORT_DIR: &str = "git-export";
+
 /// `export#GitRepository`: write a db repository as a bare repository on disk. Out: `exportPath`, `objectCount`.
+/// Needs the delete right on the repository, or authorization disabled. With authorization on, `targetPath` is a
+/// relative path under `runtime/git-export`; with it disabled, any path, as before.
 fn export_repository(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
-    let Some((provider, id)) = provider_and_id(parameters, true) else {
+    let Some((provider, id)) = hosting::allowed(parameters, "delete") else {
         return Ok(BTreeMap::new());
     };
-    match provider.export(&id, text(parameters, "targetPath").as_deref()) {
+    let target = match text(parameters, "targetPath").map(|path| path.trim().to_string()) {
+        Some(path) if !path.is_empty() && !internal_call() => {
+            // segments as a repository path's, one ending in .git allowed (a bare repository's usual name)
+            let checked = path
+                .split('/')
+                .map(|segment| {
+                    segment
+                        .strip_suffix(".git")
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or(segment)
+                })
+                .collect::<Vec<_>>()
+                .join("/");
+            if let Err(why) = crate::server::path::check_path(&checked) {
+                add_error(format!(
+                    "targetPath is a relative path under runtime/{EXPORT_DIR} ({why}); another place takes \
+                     authorization disabled"
+                ));
+                return Ok(BTreeMap::new());
+            }
+            Some(format!("{EXPORT_DIR}/{path}"))
+        }
+        other => other,
+    };
+    match provider.export(&id, target.as_deref()) {
         Ok((path, written)) => {
             let path = path.to_string_lossy().into_owned();
             add_message(format!("Exported git repository {id} to {path} ({written} objects)"));

@@ -330,7 +330,7 @@ along with this software (see the LICENSE.md file). If not, see
                     if (title && plain(title)) fields.title = plain(title)
                     if (description) fields.description = description
                     if (Object.keys(fields).length) { mr.setFields(fields, true, null, null); mr.update() }
-                    ec.service.sync().name('org.moqui.git.GitReviewServices.sync#MergeRequest').parameters({mergeRequestId: mr.mergeRequestId}).call()
+                    ec.service.sync().name('org.moqui.git.GitReviewServices.sync#MergeRequest').parameters({mergeRequestId: mr.mergeRequestId}).disableAuthz().call()
                     if (ec.message.hasError()) return
                     mergeRequestId = mr.mergeRequestId
                     mergeRequestNum = mr.mergeRequestNum
@@ -531,7 +531,7 @@ along with this software (see the LICENSE.md file). If not, see
                 mr.setFields(fields, true, null, null)
                 mr.update()
                 if (fields.targetRef) {
-                    ec.service.sync().name('org.moqui.git.GitReviewServices.check#MergeRequest').parameters({mergeRequestId}).call()
+                    ec.service.sync().name('org.moqui.git.GitReviewServices.check#MergeRequest').parameters({mergeRequestId}).disableAuthz().call()
                 }
                 ec.service.sync().name('org.moqui.git.GitReviewServices.queue#MergeRequestEvent').parameters({mergeRequestId,
                     action: fields.statusId === 'GmrOpen' && mr.statusId === 'GmrOpen' && draft === false ? 'ready' : 'updated'}).disableAuthz().call()
@@ -676,7 +676,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (open > 0) { ec.message.addError('Another merge request of ' + mr.sourceRef + ' into ' + mr.targetRef + ' is open'); return }
                 mr.setFields({statusId: 'GmrOpen', closedDate: null, lastUpdatedDate: ec.user.nowTimestamp}, true, null, null)
                 mr.update()
-                ec.service.sync().name('org.moqui.git.GitReviewServices.check#MergeRequest').parameters({mergeRequestId}).call()
+                ec.service.sync().name('org.moqui.git.GitReviewServices.check#MergeRequest').parameters({mergeRequestId}).disableAuthz().call()
                 if (ec.message.hasError()) return
                 ec.service.sync().name('org.moqui.git.GitReviewServices.queue#MergeRequestEvent').parameters({mergeRequestId, action: 'reopened'}).disableAuthz().call()
             ]]></script>
@@ -879,11 +879,13 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="check" noun="MergeRequest">
         <description>Read a merge request's merge base and mergeability again (a trial merge of its head into its
             target: the source branch's for a branch of the same repository, else its own head ref); merged when the
-            target already holds the head. For sync#MergeRequest and the services that change a request's branches.</description>
+            target already holds the head. For sync#MergeRequest and the services that change a request's branches,
+            with authorization disabled only: it takes any merge request, a hidden one's too.</description>
         <in-parameters><parameter name="mergeRequestId" required="true"/></in-parameters>
         <out-parameters><parameter name="mergeableEnumId"/></out-parameters>
         <actions>
             <script><![CDATA[
+                if (!ec.artifactExecution.authzDisabled()) { ec.message.addError('check#MergeRequest is called by the framework\'s merge request services only'); return }
                 const mr = ec.entity.find('moqui.resource.GitMergeRequest').condition('mergeRequestId', mergeRequestId).disableAuthz().one()
                 if (!mr || !['GmrDraft', 'GmrOpen'].includes(mr.statusId)) return
                 const ownHead = mr.pushedForReview === 'Y' || !!mr.sourceRepositoryId
@@ -923,10 +925,12 @@ along with this software (see the LICENSE.md file). If not, see
             follows a source branch, of its repository or of a fork): a new head is recorded, its approvals set back to
             requested when the target's branch rules dismiss stale ones, and webhooks get a merge_request event
             (synchronize); then its mergeability is checked again (check#MergeRequest), and it is merged when the
-            target holds its head. For refresh#MergeRequests and propose#MergeRequest.</description>
+            target holds its head. For refresh#MergeRequests and propose#MergeRequest, with authorization disabled only:
+            it moves any merge request's head and status.</description>
         <in-parameters><parameter name="mergeRequestId" required="true"/></in-parameters>
         <actions>
             <script><![CDATA[
+                if (!ec.artifactExecution.authzDisabled()) { ec.message.addError('sync#MergeRequest is called by the framework\'s merge request services only'); return }
                 const mr = ec.entity.find('moqui.resource.GitMergeRequest').condition('mergeRequestId', mergeRequestId).disableAuthz().one()
                 if (!mr || !['GmrDraft', 'GmrOpen'].includes(mr.statusId)) return
                 const synced = ec.service.sync().name('org.moqui.git.GitReviewServices.sync#MergeRequestHead')
@@ -945,7 +949,7 @@ along with this software (see the LICENSE.md file). If not, see
                     ec.service.sync().name('org.moqui.git.GitReviewServices.queue#MergeRequestEvent')
                             .parameters({mergeRequestId, action: 'synchronize'}).disableAuthz().call()
                 }
-                ec.service.sync().name('org.moqui.git.GitReviewServices.check#MergeRequest').parameters({mergeRequestId}).call()
+                ec.service.sync().name('org.moqui.git.GitReviewServices.check#MergeRequest').parameters({mergeRequestId}).disableAuthz().call()
             ]]></script>
         </actions>
     </service>
@@ -955,7 +959,7 @@ along with this software (see the LICENSE.md file). If not, see
             whose source it is, in this repository or in another of the fork network (sourceRepositoryId), takes the
             branch's head as it is now, whatever the event's newId (sync#MergeRequest), and each whose target it is is
             checked for mergeability again, and is merged when the target holds its head. One that fails is logged and
-            the others are still refreshed.</description>
+            the others are still refreshed. With authorization disabled only (the rule runs so).</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="refName" required="true"/>
@@ -965,6 +969,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <actions>
             <script><![CDATA[
+                if (!ec.artifactExecution.authzDisabled()) { ec.message.addError('refresh#MergeRequests is called by the framework\'s gitECA rule only'); return }
                 if (!String(refName).startsWith('refs/heads/')) return
                 const branch = String(refName).substring('refs/heads/'.length)
                 const cf = ec.entity.conditionFactory
@@ -982,7 +987,7 @@ along with this software (see the LICENSE.md file). If not, see
                     // the branch's head now, not the event's newId: the events of each change run on their own job, so a
                     // late event of an older change would set a merge request's head back to a commit its branch has left
                     try {
-                        ec.service.sync().name('org.moqui.git.GitReviewServices.sync#MergeRequest').parameters({mergeRequestId: mr.mergeRequestId}).call()
+                        ec.service.sync().name('org.moqui.git.GitReviewServices.sync#MergeRequest').parameters({mergeRequestId: mr.mergeRequestId}).disableAuthz().call()
                     } catch (err) {
                         ec.logger.log('error', 'Merge request ' + mr.mergeRequestId + ' not refreshed: ' + err)
                     }

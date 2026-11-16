@@ -31,8 +31,11 @@ use moqui_core::web::multipart::UploadedFile;
 const SERVICES: &str = "org.moqui.resource.FileServices";
 
 fn setup() -> (ExecutionContext, EntityFacade) {
+    // as the framework's conf: the git services refuse a call with authorization on without it
     let ctx = ExecutionContextFactory::test_context_in(
-        "",
+        r#"<moqui-conf><artifact-execution-facade>
+            <artifact-execution type="AT_GIT_REPOSITORY" authz-enabled="true"/>
+        </artifact-execution-facade></moqui-conf>"#,
         moqui_core::service::ServicePools::idle(),
         moqui_core::context::framework_dir(),
     );

@@ -803,7 +803,7 @@ authorization disabled):
 | `find#GitRepositoryMirrors` | `repositoryId*` → `mirrorList`: each row with `hasCredential`, never the credential |
 | `delete#GitRepositoryMirror` | `mirrorId*` → `deleted` |
 | `push#GitRepositoryMirror` | `mirrorId*` → `queued`: a push now, whatever the back-off; while one runs on any member, an error starting `GitMirrorBusy: ` |
-| `run#GitRepositoryMirrors` | `mirrorId` → `pushedIds`, `failedIds`: the queue (`run_GitRepositoryMirrors_frequent`, each minute) |
+| `run#GitRepositoryMirrors` | `mirrorId` → `pushedIds`, `failedIds`: the queue (`run_GitRepositoryMirrors_frequent`, each minute), with authorization disabled only |
 
 - **Where.** `url` is `https://host/owner/repo.git` with no user or password in it (refused), the credential apart:
   `username` and a password or token in `credential` (GitHub: any user, such as `x-access-token`, and a token with
@@ -962,7 +962,8 @@ rule, and `get#GitRefs` does not list it.
   retention time) from its recorded `headCommitId` while that commit is in the store, so `get#MergeRequestDiff`
   and the checks of its head still answer.
 
-`refresh#MergeRequests`, the framework's ref-update rule (`Git.gitecas.xml`), keeps them current on every change of a
+`refresh#MergeRequests`, the framework's ref-update rule (`Git.gitecas.xml`; it, `sync#MergeRequest` and
+`check#MergeRequest` take a call with authorization disabled only), keeps them current on every change of a
 branch, from any source, in the branch's repository and for the merge requests of other repositories of the network
 whose source it is (`sync#MergeRequest`): a source's new head is recorded (its approvals dismissed when the target's rules say so;
 webhooks get `synchronize`), each request of the branch is checked for mergeability again (`GmaMergeable`,

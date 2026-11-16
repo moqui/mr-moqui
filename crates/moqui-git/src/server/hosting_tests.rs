@@ -939,7 +939,8 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     let mr = row(&fixture, "moqui.resource.GitMergeRequest", "mergeRequestId", &mr_id);
     assert_eq!(field(&mr, "headCommitId"), moved);
     // a late event of the earlier change does not set the head back: the refresh reads the branch, not the event
-    ok(
+    // (called as the rule calls it, with authorization disabled)
+    let (_, errors) = crate::service::commit::tests::internal(
         &fixture,
         WRITER,
         "org.moqui.git.GitReviewServices.refresh#MergeRequests",
@@ -949,6 +950,7 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
             ("newId", s(&before)),
         ],
     );
+    assert!(errors.trim().is_empty(), "{errors}");
     let mr = row(&fixture, "moqui.resource.GitMergeRequest", "mergeRequestId", &mr_id);
     assert_eq!(field(&mr, "headCommitId"), moved);
     let reviewer = {

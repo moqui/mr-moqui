@@ -26,6 +26,7 @@ use super::{backoff_millis, mirror_maps, parse_mirror_url, MirrorUrl, GIT_REPOSI
 use crate::server::hosting_tests::{call, get, list, ok, s, text_of};
 use crate::server::smart_http::{check_url, redact};
 use crate::server::tests::{define, fixture_with, http_server, settled, Fixture, PASSWORD, WRITER};
+use crate::service::commit::tests::internal;
 
 const GIT: &str = "org.moqui.git.GitServices";
 
@@ -130,8 +131,9 @@ fn field(row: &moqui_core::entity::EntityValue, name: &str) -> String {
     row.get(name).map(text_of).unwrap_or_default()
 }
 
+/// The queue's push of one mirror, as its job and the queue's async call run it: with authorization disabled.
 fn run(fixture: &Fixture, mirror_id: &str) -> (BTreeMap<String, Value>, String) {
-    call(
+    internal(
         fixture,
         WRITER,
         &git("run#GitRepositoryMirrors"),
@@ -297,7 +299,7 @@ fn a_busy_mirror_is_refused_and_a_failing_one_backs_off() {
     let wait = next(&row) - before;
     assert!((55_000..=70_000).contains(&wait), "{wait}");
     // not due yet: the queue passes it over
-    let (out, _) = call(&fixture, WRITER, &git("run#GitRepositoryMirrors"), &[]);
+    let (out, _) = internal(&fixture, WRITER, &git("run#GitRepositoryMirrors"), &[]);
     assert!(list(&out, "failedIds").is_empty(), "{out:?}");
     let (_, _) = run(&fixture, &mirror_id);
     let row = mirror(&fixture, &mirror_id);

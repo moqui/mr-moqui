@@ -403,7 +403,8 @@ impl GitProvider {
                 results.push(Err("the default branch cannot be deleted".to_string()));
                 continue;
             }
-            if write.new.is_some() && !valid_ref_name(&write.name) {
+            // a delete too: a merge request's head, or any other ref of the store, is not a write through Moqui
+            if !valid_ref_name(&write.name) {
                 results.push(Err(format!(
                     "GitBadRefName: {} is not a valid branch or tag name",
                     short_name(&write.name)
