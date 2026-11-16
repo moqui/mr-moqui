@@ -275,6 +275,13 @@ fn send_inner(request: Request) -> Result<Response, Error> {
     send_default(request)
 }
 
+/// The shared client's behavior ([`crate::service::shared_http_client`]), but refusing internal addresses.
+#[cfg(feature = "http")]
+fn denying_internal() -> &'static moqui_lib::http::RestClient {
+    static CLIENT: std::sync::OnceLock<moqui_lib::http::RestClient> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| moqui_lib::http::RestClient::new().deny_internal_addresses(true))
+}
+
 /// [`send`] on the built-in transport, past any installed sender: for a test sender that answers some addresses and
 /// passes the others on.
 #[cfg(feature = "http")]
@@ -288,11 +295,6 @@ pub fn send_default(request: Request) -> Result<Response, Error> {
         Method::Head => moqui_lib::http::Method::Head,
         Method::Options => moqui_lib::http::Method::Options,
     };
-    /// The shared client's behavior, but refusing internal addresses.
-    fn denying_internal() -> &'static moqui_lib::http::RestClient {
-        static CLIENT: std::sync::OnceLock<moqui_lib::http::RestClient> = std::sync::OnceLock::new();
-        CLIENT.get_or_init(|| moqui_lib::http::RestClient::new().deny_internal_addresses(true))
-    }
     let client = if request.deny_internal {
         denying_internal()
     } else {
@@ -344,6 +346,9 @@ pub struct OpenRequest {
     pub timeout: Option<std::time::Duration>,
     /// Whether a redirect is followed (to the same host); a proxy passes the 3xx on instead.
     pub follow_redirects: bool,
+    /// Refuse a host that is or resolves to an internal address (loopback, private, link-local), redirects included, as
+    /// [`Request::deny_internal`]. Without it a link-local or metadata address is still refused.
+    pub deny_internal: bool,
 }
 
 /// The status and headers of an [`open`] response, and its body still to be read.
@@ -426,7 +431,7 @@ fn open_inner(request: OpenRequest) -> Result<OpenResponse, Error> {
                 .as_ref()
                 .map(|body| String::from_utf8_lossy(body).into_owned()),
             timeout: request.timeout,
-            deny_internal: false,
+            deny_internal: request.deny_internal,
         };
         if let Some(answer) = crate::service::http_fixtures::intercept(&whole) {
             return answer.map(whole_response);
@@ -443,7 +448,7 @@ fn open_inner(request: OpenRequest) -> Result<OpenResponse, Error> {
             headers: request.headers,
             body: request.body.map(|body| String::from_utf8_lossy(&body).into_owned()),
             timeout: request.timeout,
-            deny_internal: false,
+            deny_internal: request.deny_internal,
         })?;
         return Ok(whole_response(response));
     }
@@ -467,10 +472,24 @@ fn whole_response(response: Response) -> OpenResponse {
 
 #[cfg(feature = "http")]
 fn open_default(request: OpenRequest) -> Result<OpenResponse, Error> {
-    /// A client that passes a redirect back instead of following it.
+    /// A client that passes a redirect back instead of following it, never to a link-local or metadata address, as the
+    /// shared client.
     fn not_following() -> &'static moqui_lib::http::RestClient {
         static CLIENT: std::sync::OnceLock<moqui_lib::http::RestClient> = std::sync::OnceLock::new();
-        CLIENT.get_or_init(|| moqui_lib::http::RestClient::new().redirects(0, false))
+        CLIENT.get_or_init(|| {
+            moqui_lib::http::RestClient::new()
+                .deny_link_local_addresses(true)
+                .redirects(0, false)
+        })
+    }
+    /// [`not_following`], refusing every internal address.
+    fn not_following_denying_internal() -> &'static moqui_lib::http::RestClient {
+        static CLIENT: std::sync::OnceLock<moqui_lib::http::RestClient> = std::sync::OnceLock::new();
+        CLIENT.get_or_init(|| {
+            moqui_lib::http::RestClient::new()
+                .deny_internal_addresses(true)
+                .redirects(0, false)
+        })
     }
     let method = match request.method {
         Method::Get => moqui_lib::http::Method::Get,
@@ -481,10 +500,11 @@ fn open_default(request: OpenRequest) -> Result<OpenResponse, Error> {
         Method::Head => moqui_lib::http::Method::Head,
         Method::Options => moqui_lib::http::Method::Options,
     };
-    let client = if request.follow_redirects {
-        crate::service::shared_http_client()
-    } else {
-        not_following()
+    let client = match (request.follow_redirects, request.deny_internal) {
+        (true, false) => crate::service::shared_http_client(),
+        (true, true) => denying_internal(),
+        (false, false) => not_following(),
+        (false, true) => not_following_denying_internal(),
     };
     let opened = client.open(moqui_lib::http::OpenRequest {
         method,
@@ -624,6 +644,35 @@ mod http_tests {
         };
         let refused = send_default(metadata).unwrap_err();
         assert!(refused.message().contains("link-local address"), "{refused}");
+    }
+
+    /// [`super::open`]'s transport with `deny_internal` refuses an internal address before any socket, whether it
+    /// follows redirects or not; without it neither client goes to a link-local or metadata address (SEC-SCR-07: the
+    /// client that follows no redirect had no guard).
+    #[test]
+    fn open_refuses_internal_addresses_when_asked_and_link_local_always() {
+        let request = |url: &str, follow_redirects, deny_internal| super::OpenRequest {
+            method: Method::Get,
+            url: url.to_string(),
+            headers: Vec::new(),
+            body: None,
+            timeout: Some(std::time::Duration::from_secs(2)),
+            follow_redirects,
+            deny_internal,
+        };
+        let refusal = |request| match super::open_default(request) {
+            Ok(_) => String::from("answered"),
+            Err(err) => err.message().to_string(),
+        };
+        for follow in [true, false] {
+            let denied = refusal(request("http://127.0.0.1:1/x", follow, true));
+            assert!(denied.contains("internal address"), "follow {follow}: {denied}");
+            // the client tries it (and finds nothing listening on port 1)
+            let tried = refusal(request("http://127.0.0.1:1/x", follow, false));
+            assert!(!tried.contains("internal address"), "follow {follow}: {tried}");
+            let metadata = refusal(request("http://169.254.169.254/latest/meta-data", follow, false));
+            assert!(metadata.contains("link-local address"), "follow {follow}: {metadata}");
+        }
     }
 
     /// A row's `allowPrivateNetwork`: N denies, Y allows, and anything else denies on production only (SEC-OUT-02).

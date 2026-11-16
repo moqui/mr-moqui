@@ -114,12 +114,13 @@ const failureTexts = {
 }
 const failureText = (place, message) => place + " " + failureTexts[failureKind(message)]
 // One request with no credentials and no body, to learn that an address answers: {ok, text}. HEAD, ten seconds, the
-// answer's status only (its body is never read into the result); with denyInternal no hop goes to an internal address.
+// answer's status only (its body is never read into the result); with denyInternal no hop goes to an internal address,
+// without it an internal address is tried (an instance administrator allowed the private network), production or not.
 function probe(url, denyInternal) {
     const host = hostOf(url) || "The address"
     try {
         let client = ec.service.rest().method("HEAD").uri(url).timeout(10)
-        if (denyInternal) client = client.denyInternal()
+        client = denyInternal ? client.denyInternal() : client.allowInternal()
         const status = Number(client.call().getStatusCode())
         return status > 0 && status < 500
             ? {ok: true, text: host + " answered (HTTP " + status + "); no credentials were sent"}

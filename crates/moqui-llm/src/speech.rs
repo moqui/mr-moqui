@@ -246,6 +246,8 @@ pub fn transcribe_with(target: &Target, request: &SpeechRequest<'_>) -> Result<S
         body: Some(bytes::Bytes::from(body)),
         timeout: Some(request.timeout.unwrap_or(DEFAULT_TIMEOUT)),
         follow_redirects: false,
+        // a model endpoint is the configuration's, often on this machine (a local model server)
+        deny_internal: false,
     })?;
     let mut text = String::new();
     std::io::Read::read_to_string(&mut std::io::Read::take(&mut response.reader, MAX_ANSWER), &mut text)

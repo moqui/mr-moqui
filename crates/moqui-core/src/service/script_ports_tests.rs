@@ -281,6 +281,53 @@ fn a_property_header_goes_only_under_its_base_and_the_script_never_reads_it() {
     moqui_lib::env::set_property("pass_client_secret", String::new());
 }
 
+/// SEC-SCR-07: on a production instance `ec.service.rest()` refuses an internal address, `call()` and `send()` alike,
+/// unless the script says `allowInternal()`; `denyInternal()` wins over it; another instance is not changed; and a
+/// link-local or metadata address is refused even with `allowInternal()` on the client that follows no redirect.
+#[test]
+fn on_production_rest_refuses_an_internal_address_unless_the_script_allows_it() {
+    let (_facade, context) = setup();
+    let _entered = context.enter();
+    let (listener, port) = loopback();
+    // answered: allowInternal() call() and send() on production, and call() on another instance
+    let server = serve(listener, vec![(200, "OK", "{}"); 3]);
+    let script = |names: &str| {
+        format!(
+            r#"<actions><script><![CDATA[
+            const url = "http://127.0.0.1:{port}/x"
+            const attempt = (run) => {{ try {{ return String(run().statusCode) }} catch (e) {{ return String(e.message || e) }} }}
+            {names}
+        ]]></script></actions>"#
+        )
+    };
+    crate::web::TEST_PRODUCTION.with(|flag| flag.set(Some(true)));
+    let production = crate::script::run_actions(&script(
+        r#"prodCall = attempt(() => ec.service.rest().uri(url).call())
+            prodSend = attempt(() => ec.service.rest().uri(url).send())
+            allowedCall = attempt(() => ec.service.rest().uri(url).allowInternal().call())
+            allowedSend = attempt(() => ec.service.rest().uri(url).allowInternal().send())
+            bothCall = attempt(() => ec.service.rest().uri(url).allowInternal().denyInternal().call())
+            bothSend = attempt(() => ec.service.rest().uri(url).denyInternal().allowInternal().send())
+            metadata = attempt(() => ec.service.rest().uri("http://169.254.169.254/latest/meta-data").timeout(2)
+                .allowInternal().followRedirects(false).send())"#,
+    ));
+    crate::web::TEST_PRODUCTION.with(|flag| flag.set(Some(false)));
+    let other = crate::script::run_actions(&script(r#"devCall = attempt(() => ec.service.rest().uri(url).call())"#));
+    crate::web::TEST_PRODUCTION.with(|flag| flag.set(None));
+    production.unwrap();
+    other.unwrap();
+    let requests = server.join().unwrap();
+    let value = |name: &str| crate::script::context_value(name).map(|value| to_plain_string(&value)).unwrap_or_default();
+    for name in ["prodCall", "prodSend", "bothCall", "bothSend"] {
+        assert!(value(name).contains("internal address"), "{name}: {}", value(name));
+    }
+    for name in ["allowedCall", "allowedSend", "devCall"] {
+        assert_eq!(value(name), "200", "{name}");
+    }
+    assert!(value("metadata").contains("link-local address"), "{}", value("metadata"));
+    assert_eq!(requests.len(), 3, "{requests:?}");
+}
+
 #[test]
 fn recaptcha_without_a_secret_is_skipped_and_without_a_token_fails() {
     let (_facade, context) = setup();
