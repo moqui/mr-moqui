@@ -258,6 +258,8 @@ fn texts_cross_the_edge_node_and_wait_while_the_link_is_down() {
     let properties = [
         ("channels_webhooks_enabled", "true"),
         ("channels_media_key", "an-edge-chat-test-key"),
+        // the fake Telnyx is on loopback over http, which allowInternalAddresses permits only off production
+        ("instance_purpose", "test"),
     ];
     let local = crate::common::start_with_conf_files("edge-chat-local", None, CONF, &properties, &[]);
     // the bridge and a number routed to john.doe, before the first link sends the set whole

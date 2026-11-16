@@ -416,6 +416,7 @@ fn the_smtp_listener_stores_gateway_mail_for_hosted_and_shared_accounts() {
             ("emailServerId", text("GATE_LOOP")),
             ("smtpHost", text("127.0.0.1")),
             ("smtpPort", text(&address.port().to_string())),
+            ("allowPrivateNetwork", text("Y")),
         ],
     );
     sync(

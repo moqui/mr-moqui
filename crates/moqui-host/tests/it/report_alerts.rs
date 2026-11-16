@@ -933,7 +933,7 @@ fn alerts_deliver_real_smtp_and_webhooks_retry_failures_and_resolve_live_credent
         <moqui.service.job.ServiceJob jobName="evaluate_ReportAlerts_minute" paused="Y"/>
         <moqui.security.UserAccount userId="M6_WIRE_CONTROL" username="m6.wire.control" userFullName="M6 fixture administrator" disabled="N"/>
         <moqui.security.UserGroupMember userGroupId="ADMIN" userId="M6_WIRE_CONTROL" fromDate="0"/>
-        <moqui.basic.email.EmailServer emailServerId="M6_WIRE_SMTP" smtpHost="127.0.0.1" smtpPort="{}" smtpStartTls="N" smtpSsl="N" mailUsername="m6-fixture-user" mailPassword="m6-fixture-password" allowedToDomains="example.test"/>
+        <moqui.basic.email.EmailServer emailServerId="M6_WIRE_SMTP" smtpHost="127.0.0.1" smtpPort="{}" smtpStartTls="N" smtpSsl="N" mailUsername="m6-fixture-user" mailPassword="m6-fixture-password" allowedToDomains="example.test" allowPrivateNetwork="Y"/>
         <moqui.basic.email.EmailTemplate emailTemplateId="M6_WIRE_EMAIL" emailServerId="M6_WIRE_SMTP" fromAddress="alerts@example.test" subject="M6 wire alert" bodyScreenLocation="component://m6_wire/screen/AlertEmail.xml" webappName="webroot"/>
     </entity-facade-xml>"#,
         smtp.address.port()

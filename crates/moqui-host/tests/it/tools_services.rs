@@ -24,7 +24,8 @@ use std::net::SocketAddr;
 use crate::common::{basic, exchange, http_request};
 
 const DATA: &str = r#"<entity-facade-xml type="seed">
-    <moqui.basic.print.NetworkPrinter networkPrinterId="GATE_PRINTER" serverHost="127.0.0.1" serverPort="9" printerName="gate"/>
+    <moqui.basic.print.NetworkPrinter networkPrinterId="GATE_PRINTER" serverHost="127.0.0.1" serverPort="9" printerName="gate"
+        allowPrivateNetwork="Y"/>
     <moqui.basic.print.PrintJob printJobId="GATE_OLD_PJ" networkPrinterId="GATE_PRINTER" statusId="PtjNotSent"
         createdDate="2020-01-02 03:04:05"/>
     <moqui.basic.Uom uomId="GATE_A" description="Gate A" uomTypeEnumId="UT_LENGTH_MEASURE"/>

@@ -40,16 +40,16 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
         sendServiceName="org.moqui.impl.SystemMessageServices.send#SystemMessageRest"
         consumeServiceName="org.moqui.impl.SystemMessageServices.reset#SystemMessageInError" contentType="application/json"/>
     <moqui.service.message.SystemMessageRemote systemMessageRemoteId="GateSelf" description="This server"
-        messageAuthEnumId="SmatLogin" username="john.doe" password="moqui"/>
+        messageAuthEnumId="SmatLogin" username="john.doe" password="moqui" allowPrivateNetwork="Y"/>
 
     <moqui.security.ArtifactGroup artifactGroupId="GATE_SYNC_DATA" description="Gate sync data"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="GATE_SYNC_DATA" artifactName="moqui.basic.Enumeration"
         artifactTypeEnumId="AT_ENTITY" nameIsPattern="N" filterMap="{enumTypeId: 'EntitySyncArtifactAppl'}"/>
     <moqui.entity.sync.EntitySync entitySyncId="GATE_PUSH" description="Gate push" statusId="EsNotStarted" forPull="N"
-        delayBufferMillis="1" targetUsername="john.doe" targetPassword="moqui"/>
+        delayBufferMillis="1" targetUsername="john.doe" targetPassword="moqui" allowPrivateNetwork="Y"/>
     <moqui.entity.sync.EntitySyncArtifact entitySyncId="GATE_PUSH" artifactGroupId="GATE_SYNC_DATA" applEnumId="EsaaInclude"/>
     <moqui.entity.sync.EntitySync entitySyncId="GATE_PULL" description="Gate pull" statusId="EsNotStarted" forPull="Y"
-        delayBufferMillis="1" targetUsername="john.doe" targetPassword="moqui"/>
+        delayBufferMillis="1" targetUsername="john.doe" targetPassword="moqui" allowPrivateNetwork="Y"/>
     <moqui.entity.sync.EntitySyncArtifact entitySyncId="GATE_PULL" artifactGroupId="GATE_SYNC_DATA" applEnumId="EsaaInclude"/>
 </entity-facade-xml>"#;
 

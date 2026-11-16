@@ -216,7 +216,7 @@ fn data(idp: SocketAddr) -> String {
     <moqui.security.UserGroup userGroupId="SSO_DEFAULT" description="SSO default"/>
     <moqui.security.UserGroup userGroupId="SSO_STAFF" description="SSO staff"/>
     <moqui.security.sso.AuthFlow authFlowId="MOCK" authFlowTypeEnumId="AftOidc" description="Mock IdP" sequenceNum="1"
-        defaultUserGroupId="SSO_DEFAULT"/>
+        defaultUserGroupId="SSO_DEFAULT" allowPrivateNetwork="Y"/>
     <moqui.security.sso.OidcFlow authFlowId="MOCK" clientTypeEnumId="OctOther" clientId="{CLIENT}" secret="{SECRET}"
         discoveryUri="http://{idp}/.well-known/openid-configuration" preferredJwsAlgorithmEnumId="OjaES256" useNonce="Y"/>
     <moqui.security.sso.AuthFlowRoleMap authFlowId="MOCK" roleName="staff" userGroupId="SSO_STAFF"/>
