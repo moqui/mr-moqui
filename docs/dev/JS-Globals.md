@@ -351,6 +351,8 @@ throws, so the write fails.
 | `assertSealedPermissionGrant(userPermissionId)` | Throws when the permission is sealed and the user may not grant it |
 | `assertSealedGroupMembership(userGroupId, thruDate, hasStored, storedThruDate)` | Throws for a membership in a group that grants a sealed permission the user does not hold. `hasStored` is true for an update that found the stored row, so a change that only ends the membership sooner passes |
 | `assertDocumentExpression(fieldPath)` | Throws for a data document field path that is an expression (it has a `(`) unless the user has `DATABASE_ADMIN` |
+| `assertDocumentTemplate(text)` | Throws for a data document title or link URL or label that is a template (it has `${`) unless the user has `DATABASE_ADMIN` |
+| `assertDocumentCondition(condition)` | Throws for a data document link condition that is not empty unless the user has `DATABASE_ADMIN` |
 | `privilegedGroups()` | The effective privileged group ids, sorted |
 | `sealedPermissions()` | The effective sealed permission ids, sorted |
 | `endUserSessions(userId, visitIds)` | Ends the web sessions of the user for the visits named, or all of them with none; the number ended. It checks no authority: the caller does |

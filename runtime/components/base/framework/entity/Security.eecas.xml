@@ -33,6 +33,26 @@ along with this software (see the LICENSE.md file). If not, see
             on-create="true" on-update="true" run-before="true">
         <actions><script>UserSecurityChecks.assertDocumentExpression(fieldPath)</script></actions>
     </eeca>
+    <!-- a DataDocument's title and a link's URL and label are templates, and a link's condition is script, run as whoever
+        reads a search hit or a notification of the document: writing one needs DATABASE_ADMIN too
+        (plans/Security-Review.md SEC-SCR-05). Only a value that changes is checked, so another field of a document whose
+        title a seed load wrote can still be changed. -->
+    <eeca id="DataDocumentTitleTemplate" entity="moqui.entity.document.DataDocument"
+            on-create="true" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>
+            if (eecaOperation != "update" || documentTitle != originalValue?.documentTitle)
+                UserSecurityChecks.assertDocumentTemplate(documentTitle)
+        </script></actions>
+    </eeca>
+    <eeca id="DataDocumentLinkTemplate" entity="moqui.entity.document.DataDocumentLink"
+            on-create="true" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>
+            const updating = eecaOperation == "update"
+            if (!updating || linkUrl != originalValue?.linkUrl) UserSecurityChecks.assertDocumentTemplate(linkUrl)
+            if (!updating || label != originalValue?.label) UserSecurityChecks.assertDocumentTemplate(label)
+            if (!updating || linkCondition != originalValue?.linkCondition) UserSecurityChecks.assertDocumentCondition(linkCondition)
+        </script></actions>
+    </eeca>
     <!-- The new-device sign-in notice (mr-boss plan/impl-admin.md P10, design-admin §4 Sessions): a successful sign-in's
         history row is written by a worker after the sign-in itself (crates/moqui-core/src/user/login.rs save_history, at
         most one row a minute for a user), with its visit; the notice is decided and sent then, in a transaction of its own

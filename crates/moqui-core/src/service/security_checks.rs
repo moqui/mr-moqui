@@ -197,6 +197,34 @@ pub(crate) fn assert_document_expression(facade: &EntityFacade, field_path: &str
     if !field_path.contains('(') {
         return Ok(());
     }
+    require_document_script(facade, "A DataDocument field expression")
+}
+
+/// Refuses a `DataDocument` `documentTitle`, or a `DataDocumentLink` `linkUrl` or `label`, that is a template (it has
+/// `${`, which runs as script when a search hit or a notification of the document is shown) unless the user has
+/// `DATABASE_ADMIN` (plans/Security-Review.md SEC-SCR-05). Plain text, and any write while authorization is disabled,
+/// are allowed.
+pub(crate) fn assert_document_template(facade: &EntityFacade, text: &str) -> Result<(), Error> {
+    SECURITY_CHECKS.with(|count| count.set(count.get() + 1));
+    if !text.contains("${") {
+        return Ok(());
+    }
+    require_document_script(facade, "A DataDocument title or link template")
+}
+
+/// Refuses a `DataDocumentLink` `linkCondition`, a script condition, unless the user has `DATABASE_ADMIN`; an empty
+/// one, and any write while authorization is disabled, are allowed.
+pub(crate) fn assert_document_condition(facade: &EntityFacade, condition: &str) -> Result<(), Error> {
+    SECURITY_CHECKS.with(|count| count.set(count.get() + 1));
+    if condition.trim().is_empty() {
+        return Ok(());
+    }
+    require_document_script(facade, "A DataDocument link condition")
+}
+
+/// `what` is script that runs on the server as whoever reads the document: allowed with authorization disabled or
+/// [`DOCUMENT_EXPRESSION_PERMISSION`].
+fn require_document_script(facade: &EntityFacade, what: &str) -> Result<(), Error> {
     if authz_disabled() {
         return Ok(());
     }
@@ -205,7 +233,7 @@ pub(crate) fn assert_document_expression(facade: &EntityFacade, field_path: &str
     }
     Err(crate::context::Error::of_kind(
         crate::context::ErrorKind::Unauthorized,
-        format!("A DataDocument field expression needs the {DOCUMENT_EXPRESSION_PERMISSION} permission"),
+        format!("{what} needs the {DOCUMENT_EXPRESSION_PERMISSION} permission"),
     )
     .into())
 }
