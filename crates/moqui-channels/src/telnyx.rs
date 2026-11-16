@@ -119,9 +119,12 @@ impl Config {
             sends_per_minute: number("sendsPerMinute")
                 .and_then(|n| u32::try_from(n).ok())
                 .unwrap_or(DEFAULT_SENDS_PER_MINUTE),
-            allow_internal: config
-                .get("allowInternalAddresses")
-                .is_some_and(|value| value.as_bool() == Some(true) || value.as_str() == Some("true")),
+            // a test's fake Telnyx; never on a production instance, where an inbound text's media URL would otherwise
+            // make the server fetch an internal address (SEC-COM-10)
+            allow_internal: !moqui_core::web::is_production()
+                && config
+                    .get("allowInternalAddresses")
+                    .is_some_and(|value| value.as_bool() == Some(true) || value.as_str() == Some("true")),
         }
     }
 }
@@ -239,8 +242,11 @@ impl ChatBridgeAdapter for TelnyxSms {
         if config.api_key.is_empty() {
             return Err("The SMS bridge has no apiKey in its configuration".to_string());
         }
-        if !(config.api_base_url.starts_with("https://") || config.api_base_url.starts_with("http://")) {
-            return Err("The SMS bridge's apiBaseUrl is not an http address".to_string());
+        // the API key goes with every send, so never in clear text, except to a test's fake (SEC-COM-10)
+        if !(config.api_base_url.starts_with("https://")
+            || (config.allow_internal && config.api_base_url.starts_with("http://")))
+        {
+            return Err("The SMS bridge's apiBaseUrl is not an https address".to_string());
         }
         Ok(())
     }
