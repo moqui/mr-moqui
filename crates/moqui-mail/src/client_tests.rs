@@ -105,6 +105,7 @@ fn user(facade: &EntityFacade, user_id: &str) {
             ("emailAddress", text(&format!("{user_id}@example.com"))),
         ],
     );
+    crate::sync_tests::hosted_mail_admin(facade, user_id);
 }
 
 fn login(user_id: &str) {
