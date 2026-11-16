@@ -643,8 +643,11 @@
         "break": stmt(() => "break;"),
         "continue": stmt(() => "continue;"),
         "iterate": stmt(iterateSource),
+        // A message written across lines is one line: the break and the indentation around it are a space, as a browser
+        // shows it, so the terminal's message line and history do not carry the XML's layout (ACC-UI-028).
         "message": stmt((node) =>
-            messageCall(attr(node, "error") === "true", attr(node, "public") === "true", attr(node, "type"), node.text || "")),
+            messageCall(attr(node, "error") === "true", attr(node, "public") === "true", attr(node, "type"),
+                (node.text || "").replace(/[ \t]*\r?\n\s*/g, " "))),
         "check-errors": stmt(() => "if (ec.message.hasError()) return;"),
         "return": stmt((node) => {
             const message = has(node, "message") && attr(node, "message") !== ""
