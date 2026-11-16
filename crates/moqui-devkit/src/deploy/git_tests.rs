@@ -266,6 +266,9 @@ fn attested(secret: &str, issued_at: i64) -> (String, String) {
 
 /// A target with the gate's conf, an in-memory database, entered.
 fn target(conf: &str) -> (moqui_core::context::ExecutionContext, moqui_core::entity::EntityFacade) {
+    // not production on this thread, whatever instance_purpose another test's start left in the process: the gate
+    // refuses every deploy on a production instance, and the deploy tests failed so in a full workspace run
+    moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(Some(false)));
     let context = ExecutionContextFactory::test_context_with_conf(conf);
     let entity = moqui_core::testing::open();
     context.factory().set_entity(entity.clone());

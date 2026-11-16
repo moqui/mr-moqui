@@ -1899,6 +1899,38 @@ mod live {
         telemetry.shutdown();
     }
 
+    /// A runtime's attribute override makes its own artifact attributes again and not another runtime's: the memo of
+    /// each thread was cleared by any runtime's change, so a test whose neighbour changed its lists saw its own made twice.
+    #[test]
+    fn an_attributes_override_leaves_another_runtimes_kept_attributes() {
+        let ours = Telemetry::from_conf("<moqui-conf/>", Resource::default());
+        let other = Telemetry::from_conf("<moqui-conf/>", Resource::default());
+        let sdk = ours.sdk.as_ref().expect("telemetry is on");
+        let made = std::cell::Cell::new(0);
+        let kept = || {
+            sdk.artifact_attributes(0, 43, "moqui.artifact.duration", &|| {
+                made.set(made.get() + 1);
+                let mut attributes = Document::default();
+                attributes.insert("moqui.artifact.type".into(), Value::string("AT_SERVICE"));
+                attributes
+            })
+            .len()
+        };
+        assert_eq!(kept(), 1);
+        let disk = other.config().clone();
+        other.set_live(telemetry_config(
+            &disk,
+            &overrides(&[(
+                "telemetry/metric[moqui.artifact.duration]@attributes",
+                "moqui.artifact.name",
+            )]),
+        ));
+        assert_eq!(kept(), 1);
+        assert_eq!(made.get(), 1, "the other runtime's change made ours again");
+        ours.shutdown();
+        other.shutdown();
+    }
+
     #[test]
     fn an_operations_override_is_resolved_again() {
         let telemetry = Telemetry::from_conf("<moqui-conf/>", Resource::default());

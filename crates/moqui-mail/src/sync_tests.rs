@@ -323,10 +323,49 @@ pub(super) fn sync(account: &str) -> BTreeMap<String, Value> {
     out
 }
 
-/// A session with alice signed in.
+/// A session with alice signed in, a mail administrator ([`mail_admin`]): the tests make hosted and shared accounts as her.
 pub(super) fn alice(facade: &EntityFacade) {
     user(facade, "alice");
+    mail_admin(facade, "alice");
     login("alice");
+}
+
+/// Make `user_id` a mail administrator: `EMAIL_ACCOUNT_HOSTED` through a test group (SEC-MAIL-01), which an account
+/// delivered here (hosted or shared with no store server) needs to be made or given an address.
+pub(super) fn mail_admin(facade: &EntityFacade, user_id: &str) {
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let group = "MAIL_TEST_ADMIN";
+    for (entity, fields) in [
+        (
+            "moqui.security.UserGroup",
+            vec![
+                ("userGroupId", text(group)),
+                ("description", text("Mail test administrators")),
+            ],
+        ),
+        (
+            "moqui.security.UserGroupPermission",
+            vec![
+                ("userGroupId", text(group)),
+                ("userPermissionId", text("EMAIL_ACCOUNT_HOSTED")),
+                ("fromDate", stamp(0)),
+            ],
+        ),
+        (
+            "moqui.security.UserGroupMember",
+            vec![
+                ("userGroupId", text(group)),
+                ("userId", text(user_id)),
+                ("fromDate", stamp(0)),
+            ],
+        ),
+    ] {
+        let mut value = facade.make_value(entity).unwrap();
+        for (field, value_of) in fields {
+            value.set(field, value_of);
+        }
+        value.create_or_update(facade).unwrap();
+    }
 }
 
 fn changes(facade: &EntityFacade, account: &str) -> usize {

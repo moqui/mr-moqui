@@ -541,7 +541,8 @@ pub fn login_key_user_by_hash(hashed: &str) -> Result<Option<String>, Error> {
         return Ok(None);
     };
     let now = now_millis();
-    if field_millis(&row, "thruDate").is_some_and(|thru| now > thru) || !text_field(&row, "scope").is_empty() {
+    if field_millis(&row, "thruDate").is_some_and(|thru| key_ended(thru, now)) || !text_field(&row, "scope").is_empty()
+    {
         return Ok(None);
     }
     let user_id = text_field(&row, "userId");
@@ -615,7 +616,7 @@ fn check_login_key(key: &str, session_user: Option<&str>, scope: Option<&str>) -
         return Err(Error::new(INVALID_LOGIN));
     }
     if let Some(thru) = field_millis(&row, "thruDate") {
-        if now_millis() > thru {
+        if key_ended(thru, now_millis()) {
             save_history(&user_id, false);
             return Err(Error::new(INVALID_LOGIN));
         }
@@ -1291,6 +1292,13 @@ pub fn now_effective_millis() -> i64 {
     ExecutionContext::with_current(ExecutionContext::effective_time)
         .flatten()
         .unwrap_or_else(now_millis)
+}
+
+/// Whether a login key whose `thruDate` is `thru` has ended at `now` (both milliseconds): in date while its thruDate is
+/// after now, as every effective-dated row. A key ended now is ended: `revoke#UserHeldKey` sets its thruDate to now, and
+/// a login in the same millisecond took the revoked key.
+pub(crate) fn key_ended(thru: i64, now: i64) -> bool {
+    thru <= now
 }
 
 pub fn now_millis() -> i64 {
