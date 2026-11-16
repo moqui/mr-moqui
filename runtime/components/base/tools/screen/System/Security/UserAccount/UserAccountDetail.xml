@@ -43,6 +43,11 @@ along with this software (see the LICENSE.md file). If not, see
                 <return error="true" message="Choose another user to login as"/></if>
             <set field="loginAsHeld" from="ec.resource.script('component://framework/service/org/moqui/admin/Identity.js').heldBeyond(loginAsAccount.userId)"/>
             <if condition="loginAsHeld"><return error="true" message="${loginAsHeld}: you may not login as that user"/></if>
+            <!-- and only after the administrator signed in, or confirmed who they are, in the last five minutes: a stolen
+                session takes over no account (require#RecentAuth; the link is a form that asks and sends again on
+                X-Moqui-Reauth) -->
+            <service-call name="org.moqui.sso.RecentAuthServices.require#RecentAuth" out-map="recentAuthOut"/>
+            <if condition="!recentAuthOut.recent"><return/></if>
             <script>
                 ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationLib.js').auditRow('moqui.security.UserAccount',
                     'loginAs', loginAsAccount.userId, null, null, 'Login as by ' + ec.user.username, null)
