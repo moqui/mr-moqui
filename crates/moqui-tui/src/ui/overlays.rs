@@ -67,15 +67,18 @@ pub fn draw(paint: &mut Painter, session: &Session, breakpoints: &Breakpoints, c
                 );
             }
             Overlay::Messages => {
+                // each message wrapped to the box, so a long one (a summary and its details, ACC-UI-028) is read whole
+                let room = usize::from(canvas.width.saturating_sub(8)).max(20);
                 let mut lines: Vec<String> = session
                     .history()
                     .iter()
-                    .map(|message| {
-                        if message.error {
+                    .flat_map(|message| {
+                        let text = if message.error {
                             format!("! {}", message.text)
                         } else {
                             message.text.clone()
-                        }
+                        };
+                        crate::layout::wrap(&text, room)
                     })
                     .collect();
                 if lines.is_empty() {

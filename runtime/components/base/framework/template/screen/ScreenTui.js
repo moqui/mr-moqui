@@ -806,6 +806,16 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
             const pieces = widget.children.filter((kid) => !notWidget(kid)).map((kid) => cellPiece(field, sub, kid, list));
             return `[${pieces.join(", ")}]`;
         }
+        // A row's button-menu (More): its items as the row's own, each with its condition, so the client offers them on F10
+        // as it does a row's links and dialogs; the menu was dropped, and its actions with it (ACC-UI-036)
+        if (widget.name === "button-menu") {
+            const pieces = widget.children
+                .filter((kid) => !notWidget(kid) && !["image", "parameter"].includes(kid.name))
+                .map((kid) => cellPiece(field, sub, kid, list));
+            const items = `[${pieces.join(", ")}]`;
+            const condition = attr(widget, "condition");
+            return condition ? `((${condition}) ? ${items} : "")` : items;
+        }
         if (widget.name === "render-mode") {
             const chosen = S.chooseRenderModeText(widget, "tui");
             // Only an authored terminal representation belongs in a cell; browser markup is not a cell value.

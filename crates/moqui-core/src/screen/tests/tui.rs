@@ -1476,6 +1476,38 @@ fn a_column_chooser_leaves_out_a_field_its_hide_hides() {
     );
 }
 
+/// A row's button-menu (a More of row actions) gives the row its items, each with its own condition, as the row's links
+/// are; it was dropped, and Pause, Resume and End with it (ACC-UI-036).
+#[test]
+fn a_button_menu_in_a_list_cell_gives_the_row_its_items() {
+    let xml = format!(
+        r#"<screen require-authentication="false"><transition name="update"><default-response url="."/></transition>
+        <actions><script>{ROWS}</script></actions><widgets>
+            <form-list name="Rows" list="rows" skip-form="true">
+                <field name="name"><default-field><display/></default-field></field>
+                <field name="actions"><default-field title="">
+                    <link url="update" text="Run now" link-type="hidden-form"/>
+                    <button-menu text="More">
+                        <link url="update" text="Pause row" link-type="hidden-form"/>
+                        <link url="update" text="End row" link-type="hidden-form" condition="false"/>
+                    </button-menu>
+                    <button-menu text="Hidden menu" condition="false">
+                        <link url="update" text="Never shown" link-type="hidden-form"/>
+                    </button-menu>
+                </default-field></field>
+            </form-list>
+        </widgets></screen>"#
+    );
+    let output = render("row-menu", &xml, BTreeMap::new());
+    let doc = document(&output);
+    let list = list_named(&doc, "Rows");
+    let row = list["rows"][0].to_string();
+    assert!(row.contains("Run now"), "{row}");
+    assert!(row.contains("Pause row"), "{row}");
+    assert!(!row.contains("End row"), "{row}");
+    assert!(!row.contains("Never shown"), "{row}");
+}
+
 /// A single form's field whose hide expression holds is not drawn in the terminal, as in qvt: it was drawn and took
 /// input the transition never read (ACC-UI-023, Insights' report options showing From and Through to a report without
 /// them).

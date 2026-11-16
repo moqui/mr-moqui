@@ -49,6 +49,19 @@ pub use structure::{TreeNode, TreeState};
 
 /// Messages kept for Alt+M (section 1.2).
 const HISTORY: usize = 25;
+
+/// The messages of a reply on one line, each once, in order: a transition's message can come again with the screen it
+/// redirects to, and the line repeated the summary and its details (ACC-UI-028).
+pub(crate) fn distinct_join(messages: &[String]) -> String {
+    let mut seen: Vec<&str> = Vec::new();
+    for message in messages {
+        let text = message.trim();
+        if !text.is_empty() && !seen.contains(&text) {
+            seen.push(text);
+        }
+    }
+    seen.join("; ")
+}
 /// The counters are read again this often while nothing pushes them (section 1.6).
 const COUNTS_SECONDS: u64 = 60;
 /// While the link pushes, the counters are still read this often, in case a push was missed.
@@ -2059,7 +2072,7 @@ impl Session {
         if !errors.is_empty() {
             self.set_message(errors.join("; "), true);
         } else if !messages.info.is_empty() {
-            self.set_message(messages.info.join("; "), false);
+            self.set_message(distinct_join(&messages.info), false);
         }
     }
 
