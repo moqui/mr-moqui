@@ -1366,8 +1366,9 @@ a script and `X-Moqui-Qvt: static-template`, `Cache-Control: max-age=86400, must
 (a CSP without `unsafe-eval` allows that and not `fetch` and `new Function`), and the component it makes fetches `<path>/actions` (the
 screen package, `private, no-store`) and shows the render function over it. The package holds only the names the
 template reads (recorded from the compiled render function when it is built, and built for an `actions` request that
-comes first), `hideNav`, and the `client-context` names of the screen's actions elements; a form-list's rows keep what
-the template, `m-static-form-list` and the list views read of a row ([JS-Screen-Scripts](../dev/JS-Screen-Scripts.md#server-static-screens)).
+comes first), `hideNav`, and the `client-context` names of the actions that ran (a parent's always-actions included);
+a form-list's rows keep what the template, `m-static-form-list` and the list views read of a row, and those of a screen
+that is not server-static what its list views read ([JS-Screen-Scripts](../dev/JS-Screen-Scripts.md#server-static-screens)).
 
 Links and forms receive their availability from each actions response, including separate values for list rows.
 The server uses the same permission and transition-condition checks as a merged render. A missing target is disabled

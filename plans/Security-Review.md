@@ -173,8 +173,7 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
    approval, parsers of untrusted input, the mobile app's native code, and the helper-read parts of the PASS services.
 3. **Fixes.** The High findings are fixed (2026-11-15, what they left on 2026-11-16), and the Medium ones
    (2026-11-16) with 46 of the Low and Info ones. Of the Medium findings none is open, none deferred, none refuted and
-   none fixed only in part. Left from SEC-RTE-02: the form-list rows of a screen that is not server-static (merged qvt
-   `m-form-list`) are still sent whole, since that template is merged on the server and its reads are not recorded.
+   none fixed only in part.
 
    The Low and Info findings fixed in part are SEC-RTE-08 (a `read-only` transition such as `setPrefGoLast` or
    `/sso/logout` still changes state on a GET), SEC-TLS-08 (the deploy fetch resolves the host again), SEC-COM-21 (no

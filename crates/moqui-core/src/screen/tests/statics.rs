@@ -1050,16 +1050,37 @@ fn only_a_server_static_screen_answers_its_actions_package() {
          <widgets><label text=\"plain\"/></widgets></screen>",
     )
     .unwrap();
-    // a parent whose always-actions set a name, and a child that has only the subscreens placeholders
-    std::fs::create_dir_all(dir.join("Root/Parent")).unwrap();
+    // a screen that is not server-static (no server-static, a form-list): its rows, which only its list views fetch
+    std::fs::write(
+        dir.join("Root/PlainRows.xml"),
+        "<screen require-authentication=\"false\"><transition name=\"save\"><default-response type=\"none\"/></transition>\
+         <actions><set field=\"rowList\" from=\"[{rowId: 'R1', statusId: 'S1', unshown: 'entry-only'}]\"/></actions>\
+         <widgets><form-list name=\"PlainForm\" list=\"rowList\" transition=\"save\">\
+         <row-actions client-context=\"rowListed\"><set field=\"rowListed\" value=\"listed\"/><set field=\"rowNote\" value=\"note\"/></row-actions>\
+         <view-board group-field=\"statusId\" card-title-field=\"rowId\"/>\
+         <field name=\"rowId\"><default-field><display/></default-field></field></form-list></widgets></screen>",
+    )
+    .unwrap();
+    // a parent whose always-actions set a name (one listed in client-context) and whose pre-actions do not run for a
+    // request below it; a child whose pre-actions run (the third screen on the path); a leaf with only the subscreens
+    // placeholders
+    std::fs::create_dir_all(dir.join("Root/Parent/Child")).unwrap();
     std::fs::write(
         dir.join("Root/Parent.xml"),
-        "<screen require-authentication=\"false\"><always-actions><set field=\"parentValue\" value=\"parent\"/></always-actions>\
+        "<screen require-authentication=\"false\"><always-actions client-context=\"parentListed\">\
+         <set field=\"parentValue\" value=\"parent\"/><set field=\"parentListed\" value=\"listed\"/></always-actions>\
+         <pre-actions client-context=\"parentPre\"><set field=\"parentPre\" value=\"pre\"/></pre-actions>\
          <widgets><subscreens-active/></widgets></screen>",
     )
     .unwrap();
     std::fs::write(
         dir.join("Root/Parent/Child.xml"),
+        "<screen require-authentication=\"false\"><pre-actions client-context=\"childPre\"><set field=\"childPre\" value=\"pre\"/>\
+         <set field=\"childHidden\" value=\"hidden\"/></pre-actions><widgets><subscreens-menu/><subscreens-active/></widgets></screen>",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Root/Parent/Child/Leaf.xml"),
         "<screen require-authentication=\"false\"><widgets><subscreens-menu/><subscreens-active/></widgets></screen>",
     )
     .unwrap();
@@ -1114,10 +1135,28 @@ fn only_a_server_static_screen_answers_its_actions_package() {
     assert_eq!(row["rowId"], "R1", "{rows}");
     assert_eq!(row["rowListed"], "listed", "{rows}");
     assert!(row.get("rowNote").is_none() && row.get("unshown").is_none(), "{rows}");
-    // a placeholder screen: hideNav, which its form-lists read outside the template, and nothing of its parent's
+    // a screen that is not server-static: its rows keep the form's fields, its views' fields and its row-actions'
+    // client-context, as a server-static screen's do with no template names
+    let plain_rows = json_of(&get("/PlainRows/actions/PlainForm", &[]));
+    let plain_row = &plain_rows["rowList"][0];
+    assert_eq!(plain_row["rowId"], "R1", "{plain_rows}");
+    assert_eq!(plain_row["statusId"], "S1", "{plain_rows}");
+    assert_eq!(plain_row["rowListed"], "listed", "{plain_rows}");
+    assert!(plain_row.get("rowNote").is_none() && plain_row.get("unshown").is_none(), "{plain_rows}");
+    // a placeholder screen: hideNav, which its form-lists read outside the template, and nothing of its parent's but
+    // what the parent's always-actions list in client-context
     let child = json_of(&get("/Parent/Child/actions", &[("hideNav", "true")]));
     assert_eq!(child["hideNav"], "true", "{child}");
+    assert_eq!(child["parentListed"], "listed", "{child}");
     assert!(child.get("parentValue").is_none(), "{child}");
+    // below the third screen: the pre-actions client-context of a parent whose pre-actions ran (Child, the third) is
+    // sent, that of one whose did not (Parent, the second) is not, even for a value the request carries
+    let leaf = json_of(&get("/Parent/Child/Leaf/actions", &[("parentPre", "request")]));
+    assert_eq!(leaf["childPre"], "pre", "{leaf}");
+    assert_eq!(leaf["parentListed"], "listed", "{leaf}");
+    for unsent in ["parentPre", "childHidden", "parentValue"] {
+        assert!(leaf.get(unsent).is_none(), "{unsent} in {leaf}");
+    }
     let plain = get("/Plain/actions", &[]);
     assert_eq!(plain.status, 404, "{}", plain.body_text());
     assert!(!plain.body_text().contains("internal"), "{}", plain.body_text());
