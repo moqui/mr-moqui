@@ -258,6 +258,13 @@ along with this software (see the LICENSE.md file). If not, see
             if (!ec.user.userId && !authzOff) { ec.message.addError(ec.l10n.localize('No user for the email account')); return }
             if (ownerUserId && ownerUserId !== ec.user.userId && !authzOff) { ec.message.addError(ec.l10n.localize('An email account is made for yourself')); return }
             if (emailServerId && !authzOff) { ec.message.addError(ec.l10n.localize('An existing email server is chosen only by internal setup')); return }
+            // a hosted or shared account with no store server is delivered here: the listener's mail to its address goes to
+            // it, so only a mail administrator gives one an address (plans/Security-Review.md SEC-MAIL-01)
+            if (['EakHosted', 'EakShared'].includes(accountKindEnumId) && !storeHost && !authzOff
+                    && !ec.user.hasPermission('EMAIL_ACCOUNT_HOSTED')) {
+                ec.message.addError(ec.l10n.localize('Only a mail administrator makes an account hosted here; ask one, or add an account of another server'))
+                return
+            }
             if (!ownerUserId) ownerUserId = ec.user.userId
             let ownsServer = false
             if (emailServerId) {
@@ -347,6 +354,12 @@ along with this software (see the LICENSE.md file). If not, see
             if (access.level < 3) { ec.message.addError(`You may not change email account ${emailAccountId}`); return }
             const account = ec.entity.find('moqui.basic.email.EmailAccount').condition('emailAccountId', emailAccountId).forUpdate(true).one()
             const isInternal = account.accountKindEnumId === 'EakInternal'
+            // delivered here: hosted or shared with no store server, as moqui-mail's delivery reads it (SEC-MAIL-01)
+            const storeHostOf = (serverId) => serverId
+                    ? ec.entity.find('moqui.basic.email.EmailServer').condition('emailServerId', serverId).one()?.storeHost || null : null
+            const deliveredHere = (kind, storeHostNow) => ['EakHosted', 'EakShared'].includes(kind) && !storeHostNow
+            const wasDelivered = deliveredHere(account.accountKindEnumId, storeHostOf(account.emailServerId))
+            const oldAddress = String(account.emailAddress || '').trim().toLowerCase()
             const given = (value) => value != null
             const blank = (value) => value === '' ? null : value
             if (given(accountName)) account.set('accountName', blank(accountName))
@@ -405,6 +418,15 @@ along with this software (see the LICENSE.md file). If not, see
             if (given(statusId) && statusId !== account.statusId) {
                 if (!['EasActive', 'EasPaused'].includes(statusId)) { ec.message.addError(`An account is set Active or Paused, not ${statusId}`); return }
                 account.set('statusId', statusId)
+            }
+            // an account delivered here takes a new address, or becomes delivered here, only from a mail administrator
+            // (SEC-MAIL-01): the listener's mail to the address would go to it
+            const storeHostAfter = given(storeHost) ? blank(storeHost) : storeHostOf(account.emailServerId)
+            const newAddress = String(account.emailAddress || '').trim().toLowerCase()
+            if (deliveredHere(account.accountKindEnumId, storeHostAfter) && (!wasDelivered || newAddress !== oldAddress)
+                    && !ec.artifactExecution.authzDisabled() && !ec.user.hasPermission('EMAIL_ACCOUNT_HOSTED')) {
+                ec.message.addError(ec.l10n.localize('Only a mail administrator gives an account hosted here an address; ask one'))
+                return
             }
             emailServerId = account.emailServerId ?? null
             if (serverGiven.length) {

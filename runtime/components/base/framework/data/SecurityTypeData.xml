@@ -149,6 +149,11 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.UserPermission userPermissionId="EMAIL_ACCOUNT_OWNER_CHANGE" description="Mail: change the owner of another user's shared mail account"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="DRIVE_OWNER_CHANGE" fromDate="0"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="EMAIL_ACCOUNT_OWNER_CHANGE" fromDate="0"/>
+    <!-- Mail: a hosted or shared account with no store server is delivered here, the inbound listener's mail to its
+        address stored in it; giving one an address takes this (EmailClientServices create#EmailAccount and
+        update#EmailAccount; plans/Security-Review.md SEC-MAIL-01) -->
+    <moqui.security.UserPermission userPermissionId="EMAIL_ACCOUNT_HOSTED" description="Mail: make or re-address an account hosted on this server"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="EMAIL_ACCOUNT_HOSTED" fromDate="0"/>
     <moqui.security.ArtifactGroup artifactGroupId="ResourceOwnerServices" description="Owned resource lookup and owner change"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="ResourceOwnerServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
             artifactName="org\.moqui\.(resource\.FileServices\.(find#OwnedDrives|transfer#DriveOwner)|mail\.EmailClientServices\.(find#OwnedEmailAccounts|transfer#EmailAccountOwner))"/>
