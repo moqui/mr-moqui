@@ -1,5 +1,13 @@
 # Modern Rust Moqui Framework - MR Moqui
 
+> **Security notice (before 0.1.0).** MR Moqui is not ready for production. Until the first release (the 0.1.0
+> series) run it only on development machines, with no real business data or credentials, and do not expose it to the
+> internet. A security review is under way. Until 0.1.0 its findings, open vulnerabilities included, are recorded
+> openly in this repository ([plans/Security-Review.md](plans/Security-Review.md),
+> [docs/security/](docs/security/Attack-Surface.md)): with no production systems to protect, the repository is the
+> project's internal disclosure. From 0.1.0 the project follows Moqui Java's policy: a vulnerability is reported
+> privately to the board ([SECURITY.md](SECURITY.md)) and kept in the board's private repository until it is fixed.
+
 ## Quick Start
 
 ```sh
