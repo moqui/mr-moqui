@@ -1834,15 +1834,17 @@ fn an_agent_member_gets_each_message_through_its_entry_point() {
             ("roleEnumId", text("agent")),
         ],
     );
-    ok(
-        "set#MemberRole",
-        &[
-            ("chatRoomId", text(&chat)),
-            ("userId", text("agbot")),
-            ("roleEnumId", text("agent")),
-            ("agentRef", text("test.ChatStub.receive#AgentMessage")),
-        ],
-    );
+    // only an agent entry service is an agentRef (SEC-COM-07): the property names this test's stub as one
+    let named = [
+        ("chatRoomId", text(&chat)),
+        ("userId", text("agbot")),
+        ("roleEnumId", text("agent")),
+        ("agentRef", text("test.ChatStub.receive#AgentMessage")),
+    ];
+    refused("set#MemberRole", &named, "is not an agent's entry service");
+    moqui_lib::env::set_property("chat_agent_entry_services", "test.ChatStub.receive#AgentMessage");
+    ok("set#MemberRole", &named);
+    moqui_lib::env::clear_property("chat_agent_entry_services");
     send(&chat, "<p>what is due today?</p>");
     let in_transaction = crate::transaction::thread_in_transaction();
     let ran = ctx.factory().service_pools().run_pending();

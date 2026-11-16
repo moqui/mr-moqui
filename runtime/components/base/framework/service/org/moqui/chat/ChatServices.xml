@@ -1667,6 +1667,8 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="addedUserIdList" type="List"/></out-parameters>
         <actions><script><![CDATA[
             const ROLES = {owner: 'CmrOwner', moderator: 'CmrModerator', member: 'CmrMember', agent: 'CmrAgent'}
+            const AGENT_REFS = String(System.getProperty('chat_agent_entry_services') || 'org.moqui.agent.AgentServices.handle#ChatMessage')
+                    .split(',').map((name) => name.trim()).filter((name) => name)
             addedUserIdList = []
             const me = ec.user.userId
             if (!me) { ec.message.addError(ec.l10n.localize('No user')); return }
@@ -1714,6 +1716,8 @@ along with this software (see the LICENSE.md file). If not, see
                     const people = targets.filter((id) => !agents.has(id))
                     if (people.length) { ec.message.addError(`User ${people.join(', ')} is no agent's chat user`); return }
                 }
+                // an agent member's messages go only to an agent entry service, never to a service a moderator names (SEC-COM-07)
+                if (agentRef && !AGENT_REFS.includes(String(agentRef))) { ec.message.addError(`${agentRef} is not an agent's entry service`); return }
             }
             const now = ec.user.nowTimestamp
             const lastSeq = Number(room.lastEventSeq || 0)
@@ -1862,6 +1866,10 @@ along with this software (see the LICENSE.md file). If not, see
             if (role === 'CmrAgent' && access.room.encrypted) { ec.message.addError(ec.l10n.localize('An agent cannot read an encrypted room')); return }
             if (role === 'CmrAgent' && !ec.entity.find('moqui.agent.AgentDefinition').condition('chatUserId', userId).disableAuthz().count()) {
                 ec.message.addError(`User ${userId} is no agent's chat user`); return }
+            // an agent member's messages go only to an agent entry service, never to a service a moderator names (SEC-COM-07)
+            const AGENT_REFS = String(System.getProperty('chat_agent_entry_services') || 'org.moqui.agent.AgentServices.handle#ChatMessage')
+                    .split(',').map((name) => name.trim()).filter((name) => name)
+            if (agentRef && !AGENT_REFS.includes(String(agentRef))) { ec.message.addError(`${agentRef} is not an agent's entry service`); return }
             if (row.roleEnumId === 'CmrOwner' && role !== 'CmrOwner') {
                 const owners = ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('leftDate', null)
                         .condition('roleEnumId', 'CmrOwner').count()
