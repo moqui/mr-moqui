@@ -439,7 +439,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             const flag = (value) => value === 'true' ? true : (value === 'false' ? false : null)
             ec.service.sync().name('org.moqui.chat.ChatServices.set#Notification').parameters({chatRoomId: chatRoomId || '',
-                notificationLevelEnumId: notificationLevelEnumId || null, isMuted: flag(isMuted), isPinned: flag(isPinned)}).call()
+                notificationLevelEnumId: notificationLevelEnumId || null, isMuted: flag(isMuted), isPinned: flag(isPinned), archived: flag(archived)}).call()
             ec.web.sendJsonResponse({})
         ]]></script></actions>
         <default-response type="none"/>

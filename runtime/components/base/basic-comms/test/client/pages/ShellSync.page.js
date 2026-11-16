@@ -302,7 +302,7 @@ test("a message's edit, reaction and deletion wait in the app's outbox where the
     const panel=moqui.bundledComponent('BasicComms/Panel/Chat'), panels=[], panelLinks=[];
     const panelOf=id=>{
         const context=moqui.qvt.components['m-dynamic-container'].provide.call({id,curUrl:'/apps/BasicComms/Panel/Chat'}).mScreen;
-        const instance=Object.assign(panel.data(),{mScreen:context,$el:document.createElement('div'),
+        const instance=Object.assign(panel.data(),{mScreen:context,$el:document.createElement('div'),$emit:()=>{},home:false,
             $root:{basePath:'/apps',linkBasePath:'/qapps',setUrl:target=>panelLinks.push(target)}});
         Object.entries(panel.methods).forEach(([name,method])=>{instance[name]=method.bind(instance);});
         for (const name of ['inDialog','base','linkBase']) Object.defineProperty(instance,name,{get:()=>panel.computed[name].call(instance)});
