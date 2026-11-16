@@ -118,34 +118,6 @@ pub(super) fn user(facade: &EntityFacade, user_id: &str) {
             ("emailAddress", text(&format!("{user_id}@example.com"))),
         ],
     );
-    hosted_mail_admin(facade, user_id);
-}
-
-/// Let `user_id` make the hosted and shared accounts these tests deliver to: the `EMAIL_ACCOUNT_HOSTED` permission
-/// (plans/Security-Review.md SEC-MAIL-01), through a group of the tests' own.
-pub(super) fn hosted_mail_admin(facade: &EntityFacade, user_id: &str) {
-    const GROUP: &str = "MAIL_TEST_HOSTED";
-    const PERMISSION: &str = "EMAIL_ACCOUNT_HOSTED";
-    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-    let missing = |entity: &str, key: &str, id: &str| {
-        facade.find(entity).unwrap().eq(key, text(id)).count().unwrap() == 0
-    };
-    if missing("moqui.security.UserPermission", "userPermissionId", PERMISSION) {
-        row(facade, "moqui.security.UserPermission", &[("userPermissionId", text(PERMISSION))]);
-    }
-    if missing("moqui.security.UserGroup", "userGroupId", GROUP) {
-        row(facade, "moqui.security.UserGroup", &[("userGroupId", text(GROUP))]);
-        row(
-            facade,
-            "moqui.security.UserGroupPermission",
-            &[("userGroupId", text(GROUP)), ("userPermissionId", text(PERMISSION)), ("fromDate", stamp(1_000))],
-        );
-    }
-    row(
-        facade,
-        "moqui.security.UserGroupMember",
-        &[("userGroupId", text(GROUP)), ("userId", text(user_id)), ("fromDate", stamp(1_000))],
-    );
 }
 
 pub(super) fn login(user_id: &str) {
