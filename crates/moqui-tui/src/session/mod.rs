@@ -1304,7 +1304,13 @@ impl Session {
                 self.prompt_key(prompt, press);
                 true
             }
-            Some(Overlay::Dialog(id)) if id == shell::TRAY && press.is_plain() && !self.focused_is_text() => {
+            // the tray's Left and Right go between its tabs, also from an empty text field (Today opens on its quick
+            // add, where the advertised key did nothing, ACC-UI-008); in a field with text they move the cursor
+            Some(Overlay::Dialog(id))
+                if id == shell::TRAY
+                    && press.is_plain()
+                    && (!self.focused_is_text() || self.buffer(self.focus_id()).is_empty()) =>
+            {
                 self.tray_key(press)
             }
             Some(Overlay::DropDown(drop)) => {

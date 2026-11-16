@@ -1141,7 +1141,9 @@ fn draw_value(paint: &mut Painter, session: &Session, field: &LaidField, widget:
             }
         }
         Widget::Display { text, .. } => {
-            let room = usize::from(paint.right.saturating_sub(x));
+            // the field's own cell, as the layout counted its rows: in a row of fields a long value wrapped to the
+            // screen's edge ran into the next field's label (ACC-UI-007)
+            let room = usize::from(paint.right.saturating_sub(x)).min(field.value_width.max(1));
             let text = session.shown_text(id).unwrap_or(text);
             for (at, line) in crate::layout::wrap(text, room).iter().enumerate().take(field.rows) {
                 paint.text(x, y + at, line, Look::role(Role::Text), room);
