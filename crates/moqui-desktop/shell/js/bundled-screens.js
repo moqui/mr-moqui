@@ -2747,7 +2747,7 @@ const messageTemplate = `
             </template>
         </div>
         <div class="m-chat-stamp text-caption m-muted">{{item.timeShort}}<span v-if="item.edited"> {{room.t('(edited)')}}</span></div>
-        <div v-if="item.readers && item.readers.length" class="row justify-end items-center no-wrap q-mt-xs">
+        <div v-if="item.readers && item.readers.length && (item.mine || !room.useBubbles)" class="row justify-end items-center no-wrap q-mt-xs">
             <m-avatar v-for="reader in item.readers.slice(0, 6)" :key="reader.userId" :name="reader.name" :user-id="reader.userId" size="16px" class="q-ml-xs" tooltip></m-avatar>
             <span v-if="item.readers.length > 6" class="text-caption m-muted q-ml-xs">+{{item.readers.length - 6}}</span>
         </div>
@@ -9814,7 +9814,7 @@ module.exports = {
                           ? (_openBlock(), _createElementBlock("span", { key: 0 }, _toDisplayString(_ctx.room.t('(edited)')), 1))
                           : _createCommentVNode("", true)
                       ]),
-                      (_ctx.item.readers && _ctx.item.readers.length)
+                      (_ctx.item.readers && _ctx.item.readers.length && (_ctx.item.mine || !_ctx.room.useBubbles))
                         ? (_openBlock(), _createElementBlock("div", {
                             key: 5,
                             class: "row justify-end items-center no-wrap q-mt-xs"
