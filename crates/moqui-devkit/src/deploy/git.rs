@@ -205,34 +205,47 @@ fn gate_component(factory: &ExecutionContextFactory, name: &str) -> Result<(), S
     }
 }
 
-/// A deploy fetches over `https` or `ssh` (also `user@host:path`), never a local path or `file://`. On a production
-/// instance the host must not be a loopback, private or link-local address.
+/// A deploy fetches over `https` or `ssh` (also `user@host:path`), never a local path or `file://`. The URL is read
+/// as a URL parser reads it, so user info or a port does not hide the host. On a production instance the host must
+/// resolve, and to no loopback, private or link-local address (SEC-TLS-08).
 fn check_url(url: &str) -> Result<(), String> {
     let url = url.trim();
-    let (scheme, rest) = match url.split_once("://") {
-        Some((scheme, rest)) => (scheme.to_ascii_lowercase(), rest),
-        None if url.contains('@') && url.contains(':') && !url.starts_with('/') => ("ssh".to_string(), url),
+    let scheme = match url.split_once("://") {
+        Some((scheme, _)) => scheme.to_ascii_lowercase(),
+        None if url.contains('@') && url.contains(':') && !url.starts_with('/') => "ssh".to_string(),
         None => return Err("the URL must be https:// or ssh://".to_string()),
     };
     if scheme != "https" && scheme != "ssh" {
         return Err(format!("a {scheme} URL is not deployed from; use https:// or ssh://"));
     }
-    let authority = rest.split(['/', ':']).next().unwrap_or("");
-    let host = authority.rsplit('@').next().unwrap_or("").trim_matches(['[', ']']);
-    if host.is_empty() {
-        return Err("the URL has no host".to_string());
-    }
+    let (host, port) = url_host(url).ok_or_else(|| "the URL has no host".to_string())?;
     if moqui_core::web::is_production() {
-        use std::net::ToSocketAddrs;
-        let internal = (host, 443)
-            .to_socket_addrs()
-            .map(|mut addresses| addresses.any(|address| moqui_lib::http::internal_address(address.ip())))
-            .unwrap_or(false);
-        if internal {
-            return Err("the URL's host is a loopback, private or link-local address".to_string());
+        if let Err(err) = moqui_lib::net::public_addresses(&host, port) {
+            return Err(if err.to_string().contains("internal address") {
+                "the URL's host is a loopback, private or link-local address".to_string()
+            } else {
+                format!("the URL's host {host} was not found")
+            });
         }
     }
     Ok(())
+}
+
+/// The host and port of a deploy URL, or of the scp form `user@host:path` read as `ssh://user@host/path`.
+fn url_host(url: &str) -> Option<(String, u16)> {
+    let parsed = if let Some((_, rest)) = url.split_once("://") {
+        // the parser would take `https:///repo.git` as the host repo.git
+        if rest.starts_with(['/', '\\']) {
+            return None;
+        }
+        url::Url::parse(url).ok()?
+    } else {
+        let (user_host, path) = url.split_once(':')?;
+        url::Url::parse(&format!("ssh://{user_host}/{}", path.trim_start_matches('/'))).ok()?
+    };
+    let host = parsed.host_str().filter(|host| !host.is_empty())?;
+    let port = parsed.port().unwrap_or(if parsed.scheme() == "ssh" { 22 } else { 443 });
+    Some((host.trim_matches(['[', ']']).to_string(), port))
 }
 
 /// A component name as a directory and a repository id may hold it.

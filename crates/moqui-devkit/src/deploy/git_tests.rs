@@ -37,6 +37,33 @@ fn a_deploy_fetches_over_https_or_ssh_only() {
     }
 }
 
+/// SEC-TLS-08: on a production instance user info does not hide an internal host, and a host that does not resolve is
+/// refused rather than taken as public.
+#[test]
+fn on_production_an_internal_or_unknown_deploy_host_is_refused() {
+    assert_eq!(
+        super::url_host("https://user:secret@127.0.0.1:8443/r.git"),
+        Some(("127.0.0.1".to_string(), 8443))
+    );
+    assert_eq!(super::url_host("git@10.0.0.5:org/r.git"), Some(("10.0.0.5".to_string(), 22)));
+    moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(Some(true)));
+    let checked: Vec<_> = [
+        "https://user:secret@127.0.0.1/r.git",
+        "ssh://git@[::1]:2222/r.git",
+        "git@169.254.169.254:r.git",
+        "https://no-such-host.invalid/r.git",
+        "https://93.184.216.34/r.git",
+    ]
+    .iter()
+    .map(|url| check_url(url))
+    .collect();
+    moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(None));
+    for refused in &checked[..4] {
+        assert!(refused.is_err(), "{checked:?}");
+    }
+    assert!(checked[4].is_ok(), "{checked:?}");
+}
+
 #[test]
 fn a_component_name_is_one_directory_name() {
     for good in ["mr-pass", "my_site", "site.v2"] {
