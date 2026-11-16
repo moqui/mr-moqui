@@ -115,7 +115,8 @@ from the `<actions>`, since the call returns when it leaves an error and that mu
 The response is chosen after the actions (`pick_response`):
 
 1. With an error or a validation error in `ec.message`, the `error-response` when there is one.
-2. Else the first `conditional-response`, in the order of the file, whose condition holds. The conditions after it
+2. Else the first `conditional-response`, in the order of the file, whose condition holds: its `condition`
+   attribute (an expression), else its `condition` element; one with neither always holds. The conditions after it
    are not evaluated. (Moqui Java takes the last that holds.)
 3. Else the `default-response`.
 

@@ -232,9 +232,13 @@ impl ResponseDef {
             Some("screen-last-noparam") => ResponseKind::ScreenLastNoParam,
             _ => ResponseKind::Url,
         });
-        let condition = match node.first_named("condition") {
-            Some(condition) => Condition::from_element(&condition, &format!("{label} condition"))?,
-            None => None,
+        // a condition attribute (an expression), else a condition element, as a section's
+        let condition = match node.attribute("condition").filter(|text| !text.is_empty()) {
+            Some(expression) => Some(Condition::from_attr(&expression, &format!("{label} condition"))?),
+            None => match node.first_named("condition") {
+                Some(condition) => Condition::from_element(&condition, &format!("{label} condition"))?,
+                None => None,
+            },
         };
         let parameter_map = node.attribute("parameter-map").filter(|text| !text.is_empty());
         if let Some(expression) = &parameter_map {

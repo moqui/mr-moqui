@@ -1187,8 +1187,9 @@ fn a_transition_runs_its_path_in_one_transaction_and_takes_the_first_response_th
             </then></if></always-actions>
             <transition name="fail"><actions><message error="true">no</message></actions><default-response url="."/></transition>
             <transition name="fine"><actions><set field="ran" value="y"/></actions>
+                <conditional-response url="Never" condition="ran == 'n'"/>
                 <conditional-response url="Never"><condition><expression>ran == 'n'</expression></condition></conditional-response>
-                <conditional-response url="First"><condition><expression>ran == 'y'</expression></condition></conditional-response>
+                <conditional-response url="First" condition="ran == 'y'"/>
                 <conditional-response url="Second"><condition><expression>true</expression></condition></conditional-response>
                 <default-response url="Default"/></transition>
             <transition name="byPath"><path-parameter name="itemId"/><parameter name="itemId" required="true"/>
@@ -1229,7 +1230,8 @@ fn a_transition_runs_its_path_in_one_transaction_and_takes_the_first_response_th
     assert!(!exists("RolledBack"));
     let fine = post("/fine", "Kept");
     assert!(exists("Kept"));
-    // of the two responses that hold, the first in the file: the one before them does not hold and is passed over
+    // of the two responses that hold, the first in the file: the ones before them do not hold and are passed over, a
+    // condition attribute as a condition element
     assert_eq!(location_of(&fine), Some("/First"));
 
     // A required parameter that the path supplies is not missing.
