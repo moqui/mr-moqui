@@ -119,11 +119,13 @@ along with this software (see the LICENSE.md file). If not, see
                     <service name="org.moqui.mail.EmailServices.send#Email"/></method></resource>
             </id>
         </resource>
+        <!-- the servers no mail account owns, without their secrets (SEC-MAIL-04): a user's own mailbox server is not
+            answered here -->
         <resource name="servers">
-            <method type="get"><entity name="moqui.basic.email.EmailServer" operation="list"/></method>
+            <method type="get"><service name="org.moqui.mail.EmailServices.find#RelayServers"/></method>
             <method type="post"><entity name="moqui.basic.email.EmailServer" operation="create"/></method>
             <id name="emailServerId">
-                <method type="get"><entity name="moqui.basic.email.EmailServer" operation="one"/></method>
+                <method type="get"><service name="org.moqui.mail.EmailServices.get#RelayServer"/></method>
                 <method type="patch"><entity name="moqui.basic.email.EmailServer" operation="update"/></method>
                 <resource name="poll"><method type="post">
                     <service name="org.moqui.mail.EmailServices.poll#EmailServer"/></method></resource>
