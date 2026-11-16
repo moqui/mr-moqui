@@ -417,7 +417,7 @@ fn a_captured_send_is_captured_whatever_the_host() {
     };
     let capture = moqui_core::service::mail_capture::MailCapture::of(context.factory());
 
-    moqui_core::service::http_fixtures::allow();
+    moqui_core::service::mail_capture::allow();
     capture.set_enabled(Some(true)).unwrap();
     capture.clear();
     assert_eq!(send(), "ES_SENT");

@@ -2606,7 +2606,7 @@ fn a_test_message_goes_from_the_account_to_itself() {
     install();
     let account = shared_account(&facade, "smtp.example.com");
     let capture = moqui_core::service::mail_capture::MailCapture::of(ctx.factory());
-    moqui_core::service::http_fixtures::allow();
+    moqui_core::service::mail_capture::allow();
     capture.set_enabled(Some(true)).unwrap();
     capture.clear();
 

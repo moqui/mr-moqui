@@ -430,7 +430,7 @@ fn scheduled_reports_recheck_owner_and_export_the_panel_frame() {
         }
     }
     let capture = moqui_core::service::mail_capture::MailCapture::of(factory);
-    moqui_core::service::http_fixtures::allow();
+    moqui_core::service::mail_capture::allow();
     capture.set_enabled(Some(true)).unwrap();
     capture.clear();
     let location = gate.runtime.join("scheduled-fixture.csv");

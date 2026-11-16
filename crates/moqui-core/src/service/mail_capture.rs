@@ -24,8 +24,9 @@
 //! capturedDate}`), `count()`,
 //! `last()` and `clear()`.
 //!
-//! Only a `moqui test` run may capture (`http_fixtures::allowed`, the process flag the runner sets before it boots,
-//! never set on a server): elsewhere `enable()` throws and `mail_capture_sends` is ignored, with a warning at startup,
+//! Only a `moqui test` run may capture ([`allowed`], the process flag the runner sets before it boots beside
+//! `http_fixtures::allow`, never set on a server): elsewhere `enable()` throws and `mail_capture_sends` is ignored, with
+//! a warning at startup,
 //! so no script on a running server can hold back password reset links and sign-in codes and read them
 //! (plans/Security-Review-Medium.md SEC-DEV-05, SEC-OUT-10, SEC-MAIL-09). Each `enable()` is logged as a warning.
 
@@ -82,7 +83,7 @@ impl MailCapture {
 
     /// Whether sends are captured: in a test run only, the factory's `enable()`/`disable()`, else the conf property.
     pub fn is_enabled(&self) -> bool {
-        crate::service::http_fixtures::allowed()
+        allowed()
             && decide(*lock(&self.enabled), || {
                 moqui_lib::env::get_prop_or_env(MAIL_CAPTURE_PROPERTY)
             })
@@ -95,7 +96,7 @@ impl MailCapture {
     ///
     /// When `enabled` is `Some(true)` and this process is not a test run.
     pub fn set_enabled(&self, enabled: Option<bool>) -> Result<(), Error> {
-        may_enable(enabled, crate::service::http_fixtures::allowed())?;
+        may_enable(enabled, allowed())?;
         *lock(&self.enabled) = enabled;
         Ok(())
     }
@@ -140,6 +141,20 @@ fn may_enable(enabled: Option<bool>, allowed: bool) -> Result<(), Error> {
     }
     tracing::warn!("Mail capture enabled: sends are kept in memory and not delivered");
     Ok(())
+}
+
+/// Whether this process may capture mail: set only by the `moqui test` runner ([`allow`]). Its own flag, not
+/// `http_fixtures`', so a Rust test that captures mail does not also turn on the test run's network refusal.
+static ALLOWED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Let this process capture mail: the `moqui test` runner calls it before it boots.
+pub fn allow() {
+    ALLOWED.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Whether this process may capture mail ([`allow`]).
+pub fn allowed() -> bool {
+    ALLOWED.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 /// A factory's own switch, else the conf property's text.
@@ -209,7 +224,7 @@ impl ToolFactory for MailCaptureToolFactory {
 
     fn init(&self, _factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
         if moqui_lib::env::get_prop_or_env(MAIL_CAPTURE_PROPERTY).trim() == "true" {
-            if crate::service::http_fixtures::allowed() {
+            if allowed() {
                 tracing::warn!("{MAIL_CAPTURE_PROPERTY} is true: sends are kept in memory and not delivered");
             } else {
                 tracing::warn!("{MAIL_CAPTURE_PROPERTY} is true but ignored: mail is captured only in a moqui test run");
@@ -307,7 +322,7 @@ mod tests {
         // SEC-DEV-05: only a test run turns it on; turning it off is always allowed
         assert!(may_enable(Some(true), false).unwrap_err().message().contains("only in a moqui test run"));
         assert!(may_enable(Some(false), false).is_ok() && may_enable(None, false).is_ok());
-        crate::service::http_fixtures::allow();
+        allow();
         capture.set_enabled(Some(true)).unwrap();
         assert!(enabled());
         capture.set_enabled(Some(false)).unwrap();
