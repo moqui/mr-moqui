@@ -10,7 +10,7 @@ A servlet request is signed in from the session cookie, HTTP Basic, an `api_key`
 
 Screens carry `require-authentication`. The parser maps `false`, `anonymous-view`, and `anonymous-all` to those modes, and it maps a missing attribute to required. A render requires a user when any screen in the chain is required. An anonymous login counts as a user.
 
-Artifact authorization runs as each screen, transition, service, REST path, entity, git repository, and LLM call is pushed. Inheritable allow and always records cover children on that stack unless a more specific deny wins.
+Artifact authorization runs on a stack: each screen, transition, service, REST path, entity, git repository, and LLM call is pushed. A record is required of the last screen of a path when it requires authentication, of a transition when its screen requires authentication, of the last node of a REST path when its `require-authentication` is empty or `true`, of a service by its `authenticate`, and of an entity unless its `authorize-skip` covers the operation. Inheritable allow and always records cover children on that stack unless a more specific deny wins.
 
 ### Services and `allow-remote`
 
@@ -25,10 +25,10 @@ Seed grants, from `runtime/components/base/tools/data/ToolsSecurityData.xml`:
 | Group | Artifact | Grant |
 | --- | --- | --- |
 | `TOOLS_APP` | `component://tools/screen/Tools.xml`, `inheritAuthz` Y; `moqui.tools.ToolsHomeServices.get#ScreenCount` and `count#Screens` (the Tools home's screen count, counted on a worker) | `ADMIN`, `AUTHZT_ALWAYS`, `AUTHZA_ALL` |
-| `SYSTEM_APP` | `component://tools/screen/System.xml`, `inheritAuthz` Y, which holds Monitor (`System/Monitor.xml`); `moqui.tools.SystemHomeServices.get#SystemAttention`; the `org.moqui.report.dataset.otel_*` datasets and `org.moqui.report.dataset.monitor_annotations`; `org.moqui.monitor.MonitorServices.*`, `TelemetryServices.scrape#Targets` and `run#Checks`, `moqui.monitor.ScrapeTarget` and `SyntheticCheck`; `org.moqui.agent.AgentEvalServices.*` and the agent eval entities (`moqui.agent.AgentScorer`, `AgentScorerAttach`, `AgentDataset`, `AgentDatasetItem`, `AgentExperiment`, `AgentExperimentResult`, `AgentScore`) | `ADMIN`, `AUTHZT_ALWAYS`, `AUTHZA_ALL` |
+| `SYSTEM_APP` | `component://tools/screen/System.xml`, `inheritAuthz` Y, which holds Monitor (`System/Monitor.xml`); `moqui.tools.SystemHomeServices.get#SystemAttention` and `get#CounterSeries`; the `org.moqui.report.dataset.otel_*` datasets and `org.moqui.report.dataset.monitor_annotations`; `org.moqui.monitor.MonitorServices.*`, `TelemetryServices.scrape#Targets` and `run#Checks`, `moqui.monitor.ScrapeTarget` and `SyntheticCheck`; `org.moqui.agent.AgentEvalServices.*` and the agent eval entities (`moqui.agent.AgentScorer`, `AgentScorerAttach`, `AgentDataset`, `AgentDatasetItem`, `AgentExperiment`, `AgentExperimentResult`, `AgentScore`) | `ADMIN`, `AUTHZT_ALWAYS`, `AUTHZA_ALL` |
 | `MOQUI_API` | `/moqui`, `AT_REST_PATH`, `inheritAuthz` Y | `ADMIN`, `AUTHZT_ALWAYS`, `AUTHZA_ALL` |
 | `MOQUI_API_GIT` | `/moqui/git`, `inheritAuthz` Y | `ALL_USERS`, `AUTHZT_ALLOW`, `AUTHZA_ALL`. The services still check `AT_GIT_REPOSITORY`, and the writes ask `git-server` `rest-write-check-service` first (docs/interfaces/Git-Hosting.md, REST) |
-| `MOQUI_API_HOSTING` | `/moqui/hosting`, `inheritAuthz` Y | `ALL_USERS`, `AUTHZT_ALLOW`, `AUTHZA_ALL`. `offer` is `anonymous-view` and gives no one's data; `repository` and `mergeRequests` answer only what the caller may view |
+| `MOQUI_API_HOSTING` | `/moqui/hosting`, `inheritAuthz` Y | `ALL_USERS`, `AUTHZT_ALLOW`, `AUTHZA_ALL`. `offer` is `anonymous-view` and gives the server's settings and the caller's own username; `repository`, `mergeRequests` and `agreement` answer only for repositories the caller may view; `agreement` answers for the `authorUserId` or `authorEmail` the caller names ([The hosting REST resources](Attack-Surface-Git.md#the-hosting-rest-resources)) |
 
 The proxy permissions are `SearchRemote` and `DashboardRemote`. Both are seeded on `ADMIN`.
 
@@ -144,7 +144,7 @@ An `OPTIONS` preflight is 204 with an empty body, before the servlet chain (`cra
 
 `webapp_client_ip_header` and `webapp_trusted_proxies` are empty, so `X-Forwarded-For` is not trusted. `ClientAddressing` believes a peer only when a header is configured. If a header is set and the trusted-proxy list is still empty, the first hop is believed from any peer, and `X-Forwarded-Proto` uses that same gate. The comment above the property still names Jetty's `ForwardedRequestCustomizer`. The listener uses `ClientAddressing`.
 
-On an edge node (`node_role=front_edge`) and an all-in-one node (`node_role=all-in-one`) a header with an empty trusted-proxy list is ignored, with an error at startup: the edge node faces the internet and passes the client address to its local nodes ([Edge node](../Run-Deploy.md#a-local-server-with-an-edge-node)).
+On every node that takes links (`node_role` `front`, `front_edge`, `edge` or `all-in-one`) a header with an empty trusted-proxy list is ignored, with an error at startup: the edge node faces the internet and passes the client address to its local nodes ([Edge node](../Run-Deploy.md#a-local-server-with-an-edge-node)).
 
 `/health` and `/metrics` use the TCP peer, not this header, so a request that a proxy on the same host forwards has a loopback peer and is allowed. `/status` uses `ec.user.getClientIp()`, which can differ.
 Both take any address in 127.0.0.0/8 as loopback.

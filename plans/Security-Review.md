@@ -30,6 +30,9 @@ in [Security-Review-Low](Security-Review-Low.md).
 5. In a second round, on a smaller budget, one reader for each remaining slice read the code and wrote what is
    reachable straight into the slice's map file, with the suspected weaknesses in a short report. Those map files and
    findings have had no second reading.
+6. The seven map files whose first-round reports had not been applied (Routes, Admin, Tools, AI, Git, Comms,
+   Cluster-Edge) were then written from those reports by one writer each, who trusted an item whose quoted code was
+   specific and read the code only where it was not.
 
 Status values:
 
@@ -85,22 +88,23 @@ No finding is rated Critical. These are the ones to look at first; each High one
 - **`allow-remote` is read by nothing.** The map cited `allow-remote="false"` on about 37 lines as if it kept a
   service unreachable. No Rust code reads the attribute (the service XSD says so). A service is reached from outside
   only through a screen transition, a REST resource, a web script, a token route, the PASS authority's route table or
-  an agent tool exposure. The map's Web file now says this; the other files' sentences are still to be corrected.
+  an agent tool exposure. The map's Web file says this, and the other files' sentences are corrected or carry a
+  note.
 
 ## Coverage
 
 | Slice | Code | State | Map file written from it |
 | --- | --- | --- | --- |
 | 1 Web authentication and controls | `moqui-host/src/http*`, `guard*`, `moqui-core/src/user`, `web` | Read; not reached: `web/servlet.rs`, `screen/gate.rs`, most of `acme/`, SSO | Web: written |
-| 2 Routes, screens, REST | `moqui-core/src/screen`, REST, `components/base/webroot` | Read; not reached: `screen/frame.rs`, `web/servlet.rs`, the services behind `/rest/s1/moqui` | Routes: not yet |
-| 3 Administration, identity, sign-in | `org.moqui.admin.*`, SSO, factors, keys | Read; the bodies of the Configuration, Operation, DataTransfer, Backup, Readiness and Audit scripts only scanned for permission checks | Admin: not yet |
-| 4 Tools, System, Monitor, Dashboards | `components/base/tools`, `moqui-tools`, `moqui-report`, telemetry | Partial: `moqui-calc`, `moqui-collab`, most of `moqui-report` and `moqui-tools`, backups and most Dashboards screens not reached | Tools: not yet |
-| 5 LLM, A2A, MCP, Assist | `moqui-llm`, `moqui-host/src/llm` | Partial: the run loop, several tools, the MCP server tool path, gateway quotas and evals not read | AI: not yet |
-| 6 Git hosting and pipelines | `moqui-git`, `git_http`, `ci_run` | Read; the gix transports and several service files not reached | Git: not yet |
+| 2 Routes, screens, REST | `moqui-core/src/screen`, REST, `components/base/webroot` | Read; not reached: `screen/frame.rs`, `web/servlet.rs`, the services behind `/rest/s1/moqui` | Routes: written from the report, no second check |
+| 3 Administration, identity, sign-in | `org.moqui.admin.*`, SSO, factors, keys | Read; the bodies of the Configuration, Operation, DataTransfer, Backup, Readiness and Audit scripts only scanned for permission checks | Admin: written from the report, no second check |
+| 4 Tools, System, Monitor, Dashboards | `components/base/tools`, `moqui-tools`, `moqui-report`, telemetry | Partial: `moqui-calc`, `moqui-collab`, most of `moqui-report` and `moqui-tools`, backups and most Dashboards screens not reached | Tools: written from the report, no second check |
+| 5 LLM, A2A, MCP, Assist | `moqui-llm`, `moqui-host/src/llm` | Partial: the run loop, several tools, the MCP server tool path, gateway quotas and evals not read | AI: written from the report, no second check |
+| 6 Git hosting and pipelines | `moqui-git`, `git_http`, `ci_run` | Read; the gix transports and several service files not reached | Git: written from the report, no second check |
 | 7 Mail | `moqui-mail`, `moqui-host/src/smtp*` | Read in two rounds; not reached: the SMTP queue beyond its header, mail DNS, the DMARC and ARC decision, IMAP and POP size limits, the OAuth exchange, account owner transfer | Mail: written by its reviewer |
 | 8 Files, DAV, SSH, terminal | `moqui-dav`, `moqui-host/src/ssh`, `term` | Read in two rounds; not reached: the shell's interactive prompt, the host session environment, parts of `ssh/server.rs`, the SFTP drives backend and the SFTP client, DAV locks and free-busy, the `pim` parser bodies | Files, SSH: written by their reviewer |
-| 9 Calls, chat, SIP, XMPP | `components/base/basic-comms`, `moqui-rtc`, `moqui-sip`, `moqui-xmpp`, `moqui-channels` | Partial: chat bridges and SMS, Web Push and FCM, recording and captions only sampled | Comms: not yet |
-| 10 Cluster and edge node | `moqui-host/src/cluster*`, `edge*`, `grpc_listen` | Read; pools, takeover, the front node and the bodies of the delegated call and SIP services not checked | Cluster-Edge: not yet |
+| 9 Calls, chat, SIP, XMPP | `components/base/basic-comms`, `moqui-rtc`, `moqui-sip`, `moqui-xmpp`, `moqui-channels` | Partial: chat bridges and SMS, Web Push and FCM, recording and captions only sampled | Comms: written from the report, no second check |
+| 10 Cluster and edge node | `moqui-host/src/cluster*`, `edge*`, `grpc_listen` | Read; pools, takeover, the front node and the bodies of the delegated call and SIP services not checked | Cluster-Edge: written from the report, no second check |
 | 11 Clients | `moqui-desktop`, `moqui-mobile`, `moqui-client*`, `moqui-browser`, the browser shell | Read in the second round, on a small budget; not reached: `moqui-browser`, `moqui-embedded`, the terminal client, parts of `moqui-client`, the mobile Kotlin code, the updater's signature check, the rich text editor | Clients: written by its reviewer |
 | 12 Data layer | `moqui-entity`, `moqui-db`, `moqui-drivers` | Read; `moqui-core/src/search`, the cache and the load parsers not read | Data: written |
 | 13 Script engine, templates, parsers | `moqui-core/src/script`, `resource` | Read in the second round, on a small budget; not reached: the locked template runtime, report and formula expressions, CSV and XLSX output, multipart and JSON limits; parsers and the second half of rendering are the thinnest | Scripts: written by its reviewer |
@@ -156,16 +160,12 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 1. **A second check of the reported findings**, High and Medium first: someone reads the cited lines and looks for
    the guard the reviewer may have missed, then a fix or a refutation. Put off by the owner's decision of 2026-11-15
    until it is needed.
-2. **Map files not yet written from their first-round reports**: Routes, Admin, Tools, AI, Git, Comms and
-   Cluster-Edge, and the parts of the PASS frontend and authority reports (slices 14 and 15) beyond the summary in
-   Apps-PASS. Their reviewers' lists of what the map lacks and what is stale are in the evidence directory;
-   `WRITER.md` there is the brief a writer follows. Apps-PASS is near 100 KB and would be split first.
+2. **The rest of the PASS frontend and authority reports** (slices 14 and 15) beyond the summary in Apps-PASS. That
+   file is near 100 KB and would be split first. Every other map file is written from its report.
 3. **What each slice did not reach.** The coverage table names it, each report's "Read" section has the detail, and
    each map file ends with its open questions. The thinnest: the BOSS business apps other than Commerce and order
    approval, parsers of untrusted input, the mobile app's native code, and the helper-read parts of the PASS services.
-4. **The `allow-remote` sentences** in map text that predates this review (Admin, Tools, Comms, Cluster-Edge, and
-   the Sales and Marketing paragraphs of the two application files).
-5. **Fixes.** None was made in this pass.
+4. **Fixes.** None was made in this pass.
 
 ## Counts
 
@@ -189,10 +189,10 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 | BOSS access model; Admin, Commons, People, Accounting (`BOS`) | 0 | 0 | 3 | 5 | 1 | 0 | 9 |
 | BOSS business apps and the Mantle REST root (`BAP`) | 0 | 0 | 2 | 5 | 2 | 0 | 9 |
 | Clients (`CLI`) | 0 | 0 | 1 | 4 | 4 | 0 | 9 |
-| Script engine, templates and parsers (`SCR`) | 0 | 2 | 4 | 4 | 1 | 0 | 11 |
+| Script engine, templates and parsers (`SCR`) | 0 | 2 | 4 | 5 | 1 | 0 | 12 |
 | Outbound requests, processes and packaging (`OUT`) | 0 | 0 | 5 | 8 | 1 | 0 | 14 |
 | Development tools (`DEV`) | 0 | 0 | 3 | 3 | 2 | 0 | 8 |
-| **All** | 0 | 12 | 77 | 168 | 46 | 0 | 303 |
+| **All** | 0 | 12 | 77 | 169 | 46 | 0 | 304 |
 
 ## Findings by area
 
@@ -608,6 +608,7 @@ Map file: [Attack-Surface-Scripts.md](../docs/security/Attack-Surface-Scripts.md
 | SEC-SCR-08 | runtime/components/base/framework/template/screen/ScreenHtml.js:849 | The `editable` widget writes its text unescaped by default | Low | reported (to check) |
 | SEC-SCR-09 | crates/moqui-core/src/script/host/files.rs:455 | A thumbnail decodes an image with no limits of its own | Low | reported (to check) |
 | SEC-SCR-10 | crates/moqui-host/src/chromium.rs:312-327 | Chromium's DevTools port has no authentication on loopback | Low | reported (to check) |
+| SEC-SCR-12 | `crates/moqui-core/src/screen/definition.rs:1694` | A subscreen row's menu title is expanded as script, in menus and in the breadcrumb | Low | reported (confirmed in code) |
 | SEC-SCR-11 | crates/moqui-core/src/screen/definition.rs:910 | A screen definition loads from any resource scheme, `http` and `dbresource` included | Info | reported (to check) |
 
 ### Outbound requests, processes and packaging

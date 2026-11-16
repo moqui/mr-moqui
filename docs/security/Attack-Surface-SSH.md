@@ -26,7 +26,7 @@ The commands are in `crates/moqui-host/src/command/shell.rs`. An exec request an
 
 `shell.rs` writes no log line and no audit row for a command. The login is logged (`SSH login of <user> from <peer>`). `sh` at the prompt writes a log line with its command line and a `moqui.terminal.TerminalSession` audit row (`crates/moqui-host/src/command/host.rs`), and an SSH `attach` is logged.
 
-The SSH cluster channel is not a separate port. It is used when a peer's base URL is `ssh://`. The default transport is HTTPS, so the channel is off unless a member advertises SSH, and the SSH server must be listening. The login user is `moqui-cluster` with an Ed25519 key derived from `cluster_tls_key`. Any other key for that user is rejected. The channel carries the same cluster topics. It is not a shell.
+The SSH cluster channel is not a separate port. It is used when a peer's base URL is `ssh://`. The default transport is HTTPS, so a member sends over SSH only to a peer whose base URL is `ssh://`. The receiving side is not conditional: whenever the SSH server listens, on its port and on an edge node's SSH tunnel to it, it accepts the `moqui-cluster` login and applies its `cluster <topic>` channels, whatever `cluster_transport` is ([Where a member sends, and the SSH channel](Attack-Surface-Cluster-Edge.md#where-a-member-sends-and-the-ssh-channel)). The login user is `moqui-cluster` with an Ed25519 key derived from `cluster_tls_key`. Any other key for that user is rejected. The channel carries the same cluster topics. It is not a shell.
 
 ## Terminal session limits
 
