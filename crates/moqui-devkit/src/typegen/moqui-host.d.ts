@@ -1295,7 +1295,9 @@ interface MoquiNotificationMessage {
     /** Only the named users and group receive it, never a subscriber to every message of the topic; no argument is true. */
     directOnly(flag?: boolean): MoquiNotificationMessage;
     message(message: MoquiMap | string): MoquiNotificationMessage;
+    /** A template expanded with the message map when sent: `${...}` runs as script, so name message values, never concatenate them. */
     title(title: string): MoquiNotificationMessage;
+    /** A URL taken as written, not expanded (the topic's linkTemplate is). */
     link(link: string): MoquiNotificationMessage;
     type(type: "info" | "success" | "warning" | "danger"): MoquiNotificationMessage;
     showAlert(show?: boolean): MoquiNotificationMessage;
