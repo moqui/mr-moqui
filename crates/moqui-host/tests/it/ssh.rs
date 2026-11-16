@@ -168,6 +168,36 @@ fn exec(address: std::net::SocketAddr, username: &str, password: &str, command: 
     .map_err(|err| err.to_string())?
 }
 
+/// Open up to `count` session channels on one connection, sending no request on them, and return how many opened.
+fn open_session_channels(address: std::net::SocketAddr, username: &str, password: &str, count: usize) -> usize {
+    struct Accept;
+    impl russh::client::Handler for Accept {
+        type Error = russh::Error;
+        async fn check_server_key(&mut self, _key: &russh::keys::PublicKeyOrCertificate) -> Result<bool, Self::Error> {
+            Ok(true)
+        }
+    }
+    let (username, password) = (username.to_string(), password.to_string());
+    moqui_host::edge::block_on(async move {
+        let config = Arc::new(russh::client::Config::default());
+        let mut handle = russh::client::connect(config, address, Accept).await.unwrap();
+        assert!(handle
+            .authenticate_password(username, password)
+            .await
+            .unwrap()
+            .success());
+        let mut opened = Vec::new();
+        for _ in 0..count {
+            match handle.channel_open_session().await {
+                Ok(channel) => opened.push(channel),
+                Err(_) => break,
+            }
+        }
+        opened.len()
+    })
+    .unwrap()
+}
+
 #[test]
 fn sftp_and_the_admin_shell_run_on_the_built_in_server() {
     if !crate::common::own_process() {
@@ -453,6 +483,37 @@ fn sftp_and_the_admin_shell_run_on_the_built_in_server() {
     let mut sftp_only = SftpClient::new(&host, "sftp.only", None).unwrap();
     sftp_only.password("moqui").connect().unwrap();
     sftp_only.close();
+    // SEC-FIL-02: an app password, which no second factor guards, opens the drives over SFTP and nothing else, for a
+    // user with SSH_SHELL and SSH_SFTP too: no admin shell, no sftp-root, no agent-apps.
+    let (out, errors) = sync(
+        "org.moqui.impl.UserServices.create#UserAppPassword",
+        &[("name", Value::string("Sync client"))],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    let john_app = to_plain_string(out.get("password").unwrap());
+    assert_eq!(
+        exec(address, "john.doe", &john_app, "status"),
+        Err("channel request refused".to_string())
+    );
+    let (out, status) = exec(address, "john.doe", &john_app, "agent-apps").unwrap();
+    assert_eq!(status, 2, "{out}");
+    assert!(out.contains("drives over SFTP only"), "{out}");
+    let mut by_app = SftpClient::new(&host, "john.doe", None).unwrap();
+    by_app.password(&john_app).connect().unwrap();
+    let tops: Vec<String> = by_app
+        .ls("/")
+        .unwrap()
+        .into_iter()
+        .map(|(_, entry)| entry.name)
+        .collect();
+    assert!(
+        tops.contains(&"My files".to_string()),
+        "the drives, not sftp-root: {tops:?}"
+    );
+    assert!(!tops.contains(&"drop".to_string()), "{tops:?}");
+    by_app.close();
+    // SEC-FIL-61: one connection holds at most 8 session channels waiting for a request or running sftp
+    assert_eq!(open_session_channels(address, "john.doe", "moqui", 12), 8);
     // A shell user's commands run as that user: with no artifact authorization, entity and service calls are refused.
     let (out, status) = exec(address, "shell.only", "moqui", "status").unwrap();
     assert_eq!(status, 0, "{out}");

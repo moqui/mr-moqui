@@ -22,11 +22,13 @@
 //! A file opened for reading is opened as a windowed source (`ResourceFacade::open`, through the drive adapter for the
 //! drives) and read a window at a time as the client asks (plans/archive/High-Level-Review.md HL-010); one opened for writing
 //! is kept in memory and written on close, because a `dbresource` file is a row. `ssh-server` `sftp-max-file` bytes
-//! (default 256 MiB) bound either file, and the bytes all the open files of one channel hold together (a reader holds
-//! its window). A channel has at most [`MAX_HANDLES`] handles open.
+//! (default 256 MiB) bound either file, and the bytes all the open files of one user hold together, over all of that
+//! user's channels and connections (a reader holds its window; [`Held`], SEC-FIL-61). A channel has at most
+//! [`MAX_HANDLES`] handles open.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Weak};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock, Mutex, Weak};
 
 use moqui_core::context::{Error as CoreError, ExecutionContextFactory, Opened, ResourceStat};
 use moqui_core::resource::source::{ByteSource, READ_WINDOW};
@@ -38,6 +40,72 @@ use crate::worker::{on_pool, on_pool_without_authz};
 
 /// Open file and directory handles on one channel.
 const MAX_HANDLES: usize = 64;
+
+/// The file bytes each user's open SFTP handles hold, by username, over every channel and connection of that user.
+static HELD: LazyLock<Mutex<HashMap<String, usize>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// One channel's share of the bytes its user's open files hold ([`HELD`]): a file opened for writing is in memory
+/// until it is closed, so the bound is per user, not per channel, or a client could hold `sftp-max-file` on each of
+/// many channels (SEC-FIL-61). The share is given back when the channel ends.
+pub(super) struct Held {
+    user: String,
+    mine: usize,
+}
+
+impl Held {
+    pub(super) fn new(user: &str) -> Self {
+        Self {
+            // a username logs in in any case
+            user: user.to_ascii_lowercase(),
+            mine: 0,
+        }
+    }
+
+    /// The bytes the user's open files hold on all of their channels.
+    fn total(&self) -> usize {
+        moqui_lib::sync::lock(&HELD).get(&self.user).copied().unwrap_or(0)
+    }
+
+    fn add(&mut self, bytes: usize) {
+        self.set(self.mine.saturating_add(bytes));
+    }
+
+    fn sub(&mut self, bytes: usize) {
+        self.set(self.mine.saturating_sub(bytes));
+    }
+
+    fn set(&mut self, mine: usize) {
+        let mut held = moqui_lib::sync::lock(&HELD);
+        let total = held.entry(self.user.clone()).or_insert(0);
+        *total = total.saturating_sub(self.mine).saturating_add(mine);
+        if *total == 0 {
+            held.remove(&self.user);
+        }
+        self.mine = mine;
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        self.set(0);
+    }
+}
+
+/// An `sftp` subsystem counted in its connection's session channels while it runs (`ssh/server.rs`).
+pub(super) struct OpenChannel(Arc<AtomicUsize>);
+
+impl OpenChannel {
+    pub(super) fn new(count: &Arc<AtomicUsize>) -> Self {
+        count.fetch_add(1, Ordering::AcqRel);
+        Self(Arc::clone(count))
+    }
+}
+
+impl Drop for OpenChannel {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 /// One open handle.
 enum Open {
@@ -181,13 +249,16 @@ pub(super) struct SftpFs {
     backend: Backend,
     max_file: usize,
     handles: HashMap<String, Open>,
-    /// The file bytes the open handles hold, at most `max_file`.
-    held: usize,
+    /// The file bytes the open handles hold; with the user's other channels, at most `max_file`.
+    held: Held,
     next: u64,
+    /// The channel's place in its connection's count, given back when the subsystem ends.
+    _channel: Option<OpenChannel>,
 }
 
 impl SftpFs {
-    pub(super) fn new(factory: Weak<ExecutionContextFactory>, backend: Backend, max_file: usize) -> Self {
+    /// A channel of `held`'s user.
+    pub(super) fn new(factory: Weak<ExecutionContextFactory>, backend: Backend, max_file: usize, held: Held) -> Self {
         let backend = match backend {
             Backend::Root(root) => Backend::Root(root.trim_end_matches('/').to_string()),
             drives => drives,
@@ -197,9 +268,16 @@ impl SftpFs {
             backend,
             max_file,
             handles: HashMap::new(),
-            held: 0,
+            held,
             next: 0,
+            _channel: None,
         }
+    }
+
+    /// Count the subsystem in its connection's session channels while it runs.
+    pub(super) fn counted(mut self, channel: OpenChannel) -> Self {
+        self._channel = Some(channel);
+        self
     }
 
     /// Refuse one more handle past [`MAX_HANDLES`].
@@ -212,14 +290,14 @@ impl SftpFs {
         Ok(())
     }
 
-    /// The bytes open files may still take before this channel holds `ssh-server` `sftp-max-file`.
+    /// The bytes open files may still take before the user's channels hold `ssh-server` `sftp-max-file`.
     fn room(&self) -> usize {
-        self.max_file.saturating_sub(self.held)
+        self.max_file.saturating_sub(self.held.total())
     }
 
     fn too_much_held() -> StatusReply {
         StatusCode::Failure
-            .with_message("the open files on this channel would hold more than ssh-server sftp-max-file bytes")
+            .with_message("the open files of this user would hold more than ssh-server sftp-max-file bytes")
     }
 
     /// The storage target for a client path (a location under the root, or the path in the drives' tree) and the path
@@ -313,7 +391,12 @@ impl SftpFs {
         let Some(Open::Read { window_at, window, .. }) = self.handles.get_mut(handle) else {
             return Err(StatusCode::Failure.with_message("not a file handle"));
         };
-        self.held = self.held.saturating_sub(window.len()).saturating_add(fetched.len());
+        let mine = self
+            .held
+            .mine
+            .saturating_sub(window.len())
+            .saturating_add(fetched.len());
+        self.held.set(mine);
         *window_at = offset;
         *window = fetched;
         let stop = (len as usize).min(window.len());
@@ -530,7 +613,7 @@ impl russh_sftp::server::Handler for SftpFs {
             }
         };
         if let Open::Write { bytes, .. } = &open {
-            self.held += bytes.len();
+            self.held.add(bytes.len());
         }
         let handle = self.handle_id();
         self.handles.insert(handle.clone(), open);
@@ -571,7 +654,7 @@ impl russh_sftp::server::Handler for SftpFs {
         }
         if grown > 0 {
             bytes.resize(end, 0);
-            self.held += grown;
+            self.held.add(grown);
         }
         bytes[start..end].copy_from_slice(&data);
         Ok(ok(id))
@@ -580,7 +663,7 @@ impl russh_sftp::server::Handler for SftpFs {
     async fn close(&mut self, id: u32, handle: String) -> Result<Status, Self::Error> {
         let open = self.handles.remove(&handle);
         if let Some(Open::Read { window: bytes, .. } | Open::Write { bytes, .. }) = &open {
-            self.held = self.held.saturating_sub(bytes.len());
+            self.held.sub(bytes.len());
         }
         match open {
             Some(Open::Write { location, bytes }) => {
@@ -649,28 +732,37 @@ mod tests {
     use russh_sftp::protocol::{FileAttributes, OpenFlags};
     use russh_sftp::server::Handler as _;
 
-    use super::{normalize, Backend, Open, SftpFs, MAX_HANDLES};
+    use super::{normalize, Backend, Held, Open, SftpFs, MAX_HANDLES};
 
     fn message(reply: &russh_sftp::server::StatusReply) -> &str {
         reply.error_message.as_deref().unwrap_or("")
     }
 
+    fn root_channel(user: &str, max_file: usize) -> SftpFs {
+        SftpFs::new(
+            Weak::new(),
+            Backend::Root("runtime://sftp".to_string()),
+            max_file,
+            Held::new(user),
+        )
+    }
+
     #[tokio::test]
     async fn open_files_and_handles_are_capped_per_channel() {
-        let mut fs = SftpFs::new(Weak::new(), Backend::Root("runtime://sftp".to_string()), 100);
+        let mut fs = root_channel("capped-channel", 100);
         let (location, bytes) = ("runtime://sftp/a".to_string(), vec![0; 60]);
         fs.handles.insert("h1".to_string(), Open::Write { location, bytes });
         let (location, bytes) = ("runtime://sftp/b".to_string(), Vec::new());
         fs.handles.insert("h2".to_string(), Open::Write { location, bytes });
-        fs.held = 60;
+        fs.held.add(60);
         fs.write(1, "h2".to_string(), 0, vec![1; 40]).await.unwrap();
-        assert_eq!(fs.held, 100);
+        assert_eq!(fs.held.mine, 100);
         let refused = fs.write(2, "h2".to_string(), 40, vec![1]).await.unwrap_err();
         assert!(message(&refused).contains("would hold more than"), "{refused:?}");
         // Writing over bytes already held needs no room.
         fs.write(3, "h1".to_string(), 0, vec![2; 60]).await.unwrap();
         fs.close(4, "h1".to_string()).await.unwrap_err();
-        assert_eq!(fs.held, 40);
+        assert_eq!(fs.held.mine, 40);
 
         for index in fs.handles.len()..MAX_HANDLES {
             fs.handles.insert(format!("d{index}"), Open::Dir { entries: None });
@@ -696,6 +788,7 @@ mod tests {
             std::sync::Arc::downgrade(&factory),
             Backend::Root("runtime://sftp".to_string()),
             usize::MAX,
+            Held::new("windowed-reader"),
         );
         let content: Vec<u8> = (0..READ_WINDOW * 5 / 2).map(|at| (at % 251) as u8).collect();
         fs.handles.insert(
@@ -713,7 +806,7 @@ mod tests {
                 Ok(data) => {
                     assert!(!data.data.is_empty());
                     read.extend_from_slice(&data.data);
-                    assert!(fs.held <= READ_WINDOW, "{}", fs.held);
+                    assert!(fs.held.mine <= READ_WINDOW, "{}", fs.held.mine);
                 }
                 Err(reply) => {
                     assert_eq!(reply.status_code, russh_sftp::protocol::StatusCode::Eof);
@@ -723,7 +816,29 @@ mod tests {
         }
         assert!(read == content, "the bytes read are the file's");
         fs.close(2, "r".to_string()).await.unwrap();
-        assert_eq!(fs.held, 0);
+        assert_eq!(fs.held.mine, 0);
+    }
+
+    /// SEC-FIL-61: the bytes open files hold are counted per user over all of the user's channels, so a second channel
+    /// has only what the first left, and gets it back when the first channel ends.
+    #[tokio::test]
+    async fn the_bytes_held_are_capped_per_user_over_every_channel() {
+        let mut first = root_channel("many-channels", 100);
+        let mut second = root_channel("many-channels", 100);
+        let mut other = root_channel("another-user", 100);
+        for fs in [&mut first, &mut second, &mut other] {
+            let (location, bytes) = ("runtime://sftp/a".to_string(), Vec::new());
+            fs.handles.insert("h".to_string(), Open::Write { location, bytes });
+        }
+        first.write(1, "h".to_string(), 0, vec![1; 70]).await.unwrap();
+        let refused = second.write(2, "h".to_string(), 0, vec![1; 40]).await.unwrap_err();
+        assert!(message(&refused).contains("would hold more than"), "{refused:?}");
+        second.write(3, "h".to_string(), 0, vec![1; 30]).await.unwrap();
+        // another user is not held back
+        other.write(4, "h".to_string(), 0, vec![1; 100]).await.unwrap();
+        drop(first);
+        second.write(5, "h".to_string(), 30, vec![1; 70]).await.unwrap();
+        assert_eq!(second.held.total(), 100);
     }
 
     #[test]
