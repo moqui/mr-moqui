@@ -262,7 +262,8 @@ along with this software (see the LICENSE.md file). If not, see
             invitation), each a dated row from fromDate (now when empty) written with authorization on, so the sealed and
             privileged EECAs decide it; refused whole, nothing written, when any bundle is refused (check#GrantProposal); a bundle
             the account is already in is left. The dates are audit-logged with the reason. The framework knows no
-            organization: the caller scopes the account. Needs ADMIN_ACCESS_MANAGE or ADMIN_IDENTITY_MANAGE.</description>
+            organization: the caller scopes the account. Needs ADMIN_ACCESS_MANAGE or ADMIN_IDENTITY_MANAGE; with only the
+            latter the caller's own account is refused (reasonCode OWN_ACCOUNT).</description>
         <in-parameters>
             <parameter name="userId" required="true"/>
             <parameter name="bundleGroupIdList" type="List" required="true"/>
