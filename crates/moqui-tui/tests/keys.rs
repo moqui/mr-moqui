@@ -391,6 +391,34 @@ fn a_valid_submit_posts_the_password_clears_that_form_and_keeps_another_forms_ed
     assert_eq!(session.message(), "Saved");
 }
 
+/// Every message a transition sends is on the line, as its errors are: a summary's details follow it (ACC-UI-024, the
+/// 1099 run's count and then each vendor that failed).
+#[test]
+fn a_transition_that_sends_several_messages_shows_them_all() {
+    let (mut session, link) = edit_session();
+    link.answer_transition(
+        "/edit/update",
+        TransitionOutcome {
+            screen_url: String::new(),
+            messages: Messages {
+                info: vec![
+                    "1099 data made for 1 vendors; 1 failed, 2 not reported".to_string(),
+                    "Demo Consultant: no taxpayer identification number".to_string(),
+                ],
+                ..Messages::default()
+            },
+            parameters: BTreeMap::new(),
+        },
+    );
+    session.set_buffer("Edit.name", "Ann".to_string());
+    press(&mut session, &link, Key::Enter);
+    assert_eq!(
+        session.message(),
+        "1099 data made for 1 vendors; 1 failed, 2 not reported; Demo Consultant: no taxpayer identification number"
+    );
+    assert!(!session.message_is_error());
+}
+
 #[test]
 fn a_service_error_keeps_the_edits_and_stays() {
     let (mut session, link) = edit_session();

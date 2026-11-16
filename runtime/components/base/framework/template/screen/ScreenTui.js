@@ -640,7 +640,9 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
         // an agent's render: the field's title with the placeholder as a display, never its value
         const sub = child(field, "default-field") || child(field, "conditional-field");
         const placeholder = `$emit({t:"field",id:$uid(${jsString(fieldIdOf(field))}),name:${jsString(attr(field, "name") || "field")},title:String(${sub ? S.localizedTitle(sub) : '""'} || ""),w:{kind:"display",text:$aiOffText()}});`;
-        return aiOffBranch(field, placeholder, code);
+        // a hide expression is checked when the form renders, as qvt does: a field the screen hides was drawn and
+        // took input the transition never read (ACC-UI-023, Insights' report options)
+        return S.hideGuard(field, aiOffBranch(field, placeholder, code));
     };
     const layoutCode = (form) => {
         const fields = childrenNamed(form, "field");

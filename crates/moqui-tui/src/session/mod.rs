@@ -1839,8 +1839,8 @@ impl Session {
         let messages = self.model().messages.clone();
         if !messages.errors.is_empty() {
             self.set_message(messages.errors.join("; "), true);
-        } else if let Some(info) = messages.info.first() {
-            self.set_message(info.clone(), false);
+        } else if !messages.info.is_empty() {
+            self.set_message(messages.info.join("; "), false);
         }
     }
 

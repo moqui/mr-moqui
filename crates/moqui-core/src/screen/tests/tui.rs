@@ -1476,6 +1476,26 @@ fn a_column_chooser_leaves_out_a_field_its_hide_hides() {
     );
 }
 
+/// A single form's field whose hide expression holds is not drawn in the terminal, as in qvt: it was drawn and took
+/// input the transition never read (ACC-UI-023, Insights' report options showing From and Through to a report without
+/// them).
+#[test]
+fn a_form_field_its_hide_expression_hides_is_not_drawn() {
+    let xml = r#"<screen require-authentication="false"><actions><script>shown = {fromDate: false}</script></actions><widgets>
+            <form-single name="Opts" transition=".">
+                <field name="period"><default-field title="Period"><text-line/></default-field></field>
+                <field name="fromDate" hide="!shown.fromDate"><default-field title="From"><text-line/></default-field></field>
+                <field name="thruDate" hide="!shown.thruDate"><default-field title="Through"><text-line/></default-field></field>
+            </form-single>
+        </widgets></screen>"#;
+    for mode in ["qvt", "tui"] {
+        let body = render_in("form-hide", mode, xml).body_text();
+        assert!(body.contains("Period"), "{mode}: {body}");
+        assert!(!body.contains("\"From\"") && !body.contains(">From<"), "{mode}: {body}");
+        assert!(!body.contains("Through"), "{mode}: {body}");
+    }
+}
+
 /// A user's saved finds of a list: each with the URL that applies it, the user's own marked, the current find's parameters
 /// and the URL that clears it.
 #[test]
