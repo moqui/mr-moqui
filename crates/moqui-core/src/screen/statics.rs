@@ -1401,9 +1401,46 @@ pub(crate) fn run_actions_transition(state: &RenderState) -> Result<(), Error> {
         }
     }
     match info.extra_path.first() {
+        None if !sends_package(state) => {
+            json_error(
+                404,
+                &format!("Screen {} is not a server-static template and has no actions package", target.screen_name),
+            );
+            Ok(())
+        }
         None => screen_package(state, &target),
         Some(name) => form_package(state, &target, name),
     }
+}
+
+/// Whether `GET {screen}/actions` answers the screen's package: only for a screen that is sent as a server-static
+/// template (its qvt macro module, `server-static` naming qvt and a structure the template can hold, or a static report),
+/// whose client reads the package. Any other screen's actions put names in the context for checks and renders that
+/// are never sent, so they are not answered (plans/Security-Review-Medium.md SEC-RTE-02). A form-list's rows and a
+/// tree's nodes (`{screen}/actions/{name}`) are answered as before.
+fn sends_package(state: &RenderState) -> bool {
+    let info = &state.url_info;
+    let macro_location = info
+        .path_defs
+        .iter()
+        .filter_map(|def| def.macro_template_location("qvt"))
+        .rfind(|location| !location.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            state
+                .facade
+                .text_output("qvt")
+                .map(|output| output.macro_template_location.clone())
+        })
+        .unwrap_or_default();
+    eligibility_of(
+        &state.facade,
+        &state.factory,
+        &info.target_screen,
+        &macro_location,
+        report_forces_static(),
+    )
+    .eligible
 }
 
 // ---- includes ----
