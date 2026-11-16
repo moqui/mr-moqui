@@ -385,7 +385,13 @@ pub(crate) fn git_available() -> bool {
 
 /// Run git in `dir` (with a home of its own, so no user config is read). Its output, and whether it succeeded.
 pub(crate) fn git_in(dir: &Path, home: &Path, args: &[&str]) -> (bool, String) {
+    git_in_with(dir, home, args, std::process::Stdio::null())
+}
+
+/// [`git_in`] with `stdin` as its input (`git fast-import`'s stream).
+pub(crate) fn git_in_with(dir: &Path, home: &Path, args: &[&str], stdin: std::process::Stdio) -> (bool, String) {
     let mut command = Command::new("git");
+    command.stdin(stdin);
     command
         .args([
             "-c",

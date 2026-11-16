@@ -14,7 +14,8 @@
 
 //! How much of a request the git server reads (docs/interfaces/Git-Hosting.md, Request limits): `git-server`
 //! `max-request` (64 MiB) for upload-pack and `max-push-size` (2 GiB) for receive-pack, counted after a gzip body is
-//! inflated and over SSH as over HTTP, and refused, not cut short, past them.
+//! inflated, and refused, not cut short, past them. Over SSH a push's whole input is one request, and an upload-pack
+//! conversation is held to it round by round (`upload.rs`), as HTTP holds each of its requests.
 
 use std::io::Read;
 
@@ -23,7 +24,7 @@ use super::GitService;
 pub(crate) const DEFAULT_MAX_REQUEST: u64 = 64 * 1024 * 1024;
 pub(crate) const DEFAULT_MAX_PUSH: u64 = 2 * 1024 * 1024 * 1024;
 
-/// The most bytes of one request (an SSH command's whole input) for `service`.
+/// The most bytes of one request for `service`: an HTTP request, a round of an SSH upload-pack, an SSH push's input.
 pub(crate) fn request_limit(service: GitService) -> u64 {
     let (name, default) = match service {
         GitService::UploadPack => ("max-request", DEFAULT_MAX_REQUEST),
@@ -49,6 +50,11 @@ impl<R: Read> Capped<R> {
             left: limit,
             limit,
         }
+    }
+
+    /// The next round of a conversation: `limit` bytes more.
+    pub(crate) fn renew(&mut self) {
+        self.left = self.limit;
     }
 }
 
