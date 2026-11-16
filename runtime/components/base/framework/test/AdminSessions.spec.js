@@ -199,13 +199,19 @@ feature("an identity operator reads another user's sessions and ends one, a view
                 revoked: invoke(S + "revoke#Sessions", {sessionKeyList: [visit(2)]}),
                 credentials: invoke(S + "get#AccountCredentials", {userId: targetId})
             })),
-            operator: as(operator, () => ({
-                listed: invoke(S + "find#Sessions", {userIdList: [targetId], activeOnly: true}),
-                revoked: invoke(S + "revoke#Sessions", {userId: targetId, sessionKeyList: [visit(2)]})
-            }))
+            // without a sign-in in the last five minutes another account's session is not ended; after confirming it is
+            operator: as(operator, () => {
+                const listed = invoke(S + "find#Sessions", {userIdList: [targetId], activeOnly: true})
+                const stale = invoke(S + "revoke#Sessions", {userId: targetId, sessionKeyList: [visit(2)]})
+                const staleKept = one("moqui.server.HttpSession", {sessionId: "SPEC_SES_SESSION_2"}) != null
+                confirm()
+                return {listed, stale, staleKept, revoked: invoke(S + "revoke#Sessions", {userId: targetId, sessionKeyList: [visit(2)]})}
+            })
         }
     },
     then({viewer, operator}) {
+        operator.stale.error.includes("Confirm it is you") && operator.stale.reasonCode == "reauthRequired"
+        operator.stale.sessionCount == 0 && operator.staleKept
         viewer.found.error == "" && viewer.found.sessionList.length >= 1
         viewer.named.sessionList.length >= 1 && viewer.named.sessionList.every(row => row.userId == targetId)
         viewer.revoked.refusedCount == 1 && viewer.revoked.sessionCount == 0

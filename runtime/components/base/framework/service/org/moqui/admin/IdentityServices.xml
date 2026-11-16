@@ -72,8 +72,11 @@ along with this software (see the LICENSE.md file). If not, see
             every other session of the account (userId, else the caller's). The caller's own sessions but the current one, or
             with ADMIN_IDENTITY_MANAGE another user's; a session of another account than userId, or another user's without the
             permission, or of an account in a privileged group the caller is not in or holding a sealed permission the caller
-            lacks (bounded delegation), is refused and counted. Its next request starts over signed out and its notification socket closes at
-            its next check. Credentials (keys, app passwords) are left: revoke#AccountAccess ends them.</description>
+            lacks (bounded delegation), is refused and counted. Ending another account's sessions also needs the caller's sign-in in
+            the last five minutes (org.moqui.sso.RecentAuthServices.require#RecentAuth: an error, reasonCode reauthRequired and the
+            X-Moqui-Reauth header; a caller with authorization disabled passes); the caller's own do not. Its next request starts
+            over signed out and its notification socket closes at its next check. Credentials (keys, app passwords) are left:
+            revoke#AccountAccess ends them.</description>
         <in-parameters>
             <parameter name="sessionKeyList" type="List"/>
             <parameter name="userId"/>
@@ -83,6 +86,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="sessionCount" type="Integer"><description>The web sessions ended</description></parameter>
             <parameter name="visitCount" type="Integer"/>
             <parameter name="refusedCount" type="Integer"/>
+            <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Identity.js').execute('revokeSessions', context))</script></actions>
     </service>
@@ -111,7 +115,7 @@ along with this software (see the LICENSE.md file). If not, see
             credential by credentialKind (accessToken, deviceKey, loginKey, appPassword, sshKey, sipDevice) and credentialId.
             The account is not disabled (the lifecycle's, P6). Needs ADMIN_IDENTITY_MANAGE, and is refused for an account in a
             privileged group the caller is not in or holding a sealed permission the caller lacks; the caller scopes the target and
-            asks for ADMIN_IDENTITY_GLOBAL where the identity is shared. Any kind but sessions also needs the caller's sign-in in
+            asks for ADMIN_IDENTITY_GLOBAL where the identity is shared. Every kind, sessions included, also needs the caller's sign-in in
             the last five minutes (org.moqui.sso.RecentAuthServices.require#RecentAuth: an error, reasonCode reauthRequired and
             the X-Moqui-Reauth header, which a browser form answers by asking and sending again; a caller with authorization
             disabled passes). The caller's own credentials are refused here (the account's self-service ends them).</description>

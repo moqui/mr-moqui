@@ -342,6 +342,13 @@ function revokeSessions(p) {
         }
         refusedCount = keys.length - Array.from(byUser.values()).reduce((sum, list) => sum + list.length, 0)
     }
+    // ending another account's sessions asks the administrator's sign-in in the last five minutes (require#RecentAuth: its
+    // error and the X-Moqui-Reauth header, which a browser form answers by asking and sending again; a caller with
+    // authorization disabled passes); the caller's own other sessions do not
+    if (Array.from(byUser.keys()).some(userId => userId !== me)) {
+        const recent = ec.service.sync().name("org.moqui.sso.RecentAuthServices.require#RecentAuth").call()?.recent
+        if (!recent) return {sessionCount: 0, visitCount: 0, refusedCount: keys.length, reasonCode: "reauthRequired"}
+    }
     let sessionCount = 0
     let visitCount = 0
     const ended = new Set()
@@ -528,11 +535,10 @@ function revokeAccountAccess(p) {
         : Array.from(p.kindList || accessKinds)
               .map(text)
               .filter(kind => accessKinds.includes(kind))
-    // ending another account's keys, tokens, app passwords or phones asks the administrator's sign-in in the last five
-    // minutes (require#RecentAuth: its error and the X-Moqui-Reauth header, which a browser form answers by asking and
-    // sending again; a job or a caller with authorization disabled passes); ending sessions alone does not, as
-    // revoke#Sessions
-    if (kinds.some(kind => kind !== "sessions")) {
+    // ending another account's sessions, keys, tokens, app passwords or phones asks the administrator's sign-in in the last
+    // five minutes (require#RecentAuth: its error and the X-Moqui-Reauth header, which a browser form answers by asking and
+    // sending again; a job or a caller with authorization disabled passes), as revoke#Sessions
+    if (kinds.length) {
         const recent = ec.service.sync().name("org.moqui.sso.RecentAuthServices.require#RecentAuth").call()?.recent
         if (!recent) return {revokedCounts: {}, failedKinds: [], reasonCode: "reauthRequired"}
     }

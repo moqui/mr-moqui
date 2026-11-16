@@ -49,12 +49,14 @@ and `create#UserAppPassword`.
 An administrator's actions on another account are guarded too, after the permission and the check of the access that
 account holds (`heldBeyond`): setting its password (`update#Password` with `ADMIN_PASSWORD`), issuing its codes, adding
 or ending its factors, changing its email address or provider link (`update#UserAccount`), revoking its keys, tokens,
-app passwords, SSH keys and phones (`revoke#AccountAccess`, any kind but sessions), and Login as (Tools
-`UserAccountDetail.xml` and mr-boss Admin's `UserDetail.xml` `loginAs`, which log in only when it is recent). Ending
-another account's sessions alone is not guarded: it signs the user out and takes nothing over. `reset#Password` is not
-either: anyone may ask it, and it only mails the account's own address. A caller with authorization disabled (a job, a
-setup service, a lifecycle's scheduled step) passes; Mantle's account lifecycle "disable now", run by an administrator
-in a request, needs a recent sign-in.
+app passwords, SSH keys, phones and sessions (`revoke#AccountAccess`, every kind; `revoke#Sessions` for another
+account's sessions), and Login as (Tools `UserAccountDetail.xml` and mr-boss Admin's `UserDetail.xml` `loginAs`, which
+log in only when it is recent). Ending the user's own other sessions is not guarded. `reset#Password` is not either:
+anyone may ask it, and it only mails the account's own address. A caller with authorization disabled (a job, a setup
+service, a lifecycle's scheduled step) passes. Mantle's account lifecycle asks it before it starts a disable now or a
+removal now that ends the account's memberships, and before a retry of a step that revokes access or ends sessions, so
+such an operation is refused whole (`REAUTH_REQUIRED`) rather than left half done; a People separation is never
+refused: without a recent sign-in its account steps wait for an identity operator.
 
 ## In the browser
 
