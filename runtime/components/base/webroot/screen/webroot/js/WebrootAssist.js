@@ -302,7 +302,7 @@
             return String(html || "").replace(/<img\b[^>]*>/gi, (tag) => {
                 const src = attr(tag, "src").replace(/&amp;/g, "&");
                 const alt = attr(tag, "alt");
-                if (!strict && /^\/(?!\/)/.test(src) && !/[\s\\]/.test(src) && src.indexOf("..") < 0 && !/\ssrcset\s*=/i.test(tag))
+                if (!strict && assist.siteImage(src) && !/\ssrcset\s*=/i.test(tag))
                     return '<img src="' + escapeHtml(src) + '" alt="' + escapeHtml(alt) + '">';
                 const host = assist.hostOf(src) || (src.indexOf("data:") === 0 ? "data" : "");
                 return '<span class="m-assist-image" data-assist-image="' + escapeHtml(host) + '">' + escapeHtml(assist.labels.image) +
@@ -323,10 +323,16 @@
             box.appendChild(fragment);
             return box.innerHTML;
         },
-        // whether an image source is this site's own path (shown as it is): /..., no //, no .., no whitespace or backslash
+        // whether an image source is a static image of this site (shown as it is), as the canvas's image rule
+        // (WebrootAssistCanvas.js canvas.siteImage) and SEC-AI-03: /..., no //, no .., no whitespace, backslash, query or
+        // fragment, not under a screen, a transition or a call of the apps (a GET of one would run it with the user's
+        // cookie), and an image's extension; or a rich-text image (/richTextImage/<id>)
         siteImage(src) {
             const text = String(src || "");
-            return /^\/(?!\/)/.test(text) && !/[\s\\]/.test(text) && text.indexOf("..") < 0;
+            if (/^\/richTextImage\/[A-Za-z0-9_-]+$/.test(text)) return true;
+            if (text.charAt(0) !== "/" || text.charAt(1) === "/" || /[\s\\?#]/.test(text) || /^\/[^/]*:/.test(text) || text.indexOf("..") >= 0) return false;
+            if (/^\/(apps|qapps|rest|assist|vapps|s1|e1|m1)(\/|$)/i.test(text)) return false;
+            return /\.(png|jpe?g|gif|svg|webp|ico)$/i.test(text);
         },
         cleanTree(node, doc, strict) {
             const urlAttrs = ["src", "srcset", "href", "xlink:href", "action", "formaction", "poster", "background", "data", "cite", "longdesc", "lowsrc",
