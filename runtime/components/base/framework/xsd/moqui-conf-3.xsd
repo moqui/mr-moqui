@@ -382,6 +382,10 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="alert-workers" type="xs:string">
             <xs:annotation><xs:documentation>Threads that evaluate alert rules in one pass, default 4, at most 32. The
                 calling thread also takes rules.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="save-roots" type="xs:string">
+            <xs:annotation><xs:documentation>The locations a scheduled report may save its file under, separated by commas or
+                white space (each a directory); empty is dbresource://report/. A saveToLocation outside them, with a ..
+                segment, in a component, in a conf directory or a .env file is refused.</xs:documentation></xs:annotation></xs:attribute>
     </xs:complexType></xs:element>
     <xs:element name="resource-watch"><xs:complexType>
         <xs:annotation><xs:documentation>When a reading of the machine or of the server process is a warning or

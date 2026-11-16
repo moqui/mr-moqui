@@ -112,6 +112,8 @@ fn lock(factory: &Arc<ExecutionContextFactory>, id: &str) -> moqui_core::entity:
         .unwrap()
 }
 fn schedule(factory: &Arc<ExecutionContextFactory>, location: &str, template: Option<&str>) -> String {
+    // the fixtures save under the test's own directories (report save-roots, SEC-TLS-06)
+    moqui_lib::env::set_property("report_save_roots", "/");
     owner(factory,"org.moqui.report.ReportServices.create#Schedule",json!({"definitionId":"lease-dashboard","cronExpression":"0 0 0 * * ?","renderMode":"csv","saveToLocation":location,"emailTemplateId":template,"userId":"EX_JOHN_DOE"}))["screenScheduledId"].as_str().unwrap().to_string()
 }
 #[test]

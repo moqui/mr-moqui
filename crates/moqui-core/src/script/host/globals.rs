@@ -57,7 +57,7 @@ const GLOBALS_JS: &str = concat!(
         propertyMatches: hidden.propertyMatches, secretCodeHash: hidden.secretCodeHash };
     const web = helpers.WebUtilities, string = helpers.StringUtilities, collection = helpers.CollectionUtilities;
     for (const name of ["encodeHtml", "encodeHtmlJsSafe", "fieldValuesEncodeHtmlJsSafe", "ipMatches",
-        "isSafeSinglePathSegment", "isSameOriginRedirect", "lastPathSegment"]) web[name] = hidden[name];
+        "isSafeSinglePathSegment", "isSameOriginRedirect", "lastPathSegment", "reportSaveLocationProblem"]) web[name] = hidden[name];
     for (const name of ["encodeForXmlAttribute", "base64UrlEncode", "base64UrlDecode", "base64Encode", "base64Decode",
         "cleanHtml",
         "urlEncodeIfNeeded"]) string[name] = hidden[name];
@@ -230,6 +230,14 @@ pub(crate) static SHIM: Shim = Shim {
             None,
             leaf,
             last_path_segment
+        ),
+        method!(
+            "WebUtilities",
+            "reportSaveLocationProblem",
+            [OptText],
+            None,
+            leaf,
+            report_save_location_problem
         ),
         method!(
             "StringUtilities",
@@ -691,6 +699,15 @@ fn ip_matches(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let patterns = call.opt_text(0).unwrap_or_default();
     let address = call.opt_text(1).unwrap_or_default();
     Ok((patterns.is_empty() || crate::web::ip_matches(&patterns, &address)).into())
+}
+
+/// `WebUtilities.reportSaveLocationProblem(location)`: why a scheduled report may not be saved there (outside the
+/// conf's `report` `save-roots`, a `..`, a component, the conf or a `.env` file), or null when it may.
+fn report_save_location_problem(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.opt_text(0).unwrap_or_default();
+    let roots = crate::context::ExecutionContext::with_current(|ec| crate::context::report_save_roots(ec.factory()))
+        .unwrap_or_else(|| crate::context::DEFAULT_REPORT_SAVE_ROOTS.to_string());
+    Ok(crate::context::report_save_location_problem(&location, &roots).into())
 }
 
 fn safe_segment(call: &mut Call<'_>) -> Result<Ret, HostError> {
