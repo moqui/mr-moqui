@@ -41,7 +41,13 @@ const LOOSE_ACTIONS: &[&str] = &[
 pub const KNOWN_EXCLUSIONS: &[(&str, &str)] = &[];
 
 /// Root elements of screen and form XML files.
-const ROOTS: &[&str] = &["screen", "forms", "widget-template", "widget-templates"];
+const ROOTS: &[&str] = &[
+    "screen",
+    "screen-extend",
+    "forms",
+    "widget-template",
+    "widget-templates",
+];
 
 const JS_GLOBALS: &[&str] = &[
     "Math", "JSON", "Object", "Array", "Number", "String", "Date", "Boolean", "Symbol", "Map", "Set", "Intl",
@@ -539,8 +545,9 @@ impl ScreenLintReport {
 }
 
 /// Scan the roots. A root that is a file is scanned as is. A directory is walked for XML files.
-/// Under `runtime` style roots only paths with a `screen` directory component count, so service
-/// and data XML is skipped.
+/// Under `runtime` style roots only paths with a `screen`, `template` or `screen-extend` directory component count, so
+/// service and data XML is skipped. A file under `template` is a screen only by its root (the target of a
+/// `section-include` or `transition-include`): one there that does not parse or has another root is not a screen.
 ///
 /// # Errors
 ///
@@ -560,7 +567,13 @@ pub fn lint_screens(roots: &[PathBuf]) -> Result<ScreenLintReport, Error> {
             continue;
         }
         let text = std::fs::read_to_string(&path).map_err(|err| Error::new(format!("{}: {err}", path.display())))?;
-        if let Some(file) = scan_screen_text(path, &text, &names, &opaque)? {
+        let scanned = scan_screen_text(path.clone(), &text, &names, &opaque);
+        let scanned = if is_template(&path) {
+            scanned.unwrap_or(None)
+        } else {
+            scanned?
+        };
+        if let Some(file) = scanned {
             report.files.push(file);
         }
     }
@@ -607,7 +620,8 @@ fn scan_screen_text(
         }
     }
     crate::lint_hazards::refine(&root, &mut file);
-    if root.has_name("screen") {
+    // a template's sections are included into screens: its own anchors and terminal parts are its includers'
+    if root.has_name("screen") && !is_template(&file.path) {
         scan_tui(&root, &mut file);
         scan_anchors(&root, &mut file);
     }
@@ -804,16 +818,29 @@ fn collect(path: &Path, in_screen: bool, out: &mut Vec<PathBuf>) -> Result<(), E
         let child = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         if child.is_dir() {
-            collect(&child, in_screen || name == "screen", out)?;
-        } else if in_screen || path_has_screen(path) {
+            collect(&child, in_screen || SCREEN_DIRS.contains(&name.as_str()), out)?;
+        } else if in_screen || path_in_screen_dirs(path) {
             collect(&child, true, out)?;
         }
     }
     Ok(())
 }
 
+/// The directories whose XML files are screens, templates of screen parts, or screen extensions.
+const SCREEN_DIRS: &[&str] = &["screen", "template", "screen-extend"];
+
 fn path_has_screen(path: &Path) -> bool {
     path.components().any(|part| part.as_os_str() == "screen")
+}
+
+/// A file of screen parts under a `template` directory (not under a `screen` one): included into screens.
+fn is_template(path: &Path) -> bool {
+    !path_has_screen(path) && path.components().any(|part| part.as_os_str() == "template")
+}
+
+fn path_in_screen_dirs(path: &Path) -> bool {
+    path.components()
+        .any(|part| SCREEN_DIRS.iter().any(|dir| part.as_os_str() == *dir))
 }
 
 fn scan_node(node: &MNode, in_actions: bool, file: &mut FileReport) {
@@ -851,7 +878,10 @@ fn scan_widgets(node: &MNode, names: &HashSet<String>, opaque: &HashSet<String>,
             }
         }
     }
-    if matches!(&*node.name_rc(), "widgets" | "fail-widgets" | "widget-template") {
+    if matches!(
+        &*node.name_rc(),
+        "widgets" | "fail-widgets" | "widget-template" | "widgets-extend"
+    ) {
         walk(node, names, opaque, file);
     }
     for child in node.child_iter() {

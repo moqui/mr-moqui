@@ -62,7 +62,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <check><option key="true" text="Put each service's definition in its doc"/></check></default-field></field>
             <field name="removeStale"><default-field title="Stale docs">
                 <check><option key="true" text="Remove docs this tool wrote whose artifacts are gone"/></check></default-field></field>
-            <field name="submitButton"><default-field title="Export docs"><submit btn-type="primary"/></default-field></field>
+            <field name="submitButton"><default-field title="Export docs"><submit/></default-field></field>
             <field-layout>
                 <field-row><field-ref name="rootId"/><field-ref name="path"/></field-row>
                 <field-ref name="kinds"/>

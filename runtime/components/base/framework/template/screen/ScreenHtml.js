@@ -1937,10 +1937,12 @@
         }
         if (name === "field-row-big") {
             const title = attr(kid, "title");
+            // justify: how the fields sit on the row, a CSS justify-content value (as qvt's big-row)
+            const justify = attr(kid, "justify");
             return js`
                 sri.write("<div class=\\"field big-row\\">");
                 ${title ? `sri.write("<label>" + ec.resource.expand(${lit(title)}, "") + "</label>");` : ""}
-                sri.write("<div class=\\"widget\\">");
+                ${justify ? `sri.write(${lit(`<div class="widget" style="display:flex;flex-wrap:wrap;justify-content:${justify};">`)});` : 'sri.write("<div class=\\"widget\\">");'}
                 ${layoutCode(kid, fields, referenced, true)}
                 sri.write("</div></div>\\n");
             `;

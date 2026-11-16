@@ -599,7 +599,7 @@ ${kind === "check" ? "" : `        if ($value && !$options.some(($opt) => $opt.v
         const o = opts || {};
         const when = child(sub, "visible-when");
         const requireWhen = child(sub, "require-when");
-        const required = attr(field, "required") === "true" || attr(sub, "required") === "true";
+        const required = attr(sub, "required") === "true";
         const nullable = widget.name === "editable";
         const idExpr = o.idExpr || `$uid(${jsString(fieldIdOf(field))})`;
         const nameExpr = o.nameExpr || jsString(attr(field, "name") || "field");

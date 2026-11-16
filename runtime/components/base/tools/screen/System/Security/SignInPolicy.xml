@@ -218,7 +218,7 @@ along with this software (see the LICENSE.md file). If not, see
                                 </default-field>
                             </field>
                             <field name="ipText"><default-field title="Allowed addresses"><display/></default-field></field>
-                            <field name="memberCount"><default-field title="Members" align="right"><display/></default-field></field>
+                            <field name="memberCount" align="right"><default-field title="Members"><display/></default-field></field>
                             <field name="change">
                                 <conditional-field condition="canManage &amp;&amp; canChange" title="">
                                     <link url="." text="Change" link-type="anchor" parameter-map="{reviewGroupId:userGroupId}"/>

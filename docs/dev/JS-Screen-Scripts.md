@@ -341,7 +341,8 @@ The XML screen beside it declares the mode and the file:
 ## `moqui lint --screens`
 
 `moqui lint --screens [report-file]` checks every screen and form XML file under the runtime's components
-(`crates/moqui-devkit/src/screen_lint.rs`). The argument is the file the report is written to, not a screen to check:
+(`crates/moqui-devkit/src/screen_lint.rs`): the files under a `screen` directory, the screen parts under a `template`
+directory (the targets of `section-include` and `transition-include`, by their `screen` root) and `screen-extend` files. The argument is the file the report is written to, not a screen to check:
 naming a screen there overwrites that screen. With no file the report goes to standard output.
 
 | It checks | |
@@ -352,7 +353,7 @@ naming a screen there overwrites that screen. With no file the report goes to st
 | `actions`, `always-actions`, `pre-actions`, `row-actions`, and a transition's `service-call` | The generated script must parse |
 | `<text template="true">` bodies | Must compile as a fancy template |
 | Widget elements | An element no macro names is reported: it would render as a placeholder |
-| Attributes | An attribute the XSD does not define on its element (`<container condition>`) is listed as a warning: the renderers ignore it. It does not change the exit code, as `moqui check`'s schema warnings do not |
+| Attributes | An attribute the XSD does not define on its element (`<container condition>`, `<display align>`) is listed as a warning: the renderers ignore it, or the XSD has not caught up with one they read. It does not change the exit code, as `moqui check`'s schema warnings do not |
 
 A parse failure, an unknown element or a template that does not compile is printed and makes the command exit 1.
 

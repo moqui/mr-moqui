@@ -432,7 +432,7 @@ along with this software (see the LICENSE.md file). If not, see
             <label text="Not available: ${readError || 'no entity named'}" type="p" style="text-negative"/>
             <link url="../List" text="Back to the entities" link-type="anchor"/>
         </widgets><fail-widgets>
-            <container name="EntityHeader">
+            <container id="EntityHeader">
                 <label text="${definition.entityName || entityName}" type="h5"/>
                 <label text="${entityName}" type="p" style="m-muted"/>
                 <label text="${headerText}" type="p"/>
