@@ -192,7 +192,12 @@ pub(super) fn send_template(
         date: None,
         extra_headers: template_extra_headers(parameters),
     };
-    if !filter_recipients(&mut letter, &field_text(&server, "allowedToDomains"), &email_message_id) {
+    if !filter_recipients(
+        &mut letter,
+        &field_text(&server, "allowedToDomains"),
+        &email_message_id,
+        false,
+    ) {
         return Ok(ids(&email_message_id, ""));
     }
     letter.attachments = match collect_attachments(facade, parameters, &template_id, &env) {
@@ -299,8 +304,12 @@ pub(super) fn send_message(
     if from_address.is_empty() {
         return refuse(format!("Email Message {email_message_id} has no from address"));
     }
-    if to_addresses.is_empty() {
-        return refuse(format!("Email Message {email_message_id} has no to address"));
+    // a message may go to Bcc (or Cc) only: its To header is then the empty group (COM-UI-018)
+    if to_addresses.is_empty()
+        && field_text(&message, "ccAddresses").is_empty()
+        && field_text(&message, "bccAddresses").is_empty()
+    {
+        return refuse(format!("Email Message {email_message_id} has no recipient"));
     }
     let mut server_id = field_text(&message, "emailServerId");
     if server_id.is_empty() {
@@ -384,7 +393,12 @@ pub(super) fn send_message(
         date: None,
         extra_headers,
     };
-    if !filter_recipients(&mut letter, &field_text(&server, "allowedToDomains"), &email_message_id) {
+    if !filter_recipients(
+        &mut letter,
+        &field_text(&server, "allowedToDomains"),
+        &email_message_id,
+        true,
+    ) {
         if client {
             return refuse(format!(
                 "No To address of email message {email_message_id} is in a domain email server {server_id} allows"
@@ -913,22 +927,28 @@ pub(super) fn force_cache<T>(facade: &EntityFacade, body: impl FnOnce() -> Resul
     tx.run(TransactionAttribute::ForceCache, None, body)
 }
 
-fn filter_recipients(letter: &mut Letter, allowed: &str, email_message_id: &str) -> bool {
+/// Leaves the recipients at the server's allowed domains, and says whether the letter still has one to go to: a To
+/// address, or with `any_recipient` (a message of the mail client, which may go to Bcc only) any of To, Cc and Bcc.
+fn filter_recipients(letter: &mut Letter, allowed: &str, email_message_id: &str, any_recipient: bool) -> bool {
     let domains: Vec<String> = allowed
         .split(',')
         .map(str::trim)
         .filter(|entry| !entry.is_empty())
         .map(str::to_string)
         .collect();
+    let has_recipient =
+        |letter: &Letter| !letter.to.is_empty() || (any_recipient && (!letter.cc.is_empty() || !letter.bcc.is_empty()));
     if domains.is_empty() {
-        letter.to.retain(|address| !address.trim().is_empty());
-        return !letter.to.is_empty();
+        for list in [&mut letter.to, &mut letter.cc, &mut letter.bcc] {
+            list.retain(|address| !address.trim().is_empty());
+        }
+        return has_recipient(letter);
     }
     let mut skipped = Vec::new();
     retain_domains(&mut letter.to, &domains, &mut skipped);
     retain_domains(&mut letter.cc, &domains, &mut skipped);
     retain_domains(&mut letter.bcc, &domains, &mut skipped);
-    if letter.to.is_empty() {
+    if !has_recipient(letter) {
         tracing::warn!(
             message = %email_message_id,
             skipped = %skipped.join(","),
@@ -2070,12 +2090,26 @@ pub(super) fn build_lettre(letter: &Letter) -> Result<lettre::Message, Error> {
     for address in &letter.reply_to {
         builder = builder.reply_to(mailbox(address, "")?);
     }
-    if !letter.bounce.is_empty() {
-        let sender = letter
-            .bounce
-            .trim()
-            .parse()
-            .map_err(|err| Error::new(format!("bounce address {} is not valid: {err}", letter.bounce)))?;
+    // a message to Bcc only says so in its To, as mail clients do (RFC 5322's empty group); its envelope is set here,
+    // since lettre takes one from the To, Cc and Bcc headers and does not read a group (COM-UI-018)
+    let undisclosed = letter.to.is_empty() && letter.cc.is_empty();
+    if undisclosed {
+        let header = lettre::message::header::HeaderName::new_from_ascii_str("To");
+        builder = builder.raw_header(lettre::message::header::HeaderValue::new(
+            header,
+            "undisclosed-recipients:;".to_string(),
+        ));
+    }
+    if !letter.bounce.is_empty() || undisclosed {
+        let sender = if letter.bounce.is_empty() {
+            mailbox(&letter.from_address, "")?.email
+        } else {
+            letter
+                .bounce
+                .trim()
+                .parse()
+                .map_err(|err| Error::new(format!("bounce address {} is not valid: {err}", letter.bounce)))?
+        };
         let envelope =
             lettre::address::Envelope::new(Some(sender), recipients).map_err(|err| Error::new(err.to_string()))?;
         builder = builder.envelope(envelope);

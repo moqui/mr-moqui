@@ -247,6 +247,67 @@ feature("a reply starts from the account it came to, is kept as a draft and disc
     }
 })
 
+feature("a refused recipient is said once, and a From the user may only read says they can no longer send from it", {
+    when() {
+        ec.user.internalLoginUser("basic.comms.inbox")
+        const fromValue = compose("get#ComposeData", {}).compose.fromValue
+        // the check runs once and its error is not added again by the strict save (COM-UI-017): the error list itself
+        try { sys(() => call("org.moqui.comms.ComposeServices.send#Compose", {fromValue, toJson: JSON.stringify([{value: "invalid-recipient"}]), subject: "x", body: "<p>x</p>"})) }
+        catch (err) { /* the errors are read below */ }
+        const invalid = Array.from(ec.message.errors || [])
+        ec.message.clearErrors()
+        // a shared account the client user may read but not send from (a right lowered while a composer is open, COM-UI-021)
+        store("moqui.basic.email.EmailAccount", {emailAccountId: ACCOUNT + "_SH", ownerUserId: USER, accountKindEnumId: "EakShared",
+            emailAddress: "shared.spec@example.com", accountName: "Spec shared", statusId: "EasActive"})
+        store("moqui.basic.email.EmailAccountUser", {emailAccountId: ACCOUNT + "_SH", userId: CLIENT, fromDate: ec.user.nowTimestamp, permissionEnumId: "EapRead"})
+        ec.user.internalLoginUser("basic.comms.inbox.client")
+        const readOnly = compose("save#ComposeDraft", {fromValue: "account:" + ACCOUNT + "_SH", toJson: JSON.stringify([{value: "pat@example.org"}]), body: "<p>x</p>"})
+        const stranger = compose("save#ComposeDraft", {fromValue: "account:" + ACCOUNT, toJson: JSON.stringify([{value: "pat@example.org"}]), body: "<p>x</p>"})
+        ec.user.internalLoginUser("basic.comms.inbox")
+        sys(() => ec.entity.find("moqui.basic.email.EmailAccountUser").condition("emailAccountId", ACCOUNT + "_SH").deleteAll())
+        return {invalid, readOnly, stranger}
+    },
+    then({invalid, readOnly, stranger}) {
+        invalid.length == 1 && String(invalid[0]).includes("Not an email address: invalid-recipient")
+        readOnly.errors.includes("You can no longer send from Spec shared")
+        // an account the user does not reach is not named
+        stranger.errors.includes("Choose a mail account to send from")
+        !stranger.errors.includes("Spec mail")
+    }
+})
+
+feature("Mail offers only what an account allows and asks before deleting forever; a label row is a checkbox; MessageDetail links stay under its app; Compose's text blocks keep the focus", {
+    when() {
+        const source = ec.resource.getLocationText("component://basic-comms/screen/BasicComms/Inbox/Mail.qvue", false)
+        const detail = ec.resource.getLocationText("component://basic-comms/screen/BasicComms/Inbox/MessageDetail.xml", false)
+        const composer = ec.resource.getLocationText("component://basic-comms/screen/BasicComms/Inbox/Compose.qvue", false)
+        return {source, detail, composer}
+    },
+    then({source, detail, composer}) {
+        // COM-UI-021: the mutations are gated on the account's send right, and applyAction refuses the rest
+        source.includes('v-if="selectionCanChange"') && source.includes('v-if="rowCanChange(row)"') && source.includes('v-if="threadCanChange"')
+        source.includes("You may read this account but not change its mail")
+        // COM-UI-025: the label rows say whether each is checked, unchecked or mixed
+        /role="checkbox"\s+:aria-checked="labels\.choice\[label\.emailLabelId\] === true \? 'true' : \(labels\.choice\[label\.emailLabelId\] === false \? 'false' : 'mixed'\)"/.test(source)
+        // COM-UI-026: Unsnooze, and the snooze dialog closes only once the server takes the time
+        source.includes("rowAction(row, 'unsnooze')") && source.includes("threadAction('unsnooze')")
+        /applySnooze\(at\) \{[\s\S]*?at <= Date\.now\(\)[\s\S]*?\.then\(\(json\) => \{[\s\S]*?this\.snooze\.open = false/.test(source)
+        // COM-UI-027: Spam's name follows its action; Trash says Delete forever and asks first
+        source.includes(":aria-label=\"thread.folderKindEnumId === 'EfkJunk' ? t('Not spam') : t('Report spam')\"")
+        source.includes(":aria-label=\"threadInTrash ? t('Delete forever') : t('Delete')\"")
+        /action === 'deleteForever' && !confirmed\) \{\s*return this\.confirmDeleteForever/.test(source)
+        // COM-UI-028: an outgoing row names its own recipients, or none
+        source.includes("row.recipientList") && source.includes("t('No recipients')")
+        // COM-UI-016: no fixed /apps/Comms path
+        !detail.includes("/apps/Comms/") && detail.includes('url="downloadEml"')
+        // COM-UI-023: the text blocks' search has the focus when the menu opens, and the block goes where the "/" was
+        composer.includes('@show="focusBlockSearch"') && composer.includes("this.slashAt = at")
+        /insertBlock\(block\) \{[\s\S]*?editor\.chain\(\)\.focus\(slashAt\)/.test(composer)
+        // COM-UI-021: a refused send keeps the From chosen, so the banner says why
+        composer.includes("this.refreshIdentities(true)") && composer.includes("keepFrom !== true")
+    }
+})
+
 feature("the operations go to the app's inbox-source when the user may open it, else to the framework's mail alone", {
     when() {
         // a user IronStone denies its Comms (a project client) gets the framework's answer

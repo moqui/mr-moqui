@@ -143,12 +143,14 @@ along with this software (see the LICENSE.md file). If not, see
                         <q-checkbox v-if="!isPhone" dense size="sm" :model-value="headerCheck" @update:model-value="toggleAll" :aria-label="t('Select all')"></q-checkbox>
                         <template v-if="selectedKeys.length">
                             <span class="text-caption q-mx-sm">{{allInView ? t('All in this view') : selectedKeys.length + ' ' + t('selected')}}</span>
-                            <q-btn flat round dense icon="sym_o_archive" :aria-label="t('Archive')" @click="bulk('archive')"><q-tooltip>{{t('Archive')}} (e)</q-tooltip></q-btn>
-                            <q-btn flat round dense icon="sym_o_delete" :aria-label="t('Delete')" @click="bulk(view === 'trash' ? 'deleteForever' : 'trash')"><q-tooltip>{{view === 'trash' ? t('Delete forever') : t('Delete')}} (#)</q-tooltip></q-btn>
+                            <q-btn v-if="selectionCanChange" flat round dense icon="sym_o_archive" :aria-label="t('Archive')" @click="bulk('archive')"><q-tooltip>{{t('Archive')}} (e)</q-tooltip></q-btn>
+                            <q-btn v-if="selectionCanChange" flat round dense :icon="view === 'trash' ? 'sym_o_delete_forever' : 'sym_o_delete'" :aria-label="view === 'trash' ? t('Delete forever') : t('Delete')"
+                                    @click="bulk(view === 'trash' ? 'deleteForever' : 'trash')"><q-tooltip>{{view === 'trash' ? t('Delete forever') : t('Delete')}} (#)</q-tooltip></q-btn>
                             <q-btn flat round dense icon="sym_o_drafts" :aria-label="t('Mark read')" @click="bulk('read')"><q-tooltip>{{t('Mark read')}} (Shift+I)</q-tooltip></q-btn>
                             <q-btn flat round dense icon="sym_o_mark_email_unread" :aria-label="t('Mark unread')" @click="bulk('unread')"><q-tooltip>{{t('Mark unread')}} (Shift+U)</q-tooltip></q-btn>
-                            <q-btn flat round dense icon="sym_o_snooze" :aria-label="t('Snooze')" @click="openSnooze(null)"><q-tooltip>{{t('Snooze')}} (b)</q-tooltip></q-btn>
-                            <q-btn flat round dense icon="sym_o_more_vert" :aria-label="t('More')"><q-tooltip>{{t('More')}}</q-tooltip>
+                            <q-btn v-if="selectionCanChange" flat round dense icon="sym_o_snooze" :aria-label="t('Snooze')" @click="openSnooze(null)"><q-tooltip>{{t('Snooze')}} (b)</q-tooltip></q-btn>
+                            <q-btn v-if="selectionCanChange && params.view === 'snoozed'" flat round dense icon="sym_o_alarm_off" :aria-label="t('Unsnooze')" @click="bulk('unsnooze')"><q-tooltip>{{t('Unsnooze')}}</q-tooltip></q-btn>
+                            <q-btn v-if="selectionCanChange" flat round dense icon="sym_o_more_vert" :aria-label="t('More')"><q-tooltip>{{t('More')}}</q-tooltip>
                                 <q-menu><q-list dense style="min-width:200px">
                                     <q-item clickable v-close-popup @click="bulk('flag')"><q-item-section avatar><q-icon name="star" color="warning"></q-icon></q-item-section><q-item-section>{{t('Flag')}}</q-item-section></q-item>
                                     <q-item clickable v-close-popup @click="bulk('unflag')"><q-item-section avatar><q-icon name="sym_o_star"></q-icon></q-item-section><q-item-section>{{t('Remove flag')}}</q-item-section></q-item>
@@ -303,11 +305,13 @@ along with this software (see the LICENSE.md file). If not, see
                                                     <span class="text-caption q-ml-xs text-no-wrap" :class="row.isUnread ? 'text-weight-bold' : 'm-muted'">{{shortDate(row.sortDate)}}</span>
                                                 </div>
                                                 <div class="m-inbox-row-end-actions row no-wrap items-center" :class="{ 'm-inbox-shown': hoverKey === row.rowKey && !isTouch }" @click.stop>
-                                                    <q-btn flat round dense size="sm" icon="sym_o_archive" :aria-label="t('Archive')" @click="rowAction(row, 'archive')"><q-tooltip>{{t('Archive')}}</q-tooltip></q-btn>
-                                                    <q-btn flat round dense size="sm" icon="sym_o_delete" :aria-label="t('Delete')" @click="rowAction(row, view === 'trash' ? 'deleteForever' : 'trash')"><q-tooltip>{{t('Delete')}}</q-tooltip></q-btn>
+                                                    <q-btn v-if="rowCanChange(row)" flat round dense size="sm" icon="sym_o_archive" :aria-label="t('Archive')" @click="rowAction(row, 'archive')"><q-tooltip>{{t('Archive')}}</q-tooltip></q-btn>
+                                                    <q-btn v-if="rowCanChange(row)" flat round dense size="sm" :icon="view === 'trash' ? 'sym_o_delete_forever' : 'sym_o_delete'" :aria-label="view === 'trash' ? t('Delete forever') : t('Delete')"
+                                                            @click="rowAction(row, view === 'trash' ? 'deleteForever' : 'trash')"><q-tooltip>{{view === 'trash' ? t('Delete forever') : t('Delete')}}</q-tooltip></q-btn>
                                                     <q-btn flat round dense size="sm" :icon="row.isUnread ? 'sym_o_drafts' : 'sym_o_mark_email_unread'" :aria-label="row.isUnread ? t('Mark read') : t('Mark unread')"
                                                             @click="rowAction(row, row.isUnread ? 'read' : 'unread')"><q-tooltip>{{row.isUnread ? t('Mark read') : t('Mark unread')}}</q-tooltip></q-btn>
-                                                    <q-btn flat round dense size="sm" icon="sym_o_snooze" :aria-label="t('Snooze')" @click="openSnooze([row])"><q-tooltip>{{t('Snooze')}}</q-tooltip></q-btn>
+                                                    <q-btn v-if="rowCanChange(row) && isSnoozed(row)" flat round dense size="sm" icon="sym_o_alarm_off" :aria-label="t('Unsnooze')" @click="rowAction(row, 'unsnooze')"><q-tooltip>{{t('Unsnooze')}}</q-tooltip></q-btn>
+                                                    <q-btn v-else-if="rowCanChange(row)" flat round dense size="sm" icon="sym_o_snooze" :aria-label="t('Snooze')" @click="openSnooze([row])"><q-tooltip>{{t('Snooze')}}</q-tooltip></q-btn>
                                                 </div>
                                             </div>
                                         </q-item-label>
@@ -368,17 +372,20 @@ along with this software (see the LICENSE.md file). If not, see
                             </div>
                             </div>
                             <div class="row no-wrap items-center" :class="isPhone ? 'q-mt-xs' : ''">
-                                <q-btn flat round dense icon="sym_o_archive" :aria-label="t('Archive')" @click="threadAction('archive')"><q-tooltip>{{t('Archive')}} (e)</q-tooltip></q-btn>
-                                <q-btn flat round dense icon="sym_o_delete" :aria-label="t('Delete')" @click="threadAction(threadInTrash ? 'deleteForever' : 'trash')"><q-tooltip>{{t('Delete')}} (#)</q-tooltip></q-btn>
-                                <q-btn v-if="thread.store === 'email' && !isPhone" flat round dense icon="sym_o_report" :aria-label="t('Report spam')" @click="threadAction(thread.folderKindEnumId === 'EfkJunk' ? 'notSpam' : 'spam')">
+                                <q-btn v-if="threadCanChange" flat round dense icon="sym_o_archive" :aria-label="t('Archive')" @click="threadAction('archive')"><q-tooltip>{{t('Archive')}} (e)</q-tooltip></q-btn>
+                                <q-btn v-if="threadCanChange" flat round dense :icon="threadInTrash ? 'sym_o_delete_forever' : 'sym_o_delete'" :aria-label="threadInTrash ? t('Delete forever') : t('Delete')"
+                                        @click="threadAction(threadInTrash ? 'deleteForever' : 'trash')"><q-tooltip>{{threadInTrash ? t('Delete forever') : t('Delete')}} (#)</q-tooltip></q-btn>
+                                <q-btn v-if="thread.store === 'email' && !isPhone && threadCanChange" flat round dense icon="sym_o_report" :aria-label="thread.folderKindEnumId === 'EfkJunk' ? t('Not spam') : t('Report spam')"
+                                        @click="threadAction(thread.folderKindEnumId === 'EfkJunk' ? 'notSpam' : 'spam')">
                                     <q-tooltip>{{thread.folderKindEnumId === 'EfkJunk' ? t('Not spam') : t('Report spam')}} (!)</q-tooltip></q-btn>
                                 <q-btn flat round dense icon="sym_o_mark_email_unread" :aria-label="t('Mark unread')" @click="threadAction('unread')"><q-tooltip>{{t('Mark unread')}} (Shift+U)</q-tooltip></q-btn>
-                                <q-btn flat round dense icon="sym_o_snooze" :aria-label="t('Snooze')" @click="openSnooze('thread')"><q-tooltip>{{t('Snooze')}} (b)</q-tooltip></q-btn>
+                                <q-btn v-if="threadCanChange && isSnoozed(threadRow())" flat round dense icon="sym_o_alarm_off" :aria-label="t('Unsnooze')" @click="threadAction('unsnooze')"><q-tooltip>{{t('Unsnooze')}}</q-tooltip></q-btn>
+                                <q-btn v-else-if="threadCanChange" flat round dense icon="sym_o_snooze" :aria-label="t('Snooze')" @click="openSnooze('thread')"><q-tooltip>{{t('Snooze')}} (b)</q-tooltip></q-btn>
                                 <q-btn flat round dense icon="sym_o_more_vert" :aria-label="t('More')"><q-tooltip>{{t('More')}}</q-tooltip>
                                     <q-menu anchor="bottom right" self="top right"><q-list dense style="min-width:230px">
-                                        <q-item v-if="thread.store === 'email'" clickable v-close-popup @click="openMove('thread')"><q-item-section avatar><q-icon name="sym_o_drive_file_move"></q-icon></q-item-section><q-item-section>{{t('Move to…')}}</q-item-section><q-item-section side>v</q-item-section></q-item>
-                                        <q-item v-if="thread.store === 'email' || thread.store === 'internal'" clickable v-close-popup @click="openLabels('thread')"><q-item-section avatar><q-icon name="sym_o_label"></q-icon></q-item-section><q-item-section>{{t('Labels…')}}</q-item-section><q-item-section side>l</q-item-section></q-item>
-                                        <q-item clickable v-close-popup @click="threadAction(thread.isFlagged ? 'unflag' : 'flag')"><q-item-section avatar><q-icon :name="thread.isFlagged ? 'star' : 'sym_o_star'" :color="thread.isFlagged ? 'warning' : undefined"></q-icon></q-item-section>
+                                        <q-item v-if="thread.store === 'email' && threadCanChange" clickable v-close-popup @click="openMove('thread')"><q-item-section avatar><q-icon name="sym_o_drive_file_move"></q-icon></q-item-section><q-item-section>{{t('Move to…')}}</q-item-section><q-item-section side>v</q-item-section></q-item>
+                                        <q-item v-if="(thread.store === 'email' || thread.store === 'internal') && threadCanChange" clickable v-close-popup @click="openLabels('thread')"><q-item-section avatar><q-icon name="sym_o_label"></q-icon></q-item-section><q-item-section>{{t('Labels…')}}</q-item-section><q-item-section side>l</q-item-section></q-item>
+                                        <q-item v-if="threadCanChange" clickable v-close-popup @click="threadAction(thread.isFlagged ? 'unflag' : 'flag')"><q-item-section avatar><q-icon :name="thread.isFlagged ? 'star' : 'sym_o_star'" :color="thread.isFlagged ? 'warning' : undefined"></q-icon></q-item-section>
                                             <q-item-section>{{thread.isFlagged ? t('Remove flag') : t('Flag')}}</q-item-section><q-item-section side>s</q-item-section></q-item>
                                         <q-item clickable v-close-popup @click="openLink(lastMessage)"><q-item-section avatar><q-icon name="sym_o_add_link"></q-icon></q-item-section><q-item-section>{{t('Link to a record…')}}</q-item-section></q-item>
                                         <q-item clickable v-close-popup @click="createFrom(lastMessage, 'task')"><q-item-section avatar><q-icon name="sym_o_task_alt"></q-icon></q-item-section><q-item-section>{{t('Create a task')}}</q-item-section></q-item>
@@ -676,8 +683,9 @@ along with this software (see the LICENSE.md file). If not, see
         <template v-for="account in labelAccounts" :key="account.emailAccountId">
             <div v-if="labelAccounts.length > 1" class="text-caption m-muted q-mt-sm">{{account.accountName}}</div>
             <q-list dense>
-                <q-item v-for="label in account.labelList" :key="label.emailLabelId" clickable @click="toggleLabelChoice(label)">
-                    <q-item-section avatar><q-icon :name="labels.choice[label.emailLabelId] === true ? 'sym_o_check_box' : (labels.choice[label.emailLabelId] === false ? 'sym_o_check_box_outline_blank' : 'sym_o_indeterminate_check_box')"
+                <q-item v-for="label in account.labelList" :key="label.emailLabelId" clickable @click="toggleLabelChoice(label)" role="checkbox"
+                        :aria-checked="labels.choice[label.emailLabelId] === true ? 'true' : (labels.choice[label.emailLabelId] === false ? 'false' : 'mixed')">
+                    <q-item-section avatar><q-icon aria-hidden="true" :name="labels.choice[label.emailLabelId] === true ? 'sym_o_check_box' : (labels.choice[label.emailLabelId] === false ? 'sym_o_check_box_outline_blank' : 'sym_o_indeterminate_check_box')"
                             :color="labels.choice[label.emailLabelId] === true ? 'primary' : undefined"></q-icon></q-item-section>
                     <q-item-section>{{label.labelName}}</q-item-section></q-item>
             </q-list>
@@ -1083,6 +1091,12 @@ module.exports = {
         headerCheck() { return this.selectedKeys.length === 0 ? false : (this.allLoadedSelected ? true : null); },
         selectionRows() { return this.threads.filter((row) => this.selected[row.rowKey]); },
         selectionHasEmail() { return this.allInView ? this.storeList.includes('email') : this.selectionRows.some((row) => row.store === 'email'); },
+        // a read member of a mail account may mark its mail read, nothing more; the server refuses the rest (COM-UI-021)
+        selectionCanChange() {
+            if (this.allInView) return !this.storeList.includes('email') || this.mailAccounts.every((account) => account.canSend !== false);
+            return this.selectionRows.every((row) => this.rowCanChange(row));
+        },
+        threadCanChange() { return !this.thread || this.thread.store !== 'email' || this.thread.canSend !== false; },
         selectionCanLabel() {
             const internal = this.allInView ? this.storeList.includes('internal') : this.selectionRows.some((row) => row.store === 'internal');
             return this.selectionHasEmail || internal;
@@ -1515,6 +1529,11 @@ module.exports = {
             const mine = (entry) => (row.store === 'email' ? this.myAddresses.has(String(entry.address || '').toLowerCase()) : entry.partyId === this.me.partyId);
             const nameOf = (entry) => (mine(entry) ? t('me') : (entry.name || String(entry.address || '').split('@')[0] || entry.partyId || ''));
             const toView = ['sent', 'drafts', 'outbox', 'scheduled', 'internalSent'].includes(this.params.view);
+            // the account's own outgoing message names its own recipients, and none when it has none (COM-UI-028)
+            if (toView && Array.isArray(row.recipientList)) {
+                const named = row.recipientList.map((entry) => entry.name || String(entry.address || '').split('@')[0]).filter(Boolean);
+                return named.length ? t('To') + ': ' + named.slice(0, 3).join(', ') + (named.length > 3 ? ' +' + (named.length - 3) : '') : t('No recipients');
+            }
             if (toView) {
                 const others = list.filter((entry) => !mine(entry));
                 return t('To') + ': ' + (others.slice(0, 3).map(nameOf).join(', ') || t('me')) + (others.length > 3 ? ' +' + (others.length - 3) : '');
@@ -1648,8 +1667,17 @@ module.exports = {
             return true;
         },
         // change threads by store, with the list changed at once and an Undo for what can be undone
-        applyAction(rows, action, extra, quiet) {
+        applyAction(rows, action, extra, quiet, confirmed) {
             if (!rows.length) return Promise.resolve();
+            // keys and swipes come here too: only read and unread on mail the user may only read
+            if (!['read', 'unread'].includes(action) && rows.some((row) => !this.rowCanChange(row))) {
+                moqui.notifyMessages(null, t('You may read this account but not change its mail'));
+                return Promise.resolve();
+            }
+            // a deletion from the Trash has no Undo, so it is confirmed first, from a button, a swipe or a key (COM-UI-027)
+            if (action === 'deleteForever' && !confirmed) {
+                return this.confirmDeleteForever(rows.length).then(() => this.applyAction(rows, action, extra, quiet, true));
+            }
             const targets = rows.map((row) => this.targetOf(row));
             const params = Object.assign({ targetsJson: JSON.stringify(targets), action }, extra || {});
             const openRemoved = this.openKey && rows.some((row) => row.rowKey === this.openKey) && this.removesFromView(action);
@@ -1698,8 +1726,10 @@ module.exports = {
         offerUndo(rows, action, extra) {
             const inverse = { archive: 'unarchive', unarchive: 'archive', read: 'unread', unread: 'read', flag: 'unflag', unflag: 'flag', snooze: 'unsnooze',
                 spam: 'notSpam', notSpam: 'spam', close: 'reopen', reopen: 'close' };
+            // an unsnooze is undone by snoozing again until the time it had
+            const snoozedUntil = action === 'unsnooze' ? Math.max(0, ...rows.map((row) => Number(row.snoozedThruDate) || 0)) : 0;
             const words = { archive: t('Archived'), unarchive: t('Moved to the Inbox'), trash: t('Moved to the Trash'), spam: t('Reported as spam'),
-                notSpam: t('Not spam: back in the Inbox'), snooze: t('Snoozed'), move: t('Moved'), deleteForever: t('Deleted forever') };
+                notSpam: t('Not spam: back in the Inbox'), snooze: t('Snoozed'), unsnooze: t('Back in the Inbox'), move: t('Moved'), deleteForever: t('Deleted forever') };
             const count = rows.length;
             const undo = () => {
                 if (action === 'trash' || action === 'move') {
@@ -1712,6 +1742,8 @@ module.exports = {
                     setTimeout(() => this.loadList(true), 400);
                 } else if (action === 'labels') {
                     this.applyAction(rows, 'labels', { addLabelIds: (extra && extra.removeLabelIds) || '', removeLabelIds: (extra && extra.addLabelIds) || '' }, true);
+                } else if (action === 'unsnooze' && snoozedUntil > Date.now()) {
+                    this.applyAction(rows, 'snooze', { snoozedThruDate: String(snoozedUntil) }, true).then(() => this.loadList(true));
                 } else if (inverse[action]) {
                     this.applyAction(rows, inverse[action], null, true).then(() => this.loadList(true));
                 }
@@ -1725,8 +1757,23 @@ module.exports = {
         },
         undo() { const last = this.undoStack.pop(); if (last) last(); return !!last; },
         rowAction(row, action) { this.applyAction([row], action); },
+        rowCanChange(row) {
+            if (!row || row.store !== 'email') return true;
+            const account = this.mailAccounts.find((item) => item.emailAccountId === row.emailAccountId);
+            return !account || account.canSend !== false;
+        },
+        isSnoozed(row) { return !!(row && row.snoozedThruDate && Number(row.snoozedThruDate) > Date.now()); },
+        // count null: every conversation in this view
+        confirmDeleteForever(count) {
+            const what = count == null ? t('Every conversation in this view') : (count === 1 ? t('This conversation') : t('{count} conversations').replace('{count}', () => String(count)));
+            return this.confirm(t('Delete forever?'), what + ' ' + t('will be deleted for good. This cannot be undone.'), t('Delete forever'), true);
+        },
         toggleRowFlag(row) { this.applyAction([row], row.isFlagged ? 'unflag' : 'flag', null, true); },
-        bulk(action) {
+        bulk(action, confirmed) {
+            if (this.allInView && action === 'deleteForever' && !confirmed) {
+                this.confirmDeleteForever(null).then(() => this.bulk(action, true));
+                return;
+            }
             if (this.allInView) {
                 const params = Object.assign(this.listParams(), { action });
                 this.post('viewAction', params).then((json) => {
@@ -2112,11 +2159,16 @@ module.exports = {
             if (!match) return null;
             return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4] || 8), Number(match[5] || 0)).getTime();
         },
+        // the dialog stays open, with what was picked, until the server takes the time (COM-UI-026)
         applySnooze(at) {
             if (!at) return;
+            if (at <= Date.now()) { moqui.notifyMessages(null, t('Snooze until a time in the future')); return; }
             const rows = this.snooze.targets;
-            this.snooze.open = false;
-            this.applyAction(rows, 'snooze', { snoozedThruDate: String(at) }).then(() => this.clearSelection());
+            this.applyAction(rows, 'snooze', { snoozedThruDate: String(at) }).then((json) => {
+                if (!json || (json.failedList || []).length >= rows.length) return;
+                this.snooze.open = false;
+                this.clearSelection();
+            });
         },
         openMove(targets) {
             const rows = this.snoozeOrMoveRows(targets).filter((row) => row.store === 'email');

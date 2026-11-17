@@ -10650,6 +10650,12 @@ module.exports = {
         headerCheck() { return this.selectedKeys.length === 0 ? false : (this.allLoadedSelected ? true : null); },
         selectionRows() { return this.threads.filter((row) => this.selected[row.rowKey]); },
         selectionHasEmail() { return this.allInView ? this.storeList.includes('email') : this.selectionRows.some((row) => row.store === 'email'); },
+        // a read member of a mail account may mark its mail read, nothing more; the server refuses the rest (COM-UI-021)
+        selectionCanChange() {
+            if (this.allInView) return !this.storeList.includes('email') || this.mailAccounts.every((account) => account.canSend !== false);
+            return this.selectionRows.every((row) => this.rowCanChange(row));
+        },
+        threadCanChange() { return !this.thread || this.thread.store !== 'email' || this.thread.canSend !== false; },
         selectionCanLabel() {
             const internal = this.allInView ? this.storeList.includes('internal') : this.selectionRows.some((row) => row.store === 'internal');
             return this.selectionHasEmail || internal;
@@ -11082,6 +11088,11 @@ module.exports = {
             const mine = (entry) => (row.store === 'email' ? this.myAddresses.has(String(entry.address || '').toLowerCase()) : entry.partyId === this.me.partyId);
             const nameOf = (entry) => (mine(entry) ? t('me') : (entry.name || String(entry.address || '').split('@')[0] || entry.partyId || ''));
             const toView = ['sent', 'drafts', 'outbox', 'scheduled', 'internalSent'].includes(this.params.view);
+            // the account's own outgoing message names its own recipients, and none when it has none (COM-UI-028)
+            if (toView && Array.isArray(row.recipientList)) {
+                const named = row.recipientList.map((entry) => entry.name || String(entry.address || '').split('@')[0]).filter(Boolean);
+                return named.length ? t('To') + ': ' + named.slice(0, 3).join(', ') + (named.length > 3 ? ' +' + (named.length - 3) : '') : t('No recipients');
+            }
             if (toView) {
                 const others = list.filter((entry) => !mine(entry));
                 return t('To') + ': ' + (others.slice(0, 3).map(nameOf).join(', ') || t('me')) + (others.length > 3 ? ' +' + (others.length - 3) : '');
@@ -11215,8 +11226,17 @@ module.exports = {
             return true;
         },
         // change threads by store, with the list changed at once and an Undo for what can be undone
-        applyAction(rows, action, extra, quiet) {
+        applyAction(rows, action, extra, quiet, confirmed) {
             if (!rows.length) return Promise.resolve();
+            // keys and swipes come here too: only read and unread on mail the user may only read
+            if (!['read', 'unread'].includes(action) && rows.some((row) => !this.rowCanChange(row))) {
+                moqui.notifyMessages(null, t('You may read this account but not change its mail'));
+                return Promise.resolve();
+            }
+            // a deletion from the Trash has no Undo, so it is confirmed first, from a button, a swipe or a key (COM-UI-027)
+            if (action === 'deleteForever' && !confirmed) {
+                return this.confirmDeleteForever(rows.length).then(() => this.applyAction(rows, action, extra, quiet, true));
+            }
             const targets = rows.map((row) => this.targetOf(row));
             const params = Object.assign({ targetsJson: JSON.stringify(targets), action }, extra || {});
             const openRemoved = this.openKey && rows.some((row) => row.rowKey === this.openKey) && this.removesFromView(action);
@@ -11265,8 +11285,10 @@ module.exports = {
         offerUndo(rows, action, extra) {
             const inverse = { archive: 'unarchive', unarchive: 'archive', read: 'unread', unread: 'read', flag: 'unflag', unflag: 'flag', snooze: 'unsnooze',
                 spam: 'notSpam', notSpam: 'spam', close: 'reopen', reopen: 'close' };
+            // an unsnooze is undone by snoozing again until the time it had
+            const snoozedUntil = action === 'unsnooze' ? Math.max(0, ...rows.map((row) => Number(row.snoozedThruDate) || 0)) : 0;
             const words = { archive: t('Archived'), unarchive: t('Moved to the Inbox'), trash: t('Moved to the Trash'), spam: t('Reported as spam'),
-                notSpam: t('Not spam: back in the Inbox'), snooze: t('Snoozed'), move: t('Moved'), deleteForever: t('Deleted forever') };
+                notSpam: t('Not spam: back in the Inbox'), snooze: t('Snoozed'), unsnooze: t('Back in the Inbox'), move: t('Moved'), deleteForever: t('Deleted forever') };
             const count = rows.length;
             const undo = () => {
                 if (action === 'trash' || action === 'move') {
@@ -11279,6 +11301,8 @@ module.exports = {
                     setTimeout(() => this.loadList(true), 400);
                 } else if (action === 'labels') {
                     this.applyAction(rows, 'labels', { addLabelIds: (extra && extra.removeLabelIds) || '', removeLabelIds: (extra && extra.addLabelIds) || '' }, true);
+                } else if (action === 'unsnooze' && snoozedUntil > Date.now()) {
+                    this.applyAction(rows, 'snooze', { snoozedThruDate: String(snoozedUntil) }, true).then(() => this.loadList(true));
                 } else if (inverse[action]) {
                     this.applyAction(rows, inverse[action], null, true).then(() => this.loadList(true));
                 }
@@ -11292,8 +11316,23 @@ module.exports = {
         },
         undo() { const last = this.undoStack.pop(); if (last) last(); return !!last; },
         rowAction(row, action) { this.applyAction([row], action); },
+        rowCanChange(row) {
+            if (!row || row.store !== 'email') return true;
+            const account = this.mailAccounts.find((item) => item.emailAccountId === row.emailAccountId);
+            return !account || account.canSend !== false;
+        },
+        isSnoozed(row) { return !!(row && row.snoozedThruDate && Number(row.snoozedThruDate) > Date.now()); },
+        // count null: every conversation in this view
+        confirmDeleteForever(count) {
+            const what = count == null ? t('Every conversation in this view') : (count === 1 ? t('This conversation') : t('{count} conversations').replace('{count}', () => String(count)));
+            return this.confirm(t('Delete forever?'), what + ' ' + t('will be deleted for good. This cannot be undone.'), t('Delete forever'), true);
+        },
         toggleRowFlag(row) { this.applyAction([row], row.isFlagged ? 'unflag' : 'flag', null, true); },
-        bulk(action) {
+        bulk(action, confirmed) {
+            if (this.allInView && action === 'deleteForever' && !confirmed) {
+                this.confirmDeleteForever(null).then(() => this.bulk(action, true));
+                return;
+            }
             if (this.allInView) {
                 const params = Object.assign(this.listParams(), { action });
                 this.post('viewAction', params).then((json) => {
@@ -11679,11 +11718,16 @@ module.exports = {
             if (!match) return null;
             return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4] || 8), Number(match[5] || 0)).getTime();
         },
+        // the dialog stays open, with what was picked, until the server takes the time (COM-UI-026)
         applySnooze(at) {
             if (!at) return;
+            if (at <= Date.now()) { moqui.notifyMessages(null, t('Snooze until a time in the future')); return; }
             const rows = this.snooze.targets;
-            this.snooze.open = false;
-            this.applyAction(rows, 'snooze', { snoozedThruDate: String(at) }).then(() => this.clearSelection());
+            this.applyAction(rows, 'snooze', { snoozedThruDate: String(at) }).then((json) => {
+                if (!json || (json.failedList || []).length >= rows.length) return;
+                this.snooze.open = false;
+                this.clearSelection();
+            });
         },
         openMove(targets) {
             const rows = this.snoozeOrMoveRows(targets).filter((row) => row.store === 'email');
@@ -12963,42 +13007,48 @@ module.exports = {
                                 (_ctx.selectedKeys.length)
                                   ? (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
                                       _createElementVNode("span", { class: "text-caption q-mx-sm" }, _toDisplayString(_ctx.allInView ? _ctx.t('All in this view') : _ctx.selectedKeys.length + ' ' + _ctx.t('selected')), 1),
-                                      _createVNode(_component_q_btn, {
-                                        flat: "",
-                                        round: "",
-                                        dense: "",
-                                        icon: "sym_o_archive",
-                                        "aria-label": _ctx.t('Archive'),
-                                        onClick: $event => (_ctx.bulk('archive'))
-                                      }, {
-                                        default: _withCtx(() => [
-                                          _createVNode(_component_q_tooltip, null, {
+                                      (_ctx.selectionCanChange)
+                                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                                            key: 0,
+                                            flat: "",
+                                            round: "",
+                                            dense: "",
+                                            icon: "sym_o_archive",
+                                            "aria-label": _ctx.t('Archive'),
+                                            onClick: $event => (_ctx.bulk('archive'))
+                                          }, {
                                             default: _withCtx(() => [
-                                              _createTextVNode(_toDisplayString(_ctx.t('Archive')) + " (e)", 1)
+                                              _createVNode(_component_q_tooltip, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.t('Archive')) + " (e)", 1)
+                                                ]),
+                                                _: 1
+                                              })
                                             ]),
                                             _: 1
-                                          })
-                                        ]),
-                                        _: 1
-                                      }, 8, ["aria-label", "onClick"]),
-                                      _createVNode(_component_q_btn, {
-                                        flat: "",
-                                        round: "",
-                                        dense: "",
-                                        icon: "sym_o_delete",
-                                        "aria-label": _ctx.t('Delete'),
-                                        onClick: $event => (_ctx.bulk(_ctx.view === 'trash' ? 'deleteForever' : 'trash'))
-                                      }, {
-                                        default: _withCtx(() => [
-                                          _createVNode(_component_q_tooltip, null, {
+                                          }, 8, ["aria-label", "onClick"]))
+                                        : _createCommentVNode("", true),
+                                      (_ctx.selectionCanChange)
+                                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                                            key: 1,
+                                            flat: "",
+                                            round: "",
+                                            dense: "",
+                                            icon: _ctx.view === 'trash' ? 'sym_o_delete_forever' : 'sym_o_delete',
+                                            "aria-label": _ctx.view === 'trash' ? _ctx.t('Delete forever') : _ctx.t('Delete'),
+                                            onClick: $event => (_ctx.bulk(_ctx.view === 'trash' ? 'deleteForever' : 'trash'))
+                                          }, {
                                             default: _withCtx(() => [
-                                              _createTextVNode(_toDisplayString(_ctx.view === 'trash' ? _ctx.t('Delete forever') : _ctx.t('Delete')) + " (#)", 1)
+                                              _createVNode(_component_q_tooltip, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.view === 'trash' ? _ctx.t('Delete forever') : _ctx.t('Delete')) + " (#)", 1)
+                                                ]),
+                                                _: 1
+                                              })
                                             ]),
                                             _: 1
-                                          })
-                                        ]),
-                                        _: 1
-                                      }, 8, ["aria-label", "onClick"]),
+                                          }, 8, ["icon", "aria-label", "onClick"]))
+                                        : _createCommentVNode("", true),
                                       _createVNode(_component_q_btn, {
                                         flat: "",
                                         round: "",
@@ -13035,201 +13085,228 @@ module.exports = {
                                         ]),
                                         _: 1
                                       }, 8, ["aria-label", "onClick"]),
-                                      _createVNode(_component_q_btn, {
-                                        flat: "",
-                                        round: "",
-                                        dense: "",
-                                        icon: "sym_o_snooze",
-                                        "aria-label": _ctx.t('Snooze'),
-                                        onClick: $event => (_ctx.openSnooze(null))
-                                      }, {
-                                        default: _withCtx(() => [
-                                          _createVNode(_component_q_tooltip, null, {
+                                      (_ctx.selectionCanChange)
+                                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                                            key: 2,
+                                            flat: "",
+                                            round: "",
+                                            dense: "",
+                                            icon: "sym_o_snooze",
+                                            "aria-label": _ctx.t('Snooze'),
+                                            onClick: $event => (_ctx.openSnooze(null))
+                                          }, {
                                             default: _withCtx(() => [
-                                              _createTextVNode(_toDisplayString(_ctx.t('Snooze')) + " (b)", 1)
-                                            ]),
-                                            _: 1
-                                          })
-                                        ]),
-                                        _: 1
-                                      }, 8, ["aria-label", "onClick"]),
-                                      _createVNode(_component_q_btn, {
-                                        flat: "",
-                                        round: "",
-                                        dense: "",
-                                        icon: "sym_o_more_vert",
-                                        "aria-label": _ctx.t('More')
-                                      }, {
-                                        default: _withCtx(() => [
-                                          _createVNode(_component_q_tooltip, null, {
-                                            default: _withCtx(() => [
-                                              _createTextVNode(_toDisplayString(_ctx.t('More')), 1)
-                                            ]),
-                                            _: 1
-                                          }),
-                                          _createVNode(_component_q_menu, null, {
-                                            default: _withCtx(() => [
-                                              _createVNode(_component_q_list, {
-                                                dense: "",
-                                                style: {"min-width":"200px"}
-                                              }, {
+                                              _createVNode(_component_q_tooltip, null, {
                                                 default: _withCtx(() => [
-                                                  _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                    clickable: "",
-                                                    onClick: $event => (_ctx.bulk('flag'))
-                                                  }, {
-                                                    default: _withCtx(() => [
-                                                      _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                        default: _withCtx(() => [
-                                                          _createVNode(_component_q_icon, {
-                                                            name: "star",
-                                                            color: "warning"
-                                                          })
-                                                        ]),
-                                                        _: 1
-                                                      }),
-                                                      _createVNode(_component_q_item_section, null, {
-                                                        default: _withCtx(() => [
-                                                          _createTextVNode(_toDisplayString(_ctx.t('Flag')), 1)
-                                                        ]),
-                                                        _: 1
-                                                      })
-                                                    ]),
-                                                    _: 1
-                                                  }, 8, ["onClick"])), [
-                                                    [_directive_close_popup]
-                                                  ]),
-                                                  _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                    clickable: "",
-                                                    onClick: $event => (_ctx.bulk('unflag'))
-                                                  }, {
-                                                    default: _withCtx(() => [
-                                                      _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                        default: _withCtx(() => [
-                                                          _createVNode(_component_q_icon, { name: "sym_o_star" })
-                                                        ]),
-                                                        _: 1
-                                                      }),
-                                                      _createVNode(_component_q_item_section, null, {
-                                                        default: _withCtx(() => [
-                                                          _createTextVNode(_toDisplayString(_ctx.t('Remove flag')), 1)
-                                                        ]),
-                                                        _: 1
-                                                      })
-                                                    ]),
-                                                    _: 1
-                                                  }, 8, ["onClick"])), [
-                                                    [_directive_close_popup]
-                                                  ]),
-                                                  (_ctx.selectionHasEmail)
-                                                    ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                        key: 0,
-                                                        clickable: "",
-                                                        onClick: $event => (_ctx.openMove(null))
-                                                      }, {
-                                                        default: _withCtx(() => [
-                                                          _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                            default: _withCtx(() => [
-                                                              _createVNode(_component_q_icon, { name: "sym_o_drive_file_move" })
-                                                            ]),
-                                                            _: 1
-                                                          }),
-                                                          _createVNode(_component_q_item_section, null, {
-                                                            default: _withCtx(() => [
-                                                              _createTextVNode(_toDisplayString(_ctx.t('Move to…')), 1)
-                                                            ]),
-                                                            _: 1
-                                                          })
-                                                        ]),
-                                                        _: 1
-                                                      }, 8, ["onClick"])), [
-                                                        [_directive_close_popup]
-                                                      ])
-                                                    : _createCommentVNode("", true),
-                                                  (_ctx.selectionCanLabel)
-                                                    ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                        key: 1,
-                                                        clickable: "",
-                                                        onClick: $event => (_ctx.openLabels(null))
-                                                      }, {
-                                                        default: _withCtx(() => [
-                                                          _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                            default: _withCtx(() => [
-                                                              _createVNode(_component_q_icon, { name: "sym_o_label" })
-                                                            ]),
-                                                            _: 1
-                                                          }),
-                                                          _createVNode(_component_q_item_section, null, {
-                                                            default: _withCtx(() => [
-                                                              _createTextVNode(_toDisplayString(_ctx.t('Labels…')), 1)
-                                                            ]),
-                                                            _: 1
-                                                          })
-                                                        ]),
-                                                        _: 1
-                                                      }, 8, ["onClick"])), [
-                                                        [_directive_close_popup]
-                                                      ])
-                                                    : _createCommentVNode("", true),
-                                                  (_ctx.selectionHasEmail)
-                                                    ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                        key: 2,
-                                                        clickable: "",
-                                                        onClick: $event => (_ctx.bulk(_ctx.view === 'junk' ? 'notSpam' : 'spam'))
-                                                      }, {
-                                                        default: _withCtx(() => [
-                                                          _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                            default: _withCtx(() => [
-                                                              _createVNode(_component_q_icon, { name: "sym_o_report" })
-                                                            ]),
-                                                            _: 1
-                                                          }),
-                                                          _createVNode(_component_q_item_section, null, {
-                                                            default: _withCtx(() => [
-                                                              _createTextVNode(_toDisplayString(_ctx.view === 'junk' ? _ctx.t('Not spam') : _ctx.t('Report spam')), 1)
-                                                            ]),
-                                                            _: 1
-                                                          })
-                                                        ]),
-                                                        _: 1
-                                                      }, 8, ["onClick"])), [
-                                                        [_directive_close_popup]
-                                                      ])
-                                                    : _createCommentVNode("", true),
-                                                  (['archive', 'all'].includes(_ctx.view) || _ctx.params.view === 'internalArchive')
-                                                    ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                        key: 3,
-                                                        clickable: "",
-                                                        onClick: $event => (_ctx.bulk('unarchive'))
-                                                      }, {
-                                                        default: _withCtx(() => [
-                                                          _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                            default: _withCtx(() => [
-                                                              _createVNode(_component_q_icon, { name: "sym_o_move_to_inbox" })
-                                                            ]),
-                                                            _: 1
-                                                          }),
-                                                          _createVNode(_component_q_item_section, null, {
-                                                            default: _withCtx(() => [
-                                                              _createTextVNode(_toDisplayString(_ctx.t('Move to Inbox')), 1)
-                                                            ]),
-                                                            _: 1
-                                                          })
-                                                        ]),
-                                                        _: 1
-                                                      }, 8, ["onClick"])), [
-                                                        [_directive_close_popup]
-                                                      ])
-                                                    : _createCommentVNode("", true)
+                                                  _createTextVNode(_toDisplayString(_ctx.t('Snooze')) + " (b)", 1)
                                                 ]),
                                                 _: 1
                                               })
                                             ]),
                                             _: 1
-                                          })
-                                        ]),
-                                        _: 1
-                                      }, 8, ["aria-label"]),
+                                          }, 8, ["aria-label", "onClick"]))
+                                        : _createCommentVNode("", true),
+                                      (_ctx.selectionCanChange && _ctx.params.view === 'snoozed')
+                                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                                            key: 3,
+                                            flat: "",
+                                            round: "",
+                                            dense: "",
+                                            icon: "sym_o_alarm_off",
+                                            "aria-label": _ctx.t('Unsnooze'),
+                                            onClick: $event => (_ctx.bulk('unsnooze'))
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_tooltip, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.t('Unsnooze')), 1)
+                                                ]),
+                                                _: 1
+                                              })
+                                            ]),
+                                            _: 1
+                                          }, 8, ["aria-label", "onClick"]))
+                                        : _createCommentVNode("", true),
+                                      (_ctx.selectionCanChange)
+                                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                                            key: 4,
+                                            flat: "",
+                                            round: "",
+                                            dense: "",
+                                            icon: "sym_o_more_vert",
+                                            "aria-label": _ctx.t('More')
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_tooltip, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.t('More')), 1)
+                                                ]),
+                                                _: 1
+                                              }),
+                                              _createVNode(_component_q_menu, null, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_list, {
+                                                    dense: "",
+                                                    style: {"min-width":"200px"}
+                                                  }, {
+                                                    default: _withCtx(() => [
+                                                      _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                        clickable: "",
+                                                        onClick: $event => (_ctx.bulk('flag'))
+                                                      }, {
+                                                        default: _withCtx(() => [
+                                                          _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                            default: _withCtx(() => [
+                                                              _createVNode(_component_q_icon, {
+                                                                name: "star",
+                                                                color: "warning"
+                                                              })
+                                                            ]),
+                                                            _: 1
+                                                          }),
+                                                          _createVNode(_component_q_item_section, null, {
+                                                            default: _withCtx(() => [
+                                                              _createTextVNode(_toDisplayString(_ctx.t('Flag')), 1)
+                                                            ]),
+                                                            _: 1
+                                                          })
+                                                        ]),
+                                                        _: 1
+                                                      }, 8, ["onClick"])), [
+                                                        [_directive_close_popup]
+                                                      ]),
+                                                      _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                        clickable: "",
+                                                        onClick: $event => (_ctx.bulk('unflag'))
+                                                      }, {
+                                                        default: _withCtx(() => [
+                                                          _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                            default: _withCtx(() => [
+                                                              _createVNode(_component_q_icon, { name: "sym_o_star" })
+                                                            ]),
+                                                            _: 1
+                                                          }),
+                                                          _createVNode(_component_q_item_section, null, {
+                                                            default: _withCtx(() => [
+                                                              _createTextVNode(_toDisplayString(_ctx.t('Remove flag')), 1)
+                                                            ]),
+                                                            _: 1
+                                                          })
+                                                        ]),
+                                                        _: 1
+                                                      }, 8, ["onClick"])), [
+                                                        [_directive_close_popup]
+                                                      ]),
+                                                      (_ctx.selectionHasEmail)
+                                                        ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                            key: 0,
+                                                            clickable: "",
+                                                            onClick: $event => (_ctx.openMove(null))
+                                                          }, {
+                                                            default: _withCtx(() => [
+                                                              _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                                default: _withCtx(() => [
+                                                                  _createVNode(_component_q_icon, { name: "sym_o_drive_file_move" })
+                                                                ]),
+                                                                _: 1
+                                                              }),
+                                                              _createVNode(_component_q_item_section, null, {
+                                                                default: _withCtx(() => [
+                                                                  _createTextVNode(_toDisplayString(_ctx.t('Move to…')), 1)
+                                                                ]),
+                                                                _: 1
+                                                              })
+                                                            ]),
+                                                            _: 1
+                                                          }, 8, ["onClick"])), [
+                                                            [_directive_close_popup]
+                                                          ])
+                                                        : _createCommentVNode("", true),
+                                                      (_ctx.selectionCanLabel)
+                                                        ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                            key: 1,
+                                                            clickable: "",
+                                                            onClick: $event => (_ctx.openLabels(null))
+                                                          }, {
+                                                            default: _withCtx(() => [
+                                                              _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                                default: _withCtx(() => [
+                                                                  _createVNode(_component_q_icon, { name: "sym_o_label" })
+                                                                ]),
+                                                                _: 1
+                                                              }),
+                                                              _createVNode(_component_q_item_section, null, {
+                                                                default: _withCtx(() => [
+                                                                  _createTextVNode(_toDisplayString(_ctx.t('Labels…')), 1)
+                                                                ]),
+                                                                _: 1
+                                                              })
+                                                            ]),
+                                                            _: 1
+                                                          }, 8, ["onClick"])), [
+                                                            [_directive_close_popup]
+                                                          ])
+                                                        : _createCommentVNode("", true),
+                                                      (_ctx.selectionHasEmail)
+                                                        ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                            key: 2,
+                                                            clickable: "",
+                                                            onClick: $event => (_ctx.bulk(_ctx.view === 'junk' ? 'notSpam' : 'spam'))
+                                                          }, {
+                                                            default: _withCtx(() => [
+                                                              _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                                default: _withCtx(() => [
+                                                                  _createVNode(_component_q_icon, { name: "sym_o_report" })
+                                                                ]),
+                                                                _: 1
+                                                              }),
+                                                              _createVNode(_component_q_item_section, null, {
+                                                                default: _withCtx(() => [
+                                                                  _createTextVNode(_toDisplayString(_ctx.view === 'junk' ? _ctx.t('Not spam') : _ctx.t('Report spam')), 1)
+                                                                ]),
+                                                                _: 1
+                                                              })
+                                                            ]),
+                                                            _: 1
+                                                          }, 8, ["onClick"])), [
+                                                            [_directive_close_popup]
+                                                          ])
+                                                        : _createCommentVNode("", true),
+                                                      (['archive', 'all'].includes(_ctx.view) || _ctx.params.view === 'internalArchive')
+                                                        ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                            key: 3,
+                                                            clickable: "",
+                                                            onClick: $event => (_ctx.bulk('unarchive'))
+                                                          }, {
+                                                            default: _withCtx(() => [
+                                                              _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                                default: _withCtx(() => [
+                                                                  _createVNode(_component_q_icon, { name: "sym_o_move_to_inbox" })
+                                                                ]),
+                                                                _: 1
+                                                              }),
+                                                              _createVNode(_component_q_item_section, null, {
+                                                                default: _withCtx(() => [
+                                                                  _createTextVNode(_toDisplayString(_ctx.t('Move to Inbox')), 1)
+                                                                ]),
+                                                                _: 1
+                                                              })
+                                                            ]),
+                                                            _: 1
+                                                          }, 8, ["onClick"])), [
+                                                            [_directive_close_popup]
+                                                          ])
+                                                        : _createCommentVNode("", true)
+                                                    ]),
+                                                    _: 1
+                                                  })
+                                                ]),
+                                                _: 1
+                                              })
+                                            ]),
+                                            _: 1
+                                          }, 8, ["aria-label"]))
+                                        : _createCommentVNode("", true),
                                       _createVNode(_component_q_space),
                                       _createVNode(_component_q_btn, {
                                         flat: "",
@@ -13860,44 +13937,50 @@ module.exports = {
                                                               class: _normalizeClass(["m-inbox-row-end-actions row no-wrap items-center", { 'm-inbox-shown': _ctx.hoverKey === row.rowKey && !_ctx.isTouch }]),
                                                               onClick: _withModifiers(() => {}, ["stop"])
                                                             }, [
-                                                              _createVNode(_component_q_btn, {
-                                                                flat: "",
-                                                                round: "",
-                                                                dense: "",
-                                                                size: "sm",
-                                                                icon: "sym_o_archive",
-                                                                "aria-label": _ctx.t('Archive'),
-                                                                onClick: $event => (_ctx.rowAction(row, 'archive'))
-                                                              }, {
-                                                                default: _withCtx(() => [
-                                                                  _createVNode(_component_q_tooltip, null, {
+                                                              (_ctx.rowCanChange(row))
+                                                                ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                                    key: 0,
+                                                                    flat: "",
+                                                                    round: "",
+                                                                    dense: "",
+                                                                    size: "sm",
+                                                                    icon: "sym_o_archive",
+                                                                    "aria-label": _ctx.t('Archive'),
+                                                                    onClick: $event => (_ctx.rowAction(row, 'archive'))
+                                                                  }, {
                                                                     default: _withCtx(() => [
-                                                                      _createTextVNode(_toDisplayString(_ctx.t('Archive')), 1)
+                                                                      _createVNode(_component_q_tooltip, null, {
+                                                                        default: _withCtx(() => [
+                                                                          _createTextVNode(_toDisplayString(_ctx.t('Archive')), 1)
+                                                                        ]),
+                                                                        _: 1
+                                                                      })
                                                                     ]),
                                                                     _: 1
-                                                                  })
-                                                                ]),
-                                                                _: 1
-                                                              }, 8, ["aria-label", "onClick"]),
-                                                              _createVNode(_component_q_btn, {
-                                                                flat: "",
-                                                                round: "",
-                                                                dense: "",
-                                                                size: "sm",
-                                                                icon: "sym_o_delete",
-                                                                "aria-label": _ctx.t('Delete'),
-                                                                onClick: $event => (_ctx.rowAction(row, _ctx.view === 'trash' ? 'deleteForever' : 'trash'))
-                                                              }, {
-                                                                default: _withCtx(() => [
-                                                                  _createVNode(_component_q_tooltip, null, {
+                                                                  }, 8, ["aria-label", "onClick"]))
+                                                                : _createCommentVNode("", true),
+                                                              (_ctx.rowCanChange(row))
+                                                                ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                                    key: 1,
+                                                                    flat: "",
+                                                                    round: "",
+                                                                    dense: "",
+                                                                    size: "sm",
+                                                                    icon: _ctx.view === 'trash' ? 'sym_o_delete_forever' : 'sym_o_delete',
+                                                                    "aria-label": _ctx.view === 'trash' ? _ctx.t('Delete forever') : _ctx.t('Delete'),
+                                                                    onClick: $event => (_ctx.rowAction(row, _ctx.view === 'trash' ? 'deleteForever' : 'trash'))
+                                                                  }, {
                                                                     default: _withCtx(() => [
-                                                                      _createTextVNode(_toDisplayString(_ctx.t('Delete')), 1)
+                                                                      _createVNode(_component_q_tooltip, null, {
+                                                                        default: _withCtx(() => [
+                                                                          _createTextVNode(_toDisplayString(_ctx.view === 'trash' ? _ctx.t('Delete forever') : _ctx.t('Delete')), 1)
+                                                                        ]),
+                                                                        _: 1
+                                                                      })
                                                                     ]),
                                                                     _: 1
-                                                                  })
-                                                                ]),
-                                                                _: 1
-                                                              }, 8, ["aria-label", "onClick"]),
+                                                                  }, 8, ["icon", "aria-label", "onClick"]))
+                                                                : _createCommentVNode("", true),
                                                               _createVNode(_component_q_btn, {
                                                                 flat: "",
                                                                 round: "",
@@ -13917,25 +14000,49 @@ module.exports = {
                                                                 ]),
                                                                 _: 2
                                                               }, 1032, ["icon", "aria-label", "onClick"]),
-                                                              _createVNode(_component_q_btn, {
-                                                                flat: "",
-                                                                round: "",
-                                                                dense: "",
-                                                                size: "sm",
-                                                                icon: "sym_o_snooze",
-                                                                "aria-label": _ctx.t('Snooze'),
-                                                                onClick: $event => (_ctx.openSnooze([row]))
-                                                              }, {
-                                                                default: _withCtx(() => [
-                                                                  _createVNode(_component_q_tooltip, null, {
+                                                              (_ctx.rowCanChange(row) && _ctx.isSnoozed(row))
+                                                                ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                                    key: 2,
+                                                                    flat: "",
+                                                                    round: "",
+                                                                    dense: "",
+                                                                    size: "sm",
+                                                                    icon: "sym_o_alarm_off",
+                                                                    "aria-label": _ctx.t('Unsnooze'),
+                                                                    onClick: $event => (_ctx.rowAction(row, 'unsnooze'))
+                                                                  }, {
                                                                     default: _withCtx(() => [
-                                                                      _createTextVNode(_toDisplayString(_ctx.t('Snooze')), 1)
+                                                                      _createVNode(_component_q_tooltip, null, {
+                                                                        default: _withCtx(() => [
+                                                                          _createTextVNode(_toDisplayString(_ctx.t('Unsnooze')), 1)
+                                                                        ]),
+                                                                        _: 1
+                                                                      })
                                                                     ]),
                                                                     _: 1
-                                                                  })
-                                                                ]),
-                                                                _: 1
-                                                              }, 8, ["aria-label", "onClick"])
+                                                                  }, 8, ["aria-label", "onClick"]))
+                                                                : (_ctx.rowCanChange(row))
+                                                                  ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                                      key: 3,
+                                                                      flat: "",
+                                                                      round: "",
+                                                                      dense: "",
+                                                                      size: "sm",
+                                                                      icon: "sym_o_snooze",
+                                                                      "aria-label": _ctx.t('Snooze'),
+                                                                      onClick: $event => (_ctx.openSnooze([row]))
+                                                                    }, {
+                                                                      default: _withCtx(() => [
+                                                                        _createVNode(_component_q_tooltip, null, {
+                                                                          default: _withCtx(() => [
+                                                                            _createTextVNode(_toDisplayString(_ctx.t('Snooze')), 1)
+                                                                          ]),
+                                                                          _: 1
+                                                                        })
+                                                                      ]),
+                                                                      _: 1
+                                                                    }, 8, ["aria-label", "onClick"]))
+                                                                  : _createCommentVNode("", true)
                                                             ], 10, ["onClick"])
                                                           ])
                                                         ]),
@@ -14249,50 +14356,56 @@ module.exports = {
                                         _createElementVNode("div", {
                                           class: _normalizeClass(["row no-wrap items-center", _ctx.isPhone ? 'q-mt-xs' : ''])
                                         }, [
-                                          _createVNode(_component_q_btn, {
-                                            flat: "",
-                                            round: "",
-                                            dense: "",
-                                            icon: "sym_o_archive",
-                                            "aria-label": _ctx.t('Archive'),
-                                            onClick: $event => (_ctx.threadAction('archive'))
-                                          }, {
-                                            default: _withCtx(() => [
-                                              _createVNode(_component_q_tooltip, null, {
-                                                default: _withCtx(() => [
-                                                  _createTextVNode(_toDisplayString(_ctx.t('Archive')) + " (e)", 1)
-                                                ]),
-                                                _: 1
-                                              })
-                                            ]),
-                                            _: 1
-                                          }, 8, ["aria-label", "onClick"]),
-                                          _createVNode(_component_q_btn, {
-                                            flat: "",
-                                            round: "",
-                                            dense: "",
-                                            icon: "sym_o_delete",
-                                            "aria-label": _ctx.t('Delete'),
-                                            onClick: $event => (_ctx.threadAction(_ctx.threadInTrash ? 'deleteForever' : 'trash'))
-                                          }, {
-                                            default: _withCtx(() => [
-                                              _createVNode(_component_q_tooltip, null, {
-                                                default: _withCtx(() => [
-                                                  _createTextVNode(_toDisplayString(_ctx.t('Delete')) + " (#)", 1)
-                                                ]),
-                                                _: 1
-                                              })
-                                            ]),
-                                            _: 1
-                                          }, 8, ["aria-label", "onClick"]),
-                                          (_ctx.thread.store === 'email' && !_ctx.isPhone)
+                                          (_ctx.threadCanChange)
                                             ? (_openBlock(), _createBlock(_component_q_btn, {
                                                 key: 0,
                                                 flat: "",
                                                 round: "",
                                                 dense: "",
+                                                icon: "sym_o_archive",
+                                                "aria-label": _ctx.t('Archive'),
+                                                onClick: $event => (_ctx.threadAction('archive'))
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_tooltip, null, {
+                                                    default: _withCtx(() => [
+                                                      _createTextVNode(_toDisplayString(_ctx.t('Archive')) + " (e)", 1)
+                                                    ]),
+                                                    _: 1
+                                                  })
+                                                ]),
+                                                _: 1
+                                              }, 8, ["aria-label", "onClick"]))
+                                            : _createCommentVNode("", true),
+                                          (_ctx.threadCanChange)
+                                            ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                key: 1,
+                                                flat: "",
+                                                round: "",
+                                                dense: "",
+                                                icon: _ctx.threadInTrash ? 'sym_o_delete_forever' : 'sym_o_delete',
+                                                "aria-label": _ctx.threadInTrash ? _ctx.t('Delete forever') : _ctx.t('Delete'),
+                                                onClick: $event => (_ctx.threadAction(_ctx.threadInTrash ? 'deleteForever' : 'trash'))
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_tooltip, null, {
+                                                    default: _withCtx(() => [
+                                                      _createTextVNode(_toDisplayString(_ctx.threadInTrash ? _ctx.t('Delete forever') : _ctx.t('Delete')) + " (#)", 1)
+                                                    ]),
+                                                    _: 1
+                                                  })
+                                                ]),
+                                                _: 1
+                                              }, 8, ["icon", "aria-label", "onClick"]))
+                                            : _createCommentVNode("", true),
+                                          (_ctx.thread.store === 'email' && !_ctx.isPhone && _ctx.threadCanChange)
+                                            ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                key: 2,
+                                                flat: "",
+                                                round: "",
+                                                dense: "",
                                                 icon: "sym_o_report",
-                                                "aria-label": _ctx.t('Report spam'),
+                                                "aria-label": _ctx.thread.folderKindEnumId === 'EfkJunk' ? _ctx.t('Not spam') : _ctx.t('Report spam'),
                                                 onClick: $event => (_ctx.threadAction(_ctx.thread.folderKindEnumId === 'EfkJunk' ? 'notSpam' : 'spam'))
                                               }, {
                                                 default: _withCtx(() => [
@@ -14324,24 +14437,47 @@ module.exports = {
                                             ]),
                                             _: 1
                                           }, 8, ["aria-label", "onClick"]),
-                                          _createVNode(_component_q_btn, {
-                                            flat: "",
-                                            round: "",
-                                            dense: "",
-                                            icon: "sym_o_snooze",
-                                            "aria-label": _ctx.t('Snooze'),
-                                            onClick: $event => (_ctx.openSnooze('thread'))
-                                          }, {
-                                            default: _withCtx(() => [
-                                              _createVNode(_component_q_tooltip, null, {
+                                          (_ctx.threadCanChange && _ctx.isSnoozed(_ctx.threadRow()))
+                                            ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                key: 3,
+                                                flat: "",
+                                                round: "",
+                                                dense: "",
+                                                icon: "sym_o_alarm_off",
+                                                "aria-label": _ctx.t('Unsnooze'),
+                                                onClick: $event => (_ctx.threadAction('unsnooze'))
+                                              }, {
                                                 default: _withCtx(() => [
-                                                  _createTextVNode(_toDisplayString(_ctx.t('Snooze')) + " (b)", 1)
+                                                  _createVNode(_component_q_tooltip, null, {
+                                                    default: _withCtx(() => [
+                                                      _createTextVNode(_toDisplayString(_ctx.t('Unsnooze')), 1)
+                                                    ]),
+                                                    _: 1
+                                                  })
                                                 ]),
                                                 _: 1
-                                              })
-                                            ]),
-                                            _: 1
-                                          }, 8, ["aria-label", "onClick"]),
+                                              }, 8, ["aria-label", "onClick"]))
+                                            : (_ctx.threadCanChange)
+                                              ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                  key: 4,
+                                                  flat: "",
+                                                  round: "",
+                                                  dense: "",
+                                                  icon: "sym_o_snooze",
+                                                  "aria-label": _ctx.t('Snooze'),
+                                                  onClick: $event => (_ctx.openSnooze('thread'))
+                                                }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_tooltip, null, {
+                                                      default: _withCtx(() => [
+                                                        _createTextVNode(_toDisplayString(_ctx.t('Snooze')) + " (b)", 1)
+                                                      ]),
+                                                      _: 1
+                                                    })
+                                                  ]),
+                                                  _: 1
+                                                }, 8, ["aria-label", "onClick"]))
+                                              : _createCommentVNode("", true),
                                           _createVNode(_component_q_btn, {
                                             flat: "",
                                             round: "",
@@ -14366,7 +14502,7 @@ module.exports = {
                                                     style: {"min-width":"230px"}
                                                   }, {
                                                     default: _withCtx(() => [
-                                                      (_ctx.thread.store === 'email')
+                                                      (_ctx.thread.store === 'email' && _ctx.threadCanChange)
                                                         ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                                                             key: 0,
                                                             clickable: "",
@@ -14397,7 +14533,7 @@ module.exports = {
                                                             [_directive_close_popup]
                                                           ])
                                                         : _createCommentVNode("", true),
-                                                      (_ctx.thread.store === 'email' || _ctx.thread.store === 'internal')
+                                                      ((_ctx.thread.store === 'email' || _ctx.thread.store === 'internal') && _ctx.threadCanChange)
                                                         ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                                                             key: 1,
                                                             clickable: "",
@@ -14428,37 +14564,40 @@ module.exports = {
                                                             [_directive_close_popup]
                                                           ])
                                                         : _createCommentVNode("", true),
-                                                      _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                        clickable: "",
-                                                        onClick: $event => (_ctx.threadAction(_ctx.thread.isFlagged ? 'unflag' : 'flag'))
-                                                      }, {
-                                                        default: _withCtx(() => [
-                                                          _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                      (_ctx.threadCanChange)
+                                                        ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                            key: 2,
+                                                            clickable: "",
+                                                            onClick: $event => (_ctx.threadAction(_ctx.thread.isFlagged ? 'unflag' : 'flag'))
+                                                          }, {
                                                             default: _withCtx(() => [
-                                                              _createVNode(_component_q_icon, {
-                                                                name: _ctx.thread.isFlagged ? 'star' : 'sym_o_star',
-                                                                color: _ctx.thread.isFlagged ? 'warning' : undefined
-                                                              }, null, 8, ["name", "color"])
+                                                              _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                                default: _withCtx(() => [
+                                                                  _createVNode(_component_q_icon, {
+                                                                    name: _ctx.thread.isFlagged ? 'star' : 'sym_o_star',
+                                                                    color: _ctx.thread.isFlagged ? 'warning' : undefined
+                                                                  }, null, 8, ["name", "color"])
+                                                                ]),
+                                                                _: 1
+                                                              }),
+                                                              _createVNode(_component_q_item_section, null, {
+                                                                default: _withCtx(() => [
+                                                                  _createTextVNode(_toDisplayString(_ctx.thread.isFlagged ? _ctx.t('Remove flag') : _ctx.t('Flag')), 1)
+                                                                ]),
+                                                                _: 1
+                                                              }),
+                                                              _createVNode(_component_q_item_section, { side: "" }, {
+                                                                default: _withCtx(() => [
+                                                                  _createTextVNode("s")
+                                                                ]),
+                                                                _: 1
+                                                              })
                                                             ]),
                                                             _: 1
-                                                          }),
-                                                          _createVNode(_component_q_item_section, null, {
-                                                            default: _withCtx(() => [
-                                                              _createTextVNode(_toDisplayString(_ctx.thread.isFlagged ? _ctx.t('Remove flag') : _ctx.t('Flag')), 1)
-                                                            ]),
-                                                            _: 1
-                                                          }),
-                                                          _createVNode(_component_q_item_section, { side: "" }, {
-                                                            default: _withCtx(() => [
-                                                              _createTextVNode("s")
-                                                            ]),
-                                                            _: 1
-                                                          })
-                                                        ]),
-                                                        _: 1
-                                                      }, 8, ["onClick"])), [
-                                                        [_directive_close_popup]
-                                                      ]),
+                                                          }, 8, ["onClick"])), [
+                                                            [_directive_close_popup]
+                                                          ])
+                                                        : _createCommentVNode("", true),
                                                       _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                                                         clickable: "",
                                                         onClick: $event => (_ctx.openLink(_ctx.lastMessage))
@@ -14549,7 +14688,7 @@ module.exports = {
                                                       ]),
                                                       (_ctx.lastMessage)
                                                         ? (_openBlock(), _createBlock(_component_m_ext_actions, {
-                                                            key: 2,
+                                                            key: 3,
                                                             slot: "message-actions",
                                                             item: { store: _ctx.lastMessage.store, emailMessageId: _ctx.lastMessage.emailMessageId || null, communicationEventId: _ctx.lastMessage.communicationEventId || null },
                                                             onDone: _ctx.reloadThread
@@ -14557,7 +14696,7 @@ module.exports = {
                                                         : _createCommentVNode("", true),
                                                       (_ctx.thread.canModerate && !_ctx.thread.isClosed)
                                                         ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                            key: 3,
+                                                            key: 4,
                                                             clickable: "",
                                                             onClick: $event => (_ctx.threadAction('close'))
                                                           }, {
@@ -14582,7 +14721,7 @@ module.exports = {
                                                         : _createCommentVNode("", true),
                                                       (_ctx.thread.canModerate && _ctx.thread.isClosed)
                                                         ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                            key: 4,
+                                                            key: 5,
                                                             clickable: "",
                                                             onClick: $event => (_ctx.threadAction('reopen'))
                                                           }, {
@@ -14660,7 +14799,7 @@ module.exports = {
                                           }, 8, ["aria-label"]),
                                           (_ctx.splitMode)
                                             ? (_openBlock(), _createBlock(_component_q_btn, {
-                                                key: 1,
+                                                key: 5,
                                                 flat: "",
                                                 round: "",
                                                 dense: "",
@@ -16148,12 +16287,15 @@ module.exports = {
                                   return (_openBlock(), _createBlock(_component_q_item, {
                                     key: label.emailLabelId,
                                     clickable: "",
-                                    onClick: $event => (_ctx.toggleLabelChoice(label))
+                                    onClick: $event => (_ctx.toggleLabelChoice(label)),
+                                    role: "checkbox",
+                                    "aria-checked": _ctx.labels.choice[label.emailLabelId] === true ? 'true' : (_ctx.labels.choice[label.emailLabelId] === false ? 'false' : 'mixed')
                                   }, {
                                     default: _withCtx(() => [
                                       _createVNode(_component_q_item_section, { avatar: "" }, {
                                         default: _withCtx(() => [
                                           _createVNode(_component_q_icon, {
+                                            "aria-hidden": "true",
                                             name: _ctx.labels.choice[label.emailLabelId] === true ? 'sym_o_check_box' : (_ctx.labels.choice[label.emailLabelId] === false ? 'sym_o_check_box_outline_blank' : 'sym_o_indeterminate_check_box'),
                                             color: _ctx.labels.choice[label.emailLabelId] === true ? 'primary' : undefined
                                           }, null, 8, ["name", "color"])
@@ -16168,7 +16310,7 @@ module.exports = {
                                       }, 1024)
                                     ]),
                                     _: 2
-                                  }, 1032, ["onClick"]))
+                                  }, 1032, ["onClick", "aria-checked"]))
                                 }), 128))
                               ]),
                               _: 2
@@ -17591,7 +17733,7 @@ module.exports = {
             uid: composeCount, query: {}, state: 'loading', error: null, draft: this.emptyDraft(), identities: [], me: {}, undoSeconds: 10, kind: 'new',
             adding: { to: null, cc: null, bcc: null }, showCc: false, showBcc: false, showQuote: false, dragOver: false, uploading: false, picked: null,
             sending: false, sent: false, savedAt: null, saving: false, saveError: null, dirty: false, saveTimer: null, scheduleOpen: false, scheduleCustom: '',
-            blocksOpen: false, blocks: [], blockSearch: '', slashPending: false, signature: null, signaturePlacement: 'above', belowSignature: null,
+            blocksOpen: false, blocks: [], blockSearch: '', slashPending: false, slashAt: null, signature: null, signaturePlacement: 'above', belowSignature: null,
             loadedOnce: false, pageLayoutOverride: null, hasDrive: false,
             // the desktop client offline (MD4): the files kept by the app until the message is sent from its outbox, the
             // message's clientRef, and whether the email's draft is kept here, not yet on the server
@@ -17702,7 +17844,9 @@ module.exports = {
         },
         url(name) { return this.base() + '/' + name; },
         go(target) { if (target) this.$root.setUrl(target); },
-        refreshIdentities() {
+        // keepFrom: a send refused for its From (the right to send from it was lowered meanwhile) keeps the From chosen,
+        // so the noFrom banner says why rather than another identity taking its place (COM-UI-021)
+        refreshIdentities(keepFrom) {
             if (this.refreshingIdentities) return;
             this.refreshingIdentities = true;
             this.identityError = null;
@@ -17711,7 +17855,7 @@ module.exports = {
                 const compose = result.json && result.json.compose;
                 if (!compose || !Array.isArray(compose.identityList)) throw new Error('No identities in compose data');
                 this.identities = compose.identityList;
-                if (!this.identityOptions.some((identity) => identity.value === this.draft.fromValue)) {
+                if (keepFrom !== true && !this.identityOptions.some((identity) => identity.value === this.draft.fromValue)) {
                     this.draft.fromValue = (this.identityOptions.find((identity) => identity.value === compose.fromValue) || this.identityOptions[0] || {}).value || null;
                 }
                 if (!this.noFrom) this.saveError = null;
@@ -18275,15 +18419,38 @@ module.exports = {
             moqui.request(this.url('textBlocks')).then((result) => { this.blocks = (result.json || {}).textBlockList || []; this.blocksLoaded = true; }, () => {});
         },
         blockText(block) { return String(block.bodyHtml || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 80); },
+        // the menu's search has the focus when it opens, by "/" or the button (COM-UI-023)
+        focusBlockSearch() {
+            const input = this.$refs.blockPanel && this.$refs.blockPanel.querySelector('input');
+            if (input) input.focus();
+        },
+        // closed with nothing chosen (Esc, a click outside): the "/" stays as typed and the editor has the focus again
+        blocksHidden() {
+            if (!this.slashPending) return;
+            this.slashPending = false;
+            const editor = this.$refs.editor && this.$refs.editor.editor;
+            if (editor && editor.commands) editor.commands.focus(this.slashAt == null ? undefined : this.slashAt);
+            this.slashAt = null;
+        },
+        // Enter in the search inserts the first match (a row with the focus takes Enter itself)
+        insertFirstBlock(event) {
+            if (!event || !event.target || event.target.tagName !== 'INPUT') return;
+            event.preventDefault();
+            const block = this.shownBlocks[0];
+            if (!block) return;
+            this.insertBlock(block);
+            this.blocksOpen = false;
+        },
         insertBlock(block) {
             const editor = this.$refs.editor && this.$refs.editor.editor;
             const html = block.bodyHtml || '';
             if (editor && editor.chain && !this.draft.plain) {
-                let chain = editor.chain().focus();
-                if (this.slashPending) {
-                    const at = editor.state.selection.from;
-                    const before = editor.state.doc.textBetween(Math.max(0, at - 1), at, '\n', '\n');
-                    if (before === '/') chain = chain.deleteRange({ from: at - 1, to: at });
+                // the search had the focus, so the place to insert is where the "/" was typed
+                const slashAt = this.slashPending && this.slashAt != null ? this.slashAt : null;
+                let chain = slashAt != null ? editor.chain().focus(slashAt) : editor.chain().focus();
+                if (slashAt != null && slashAt > 0) {
+                    const before = editor.state.doc.textBetween(slashAt - 1, slashAt, '\n', '\n');
+                    if (before === '/') chain = chain.deleteRange({ from: slashAt - 1, to: slashAt });
                 }
                 chain.insertContent(html).run();
             } else {
@@ -18291,6 +18458,7 @@ module.exports = {
                 this.draft.body = this.draft.plain ? String(this.draft.body || '').replace(/\/$/, '') + text : String(this.draft.body || '') + html;
             }
             this.slashPending = false;
+            this.slashAt = null;
         },
         // "/" at the start of a word opens the text blocks
         onEditorKeyup(event) {
@@ -18299,7 +18467,7 @@ module.exports = {
             if (!editor || !editor.state) return;
             const at = editor.state.selection.from;
             const before = editor.state.doc.textBetween(Math.max(0, at - 2), at, '\n', '\n');
-            if (before === '/' || /[\s\n]\/$/.test(before)) { this.slashPending = true; this.blockSearch = ''; this.blocksOpen = true; this.loadBlocks(); }
+            if (before === '/' || /[\s\n]\/$/.test(before)) { this.slashPending = true; this.slashAt = at; this.blockSearch = ''; this.blocksOpen = true; this.loadBlocks(); }
         },
         onKeydown(event) {
             if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); this.send(); }
@@ -18312,7 +18480,7 @@ module.exports = {
             if (this.noFrom) { moqui.notifyMessages(null, this.fromMessage); return; }
             this.collectPending();
             const d = this.draft;
-            if (!d.to.length && !d.cc.length && !d.bcc.length) { moqui.notifyMessages(null, t('Add a recipient in To')); return; }
+            if (!d.to.length && !d.cc.length && !d.bcc.length) { moqui.notifyMessages(null, t('Add a recipient')); return; }
             if (this.uploading) { moqui.notifyMessages(null, t('Wait for the files to finish uploading')); return; }
             if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
             const params = Object.assign(this.draftParams(), {});
@@ -18355,6 +18523,9 @@ module.exports = {
                 }
                 this.sending = false;
                 moqui.handleAjaxError(err);
+                // a refusal may be for the From (the right to send from it lowered meanwhile): the message stays here, and the
+                // identities are read again so the banner says so
+                if (this.mode === 'email') this.refreshIdentities(true);
             });
             // a save that is running finishes first, so the send has the draft's id
             if (this.saving && this.savePromise) this.savePromise.then(() => { if (this.draft.emailMessageId) params.emailMessageId = this.draft.emailMessageId; go(); });
@@ -18455,7 +18626,7 @@ module.exports = {
         {
             const target = component;
             target.render = (function () {
-                const { resolveComponent: _resolveComponent, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, withCtx: _withCtx, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, normalizeClass: _normalizeClass, resolveDirective: _resolveDirective, withDirectives: _withDirectives, withModifiers: _withModifiers, withKeys: _withKeys } = Vue
+                const { resolveComponent: _resolveComponent, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, withCtx: _withCtx, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, normalizeClass: _normalizeClass, resolveDirective: _resolveDirective, withDirectives: _withDirectives, withKeys: _withKeys, withModifiers: _withModifiers } = Vue
 
                 return function render(_ctx, _cache) {
                   const _component_q_skeleton = _resolveComponent("q-skeleton")
@@ -19103,13 +19274,17 @@ module.exports = {
                                           modelValue: _ctx.blocksOpen,
                                           "onUpdate:modelValue": $event => ((_ctx.blocksOpen) = $event),
                                           onBeforeShow: _ctx.loadBlocks,
+                                          onShow: _ctx.focusBlockSearch,
+                                          onHide: _ctx.blocksHidden,
                                           anchor: "top left",
                                           self: "bottom left"
                                         }, {
                                           default: _withCtx(() => [
                                             _createElementVNode("div", {
+                                              ref: "blockPanel",
                                               class: "q-pa-sm",
-                                              style: {"width":"320px","max-width":"90vw"}
+                                              style: {"width":"320px","max-width":"90vw"},
+                                              onKeydown: _withKeys(_ctx.insertFirstBlock, ["enter"])
                                             }, [
                                               _createVNode(_component_m_text_line, {
                                                 modelValue: _ctx.blockSearch,
@@ -19193,10 +19368,10 @@ module.exports = {
                                                 label: _ctx.t('Manage text blocks'),
                                                 onClick: $event => (_ctx.go(_ctx.appLink() + 'Settings/TextBlocks'))
                                               }, null, 8, ["label", "onClick"])
-                                            ])
+                                            ], 40, ["onKeydown"])
                                           ]),
                                           _: 1
-                                        }, 8, ["modelValue", "onUpdate:modelValue", "onBeforeShow"])
+                                        }, 8, ["modelValue", "onUpdate:modelValue", "onBeforeShow", "onShow", "onHide"])
                                       ]),
                                       _: 1
                                     }, 8, ["aria-label"]),

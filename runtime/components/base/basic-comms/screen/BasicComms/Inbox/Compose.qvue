@@ -140,8 +140,8 @@ along with this software (see the LICENSE.md file). If not, see
                     <q-btn flat round dense icon="sym_o_attach_file" :aria-label="t('Attach files')" @click="pickFiles"><q-tooltip>{{t('Attach files')}}</q-tooltip></q-btn>
                     <q-btn v-if="hasDrive" flat round dense icon="sym_o_add_to_drive" :aria-label="t('Attach from Files')" @click="openPicker"><q-tooltip>{{t('Attach from Files')}}</q-tooltip></q-btn>
                     <q-btn flat round dense icon="sym_o_text_snippet" :aria-label="t('Text blocks')"><q-tooltip>{{t('Text blocks')}} (/)</q-tooltip>
-                        <q-menu v-model="blocksOpen" @before-show="loadBlocks" anchor="top left" self="bottom left">
-                            <div class="q-pa-sm" style="width:320px;max-width:90vw">
+                        <q-menu v-model="blocksOpen" @before-show="loadBlocks" @show="focusBlockSearch" @hide="blocksHidden" anchor="top left" self="bottom left">
+                            <div ref="blockPanel" class="q-pa-sm" style="width:320px;max-width:90vw" @keydown.enter="insertFirstBlock">
                                 <m-text-line v-model="blockSearch" name="blockSearch" :label="t('Find a text block')"></m-text-line>
                                 <q-list dense class="q-mt-xs" style="max-height:240px;overflow:auto">
                                     <q-item v-for="block in shownBlocks" :key="block.emailTextBlockId" clickable v-close-popup @click="insertBlock(block)">
@@ -259,7 +259,7 @@ module.exports = {
             uid: composeCount, query: {}, state: 'loading', error: null, draft: this.emptyDraft(), identities: [], me: {}, undoSeconds: 10, kind: 'new',
             adding: { to: null, cc: null, bcc: null }, showCc: false, showBcc: false, showQuote: false, dragOver: false, uploading: false, picked: null,
             sending: false, sent: false, savedAt: null, saving: false, saveError: null, dirty: false, saveTimer: null, scheduleOpen: false, scheduleCustom: '',
-            blocksOpen: false, blocks: [], blockSearch: '', slashPending: false, signature: null, signaturePlacement: 'above', belowSignature: null,
+            blocksOpen: false, blocks: [], blockSearch: '', slashPending: false, slashAt: null, signature: null, signaturePlacement: 'above', belowSignature: null,
             loadedOnce: false, pageLayoutOverride: null, hasDrive: false,
             // the desktop client offline (MD4): the files kept by the app until the message is sent from its outbox, the
             // message's clientRef, and whether the email's draft is kept here, not yet on the server
@@ -370,7 +370,9 @@ module.exports = {
         },
         url(name) { return this.base() + '/' + name; },
         go(target) { if (target) this.$root.setUrl(target); },
-        refreshIdentities() {
+        // keepFrom: a send refused for its From (the right to send from it was lowered meanwhile) keeps the From chosen,
+        // so the noFrom banner says why rather than another identity taking its place (COM-UI-021)
+        refreshIdentities(keepFrom) {
             if (this.refreshingIdentities) return;
             this.refreshingIdentities = true;
             this.identityError = null;
@@ -379,7 +381,7 @@ module.exports = {
                 const compose = result.json && result.json.compose;
                 if (!compose || !Array.isArray(compose.identityList)) throw new Error('No identities in compose data');
                 this.identities = compose.identityList;
-                if (!this.identityOptions.some((identity) => identity.value === this.draft.fromValue)) {
+                if (keepFrom !== true && !this.identityOptions.some((identity) => identity.value === this.draft.fromValue)) {
                     this.draft.fromValue = (this.identityOptions.find((identity) => identity.value === compose.fromValue) || this.identityOptions[0] || {}).value || null;
                 }
                 if (!this.noFrom) this.saveError = null;
@@ -943,15 +945,38 @@ module.exports = {
             moqui.request(this.url('textBlocks')).then((result) => { this.blocks = (result.json || {}).textBlockList || []; this.blocksLoaded = true; }, () => {});
         },
         blockText(block) { return String(block.bodyHtml || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 80); },
+        // the menu's search has the focus when it opens, by "/" or the button (COM-UI-023)
+        focusBlockSearch() {
+            const input = this.$refs.blockPanel && this.$refs.blockPanel.querySelector('input');
+            if (input) input.focus();
+        },
+        // closed with nothing chosen (Esc, a click outside): the "/" stays as typed and the editor has the focus again
+        blocksHidden() {
+            if (!this.slashPending) return;
+            this.slashPending = false;
+            const editor = this.$refs.editor && this.$refs.editor.editor;
+            if (editor && editor.commands) editor.commands.focus(this.slashAt == null ? undefined : this.slashAt);
+            this.slashAt = null;
+        },
+        // Enter in the search inserts the first match (a row with the focus takes Enter itself)
+        insertFirstBlock(event) {
+            if (!event || !event.target || event.target.tagName !== 'INPUT') return;
+            event.preventDefault();
+            const block = this.shownBlocks[0];
+            if (!block) return;
+            this.insertBlock(block);
+            this.blocksOpen = false;
+        },
         insertBlock(block) {
             const editor = this.$refs.editor && this.$refs.editor.editor;
             const html = block.bodyHtml || '';
             if (editor && editor.chain && !this.draft.plain) {
-                let chain = editor.chain().focus();
-                if (this.slashPending) {
-                    const at = editor.state.selection.from;
-                    const before = editor.state.doc.textBetween(Math.max(0, at - 1), at, '\n', '\n');
-                    if (before === '/') chain = chain.deleteRange({ from: at - 1, to: at });
+                // the search had the focus, so the place to insert is where the "/" was typed
+                const slashAt = this.slashPending && this.slashAt != null ? this.slashAt : null;
+                let chain = slashAt != null ? editor.chain().focus(slashAt) : editor.chain().focus();
+                if (slashAt != null && slashAt > 0) {
+                    const before = editor.state.doc.textBetween(slashAt - 1, slashAt, '\n', '\n');
+                    if (before === '/') chain = chain.deleteRange({ from: slashAt - 1, to: slashAt });
                 }
                 chain.insertContent(html).run();
             } else {
@@ -959,6 +984,7 @@ module.exports = {
                 this.draft.body = this.draft.plain ? String(this.draft.body || '').replace(/\/$/, '') + text : String(this.draft.body || '') + html;
             }
             this.slashPending = false;
+            this.slashAt = null;
         },
         // "/" at the start of a word opens the text blocks
         onEditorKeyup(event) {
@@ -967,7 +993,7 @@ module.exports = {
             if (!editor || !editor.state) return;
             const at = editor.state.selection.from;
             const before = editor.state.doc.textBetween(Math.max(0, at - 2), at, '\n', '\n');
-            if (before === '/' || /[\s\n]\/$/.test(before)) { this.slashPending = true; this.blockSearch = ''; this.blocksOpen = true; this.loadBlocks(); }
+            if (before === '/' || /[\s\n]\/$/.test(before)) { this.slashPending = true; this.slashAt = at; this.blockSearch = ''; this.blocksOpen = true; this.loadBlocks(); }
         },
         onKeydown(event) {
             if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); this.send(); }
@@ -980,7 +1006,7 @@ module.exports = {
             if (this.noFrom) { moqui.notifyMessages(null, this.fromMessage); return; }
             this.collectPending();
             const d = this.draft;
-            if (!d.to.length && !d.cc.length && !d.bcc.length) { moqui.notifyMessages(null, t('Add a recipient in To')); return; }
+            if (!d.to.length && !d.cc.length && !d.bcc.length) { moqui.notifyMessages(null, t('Add a recipient')); return; }
             if (this.uploading) { moqui.notifyMessages(null, t('Wait for the files to finish uploading')); return; }
             if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
             const params = Object.assign(this.draftParams(), {});
@@ -1023,6 +1049,9 @@ module.exports = {
                 }
                 this.sending = false;
                 moqui.handleAjaxError(err);
+                // a refusal may be for the From (the right to send from it lowered meanwhile): the message stays here, and the
+                // identities are read again so the banner says so
+                if (this.mode === 'email') this.refreshIdentities(true);
             });
             // a save that is running finishes first, so the send has the draft's id
             if (this.saving && this.savePromise) this.savePromise.then(() => { if (this.draft.emailMessageId) params.emailMessageId = this.draft.emailMessageId; go(); });

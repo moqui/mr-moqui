@@ -349,3 +349,41 @@ fn a_subject_is_a_safe_file_name() {
     assert_eq!(super::file_name("Café menu"), "Café menu.eml");
     assert_eq!(super::file_name(&"x".repeat(200)).len(), 84);
 }
+
+/// A message to Bcc only (COM-UI-018) has the empty group as its To, no Bcc header, and the Bcc in its envelope.
+#[test]
+fn a_message_to_bcc_only_says_undisclosed_recipients() {
+    let letter = super::Letter {
+        subject: "Quiet".to_string(),
+        from_address: "me@example.com".to_string(),
+        from_name: String::new(),
+        to: Vec::new(),
+        cc: Vec::new(),
+        bcc: vec!["hidden@example.org".to_string()],
+        reply_to: Vec::new(),
+        bounce: String::new(),
+        body: String::new(),
+        body_text: "Hello".to_string(),
+        attachments: Vec::new(),
+        inline: Vec::new(),
+        message_id: "<quiet1@example.com>".to_string(),
+        in_reply_to: String::new(),
+        references: String::new(),
+        date: Some(1_760_000_000_000),
+        extra_headers: Vec::new(),
+    };
+    let message = super::build_lettre(&letter).unwrap();
+    let mime = String::from_utf8(message.formatted()).unwrap();
+    let (head, _) = mime.split_once("\r\n\r\n").expect("a header block");
+    assert!(head.contains("To: undisclosed-recipients:;"), "{head}");
+    assert!(!head.contains("Bcc:") && !head.contains("hidden@example.org"), "{head}");
+    let envelope = message.envelope();
+    assert_eq!(
+        envelope.from().map(ToString::to_string).as_deref(),
+        Some("me@example.com")
+    );
+    assert_eq!(
+        envelope.to().iter().map(ToString::to_string).collect::<Vec<_>>(),
+        ["hidden@example.org"]
+    );
+}

@@ -1254,7 +1254,9 @@ along with this software (see the LICENSE.md file). If not, see
             the view), subject, snippet, sortDate (epoch millis: the date of the thread's newest message in the view),
             lastDate, firstDate, messageCount, replyCount, unreadCount, isUnread, isFlagged, isArchived, snoozedThruDate,
             scheduledSendDate, hasAttachment, draftCount, fromAddress and fromName (of the newest message), participantList
-            ({address, name}), participantAddressList, labelList ({emailLabelId, labelName, color}), sendError,
+            ({address, name}), participantAddressList, recipientList (the To, Cc and Bcc, {address, name}, of the message in
+            view when it is the account's own outgoing one: a draft, waiting or sent; else null), labelList ({emailLabelId,
+            labelName, color}), sendError,
             fromPartyId, participantPartyIdList, contactListId, contactListName and isClosed}. The last five are the
             internal store's, empty here, so an app can merge both stores by sortDate (Mantle's find#InboxThreads). A
             thread outside trash and junk leaves out its messages there, and one in them shows only those.
@@ -1295,7 +1297,7 @@ along with this software (see the LICENSE.md file). If not, see
             const MESSAGE = 'moqui.basic.email.EmailMessage'
             const VIEWS = ['inbox', 'flagged', 'snoozed', 'scheduled', 'outbox', 'drafts', 'sent', 'archive', 'junk', 'trash', 'all', 'anywhere', 'folder', 'label']
             const LIST_FIELDS = ['emailMessageId', 'rootEmailMessageId', 'parentEmailMessageId', 'emailAccountId', 'emailFolderId',
-                'statusId', 'subject', 'snippet', 'fromAddress', 'fromName', 'toAddresses', 'ccAddresses', 'messageDate', 'isRead',
+                'statusId', 'subject', 'snippet', 'fromAddress', 'fromName', 'toAddresses', 'ccAddresses', 'bccAddresses', 'messageDate', 'isRead',
                 'isFlagged', 'isAnswered', 'hasAttachment', 'snoozedThruDate', 'scheduledSendDate', 'archivedDate', 'sendError', 'messageSize']
             const toMillis = (value) => {
                 if (value == null || value === '') return null
@@ -1663,6 +1665,11 @@ along with this software (see the LICENSE.md file). If not, see
                     labelList.push(label)
                 }
                 const snoozes = messages.map((message) => toMillis(message.snoozedThruDate)).filter((millis) => millis != null && millis > nowMillis)
+                // a message the account sends (a draft, one waiting, one sent) lists whom it goes to, its own To, Cc and Bcc,
+                // not the thread's people (COM-UI-028)
+                const outgoing = ['ES_DRAFT', 'ES_READY', 'ES_SCHEDULED', 'ES_SENT'].includes(shown.statusId)
+                const recipientList = outgoing ? [].concat(splitAddresses(shown.toAddresses), splitAddresses(shown.ccAddresses),
+                        splitAddresses(shown.bccAddresses)).filter((entry) => entry.address) : null
                 const unreadCount = messages.filter((message) => message.isRead !== 'Y').length
                 return {store: 'email', threadId: threadId, rootEmailMessageId: threadId, lastEmailMessageId: last.emailMessageId,
                     emailMessageId: shown.emailMessageId, emailAccountId: shown.emailAccountId, emailFolderId: shown.emailFolderId ?? null,
@@ -1676,7 +1683,7 @@ along with this software (see the LICENSE.md file). If not, see
                     scheduledSendDate: toMillis(shown.scheduledSendDate), hasAttachment: messages.some((message) => message.hasAttachment === 'Y'),
                     draftCount: messages.filter((message) => message.statusId === 'ES_DRAFT').length,
                     fromAddress: last.fromAddress ?? null, fromName: last.fromName ?? null, participantList: participants,
-                    participantAddressList: participants.map((entry) => entry.address), labelList: labelList, sendError: shown.sendError ?? null,
+                    participantAddressList: participants.map((entry) => entry.address), recipientList: recipientList, labelList: labelList, sendError: shown.sendError ?? null,
                     fromPartyId: null, participantPartyIdList: [], contactListId: null, contactListName: null, isClosed: false}
             }
             const plain = (row) => {
@@ -3530,7 +3537,8 @@ along with this software (see the LICENSE.md file). If not, see
             const server = account.emailServerId ? ec.entity.find('moqui.basic.email.EmailServer').condition('emailServerId', account.emailServerId).one() : null
             if (server == null || !server.smtpHost) { ec.message.addError(`Email account ${account.accountName || account.emailAccountId} has no outgoing (SMTP) server`); return }
             if (!draft.fromAddress) { ec.message.addError(ec.l10n.localize('The message has no from address')); return }
-            if (!draft.toAddresses) { ec.message.addError(ec.l10n.localize('Add a recipient in To')); return }
+            // To, Cc or Bcc: a message to Bcc only goes with the To header undisclosed-recipients:; (COM-UI-018)
+            if (!draft.toAddresses && !draft.ccAddresses && !draft.bccAddresses) { ec.message.addError(ec.l10n.localize('Add a recipient')); return }
             const bad = [draft.toAddresses, draft.ccAddresses, draft.bccAddresses].filter((list) => list)
                     .flatMap((list) => String(list).split(',')).map((entry) => entry.trim()).filter((entry) => entry && !entry.includes('@'))
             if (bad.length) { ec.message.addError(`Not an email address: ${bad.join(', ')}`); return }

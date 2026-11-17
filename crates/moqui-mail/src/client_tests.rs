@@ -547,7 +547,12 @@ fn find_messages_views_threads_and_cursor() {
         "M8",
         "EfkDrafts",
         at(60),
-        &[("statusId", text("ES_DRAFT")), ("isRead", text("Y"))],
+        &[
+            ("statusId", text("ES_DRAFT")),
+            ("isRead", text("Y")),
+            ("toAddresses", Value::Null),
+            ("bccAddresses", text("hidden@example.org")),
+        ],
     );
     message(
         &facade,
@@ -627,6 +632,16 @@ fn find_messages_views_threads_and_cursor() {
     assert_eq!(view("trash"), ["M6"]);
     assert_eq!(view("archive"), ["M7"]);
     assert_eq!(view("drafts"), ["M8"]);
+    // a draft names its own recipients, Bcc too; a received message has none (COM-UI-028)
+    let drafts = ok("find#Messages", &[("view", text("drafts"))]);
+    let recipients = match maps(&drafts, "threadList")[0].get("recipientList") {
+        Some(Value::List(items)) => items.clone(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(recipients.len(), 1);
+    assert!(matches!(&recipients[0], Value::Map(entry) if field(entry, "address") == "hidden@example.org"));
+    let flagged = ok("find#Messages", &[("view", text("flagged"))]);
+    assert_eq!(maps(&flagged, "threadList")[0].get("recipientList"), Some(&Value::Null));
     assert_eq!(view("all"), ["M8", "M4", "M1", "M9", "M3", "M7"]);
     assert!(view("outbox").is_empty());
     let trash = ok("find#Messages", &[("view", text("trash"))]);
@@ -1359,6 +1374,28 @@ fn drafts_send_now_scheduled_held_and_failed() {
         "emailMessageId",
     );
     refused("send#Draft", &[("emailMessageId", text(&no_to))], "Add a recipient");
+    // Bcc alone is a recipient (COM-UI-018): the mail goes, with the empty group as its To
+    let bcc_only = out_text(
+        &ok(
+            "save#Draft",
+            &[
+                ("emailAccountId", text(&account)),
+                ("bccAddresses", text("hidden@example.org")),
+                ("subject", text("Bcc only")),
+                ("body", text("x")),
+            ],
+        ),
+        "emailMessageId",
+    );
+    let before = sink.sent().len();
+    let bcc_sent = ok("send#Draft", &[("emailMessageId", text(&bcc_only))]);
+    assert_eq!(bcc_sent.get("sent"), Some(&Value::Bool(true)), "{bcc_sent:?}");
+    let mail = sink.sent().into_iter().nth(before).expect("the Bcc-only mail");
+    assert!(
+        mail.to.is_empty() && mail.mime.contains("To: undisclosed-recipients:;"),
+        "{}",
+        mail.mime
+    );
     ok(
         "save#Draft",
         &[
@@ -1394,7 +1431,7 @@ fn drafts_send_now_scheduled_held_and_failed() {
     // discarding a draft deletes it
     ok("trash#Messages", &[("emailMessageId", text(&stranded))]);
     assert!(find_one(&facade, MESSAGE, "emailMessageId", &stranded).is_none());
-    assert_eq!(sink.sent().len(), 5);
+    assert_eq!(sink.sent().len(), 6, "the five before and the Bcc-only one");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
