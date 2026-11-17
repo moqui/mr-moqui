@@ -271,11 +271,18 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
             let work = option(args, "--work").map_or_else(|| std::env::temp_dir().join("moqui-ci"), PathBuf::from);
             let shell = option(args, "--shell");
             let keep_processes = args.iter().any(|arg| arg == "--keep-processes");
+            // a pool's untrusted runs go only to a runner that runs its steps as another user (SEC-GIT-19)
+            let claim = serde_json::json!({ "stepUser": step_user.is_some() });
+            let mut noticed = false;
             loop {
-                let claimed = runner::http::call(&server, "claim", &runner_token, &serde_json::json!({}));
+                let claimed = runner::http::call(&server, "claim", &runner_token, &claim);
                 match claimed {
                     Ok((200, answer)) => {
                         rotate_when_due(&server, &answer, &mut runner_token, token_file.as_deref(), &mut warned);
+                        if let Some(notice) = answer["notice"].as_str().filter(|_| !noticed) {
+                            eprintln!("moqui ci-run poll: {notice}");
+                            noticed = true;
+                        }
                         if let (Some(job), Some(token)) = (answer["jobRunId"].as_str(), answer["token"].as_str()) {
                             let dir = work.join(job);
                             let _ = std::fs::remove_dir_all(&dir);

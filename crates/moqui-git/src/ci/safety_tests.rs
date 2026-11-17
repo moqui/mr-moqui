@@ -237,17 +237,17 @@ fn a_shared_pool_takes_no_job_of_an_owner_with_its_own_and_a_revoked_runner_lose
     let _entered = fixture.context.enter();
     let _authz = fixture.context.disable_authz();
     assert_eq!(
-        registered::claim(&entity, &shared).unwrap(),
+        registered::claim(&entity, &shared, false).unwrap(),
         None,
         "the owner has its own pool"
     );
-    let claimed = registered::claim(&entity, &own)
+    let claimed = registered::claim(&entity, &own, false)
         .unwrap()
         .expect("its own pool's runner");
     assert_eq!(claimed.job_run_id, "J1");
     // revoked: its token is refused and its job ends
     assert!(registered::revoke(&entity, "RO").unwrap());
-    assert!(registered::claim(&entity, &own).is_err());
+    assert!(registered::claim(&entity, &own, false).is_err());
     let job = super::one(&entity, JOB_RUN, "jobRunId", "J1").unwrap().unwrap();
     assert_eq!(
         (text(&job, "statusId"), text(&job, "statusMessage")),
@@ -427,7 +427,7 @@ fn old_tokens_ownerless_pools_double_retries_and_ended_runs_get_nothing() {
         "no expiry is expired"
     );
     // an ownerless pool of registered runners on a server with tenants
-    let refused = registered::claim(&entity, &shared).unwrap_err();
+    let refused = registered::claim(&entity, &shared, false).unwrap_err();
     assert!(refused.message().contains("has no ownerId"), "{refused}");
     // the run ended (cancelled as the claim read its jobs): its job goes to no runner
     let mut run = super::one(&entity, PIPELINE_RUN, "pipelineRunId", "R1")
@@ -435,7 +435,7 @@ fn old_tokens_ownerless_pools_double_retries_and_ended_runs_get_nothing() {
         .unwrap();
     run.set("statusId", s("cancelled"));
     run.update(&entity).unwrap();
-    assert_eq!(registered::claim(&entity, &own).unwrap(), None);
+    assert_eq!(registered::claim(&entity, &own, false).unwrap(), None);
     run.set("statusId", s("queued"));
     run.update(&entity).unwrap();
     // a runner left reserved for a job it never ran (still queued: the claim failed after the reservation) is freed
@@ -452,7 +452,7 @@ fn old_tokens_ownerless_pools_double_retries_and_ended_runs_get_nothing() {
             ("statusId", s("queued")),
         ],
     );
-    let claimed = registered::claim(&entity, &own)
+    let claimed = registered::claim(&entity, &own, false)
         .unwrap()
         .expect("freed and given a job");
     assert_eq!(claimed.job_run_id, "J1");
