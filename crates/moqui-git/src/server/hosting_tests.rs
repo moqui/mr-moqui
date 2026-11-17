@@ -1600,6 +1600,20 @@ fn webhooks_are_capped_and_a_pass_of_the_retries_is_bounded_by_time() {
     assert_eq!(*answered.lock().unwrap(), 1);
     let produced = produced(&fixture);
     assert_eq!(produced.len(), 1, "the other waits for the next pass: {produced:?}");
+    // the next run of the job, at once: within queue-pass-gap-seconds (300) of the last pass, it starts none
+    let (again, errors) = crate::service::commit::tests::internal(
+        &fixture,
+        WRITER,
+        "org.moqui.git.GitServices.retry#GitWebhookDeliveries",
+        &[],
+    );
+    assert!(errors.trim().is_empty(), "{errors}");
+    assert_eq!(
+        again.get("retriedCount").map(text_of).as_deref(),
+        Some("0"),
+        "a pass so soon after the last starts no send: {again:?}"
+    );
+    assert_eq!(*answered.lock().unwrap(), 1);
 }
 
 #[test]

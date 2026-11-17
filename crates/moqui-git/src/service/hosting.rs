@@ -1684,13 +1684,17 @@ const DEFAULT_MAX_WEBHOOKS: i64 = 20;
 
 /// `get#GitWebhookLimits`: for `store#GitWebhook` and `retry#GitWebhookDeliveries` (SEC-GIT-18): `maxWebhooks`, the
 /// most webhooks of a repository (`git-server` `max-webhooks`, 20; 0 none), and `passSeconds`, how long a pass of the
-/// retries starts sends (`queue-pass-seconds`, 300; 0 no bound).
-fn get_webhook_limits(_parameters: &Parameters, _facade: &EntityFacade) -> Out {
+/// retries starts sends (`queue-pass-seconds`, 300; 0 no bound). With `startPass`, `passMayStart`: whether a pass of
+/// the retries may start now, at least `queue-pass-gap-seconds` after the last (300; 0 no gap), recorded as started.
+fn get_webhook_limits(parameters: &Parameters, _facade: &EntityFacade) -> Out {
     let most = super::max_per_repository("max-webhooks", DEFAULT_MAX_WEBHOOKS);
     let pass = crate::queue_pass_seconds().and_then(|seconds| i64::try_from(seconds).ok());
+    let start = matches!(parameters.get("startPass"), Some(Value::Bool(true)))
+        || text(parameters, "startPass").as_deref() == Some("true");
     Ok(out([
         ("maxWebhooks", Value::I64(if most == i64::MAX { 0 } else { most })),
         ("passSeconds", Value::I64(pass.unwrap_or(0))),
+        ("passMayStart", Value::Bool(!start || crate::queue_pass_may_start("webhooks"))),
     ]))
 }
 

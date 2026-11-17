@@ -209,7 +209,11 @@ impl GitProvider {
     /// it is asked for). A mirror another push holds is passed over: that push pushes again when it ends. (pushed,
     /// failed) ids; each failure is on its row.
     pub fn push_due_mirrors(&self, only: Option<&str>) -> Result<(Vec<String>, Vec<String>), Error> {
-        // a pass of the queue is bounded by time (SEC-GIT-18); the one mirror asked for is pushed whatever the time
+        // a pass of the queue is bounded by time and starts no sooner than queue-pass-gap-seconds after the last
+        // (SEC-GIT-18); the one mirror asked for (a push's) is pushed whatever the time
+        if only.is_none() && !crate::queue_pass_may_start("mirrors") {
+            return Ok((Vec::new(), Vec::new()));
+        }
         let until = match only {
             Some(_) => None,
             None => crate::queue_pass_seconds()

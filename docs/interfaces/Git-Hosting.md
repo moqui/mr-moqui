@@ -778,7 +778,7 @@ reopened, merged), all when none is named. The body is JSON (`event`, `ref`, `be
 signature check it unchanged. Each delivery is a SystemMessage of type `GitWebhook` sent at once
 (`send#GitWebhookDelivery`); a status that is not 2xx, or no answer in 10 seconds, leaves it to
 `retry#GitWebhookDeliveries` (the `retry_GitWebhookDeliveries_frequent` job, each minute), which tries again after 1, 2,
-4 ... minutes and gives up after 8 failures; one pass starts sends for `git-server` `queue-pass-seconds` (300) and
+4 ... minutes and gives up after 8 failures; one pass starts sends for `git-server` `queue-pass-seconds` (300), starts at least `queue-pass-gap-seconds` (300) after the last pass on the node, and
 leaves the rest for the next run. A repository has at most `max-webhooks` (20) webhooks: `store#GitWebhook` refuses one
 more. `find#GitWebhookDeliveries` is the delivery log, each attempt's error kept
 (`SystemMessageError`); `test#GitWebhook` sends a `ping` now. A webhook URL that names, or resolves to, a loopback,
@@ -812,7 +812,7 @@ authorization disabled):
 | `find#GitRepositoryMirrors` | `repositoryId*` → `mirrorList`: each row with `hasCredential`, never the credential |
 | `delete#GitRepositoryMirror` | `mirrorId*` → `deleted` |
 | `push#GitRepositoryMirror` | `mirrorId*` → `queued`: a push now, whatever the back-off; while one runs on any member, an error starting `GitMirrorBusy: ` |
-| `run#GitRepositoryMirrors` | `mirrorId` → `pushedIds`, `failedIds`: the queue (`run_GitRepositoryMirrors_frequent`, each minute), with authorization disabled only; a pass of the due mirrors starts pushes for `queue-pass-seconds` (300), the rest waiting for the next run |
+| `run#GitRepositoryMirrors` | `mirrorId` → `pushedIds`, `failedIds`: the queue (`run_GitRepositoryMirrors_frequent`, each minute), with authorization disabled only; a pass of the due mirrors starts pushes for `queue-pass-seconds` (300), the rest waiting for the next run, and starts at least `queue-pass-gap-seconds` (300) after the last pass on the node (a push's own mirror is pushed at once) |
 
 - **Where.** `url` is `https://host/owner/repo.git` with no user or password in it (refused), the credential apart:
   `username` and a password or token in `credential` (GitHub: any user, such as `x-access-token`, and a token with
