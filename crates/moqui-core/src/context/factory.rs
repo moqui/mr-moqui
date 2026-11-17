@@ -1041,6 +1041,9 @@ impl ExecutionContextFactory {
         } else {
             log_property(name, &value, secret, true);
         }
+        if name == SESSION_COOKIE_KEY {
+            check_session_cookie_key(&value)?;
+        }
         env::set_property(name, value.clone());
         self.conf_properties().insert(name.to_string(), value.clone());
         Ok(value)
@@ -1848,7 +1851,41 @@ fn apply_default_properties(
     }
     install_tls_pair(&mut generated, &mut set_by_boot, cert_slot, key_slot)?;
     append_env_secrets(env_path, &generated)?;
+    check_session_cookie_key(&env::get_prop_or_env(SESSION_COOKIE_KEY))?;
     Ok((names, set_by_boot, purpose_source))
+}
+
+const SESSION_COOKIE_KEY: &str = "session_cookie_key";
+
+/// The session cookie's HMAC key as an operator set it (the environment, `runtime/.env`, a conf), checked before it signs
+/// anything: one still ending in `CHANGEME`, one that is not standard base64, and one under 32 bytes are refused, so the
+/// server does not start with a key someone could guess (SEC-WEB-13). The key boot generates is 32 random bytes. Not set
+/// at all passes here; every session then fails until it is.
+///
+/// # Errors
+///
+/// Names the property and what is wrong with it, never its value.
+pub(super) fn check_session_cookie_key(raw: &str) -> Result<(), Error> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(());
+    }
+    if raw.ends_with("CHANGEME") {
+        return Err(Error::new(format!(
+            "{SESSION_COOKIE_KEY} is still CHANGEME: remove it from runtime/.env and the environment for a generated one, \
+             or set 32 random bytes in base64"
+        )));
+    }
+    let Ok(decoded) = STANDARD.decode(raw.as_bytes()) else {
+        return Err(Error::new(format!("{SESSION_COOKIE_KEY} is not standard base64")));
+    };
+    if decoded.len() < 32 {
+        return Err(Error::new(format!(
+            "{SESSION_COOKIE_KEY} is {} bytes; it must be at least 32 random bytes in base64",
+            decoded.len()
+        )));
+    }
+    Ok(())
 }
 
 struct TlsSlot {

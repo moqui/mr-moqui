@@ -420,6 +420,33 @@ fn generated_secrets_are_32_random_bytes_and_secret_names_are_known() {
     assert!(!secret("ssh_host_key", Some("false")));
 }
 
+/// SEC-WEB-13: a `session_cookie_key` an operator set is checked before the server starts: still `CHANGEME`, not
+/// base64, or under 32 bytes stops the boot with a message naming the property and not the value; 32 bytes start.
+#[test]
+fn a_weak_session_cookie_key_stops_the_boot() {
+    use base64::Engine as _;
+    let _lock = crate::user::session::cookie_property_lock();
+    let root = workspace_root();
+    let _env = EnvGuard::new(root.clone());
+    let framework = root.join("runtime/components/base/framework");
+    let temp = TempRuntime::new("cookiekey");
+    let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+    for weak in ["CHANGEME".to_string(), "not base64!".to_string(), encode(&[7_u8; 16])] {
+        env::set_property("session_cookie_key", weak.clone());
+        let err = match ExecutionContextFactory::boot_with_framework(temp.path(), &framework) {
+            Ok(_) => panic!("boot started with the session cookie key {weak:?}"),
+            Err(err) => err.to_string(),
+        };
+        assert!(err.contains("session_cookie_key"), "{err}");
+        assert!(!err.contains(&weak) || weak == "CHANGEME", "{err}");
+    }
+    env::set_property("session_cookie_key", encode(&[7_u8; 32]));
+    let factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
+    for name in factory.property_names() {
+        env::clear_property(name);
+    }
+}
+
 fn write_probe_conf(runtime: &Path, name: &str, value: &str) {
     let text =
         format!("<moqui-conf><default-property name=\"{name}\" value=\"{value}\" is-secret=\"true\"/></moqui-conf>\n");

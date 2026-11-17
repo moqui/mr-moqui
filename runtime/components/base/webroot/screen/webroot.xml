@@ -79,40 +79,50 @@ along with this software (see the LICENSE.md file). If not, see
         (m-list-views infoUrl): what org.moqui.ui.StatusServices.get#ListViewColumns answers ({columns, transitions, colors})
         for values (a comma list), statusTypeId, statusFlowId (Default when empty) and status (true for a status field). transitions is the flow by status
         ({statusId: [toStatusId]}), colors the color by value. Status items, enumerations and flows are configuration, read
-        without authorization. -->
+        without authorization, for a signed-in user only: 401 without a user (SEC-RTE-12); a public page that needs a board
+        names its values server-side. -->
     <transition name="listViewColumns" read-only="true" begin-transaction="false">
         <parameter name="values"/><parameter name="statusTypeId"/><parameter name="statusFlowId"/><parameter name="status"/>
         <actions><script><![CDATA[
-            const params = ec.web.parameters
-            const values = params.values == null || params.values === '' ? [] : String(params.values).split(',').map((value) => value.trim()).filter((value) => value)
-            const out = ec.service.sync().name('org.moqui.ui.StatusServices.get#ListViewColumns').parameters({values: values.slice(0, 500),
-                statusTypeId: params.statusTypeId || null, statusFlowId: params.statusFlowId || null,
-                status: String(params.status || '') === 'true'}).disableAuthz().call() || {}
-            const columns = Array.from(out.columns || []).map((column) => ({value: column.value, label: column.label, color: column.color ?? null}))
-            const transitions = {}
-            for (const step of Array.from(out.flow || [])) (transitions[step.statusId] = transitions[step.statusId] || []).push(step.toStatusId)
-            const colors = {}
-            for (const column of columns) if (column.color) colors[column.value] = column.color
-            ec.web.sendJsonResponse({columns: columns, transitions: transitions, colors: colors})
+            if (!ec.user.userId) {
+                ec.web.sendJsonError(401, 'Authentication required')
+            } else {
+                const params = ec.web.parameters
+                const values = params.values == null || params.values === '' ? [] : String(params.values).split(',').map((value) => value.trim()).filter((value) => value)
+                const out = ec.service.sync().name('org.moqui.ui.StatusServices.get#ListViewColumns').parameters({values: values.slice(0, 500),
+                    statusTypeId: params.statusTypeId || null, statusFlowId: params.statusFlowId || null,
+                    status: String(params.status || '') === 'true'}).disableAuthz().call() || {}
+                const columns = Array.from(out.columns || []).map((column) => ({value: column.value, label: column.label, color: column.color ?? null}))
+                const transitions = {}
+                for (const step of Array.from(out.flow || [])) (transitions[step.statusId] = transitions[step.statusId] || []).push(step.toStatusId)
+                const colors = {}
+                for (const column of columns) if (column.color) colors[column.value] = column.color
+                ec.web.sendJsonResponse({columns: columns, transitions: transitions, colors: colors})
+            }
             ]]></script></actions>
         <default-response type="none"/>
     </transition>
     <!-- The status flow of a status-bar in a server-static screen, which the browser asks for (m-status-bar barUrl): what
         org.moqui.ui.StatusServices.get#StatusBar answers ({current, stages, transitions, next}) for statusId, statusTypeId,
-        statusFlowId, stages and allowedStatusIds (comma lists) and readOnly (no transitions). Status items and flows are
-        configuration, read without authorization; a transition with a userPermissionId is offered only with that permission. -->
+        statusFlowId, stages and allowedStatusIds (comma lists, 500 ids at most) and readOnly (no transitions). Status items and
+        flows are configuration, read without authorization, for a signed-in user only: 401 without a user (SEC-RTE-12); a
+        transition with a userPermissionId is offered only with that permission. -->
     <transition name="statusBar" read-only="true" begin-transaction="false">
         <parameter name="statusId"/><parameter name="statusTypeId"/><parameter name="statusFlowId"/><parameter name="stages"/>
         <parameter name="allowedStatusIds"/><parameter name="readOnly"/>
         <actions><script><![CDATA[
-            const params = ec.web.parameters
-            const list = (value) => value == null || value === '' ? null : String(value).split(',').map((id) => id.trim()).filter((id) => id)
-            const readOnly = String(params.readOnly || '') === 'true'
-            const allowed = readOnly ? [] : (params.allowedStatusIds == null ? null : (list(params.allowedStatusIds) || []))
-            const out = ec.service.sync().name('org.moqui.ui.StatusServices.get#StatusBar').parameters({statusId: params.statusId || null,
-                statusTypeId: params.statusTypeId || null, statusFlowId: params.statusFlowId || null, stageStatusIds: list(params.stages),
-                allowedToStatusIds: allowed}).disableAuthz().call() || {}
-            ec.web.sendJsonResponse({current: out.current ?? null, stages: out.stages || [], transitions: out.transitions || [], next: out.next ?? null})
+            if (!ec.user.userId) {
+                ec.web.sendJsonError(401, 'Authentication required')
+            } else {
+                const params = ec.web.parameters
+                const list = (value) => value == null || value === '' ? null : String(value).split(',').map((id) => id.trim()).filter((id) => id).slice(0, 500)
+                const readOnly = String(params.readOnly || '') === 'true'
+                const allowed = readOnly ? [] : (params.allowedStatusIds == null ? null : (list(params.allowedStatusIds) || []))
+                const out = ec.service.sync().name('org.moqui.ui.StatusServices.get#StatusBar').parameters({statusId: params.statusId || null,
+                    statusTypeId: params.statusTypeId || null, statusFlowId: params.statusFlowId || null, stageStatusIds: list(params.stages),
+                    allowedToStatusIds: allowed}).disableAuthz().call() || {}
+                ec.web.sendJsonResponse({current: out.current ?? null, stages: out.stages || [], transitions: out.transitions || [], next: out.next ?? null})
+            }
             ]]></script></actions>
         <default-response type="none"/>
     </transition>

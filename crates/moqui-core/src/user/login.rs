@@ -471,7 +471,8 @@ fn without_authz() -> Option<crate::context::AuthzGuard> {
     ExecutionContext::with_current(|ctx| ctx.disable_authz())
 }
 
-/// Set the in-memory user without checking the password. Does not rotate a bound session.
+/// Set the in-memory user without checking the password. A bound web session that held another user or none moves to
+/// a new id ([`internal_login`]).
 ///
 /// # Errors
 ///
@@ -551,7 +552,19 @@ fn internal_login(username: &str, queued: bool, person: bool) -> (Option<String>
         return (None, Err(Error::new(INVALID_LOGIN)));
     }
     let user_id = Some(text_field(&account, "userId")).filter(|id| !id.is_empty());
-    let result = post_password(&account, now).and_then(|()| finish_login(&facade, &account, None, false, person));
+    let before = session::current_user_id().ok().flatten();
+    let result = post_password(&account, now)
+        .and_then(|()| finish_login(&facade, &account, None, false, person))
+        .and_then(|()| {
+            // A bound web session that now holds another user moves to a new id, whatever signed the user in (the
+            // code of a second factor, a forced password change, a key, an identity provider), so an id planted
+            // before the sign-in does not carry it (SEC-WEB-05). A queued worker has no session of its own, and a
+            // session the server made for this request was never anyone else's.
+            if queued || before == user_id || session::session_made_for_request() {
+                return Ok(());
+            }
+            session::rotate_on_password_login()
+        });
     (user_id, result)
 }
 
@@ -565,8 +578,9 @@ fn recorded_login(username: &str) -> Result<(), Error> {
     result
 }
 
-/// A login an identity provider vouched for (SSO): [`internal_login_user`], then the session id is replaced as after
-/// a password login, so a session id from before the redirect does not carry the new login.
+/// A login an identity provider vouched for (SSO): [`internal_login_user`], which replaces the session id as a password
+/// login does when the session held another user or none, so a session id from before the redirect does not carry the
+/// new login.
 ///
 /// # Errors
 ///
@@ -578,12 +592,13 @@ pub fn login_external_user(username: &str, authenticated_at: Option<i64>) -> Res
             note_recent_auth_at(&user_id, at);
         }
     }
-    session::rotate_on_password_login()
+    Ok(())
 }
 
 /// Log in with a `UserLoginKey`. The stored `loginKey` is [`super::password::hash_login_key`].
 ///
-/// A `thruDate` in the past is rejected. A null `thruDate` stays valid. Does not rotate the session id.
+/// A `thruDate` in the past is rejected. A null `thruDate` stays valid. A cookie session that held another user or none
+/// moves to a new id, as for every login ([`internal_login`]).
 ///
 /// # Errors
 ///
@@ -1242,7 +1257,8 @@ pub fn logout_local() -> Result<(), Error> {
     session::flush_after_logout()
 }
 
-/// Clear the in-memory user and anonymous flag. Sets `hasLoggedOut` on the account.
+/// Clear the in-memory user and anonymous flag. Sets `hasLoggedOut` on the account. A bound web session is ended with
+/// its attributes and replaced by a new empty one ([`session::renew_after_logout`]).
 ///
 /// Guarantee mode flushes the bound session after the user is cleared.
 ///
@@ -1277,7 +1293,9 @@ pub fn logout() -> Result<(), Error> {
     session::set_session_attribute(REAUTH_PASSWORD, None);
     session::clear_login();
     forget_shell_providers();
-    update.and(session::flush_after_logout())
+    // the bound web session ends with its attributes, and a new empty one goes on (SEC-WEB-06)
+    let renewed = session::renew_after_logout();
+    update.and(renewed).and(session::flush_after_logout())
 }
 
 /// The session attribute of the session's last sign-in that proved who its user is: `<millis> <userId>`. A password

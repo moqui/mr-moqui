@@ -188,14 +188,16 @@ fn a_system_message_goes_out_over_rest_comes_back_at_rest_sm_and_is_consumed(gat
     );
     assert_eq!(status, 200, "{json}");
 
-    // The receive checks the path, the type, and the login before anything is stored.
+    // The receive checks the path, the type, and the login before anything is stored; every refusal is the same 403
+    // text, which names neither the type nor the remote (SEC-RTE-13).
     let (status, json) = call(address, "POST", "/rest/sm/GateSmsg", Some(&john), "{}");
     assert_eq!(status, 400, "{json}");
     let (status, json) = call(address, "POST", "/rest/sm/NoSuchType/GateSelf/1", Some(&john), "{}");
-    assert_eq!(status, 400, "{json}");
-    assert!(text(&json, "errors").contains("NoSuchType"), "{json}");
-    let (status, json) = call(address, "POST", "/rest/sm/GateSmsg/GateSelf/1", None, "{}");
-    assert_eq!(status, 401, "{json}");
+    assert_eq!(status, 403, "{json}");
+    assert!(!text(&json, "errors").contains("NoSuchType"), "{json}");
+    let (status, no_login) = call(address, "POST", "/rest/sm/GateSmsg/GateSelf/1", None, "{}");
+    assert_eq!(status, 403, "{no_login}");
+    assert_eq!(text(&no_login, "errors"), text(&json, "errors"));
 
     let message = r#"{"hello":"gate"}"#;
     let (status, json) = call(

@@ -423,6 +423,13 @@ along with this software (see the LICENSE.md file). If not, see
                 <field-map field-name="resetPasswordSetDate" from="null"/>
                 <field-map field-name="disabled" from="disabled"/>
             </service-call>
+            <!-- a new password ends the account's other sessions, on every server: one that knew or took the old password
+                does not stay signed in (SEC-WEB-06). The session that changed it stays. The password stands if a
+                session will not end; that is logged. -->
+            <script>
+                try { UserSecurityChecks.endUserSessions(userId, null) }
+                catch (e) { ec.logger.error(`Password changed for user ${userId}, but its other sessions were not ended: ${e.message}`) }
+            </script>
             <set field="updateSuccessful" from="true"/>
         </actions>
     </service>

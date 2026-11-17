@@ -17,7 +17,7 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
@@ -124,6 +124,8 @@ pub(crate) struct Inner {
     pub(crate) db_ready: AtomicBool,
     locale: RwLock<String>,
     crypt: RwLock<Option<(CryptConfig, Vec<CryptConfig>)>>,
+    /// `entity-facade` `crypt-read-plain`: stored text of an encrypted field that is not ciphertext reads as its value.
+    crypt_read_plain: AtomicBool,
     sim_tx: RwLock<Option<TransactionManager>>,
     /// Starts the overlay cluster on the first `enter_sim`. The mutex also serializes that start.
     sim_starter: Mutex<Option<SimStarter>>,
@@ -301,6 +303,7 @@ impl EntityFacade {
                 db_ready: AtomicBool::new(false),
                 locale: RwLock::new("en".to_string()),
                 crypt: RwLock::new(None),
+                crypt_read_plain: AtomicBool::new(false),
                 sim_starter: Mutex::new(None),
                 sim_tx: RwLock::new(None),
                 slots: RwLock::new(HashMap::new()),
@@ -464,7 +467,7 @@ impl EntityFacade {
         *slot = Some((primary, alts));
     }
 
-    /// Install the cipher from `entity-facade` and its `decrypt-alt` children.
+    /// Install the cipher from `entity-facade` and its `decrypt-alt` children, and `crypt-read-plain`.
     ///
     /// Attributes expand through [`moqui_lib::env`]. An empty `crypt-pass` leaves encryption off.
     pub fn crypt_from_conf(&self, conf: &MNode) -> Result<(), Error> {
@@ -474,6 +477,8 @@ impl EntityFacade {
             conf.first_named("entity-facade")
                 .ok_or_else(|| Error::new("conf has no entity-facade"))?
         };
+        let read_plain = moqui_lib::env::expand(&facade.attribute("crypt-read-plain").unwrap_or_default())?;
+        self.set_crypt_read_plain(read_plain.trim() == "true");
         let pass = moqui_lib::env::expand(&facade.attribute("crypt-pass").unwrap_or_default())?;
         if pass.is_empty() {
             return Ok(());
@@ -493,6 +498,18 @@ impl EntityFacade {
 
     pub fn crypt(&self) -> Option<(CryptConfig, Vec<CryptConfig>)> {
         read(&self.inner.crypt).clone()
+    }
+
+    /// Read stored text of an encrypted field that is not ciphertext as its value, each read logged: for a migration of
+    /// values stored before their field was encrypted (`entity-facade` `crypt-read-plain`). Off, such text reads as
+    /// [`super::field_rw::DECRYPT_FAILED`], so a writer of the database cannot set a secret field to a value of their
+    /// choice (SEC-DAT-10).
+    pub fn set_crypt_read_plain(&self, read_plain: bool) {
+        self.inner.crypt_read_plain.store(read_plain, Ordering::Release);
+    }
+
+    pub fn crypt_read_plain(&self) -> bool {
+        self.inner.crypt_read_plain.load(Ordering::Acquire)
     }
 
     pub fn flags(&self) -> EntityFlags {

@@ -685,6 +685,93 @@ pub(crate) fn rotate_on_password_login() -> Result<(), Error> {
     Ok(())
 }
 
+/// Replace the bound session after a logout: its id is retired and its row deleted with every attribute in it (the
+/// one-time values a service left there, the screen state of the user who signed out), and the request goes on with a
+/// new empty session of no user and no visit, which the response's cookie names (SEC-WEB-06). Only the visitor stays,
+/// as the visitor cookie does. Nothing when no web session is bound.
+///
+/// # Errors
+///
+/// Returns an error when the new id cannot be made or the old row cannot be deleted; the session is left as it was.
+pub(crate) fn renew_after_logout() -> Result<(), Error> {
+    let (factory, old_id) = with_session(|session| (session.factory.clone(), session.bound_id.clone()));
+    let (Some(factory), Some(old_id)) = (factory, old_id) else {
+        return Ok(());
+    };
+    sync_bound(&factory);
+    let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
+    let new_id = random_hex(SESSION_ID_BYTES)?;
+    let new_token = random_hex(SESSION_TOKEN_BYTES)?;
+    let visitor_id = {
+        let mut table = lock_sessions(&factory);
+        let Some(old) = table.sessions.get(&old_id).filter(|old| !old.retired) else {
+            return Err(Error::new("bound session is missing"));
+        };
+        let mut born = old.clone();
+        born.columns = Columns {
+            visitor_id: old.columns.visitor_id.clone(),
+            session_token: Some(new_token.clone()),
+            ..Columns::default()
+        };
+        born.username = None;
+        born.anonymous = false;
+        born.attributes = BTreeMap::new();
+        born.dirty_columns = all_columns();
+        born.dirty_json = BTreeSet::new();
+        born.snapshot = None;
+        born.invalidated = false;
+        born.retired = false;
+        born.client_ip = None;
+        born.revision = next_revision();
+        let visitor_id = born.columns.visitor_id.clone();
+        table.sessions.insert(new_id.clone(), born);
+        visitor_id
+    };
+    {
+        let _claim = FlushClaim::wait(&factory, &old_id);
+        if let Err(err) = delete_session_row(&facade, &old_id) {
+            lock_sessions(&factory).sessions.remove(&new_id);
+            return Err(err);
+        }
+        retire_old(&factory, &old_id);
+    }
+    // another server may hold the old session live, and would go on serving its attributes
+    publish_session_end(&facade, &[&old_id]);
+    invalidate(&old_id);
+    invalidate(&new_id);
+    with_session(|session| {
+        session.bound_id = Some(new_id.clone());
+        session.csrf_token = Some(new_token);
+        session.user_id = None;
+        session.username = None;
+        session.anonymous = false;
+        session.visit_id = None;
+        session.visitor_id = visitor_id;
+        session.locale = None;
+        session.time_zone = None;
+        session.attributes = BTreeMap::new();
+        session.flash.clear();
+        session.flash_errors.clear();
+        session.saved.clear();
+        session.errors.clear();
+        session.screen_history.clear();
+        session.authz = AuthzCache::default();
+        session.login_key_kind = None;
+        session.dirty_columns.clear();
+        session.dirty_json.clear();
+    });
+    // the new session holds nothing of an earlier request, as one the bind made for it
+    REQUEST_SESSION.with(|slot| {
+        if let Some(request) = slot.borrow_mut().as_mut() {
+            request.made = true;
+        }
+    });
+    if lock_sessions(&factory).mode == FlushMode::Guarantee {
+        flush_id(&factory, &new_id)?;
+    }
+    Ok(())
+}
+
 /// End another session of the signed-in user, by its visit: the `Visit` gets its `thruDate`, and each web session of
 /// that visit (a live one on this node, and its `HttpSession` row) is ended as a rotated-away session is, so its cookie
 /// starts over signed out. Only the user's own visit, and not the current one (a logout ends that). Returns how many
@@ -775,6 +862,10 @@ fn end_sessions_using(
             return Ok(0);
         }
         visits = visits.condition(moqui_db::sql::Condition::is_in("visitId", wanted));
+    } else {
+        // every session of the user: their open visits, and below every session row that names the user, so an account
+        // with years of ended visits does not read the sessions of each (a password change runs this, SEC-WEB-06)
+        visits = visits.condition(moqui_db::sql::Condition::is_null("thruDate"));
     }
     let mut visit_set = BTreeSet::new();
     for visit in visits.list().map_err(Error::from)?.iter() {

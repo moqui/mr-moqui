@@ -374,6 +374,7 @@ fn map_conditions(
         };
         if names.is_empty() {
             if allow_missing {
+                note_missing_alias(entity, filter_entity, field);
                 continue;
             }
             return Err(moqui_lib::error::Error::new(format!(
@@ -386,6 +387,27 @@ fn map_conditions(
         }
     }
     Ok(join_conditions(parts, join_or))
+}
+
+/// A filter term an `allowMissingAlias` set left out of a find, because the view has no alias for its field: that find
+/// reads the rows the term would have kept out (SEC-DAT-11). Logged as a warning the first time for each view and field,
+/// so a view that needs an alias is found, and at debug level after that, so a busy view does not fill the log.
+fn note_missing_alias(entity: &EntityDefinition, filter_entity: &str, field: &str) {
+    static NOTED: std::sync::OnceLock<Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+    let key = format!("{}\u{1}{filter_entity}\u{1}{field}", entity.full_name);
+    let first = moqui_lib::sync::lock(NOTED.get_or_init(Mutex::default)).insert(key);
+    if first {
+        tracing::warn!(
+            "A find on {} is not filtered by {field} of {filter_entity}: the view has no alias for it and the filter set \
+             allows a missing alias (allowMissingAlias)",
+            entity.full_name
+        );
+    } else {
+        tracing::debug!(
+            "A find on {} is not filtered by {field} of {filter_entity} (allowMissingAlias)",
+            entity.full_name
+        );
+    }
 }
 
 /// The `ENTCO_` id of a `_comp` operator, by symbol or name as Java's `ComparisonOperator` reads them.

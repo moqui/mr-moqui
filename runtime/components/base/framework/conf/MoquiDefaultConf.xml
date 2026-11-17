@@ -1541,7 +1541,11 @@
             distributed-cache-invalidate="false" dci-topic-factory="" query-stats="false"
             database-locale="${default_locale}" database-time-zone="${database_time_zone ?: default_time_zone}"
             rest-max-page-size="1000"
-            crypt-salt="20201202" crypt-iter="10" crypt-algo="PBEWithHmacSHA256AndAES_128" crypt-pass="${entity_ds_crypt_pass}">
+            crypt-salt="20201202" crypt-iter="10" crypt-algo="PBEWithHmacSHA256AndAES_128" crypt-pass="${entity_ds_crypt_pass}"
+            crypt-read-plain="${entity_ds_crypt_read_plain ?: 'false'}">
+        <!-- crypt-read-plain: entity_ds_crypt_read_plain=true reads the stored text of an encrypted field that is not
+            ciphertext as its value (logged), for a migration of values stored before their field was encrypted; off,
+            such text is _DECRYPT_FAILED_ (SEC-DAT-10) -->
 
         <!-- alternate decrypt using original algo (PBEWithMD5AndDES), etc for decrypting old values, all new values will encrypt using the 4 attributes on entity-facade element -->
         <decrypt-alt crypt-salt="SkcorIuqom" crypt-iter="10" crypt-algo="PBEWithMD5AndDES" crypt-pass="${entity_ds_crypt_pass}"/>

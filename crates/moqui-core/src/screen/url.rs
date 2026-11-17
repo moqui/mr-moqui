@@ -182,6 +182,16 @@ impl ScreenUrlInfo {
         self.target_screen.transition(name, method)
     }
 
+    /// Whether a screen of the path requires authentication: every screen from the root, not only those that render,
+    /// so a `lastStandalone` fragment or a standalone screen does not take its parents out of the check, and a screen
+    /// (or its transitions, or a file under it) below a parent that needs a user needs one too, whatever it says itself
+    /// (SEC-RTE-09). The parents' always-actions run for it anyway.
+    pub fn path_requires_authentication(&self) -> bool {
+        self.path_defs
+            .iter()
+            .any(|def| def.authentication == super::definition::Authentication::Required)
+    }
+
     /// Screens that render, from `render_path_difference`.
     pub fn render_defs(&self) -> &[Arc<ScreenDef>] {
         &self.path_defs[self.render_path_difference.min(self.path_defs.len())..]
@@ -497,12 +507,15 @@ fn last_always_full(screen: &ScreenDef) -> bool {
     screen.subscreens.always_use_full_path
 }
 
+/// A path name with no screen or transition under `under`. Nobody signed in gets a plain answer, with neither the name
+/// nor the location of the last screen found, so the answer does not tell what exists (SEC-RTE-13).
 fn not_found(name: &str, under: &ScreenDef) -> Error {
-    Error::of_kind(
-        ErrorKind::NotFound,
-        format!("screen path not found: {name} under {}", under.location),
-    )
-    .with_missing_path(name)
+    let message = if crate::user::current_username().ok().flatten().is_some() {
+        format!("screen path not found: {name} under {}", under.location)
+    } else {
+        "screen path not found".to_string()
+    };
+    Error::of_kind(ErrorKind::NotFound, message).with_missing_path(name)
 }
 
 /// A screen path after `ScreenPathAlias`, `//` search, and cleanup. `cache` is false when the alias read failed.

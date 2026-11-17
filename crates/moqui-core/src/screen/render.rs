@@ -1489,8 +1489,10 @@ fn output_type(facade: &ScreenFacade, info: &ScreenUrlInfo, mode: &str) -> (Stri
     (content_type, encoding.unwrap_or_else(|| DEFAULT_ENCODING.to_string()))
 }
 
+/// A screen of the path that says `allow-web-request="false"` refuses a web request, also when it does not render (a
+/// `lastStandalone` fragment below it), as the user check reads the whole path (SEC-RTE-09).
 fn check_web_settings(info: &ScreenUrlInfo) -> Result<(), Error> {
-    for def in info.render_defs() {
+    for def in &info.path_defs {
         if !def.web.allow_web_request {
             return Err(Error::of_kind(
                 ErrorKind::Unauthorized,
@@ -1543,10 +1545,7 @@ fn redirect_to_login(factory: &ExecutionContextFactory, job: &Job<'_>, info: &Sc
         || super::statics::report_active()
         || user::current_username()?.is_some()
         || user::is_anonymous()?
-        || !info
-            .render_defs()
-            .iter()
-            .any(|def| def.authentication == Authentication::Required)
+        || !info.path_requires_authentication()
     {
         return Ok(false);
     }
@@ -1579,21 +1578,19 @@ fn redirect_to_login(factory: &ExecutionContextFactory, job: &Job<'_>, info: &Sc
     Ok(true)
 }
 
-/// Every screen that renders and requires authentication needs a user. Anonymous access screens
-/// and `require-authentication="false"` screens do not. As in Java, an anonymous login (a service such
+/// A path with a screen that requires authentication needs a user. Anonymous access screens and
+/// `require-authentication="false"` screens do not. As in Java, an anonymous login (a service such
 /// as `send#EmailTemplate` that is `anonymous-view` rendering an email body) counts.
 fn check_authentication(info: &ScreenUrlInfo) -> Result<(), Error> {
     // The compatibility report looks at screens, not at who may see them.
     if super::statics::report_active() || user::current_username()?.is_some() || user::is_anonymous()? {
         return Ok(());
     }
-    for def in info.render_defs() {
-        if def.authentication == Authentication::Required {
-            return Err(Error::of_kind(
-                ErrorKind::AuthenticationRequired,
-                "Authentication required",
-            ));
-        }
+    if info.path_requires_authentication() {
+        return Err(Error::of_kind(
+            ErrorKind::AuthenticationRequired,
+            "Authentication required",
+        ));
     }
     Ok(())
 }

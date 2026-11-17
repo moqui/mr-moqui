@@ -494,6 +494,131 @@ fn a_screen_that_requires_authentication_is_401_for_nobody_and_200_for_a_user() 
     assert!(output.body_text().contains("secure"), "{}", output.body_text());
 }
 
+/// SEC-RTE-09: a screen that needs no user, under a parent that needs one, needs one too: a `lastStandalone` fragment
+/// of it and its transition are 401 for nobody, as its full page is; a user gets the fragment.
+#[test]
+fn a_screen_under_a_parent_that_needs_a_user_needs_one_as_a_fragment() {
+    let dir = std::env::temp_dir().join(format!("moqui-screen-parent-authc-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root/Locked")).unwrap();
+    let write = |name: &str, xml: &str| std::fs::write(dir.join(name), xml).unwrap();
+    write(
+        "Root.xml",
+        r#"<screen require-authentication="false"><widgets><subscreens-active/></widgets></screen>"#,
+    );
+    write(
+        "Root/Locked.xml",
+        r#"<screen><widgets><subscreens-active/></widgets></screen>"#,
+    );
+    write(
+        "Root/Locked/Open.xml",
+        r#"<screen require-authentication="false">
+            <transition name="poke"><actions><script>ec.web.response.setStatus(202)</script></actions>
+                <default-response type="none"/></transition>
+            <widgets><label text="inside the lock"/></widgets>
+        </screen>"#,
+    );
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = World::open("");
+
+    let page = serve_at(&world.factory, request("GET", "/Locked/Open.text"), &root);
+    assert_eq!(page.status, 302, "{}", page.body_text());
+    let fragment = serve_at(
+        &world.factory,
+        with_query(request("GET", "/Locked/Open.text"), "lastStandalone", "true"),
+        &root,
+    );
+    assert_eq!(fragment.status, 401, "{}", fragment.body_text());
+    assert!(
+        !fragment.body_text().contains("inside the lock"),
+        "{}",
+        fragment.body_text()
+    );
+    let poked = serve_at(&world.factory, request("POST", "/Locked/Open/poke"), &root);
+    assert_eq!(poked.status, 401, "{}", poked.body_text());
+    let anonymous = make_render(&world.factory)
+        .root_screen(root.clone())
+        .screen_path("/Locked/Open")
+        .render_mode("text")
+        .parameters([("lastStandalone".to_string(), Value::string("true"))].into())
+        .render()
+        .unwrap_err();
+    assert_eq!(anonymous.kind(), ErrorKind::AuthenticationRequired);
+
+    world.user("admin", None);
+    let ec = world.factory.new_context();
+    let _entered = ec.enter();
+    crate::user::login_user("admin", "secret").unwrap();
+    let output = make_render(&world.factory)
+        .root_screen(root)
+        .screen_path("/Locked/Open")
+        .render_mode("text")
+        .parameters([("lastStandalone".to_string(), Value::string("true"))].into())
+        .render()
+        .unwrap();
+    assert!(output.body_text().contains("inside the lock"), "{}", output.body_text());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-RTE-09 follow-up: a parent's `allow-web-request="false"` refuses a web request for a screen below it, as a
+/// `lastStandalone` fragment too, as for its full page.
+#[test]
+fn a_parent_that_allows_no_web_request_refuses_a_fragment_below_it() {
+    let dir = std::env::temp_dir().join(format!("moqui-screen-parent-web-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root/Internal")).unwrap();
+    let write = |name: &str, xml: &str| std::fs::write(dir.join(name), xml).unwrap();
+    write(
+        "Root.xml",
+        r#"<screen require-authentication="false"><widgets><subscreens-active/></widgets></screen>"#,
+    );
+    write(
+        "Root/Internal.xml",
+        r#"<screen require-authentication="false"><web-settings allow-web-request="false"/>
+            <widgets><subscreens-active/></widgets></screen>"#,
+    );
+    write(
+        "Root/Internal/Below.xml",
+        r#"<screen require-authentication="false"><widgets><label text="not for the web"/></widgets></screen>"#,
+    );
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = World::open("");
+    let page = serve_at(&world.factory, request("GET", "/Internal/Below.text"), &root);
+    assert_eq!(page.status, 403, "{}", page.body_text());
+    let fragment = serve_at(
+        &world.factory,
+        with_query(request("GET", "/Internal/Below.text"), "lastStandalone", "true"),
+        &root,
+    );
+    assert_eq!(fragment.status, 403, "{}", fragment.body_text());
+    assert!(
+        !fragment.body_text().contains("not for the web"),
+        "{}",
+        fragment.body_text()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-RTE-13: a path with no screen is a plain 404 for nobody, naming neither the path nor the last screen found; a
+/// signed-in user gets the name and the location to fix a link.
+#[test]
+fn a_missing_screen_is_a_plain_not_found_for_nobody() {
+    let world = World::open("");
+    let anonymous = render(&world.factory, "/NoSuchScreen").unwrap_err();
+    assert_eq!(anonymous.kind(), ErrorKind::NotFound);
+    assert_eq!(anonymous.message(), "screen path not found");
+    let response = serve_at(&world.factory, request("GET", "/NoSuchScreen"), &fixture_root());
+    assert_eq!(response.status, 404);
+    assert!(!response.body_text().contains("testdata"), "{}", response.body_text());
+
+    world.user("admin", None);
+    let ec = world.factory.new_context();
+    let _entered = ec.enter();
+    crate::user::login_user("admin", "secret").unwrap();
+    let signed_in = render(&world.factory, "/NoSuchScreen").unwrap_err();
+    assert!(signed_in.message().contains("NoSuchScreen under "), "{signed_in}");
+}
+
 /// The HTTP log reads the bound session after the screen runs: session id, visitor, and username.
 #[test]
 fn a_screen_request_records_the_session_the_visitor_and_the_user() {

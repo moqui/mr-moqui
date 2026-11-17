@@ -1703,6 +1703,12 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="crypt-salt" type="xs:string"/>
             <xs:attribute name="crypt-iter" type="xs:string"/>
             <xs:attribute name="crypt-algo" type="xs:string"/>
+            <xs:attribute name="crypt-read-plain" default="false" type="boolean-expandable"><xs:annotation><xs:documentation>
+                True to read the stored text of an encrypted field that is not ciphertext as its value, each such read
+                logged: only for a migration of values stored before their field was encrypted (run
+                rewrite#EntityEncryptedFields, then turn it off). False, such text reads as _DECRYPT_FAILED_, so a
+                writer of the database cannot set a secret field to a value of their choice. No Java counterpart.
+            </xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="query-stats" default="false" type="boolean-expandable"/>
             <xs:attribute name="rest-max-page-size" type="non-neg-int-expandable" default="1000"><xs:annotation><xs:documentation>
                 The most rows a page of the entity REST API returns. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>

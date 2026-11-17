@@ -645,6 +645,46 @@ fn encrypted_fields_are_rewritten_in_key_pages() {
     }
 }
 
+/// SEC-DAT-10: stored text of an encrypted field that is not ciphertext (a value a writer of the database put there)
+/// reads as the decrypt-failed placeholder, and the rewrite skips it, unless `crypt-read-plain` is on for a migration:
+/// then it reads as it is and the rewrite seals it.
+#[test]
+fn plain_text_in_an_encrypted_field_is_read_only_for_a_migration() {
+    const ENV: &str = "moqui.server.instance.InstanceImageTypeEnv";
+    let (facade, context) = setup();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    facade.set_disable_fk_create(true);
+    // written before a key was set, as a writer of the database would: the text itself
+    let mut planted = facade.make_value(ENV).unwrap();
+    planted.set("imageTypeId", Value::string("A"));
+    planted.set("envName", Value::string("PLANTED"));
+    planted.set("envValue", Value::string("attacker-chosen"));
+    planted.create(&facade).unwrap();
+    facade.set_crypt(crypt("Current:CHANGEME"), Vec::new());
+    let read = || {
+        let row = facade
+            .find(ENV)
+            .unwrap()
+            .eq("imageTypeId", Value::string("A"))
+            .eq("envName", Value::string("PLANTED"))
+            .one()
+            .unwrap()
+            .unwrap();
+        row.get("envValue").map(to_plain_string).unwrap_or_default()
+    };
+    assert_eq!(read(), crate::entity::field_rw::DECRYPT_FAILED);
+    let out = super::rewrite_encrypted_in_pages(ENV, &facade, 10).unwrap();
+    assert_eq!(out.get("recordsUpdated"), Some(&Value::I64(0)));
+
+    facade.set_crypt_read_plain(true);
+    assert_eq!(read(), "attacker-chosen");
+    let out = super::rewrite_encrypted_in_pages(ENV, &facade, 10).unwrap();
+    assert_eq!(out.get("recordsUpdated"), Some(&Value::I64(1)));
+    facade.set_crypt_read_plain(false);
+    assert_eq!(read(), "attacker-chosen", "sealed by the migration");
+}
+
 #[test]
 fn key_after_orders_by_each_key_field_in_turn() {
     use crate::entity::Condition;

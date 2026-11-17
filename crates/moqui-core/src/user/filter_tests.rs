@@ -94,6 +94,48 @@ fn a_filter_map_joins_a_list_of_maps_with_their_own_comparisons() {
     assert!(super::comparison_enum("sounds-like").is_err());
 }
 
+/// SEC-DAT-11: a filter term an `allowMissingAlias` set leaves out of a find on a view with no alias for its field is
+/// logged, naming the view, the entity and the field; a set that does not allow it is an error.
+#[test]
+fn a_filter_term_left_out_for_a_missing_alias_is_logged() {
+    let (facade, _model_dir) = product_facade();
+    let filter: std::collections::BTreeMap<String, Value> =
+        [("privateOwnerTermField".to_string(), Value::string("someone"))].into();
+    let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let subscriber = crate::testing::LogSubscriber(std::sync::Arc::clone(&lines));
+    let skipped = tracing::subscriber::with_default(subscriber, || {
+        facade
+            .with_entity(VIEW, |entity, _, _| {
+                super::map_conditions(
+                    entity,
+                    "test.product.Product",
+                    super::Relation::Member,
+                    &filter,
+                    (false, ""),
+                    true,
+                )
+            })
+            .unwrap()
+    });
+    assert!(skipped.is_none());
+    let logged = lines.lock().unwrap().join("\n");
+    assert!(
+        logged.contains(VIEW) && logged.contains("privateOwnerTermField") && logged.contains("allowMissingAlias"),
+        "{logged}"
+    );
+    let refused = facade.with_entity(VIEW, |entity, _, _| {
+        super::map_conditions(
+            entity,
+            "test.product.Product",
+            super::Relation::Member,
+            &filter,
+            (false, ""),
+            false,
+        )
+    });
+    assert!(refused.is_err());
+}
+
 #[test]
 fn view_find_applies_user_org_and_skips_active_org_until_set() {
     session::reset_session();

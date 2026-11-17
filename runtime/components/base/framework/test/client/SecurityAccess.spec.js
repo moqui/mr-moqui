@@ -137,8 +137,8 @@ feature("A01 the login follows a returnTo on the site", {
 // A01 Broken Access Control for /rest/sm, ported from Moqui Java's pytest proofs (framework/test/test_api_rest.py and
 // test_a01_more.py): SmatHmacSha256, SmatHmacSha256Timestamp (five minute window and replay), SmatNone, and an unknown
 // type. message.rs answers 403 for a missing HMAC header, a bad signature, a timestamp outside the window, and a
-// replay, the same codes as those proofs; a missing fixture remote is 400 "not valid" and the feature skips. No login.
-// Passes on any conf.
+// replay, the same codes as those proofs, and for an unknown type or remote, all with one text. No login. Passes on any
+// conf that has the fixtures.
 
 const MESSAGE_TYPE = "SEC_SMT_TEST"
 const REMOTE_HMAC = "SEC_SMR_HMAC"
@@ -148,17 +148,13 @@ const SECRET = "sec-hmac-test-secret"
 const HEADER = "X-Moqui-Signature"
 const BODY = '{"probe":true}'
 
-// 400 containing "not valid" is a missing SEC_SMR_* fixture, the Python skip. A refusal, including a bad signature's
-// 403, is returned and asserted.
+// Every refusal is one 403 text that names nothing (SEC-RTE-13), so a missing SEC_SMR_* fixture is not told apart from
+// a refusal: without the fixtures (test/ClientFixtures.spec.js, or --serve) the accepted posts fail.
+const REFUSED = "system message not accepted"
 const postMessage = (remote, body, signature) => {
     const headers = { "Content-Type": "application/json" }
     if (signature != null) headers[HEADER] = signature
-    const res = session().post(`/rest/sm/${MESSAGE_TYPE}/${remote}`, { body, headers, csrf: false })
-    if (res.status == 400 && res.text.toLowerCase().includes("not valid")) {
-        skip("the SEC_SMR_* remotes are not on this server: run test/ClientFixtures.spec.js on its database " +
-            "(moqui test framework --spec ClientFixtures --db existing), or use --serve")
-    }
-    return res
+    return session().post(`/rest/sm/${MESSAGE_TYPE}/${remote}`, { body, headers, csrf: false })
 }
 
 // test_api_rest.py: test_system_message_hmac_missing_header_is_403
@@ -166,7 +162,7 @@ feature("A01 a /rest/sm HMAC post with no signature header is 403", {
     when() { return { res: postMessage(REMOTE_HMAC, BODY) } },
     then({ res }) {
         res.status == 403
-        res.text.toLowerCase().includes("hmac") || res.text.toLowerCase().includes("header")
+        res.text.toLowerCase().includes(REFUSED)
     },
 })
 
@@ -175,7 +171,7 @@ feature("A01 a /rest/sm HMAC post with a bad signature is 403", {
     when() { return { res: postMessage(REMOTE_HMAC, BODY, "not-a-valid-hmac") } },
     then({ res }) {
         res.status == 403
-        res.text.toLowerCase().includes("hmac")
+        res.text.toLowerCase().includes(REFUSED)
     },
 })
 
@@ -198,7 +194,7 @@ feature("A01 a /rest/sm timestamp HMAC outside the window is 403", {
     },
     then({ res }) {
         res.status == 403
-        res.text.toLowerCase().includes("hmac") || res.text.toLowerCase().includes("timestamp")
+        res.text.toLowerCase().includes(REFUSED)
     },
 })
 
@@ -240,13 +236,12 @@ feature("A01 a replayed /rest/sm timestamp HMAC is rejected", {
         first.status == 200
         first.text.toLowerCase().includes("systemmessageidlist")
         second.status == 403
-        second.text.toLowerCase().includes("hmac")
-        second.text.toLowerCase().includes("replay")
+        second.text.toLowerCase().includes(REFUSED)
     },
 })
 
 // test_a01_more.py: test_system_message_unknown_remote_is_rejected
-// 400 "Message type NotAType not valid" here (the type is checked before the remote). Python accepts 400, 401, or 403.
+// 403 with the one refusal text, which names neither the type nor the remote (SEC-RTE-13). Python accepts 400, 401, or 403.
 feature("A01 an unknown /rest/sm remote is rejected", {
     when() {
         return { res: session().post("/rest/sm/NotAType/NotARemote", {
@@ -254,8 +249,9 @@ feature("A01 an unknown /rest/sm remote is rejected", {
         }) }
     },
     then({ res }) {
-        res.status == 400
-        res.text.toLowerCase().includes("not valid")
+        res.status == 403
+        res.text.toLowerCase().includes(REFUSED)
+        !res.text.includes("NotAType")
     },
 })
 
