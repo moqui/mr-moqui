@@ -286,6 +286,9 @@ pub struct Receipt {
     /// A group text's: the recipient's own message id.
     pub other_remote_event_id: Option<String>,
     pub receipt_millis: Option<i64>,
+    /// An opt-out the receipt tells of (Twilio's failed status with 21610: the person sent STOP), applied after it,
+    /// once by its event id.
+    pub opt_signal: Option<OptSignal>,
 }
 
 /// A keyword a provider tells of apart from a text (an opt-out it took itself).
@@ -601,7 +604,7 @@ fn mark_opted_out(out: &Outgoing<'_>) {
 /// Keep `thread_id`, the conversation the provider made for the mapping of `external_room_id` (a Twilio Conversation
 /// of a group text), on that mapping (`ChatBridgeServices.store#MappingThread`, in a transaction of its own): later
 /// sends carry it ([`DeliveryRequest::external_thread_id`]) and a text that names it ([`Inbound::thread_id`]) comes to
-/// the mapping's room.
+/// the mapping's room. An empty `thread_id` lets the mapping's go (the conversation is gone or closed).
 ///
 /// # Errors
 ///
@@ -1105,10 +1108,18 @@ fn noted(bridge: &BridgeInfo, receipt: &Receipt) -> WebhookResponse {
         parameters.insert("receiptDate".to_string(), Value::Timestamp(stamp));
     }
     match crate::call("org.moqui.chat.ChatBridgeServices.note#DeliveryReceipt", parameters) {
-        Ok(out) => WebhookResponse::json(
-            200,
-            &json!({"found": out.get("found") == Some(&Value::Bool(true)), "status": status}),
-        ),
+        Ok(out) => {
+            if let Some(signal) = &receipt.opt_signal {
+                let answer = opted(bridge, signal);
+                if !(200..300).contains(&answer.status) {
+                    return answer;
+                }
+            }
+            WebhookResponse::json(
+                200,
+                &json!({"found": out.get("found") == Some(&Value::Bool(true)), "status": status}),
+            )
+        }
         Err(error) => {
             tracing::error!(
                 "SMS bridge {}: the receipt of {} was not kept: {error}",

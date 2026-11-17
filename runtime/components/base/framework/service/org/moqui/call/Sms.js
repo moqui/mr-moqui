@@ -553,7 +553,7 @@ function noteOptSignal(p) {
 /**
  * Internal (the adapter's webhook, after it checked the provider's signature): a text from theirNumber to ourNumber.
  * ourNumber must have messaging through chatBridgeId (else outcome ignored, reasonCode unknownNumber). A STOP, START or HELP
- * keeps the pair's opt-out. The pair room is found or made, then the text goes through ingest#Event as the provider's
+ * keeps the pair's opt-out (STOP and START once for the message). The pair room is found or made, then the text goes through ingest#Event as the provider's
  * transaction eventId (a repeated webhook does nothing again): outcome, chatRoomId, eventSeq.
  */
 function receive(p) {
@@ -616,7 +616,12 @@ function receive(p) {
     if (ec.message.hasError()) throw new Error(ec.message.errorsString)
     return out
   }
-  if (keyword) sub('org.moqui.call.SmsServices.note#SmsKeyword', { ourNumber: ours, theirNumber: theirs, keyword })
+  // a STOP or START is applied once for its message (note#SmsOptSignal, signal:text:<messageId>), so a copy of the
+  // webhook the replay cache no longer holds (a provider whose signature has no time: Twilio) does not change the
+  // opt-out again after a later keyword; HELP changes no opt-out
+  if (keyword === 'HELP') sub('org.moqui.call.SmsServices.note#SmsKeyword', { ourNumber: ours, theirNumber: theirs, keyword })
+  else if (keyword) sub('org.moqui.call.SmsServices.note#SmsOptSignal', { chatBridgeId: p.chatBridgeId,
+    eventId: 'text:' + String(p.messageId), ourNumber: ours, theirNumber: theirs, keyword })
   const pair = sub('org.moqui.call.SmsServices.ensure#PairRoom', groupNumbers ? { ourNumber: ours, theirNumberList: groupNumbers }
     : { ourNumber: ours, theirNumber: pairTheirs })
   if (!pair.chatRoomId) return { outcome: 'ignored', reasonCode: pair.reasonCode || 'noMessaging' }

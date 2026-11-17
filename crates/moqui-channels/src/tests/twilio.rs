@@ -132,6 +132,11 @@ impl Bed {
 
     /// A status callback of `message`.
     fn twilio_status(&self, message: &str, status: &str, error_code: Option<&str>) -> WebhookResponse {
+        self.hook(&self.twilio_status_request(message, status, error_code))
+    }
+
+    /// A status callback's request, signed now.
+    fn twilio_status_request(&self, message: &str, status: &str, error_code: Option<&str>) -> WebhookRequest {
         let mut pairs = vec![
             ("MessageSid", message),
             ("SmsSid", message),
@@ -144,7 +149,19 @@ impl Bed {
         if let Some(code) = error_code {
             pairs.push(("ErrorCode", code));
         }
-        self.hook(&self.signed_bytes(form(&pairs), now() / 1000))
+        self.signed_bytes(form(&pairs), now() / 1000)
+    }
+
+    /// `request` straight to the adapter's apply in the bridge's webhook, past the replay cache (a copy after its
+    /// window: Twilio's signature has no time in it).
+    fn applied_again(&self, request: &WebhookRequest) -> WebhookResponse {
+        let context = self.ctx.factory().new_context();
+        let _entered = context.enter();
+        moqui_core::context::ExecutionContext::with_current(|ec| {
+            ec.shared_map()
+                .insert(moqui_core::service::chat_bridge::WEBHOOK_MARK.to_string(), text(BRIDGE));
+        });
+        adapter().apply_webhook(&bridge_info(self), request)
     }
 }
 
@@ -188,6 +205,19 @@ fn a_twilio_bridge_needs_its_account_and_token_and_carries_groups_of_nine() {
     assert!(adapter
         .start(&bridge(json!({"accountSid": ACCOUNT, "authToken": TOKEN})))
         .is_ok());
+    // the Conversations and file addresses carry the credentials too: https, or http only for a test's fake off
+    // production
+    for key in ["conversationsBaseUrl", "mediaContentBaseUrl"] {
+        let mut plain = json!({"accountSid": ACCOUNT, "authToken": TOKEN});
+        plain[key] = json!("http://twilio.example.test");
+        assert!(adapter.start(&bridge(plain.clone())).unwrap_err().contains(key));
+        plain["allowInternalAddresses"] = json!(true);
+        assert!(adapter.start(&bridge(plain.clone())).is_ok(), "{key}");
+        moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(Some(true)));
+        let on_production = adapter.start(&bridge(plain));
+        moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(None));
+        assert!(on_production.is_err(), "{key} on production");
+    }
     // the signature is the local node's to check: the edge node never holds the token
     assert_eq!(
         adapter.webhook_verification(),
@@ -341,6 +371,36 @@ fn twilio_refusals_mark_an_opt_out_and_a_lost_answer_is_uncertain() {
     assert_eq!(bed.fake.sends().len(), sends, "refused before Twilio");
 }
 
+/// A 21610 that comes later, in a status callback (failed, `ErrorCode` 21610): the delivery fails and the pair is
+/// marked opted out, once for that message (a copy after a START changes nothing).
+#[test]
+fn a_twilio_status_callback_with_21610_marks_the_pair_opted_out() {
+    let bed = twilio_bed();
+    let _entered = bed.ctx.enter();
+    bed.twilio_in(THEIRS, "Hi", &[]);
+    let room = bed.room(THEIRS).unwrap();
+    let seq = bed.send(&room, "Hello", &[]);
+    bed.round(0);
+    let remote = bed.delivery(&room, seq).3;
+    let opted = || {
+        bed.one(
+            "moqui.call.SmsOptOut",
+            &[("phoneNumber", text(OURS)), ("otherNumber", text(THEIRS))],
+        )["optedOut"]
+            .clone()
+    };
+    let callback = bed.twilio_status_request(&remote, "failed", Some("21610"));
+    assert!(is_twiml(&bed.hook(&callback)));
+    let (state, reason, ..) = bed.delivery(&room, seq);
+    assert_eq!((state.as_str(), reason.as_str()), ("CdsFailed", "deliveryFailed"));
+    assert_eq!(opted(), "Y");
+    bed.twilio_in(THEIRS, "START", &[]);
+    assert_eq!(opted(), "N");
+    // the same callback again past the replay cache: the opt-out is not taken again
+    assert!(is_twiml(&bed.applied_again(&callback)));
+    assert_eq!(opted(), "N");
+}
+
 /// Advanced Opt-Out: Twilio answers STOP itself and still posts the text (with `OptOutType`); the opt-out is taken from
 /// the text once, through the inbound message (its MessageSid), and the text is a message in the room. A copy of the
 /// STOP after a START changes nothing. A keyword only the account knows (not one of Moqui's) is a text: Twilio's
@@ -374,6 +434,10 @@ fn a_twilio_opt_out_keyword_is_kept_once() {
     // the STOP again (Twilio's signature has no time): answered, and the pair stays opted in
     assert!(is_twiml(&bed.hook(&stop)));
     assert_eq!(opted()["optedOut"], "N");
+    // and past the replay cache (a copy after its window)
+    let answer = bed.applied_again(&stop);
+    assert!(is_twiml(&answer), "{answer:?}");
+    assert_eq!(opted()["optedOut"], "N", "the STOP's message was applied once");
     assert_eq!(bed.messages(&room).len(), 2);
     bed.twilio_in(THEIRS, "Arret", &[("OptOutType", "STOP")]);
     assert_eq!(opted()["optedOut"], "N", "not a keyword of Moqui's");
@@ -860,17 +924,51 @@ impl Bed {
         .cloned()
         .unwrap_or_default()
     }
+
+    /// The fake's participants of `conversation`: ours (projected) and each of `theirs`, `MB{base + n}`.
+    fn twilio_roster(&self, conversation: &str, base: u64, theirs: &[&str]) {
+        let mut participants =
+            vec![json!({"sid": sid("MB", base), "messaging_binding": {"type": "sms", "projected_address": OURS}})];
+        for (n, number) in theirs.iter().enumerate() {
+            participants.push(json!({"sid": sid("MB", base + 1 + n as u64),
+                "messaging_binding": {"type": "sms", "address": number}}));
+        }
+        self.fake.file(
+            &format!("/v1/Conversations/{conversation}/Participants?PageSize=50"),
+            "application/json",
+            json!({"participants": participants}).to_string().as_bytes(),
+        );
+    }
+
+    /// The fake's Conversation `conversation` in `state`.
+    fn twilio_state(&self, conversation: &str, state: &str) {
+        self.fake.file(
+            &format!("/v1/Conversations/{conversation}"),
+            "application/json",
+            json!({"sid": conversation, "state": state}).to_string().as_bytes(),
+        );
+    }
+
+    /// The paths of the sends the fake took that end with `tail`.
+    fn twilio_sends(&self, tail: &str) -> Vec<String> {
+        self.fake
+            .sends()
+            .into_iter()
+            .map(|seen| seen.path)
+            .filter(|path| path.ends_with(tail))
+            .collect()
+    }
 }
 
-/// A group room's first send makes its Conversation (our number the chat participant by its projected address, each
-/// other number by its address, a webhook to the bridge) and keeps its SID on the mapping; later sends only post to it.
-/// Its receipts are each recipient's, a reply in it comes into the group room, a group text with files is refused,
-/// and an answer lost on the post is uncertain.
+/// A group room's first send makes its Conversation in one request with all its numbers (our number by its projected
+/// address, each other by its address, the room's unique name), keeps its SID on the mapping, adds the bridge's
+/// webhook, and posts; later sends only post. Its receipts are each recipient's, a reply in it comes into the group
+/// room, a group text with files is refused, and an answer lost on the post is uncertain.
 #[test]
 fn a_twilio_group_text_goes_through_one_conversation() {
     let bed = twilio_bed();
     let _entered = bed.ctx.enter();
-    let (room, _) = bed.twilio_group();
+    let (room, external) = bed.twilio_group();
     let seq = bed.send(&room, "Dinner at eight?", &[]);
     bed.round(0);
     let sends = bed.fake.sends();
@@ -880,29 +978,39 @@ fn a_twilio_group_text_goes_through_one_conversation() {
     assert_eq!(
         paths,
         vec![
-            "/v1/Conversations".to_string(),
-            under("Participants"),
-            under("Participants"),
-            under("Participants"),
+            "/v1/ConversationWithParticipants".to_string(),
             under("Webhooks"),
             under("Messages"),
         ]
     );
-    assert!(value(&posted(&sends[0]), "UniqueName").is_some_and(|name| name.starts_with("moqui-sms-")));
-    let ours = posted(&sends[1]);
-    assert_eq!(value(&ours, "Identity"), Some(OURS));
-    assert_eq!(value(&ours, "MessagingBinding.ProjectedAddress"), Some(OURS));
-    assert_eq!(value(&posted(&sends[2]), "MessagingBinding.Address"), Some(OTHER));
-    assert_eq!(value(&posted(&sends[3]), "MessagingBinding.Address"), Some(THEIRS));
-    let hook = posted(&sends[4]);
+    let made = posted(&sends[0]);
+    assert_eq!(
+        value(&made, "UniqueName"),
+        Some(twilio::group::unique_name(BRIDGE, &external).as_str())
+    );
+    let participants: Vec<Json> = made
+        .iter()
+        .filter(|(name, _)| name == "Participant")
+        .map(|(_, value)| serde_json::from_str(value).unwrap())
+        .collect();
+    assert_eq!(
+        participants,
+        vec![
+            json!({"messaging_binding": {"projected_address": OURS}}),
+            json!({"messaging_binding": {"address": OTHER}}),
+            json!({"messaging_binding": {"address": THEIRS}}),
+        ]
+    );
+    let hook = posted(&sends[1]);
     assert_eq!(value(&hook, "Configuration.Url"), Some(WEBHOOK));
+    assert_eq!(value(&hook, "Configuration.Method"), Some("post"));
     let filters: Vec<&str> = hook
         .iter()
         .filter(|(name, _)| name == "Configuration.Filters")
         .map(|(_, value)| value.as_str())
         .collect();
     assert_eq!(filters, vec!["onMessageAdded", "onDeliveryUpdated"]);
-    let message = posted(&sends[5]);
+    let message = posted(&sends[2]);
     assert_eq!(value(&message, "Author"), Some(OURS));
     assert_eq!(value(&message, "Body"), Some("Dinner at eight?"));
     assert!(sends
@@ -911,7 +1019,7 @@ fn a_twilio_group_text_goes_through_one_conversation() {
     let (state, _, _, remote, _) = bed.delivery(&room, seq);
     assert_eq!(
         (state.as_str(), remote.as_str()),
-        ("CdsAccepted", sid("IM", 6).as_str())
+        ("CdsAccepted", sid("IM", 3).as_str())
     );
     assert_eq!(bed.thread(&room), conversation, "the mapping keeps the Conversation");
     assert_eq!(bed.sent_count("user:alice"), 2, "counted once a recipient");
@@ -920,11 +1028,12 @@ fn a_twilio_group_text_goes_through_one_conversation() {
     let second = bed.send(&room, "Or nine", &[]);
     bed.round(0);
     let sends = bed.fake.sends();
-    assert_eq!(sends.len(), 7);
-    assert_eq!(sends[6].path, under("Messages"));
+    assert_eq!(sends.len(), 4);
+    assert_eq!(sends[3].path, under("Messages"));
     assert_eq!(bed.delivery(&room, second).0, "CdsAccepted");
 
-    // receipts, one a recipient (participants 2 ours, 3 OTHER, 4 THEIRS)
+    // receipts, one a recipient, the participants read from Twilio (MB10 ours, MB11 OTHER, MB12 THEIRS)
+    bed.twilio_roster(&conversation, 10, &[OTHER, THEIRS]);
     let receipt = |participant: u64, status: &str, receipt: u64| {
         bed.conversation_event(&[
             ("EventType", "onDeliveryUpdated"),
@@ -937,8 +1046,8 @@ fn a_twilio_group_text_goes_through_one_conversation() {
             ("Status", status),
         ])
     };
-    assert!(is_twiml(&receipt(3, "delivered", 1)));
-    receipt(4, "sent", 2);
+    assert!(is_twiml(&receipt(11, "delivered", 1)));
+    receipt(12, "sent", 2);
     let row = bed.one(
         "moqui.chat.ChatBridgeDelivery",
         &[("chatRoomId", text(&room)), ("eventSeq", Value::I64(seq))],
@@ -985,7 +1094,7 @@ fn a_twilio_group_text_goes_through_one_conversation() {
         &[("chatRoomId", text(&room)), ("eventSeq", Value::I64(with_file))],
     );
     assert_eq!(row["reasonCode"], "groupMediaNotSupported");
-    assert_eq!(bed.fake.sends().len(), 7);
+    assert_eq!(bed.fake.sends().len(), 4);
 
     // an answer lost on the post: uncertain, not sent again
     bed.fake.script(&[Reply::Drop]);
@@ -993,11 +1102,11 @@ fn a_twilio_group_text_goes_through_one_conversation() {
     bed.round(0);
     assert_eq!(bed.delivery(&room, lost).0, "CdsUncertain");
     bed.round(120_000);
-    assert_eq!(bed.fake.sends().len(), 8);
+    assert_eq!(bed.fake.sends().len(), 5);
 }
 
 /// An answer lost when the Conversation is made: nothing reached a phone, so it is tried again, and the next try finds
-/// the Conversation by its unique name instead of making a second.
+/// the Conversation by its unique name instead of making a second, and puts the bridge's webhook on it.
 #[test]
 fn a_twilio_group_conversation_is_made_once() {
     let bed = twilio_bed();
@@ -1012,22 +1121,127 @@ fn a_twilio_group_conversation_is_made_once() {
     bed.fake.file(
         &format!("/v1/Conversations/{}", twilio::group::unique_name(BRIDGE, &external)),
         "application/json",
-        json!({"sid": made}).to_string().as_bytes(),
+        json!({"sid": made, "state": "active"}).to_string().as_bytes(),
     );
     bed.round(60_000);
     assert_eq!(bed.delivery(&room, seq).0, "CdsAccepted");
-    let sends = bed.fake.sends();
     assert_eq!(
-        sends.iter().filter(|seen| seen.path == "/v1/Conversations").count(),
+        bed.twilio_sends("/ConversationWithParticipants").len(),
         1,
         "one Conversation"
     );
-    assert_eq!(sends.last().unwrap().path, format!("/v1/Conversations/{made}/Messages"));
+    assert_eq!(
+        bed.twilio_sends("/Webhooks"),
+        vec![format!("/v1/Conversations/{made}/Webhooks")]
+    );
+    assert_eq!(
+        bed.fake.sends().last().unwrap().path,
+        format!("/v1/Conversations/{made}/Messages")
+    );
     assert_eq!(bed.thread(&room), made);
 }
 
+/// The webhook is on the Conversation whenever a send uses it: one not added (Twilio's 5xx) is added on the next try,
+/// which carries the kept Conversation and makes no other; one Twilio still initializes waits; one that has the
+/// bridge's webhook already gets no second.
+#[test]
+fn a_twilio_group_conversations_webhook_is_added_on_a_retry() {
+    let bed = twilio_bed();
+    let _entered = bed.ctx.enter();
+    let (room, _) = bed.twilio_group();
+    let made = sid("CH", 1);
+    bed.fake.script(&[Reply::Status(
+        201,
+        json!({"sid": made, "state": "initializing"}).to_string(),
+    )]);
+    let seq = bed.send(&room, "Hello all", &[]);
+    bed.round(0);
+    let (state, reason, ..) = bed.delivery(&room, seq);
+    assert_eq!(state, "CdsPending", "{reason}");
+    assert_eq!(bed.thread(&room), made, "kept at once");
+    assert!(bed.twilio_sends("/Webhooks").is_empty(), "not while it initializes");
+
+    // active now; the webhook's add fails once
+    bed.twilio_state(&made, "active");
+    bed.fake
+        .script(&[Reply::Status(500, json!({"message": "busy"}).to_string())]);
+    bed.round(10_000);
+    assert_eq!(bed.delivery(&room, seq).0, "CdsPending");
+    bed.round(70_000);
+    assert_eq!(bed.delivery(&room, seq).0, "CdsAccepted");
+    assert_eq!(bed.twilio_sends("/ConversationWithParticipants").len(), 1);
+    assert_eq!(bed.twilio_sends("/Webhooks").len(), 2, "tried again until added");
+    assert_eq!(bed.twilio_sends("/Messages").len(), 1);
+
+    // another process (a fresh adapter) that finds the bridge's webhook there adds none
+    moqui_core::service::chat_bridge::register_adapter(bed.ctx.factory(), Arc::new(adapter()));
+    bed.fake.file(
+        &format!("/v1/Conversations/{made}/Webhooks"),
+        "application/json",
+        json!({"webhooks": [{"sid": sid("WH", 9), "target": "webhook", "configuration": {"url": WEBHOOK}}]})
+            .to_string()
+            .as_bytes(),
+    );
+    let again = bed.send(&room, "Again", &[]);
+    bed.round(140_000);
+    assert_eq!(bed.delivery(&room, again).0, "CdsAccepted");
+    assert_eq!(bed.twilio_sends("/Webhooks").len(), 2);
+}
+
+/// A kept Conversation that is closed or gone (404): let go from the mapping, tried again, and the next try makes a new
+/// one (a closed one of the room's unique name is deleted first, freeing the name).
+#[test]
+fn a_closed_or_gone_twilio_conversation_is_made_again() {
+    let bed = twilio_bed();
+    let _entered = bed.ctx.enter();
+    let (room, external) = bed.twilio_group();
+    let first = bed.send(&room, "One", &[]);
+    bed.round(0);
+    assert_eq!(bed.delivery(&room, first).0, "CdsAccepted");
+    let made = sid("CH", 1);
+    assert_eq!(bed.thread(&room), made);
+
+    // gone: the post is refused; the next send checks it, lets it go, and makes another
+    bed.fake.script(&[Reply::Status(
+        404,
+        json!({"code": 20404, "message": "The requested resource was not found"}).to_string(),
+    )]);
+    let refused = bed.send(&room, "Two", &[]);
+    bed.round(0);
+    assert_eq!(bed.delivery(&room, refused).0, "CdsFailed");
+    let next = bed.send(&room, "Three", &[]);
+    bed.round(0);
+    assert_eq!(bed.delivery(&room, next).0, "CdsPending");
+    assert_eq!(bed.thread(&room), "", "let go");
+    bed.round(60_000);
+    assert_eq!(bed.delivery(&room, next).0, "CdsAccepted");
+    let remade = bed.thread(&room);
+    assert!(!remade.is_empty() && remade != made, "{remade}");
+    assert_eq!(bed.twilio_sends("/ConversationWithParticipants").len(), 2);
+
+    // closed, in another process: let go; its unique name's Conversation is the closed one, deleted, and made again
+    moqui_core::service::chat_bridge::register_adapter(bed.ctx.factory(), Arc::new(adapter()));
+    bed.twilio_state(&remade, "closed");
+    bed.fake.file(
+        &format!("/v1/Conversations/{}", twilio::group::unique_name(BRIDGE, &external)),
+        "application/json",
+        json!({"sid": remade, "state": "closed"}).to_string().as_bytes(),
+    );
+    let last = bed.send(&room, "Four", &[]);
+    bed.round(120_000);
+    assert_eq!(bed.thread(&room), "");
+    bed.round(180_000);
+    assert_eq!(bed.delivery(&room, last).0, "CdsAccepted");
+    assert!(
+        bed.twilio_sends(&format!("/Conversations/{remade}")).len() == 1,
+        "the closed one deleted"
+    );
+    assert_eq!(bed.twilio_sends("/ConversationWithParticipants").len(), 3);
+}
+
 /// A group text someone else started (Twilio made its Conversation): its numbers are read from Twilio once, the text
-/// is the group's room, and its files are fetched from the Media Content Service.
+/// is the group's room, and its files are fetched from the Media Content Service. A Conversation of one number (Twilio's
+/// autocreation: `proxy_address` our number) is the pair's room; one with no number of ours is left, logged.
 #[test]
 fn a_twilio_group_text_from_a_conversation_twilio_made_comes_into_the_group_room() {
     let bed = twilio_bed();
@@ -1035,16 +1249,7 @@ fn a_twilio_group_text_from_a_conversation_twilio_made_comes_into_the_group_room
     let conversation = sid("CH", 7);
     let service = sid("IS", 1);
     let media = sid("ME", 1);
-    bed.fake.file(
-        &format!("/v1/Conversations/{conversation}/Participants?PageSize=50"),
-        "application/json",
-        json!({"participants": [
-            {"sid": sid("MB", 71), "identity": OURS, "messaging_binding": {"type": "sms", "projected_address": OURS}},
-            {"sid": sid("MB", 72), "messaging_binding": {"type": "sms", "address": THEIRS}},
-            {"sid": sid("MB", 73), "messaging_binding": {"type": "sms", "address": OTHER}}]})
-        .to_string()
-        .as_bytes(),
-    );
+    bed.twilio_roster(&conversation, 71, &[THEIRS, OTHER]);
     bed.fake.file(
         &format!("/v1/Services/{service}/Media/{media}/Content"),
         "image/jpeg",
@@ -1069,53 +1274,91 @@ fn a_twilio_group_text_from_a_conversation_twilio_made_comes_into_the_group_room
         bed.count("moqui.chat.ChatAttachment", &[("chatRoomId", text(&room))]),
         1
     );
+
+    // one number, our number its proxy address: the pair's room
+    let pair = sid("CH", 8);
+    bed.fake.file(
+        &format!("/v1/Conversations/{pair}/Participants?PageSize=50"),
+        "application/json",
+        json!({"participants": [{"sid": sid("MB", 81),
+            "messaging_binding": {"type": "sms", "address": THEIRS, "proxy_address": OURS}}]})
+        .to_string()
+        .as_bytes(),
+    );
+    bed.conversation_event(&[
+        ("EventType", "onMessageAdded"),
+        ("ConversationSid", &pair),
+        ("MessageSid", &sid("IM", 80)),
+        ("Author", THEIRS),
+        ("Body", "Just me"),
+    ]);
+    let pair_room = bed.room(THEIRS).expect("the pair's room");
+    assert_eq!(bed.messages(&pair_room)[0].1, "Just me");
+
+    // no number of ours among its participants: left (logged), nothing made
+    let foreign = sid("CH", 9);
+    bed.fake.file(
+        &format!("/v1/Conversations/{foreign}/Participants?PageSize=50"),
+        "application/json",
+        json!({"participants": [{"sid": sid("MB", 91), "messaging_binding": {"type": "sms", "address": OTHER}}]})
+            .to_string()
+            .as_bytes(),
+    );
+    let left = bed.conversation_event(&[
+        ("EventType", "onMessageAdded"),
+        ("ConversationSid", &foreign),
+        ("MessageSid", &sid("IM", 90)),
+        ("Author", OTHER),
+        ("Body", "Hello?"),
+    ]);
+    assert!(is_twiml(&left));
+    assert!(bed.room(OTHER).is_none());
 }
 
 /// Twilio answers that another Conversation has the group's numbers (50438: one it made for a group text that came
-/// in): that one, found by its participants, is the room's, and the one just made is deleted.
+/// in): that one, found by its participants on the second page of the first number's Conversations, is the room's,
+/// with the bridge's webhook added to it.
 #[test]
 fn a_twilio_group_room_takes_the_conversation_twilio_has_of_its_numbers() {
     let bed = twilio_bed();
     let _entered = bed.ctx.enter();
     let (room, _) = bed.twilio_group();
     let theirs = sid("CH", 42);
+    let second_page = format!(
+        "{}/v1/ParticipantConversations?Address=%2B15553334444&PageSize=50&Page=1",
+        bed.fake.base
+    );
     bed.fake.file(
-        "/v1/ParticipantConversations?Address=%2B15553334444",
+        "/v1/ParticipantConversations?Address=%2B15553334444&PageSize=50",
         "application/json",
-        json!({"conversations": [
-            {"conversation_sid": sid("CH", 41), "conversation_state": "closed"},
-            {"conversation_sid": theirs, "conversation_state": "active"}]})
+        json!({"conversations": [{"conversation_sid": sid("CH", 41), "conversation_state": "closed"}],
+            "meta": {"next_page_url": second_page}})
         .to_string()
         .as_bytes(),
     );
     bed.fake.file(
-        &format!("/v1/Conversations/{theirs}/Participants?PageSize=50"),
+        "/v1/ParticipantConversations?Address=%2B15553334444&PageSize=50&Page=1",
         "application/json",
-        json!({"participants": [
-            {"sid": sid("MB", 81), "messaging_binding": {"projected_address": OURS}},
-            {"sid": sid("MB", 82), "messaging_binding": {"address": THEIRS}},
-            {"sid": sid("MB", 83), "messaging_binding": {"address": OTHER}}]})
+        json!({"conversations": [{"conversation_sid": theirs, "conversation_state": "active"}],
+            "meta": {"next_page_url": null}})
         .to_string()
         .as_bytes(),
     );
-    let made = sid("CH", 1);
-    bed.fake.script(&[
-        Reply::Status(201, json!({"sid": made}).to_string()),
-        Reply::Status(201, json!({"sid": sid("MB", 2)}).to_string()),
-        Reply::Status(
-            400,
-            json!({"code": 50438, "message": "Group conversation with given participant list already exists"})
-                .to_string(),
-        ),
-    ]);
+    bed.twilio_roster(&theirs, 81, &[THEIRS, OTHER]);
+    bed.fake.script(&[Reply::Status(
+        400,
+        json!({"code": 50438, "message": "Group conversation with given participant list already exists"}).to_string(),
+    )]);
     let seq = bed.send(&room, "Hello again", &[]);
     bed.round(0);
     assert_eq!(bed.delivery(&room, seq).0, "CdsAccepted");
     assert_eq!(bed.thread(&room), theirs);
-    let paths: Vec<String> = bed.fake.sends().into_iter().map(|seen| seen.path).collect();
-    assert!(
-        paths.contains(&format!("/v1/Conversations/{made}")),
-        "the one made is deleted: {paths:?}"
+    assert_eq!(
+        bed.twilio_sends("/Webhooks"),
+        vec![format!("/v1/Conversations/{theirs}/Webhooks")]
     );
-    assert_eq!(paths.last(), Some(&format!("/v1/Conversations/{theirs}/Messages")));
+    assert_eq!(
+        bed.fake.sends().last().map(|seen| seen.path.clone()),
+        Some(format!("/v1/Conversations/{theirs}/Messages"))
+    );
 }

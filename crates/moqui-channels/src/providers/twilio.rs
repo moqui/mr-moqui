@@ -41,7 +41,8 @@
 //!   Twilio's signature has no time in it: a copy is caught by the replay cache while it holds it, and after that by the
 //!   ids (the message's `MessageSid` once, a receipt never back). An inbound text (`MessageSid`, `From`, `To`, `Body`,
 //!   `MediaUrl{N}`; a STOP Advanced Opt-Out took, `OptOutType`, is the text's keyword, taken through it only) and a
-//!   status callback (`MessageStatus`, `ErrorCode`), answered with empty TwiML, on an edge node too. Files are fetched
+//!   status callback (`MessageStatus`, `ErrorCode`; a failed one with 21610 also marks the pair opted out, once for
+//!   the message: [`crate::sms::Receipt::opt_signal`]), answered with empty TwiML, on an edge node too. Files are fetched
 //!   with the API's Basic auth. With no `authToken` a queued request waits ([`SmsProvider::can_verify`]).
 //!
 //! Its encryption is `None` (plans/Comms-Messaging.md §6.3): the API is reached over TLS, but Twilio, the carriers and
@@ -58,8 +59,8 @@ use moqui_lib::http::{Method, RestClient};
 use serde_json::Value as Json;
 
 use crate::sms::{
-    exchange, text_of, ApiBody, ApiRequest, Defaults, Inbound, InboundMedia, Outgoing, ProviderError, Receipt,
-    ReceiptStatus, Refusal, Settings, SmsEvent, SmsProvider,
+    exchange, text_of, ApiBody, ApiRequest, Defaults, Inbound, InboundMedia, Keyword, OptSignal, Outgoing,
+    ProviderError, Receipt, ReceiptStatus, Refusal, Settings, SmsEvent, SmsProvider,
 };
 
 /// The most outside numbers of a group text: a Twilio group MMS Conversation has at most 10 participants, our number
@@ -83,6 +84,8 @@ pub struct Config {
     pub conversations_base_url: String,
     /// No trailing `/`.
     pub media_content_base_url: String,
+    /// `allowInternalAddresses` off production: the Conversations and media addresses may be http (a test's fake).
+    pub allow_internal: bool,
 }
 
 impl Config {
@@ -149,6 +152,7 @@ impl SmsProvider for Twilio {
             conversation_service_sid: text_of(config, "conversationServiceSid"),
             conversations_base_url: base("conversationsBaseUrl", "https://conversations.twilio.com"),
             media_content_base_url: base("mediaContentBaseUrl", "https://mcs.us1.twilio.com"),
+            allow_internal: Settings::of(config, &self.defaults()).allow_internal,
         }
     }
 
@@ -171,6 +175,15 @@ impl SmsProvider for Twilio {
         ] {
             if sid.as_deref().is_some_and(|sid| !is_sid(sid, prefix)) {
                 return Err(format!("The Twilio bridge's {key} is not a {prefix}... id"));
+            }
+        }
+        // the API's credentials go to them too: never in clear text, except to a test's fake (SEC-COM-10)
+        for (key, url) in [
+            ("conversationsBaseUrl", &config.conversations_base_url),
+            ("mediaContentBaseUrl", &config.media_content_base_url),
+        ] {
+            if !(url.starts_with("https://") || (config.allow_internal && url.starts_with("http://"))) {
+                return Err(format!("The Twilio bridge's {key} is not an https address"));
             }
         }
         Ok(())
@@ -618,13 +631,26 @@ fn receipt(form: &Form, status: &str) -> SmsEvent {
         "undelivered" | "failed" | "canceled" => ReceiptStatus::Failed,
         other => return SmsEvent::Ignored(other.to_string()),
     };
-    let error = form.get("ErrorCode").filter(|code| *code != "0").map(error_text);
+    let code = form.get("ErrorCode").filter(|code| *code != "0");
+    // failed for the person's STOP (Twilio holds it): the pair is marked opted out too, once for this message
+    let opt_signal = match (status, code, form.get("From"), form.get("To")) {
+        (ReceiptStatus::Failed, Some("21610"), Some(ours), Some(theirs)) => Some(OptSignal {
+            event_id: format!("{message_id}:21610"),
+            our_number: ours.to_string(),
+            their_number: theirs.to_string(),
+            keyword: Keyword::Stop,
+        }),
+        _ => None,
+    };
     SmsEvent::Receipt(Receipt {
         remote_event_id: message_id.to_string(),
         status,
-        error: error.or_else(|| (status == ReceiptStatus::Failed).then(|| "Twilio could not deliver it".to_string())),
+        error: code
+            .map(error_text)
+            .or_else(|| (status == ReceiptStatus::Failed).then(|| "Twilio could not deliver it".to_string())),
         recipient_number: None,
         other_remote_event_id: None,
         receipt_millis: None,
+        opt_signal,
     })
 }

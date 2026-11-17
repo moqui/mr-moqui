@@ -616,11 +616,12 @@ along with this software (see the LICENSE.md file). If not, see
             Conversation of a group text): keep externalThreadId on the active mapping of externalRoomId on chatBridgeId, in a
             transaction of its own, so later sends carry it (DeliveryRequest.external_thread_id) and a text that names it
             comes to the mapping's room (receive#Sms). Refused (reasonCode threadTaken) when another active mapping of the
-            bridge has it; noMapping when there is no active mapping. Out: chatRoomBridgeId.</description>
+            bridge has it; noMapping when there is no active mapping. An empty externalThreadId lets the mapping's go (the
+            conversation is gone or closed on the network; the adapter makes another). Out: chatRoomBridgeId.</description>
         <in-parameters>
             <parameter name="chatBridgeId" required="true"/>
             <parameter name="externalRoomId" required="true"/>
-            <parameter name="externalThreadId" required="true"/>
+            <parameter name="externalThreadId"/>
         </in-parameters>
         <out-parameters>
             <parameter name="chatRoomBridgeId"/>
@@ -635,6 +636,14 @@ along with this software (see the LICENSE.md file). If not, see
             }
             const mapping = active({externalRoomId: externalRoomId})[0]
             if (!mapping) { reasonCode = 'noMapping'; ec.message.addError(ec.l10n.localize('The room has no mapping to this bridge')); return }
+            const thread = externalThreadId == null ? '' : String(externalThreadId).trim()
+            if (!thread) {
+                const cleared = ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatRoomBridgeId', mapping.chatRoomBridgeId).forUpdate(true).disableAuthz().one()
+                cleared.set('externalThreadId', null)
+                cleared.update()
+                chatRoomBridgeId = mapping.chatRoomBridgeId
+                return
+            }
             if (active({externalThreadId: externalThreadId}).some((row) => row.chatRoomBridgeId !== mapping.chatRoomBridgeId)) {
                 reasonCode = 'threadTaken'; ec.message.addError(ec.l10n.localize('Another room of this bridge has that conversation')); return
             }
