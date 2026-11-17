@@ -334,7 +334,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="ownerId"/>
             <parameter name="instanceHostId"/>
             <parameter name="poolKind"><description>container or registered</description></parameter>
-            <parameter name="trusted" type="Boolean"><description>false: the pool takes untrusted runs, and only those</description></parameter>
+            <parameter name="trusted" type="Boolean"><description>false: the pool takes untrusted runs, and only those; a registered
+                runner claims them only when started with --step-user</description></parameter>
             <parameter name="enabled" type="Boolean"/>
             <parameter name="maxConcurrent" type="Integer"/>
             <parameter name="allowedImages"/>

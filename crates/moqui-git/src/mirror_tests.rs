@@ -327,6 +327,50 @@ fn a_busy_mirror_is_refused_and_a_failing_one_backs_off() {
     assert!(!notes[0].contains(secret), "{}", notes[0]);
 }
 
+/// SEC-GIT-18: a repository has at most `git-server` `max-mirrors` push mirrors (one more is refused, a change of one
+/// is not), and a pass of the queue starts no push once its time has run: the mirrors left stay due for the next.
+#[test]
+fn mirrors_are_capped_and_a_pass_of_the_queue_is_bounded_by_time() {
+    let fixture = fixture(
+        "mirror-caps",
+        r#"<git-server webhook-private-network="true" max-mirrors="2"/>"#,
+    );
+    define(&fixture, "src", "db");
+    write(&fixture, "src", "one\n");
+    let base = http_server(fixture.context.factory());
+    let store = |parameters: &[(&str, Value)]| call(&fixture, WRITER, &git("store#GitRepositoryMirror"), parameters);
+    let mut ids = Vec::new();
+    for name in ["one", "two"] {
+        // repositories the server does not have: each push fails, quickly
+        let url = format!("{base}/git/{name}.git");
+        let (out, errors) = store(&[("repositoryId", s("src")), ("url", s(&url))]);
+        assert!(errors.trim().is_empty(), "{errors}");
+        ids.push(get(&out, "mirrorId").to_string());
+    }
+    let three = format!("{base}/git/three.git");
+    let (_, errors) = store(&[("repositoryId", s("src")), ("url", s(&three))]);
+    assert!(errors.contains("max-mirrors"), "{errors}");
+    let (_, errors) = store(&[("repositoryId", s("src")), ("mirrorId", s(&ids[0])), ("enabled", s("Y"))]);
+    assert!(errors.trim().is_empty(), "a change is no new mirror: {errors}");
+
+    let pass = |until: Option<i64>| {
+        let _entered = fixture.context.enter();
+        moqui_core::user::internal_login_user(WRITER).unwrap();
+        let _authz = fixture.context.disable_authz();
+        let provider = crate::provider(fixture.context.factory()).unwrap();
+        let done = provider.push_due_mirrors_until(None, until).unwrap();
+        moqui_core::user::logout().unwrap();
+        done
+    };
+    // the pass's time has run: no push is started, and both are still due
+    assert_eq!(pass(Some(0)), (Vec::new(), Vec::new()));
+    for id in &ids {
+        assert_eq!(field(&mirror(&fixture, id), "attemptCount"), "0", "{id}");
+    }
+    let (pushed, failed) = pass(None);
+    assert_eq!((pushed.len(), failed.len()), (0, 2), "{failed:?}");
+}
+
 /// An edit keeps what it leaves out or sends null; `clearRefPattern` empties the patterns and `clearCredential` the
 /// username and credential, as a null parameter is not told from an absent one.
 #[test]

@@ -414,8 +414,13 @@ impl Session {
                 self.send(iq_result(iq).c(list).build());
             }
             ("set", "block") if !jids.is_empty() => {
-                if self.call(services::BLOCK, json!({"jidList": jids})).await.is_err() {
-                    return self.refuse(iq, "wait", "internal-server-error", None);
+                match self.call(services::BLOCK, json!({"jidList": jids})).await {
+                    Err(_) => return self.refuse(iq, "wait", "internal-server-error", None),
+                    // the block list is at its cap (xmpp_block_max_jids, SEC-COM-20): nothing was blocked
+                    Ok(found) if backend::flag(&found, "resourceConstraint") => {
+                        return self.refuse(iq, "wait", "resource-constraint", None);
+                    }
+                    Ok(_) => {}
                 }
                 self.blocked = None;
                 self.send(iq_result(iq).build());
@@ -487,6 +492,10 @@ impl Session {
                 .await
         };
         match result {
+            // the user has its most registrations (xmpp_push_max_registrations, SEC-COM-20)
+            Ok(found) if backend::flag(&found, "resourceConstraint") => {
+                self.refuse(iq, "wait", "resource-constraint", None)
+            }
             Ok(_) => self.send(iq_result(iq).build()),
             Err(_) => self.refuse(iq, "cancel", "not-allowed", None),
         }

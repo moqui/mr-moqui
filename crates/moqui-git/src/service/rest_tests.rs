@@ -587,7 +587,52 @@ fn a_services_error_names_the_number_not_the_id() {
         "No merge request !3 in web"
     );
     assert_eq!(path_error("may not push", &merge_request), "may not push");
-    assert_eq!(MAX_PAGE_SIZE, 200);
+    assert_eq!(MAX_PAGE_SIZE, 100);
+}
+
+/// SEC-GIT-18: a page of merge requests is at most `git-server` `merge-requests-max-page`, and a call that names no
+/// repository looks only in the first `merge-requests-max-repositories` the caller may view, by id; a call that names
+/// repositories looks in those.
+#[test]
+fn a_call_that_names_no_repository_looks_in_so_many() {
+    let fixture = fixture_with(
+        "rest-bounded",
+        moqui_core::context::framework_dir(),
+        r#"<git-server merge-requests-max-page="1" merge-requests-max-repositories="1"/>"#,
+    );
+    grant_entities(&fixture);
+    rest_paths(&fixture);
+    for (id, title) in [("alpha", "Alpha"), ("beta", "Beta")] {
+        define(&fixture, id, "db");
+        branches(&fixture, id);
+        let (_, errors) = rest(
+            &fixture,
+            Some(WRITER),
+            "post",
+            &format!("moqui/git/{id}/mergeRequests"),
+            &[("sourceRef", s("topic")), ("title", s(title))],
+        );
+        assert!(errors.is_empty(), "{errors}");
+    }
+    let found = |parameters: &[(&str, Value)]| {
+        let (answer, errors) = rest(&fixture, Some(READER), "get", "moqui/hosting/mergeRequests", parameters);
+        assert!(errors.is_empty(), "{errors}");
+        let titles: Vec<String> = match field(&answer, "mergeRequestList") {
+            Value::List(items) => items.iter().map(|item| text_of(entry(item, "title"))).collect(),
+            other => panic!("{other:?}"),
+        };
+        (titles, to_plain_string(&field(&answer, "mergeRequestListCount")))
+    };
+    // no repository named: the first one the reader may view, alpha
+    assert_eq!(
+        found(&[("filter", s("all")), ("pageSize", s("50"))]),
+        (vec!["Alpha".to_string()], "1".to_string())
+    );
+    // named, past the walk's bound; a page of one
+    assert_eq!(found(&[("repositoryId", s("beta"))]), (vec!["Beta".to_string()], "1".to_string()));
+    let both = Value::List(vec![s("alpha"), s("beta")]);
+    let (titles, count) = found(&[("repositoryIdList", both), ("pageSize", s("50"))]);
+    assert_eq!((titles.len(), count.as_str()), (1, "2"));
 }
 
 /// The review threads go to the application's service, as the caller, behind the same gates as the merge request:

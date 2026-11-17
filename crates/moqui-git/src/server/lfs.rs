@@ -328,7 +328,7 @@ fn message(status: u16, text: &str) -> (u16, Json) {
     (status, json!({ "message": text }))
 }
 
-fn refuse(out: &mut dyn HttpResponder, refusal: &Refusal) {
+pub(super) fn refuse(out: &mut dyn HttpResponder, refusal: &Refusal) {
     let status = match refusal {
         Refusal::Unauthenticated(_) => 401,
         Refusal::Forbidden(_) => 403,
@@ -382,9 +382,7 @@ pub fn serve_lfs(request: &LfsHttpRequest, body: &mut dyn Read, out: &mut dyn Ht
         let provider = provider()?;
         let has_credentials = request.authorization.is_some() || request.api_key.is_some();
         if has_credentials && !request.secure {
-            return Err(Refusal::Forbidden(
-                "credentials over plain HTTP are refused; use HTTPS".into(),
-            ));
+            return Err(Refusal::Forbidden(super::INSECURE_CREDENTIALS.into()));
         }
         let (token, logged_in) = match request.authorization.as_deref().and_then(read_token) {
             Some(token) => {

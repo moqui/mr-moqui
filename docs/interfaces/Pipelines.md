@@ -344,8 +344,12 @@ runner token takes any job of the pool and, through that job's token, its secret
 case. A step that runs as the runner's user can still read the token file. On unix, `--step-user USER` runs the steps as
 another user: the runner runs as root (its token file root's alone, mode 600), the checkout, its caches and the steps'
 `home` beside it are handed to USER (`chown -R`) before the first step, each step runs as USER (`USER` and `LOGNAME`
-are USER's), and after the job the processes of USER that started during it are killed. Without it, keep such a pool
-for one owner's trusted runs.
+are USER's), and after the job the processes of USER that started during it are killed. `poll` says at each claim
+whether it was started with `--step-user` (`stepUser` in the claim's body), and **a pool that takes untrusted runs
+(`trusted` N) gives a job only to a runner that was**: one without it is given none, its claim's answer says why
+(`notice`, which `poll` prints once), and the untrusted run waits, queued, for such a runner (plans/Security-Review-Low.md
+SEC-GIT-19); for untrusted runs on machines whose runners cannot run steps as another user, use a pool of containers.
+Without `--step-user`, keep a pool for one owner's trusted runs.
 
 A runner token expires `git-ci` `runner-token-days` (90; 0 is never) after it was made; a runner registered before
 tokens expired counts from its registration. A claim's answer says when to rotate (`rotateAfter`, halfway), and `poll`
@@ -359,7 +363,8 @@ runner (`revoke#Runner`) whose machine was shared.
 
 `poll` asks for a job every few seconds; when its pool has room it is given
 the oldest queued job of the pool with a job token, runs it in a directory of its own, and asks again. A runner runs
-one job at a time, and nothing isolates a job from the machine: use such a pool for trusted runs, of one owner. Each
+one job at a time, and nothing but `--step-user` isolates a job from the machine: use such a pool for trusted runs,
+of one owner, or for untrusted runs with runners started with `--step-user`. Each
 step's process group is killed when the step ends (before the step's process is reaped, so a reused group id is
 never hit), and after each job `poll` kills the processes of the runner's user that started since the job began, but
 itself and what it runs under (never as root; `--keep-processes` leaves them), so what a job left running, in a group
@@ -432,7 +437,7 @@ token in `Authorization: Bearer`, taken only over HTTPS, from loopback, or with 
 | `GET jobs/{jobRunId}/caches?key=` | job | The cache archive, or 404 |
 | `POST jobs/{jobRunId}/result` | job | `{status: success, failure or error, exitCode, message}`. The job ends and the token is dead. |
 | `POST register` | pool | `{name, platform}`: a new runner, `{runnerId, token}` |
-| `POST claim` | runner | A queued job of the runner's pool, `{jobRunId, token}`, or `{}`; with `rotateAfter` (epoch milliseconds) when the token expires |
+| `POST claim` | runner | A queued job of the runner's pool, `{jobRunId, token}`, or `{}`; with `rotateAfter` (epoch milliseconds) when the token expires. The body says `{"stepUser": true}` for a runner started with `--step-user`; a pool that takes untrusted runs gives a job to no other, and answers it a `notice` |
 | `POST rotate` | runner | A new runner token, `{token, expiresAt, rotateAfter}`; the one it was called with is dead at once |
 
 Every job endpoint checks that the token's job run is the one in the path (403 otherwise) and still running (410

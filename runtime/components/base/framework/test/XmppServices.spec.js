@@ -74,7 +74,7 @@ spec({
         })
         sys(() => {
             for (const entity of ["moqui.xmpp.XmppPepItem", "moqui.xmpp.XmppPepNode", "moqui.xmpp.XmppUpload", "moqui.xmpp.XmppFastToken",
-                    "moqui.security.UserAppPassword"]) {
+                    "moqui.xmpp.XmppBlockedJid", "moqui.xmpp.XmppPushRegistration", "moqui.security.UserAppPassword"]) {
                 ec.entity.find(entity).condition("userId", "in", [A, B, C]).deleteAll()
             }
         })
@@ -274,6 +274,73 @@ feature("an upload is attached only by the user who put it; a slot over the limi
         owner.errors == ""
         owner.chatAttachmentId != null
         tooLarge.errors != ""
+    }
+})
+
+// SEC-COM-20: a user's PEP bytes, block list and push registrations stop at their caps (refused with resourceConstraint,
+// nothing kept), and an upload no message was given is deleted a day after it was put
+feature("PEP bytes, blocked JIDs and push registrations stop at their caps; an unattached upload goes after a day", {
+    when() {
+        const capped = withProperty("xmpp_pep_max_bytes", "300", () => withProperty("xmpp_block_max_jids", "2", () =>
+            withProperty("xmpp_push_max_registrations", "1", () => {
+                // 42 bytes of element around the text
+                const item = (itemId, size) => as(C, "publish#PepItem", {node: "urn:xmpp:avatar:data", itemId,
+                    payloadXml: "<data xmlns='urn:xmpp:avatar:data'>" + "x".repeat(size) + "</data>"})
+                const first = item("a", 100)
+                const replacing = item("a", 200)
+                const over = item("b", 100)
+                const items = sys(() => ec.entity.find("moqui.xmpp.XmppPepItem").condition("userId", C).count())
+                const blocked = as(C, "block#Jids", {jidList: ["one@x.test", "two@x.test"]})
+                const reblocked = as(C, "block#Jids", {jidList: ["two@x.test"]})
+                const third = as(C, "block#Jids", {jidList: ["three@x.test", "one@x.test"]})
+                const blockList = as(C, "get#BlockedJids", {}).jidList
+                const push = as(C, "enable#Push", {pushJid: "push.x.test", node: "n1"})
+                const repush = as(C, "enable#Push", {pushJid: "push.x.test", node: "n1"})
+                const another = as(C, "enable#Push", {pushJid: "push.x.test", node: "n2"})
+                const pushes = sys(() => ec.entity.find("moqui.xmpp.XmppPushRegistration").condition("userId", C).count())
+                return {first, replacing, over, items, blocked, reblocked, third, blockList, push, repush, another, pushes}
+            })))
+        // three uploads of A put 25 hours ago, one given to a message, and one put an hour ago
+        const put = (fileName, hoursAgo) => {
+            as(A, "create#UploadSlot", {fileName, fileSize: 5, contentType: "text/plain"})
+            return sys(() => {
+                const row = ec.entity.find("moqui.xmpp.XmppUpload").condition("userId", A).condition("fileName", fileName).one()
+                row.completedDate = new Date(Number(ec.user.nowTimestamp) - hoursAgo * 3600000)
+                row.update()
+                return row
+            })
+        }
+        put("old.txt", 25)
+        const attached = put("given.txt", 25)
+        put("new.txt", 1)
+        sys(() => {
+            const file = ec.entity.makeValue("moqui.chat.ChatAttachment")
+            file.setSequencedIdPrimary()
+            file.setFields({chatRoomId: room, location: attached.location, fileName: "given.txt", uploadedByUserId: A}, true, null, null)
+            file.create()
+        })
+        const cleaned = as(null, "clean#Uploads", {})
+        const left = sys(() => Array.from(ec.entity.find("moqui.xmpp.XmppUpload").condition("userId", A)
+                .condition("fileName", "in", ["old.txt", "given.txt", "new.txt"]).list()).map((row) => row.fileName).sort())
+        return Object.assign(capped, {cleaned, left})
+    },
+    then({first, replacing, over, items, blocked, reblocked, third, blockList, push, repush, another, pushes, cleaned, left}) {
+        first.errors == "" && first.resourceConstraint == false
+        replacing.errors == "" && replacing.resourceConstraint == false
+        over.errors == ""
+        over.resourceConstraint == true
+        items == 1
+        blocked.resourceConstraint == false
+        reblocked.resourceConstraint == false
+        third.resourceConstraint == true
+        blockList.length == 2
+        !blockList.includes("three@x.test")
+        push.resourceConstraint == false
+        repush.resourceConstraint == false
+        another.resourceConstraint == true
+        pushes == 1
+        cleaned.errors == ""
+        left.join(",") == "given.txt,new.txt"
     }
 })
 
