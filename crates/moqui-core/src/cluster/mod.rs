@@ -1324,6 +1324,13 @@ fn mark_peer_down(state: &ClusterState, base_url: &str) {
         .insert(base_url.to_string(), Instant::now() + PEER_BACKOFF);
 }
 
+/// Whether a member row names this member's session key and cluster certificate, so cluster messages may go to its
+/// base URL (SEC-CLU-04): a row a member of another cluster on the same database wrote, or one written by hand with
+/// other material, gets none. Before this member has started, every row does.
+fn same_material(member: &LoadedMember, own: Option<&Member>) -> bool {
+    own.is_none_or(|own| member.session_fp == own.session_fp && member.cert_fp == own.cert_fp)
+}
+
 fn live_peer_urls(
     state: &ClusterState,
     factory: &ExecutionContextFactory,
@@ -1332,9 +1339,17 @@ fn live_peer_urls(
     let instance_id = state.instance_id();
     let now = db_now(facade);
     let window = window_millis(factory);
+    let own = lock(&state.member).clone();
     let mut bases = Vec::new();
     for member in load_members(facade)? {
         if member.instance_id == instance_id || !is_live(member.heartbeat, now, window) {
+            continue;
+        }
+        if !same_material(&member, own.as_ref()) {
+            tracing::warn!(
+                "cluster member {} is left out: its row names another session key or cluster certificate",
+                member.instance_id
+            );
             continue;
         }
         let base = trim_base(&member.base_url);
