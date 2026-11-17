@@ -742,3 +742,30 @@ test("the shared list helpers: times in the user's zone by calendar day, the roo
     assert.deepEqual(chat.countsOf({ isMember: false, unreadCount: 3 }), { unread: 0, mentions: 0 });
     assert.deepEqual(chat.countsOf({ isMember: true, chatRoomId: "NONE", unreadCount: 3, mentionCount: 1 }), { unread: 3, mentions: 1 });
 });
+
+test("the new-chat pickers: one person is a direct chat, several a group (with a name, a private room), a phone number its room, and a number with others is refused", async () => {
+    assert.equal(chat.pickKind(null), "none");
+    assert.equal(chat.pickKind(["bob"]), "direct");
+    assert.equal(chat.pickKind(["bob", "cy"]), "group");
+    assert.equal(chat.pickKind(["tel:+15552224000"]), "number");
+    assert.equal(chat.pickKind(["tel:+15552224000", "bob"]), "mixed");
+    const posts = [];
+    const post = (name, params) => { posts.push({ name, params }); return Promise.resolve({ chatRoomId: "R" + posts.length }); };
+    assert.equal((await chat.startChat(post, { values: ["bob"] })).chatRoomId, "R1");
+    await chat.startChat(post, { values: ["bob", "cy"], name: "  " });
+    await chat.startChat(post, { values: ["bob", "cy"], name: " Ops " });
+    await chat.startChat(post, { values: ["tel:(555) 222-4000"], fromNumber: "+15550004000" });
+    await chat.startChat(post, { values: ["tel:5552224000"] });
+    assert.deepEqual(posts, [
+        { name: "createDirect", params: { userIds: "bob" } },
+        { name: "createDirect", params: { userIds: "bob,cy" } },
+        { name: "createRoom", params: { roomTypeEnumId: "private", roomName: "Ops", memberUserIds: "bob,cy", encrypted: "false" } },
+        { name: "textRoom", params: { textTo: "(555) 222-4000", textFrom: "+15550004000" } },
+        { name: "textRoom", params: { textTo: "5552224000", textFrom: "" } }]);
+    // a number with someone else, or nothing picked, posts nothing
+    await assert.rejects(chat.startChat(post, { values: ["tel:5552224000", "bob"] }), (err) => err.refused === "mixed");
+    await assert.rejects(chat.startChat(post, { values: [] }), (err) => err.refused === "none");
+    assert.equal(posts.length, 5);
+    assert.deepEqual(chat.numberOptions([{ phoneNumber: "+15550004000", description: "Office" }, { phoneNumber: "+15550004001" }]),
+        [{ value: "+15550004000", label: "+15550004000 · Office" }, { value: "+15550004001", label: "+15550004001" }]);
+});

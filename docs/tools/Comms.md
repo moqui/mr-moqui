@@ -46,7 +46,11 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   the drives let the user open (`org.moqui.comms.FilePickerServices` over `FileServices`), and a user with no drive
   sees neither button.
 - **Chat.** Rooms (private, public, direct), threads, mentions, reactions, polls, pinned messages and files; presence
-  and status in the account menu. The tray's Chat tab is the same view, smaller. When the last owner leaves, the
+  and status in the account menu. The tray's Chat tab is the same view, smaller. New direct message (on a phone, Start
+  chat) takes one person, several (with a name they become a private room), or, for a user with a number that texts, a
+  phone number typed in its search, which opens that number's room as Calls' Text a number does. On a phone a swipe to
+  the right on a message replies to it, Attach offers the camera, the gallery or a file, and Back closes a menu or sheet,
+  then a pane or thread, then the room. When the last owner leaves, the
   longest-standing moderator (else member) becomes an owner: Leave names them, and the room says they became an owner
   when the owner left.
 - <a id="encrypted-rooms"></a>**Encrypted rooms** (C7). New room has Encrypted for a private room (and an encrypted direct

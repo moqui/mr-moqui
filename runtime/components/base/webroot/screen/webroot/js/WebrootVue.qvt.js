@@ -128,6 +128,89 @@
         else vm.setUrl(path);
     };
 
+    /* ========== back layers ========== */
+
+    // What Back closes (plans/Comms-Messaging.md §2.2): each open layer of the page (a sheet, a details pane, a thread, a
+    // room opened in a list) pushes a function that closes it and takes it off when it closes another way. pop() closes,
+    // in order: an open Quasar dialog or menu (as Esc does), the top layer whose element is shown (a layer in a hidden
+    // tray waits), then the page root's own history (base, the desktop and mobile shell's), and answers whether it closed
+    // one. What is in front goes first (front(): the floating window that has the focus, else the open tray): while it is
+    // there only its layers close, and with none pop answers false, so the caller closes it (Esc closes the tray). within
+    // keeps pop to the layers inside an element (Chat's own Esc). Esc asks for the layers only (popups: false, base:
+    // false); the shell's Back and Android's back gesture (MainActivity.kt of crates/moqui-mobile) ask for all. While a
+    // layer closes, closing is true: a link it follows is a step back, not a new place (the shell's history). Layers are
+    // not in the browser's history.
+    const backLayers = [];
+    const shown = (el) => !el || (el.isConnected !== false && (!el.getClientRects || el.getClientRects().length > 0));
+    // an open popup: a dialog or menu that is not leaving (Quasar keeps one in the page for its leave transition)
+    const openPopup = () => {
+        const doc = root.document;
+        if (!doc || !doc.querySelectorAll) return null;
+        const list = Array.from(doc.querySelectorAll(".q-dialog .q-dialog__inner, .q-menu")).filter((el) => !/-leave-/.test(el.className || ""));
+        return list.length ? list[list.length - 1] : null;
+    };
+    // Quasar closes its top dialog or menu on Esc (a keydown, then a keyup, both on the window)
+    const escapePopup = () => {
+        ["keydown", "keyup"].forEach((type) => {
+            const event = new root.KeyboardEvent(type, { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true, cancelable: true });
+            if (event.keyCode !== 27) Object.defineProperty(event, "keyCode", { get: () => 27 });
+            root.dispatchEvent(event);
+        });
+    };
+    moqui.back = {
+        base: null,
+        closing: false,
+        // the element in front of the page: the floating window with the focus, else the open tray (m-qapps-root's)
+        front() {
+            const doc = root.document;
+            const active = doc && doc.activeElement;
+            const float = active && active.closest ? active.closest("[id^='m-float-']") : null;
+            if (float) return float;
+            const vm = rootVm();
+            const tray = vm && vm.trayOpen && doc ? doc.getElementById("m-tray") : null;
+            return tray && tray.getClientRects().length ? tray : null;
+        },
+        // a layer: close() closes it; el, when given, is the element that shows it, and isOpen, when given, keeps it on when
+        // close() left it open. Answers the function that takes it off.
+        push(close, el, isOpen) {
+            const layer = { close, el: el || null, isOpen: isOpen || null };
+            backLayers.push(layer);
+            return () => { const at = backLayers.indexOf(layer); if (at >= 0) backLayers.splice(at, 1); };
+        },
+        // a layer while isOpen() of a Vue component is true (watched), in mounted; answers the function that stops it, for
+        // beforeUnmount
+        track(vm, isOpen, close) {
+            if (!vm || typeof vm.$watch !== "function") return () => {};
+            let off = null;
+            const apply = (open) => {
+                if (open && !off) off = moqui.back.push(close, vm && vm.$el && vm.$el.nodeType === 1 ? vm.$el : null, () => !!isOpen());
+                else if (!open && off) { off(); off = null; }
+            };
+            const stop = vm.$watch(() => !!isOpen(), apply, { immediate: true, flush: "sync" });
+            return () => { stop(); apply(false); };
+        },
+        depth() { return backLayers.filter((layer) => shown(layer.el)).length; },
+        popupOpen() { return !!openPopup(); },
+        pop(options) {
+            const opts = options || {};
+            if (opts.popups !== false && openPopup()) { escapePopup(); return true; }
+            const front = opts.within ? null : moqui.back.front();
+            const scope = opts.within || front;
+            for (let at = backLayers.length - 1; at >= 0; at--) {
+                const layer = backLayers[at];
+                if (!shown(layer.el) || (scope && !(layer.el && scope.contains(layer.el)))) continue;
+                backLayers.splice(at, 1);
+                moqui.back.closing = true;
+                try { layer.close(); } catch (err) { console.error("Back: a layer did not close", err); } finally { moqui.back.closing = false; }
+                if (layer.isOpen && layer.isOpen() && backLayers.indexOf(layer) < 0) backLayers.splice(at, 0, layer);
+                return true;
+            }
+            if (front || opts.within) return false;
+            if (opts.base !== false && typeof moqui.back.base === "function") return !!moqui.back.base();
+            return false;
+        }
+    };
+
     /* ========== user preferences ========== */
 
     // The user's preferences in the page are config.preferences (the snapshot the server wrote). moqui.applyPreference(key, value)
@@ -10018,9 +10101,10 @@
                     } }
                 ];
             },
-            // Esc: a Quasar dialog or menu closes itself; else the tray closes
+            // Esc: a Quasar dialog or menu closes itself; else the top back layer (moqui.back), else the tray closes
             closeTopmost() {
                 if (this.shellPopupOpen()) return false;
+                if (moqui.back.pop({ popups: false, base: false })) return true;
                 if (this.trayOpen) { this.closeTray(); return true; }
                 return false;
             },

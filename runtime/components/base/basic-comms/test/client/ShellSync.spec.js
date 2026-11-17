@@ -4,7 +4,8 @@
 // show one message; a reconnect after a feed reset reads the room as the store has it; a message's edit, reaction and
 // deletion go through the outbox where the server takes them once, and a refused one shows why with Retry and Discard; a
 // thread change and a send that conflicted say so, the send's copy opened in Compose; an internal message waits in the
-// outbox where the server takes its send once; a revoked key holds what waits, and one held item stops no other.
+// outbox where the server takes its send once; a revoked key holds what waits, and one held item stops no other; Back
+// (moqui.back) closes the message sheet, then the pane, then goes back in the shell's history, and a swipe right replies.
 spec({ server: false, timeout: 60 })
 
 browser.runInPage({

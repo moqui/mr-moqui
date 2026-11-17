@@ -16,7 +16,8 @@ with a messaging bridge and no trunk texts.
 - **Entities:** the C4-SMS block of `framework/entity/VoiceEntities.xml`: `SmsOptOut`, `SmsSendCount`, the SMS fields of
   `VoicePolicy`, a delivery's receipt on `ChatBridgeDelivery`; `ChatRoom` type `CrtExternal`.
 - **Screens:** System, Chat Bridges (the bridge), System, Voice: Numbers (Texts through) and Fraud (the SMS limits, the
-  system's number); Calls History's Text a number; the pair's room in Chat (its SMS icon and bridge chip).
+  system's number); Calls History's Text a number, and a number typed in Chat's new-chat pickers; the pair's room in
+  Chat (its SMS icon and bridge chip).
 
 ## Setup
 
@@ -91,7 +92,9 @@ call. The outside person is an external actor of the bridge (`ChatExternalUser` 
 - **Voicemail.** A message left on such a call is a `CetCall` event (action `voicemail`, its `voicemailId`) in the room;
   its audio stays the box's, for the box's readers only.
 - **Text a number.** Calls History has it beside Call a number for a user with a number that texts:
-  `open#PairRoom` (the same checks as a send) opens the room in Chat.
+  `open#PairRoom` (the same checks as a send) opens the room in Chat. Chat's new-chat pickers (New direct message, the
+  phone's Start chat) do the same with a number typed in their search (`searchUsers` with `numbers=true`, then
+  `textRoom`).
 
 ## Texts that come in
 

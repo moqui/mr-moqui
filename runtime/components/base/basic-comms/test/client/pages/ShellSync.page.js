@@ -1143,6 +1143,99 @@ test("Send is an icon with bubbles; an encrypted room's search says it is not se
     }
 });
 
+// a touch the page makes itself (the test kit has no touch emulation): an event of the type with its touches
+const touch = (el, type, x, y) => {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    const point = { identifier: 1, target: el, clientX: x, clientY: y };
+    event.touches = type === "touchend" ? [] : [point];
+    event.changedTouches = [point];
+    el.dispatchEvent(event);
+};
+test("Back (moqui.back) closes the message sheet, then the pane, then goes back in the shell to the home, where it closes nothing; a swipe right on a bubble replies", async () => {
+    const vm = await openRoom();
+    const kept = vm.width;
+    try {
+        vm.width = 500;
+        await Vue.nextTick();
+        assert.equal(vm.useBubbles, true);
+        // a swipe to the right past the threshold replies to the bubble, which follows the finger; the long press does not start
+        const row = () => document.querySelector(".m-chat-msg[data-seq='5']");
+        touch(row(), "touchstart", 20, 200);
+        touch(row(), "touchmove", 60, 203);
+        await Vue.nextTick();
+        assert.ok(String(row().style.transform).includes("translateX(40px)"), "the bubble follows");
+        touch(row(), "touchmove", 110, 205);
+        touch(row(), "touchend", 110, 205);
+        await Vue.nextTick();
+        assert.equal(vm.replyTo && vm.replyTo.eventSeq, 5, "a reply to the swiped message");
+        assert.equal(row().style.transform, "", "the bubble back in its place");
+        assert.ok(!vm.holdTimer && !vm.sheet.open, "a swipe is not a long press");
+        vm.cancelReply();
+        // a short swipe, or a move up or down (a scroll), replies to nothing
+        touch(row(), "touchstart", 20, 200);
+        touch(row(), "touchmove", 60, 202);
+        touch(row(), "touchend", 60, 202);
+        touch(row(), "touchstart", 20, 200);
+        touch(row(), "touchmove", 30, 260);
+        touch(row(), "touchmove", 120, 262);
+        touch(row(), "touchend", 120, 262);
+        assert.equal(vm.replyTo, null);
+        // a touch in a code block (it scrolls sideways) is that scroll, not a swipe
+        const pre = document.createElement("pre");
+        pre.textContent = "wide code";
+        row().querySelector(".m-chat-body").appendChild(pre);
+        touch(pre, "touchstart", 20, 200);
+        touch(pre, "touchmove", 120, 202);
+        touch(pre, "touchend", 120, 202);
+        pre.remove();
+        assert.equal(vm.replyTo, null, "no reply from a swipe in a code block");
+        assert.equal(row().style.transform, "");
+        // the layers: a pane, then the sheet over it
+        vm.openSide("members");
+        await Vue.nextTick();
+        vm.openSheet({ eventSeq: 5, event: eventOf(vm, 5), senderName: "Bob" }, false);
+        const sheet = await until(() => document.querySelector(".m-chat-sheet"), "the message sheet");
+        assert.ok(moqui.back.popupOpen());
+        assert.ok(moqui.back.pop(), "Back closes the sheet");
+        await until(() => !sheet.isConnected, "the sheet to close");
+        assert.equal(vm.sheet.open, false);
+        assert.equal(vm.side, "members", "the pane stays");
+        assert.equal(moqui.back.popupOpen(), false);
+        assert.ok(moqui.back.pop(), "then the pane");
+        assert.equal(vm.side, null);
+        assert.equal(root.view, "chat", "the room stays");
+        assert.equal(moqui.back.pop({ base: false }), false, "Esc has nothing more to close");
+        // then the shell's history: the header's Back and Android's back go home, where back closes nothing (the app leaves)
+        root.backStack = [];
+        assert.ok(moqui.back.pop());
+        assert.equal(root.view, null, "the home");
+        assert.equal(moqui.back.pop(), false);
+    } finally {
+        vm.width = kept;
+    }
+});
+
+test("the shell's history: a link forward to a place on the stack is a new entry; a thread closed by Back is a step back, not opened again", async () => {
+    await openRoom();
+    root.backStack = [];
+    root.setUrl("/qapps/BasicComms/Chat?chatRoomId=R3");
+    root.setUrl("/qapps/BasicComms/Chat?chatRoomId=R1");
+    assert.deepEqual(root.backStack.map((url) => url.split("?")[1]), ["chatRoomId=R1", "chatRoomId=R3"]);
+    root.historyBack();
+    assert.equal(root.currentParameters.chatRoomId, "R3");
+    root.historyBack();
+    assert.equal(root.currentParameters.chatRoomId, "R1");
+    const vm = await openRoom();
+    root.backStack = [];
+    vm.openThread(5);
+    await until(() => Number(root.currentParameters.thread) === 5, "the thread in the shell's history");
+    assert.equal(root.backStack.length, 1, "the thread is an entry");
+    assert.ok(moqui.back.pop({ base: false }));
+    assert.equal(vm.side, null);
+    assert.equal(root.backStack.length, 0, "closing the thread by Back took its entry and put none on");
+    assert.ok(!root.currentParameters.thread);
+});
+
 test("with no host, as on the web, a message's changes are asked of the server as before", async () => {
     const vm = await openRoom();
     const desktop = window.moquiDesktop;

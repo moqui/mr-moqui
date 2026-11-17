@@ -1152,6 +1152,38 @@
             const who = last.senderUserId === meUserId ? tr("You") : String(last.senderName || "").split(" ")[0];
             const text = last.encrypted ? tr("Encrypted message") : last.redacted || !last.snippet ? tr("Message removed") : last.snippet;
             return room.roomTypeEnumId === "CrtDirect" && last.senderUserId !== meUserId && room.otherUserId ? text : (who ? who + ": " : "") + text;
+        },
+        // ---- the new-chat pickers (Chat's New direct message, the chat panel's New message, the phone home's Start chat) ----
+        // A picked value is a userId, or a phone number as Chat's searchUsers offers it with numbers=true (tel:<number>).
+        isNumberPick(value) { return String(value || "").indexOf("tel:") === 0; },
+        // what was picked: none, direct (one person), group (several), number (one phone number), or mixed (a number with
+        // others, which Start refuses: a text goes to one number)
+        pickKind(values) {
+            const list = (values || []).map((value) => String(value).trim()).filter((value) => value);
+            if (!list.length) return "none";
+            const numbers = list.filter((value) => chat.isNumberPick(value)).length;
+            if (numbers) return list.length > 1 ? "mixed" : "number";
+            return list.length > 1 ? "group" : "direct";
+        },
+        // Start: the number's room (textRoom: open#PairRoom, from fromNumber or the user's only number), a private room when
+        // a group has a name (createRoom), else the direct or group direct chat (createDirect). post(name, params) is the
+        // screen's, a promise of the transition's JSON (chatRoomId).
+        startChat(post, pick) {
+            const values = ((pick && pick.values) || []).map((value) => String(value).trim()).filter((value) => value);
+            const kind = chat.pickKind(values);
+            if (kind === "none") return Promise.reject({ refused: "none" });
+            if (kind === "mixed") {
+                if (moqui.notifyMessages) moqui.notifyMessages([{ type: "info", message: tr("A text goes to one phone number: start it with the number alone") }]);
+                return Promise.reject({ refused: "mixed" });
+            }
+            if (kind === "number") return post("textRoom", { textTo: values[0].slice(4), textFrom: (pick && pick.fromNumber) || "" });
+            const name = String((pick && pick.name) || "").trim();
+            if (kind === "group" && name) return post("createRoom", { roomTypeEnumId: "private", roomName: name, memberUserIds: values.join(","), encrypted: "false" });
+            return post("createDirect", { userIds: values.join(",") });
+        },
+        // the user's numbers that text (Chat's textNumbers), as a picker's From options
+        numberOptions(list) {
+            return (list || []).map((number) => ({ value: number.phoneNumber, label: number.phoneNumber + (number.description ? " · " + number.description : "") }));
         }
     });
     moqui.chat = chat;

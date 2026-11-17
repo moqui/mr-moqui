@@ -83,6 +83,15 @@ own `/qapps`), never both:
   `http://localhost:8080`. When the verifier cannot start the app makes no request, answers from the store, and the
   commands that need the server say so.
 
+## Back
+
+Android's back (the gesture or the button) asks the page first (`MainActivity.kt`'s back callback, added after
+Tauri's own once the webview is made: `moqui.back.pop()`): an open dialog or menu, then a sheet, a details pane or thread, a room opened from the home's list, and
+then the shell's own history all close one at a time. When the page closes nothing (the home with nothing open), the
+WebView goes back in its history (a server page), and then back leaves the app as before. The room's back arrow says "Back
+to chats" and a pane's "Back to the room". The page has 400 ms to answer, after which Tauri's back goes on. Asking the
+page loses Android's predictive back animation (the preview of the screen back leads to).
+
 ## Lifecycle
 
 - **Paused** (another app, the screen off): the mirror stops; the store, the sockets and the outbox's sender stay while

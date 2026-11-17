@@ -343,7 +343,7 @@ module.exports = {
             if (!url) return;
             const target = this.route(url);
             if (!target) { host().openRemote(this.getLinkPath(String(url))).catch((err) => this.failed(err)); return; }
-            if (pushState !== false && this.view) this.backStack = this.backStack.concat([this.currentLinkUrl]).slice(-30);
+            const before = this.view ? this.currentLinkUrl : null;
             // another screen: its containers register again (the same screen keeps them, a compose dock stays)
             if (target.view !== this.view) this.activeContainers = {};
             this.view = target.view;
@@ -351,6 +351,7 @@ module.exports = {
             this.currentParameters = target.parameters;
             this.bodyParameters = bodyParameters || null;
             this.drawer = this.drawer && this.$q.screen.gt.sm;
+            if (pushState !== false && before) this.remember(before);
             if (onComplete) onComplete({ name: this.currentPathList[this.currentPathList.length - 1], path: this.currentPath, query: this.currentParameters,
                 params: this.bodyParameters || {}, fullPath: this.currentLinkUrl, meta: {}, hash: '', matched: [{ path: this.currentPath }] });
         },
@@ -358,11 +359,31 @@ module.exports = {
         replaceUrl(url) { this.setUrl(url, null, null, false); },
         setParameters(parameters) {
             if (parameters) {
-                if (this.view) this.backStack = this.backStack.concat([this.currentLinkUrl]).slice(-30);
+                const before = this.view ? this.currentLinkUrl : null;
                 this.currentParameters = Object.assign({}, this.currentParameters, parameters);
+                if (before) this.remember(before);
             }
         },
+        // the shell's history: the place left (before) goes on the back stack. A link a back layer follows as it closes
+        // (moqui.back.closing: a thread closed by Back) is a step back instead: it takes the place now off the top of the
+        // stack when it is there, and puts nothing on, so the next Back does not open the thread again.
+        remember(before) {
+            const stack = this.backStack;
+            const now = this.currentLinkUrl;
+            if (now === before) return;
+            if (moqui.back && moqui.back.closing) {
+                if (stack.length && stack[stack.length - 1] === now) this.backStack = stack.slice(0, -1);
+                return;
+            }
+            this.backStack = stack.concat([before]).slice(-30);
+        },
+        // Back (the header's, and Android's through moqui.back.pop): the top back layer (a dialog, menu, sheet, pane or
+        // room the screens opened: moqui.back), else the shell's history (historyBack, moqui.back.base)
         goBack() {
+            if (moqui.back) moqui.back.pop();
+            else this.historyBack();
+        },
+        historyBack() {
             const stack = this.backStack.slice();
             const previous = stack.pop();
             this.backStack = stack;
@@ -370,7 +391,7 @@ module.exports = {
             else this.goHome();
         },
         goHome() { this.view = null; this.currentPathList = []; this.currentParameters = {}; this.backStack = []; this.activeContainers = {}; },
-        goPreviousScreen() { this.goBack(); },
+        goPreviousScreen() { this.historyBack(); },
         // a path of the screens (/apps/...) as the server's page (/qapps/...)
         getLinkPath(path) { return String(path || '').replace(/^\/apps(\/|$)/, this.linkBasePath + '$1'); },
         shellLoadPath(url) { return String(url || '').replace(/^\/qapps(\/|$)/, this.basePath + '$1'); },
@@ -455,6 +476,13 @@ module.exports = {
         }
     },
     mounted() {
+        // Back with no layer open goes back in the shell's history, and at the home answers that it did nothing (so
+        // Android's back leaves the app there)
+        if (moqui.back) {
+            moqui.back.base = () => { if (!this.view) return false; this.historyBack(); return true; };
+            // the drawer over the page (a narrow screen) is a layer too
+            this.backOff = moqui.back.track(this, () => this.drawer && this.$q.screen.lt.md, () => { this.drawer = false; });
+        }
         // what the host had to tell after the sign-in (an account kept as a personal device's)
         if (this.state && this.state.notice) this.$q.notify({ type: 'info', message: t(this.state.notice), timeout: 12000 });
         if (moqui.chat) moqui.chat.start(this);
@@ -473,6 +501,10 @@ module.exports = {
             }, () => {});
         }, 5 * 60 * 1000);
     },
-    unmounted() { clearInterval(this.countsTimer); }
+    unmounted() {
+        clearInterval(this.countsTimer);
+        if (moqui.back && moqui.back.base) moqui.back.base = null;
+        if (this.backOff) this.backOff();
+    }
 };
 </script>

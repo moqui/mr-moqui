@@ -26,7 +26,7 @@ Parts:
 
 | Part | Status | Phase (§18) |
 |---|---|---|
-| §2: phone layout | Partial: built by PR #203 except back layers, swipe to reply, voice notes, and named rooms and numbers in the picker | 1 |
+| §2: phone layout | Built (PR #203, phase 1) except voice notes (phase 7) and the checks on a real phone (§2.3) | 1, done |
 | §3: desktop gaps | Planned; the palette and its Rooms source are built for the web | 8 |
 | §4: reactions and the message menu | Partial: the long-press sheet and a fixed emoji grid are built | 6 |
 | §5: details tabs and new services | Partial: People, Pinned and Files (All, Pictures) panes are built; the services are planned | 7 |
@@ -53,7 +53,7 @@ Parts:
 | Files | `upload`; `files` transition over `find#RoomFiles` (one `contentTypePrefix`, `searchText`, `limit`, `beforeEventSeq`); a Files pane with All and Pictures; an image viewer |
 | Search | `search` over `search#ChatEvents` (not for an encrypted room). "Find a room or person" filters the rooms already loaded; it finds no new person |
 | Desktop layout | Sidebar with filters (All, Unread, Mentions, Direct, Rooms, Records, Archived), Pinned and Recent groups, unread and mention counts, presence and status, hover toolbar, Up arrow edits. Mod+K is the shell palette, with a `#` Rooms source (web only; the desktop and mobile shell has no palette) |
-| Phone layout (PR #203) | The room list fills the home; a Start chat button opens a full-screen people picker; bubbles with own messages on the right; a one-row composer; a long press (450 ms) or right-click opens the message actions as a sheet; swipe right pins and swipe left archives a room; a long press on a room opens pin, mute, mark read and archive |
+| Phone layout (PR #203, phase 1) | The room list fills the home; a Start chat button opens a full-screen picker of people (with several, a name makes a private room) and phone numbers; bubbles with own messages on the right; a one-row composer whose Attach offers the camera, the gallery or a file; a long press (450 ms) or right-click opens the message actions as a sheet; a swipe right on a bubble replies; swipe right pins and swipe left archives a room; a long press on a room opens pin, mute, mark read and archive; Back (`moqui.back`) closes a menu or sheet, then a pane or thread, then the room |
 | Archive | Per member (`archivedEventSeq`) and per room by an owner (`archivedDate`, read-only) |
 | Encrypted chat | Megolm rooms, cross-signing, emoji and QR verification, key backup ([Chat-Keys](../docs/interfaces/Chat-Keys.md)). Opt-in for direct and private rooms when the room is made; never turned on or off later. An encrypted direct room is a separate room from the plain one with the same person. The shell page owns the crypto device, on the desktop and on Android ([Desktop-Client](../docs/ui/Desktop-Client.md#chat-crypto)); on Android its passphrase is sealed by the Android Keystore |
 | Calls | WebRTC with an SFU; SFrame E2EE with `requireE2ee` or the room's `callE2eeRequired`, set at the start and never lowered ([WebRTC](../docs/interfaces/WebRTC.md)). One call button in the room header; it always starts with video |
@@ -78,15 +78,11 @@ time format: `ChatPanel.qvue:152-163`).
 | `sideOverlay` | `compact`, or the room is under 900 px wide | A details pane replaces the timeline, with a back arrow |
 
 **Gaps on a phone that remain:**
-- The Android back gesture leaves the app from an open room, sheet or pane (`WryActivity.kt:59-73` only asks the
-  WebView's history; the shell keeps its own). Not yet seen on a device.
-- No swipe to reply. No voice notes. No camera or gallery choice on attach.
-- The new-chat picker starts a direct or group direct chat only: no named room, no phone number.
+- No voice notes.
 - Who reacted and who voted show only on hover, so not on touch.
 - The Files pane has only All and Pictures. No links, voice, or reactions list.
 - The call button always starts a video call.
 - No push for chat messages: a message only shows when the app is open.
-- The room list on the home formats times in the browser's zone, the room in the user's zone (COM-UI-007).
 
 ## 2. Phone layout
 
@@ -98,16 +94,18 @@ The width selects the layout, with the thresholds in §1. They stay as built: th
 | Area | Phone layout | Status |
 |---|---|---|
 | Home | The room list at full size, not a card. Search bar on top. Start chat button (FAB) at the bottom right | Built (`Root.qvue:154`, `ChatPanel.qvue:102`). The search bar shows only with more than six rooms |
-| Room row | Avatar, name, last message, time, unread badge, E2EE or SMS icon | Partial: no E2EE icon (§6); a phone-number room has no icon on the home (`ChatPanel.qvue:153` has no `CrtExternal`) |
+| Room row | Avatar, name, last message, time, unread badge, E2EE or SMS icon | Partial: no E2EE icon (§6); a phone-number room has the SMS icon (`CrtExternal`, phase 0) |
 | Room row actions | Swipe right: pin. Swipe left: archive. Long press: pin, mute, mark read or unread, archive | Built (`ChatPanel.qvue:56-60`, `118-134`) |
-| New chat | Full-screen picker: search people and phone numbers, select one or several, Start. A name makes it a room | Partial: people only, through `searchUsers` and `createDirect`. Phone numbers and a named room are planned |
+| New chat | Full-screen picker: search people and phone numbers, select one or several, Start. A name makes it a room | Built (phase 1): `searchUsers` with `numbers=true` offers a typed number, `textRoom` opens its room, a name with two or more people calls `createRoom` (`moqui.chat.startChat`) |
 | Room header | Back, avatar, name, E2EE status icon (§6), call and video buttons, menu | Partial: one call button; the E2EE icon is planned |
 | Messages | Bubbles. Own on the right in the primary color. Others on the left with the avatar in groups. Day labels. Group by sender within `GROUP_MILLIS` (5 minutes) | Built. The day label is a line with a label, not a chip |
-| Reply | Swipe right on a bubble. The quote shows above the composer and above the sent bubble. Tap a quote to jump | Partial: Reply is in the sheet; the swipe is planned |
-| Composer | Fixed at the bottom, above the keyboard: attach (camera, gallery, file), emoji, text, then a send button that becomes the voice button when empty | Partial: one row with attach, emoji, poll and Send. `MainActivity.kt:52-57` pads the page for the keyboard; check it on a device. The attach choice and the voice button are planned |
-| Back | Back closes the open layer: menu or sheet, then a details pane or thread, then the room | Planned (§2.2). Today Android back leaves the app |
+| Reply | Swipe right on a bubble. The quote shows above the composer and above the sent bubble. Tap a quote to jump | Built (phase 1): past 64 px, in the room's timeline |
+| Composer | Fixed at the bottom, above the keyboard: attach (camera, gallery, file), emoji, text, then a send button that becomes the voice button when empty | Partial: one row with attach (camera, gallery, file), emoji, poll and Send. `MainActivity.kt:52-57` pads the page for the keyboard; check it on a device. The voice button comes with phase 7 |
+| Back | Back closes the open layer: menu or sheet, then a details pane or thread, then the room | Built (phase 1): `moqui.back`; Android back asks it before the WebView's history |
 
 ### 2.2 Work
+
+Steps 1 to 7 are built (phase 0 and phase 1); the voice button of step 5 comes with phase 7.
 
 1. **Shared helpers.** `moqui.chat` in `webroot/js/WebrootChat.js` (the shell already loads it) gets the helpers that
    `Chat.qvue` and `ChatPanel.qvue` each have a copy of: the room icon, the unread and mention counts, the snippet,
@@ -128,6 +126,16 @@ The width selects the layout, with the thresholds in §1. They stay as built: th
      are not, and browser Back does not close them. That stays.
    - The room's Back and a pane's Back both read "Back" today. Each names where it goes ("Back to chats", "Back to
      the room").
+   - As built: the layers are the message sheet, an edit, the side pane or thread (`Chat.qvue`), and the room, the
+     picker, a room's actions and the archive of the chat panel (`ChatPanel.qvue`, the phone's home). A room of the Chat
+     screen is not a layer: it is in the history (the browser's, or the shell's, `moqui.back.base`). The shell's drawer
+     over a narrow window is a layer. A link followed while a layer closes by Back (`moqui.back.closing`: a thread) is a
+     step back in the shell's history, so the next Back does not open the thread again; any other link is a new entry.
+     What is in front closes first: with the tray open (or a floating window focused), Esc closes its layers, then the
+     tray, never a layer of the screen behind.
+   - As built on Android: Tauri's `TauriActivity` turns off `WryActivity`'s back callback (`handleBackNavigation` false)
+     and handles back in its app plugin, so the app's `MainActivity.kt` adds its own callback after Tauri's, once the
+     webview is made; when the page closes nothing, Tauri's back goes on.
 3. **Swipe to reply** on a bubble: a touch move to the right past a threshold starts a reply; it cancels the long
    press, as a move does today (`Chat.qvue:359`).
 4. **Picker.** A phone number starts or opens the number's room (`CrtExternal`) where the user has a number to text
@@ -144,7 +152,7 @@ The width selects the layout, with the thresholds in §1. They stay as built: th
 | Check | How it is checked |
 |---|---|
 | At 390×844 the list fills the screen, and Start chat opens the full-screen picker | Acceptance client spec (a phone-width check is an acceptance test) |
-| A direct chat with one person, a named group with two, and a text to a number can be started from the phone | Acceptance client spec; the number with the fake SMS adapter |
+| A direct chat with one person, a named group with two, and a text to a number can be started from the phone | Acceptance client spec `PhoneChat`, on a stand-in server; the real `searchUsers` and `textRoom` path is covered by `BasicCommsTexts` |
 | Bubbles show own messages on the right; a list time and a room time agree for a user whose zone is not the browser's | Regression client spec for the time; the rest in the acceptance spec |
 | Back closes a sheet, then a pane, then the room, and does not leave the app from inside a room | Regression client spec for `moqui.back`; the Android gesture on a real phone |
 | The composer stays above the keyboard; a long press vibrates | Real phone. The manifest has no `VIBRATE` permission, so `navigator.vibrate` may do nothing in the app; if so, add a host command |
@@ -1062,7 +1070,7 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 | # | Phase | Sections | Size |
 |---|---|---|---|
 | 0 | Fixes from the UI review: done 2026-11-16 (`82affc535`) | §5.2 paging, §6.5 | Small |
-| 1 | Shared helpers and the rest of the phone layout | §2 | Medium |
+| 1 | Shared helpers and the rest of the phone layout: done 2026-11-17 (`c88df4a3f`) | §2 | Medium |
 | 2 | Notifications | §7 | Large |
 | 3 | E2EE labels and the call rule | §6.1–§6.4 | Medium |
 | 4 | Calls: flow and screen | §8.3 items 1–7 | Large |
@@ -1137,15 +1145,24 @@ own pass fixed them (`d34cc6645` for COM-UI-020, then `5f4787d0f`).
 
 #### Phase 1: shared helpers and the rest of the phone layout
 
-Work: §2.2 steps 2 to 7. The helpers of step 1 are built (phase 0): `moqui.chat` has the times, room icon, counts,
-archive, snippet and thresholds. The Send button (step 5) and the home list's icon and `setNotification` (step 6) are
-done too.
-- `moqui.back` and its three callers (Esc, the shell's Back, Android back in `WryActivity.kt`).
-- Swipe to reply. The picker's phone number and named room. The attach choice.
-- Files: `WebrootChat.js`, `WebrootVue.qvt.js`, `Chat.qvue`, `ChatPanel.qvue`, `Root.qvue`,
-  `crates/moqui-mobile/patches/wry/…/WryActivity.kt`, `bundled-screens.js` (regenerated).
+Done 2026-11-17 in `c88df4a3f`. Work: §2.2 steps 2 to 7. The helpers of step 1 were built in phase 0, and so were the
+Send button (step 5) and the home list's icon and `setNotification` (step 6).
+
+| Work | Files |
+|---|---|
+| `moqui.back` (`push`, `track`, `pop`, `base`) and its callers: Esc (`closeTopmost`, Chat's `onEscape`), the shell's Back and `goBack` (then its history, `historyBack`), Android's back (`MainActivity.kt`, before Tauri's own back: the WebView's history, then leaving) | `WebrootVue.qvt.js`, `Chat.qvue`, `ChatPanel.qvue`, `Root.qvue`, `gen/android/…/MainActivity.kt` |
+| The back arrows name where they go: "Back to chats", "Back to the room" | `Chat.qvue`, `ChatPanel.qvue` |
+| Swipe to reply (64 px, the room's timeline; it cancels the long press) | `Chat.qvue` |
+| The pickers: a typed number (`searchUsers` with `numbers=true`), the user's numbers (`textNumbers`), the number's room (`textRoom`, `open#PairRoom`); a name with two or more people makes a private room; `moqui.chat.pickKind`, `startChat` | `Chat.xml`, `WebrootChat.js`, `Chat.qvue`, `ChatPanel.qvue` |
+| Attach with bubbles: the camera, the gallery or a file | `Chat.qvue` |
+| Bundled screens regenerated | `bundled-screens.js` |
+
 - Terminal: no change.
-- Done when: §2.3.
+- Tests. Regression: `moqui.back`'s rules (`WebrootVue.qvt.shell`), the picker's rules (`WebrootChat`), Back and the
+  swipe in the bundled shell (`ShellSync`), and Chat's number transitions (`BasicCommsTexts`). Acceptance: `PhoneChat`
+  (§2.3 at 390×844, offline, in the bundled shell).
+- Left for a real phone (§2.3, §18.4): the back gesture on a device, the composer above the keyboard, the long press's
+  vibration, the camera and gallery choosers.
 
 #### Phase 2: notifications
 

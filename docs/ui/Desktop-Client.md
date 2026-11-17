@@ -323,8 +323,10 @@ and the libraries they load (tiptap, the crypto library) are in `libs.txt`; a go
 (`UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled`, `call_components_are_precompiled`).
 
 - **In the shell:** Root routes those screens with its own history under the account's comms app (`calls.appRoot` of the
-  client config). A link to them from the OS or a notification (`mailto:`, `tel:`, `sip:`, a chat or ring notification)
-  is kept by the host until the shell takes it, across a sign-in or a load (`client/windows.rs` `open_page`).
+  client config). Its Back closes what a screen opened first (a dialog, a sheet, a pane or thread, a room opened in the
+  home's list, the drawer over a narrow window: `moqui.back`, [Qvt-Client](Qvt-Client.md)), then goes back in that
+  history; a link followed as a layer closes by Back (a thread's) is a step back, not a new entry. A link to them from the
+  OS or a notification (`mailto:`, `tel:`, `sip:`, a chat or ring notification) is kept by the host until the shell takes it, across a sign-in or a load (`client/windows.rs` `open_page`).
 - **In app windows:** every other screen, the server's own `/qapps`: Calls' History, Voicemail and Recordings; Settings,
   Settings/Calls too (its device choices are per-origin `localStorage`, so the app window's; the call lobby's pickers set
   the shell's); Home and the notifications; MessageDetail; the quick creates; an attachment opened to view; anything not

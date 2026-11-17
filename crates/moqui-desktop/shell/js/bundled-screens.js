@@ -27,7 +27,8 @@ module.exports = {
     inject: { mScreen: { default: null } },
     data() {
         return { loaded: !!memo.rooms, rooms: memo.rooms || [], me: memo.me || {}, prefs: memo.prefs || {}, roomId: null, componentVersion: 0,
-            height: 520, newOpen: false, newUserIds: [], busy: false, filter: '', archivedView: false, roomSheet: { open: false, room: null } };
+            height: 520, newOpen: false, newUserIds: [], newName: '', fromNumber: '', numbers: [], busy: false, filter: '', archivedView: false,
+            roomSheet: { open: false, room: null } };
     },
     computed: {
         // Qvue screens have no container ID wrapper; the loader supplies its identity before mount or measurement.
@@ -51,6 +52,18 @@ module.exports = {
                 return (right.lastEventDate || 0) - (left.lastEventDate || 0);
             });
             return this.home ? list : list.slice(0, MAX_SHOWN);
+        },
+        // the new-chat picker: what is picked (moqui.chat.pickKind), and phone numbers offered when the user has one that texts
+        pickKind() { return moqui.chat.pickKind(this.newUserIds); },
+        pickParameters() { return { numbers: this.numbers.length ? 'true' : '' }; },
+        toLabel() { return this.numbers.length ? t('To: people or a phone number') : t('To: one person or several'); },
+        pickHint() {
+            const kind = this.pickKind;
+            if (kind === 'number') return t('A text from your number: the conversation with this number opens.');
+            if (kind === 'mixed') return t('A text goes to one phone number: start it with the number alone.');
+            if (kind === 'group') return t('A group chat; with a name it is a room, which can take more people later.');
+            return this.numbers.length ? t('Pick one person for a direct chat, several for a group, or type a phone number to text it.')
+                : t('Pick one person for a direct chat, or several for a group.');
         },
         archivedCount() { return this.rooms.filter((room) => room.isMember && this.isArchived(room)).length; },
         unreadTotal() { return this.rooms.reduce((sum, room) => sum + (this.countsOf(room).unread || 0), 0); }
@@ -161,16 +174,28 @@ module.exports = {
             const room = this.rooms.find((item) => item.chatRoomId === id);
             if (room) { room.unreadCount = 0; room.mentionCount = 0; }
         },
-        toggleNew() { this.newOpen = !this.newOpen; this.newUserIds = []; },
-        openNew() { this.newUserIds = []; this.newOpen = true; },
+        toggleNew() { if (this.newOpen) this.newOpen = false; else this.openNew(); },
+        openNew() {
+            this.newUserIds = [];
+            this.newName = '';
+            this.newOpen = true;
+            // the numbers the user may text from, read again each time (none offline: the picker is people only)
+            moqui.request(this.url('textNumbers')).then((result) => {
+                this.numbers = moqui.chat.numberOptions(((result && result.json) || {}).numberList);
+                if (!this.numbers.some((number) => number.value === this.fromNumber)) this.fromNumber = this.numbers.length ? this.numbers[0].value : '';
+            }, () => {});
+        },
+        // Start: the number's room, a named room, or the direct or group chat (moqui.chat.startChat)
         startDirect() {
-            const ids = this.newUserIds || [];
-            if (!ids.length) return;
+            const pick = { values: this.newUserIds || [], name: this.newName, fromNumber: this.fromNumber };
+            if (moqui.chat.pickKind(pick.values) === 'none') return;
             this.busy = true;
-            this.post('createDirect', { userIds: ids.join(',') }).then((json) => {
+            moqui.chat.startChat((name, params) => this.post(name, params), pick).then((json) => {
                 this.busy = false;
+                if (!json || !json.chatRoomId) return;
                 this.newOpen = false;
                 this.newUserIds = [];
+                this.newName = '';
                 this.scheduleRooms();
                 this.openRoom(json.chatRoomId);
             }, () => { this.busy = false; });
@@ -207,6 +232,9 @@ module.exports = {
         }
     },
     mounted() {
+        // what Back closes (moqui.back): the room opened here, the picker, a room's actions, the archive
+        this.backOff = moqui.back ? [moqui.back.track(this, () => this.roomId, () => this.closeRoom()), moqui.back.track(this, () => this.archivedView, () => { this.archivedView = false; }),
+            moqui.back.track(this, () => this.newOpen, () => { this.newOpen = false; }), moqui.back.track(this, () => this.roomSheet.open, () => { this.roomSheet.open = false; })] : [];
         this.measure();
         if (this.inDialog) this.newOpen = true;
         else if (memo.roomId) this.openRoom(memo.roomId);
@@ -222,6 +250,7 @@ module.exports = {
         this.refresh();
     },
     beforeUnmount() {
+        (this.backOff || []).forEach((off) => off());
         if (this.resizer) this.resizer.disconnect();
         this.holdCancel();
         (this.unsubscribe || []).forEach((off) => off());
@@ -241,6 +270,7 @@ module.exports = {
                   const _component_q_icon = _resolveComponent("q-icon")
                   const _component_q_input = _resolveComponent("q-input")
                   const _component_m_drop_down = _resolveComponent("m-drop-down")
+                  const _component_m_text_line = _resolveComponent("m-text-line")
                   const _component_q_separator = _resolveComponent("q-separator")
                   const _component_q_skeleton = _resolveComponent("q-skeleton")
                   const _component_m_avatar = _resolveComponent("m-avatar")
@@ -272,7 +302,7 @@ module.exports = {
                                   round: "",
                                   dense: "",
                                   icon: "sym_o_arrow_back",
-                                  "aria-label": _ctx.t('Back'),
+                                  "aria-label": _ctx.t('Back to chats'),
                                   onClick: $event => (_ctx.archivedView = false)
                                 }, null, 8, ["aria-label", "onClick"]),
                                 _createElementVNode("div", { class: "col ellipsis text-h6 q-pl-sm" }, _toDisplayString(_ctx.t('Archived')), 1)
@@ -387,8 +417,36 @@ module.exports = {
                                   multiple: "",
                                   "server-search": "",
                                   "options-url": _ctx.url('searchUsers'),
-                                  label: _ctx.t('To: one person or several')
-                                }, null, 8, ["modelValue", "onUpdate:modelValue", "options-url", "label"]),
+                                  "options-parameters": _ctx.pickParameters,
+                                  label: _ctx.toLabel
+                                }, null, 8, ["modelValue", "onUpdate:modelValue", "options-url", "options-parameters", "label"]),
+                                (_ctx.pickKind === 'group')
+                                  ? (_openBlock(), _createBlock(_component_m_text_line, {
+                                      key: 0,
+                                      modelValue: _ctx.newName,
+                                      "onUpdate:modelValue": $event => ((_ctx.newName) = $event),
+                                      name: "panelRoomName",
+                                      label: _ctx.t('Name (optional): makes a room'),
+                                      class: "q-mt-xs"
+                                    }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]))
+                                  : _createCommentVNode("", true),
+                                (_ctx.pickKind === 'number' && _ctx.numbers.length > 1)
+                                  ? (_openBlock(), _createBlock(_component_m_drop_down, {
+                                      key: 1,
+                                      modelValue: _ctx.fromNumber,
+                                      "onUpdate:modelValue": $event => ((_ctx.fromNumber) = $event),
+                                      name: "panelFromNumber",
+                                      options: _ctx.numbers,
+                                      label: _ctx.t('From'),
+                                      class: "q-mt-xs"
+                                    }, null, 8, ["modelValue", "onUpdate:modelValue", "options", "label"]))
+                                  : _createCommentVNode("", true),
+                                (_ctx.pickKind === 'mixed')
+                                  ? (_openBlock(), _createElementBlock("div", {
+                                      key: 2,
+                                      class: "text-caption text-negative q-mt-xs"
+                                    }, _toDisplayString(_ctx.pickHint), 1))
+                                  : _createCommentVNode("", true),
                                 _createElementVNode("div", { class: "row q-gutter-x-sm q-mt-xs" }, [
                                   _createVNode(_component_q_btn, {
                                     dense: "",
@@ -397,7 +455,7 @@ module.exports = {
                                     color: "primary",
                                     icon: "sym_o_chat",
                                     label: _ctx.t('Start'),
-                                    disable: !(_ctx.newUserIds || []).length,
+                                    disable: _ctx.pickKind === 'none' || _ctx.pickKind === 'mixed',
                                     loading: _ctx.busy,
                                     onClick: _ctx.startDirect
                                   }, null, 8, ["label", "disable", "loading", "onClick"]),
@@ -716,7 +774,7 @@ module.exports = {
                                           round: "",
                                           dense: "",
                                           icon: "sym_o_arrow_back",
-                                          "aria-label": _ctx.t('Back')
+                                          "aria-label": _ctx.t('Back to chats')
                                         }, null, 8, ["aria-label"]), [
                                           [_directive_close_popup]
                                         ]),
@@ -730,9 +788,33 @@ module.exports = {
                                           multiple: "",
                                           "server-search": "",
                                           "options-url": _ctx.url('searchUsers'),
-                                          label: _ctx.t('To: one person or several')
-                                        }, null, 8, ["modelValue", "onUpdate:modelValue", "options-url", "label"]),
-                                        _createElementVNode("div", { class: "text-caption m-muted q-mt-sm" }, _toDisplayString(_ctx.t('Pick one person for a direct chat, or several for a group.')), 1)
+                                          "options-parameters": _ctx.pickParameters,
+                                          label: _ctx.toLabel
+                                        }, null, 8, ["modelValue", "onUpdate:modelValue", "options-url", "options-parameters", "label"]),
+                                        (_ctx.pickKind === 'group')
+                                          ? (_openBlock(), _createBlock(_component_m_text_line, {
+                                              key: 0,
+                                              modelValue: _ctx.newName,
+                                              "onUpdate:modelValue": $event => ((_ctx.newName) = $event),
+                                              name: "panelRoomName",
+                                              label: _ctx.t('Name (optional): makes a room'),
+                                              class: "q-mt-sm"
+                                            }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]))
+                                          : _createCommentVNode("", true),
+                                        (_ctx.pickKind === 'number' && _ctx.numbers.length > 1)
+                                          ? (_openBlock(), _createBlock(_component_m_drop_down, {
+                                              key: 1,
+                                              modelValue: _ctx.fromNumber,
+                                              "onUpdate:modelValue": $event => ((_ctx.fromNumber) = $event),
+                                              name: "panelFromNumber",
+                                              options: _ctx.numbers,
+                                              label: _ctx.t('From'),
+                                              class: "q-mt-sm"
+                                            }, null, 8, ["modelValue", "onUpdate:modelValue", "options", "label"]))
+                                          : _createCommentVNode("", true),
+                                        _createElementVNode("div", {
+                                          class: _normalizeClass(["text-caption q-mt-sm m-chat-new-hint", _ctx.pickKind === 'mixed' ? 'text-negative' : 'm-muted'])
+                                        }, _toDisplayString(_ctx.pickHint), 3)
                                       ]),
                                       _createVNode(_component_q_space),
                                       _createElementVNode("div", { class: "q-pa-md" }, [
@@ -740,11 +822,11 @@ module.exports = {
                                           unelevated: "",
                                           "no-caps": "",
                                           color: "primary",
-                                          class: "full-width",
+                                          class: "full-width m-chat-new-start",
                                           size: "lg",
                                           icon: "sym_o_chat",
                                           label: _ctx.t('Start'),
-                                          disable: !(_ctx.newUserIds || []).length,
+                                          disable: _ctx.pickKind === 'none' || _ctx.pickKind === 'mixed',
                                           loading: _ctx.busy,
                                           onClick: _ctx.startDirect
                                         }, null, 8, ["label", "disable", "loading", "onClick"])
@@ -1145,7 +1227,7 @@ module.exports = {
             if (!url) return;
             const target = this.route(url);
             if (!target) { host().openRemote(this.getLinkPath(String(url))).catch((err) => this.failed(err)); return; }
-            if (pushState !== false && this.view) this.backStack = this.backStack.concat([this.currentLinkUrl]).slice(-30);
+            const before = this.view ? this.currentLinkUrl : null;
             // another screen: its containers register again (the same screen keeps them, a compose dock stays)
             if (target.view !== this.view) this.activeContainers = {};
             this.view = target.view;
@@ -1153,6 +1235,7 @@ module.exports = {
             this.currentParameters = target.parameters;
             this.bodyParameters = bodyParameters || null;
             this.drawer = this.drawer && this.$q.screen.gt.sm;
+            if (pushState !== false && before) this.remember(before);
             if (onComplete) onComplete({ name: this.currentPathList[this.currentPathList.length - 1], path: this.currentPath, query: this.currentParameters,
                 params: this.bodyParameters || {}, fullPath: this.currentLinkUrl, meta: {}, hash: '', matched: [{ path: this.currentPath }] });
         },
@@ -1160,11 +1243,31 @@ module.exports = {
         replaceUrl(url) { this.setUrl(url, null, null, false); },
         setParameters(parameters) {
             if (parameters) {
-                if (this.view) this.backStack = this.backStack.concat([this.currentLinkUrl]).slice(-30);
+                const before = this.view ? this.currentLinkUrl : null;
                 this.currentParameters = Object.assign({}, this.currentParameters, parameters);
+                if (before) this.remember(before);
             }
         },
+        // the shell's history: the place left (before) goes on the back stack. A link a back layer follows as it closes
+        // (moqui.back.closing: a thread closed by Back) is a step back instead: it takes the place now off the top of the
+        // stack when it is there, and puts nothing on, so the next Back does not open the thread again.
+        remember(before) {
+            const stack = this.backStack;
+            const now = this.currentLinkUrl;
+            if (now === before) return;
+            if (moqui.back && moqui.back.closing) {
+                if (stack.length && stack[stack.length - 1] === now) this.backStack = stack.slice(0, -1);
+                return;
+            }
+            this.backStack = stack.concat([before]).slice(-30);
+        },
+        // Back (the header's, and Android's through moqui.back.pop): the top back layer (a dialog, menu, sheet, pane or
+        // room the screens opened: moqui.back), else the shell's history (historyBack, moqui.back.base)
         goBack() {
+            if (moqui.back) moqui.back.pop();
+            else this.historyBack();
+        },
+        historyBack() {
             const stack = this.backStack.slice();
             const previous = stack.pop();
             this.backStack = stack;
@@ -1172,7 +1275,7 @@ module.exports = {
             else this.goHome();
         },
         goHome() { this.view = null; this.currentPathList = []; this.currentParameters = {}; this.backStack = []; this.activeContainers = {}; },
-        goPreviousScreen() { this.goBack(); },
+        goPreviousScreen() { this.historyBack(); },
         // a path of the screens (/apps/...) as the server's page (/qapps/...)
         getLinkPath(path) { return String(path || '').replace(/^\/apps(\/|$)/, this.linkBasePath + '$1'); },
         shellLoadPath(url) { return String(url || '').replace(/^\/qapps(\/|$)/, this.basePath + '$1'); },
@@ -1257,6 +1360,13 @@ module.exports = {
         }
     },
     mounted() {
+        // Back with no layer open goes back in the shell's history, and at the home answers that it did nothing (so
+        // Android's back leaves the app there)
+        if (moqui.back) {
+            moqui.back.base = () => { if (!this.view) return false; this.historyBack(); return true; };
+            // the drawer over the page (a narrow screen) is a layer too
+            this.backOff = moqui.back.track(this, () => this.drawer && this.$q.screen.lt.md, () => { this.drawer = false; });
+        }
         // what the host had to tell after the sign-in (an account kept as a personal device's)
         if (this.state && this.state.notice) this.$q.notify({ type: 'info', message: t(this.state.notice), timeout: 12000 });
         if (moqui.chat) moqui.chat.start(this);
@@ -1275,7 +1385,11 @@ module.exports = {
             }, () => {});
         }, 5 * 60 * 1000);
     },
-    unmounted() { clearInterval(this.countsTimer); }
+    unmounted() {
+        clearInterval(this.countsTimer);
+        if (moqui.back && moqui.back.base) moqui.back.base = null;
+        if (this.backOff) this.backOff();
+    }
 };
         })(module.exports);
         const component = Object.assign({}, returned !== undefined ? returned : module.exports);
@@ -2491,6 +2605,8 @@ module.exports = {
 const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
 const DAY = 86400000;
 const GROUP_MILLIS = 5 * 60000;
+// how far a bubble is swiped to the right to reply to it
+const SWIPE_REPLY_PX = 64;
 const EDIT_WINDOW = 24 * 3600000;
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '🎉', '👀', '✅'];
 const EMOJI = ['😀', '😃', '😄', '😁', '😅', '😂', '🙂', '😉', '😊', '😍', '🤔', '😐', '😴', '😎', '🥳', '😢', '😮', '😬', '🙃', '🤝',
@@ -2608,8 +2724,8 @@ const messageTemplate = `
         :data-seq="item.eventSeq" role="article" :tabindex="actionsAvailable ? 0 : -1" :aria-label="messageLabel"
         @focusin="actionFocus = true" @focusout="actionFocus = $event.currentTarget.contains($event.relatedTarget)"
         @mouseenter="room.hover(item, inThread)" @mouseleave="room.unhover(item, inThread)" @click="room.tap(item, inThread)"
-        @touchstart.passive="room.holdStart(item, inThread, $event)" @touchmove.passive="room.holdCancel()" @touchend="room.holdEnd($event)"
-        @contextmenu="room.contextMenu(item, inThread, $event)">
+        @touchstart.passive="room.holdStart(item, inThread, $event)" @touchmove.passive="room.holdMove($event)" @touchend="room.holdEnd($event)"
+        @touchcancel="room.holdEnd($event)" @contextmenu="room.contextMenu(item, inThread, $event)" :style="room.swipeStyle(item, inThread)">
     <div class="self-stretch" :class="item.highlight ? 'bg-primary' : ''" style="width:3px;margin-right:3px;border-radius:2px"></div>
     <div style="width:40px;min-width:40px" class="q-pr-sm m-chat-avatar">
         <m-avatar v-if="!item.grouped" :name="item.senderName" :user-id="item.senderUserId || undefined" size="32px" class="q-mt-xs"></m-avatar>
@@ -2817,8 +2933,17 @@ const composerTemplate = `
     <m-rich-text ref="editor" v-model="body" :name="'chatBody' + uid" light rows="1" :enter="room.prefs.enterSends === false ? 'newline' : 'submit'"
             :label="editorLabel" :placeholder="placeholder" :mention-url="room.url('mentionUsers')" :mention-parameters="{chatRoomId: room.roomId}" @submit="send"></m-rich-text>
     <div class="row items-center no-wrap q-mt-xs m-chat-composer-actions">
-        <q-btn flat round dense size="sm" icon="sym_o_attach_file" :aria-label="room.t('Attach files')" :disable="room.offline" @click="pickFiles">
-            <q-tooltip>{{room.offline ? room.t('Files go up when you are back online') : room.t('Attach files')}}</q-tooltip></q-btn>
+        <q-btn flat round dense size="sm" icon="sym_o_attach_file" class="m-chat-attach" :aria-label="room.t('Attach files')" :disable="room.offline" @click="attachClick">
+            <q-tooltip>{{room.offline ? room.t('Files go up when you are back online') : room.t('Attach files')}}</q-tooltip>
+            <!-- on a phone (bubbles): the camera, the gallery or a file -->
+            <q-menu v-if="room.phoneAttach" anchor="top left" self="bottom left"><q-list class="m-chat-attach-menu" style="min-width:200px">
+                <q-item clickable v-close-popup data-attach="camera" @click="pickNative('camera')"><q-item-section avatar><q-icon name="sym_o_photo_camera"></q-icon></q-item-section>
+                    <q-item-section>{{room.t('Camera')}}</q-item-section></q-item>
+                <q-item clickable v-close-popup data-attach="gallery" @click="pickNative('gallery')"><q-item-section avatar><q-icon name="sym_o_photo_library"></q-icon></q-item-section>
+                    <q-item-section>{{room.t('Photos and videos')}}</q-item-section></q-item>
+                <q-item clickable v-close-popup data-attach="file" @click="pickFiles"><q-item-section avatar><q-icon name="sym_o_draft"></q-icon></q-item-section>
+                    <q-item-section>{{room.t('File')}}</q-item-section></q-item>
+            </q-list></q-menu></q-btn>
         <q-btn flat round dense size="sm" icon="sym_o_mood" :aria-label="room.t('Emoji')"><q-tooltip>{{room.t('Emoji')}}</q-tooltip>
             <q-menu anchor="top left" self="bottom left"><div class="q-pa-xs row" style="width:236px">
                 <q-btn v-for="key in room.emoji" :key="key" flat dense size="sm" class="q-px-xs" :label="key" v-close-popup @click="insert(key)"></q-btn>
@@ -2832,7 +2957,9 @@ const composerTemplate = `
         <q-btn dense unelevated no-caps color="primary" icon="sym_o_send" class="m-chat-send" :label="room.useBubbles ? undefined : room.t('Send')" :aria-label="room.t('Send')"
                 :disable="!canSend" :loading="sending" @click="send"></q-btn>
     </div>
-    <div class="hidden"><m-file ref="picker" v-model="picked" :name="'chatFile' + uid" multiple @update:model-value="onPicked"></m-file></div>
+    <div class="hidden"><m-file ref="picker" v-model="picked" :name="'chatFile' + uid" multiple @update:model-value="onPicked"></m-file>
+        <input ref="camera" type="file" accept="image/*" capture="environment" :name="'chatCamera' + uid" @change="onNative">
+        <input ref="gallery" type="file" accept="image/*,video/*" multiple :name="'chatGallery' + uid" @change="onNative"></div>
 </div>`;
 
 let composerCount = 0;
@@ -2926,6 +3053,14 @@ const chatComposer = {
         pickFiles() {
             const input = this.$refs.picker && this.$refs.picker.$el && this.$refs.picker.$el.querySelector('input[type=file]');
             if (input) input.click();
+        },
+        // the attach button: the file picker, or on a phone its menu (camera, gallery, file)
+        attachClick() { if (!this.room.phoneAttach) this.pickFiles(); },
+        pickNative(kind) { const input = this.$refs[kind]; if (input) input.click(); },
+        onNative(event) {
+            const list = Array.from((event.target && event.target.files) || []);
+            if (event.target) event.target.value = '';
+            if (list.length) this.upload(list);
         },
         onPicked(files) {
             const list = Array.isArray(files) ? files : (files ? [files] : []);
@@ -3027,7 +3162,7 @@ const chatMessage = {
 const roomTemplate = `
 <div class="column no-wrap relative-position" :class="useBubbles ? 'm-chat-phone' : ''" style="height:100%;min-height:0" @dragover.prevent="onDragOver" @dragleave.self="dragOver = false" @drop.prevent="onDrop">
     <div class="row items-center no-wrap q-px-sm q-py-xs" style="min-height:52px">
-        <q-btn v-if="canGoBack" flat round dense icon="sym_o_arrow_back" :aria-label="t('Back')" class="q-mr-xs" @click="$emit('back')"><q-tooltip>{{t('Back')}}</q-tooltip></q-btn>
+        <q-btn v-if="canGoBack" flat round dense icon="sym_o_arrow_back" :aria-label="t('Back to chats')" class="q-mr-xs m-chat-back" @click="$emit('back')"><q-tooltip>{{t('Back to chats')}}</q-tooltip></q-btn>
         <template v-if="room">
             <m-avatar v-if="isDirect && room.otherUserId" :name="displayName" :user-id="room.otherUserId" size="34px"></m-avatar>
             <q-avatar v-else size="34px" rounded class="m-tonal text-primary" :icon="roomIcon"></q-avatar>
@@ -3184,7 +3319,7 @@ const roomTemplate = `
         <q-separator v-if="side && !sideOverlay" vertical></q-separator>
         <div v-if="side" class="column no-wrap" :class="sideOverlay ? 'col' : ''" :style="sideOverlay ? 'min-width:0' : 'width:360px;min-width:360px'">
             <div class="row items-center no-wrap q-px-sm" style="min-height:44px">
-                <q-btn v-if="sideOverlay" flat round dense icon="sym_o_arrow_back" :aria-label="t('Back')" @click="closeSide"></q-btn>
+                <q-btn v-if="sideOverlay" flat round dense icon="sym_o_arrow_back" :aria-label="t('Back to the room')" class="m-chat-side-back" @click="closeSide"><q-tooltip>{{t('Back to the room')}}</q-tooltip></q-btn>
                 <div class="text-subtitle2 q-ml-xs col ellipsis">{{sideTitle}}</div>
                 <q-btn v-if="!sideOverlay" flat round dense icon="sym_o_close" :aria-label="t('Close')" @click="closeSide"><q-tooltip>{{t('Close')}} (Esc)</q-tooltip></q-btn>
             </div>
@@ -3492,6 +3627,7 @@ const chatRoom = {
             events: [], hasMoreBefore: false, hasMoreAfter: false, gapBefore: false, gapAfter: false, loadingOlder: false, loadingNewer: false,
             myLastRead: 0, dividerSeq: null, highlightSeq: null, atBottom: true, newBelow: 0, holdRead: false,
             hoverKey: null, tapKey: null, sheet: { open: false, item: null, inThread: false, allEmoji: false }, editing: null, replyTo: null, side: null,
+            swipeKey: null, swipeDx: 0,
             threadView: { rootSeq: null, events: [], loading: false }, pinned: { list: [], loading: false },
             threadsPane: { list: [], loading: false, hasMore: false, mine: false, next: null }, filesPane: { list: [], loading: false, next: null, kind: 'all' },
             forward: { open: false, item: null, roomId: null, comment: '', busy: false },
@@ -3555,6 +3691,8 @@ const chatRoom = {
         narrow() { return this.compact || (this.width > 0 && this.width < moqui.chat.NARROW_PX); },
         // a phone messaging layout: mine on the right, the others on the left, each in a bubble (the phone home, the stacked Chat, a narrow room)
         useBubbles() { return this.bubbles || this.narrow; },
+        // the attach choice of a phone (camera, gallery, file): bubbles on a mobile platform, not the desktop's narrow tray
+        phoneAttach() { return this.useBubbles && !!(this.$q.platform && this.$q.platform.is && this.$q.platform.is.mobile); },
         sideOverlay() { return this.compact || (this.width > 0 && this.width < moqui.chat.SIDE_OVERLAY_PX); },
         sideTitle() {
             return { thread: t('Thread'), members: fill(t('Members ({count})'), { count: this.members.length }), pinned: t('Pinned messages'),
@@ -4180,15 +4318,58 @@ const chatRoom = {
         // a long press on a message (in bubbles, as on a phone) opens its actions as a sheet; a move or a short tap does not
         holdStart(item, inThread, event) {
             this.holdCancel();
+            this.touchFrom = null;
             if (!this.useBubbles || (event.touches && event.touches.length > 1)) return;
             if (event.target && event.target.closest && event.target.closest('input, textarea, [contenteditable="true"], .q-btn')) return;
+            const touch = event.touches && event.touches[0];
+            // a touch in what scrolls sideways (a wide code block or table) is that scroll, never a swipe
+            if (touch && !this.scrollsSideways(event.target, event.currentTarget)) this.touchFrom = { x: touch.clientX, y: touch.clientY, item, inThread: !!inThread };
             this.holdTimer = setTimeout(() => { this.holdTimer = null; this.held = true; this.openSheet(item, inThread); }, 450);
         },
         holdCancel() { if (this.holdTimer) { clearTimeout(this.holdTimer); this.holdTimer = null; } },
+        // whether target, up to the message's row, is in a code block or table, or in an element that scrolls sideways
+        scrollsSideways(target, row) {
+            if (target && target.closest && target.closest('pre, table')) return true;
+            for (let el = target; el && el !== row && el.nodeType === 1; el = el.parentElement) {
+                const overflow = window.getComputedStyle(el).overflowX;
+                if ((overflow === 'auto' || overflow === 'scroll') && el.scrollWidth > el.clientWidth + 1) return true;
+            }
+            return false;
+        },
+        // a move cancels the long press; in the room's timeline, one to the right is a swipe to reply, which the bubble
+        // follows and which replies when let go past SWIPE_REPLY_PX (an up or down move is a scroll, not a swipe)
+        holdMove(event) {
+            this.holdCancel();
+            const from = this.touchFrom;
+            const touch = event.touches && event.touches[0];
+            if (!from || !touch) return;
+            const dx = touch.clientX - from.x;
+            const dy = Math.abs(touch.clientY - from.y);
+            if (!this.swipeKey) {
+                if (dy > 16 && dy > dx) { this.touchFrom = null; return; }
+                if (dx < 12 || dx < dy * 2 || from.inThread || !this.canPost || from.item.redacted || this.isEditing(from.item)) return;
+                this.swipeKey = 'm' + from.item.eventSeq;
+            }
+            this.swipeDx = Math.max(0, Math.min(dx, SWIPE_REPLY_PX * 1.5));
+        },
         holdEnd(event) {
             this.holdCancel();
+            const from = this.touchFrom;
+            const replying = !!(from && this.swipeKey && this.swipeDx >= SWIPE_REPLY_PX);
+            this.touchFrom = null;
+            this.swipeKey = null;
+            this.swipeDx = 0;
+            if (replying) {
+                this.startReply(from.item);
+                if (navigator.vibrate) { try { navigator.vibrate(10); } catch (e) { /* no vibration here */ } }
+                if (event.cancelable) event.preventDefault();
+                return;
+            }
             // the press that opened the sheet is not also a click on what is under it
             if (this.held) { this.held = false; if (event.cancelable) event.preventDefault(); }
+        },
+        swipeStyle(item, inThread) {
+            return !inThread && this.swipeKey === 'm' + item.eventSeq && this.swipeDx ? { transform: 'translateX(' + this.swipeDx + 'px)' } : null;
         },
         contextMenu(item, inThread, event) {
             if (!this.useBubbles) return;
@@ -4814,10 +4995,12 @@ const chatRoom = {
             else this.openInChat();
         },
         openInChat() { this.$root.setUrl(this.linkBase + '?chatRoomId=' + encodeURIComponent(this.roomId)); },
-        // Esc: the edit, then the side pane, then mark the room read
+        // Esc: an open dialog or menu closes itself; else the edit, then the top back layer (moqui.back: the side pane,
+        // a thread), then mark the room read
         onEscape() {
+            if (moqui.back && moqui.back.popupOpen()) return false;
             if (this.editing) { this.cancelEdit(); return true; }
-            if (this.side) { this.closeSide(); return true; }
+            if (moqui.back ? moqui.back.pop({ popups: false, base: false, within: this.$el }) : (this.side && (this.closeSide(), true))) return true;
             this.markRead(true);
             return true;
         },
@@ -4832,6 +5015,12 @@ const chatRoom = {
     mounted() {
         this.composers = {};
         this.unsubscribe = [];
+        // what Back closes (moqui.back): the message sheet, an edit, the side pane or thread
+        if (moqui.back) {
+            this.unsubscribe.push(moqui.back.track(this, () => this.side, () => this.closeSide()));
+            this.unsubscribe.push(moqui.back.track(this, () => this.editing, () => this.cancelEdit()));
+            this.unsubscribe.push(moqui.back.track(this, () => this.sheet.open, () => { this.sheet.open = false; }));
+        }
         if (moqui.chat) {
             this.unsubscribe.push(moqui.chat.on('event', (payload) => this.onEvent(payload)));
             if (moqui.crypto && moqui.crypto.onRoomKeys) this.unsubscribe.push(moqui.crypto.onRoomKeys(() => this.onRoomKeys()));
@@ -4875,7 +5064,7 @@ module.exports = {
     data() {
         return {
             loaded: false, height: 600, me: {}, prefs: {}, rooms: [], filter: 'all', search: '', drafts: {}, roomId: null, seq: null, thread: null,
-            newDirect: { open: false, userIds: [], busy: false }, newRoom: { open: false, type: 'private', name: '', topic: '', userIds: [], busy: false },
+            newDirect: { open: false, userIds: [], busy: false, name: '', fromNumber: '', numbers: [] }, newRoom: { open: false, type: 'private', name: '', topic: '', userIds: [], busy: false },
             browse: { open: false, search: '', list: [], loading: false }
         };
     },
@@ -4896,6 +5085,16 @@ module.exports = {
             return me.statusText || me.emoji ? ((me.emoji ? me.emoji + ' ' : '') + (me.statusText || '')) : option.label;
         },
         memberRooms() { return this.rooms.filter((room) => room.isMember); },
+        // New direct message: what is picked (moqui.chat.pickKind), and phone numbers offered when the user has one that texts
+        pickKind() { return moqui.chat.pickKind(this.newDirect.userIds); },
+        pickParameters() { return { numbers: (this.newDirect.numbers || []).length ? 'true' : '' }; },
+        pickHint() {
+            const kind = this.pickKind;
+            if (kind === 'number') return t('A text from your number: the conversation with this number opens.');
+            if (kind === 'mixed') return t('A text goes to one phone number: start it with the number alone.');
+            if (kind === 'group') return t('A group chat; with a name it is a room, which can take more people later.');
+            return t('One person, or several for a group message. A conversation you already have with them opens again.');
+        },
         filterItems() {
             const unread = this.memberRooms.filter((room) => this.countsOf(room).unread || this.countsOf(room).mentions).length;
             const mentions = this.memberRooms.filter((room) => this.countsOf(room).mentions).length;
@@ -5102,14 +5301,35 @@ module.exports = {
         clearStatus() { if (moqui.chat) moqui.chat.setStatus({ clearStatus: true }); },
 
         // ---- new conversations ----
-        openNewDirect() { if (needsConnection()) return; this.newDirect = { open: true, userIds: [], busy: false }; },
+        openNewDirect() {
+            if (needsConnection()) return;
+            this.newDirect = { open: true, userIds: [], busy: false, name: '', fromNumber: '', numbers: this.newDirect.numbers || [] };
+            // the numbers the user may text from, read again each time
+            this.get('textNumbers').then((json) => {
+                this.newDirect.numbers = moqui.chat.numberOptions(json.numberList);
+                if (!this.newDirect.fromNumber && this.newDirect.numbers.length) this.newDirect.fromNumber = this.newDirect.numbers[0].value;
+            }, () => {});
+        },
+        // Start in New direct message: the number's room, a named room, or the direct chat (moqui.chat.startChat)
+        startPicked() {
+            const pick = { values: this.newDirect.userIds || [], name: this.newDirect.name, fromNumber: this.newDirect.fromNumber };
+            if (moqui.chat.pickKind(pick.values) === 'none') return;
+            this.newDirect.busy = true;
+            moqui.chat.startChat((name, params) => this.post(name, params), pick).then((json) => {
+                this.newDirect.busy = false;
+                if (!json || !json.chatRoomId) return;
+                this.newDirect.open = false;
+                this.scheduleRooms();
+                this.openRoom(json.chatRoomId);
+            }, () => { this.newDirect.busy = false; });
+        },
         openNewRoom() { if (needsConnection()) return; this.newRoom = { open: true, type: 'private', name: '', topic: '', userIds: [], busy: false, encrypted: false }; },
         startDirect(userIds, fromLink) {
             const ids = (userIds || this.newDirect.userIds || []).map((id) => String(id).trim()).filter((id) => id);
             if (!ids.length) return;
             this.newDirect.busy = true;
             this.post('createDirect', { userIds: ids.join(',') }).then((json) => {
-                this.newDirect = { open: false, userIds: [], busy: false };
+                Object.assign(this.newDirect, { open: false, userIds: [], busy: false, name: '' });
                 this.scheduleRooms();
                 if (fromLink) this.replaceRoom(json.chatRoomId); else this.openRoom(json.chatRoomId);
             }, () => { this.newDirect.busy = false; if (fromLink) this.replaceRoom(null); });
@@ -5911,9 +6131,31 @@ module.exports = {
                           multiple: "",
                           "server-search": "",
                           "options-url": _ctx.url('searchUsers'),
-                          label: _ctx.t('To')
-                        }, null, 8, ["modelValue", "onUpdate:modelValue", "options-url", "label"]),
-                        _createElementVNode("div", { class: "text-caption m-muted q-mt-xs" }, _toDisplayString(_ctx.t('One person, or several for a group message. A conversation you already have with them opens again.')), 1),
+                          "options-parameters": _ctx.pickParameters,
+                          label: (_ctx.newDirect.numbers || []).length ? _ctx.t('To: people or a phone number') : _ctx.t('To')
+                        }, null, 8, ["modelValue", "onUpdate:modelValue", "options-url", "options-parameters", "label"]),
+                        (_ctx.pickKind === 'group')
+                          ? (_openBlock(), _createBlock(_component_m_text_line, {
+                              key: 0,
+                              modelValue: _ctx.newDirect.name,
+                              "onUpdate:modelValue": $event => ((_ctx.newDirect.name) = $event),
+                              name: "directRoomName",
+                              label: _ctx.t('Name (optional): makes a room'),
+                              class: "q-mt-xs"
+                            }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]))
+                          : _createCommentVNode("", true),
+                        (_ctx.pickKind === 'number' && (_ctx.newDirect.numbers || []).length > 1)
+                          ? (_openBlock(), _createBlock(_component_m_drop_down, {
+                              key: 1,
+                              modelValue: _ctx.newDirect.fromNumber,
+                              "onUpdate:modelValue": $event => ((_ctx.newDirect.fromNumber) = $event),
+                              name: "directFromNumber",
+                              options: _ctx.newDirect.numbers,
+                              label: _ctx.t('From'),
+                              class: "q-mt-xs"
+                            }, null, 8, ["modelValue", "onUpdate:modelValue", "options", "label"]))
+                          : _createCommentVNode("", true),
+                        _createElementVNode("div", { class: "text-caption m-muted q-mt-xs" }, _toDisplayString(_ctx.pickHint), 1),
                         _createElementVNode("div", { class: "row q-gutter-sm q-mt-md" }, [
                           _createVNode(_component_q_btn, {
                             unelevated: "",
@@ -5922,8 +6164,8 @@ module.exports = {
                             icon: "sym_o_chat",
                             label: _ctx.t('Start'),
                             loading: _ctx.newDirect.busy,
-                            disable: !(_ctx.newDirect.userIds || []).length,
-                            onClick: $event => (_ctx.startDirect())
+                            disable: _ctx.pickKind === 'none' || _ctx.pickKind === 'mixed',
+                            onClick: $event => (_ctx.startPicked())
                           }, null, 8, ["label", "loading", "disable", "onClick"]),
                           _withDirectives(_createVNode(_component_q_btn, {
                             flat: "",
@@ -6201,14 +6443,14 @@ module.exports = {
                             round: "",
                             dense: "",
                             icon: "sym_o_arrow_back",
-                            "aria-label": _ctx.t('Back'),
-                            class: "q-mr-xs",
+                            "aria-label": _ctx.t('Back to chats'),
+                            class: "q-mr-xs m-chat-back",
                             onClick: $event => (_ctx.$emit('back'))
                           }, {
                             default: _withCtx(() => [
                               _createVNode(_component_q_tooltip, null, {
                                 default: _withCtx(() => [
-                                  _createTextVNode(_toDisplayString(_ctx.t('Back')), 1)
+                                  _createTextVNode(_toDisplayString(_ctx.t('Back to chats')), 1)
                                 ]),
                                 _: 1
                               })
@@ -7289,9 +7531,20 @@ module.exports = {
                                     round: "",
                                     dense: "",
                                     icon: "sym_o_arrow_back",
-                                    "aria-label": _ctx.t('Back'),
+                                    "aria-label": _ctx.t('Back to the room'),
+                                    class: "m-chat-side-back",
                                     onClick: _ctx.closeSide
-                                  }, null, 8, ["aria-label", "onClick"]))
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_tooltip, null, {
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(_ctx.t('Back to the room')), 1)
+                                        ]),
+                                        _: 1
+                                      })
+                                    ]),
+                                    _: 1
+                                  }, 8, ["aria-label", "onClick"]))
                                 : _createCommentVNode("", true),
                               _createElementVNode("div", { class: "text-subtitle2 q-ml-xs col ellipsis" }, _toDisplayString(_ctx.sideTitle), 1),
                               (!_ctx.sideOverlay)
@@ -9040,6 +9293,9 @@ module.exports = {
                   const _component_q_chip = _resolveComponent("q-chip")
                   const _component_m_rich_text = _resolveComponent("m-rich-text")
                   const _component_q_tooltip = _resolveComponent("q-tooltip")
+                  const _component_q_item_section = _resolveComponent("q-item-section")
+                  const _component_q_item = _resolveComponent("q-item")
+                  const _component_q_list = _resolveComponent("q-list")
                   const _component_q_menu = _resolveComponent("q-menu")
                   const _component_q_space = _resolveComponent("q-space")
                   const _component_m_file = _resolveComponent("m-file")
@@ -9134,9 +9390,10 @@ module.exports = {
                         dense: "",
                         size: "sm",
                         icon: "sym_o_attach_file",
+                        class: "m-chat-attach",
                         "aria-label": _ctx.room.t('Attach files'),
                         disable: _ctx.room.offline,
-                        onClick: _ctx.pickFiles
+                        onClick: _ctx.attachClick
                       }, {
                         default: _withCtx(() => [
                           _createVNode(_component_q_tooltip, null, {
@@ -9144,7 +9401,95 @@ module.exports = {
                               _createTextVNode(_toDisplayString(_ctx.room.offline ? _ctx.room.t('Files go up when you are back online') : _ctx.room.t('Attach files')), 1)
                             ]),
                             _: 1
-                          })
+                          }),
+                          (_ctx.room.phoneAttach)
+                            ? (_openBlock(), _createBlock(_component_q_menu, {
+                                key: 0,
+                                anchor: "top left",
+                                self: "bottom left"
+                              }, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_list, {
+                                    class: "m-chat-attach-menu",
+                                    style: {"min-width":"200px"}
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                        clickable: "",
+                                        "data-attach": "camera",
+                                        onClick: $event => (_ctx.pickNative('camera'))
+                                      }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item_section, { avatar: "" }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_icon, { name: "sym_o_photo_camera" })
+                                            ]),
+                                            _: 1
+                                          }),
+                                          _createVNode(_component_q_item_section, null, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(_ctx.room.t('Camera')), 1)
+                                            ]),
+                                            _: 1
+                                          })
+                                        ]),
+                                        _: 1
+                                      }, 8, ["onClick"])), [
+                                        [_directive_close_popup]
+                                      ]),
+                                      _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                        clickable: "",
+                                        "data-attach": "gallery",
+                                        onClick: $event => (_ctx.pickNative('gallery'))
+                                      }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item_section, { avatar: "" }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_icon, { name: "sym_o_photo_library" })
+                                            ]),
+                                            _: 1
+                                          }),
+                                          _createVNode(_component_q_item_section, null, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(_ctx.room.t('Photos and videos')), 1)
+                                            ]),
+                                            _: 1
+                                          })
+                                        ]),
+                                        _: 1
+                                      }, 8, ["onClick"])), [
+                                        [_directive_close_popup]
+                                      ]),
+                                      _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                        clickable: "",
+                                        "data-attach": "file",
+                                        onClick: _ctx.pickFiles
+                                      }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item_section, { avatar: "" }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_icon, { name: "sym_o_draft" })
+                                            ]),
+                                            _: 1
+                                          }),
+                                          _createVNode(_component_q_item_section, null, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(_ctx.room.t('File')), 1)
+                                            ]),
+                                            _: 1
+                                          })
+                                        ]),
+                                        _: 1
+                                      }, 8, ["onClick"])), [
+                                        [_directive_close_popup]
+                                      ])
+                                    ]),
+                                    _: 1
+                                  })
+                                ]),
+                                _: 1
+                              }))
+                            : _createCommentVNode("", true)
                         ]),
                         _: 1
                       }, 8, ["aria-label", "disable", "onClick"]),
@@ -9263,7 +9608,23 @@ module.exports = {
                         "onUpdate:modelValue": [$event => ((_ctx.picked) = $event), _ctx.onPicked],
                         name: 'chatFile' + _ctx.uid,
                         multiple: ""
-                      }, null, 8, ["modelValue", "onUpdate:modelValue", "name"])
+                      }, null, 8, ["modelValue", "onUpdate:modelValue", "name"]),
+                      _createElementVNode("input", {
+                        ref: "camera",
+                        type: "file",
+                        accept: "image/*",
+                        capture: "environment",
+                        name: 'chatCamera' + _ctx.uid,
+                        onChange: _ctx.onNative
+                      }, null, 40, ["name", "onChange"]),
+                      _createElementVNode("input", {
+                        ref: "gallery",
+                        type: "file",
+                        accept: "image/*,video/*",
+                        multiple: "",
+                        name: 'chatGallery' + _ctx.uid,
+                        onChange: _ctx.onNative
+                      }, null, 40, ["name", "onChange"])
                     ])
                   ], 40, ["onKeydownCapture", "onPaste"]))
                 }
@@ -9273,7 +9634,7 @@ module.exports = {
         {
             const target = component.components["chat-room"].components["chat-message"];
             target.render = (function () {
-                const { normalizeClass: _normalizeClass, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementBlock: _createElementBlock, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, withModifiers: _withModifiers, renderList: _renderList, Fragment: _Fragment, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
+                const { normalizeClass: _normalizeClass, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementBlock: _createElementBlock, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, withModifiers: _withModifiers, renderList: _renderList, Fragment: _Fragment, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeStyle: _normalizeStyle } = Vue
 
                 return function render(_ctx, _cache) {
                   const _component_m_avatar = _resolveComponent("m-avatar")
@@ -9310,9 +9671,11 @@ module.exports = {
                     onMouseleave: $event => (_ctx.room.unhover(_ctx.item, _ctx.inThread)),
                     onClick: $event => (_ctx.room.tap(_ctx.item, _ctx.inThread)),
                     onTouchstartPassive: $event => (_ctx.room.holdStart(_ctx.item, _ctx.inThread, $event)),
-                    onTouchmovePassive: $event => (_ctx.room.holdCancel()),
+                    onTouchmovePassive: $event => (_ctx.room.holdMove($event)),
                     onTouchend: $event => (_ctx.room.holdEnd($event)),
-                    onContextmenu: $event => (_ctx.room.contextMenu(_ctx.item, _ctx.inThread, $event))
+                    onTouchcancel: $event => (_ctx.room.holdEnd($event)),
+                    onContextmenu: $event => (_ctx.room.contextMenu(_ctx.item, _ctx.inThread, $event)),
+                    style: _normalizeStyle(_ctx.room.swipeStyle(_ctx.item, _ctx.inThread))
                   }, [
                     _createElementVNode("div", {
                       class: _normalizeClass(["self-stretch", _ctx.item.highlight ? 'bg-primary' : '']),
@@ -10247,7 +10610,7 @@ module.exports = {
                           })
                         ], 8, ["onClick"]))
                       : _createCommentVNode("", true)
-                  ], 42, ["id", "data-seq", "tabindex", "aria-label", "onFocusin", "onFocusout", "onMouseenter", "onMouseleave", "onClick", "onTouchstartPassive", "onTouchmovePassive", "onTouchend", "onContextmenu"]))
+                  ], 46, ["id", "data-seq", "tabindex", "aria-label", "onFocusin", "onFocusout", "onMouseenter", "onMouseleave", "onClick", "onTouchstartPassive", "onTouchmovePassive", "onTouchend", "onTouchcancel", "onContextmenu"]))
                 }
             })();
             delete target.template;
