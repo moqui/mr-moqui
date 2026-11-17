@@ -194,6 +194,30 @@ fn work(bridge: &BridgeInfo, config: &Config, event: &Json) -> WebhookResponse {
     }
 }
 
+/// The most recipients of a text that came in that are read: the server finds ours among them and keeps the sender and
+/// at most a group's others (receive#Sms), so this bounds only the input.
+const RECIPIENTS_READ: usize = 32;
+
+/// The numbers a text that came in went to: `to` and, for a group text, `cc`, each once.
+pub(crate) fn recipients_of(payload: &Json) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for list in ["to", "cc"] {
+        for entry in payload.get(list).and_then(Json::as_array).into_iter().flatten() {
+            let number = entry
+                .get("phone_number")
+                .and_then(Json::as_str)
+                .or_else(|| entry.as_str());
+            if let Some(number) = number.filter(|number| !number.is_empty() && number.len() <= 20) {
+                if !out.iter().any(|known| known == number) {
+                    out.push(number.to_string());
+                }
+            }
+        }
+    }
+    out.truncate(RECIPIENTS_READ);
+    out
+}
+
 fn received(bridge: &BridgeInfo, config: &Config, event: &Json, payload: &Json) -> WebhookResponse {
     let (Some(event_id), Some(message_id), Some(ours), Some(theirs)) = (
         str_at(event, "/data/id"),
@@ -220,6 +244,8 @@ fn received(bridge: &BridgeInfo, config: &Config, event: &Json, payload: &Json) 
                 .collect()
         })
         .unwrap_or_default();
+    // a group text (group MMS) went to several numbers: every one of them, `to` and `cc`, our number among them
+    let recipients = recipients_of(payload);
     let mut parameters = BTreeMap::from([
         ("chatBridgeId".to_string(), Value::string(&bridge.chat_bridge_id)),
         ("eventId".to_string(), Value::string(event_id)),
@@ -228,6 +254,12 @@ fn received(bridge: &BridgeInfo, config: &Config, event: &Json, payload: &Json) 
         ("theirNumber".to_string(), Value::string(theirs)),
         ("mediaList".to_string(), Value::List(media)),
     ]);
+    if recipients.len() > 1 {
+        parameters.insert(
+            "recipientList".to_string(),
+            Value::List(recipients.iter().map(Value::string).collect()),
+        );
+    }
     if let Some(text) = payload.get("text").and_then(Json::as_str) {
         parameters.insert("text".to_string(), Value::string(text));
     }
@@ -273,11 +305,14 @@ fn received(bridge: &BridgeInfo, config: &Config, event: &Json, payload: &Json) 
     }
 }
 
-/// A delivery receipt: the message's state at its (first) recipient.
+/// A delivery receipt: the message's state at its recipient. A group MMS has one a recipient, each naming the group's
+/// message (`group_message_id`, the delivery's remote id) and its one recipient.
 fn receipt(bridge: &BridgeInfo, event: &Json, payload: &Json) -> WebhookResponse {
-    let Some(message_id) = str_at(payload, "/id") else {
+    let Some(own_id) = str_at(payload, "/id") else {
         return WebhookResponse::text(400, "a receipt names its message");
     };
+    let group_id = str_at(payload, "/group_message_id");
+    let message_id = group_id.unwrap_or(own_id);
     let status = match str_at(payload, "/to/0/status").unwrap_or_default() {
         "sent" => "sent",
         "delivered" => "delivered",
@@ -293,6 +328,12 @@ fn receipt(bridge: &BridgeInfo, event: &Json, payload: &Json) -> WebhookResponse
     let error = str_at(payload, "/errors/0/detail").or_else(|| str_at(payload, "/errors/0/title"));
     if let Some(error) = error {
         parameters.insert("error".to_string(), Value::string(error));
+    }
+    if group_id.is_some() {
+        if let Some(number) = str_at(payload, "/to/0/phone_number") {
+            parameters.insert("recipientNumber".to_string(), Value::string(number));
+        }
+        parameters.insert("otherRemoteEventId".to_string(), Value::string(own_id));
     }
     if let Some(at) = millis_of(str_at(event, "/data/occurred_at")) {
         if let Ok(stamp) = jiff::Timestamp::from_millisecond(at) {

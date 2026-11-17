@@ -302,11 +302,29 @@
             deviceMode: deviceMode ? String(deviceMode) : null }),
         ssoCancel: () => shellAsk("client_sso_cancel"),
         // the shell's call joined or over (WebrootCall.js): the phone's native call (MT2) is kept while it lasts
-        callState: (callSessionId, state) => shellAsk("call_state", { callSessionId: String(callSessionId || ""), state: String(state || "") })
+        callState: (callSessionId, state, name) => shellAsk("call_state", { callSessionId: String(callSessionId || ""), state: String(state || ""),
+            name: name ? String(name) : null })
             .catch((err) => console.info("The call state was not told to the app", err)),
         // whether the call screen answers this call by itself: once, for the call the user answered on the phone
         takeAnswer: (callSessionId) => shellAsk("call_take_answer", { callSessionId: String(callSessionId || "") })
-            .then((taken) => taken === true, () => false)
+            .then((taken) => taken === true, () => false),
+        // the call's audio through Telecom (plans/Comms-Messaging.md §8.3 item 5): {route, routes}, and the speaker
+        // button's choice of a route (earpiece, speaker, wired, bluetooth); changes come by moqui.call.setHostAudio
+        callAudio: () => shellAsk("call_audio").catch(() => ({ route: null, routes: [] })),
+        callAudioRoute: (route) => shellAsk("call_audio_route", { route: String(route || "") }).catch(() => false),
+        // the phone's dialer through the app (plans/Comms-Messaging.md §9.1): whether this account has a number to call
+        // from (the calling account is registered while one here has); a number waiting for the user's pick of the
+        // account that calls it ({number, accounts: [{id, label}]}, or null), and the pick
+        dialAccount: (canCall) => shellAsk("call_dial_account", { canCall: canCall === true })
+            .catch((err) => console.info("The calling account was not told", err)),
+        dialChoice: () => shellAsk("call_dial_choice").catch(() => null),
+        dialFrom: (account) => shellAsk("call_dial_from", { account: String(account || "") }),
+        // the phone's own contacts (§9.2), read on the phone only: a search (asks for the permission the first time) and
+        // the names of numbers (never asks)
+        contactsSearch: (term) => shellAsk("contacts_search", { term: String(term || "") })
+            .then((list) => (Array.isArray(list) ? list : []), () => []),
+        contactNames: (numbers) => shellAsk("contact_names", { numbers: (Array.isArray(numbers) ? numbers : []).map(String) })
+            .then((named) => (named && typeof named === "object" && !Array.isArray(named) ? named : {}), () => ({}))
     });
     console.info("moqui-mobile: the shell's bridge is ready");
 })();

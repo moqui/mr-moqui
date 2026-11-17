@@ -120,7 +120,7 @@ fn the_call_screen_and_transitions_are_under_the_comms_app() {
     );
     assert_eq!(
         hang_up_script("7"),
-        "window.moqui && moqui.call && moqui.call.state.current === \"7\" && moqui.call.leave()"
+        "window.moqui && moqui.call && (moqui.call.state.current === \"7\" ? moqui.call.leave() : moqui.call.state.held && moqui.call.state.held.callSessionId === \"7\" && moqui.call.leaveHeld())"
     );
     assert_eq!(
         transition_path("/qapps/BasicComms", "declineCall"),
@@ -439,4 +439,37 @@ fn a_room_link_names_a_real_account_and_opens_only_when_this_app_signed_it() {
     assert_eq!(account_id("a..b"), None);
     assert_eq!(account_id(".a"), None);
     assert_eq!(account_id("a/b"), None);
+}
+
+/// plans/Comms-Messaging.md §8.3 items 4, 5 and 7: what the native call tells the call screen, as a script that calls
+/// the page's own function only when it has it; a value of the wrong shape tells nothing.
+#[test]
+fn the_native_call_tells_the_page_its_audio_picture_in_picture_and_hold() {
+    let audio = tell_script("audio", r#"{"route":"earpiece","routes":["earpiece","speaker"]}"#).unwrap();
+    assert!(audio.contains("moqui.call.setHostAudio({\"route\":\"earpiece\",\"routes\":[\"earpiece\",\"speaker\"]})"));
+    assert!(audio.starts_with("window.moqui && moqui.call && typeof moqui.call.setHostAudio === \"function\""));
+    assert!(tell_script("pip", "true")
+        .unwrap()
+        .ends_with("moqui.call.setHostPip(true)"));
+    assert!(tell_script("mute", "false")
+        .unwrap()
+        .ends_with("moqui.call.setHostMute(false)"));
+    assert!(tell_script("muteToggle", "true")
+        .unwrap()
+        .ends_with("moqui.call.toggleMute()"));
+    // the phone's contacts allowed later: the chat names its phone rooms again
+    assert!(tell_script("contacts", "true")
+        .unwrap()
+        .ends_with("moqui.chat.contactsChanged()"));
+    assert_eq!(tell_script("contacts", "{}"), None);
+    assert!(tell_script("hold", r#"{"callSessionId":"100231","hold":true}"#)
+        .unwrap()
+        .ends_with("moqui.call.hostHold(\"100231\", true)"));
+    assert_eq!(
+        tell_script("hold", r#"{"callSessionId":"a\");x(\"","hold":true}"#),
+        None
+    );
+    assert_eq!(tell_script("pip", "\"yes\""), None);
+    assert_eq!(tell_script("audio", "[]"), None);
+    assert_eq!(tell_script("eval", "{}"), None);
 }

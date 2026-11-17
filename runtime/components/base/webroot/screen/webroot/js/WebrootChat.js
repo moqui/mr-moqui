@@ -1359,13 +1359,14 @@
         // ---- the new-chat pickers (Chat's New direct message, the chat panel's New message, the phone home's Start chat) ----
         // A picked value is a userId, or a phone number as Chat's searchUsers offers it with numbers=true (tel:<number>).
         isNumberPick(value) { return String(value || "").indexOf("tel:") === 0; },
-        // what was picked: none, direct (one person), group (several), number (one phone number), or mixed (a number with
-        // others, which Start refuses: a text goes to one number)
+        // what was picked: none, direct (one person), group (several), number (one phone number), numbers (several: a
+        // group text, plans/Comms-Messaging.md §9), or mixed (numbers with people, which Start refuses: a text goes to
+        // numbers only)
         pickKind(values) {
             const list = (values || []).map((value) => String(value).trim()).filter((value) => value);
             if (!list.length) return "none";
             const numbers = list.filter((value) => chat.isNumberPick(value)).length;
-            if (numbers) return list.length > 1 ? "mixed" : "number";
+            if (numbers) return numbers < list.length ? "mixed" : numbers > 1 ? "numbers" : "number";
             return list.length > 1 ? "group" : "direct";
         },
         // Start: the number's room (textRoom: open#PairRoom, from fromNumber or the user's only number), a private room when
@@ -1376,13 +1377,84 @@
             const kind = chat.pickKind(values);
             if (kind === "none") return Promise.reject({ refused: "none" });
             if (kind === "mixed") {
-                if (moqui.notifyMessages) moqui.notifyMessages([{ type: "info", message: tr("A text goes to one phone number: start it with the number alone") }]);
+                if (moqui.notifyMessages) moqui.notifyMessages([{ type: "info", message: tr("A text goes to phone numbers only: start it without the people") }]);
                 return Promise.reject({ refused: "mixed" });
             }
-            if (kind === "number") return post("textRoom", { textTo: values[0].slice(4), textFrom: (pick && pick.fromNumber) || "" });
+            if (kind === "number" || kind === "numbers") {
+                return post("textRoom", { textTo: values.map((value) => value.slice(4)).join(","), textFrom: (pick && pick.fromNumber) || "" });
+            }
             const name = String((pick && pick.name) || "").trim();
             if (kind === "group" && name) return post("createRoom", { roomTypeEnumId: "private", roomName: name, memberUserIds: values.join(","), encrypted: "false" });
             return post("createDirect", { userIds: values.join(",") });
+        },
+        // ---- names of outside numbers (plans/Comms-Messaging.md §9, Phone book) ----
+        // The numbers of a phone room (CrtExternal, named by its number, or a group text's numbers comma-separated), or
+        // none for another room or one whose name is not numbers.
+        roomNumbers(room) {
+            if (!room || room.roomTypeEnumId !== "CrtExternal") return [];
+            const parts = String(room.roomName || "").split(",").map((part) => part.trim()).filter((part) => part);
+            return parts.length && parts.every((part) => /^\+[0-9]{5,15}$/.test(part)) ? parts : [];
+        },
+        // a phone room's name with its numbers named (names: number to name), each number left as it is when unknown
+        phoneTitle(numbers, names) {
+            return numbers.map((number) => (names && names[number]) || number).join(", ");
+        },
+        // Phone rooms named by the names of their numbers: the phone's own contacts first (the mobile app's
+        // moquiDesktop.contactNames, read on the phone), then the apps' call-context (Chat's phoneNames). The server is asked
+        // for every number of the rooms, not only those the phone does not know, so it cannot tell which numbers are in the
+        // phone's contacts. rooms is a screen's reactive list, its displayName set now from what is known and again when the
+        // rest comes. Never asks twice for a number; contactsChanged (the contacts allowed later) asks the phone again.
+        phoneNames: {},
+        contactNamesOf: {},
+        serverNamesOf: {},
+        namedRooms: [],
+        nameRooms(rooms) {
+            const list = Array.isArray(rooms) ? rooms : [];
+            chat.namedRooms = list;
+            const apply = () => list.forEach((room) => {
+                const numbers = chat.roomNumbers(room);
+                if (numbers.length) room.displayName = chat.phoneTitle(numbers, chat.phoneNames);
+            });
+            const merge = () => {
+                const names = {};
+                Object.keys(chat.serverNamesOf).forEach((number) => { if (chat.serverNamesOf[number]) names[number] = chat.serverNamesOf[number]; });
+                Object.keys(chat.contactNamesOf).forEach((number) => { if (chat.contactNamesOf[number]) names[number] = chat.contactNamesOf[number]; });
+                chat.phoneNames = names;
+                apply();
+            };
+            apply();
+            const all = Array.from(new Set(list.flatMap((room) => chat.roomNumbers(room)))).slice(0, 50);
+            const host = root.moquiDesktop;
+            const fromHost = all.filter((number) => !(number in chat.contactNamesOf));
+            const fromServer = all.filter((number) => !(number in chat.serverNamesOf));
+            fromHost.forEach((number) => { chat.contactNamesOf[number] = null; });
+            fromServer.forEach((number) => { chat.serverNamesOf[number] = null; });
+            const phone = fromHost.length && host && typeof host.contactNames === "function"
+                ? Promise.resolve(host.contactNames(fromHost)).then((names) => {
+                    Object.keys(names || {}).forEach((number) => { if (names[number]) chat.contactNamesOf[number] = String(names[number]); });
+                }, () => null) : Promise.resolve();
+            const base = moqui.call && moqui.call.chatBase ? moqui.call.chatBase() : "/apps/BasicComms/Chat";
+            const server = fromServer.length ? moqui.request(base + "/phoneNames", { params: { numbers: fromServer.join(",") } }).then((result) => {
+                const map = (result.json && result.json.nameMap) || {};
+                Object.keys(map).forEach((number) => { if (map[number]) chat.serverNamesOf[number] = String(map[number]); });
+            }, () => null) : Promise.resolve();
+            return Promise.all([phone, server]).then(merge);
+        },
+        // The phone's contacts became readable (the permission granted after the rooms were named): ask the phone again for
+        // the rooms last named, with no reload.
+        contactsChanged() {
+            chat.contactNamesOf = {};
+            return chat.nameRooms(chat.namedRooms);
+        },
+        // The phone's own contacts as a new-chat picker's extra options (the mobile app's moquiDesktop.contactsSearch, which
+        // asks for the contacts permission on first use): each {value: tel:<number>, label: name · number}.
+        contactOptions(term) {
+            const host = root.moquiDesktop;
+            const typed = String(term || "").trim();
+            if (!host || typeof host.contactsSearch !== "function" || typed.length < 2) return Promise.resolve([]);
+            return Promise.resolve(host.contactsSearch(typed)).then((list) => (Array.isArray(list) ? list : []).slice(0, 10)
+                .filter((contact) => contact && contact.number)
+                .map((contact) => ({ value: "tel:" + contact.number, label: (contact.name ? contact.name + " · " : "") + contact.number })), () => []);
         },
         // the user's numbers that text (Chat's textNumbers), as a picker's From options
         numberOptions(list) {
@@ -1407,7 +1479,9 @@
             const repeats = (name) => destinations.filter((one) => network(one) === name).length > 1;
             const delivered = destinations.length ? destinations.map((one) => ({
                 name: repeats(network(one)) && one.bridgeName && one.bridgeName !== network(one) ? network(one) + " · " + one.bridgeName : network(one),
-                state: one.state || "pending", receipt: one.receipt || null, error: one.error || null })) : null;
+                state: one.state || "pending", receipt: one.receipt || null, error: one.error || null,
+                // a group text's receipts, one a recipient (number to its receipt)
+                recipients: one.recipients && typeof one.recipients === "object" ? one.recipients : null })) : null;
             let readBy = null;
             if (!thread && options.receipts === false) readBy = { off: true };
             else if (!thread) {
@@ -1436,6 +1510,12 @@
             for (const one of info.delivered || []) {
                 const text = one.state === "accepted" ? (RECEIPTS[one.receipt] || tr("Taken by the network")) : (STATES[one.state] || one.state);
                 lines.push({ key: "delivered", label: one.name || tr("Bridge"), text: text + (one.error && one.state !== "accepted" ? ": " + one.error : ""), state: one.state });
+                // a group text: each recipient's own receipt, a failed one said as such even when the others got it
+                for (const number of Object.keys(one.recipients || {}).sort()) {
+                    const receipt = one.recipients[number];
+                    lines.push({ key: "recipient", label: number, text: receipt === "failed" ? tr("Not delivered") : (RECEIPTS[receipt] || tr("Taken by the network")),
+                        state: receipt === "failed" ? "failed" : "accepted" });
+                }
             }
             if (info.readBy && info.readBy.off) lines.push({ key: "read", label: tr("Read by"), text: tr("Your read receipts are off, so you do not see who has read it") });
             else if (info.readBy) {

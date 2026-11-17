@@ -812,6 +812,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="receiptStatus" type="text-short"><description>What the network's delivery receipt last said: sent,
             delivered, failed or unconfirmed (C4-SMS)</description></field>
         <field name="receiptDate" type="date-time"/>
+        <field name="recipientReceipts" type="text-medium"><description>A group text's receipts, one a recipient: JSON of
+            number to sent, delivered, failed or unconfirmed (plans/Comms-Messaging.md §9); receiptStatus is then theirs
+            together, failed only when every recipient failed</description></field>
         <index name="CHAT_DELIVERY_REMOTE"><index-field name="chatBridgeId"/><index-field name="remoteEventId"/></index>
     </extend-entity>
     <!-- ========== end C4-SMS ========== -->

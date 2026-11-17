@@ -119,7 +119,11 @@
         movedAway: null,
         outputs: [],
         cameras: [],
-        facing: "user"
+        facing: "user",
+        // the mobile app's native call (plans/Comms-Messaging.md §8.3 items 4, 5): its audio route through Telecom
+        // ({route, routes}: earpiece, speaker, wired, bluetooth), and the app in picture-in-picture
+        hostAudio: null,
+        hostPip: false
     });
 
     const call = {
@@ -215,14 +219,36 @@
         // joined, left, and its call screen shown or left (over the lock screen the app shows only that)
         // joined, left, held (call waiting: the native call stays; an older app that does not know it keeps "joined"), and
         // its call screen shown or left (over the lock screen the app shows only that)
-        hostCallState(callSessionId, what) {
+        // name: the call's name for a car or a watch (the room, or the other people), with joined; a promise of the ask, so
+        // what follows goes after it
+        // the name a car or a watch shows of a call: the other people, else the room's name
+        joinedName(view) {
+            if (!view) return "";
+            return (view.participants || []).filter((p) => p.userId !== call.me).map((p) => p.displayName).filter((n) => n).join(", ")
+                || view.roomName || "";
+        },
+        // the mobile app's native call joined: joined with its name first, then its kind once that is told (the kind's
+        // default route needs the call there)
+        tellJoined(callSessionId, kind) {
+            return call.hostCallState(callSessionId, "joined", call.joinedName(state.calls[callSessionId]))
+                .then(() => call.hostCallState(callSessionId, kind));
+        },
+        // the call screen shown and gone, with a token of its mount: an older screen's offScreen that comes after a newer
+        // screen's screen is ignored by the app, so the call screen counts as shown
+        screenSeq: 0,
+        screenToken() {
+            call.screenSeq += 1;
+            return String(Math.floor(root.performance && performance.timeOrigin ? performance.timeOrigin : Date.now()) * 1000 + call.screenSeq);
+        },
+        hostCallState(callSessionId, what, name) {
             const host = root.moquiDesktop;
-            if (!host || typeof host.callState !== "function") return;
+            if (!host || typeof host.callState !== "function") return Promise.resolve();
             try {
-                const asked = host.callState(callSessionId, what);
-                if (asked && typeof asked.catch === "function") asked.catch(() => null);
+                const asked = host.callState(callSessionId, what, name || "");
+                return Promise.resolve(asked).catch(() => null);
             } catch (e) {
                 /* an app that does not know this state */
+                return Promise.resolve();
             }
         },
         // whether this call screen answers the call by itself: only the mobile app's host says so, once, for the call
@@ -255,7 +281,7 @@
             const held = state.held;
             if (held && held.callSessionId === view.callSessionId) {
                 const leg = (view.participants || []).flatMap((p) => p.legs || []).find((l) => l.callLegId === held.legId);
-                if (view.status === "ended" || !leg || leg.status !== "answered") state.held = null;
+                if (view.status === "ended" || !leg || leg.status !== "answered") call.dropHeld(held);
                 return;
             }
             if (held || view.status === "ended" || view.callSessionId === state.current || view.myLegStatus !== "answered") return;
@@ -298,7 +324,7 @@
             if (data.action === "moved" && data.toCallSessionId && state.current === data.callSessionId) call.moveTo(data.toCallSessionId);
             if (data.action === "ended" && state.current === data.callSessionId) call.hangUp("ended");
             // the call on hold ended: nothing to resume
-            if (data.action === "ended" && state.held && state.held.callSessionId === data.callSessionId) state.held = null;
+            if (data.action === "ended" && state.held && state.held.callSessionId === data.callSessionId) call.dropHeld(state.held);
             // Move to this device: this page's leg was moved to the user's other device, which is connected now
             if (data.action === "legMoved") call.movedElsewhere(data.callSessionId, data.fromLegIds || []);
             if (data.action === "captions" && data.callSessionId === state.current) call.loadCaptions(data.callSessionId);
@@ -528,7 +554,52 @@
             return call.renegotiate(null);
         },
         toggleVideo() {
-            return call.hasVideo() && !state.cameraOff ? call.dropVideo() : call.addVideo();
+            const id = state.current;
+            return (call.hasVideo() && !state.cameraOff ? call.dropVideo() : call.addVideo()).then((done) => {
+                // the mobile app's native call: its default route and picture-in-picture follow the call's kind
+                if (id && state.current === id) call.hostCallState(id, call.hasVideo() && !state.cameraOff ? "video" : "voice");
+                return done;
+            });
+        },
+
+        // ---- the mobile app's native call (plans/Comms-Messaging.md §8.3 items 4, 5, 7) ----
+        // its audio route and routes (the host tells each change; the speaker button chooses)
+        setHostAudio(audio) {
+            state.hostAudio = audio && Array.isArray(audio.routes) ? { route: audio.route || null, routes: audio.routes.slice() } : null;
+        },
+        hostRoutes() {
+            const host = root.moquiDesktop;
+            return host && typeof host.callAudioRoute === "function" && state.hostAudio && state.hostAudio.routes.length > 1 ? state.hostAudio.routes : [];
+        },
+        chooseHostRoute(route) {
+            const host = root.moquiDesktop;
+            if (!host || typeof host.callAudioRoute !== "function") return Promise.resolve(false);
+            return Promise.resolve(host.callAudioRoute(route)).then((asked) => {
+                if (asked && state.hostAudio) state.hostAudio = Object.assign({}, state.hostAudio, { route });
+                return !!asked;
+            }, () => false);
+        },
+        // the app in picture-in-picture: the call screen shows only its video
+        setHostPip(on) {
+            state.hostPip = !!on;
+        },
+        // Telecom holds the call or takes it off hold (another call, a watch, a car): the page does it, and says so back
+        // A call already on hold is not overwritten: the page holds one call at a time, so Telecom's hold of the call this
+        // page is in, with another on hold, is refused (the call goes on); a hold on its way answers once.
+        hostHold(callSessionId, hold) {
+            if (hold && state.current === callSessionId) {
+                if (state.held && state.held.callSessionId !== callSessionId && !(call.holding && call.holding.callSessionId === callSessionId)) {
+                    return Promise.resolve(null);
+                }
+                return call.hold();
+            }
+            if (!hold && state.held && state.held.callSessionId === callSessionId) return call.resume();
+            return Promise.resolve(null);
+        },
+        // Telecom's mute (a car, a watch, a headset's button): the page's microphone follows
+        setHostMute(muted) {
+            if (!state.current || !!state.muted === !!muted) return;
+            call.toggleMute();
         },
         // The other side's video came or went: a prompt, not a new call. "on": they turned theirs on and this page sends
         // none; "off": they turned theirs off and this page still sends.
@@ -649,7 +720,7 @@
             const last = call.lastLeg && call.lastLeg.callSessionId === callSessionId && fromLegIds.includes(call.lastLeg.legId);
             // the call on hold here was taken to another device: it is held here no more
             const held = state.held && state.held.callSessionId === callSessionId && fromLegIds.includes(state.held.legId);
-            if (held) state.held = null;
+            if (held) call.dropHeld(state.held);
             if (!mine && !last && !held) return;
             if (mine) call.hangUp("moved");
             state.movedAway = { callSessionId };
@@ -663,6 +734,26 @@
             const id = state.current;
             const legId = state.legId;
             if (!id) return Promise.resolve(null);
+            // one hold at a time: a second ask while one is on its way (Telecom's hold and the page's Hold and answer at
+            // once) gets the same answer
+            if (call.holding && call.holding.callSessionId === id) return call.holding.promise;
+            // a hold that never settles (no answer from the server) gives up, so the next ask is not stuck on it
+            const gaveUp = new Promise((resolve) => setTimeout(() => resolve(null), call.HOLD_WAIT_MS));
+            const promise = Promise.race([call.holdNow(id, legId), gaveUp])
+                .finally(() => { if (call.holding && call.holding.promise === promise) call.holding = null; });
+            call.holding = { callSessionId: id, promise };
+            return promise;
+        },
+        holding: null,
+        HOLD_WAIT_MS: 15000,
+        // the call on hold is no longer this page's (it ended, moved, or was left): the mobile app's native call on hold
+        // ends with it
+        dropHeld(held) {
+            if (!held) return;
+            if (state.held === held) state.held = null;
+            call.hostCallState(held.callSessionId, "left");
+        },
+        holdNow(id, legId) {
             const video = call.hasVideo() && !state.cameraOff;
             const view = state.calls[id];
             const name = view ? (view.participants || []).filter((p) => p.userId !== call.me).map((p) => p.displayName).join(", ") : "";
@@ -688,7 +779,7 @@
                 const view = json.call;
                 const leg = view && (view.participants || []).flatMap((p) => (p.userId === call.me ? p.legs || [] : [])).find((l) => l.callLegId === held.legId);
                 if (!view || view.status === "ended" || !leg || leg.status !== "answered") {
-                    if (state.held === held) state.held = null;
+                    call.dropHeld(held);
                     if (moqui.notifyMessages) moqui.notifyMessages([{ type: "info", message: t("The call on hold has ended or moved to another device") }]);
                     return null;
                 }
@@ -716,7 +807,7 @@
         leaveHeld() {
             const held = state.held;
             if (!held) return Promise.resolve({});
-            state.held = null;
+            call.dropHeld(held);
             call.send({ rtc: "leave", callSessionId: held.callSessionId, callLegId: held.legId, id: call.nextId++ });
             return call.request("leaveCall", { callSessionId: held.callSessionId, callLegId: held.legId });
         },
@@ -991,7 +1082,11 @@
                     state.muted = !!(stream && stream.getAudioTracks().some((track) => !track.enabled));
                     return call.connect(stream).then((done) => {
                         if (state.current === callSessionId) {
-                            call.hostCallState(callSessionId, "joined");
+                            // the mobile app's native call, with its name for a car or a watch; then its kind (the default
+                            // audio route), after it, and its audio routes
+                            call.tellJoined(callSessionId, call.hasVideo() && !state.cameraOff ? "video" : "voice");
+                            const host = root.moquiDesktop;
+                            if (host && typeof host.callAudio === "function") Promise.resolve(host.callAudio()).then(call.setHostAudio, () => null);
                             call.listDevices();
                             call.offerAutoPip();
                         }
@@ -2337,10 +2432,11 @@
         mounted() {
             this.load();
             this.timer = setInterval(() => (this.now = Date.now()), 1000);
-            if (this.callSessionId) moqui.call.hostCallState(this.callSessionId, "screen");
+            this.screenToken = moqui.call.screenToken();
+            if (this.callSessionId) moqui.call.hostCallState(this.callSessionId, "screen", this.screenToken);
         },
         beforeUnmount() {
-            if (this.callSessionId) moqui.call.hostCallState(this.callSessionId, "offScreen");
+            if (this.callSessionId) moqui.call.hostCallState(this.callSessionId, "offScreen", this.screenToken);
             clearInterval(this.timer);
             this.stopPreview();
         },
@@ -2363,7 +2459,10 @@
                             if (!taken) return;
                             const v = this.view;
                             if (v && v.myLegStatus === "offered" && !this.e2eeUnsupported && !this.offline && !this.keysInShell) {
-                                moqui.call.answer(id, this.video).then((json) => {
+                                // call waiting answered on the phone: the call this page is in goes on hold first
+                                const current = moqui.call.state.current;
+                                const answering = current && current !== id ? moqui.call.holdAndAnswer(id, this.video) : moqui.call.answer(id, this.video);
+                                answering.then((json) => {
                                     if (!json || !json.callLegId) moqui.call.hostCallState(id, "left");
                                     this.load();
                                 }, () => moqui.call.hostCallState(id, "left"));
@@ -2601,7 +2700,13 @@
                 if (!this.remotes.length) return this.view.status === "ringing" ? t("Ringing…") : this.call.phase === "connected" ? t("Waiting for the others") : t("Connecting");
                 return this.now && elapsedText(this.call.startedAt);
             },
-            canOutput() { return moqui.call.canChooseOutput(); },
+            canOutput() { return !this.hostRoutes.length && moqui.call.canChooseOutput(); },
+            // the mobile app's routes through Telecom (§8.3 item 5): earpiece, speaker, wired, bluetooth
+            hostRoutes() { return this.call.hostAudio ? moqui.call.hostRoutes() : []; },
+            routeIcon() {
+                const route = this.call.hostAudio && this.call.hostAudio.route;
+                return route === "speaker" ? "sym_o_volume_up" : route === "bluetooth" ? "sym_o_bluetooth_audio" : route === "wired" ? "sym_o_headphones" : "sym_o_phone_in_talk";
+            },
             canFlip() {
                 const coarse = !!(root.matchMedia && root.matchMedia("(pointer: coarse)").matches);
                 return this.hasVideo && (this.call.cameras.length > 1 || coarse);
@@ -2619,11 +2724,14 @@
             t,
             addPeople() { const actions = this.$refs.actions; if (actions && actions.open) actions.open("add"); },
             dtmf(key) { moqui.call.request("sendDtmf", { callSessionId: this.view.callSessionId, digits: key }); },
-            outputLabel(d, i) { return d.label || t("Speaker") + " " + (i + 1); }
+            outputLabel(d, i) { return d.label || t("Speaker") + " " + (i + 1); },
+            routeLabel(route) {
+                return { earpiece: t("Phone"), speaker: t("Speaker"), wired: t("Headphones"), bluetooth: t("Bluetooth") }[route] || route;
+            }
         },
         template:
             '<div class="m-call-compact column no-wrap" :style="panel ? \'min-height:calc(100vh - 140px)\' : \'min-height:calc(100vh - 16px)\'">' +
-            '<div class="row items-center no-wrap q-mb-xs">' +
+            '<div v-show="!call.hostPip" class="row items-center no-wrap q-mb-xs">' +
             '<q-btn flat round dense :icon="panel ? \'sym_o_open_in_full\' : \'sym_o_keyboard_arrow_down\'" class="m-call-minimize" :aria-label="panel ? t(\'Open the call full size\') : t(\'Minimize the call\')" @click="panel ? moquiCall().open(view.callSessionId) : moquiCall().minimize()">' +
             '<q-tooltip>{{panel ? t(\'Open the call full size\') : t(\'Minimize the call\')}}</q-tooltip></q-btn>' +
             '<div class="col q-ml-xs" style="min-width:0"><div class="text-subtitle1 text-weight-medium ellipsis">{{title}}</div>' +
@@ -2633,12 +2741,12 @@
             '<m-call-actions v-if="view.status !== \'ended\'" ref="actions" :view="view"></m-call-actions>' +
             '<q-btn v-if="panel" flat round dense icon="sym_o_close" :aria-label="t(\'Close the panel\')" @click="moquiCall().closePanel()"><q-tooltip>{{t(\'Close the panel\')}}</q-tooltip></q-btn></div>' +
             // the call on hold (call waiting): on a phone the call covers the dock, so its banner is here too
-            '<q-banner v-if="call.held" dense rounded class="m-tonal q-mb-xs m-call-held-here"><template v-slot:avatar><q-icon name="sym_o_phone_paused" color="warning"></q-icon></template>' +
+            '<q-banner v-if="call.held && !call.hostPip" dense rounded class="m-tonal q-mb-xs m-call-held-here"><template v-slot:avatar><q-icon name="sym_o_phone_paused" color="warning"></q-icon></template>' +
             '{{t(\'On hold\')}}: {{call.held.name || t(\'Call\')}}' +
             '<template v-slot:action><q-btn flat no-caps color="primary" :label="t(\'Swap\')" @click="moquiCall().resume()"></q-btn>' +
             '<q-btn flat no-caps color="negative" :label="t(\'Leave\')" @click="moquiCall().leaveHeld()"></q-btn></template></q-banner>' +
             // the call's E2EE label
-            '<div class="row q-mb-xs"><q-chip dense square :icon="label.icon" class="m-call-encryption m-tonal" :class="label.lock ? \'m-call-e2ee text-positive\' : \'\'" :data-e2ee="label.state">{{label.short}}<q-tooltip max-width="320px">{{label.banner}}</q-tooltip></q-chip></div>' +
+            '<div v-show="!call.hostPip" class="row q-mb-xs"><q-chip dense square :icon="label.icon" class="m-call-encryption m-tonal" :class="label.lock ? \'m-call-e2ee text-positive\' : \'\'" :data-e2ee="label.state">{{label.short}}<q-tooltip max-width="320px">{{label.banner}}</q-tooltip></q-chip></div>' +
             // the stage
             '<div class="col relative-position m-call-stage" style="min-height:240px;background:#000;border-radius:12px;overflow:hidden">' +
             '<div v-if="main" :key="main.key" class="m-call-tile absolute-full"><m-call-video :stream="main.stream" muted :style="main.screen ? \'width:100%;height:100%;object-fit:contain\' : \'width:100%;height:100%;object-fit:cover\'"></m-call-video>' +
@@ -2654,8 +2762,10 @@
             '<m-call-video :stream="selfVideo" muted mirror style="width:100%;height:100%;object-fit:cover"></m-call-video></div></div>' +
             captionsBox("true", "captionLines") +
             // the controls
-            '<div class="row justify-center items-center no-wrap q-gutter-sm q-py-sm m-call-controls">' +
+            '<div v-show="!call.hostPip" class="row justify-center items-center no-wrap q-gutter-sm q-py-sm m-call-controls">' +
             '<q-btn round unelevated :color="call.muted ? \'negative\' : \'grey-8\'" :icon="call.muted ? \'sym_o_mic_off\' : \'sym_o_mic\'" :aria-label="call.muted ? t(\'Unmute\') : t(\'Mute\')" @click="moquiCall().toggleMute()"><q-tooltip>{{call.muted ? t(\'Unmute\') : t(\'Mute\')}}</q-tooltip></q-btn>' +
+            '<q-btn v-if="hostRoutes.length" round unelevated :color="call.hostAudio.route === \'speaker\' ? \'primary\' : \'grey-8\'" :icon="routeIcon" class="m-call-route" :aria-label="t(\'Audio\')"><q-tooltip>{{t(\'Audio\')}}</q-tooltip><q-menu><q-list dense style="min-width:200px">' +
+            '<q-item v-for="r in hostRoutes" :key="r" clickable v-close-popup :active="call.hostAudio.route === r" :data-route="r" @click="moquiCall().chooseHostRoute(r)"><q-item-section>{{routeLabel(r)}}</q-item-section></q-item></q-list></q-menu></q-btn>' +
             '<q-btn v-if="canOutput" round unelevated color="grey-8" icon="sym_o_volume_up" :aria-label="t(\'Speaker\')"><q-tooltip>{{t(\'Speaker\')}}</q-tooltip><q-menu><q-list dense style="min-width:220px">' +
             '<q-item v-for="(d, i) in call.outputs" :key="d.deviceId" clickable v-close-popup :active="(call.settings.audioOut || \'default\') === d.deviceId" @click="moquiCall().chooseOutput(d.deviceId)"><q-item-section>{{outputLabel(d, i)}}</q-item-section></q-item></q-list></q-menu></q-btn>' +
             '<q-btn round unelevated :color="hasVideo ? \'grey-8\' : \'negative\'" :icon="hasVideo ? \'sym_o_videocam\' : \'sym_o_videocam_off\'" class="m-call-video-toggle" :aria-label="hasVideo ? t(\'Turn off video\') : t(\'Turn on video\')" @click="moquiCall().toggleVideo()"><q-tooltip>{{hasVideo ? t(\'Turn off video\') : t(\'Turn on video\')}}</q-tooltip></q-btn>' +

@@ -517,6 +517,18 @@ adapter (C4 on) brings its own transport, and C1 ships none.
   Files a text names are fetched from public addresses only (3 redirects, each checked) unless `allowInternalAddresses`
   is set, which lifts the address guard for the API calls and the media fetch of that bridge ([the internal-address
   guard](Attack-Surface-Outbound.md#the-internal-address-guard)).
+- **Group texts and phone names** (plans/Comms-Messaging.md §9). Text a number (`open#PairRoom`, Chat's `textRoom`,
+  Calls History's `textNumber`) takes up to 8 numbers, comma-separated; each is checked as a send to it is
+  (`check#SmsSend`) before the group's room is made, and a group's reply checks each number again before the one group
+  MMS goes, each recipient counted toward the day's limits. A group MMS that comes in is the group's room only when our
+  number is among its recipients on that bridge; its sender is always kept, our own numbers are never its others, a
+  short code keeps a room of its own, and an outside number starts at most 5 new group rooms a day with one of our
+  numbers (50 for the number; past that, the sender's pair room), so a sender cannot flood the number's users with
+  rooms. `find#PhoneNames` (Chat's `phoneNames`, a GET) answers, for up to 50 E.164 numbers, only those of phone rooms
+  the caller is in (their mappings), at most 600 numbers an hour a user (`moqui.sms.names.asked`), the first contact name
+  the apps' `call-context` providers give the caller (`call#Providers` as the user, the apps they may open); it takes no
+  other user's id, so a user learns of a number only what their own apps would show them for a call from it, and
+  cannot read an app's contacts by guessing numbers.
 - **Internal services.** `send#Message`, `edit#Message`, `react#Message` and `redact#Message` take `senderActorId` only
   with authorization disabled. `get#LocalActors`, `get#ActorNames`, `get#RoomBridges`, `check#BridgeSupport`,
   `get#BridgeCapabilities`, `wake#BridgeDelivery`, `run#BridgeDeliveries` and the

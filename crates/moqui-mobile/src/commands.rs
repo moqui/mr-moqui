@@ -14,8 +14,9 @@
 
 //! The mobile app's own commands, beside the shared ones of `moqui_client_tauri`: the way back from a server page to
 //! the shell, a comms screen of a server page shown in the shell (an encrypted room, whose crypto device is the
-//! shell's), a native notification, and a link opened outside the app. Any page of the app may call them; none reaches
-//! more than a page could.
+//! shell's), a native notification, a link opened outside the app; and the shell's own: the notification check, the
+//! native call, the phone's contacts and the calling account of the phone's dialer. Any page of the app may call the
+//! first ones, none reaching more than a page could; the shell's check its page and nonce.
 
 use std::sync::Arc;
 
@@ -211,7 +212,14 @@ pub(crate) fn push_check_fix(app: AppHandle, what: String) -> Result<(), String>
     shell_only(&host)?;
     if !matches!(
         what.as_str(),
-        "notifications" | "channels" | "battery" | "fullScreen" | "distributor" | "firebase"
+        "notifications"
+            | "channels"
+            | "battery"
+            | "fullScreen"
+            | "distributor"
+            | "firebase"
+            | "callingAccounts"
+            | "contacts"
     ) {
         return Err(format!("Nothing to fix: {what}"));
     }
@@ -255,9 +263,60 @@ fn native_state() -> Result<serde_json::Value, String> {
 
 /// What the shell says of a call to the native code (MT2): `joined` (its media is up), `left` (left, ended, or never
 /// joined), `screen` and `offScreen` (its call screen shown or left: over the lock screen the app shows the call's
-/// screen only), and `held` (call waiting put it on hold: its leg stays in the call; the native code keeps its call,
-/// and will map it to Telecom's hold, plans/Comms-Messaging.md phase 4's Android part).
-pub(crate) const CALL_STATES: [&str; 5] = ["joined", "left", "screen", "offScreen", "held"];
+/// screen only), `held` (call waiting put it on hold: its leg stays in the call, and its Telecom call goes on hold;
+/// `joined` again takes it off), and `video` or `voice` (the call's kind now: its default audio route, and
+/// picture-in-picture for video; plans/Comms-Messaging.md §8.3 items 3 to 5).
+pub(crate) const CALL_STATES: [&str; 7] = ["joined", "left", "screen", "offScreen", "held", "video", "voice"];
+
+/// The call's audio for the shell's speaker button (plans/Comms-Messaging.md §8.3 item 5): `{route, routes}`, the
+/// route in use and the ones Telecom offers (`earpiece`, `speaker`, `wired`, `bluetooth`). The shell's only.
+#[tauri::command(async)]
+pub(crate) fn call_audio(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let host = host(&app)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
+    #[cfg(target_os = "android")]
+    {
+        let text = crate::android::call_audio_state()?;
+        serde_json::from_str(&text).map_err(|err| err.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    Ok(serde_json::json!({ "route": null, "routes": [] }))
+}
+
+/// The routes the shell's speaker button may choose.
+pub(crate) const AUDIO_ROUTES: [&str; 4] = ["earpiece", "speaker", "wired", "bluetooth"];
+
+/// The shell's speaker button: the call's audio to `route` ([`AUDIO_ROUTES`]) for the rest of the call. Whether
+/// Telecom was asked (false: no call in Telecom, or no such route now).
+#[tauri::command(async)]
+pub(crate) fn call_audio_route(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+    route: String,
+) -> Result<bool, String> {
+    let host = host(&app)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
+    let route = AUDIO_ROUTES
+        .iter()
+        .find(|known| **known == route)
+        .ok_or("Not an audio route")?;
+    #[cfg(target_os = "android")]
+    return crate::android::call_audio_route(route);
+    #[cfg(not(target_os = "android"))]
+    {
+        log::info!("The call's audio to {route}");
+        Ok(false)
+    }
+}
 
 /// The shell's call `callSessionId` is in `state` ([`CALL_STATES`]): the native call (the Telecom call, the foreground
 /// service, the showing over the lock screen) is kept while the page has the call and ended after. The shell's only
@@ -269,8 +328,11 @@ pub(crate) fn call_state(
     nonce: Option<String>,
     call_session_id: String,
     state: String,
+    name: Option<String>,
 ) -> Result<(), String> {
     let host = host(&app)?;
+    // the check and the telling under one lock with the page's end, so a joined of a page going is told before its end
+    let _calls = moqui_lib::sync::lock(&host.calls);
     if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
         return Err("Not the shell's page".to_string());
     }
@@ -279,11 +341,18 @@ pub(crate) fn call_state(
         .iter()
         .find(|known| **known == state)
         .ok_or("Not a call state")?;
+    // the call's name for a car or a watch (with joined): the room, or the other people
+    let name = call_name(name.as_deref());
     #[cfg(target_os = "android")]
-    crate::android::page_call_state(id, state)?;
+    crate::android::page_call_state(id, state, &name)?;
     #[cfg(not(target_os = "android"))]
-    log::info!("The call {id} is {state}");
+    log::info!("The call {id} is {state} {name}");
     Ok(())
+}
+
+/// A call's name as a car or a watch shows it: one line, at most 80 characters, no control characters.
+pub(crate) fn call_name(name: Option<&str>) -> String {
+    clip(name.unwrap_or(""), 80).trim().to_string()
 }
 
 /// Whether the shell's call screen of `callSessionId` answers it by itself: only once, for the call the user answered
@@ -300,6 +369,151 @@ pub(crate) fn call_take_answer(
         return Err("Not the shell's page".to_string());
     }
     Ok(host.take_answer(&call_session_id))
+}
+
+/// The shell's word, as it loads for the current account, of whether it has a number to call from (its Dialer's caller
+/// IDs, plans/Comms-Messaging.md §9.1): the app's calling account for the phone's dialer is registered while an account
+/// here has one, and taken away when none has. The shell's only.
+#[tauri::command(async)]
+pub(crate) fn call_dial_account(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+    can_call: bool,
+) -> Result<(), String> {
+    let host = host(&app)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
+    let account = host.signed_in().ok_or("No account is signed in")?;
+    host.set_dial_account(&account, can_call)
+}
+
+/// The number from the phone's dialer waiting for the user's pick of the account that calls it (the current account
+/// cannot, several others can): `{number, accounts: [{id, label}]}`, or null. For the Dialer of the account it was
+/// shown on, within two minutes.
+#[tauri::command(async)]
+pub(crate) fn call_dial_choice(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let host = host(&app)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
+    Ok(match host.dial_choice() {
+        Some((number, accounts)) => serde_json::json!({
+            "number": number,
+            "accounts": accounts.into_iter().map(|(id, label)| serde_json::json!({"id": id, "label": label})).collect::<Vec<_>>(),
+        }),
+        None => serde_json::Value::Null,
+    })
+}
+
+/// The user's pick of `account` for the number waiting (`call_dial_choice`): that account's Dialer with the number
+/// filled in, the account made current. The user still presses Call.
+#[tauri::command(async)]
+pub(crate) fn call_dial_from(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+    account: String,
+) -> Result<(), String> {
+    let host = host(&app)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
+    host.dial_from(&account)
+}
+
+/// The most contacts a search gives.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+const CONTACTS_MAX: i32 = 10;
+/// The most numbers named at once.
+const NAMES_MAX: usize = 50;
+
+/// The phone's contacts whose name or number has `term` (plans/Comms-Messaging.md §9.2), for the new-chat picker:
+/// `[{name, number}]`, at most ten. The first search asks for the contacts permission (with its reason); without it,
+/// none. Read on the phone only, for the shell's page; nothing is sent anywhere.
+#[tauri::command(async)]
+pub(crate) fn contacts_search(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+    term: String,
+) -> Result<serde_json::Value, String> {
+    let host = host(&app)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
+    let Some(term) = contact_term(&term) else {
+        return Ok(serde_json::json!([]));
+    };
+    #[cfg(target_os = "android")]
+    {
+        let text = crate::android::contacts_search(&term, CONTACTS_MAX)?;
+        serde_json::from_str(&text).map_err(|err| err.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        log::info!(
+            "No phone contacts here to search for {} characters",
+            term.chars().count()
+        );
+        Ok(serde_json::json!([]))
+    }
+}
+
+/// The names the phone's contacts have for `numbers` (E.164, at most 50; others are left out): `{number: name}`. Never
+/// asks for the permission (a room list is not a use); without it, none. The shell's page only; nothing is sent.
+#[tauri::command(async)]
+pub(crate) fn contact_names(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+    numbers: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    let host = host(&app)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
+    let numbers = contact_numbers(&numbers);
+    if numbers.is_empty() {
+        return Ok(serde_json::json!({}));
+    }
+    #[cfg(target_os = "android")]
+    {
+        let text = crate::android::contact_names(&numbers)?;
+        serde_json::from_str(&text).map_err(|err| err.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        log::info!("No phone contacts here to name {} numbers", numbers.len());
+        Ok(serde_json::json!({}))
+    }
+}
+
+/// A contacts search's term: trimmed, no control characters, two to 100 characters; none otherwise.
+pub(crate) fn contact_term(term: &str) -> Option<String> {
+    let term = clip(term, 100);
+    (term.chars().count() >= 2).then_some(term)
+}
+
+/// The numbers a page asks names of that are E.164 (`+` and 5 to 15 digits), once each, at most [`NAMES_MAX`].
+pub(crate) fn contact_numbers(numbers: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for number in numbers.iter().map(|number| number.trim()) {
+        let digits = number.strip_prefix('+').unwrap_or("");
+        let e164 = (5..=15).contains(&digits.len()) && digits.chars().all(|c| c.is_ascii_digit());
+        if e164 && !out.iter().any(|kept| kept == number) {
+            out.push(number.to_string());
+        }
+        if out.len() >= NAMES_MAX {
+            break;
+        }
+    }
+    out
 }
 
 /// Open `url` outside the app: http and https on the web, mailto, tel and sip.

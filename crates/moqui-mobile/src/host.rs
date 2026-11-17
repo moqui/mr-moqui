@@ -244,6 +244,12 @@ pub(crate) struct MobileHost {
     pub(crate) dir: PathBuf,
     /// The call answered on the phone whose screen has not yet taken the answer ([`Self::take_answer`]).
     answer: Mutex<Option<String>>,
+    /// A number from the phone's dialer waiting for the user's pick of the account that calls it ([`Self::dial_choice`]).
+    dial: Mutex<Option<crate::dial::DialChoice>>,
+    /// Held while the page's call state goes to the native code (`call_state`) and while a navigation tells it the page
+    /// went ([`Self::navigate`]): a `joined` checked against a page that is going is told before the page's end, which
+    /// then ends it, never after.
+    pub(crate) calls: Mutex<()>,
 }
 
 impl MobileHost {
@@ -255,6 +261,8 @@ impl MobileHost {
             network: AtomicBool::new(network),
             dir,
             answer: Mutex::new(None),
+            dial: Mutex::new(None),
+            calls: Mutex::new(()),
         }
     }
 
@@ -353,6 +361,135 @@ impl MobileHost {
         log::info!("moqui-mobile: the room {room} opens in the shell");
     }
 
+    /// A number the phone's dialer handed over (plans/Comms-Messaging.md §9.1): filled in on the Dialer of the account
+    /// that calls ([`crate::dial::DialAccounts::choose`]), where the user presses Call; nothing is placed by itself. The
+    /// current account when it can call (or none can: its Dialer says why), the one that can when only one can (made
+    /// current), else the current one's Dialer asks which ([`Self::dial_choice`]). Not on the main thread.
+    pub(crate) fn open_dial(&self, number: &str) {
+        let Ok(state) = moqui_client_tauri::state(&self.app) else {
+            return;
+        };
+        let Some(current) = self.signed_in() else {
+            log::warn!("moqui-mobile: a number from the phone's dialer, with no account signed in: not shown");
+            return;
+        };
+        let signed_in = crate::native::signed_in_ids(&state.core);
+        let (account, choose) = match crate::dial::DialAccounts::load(&self.dir).choose(Some(&current), &signed_in) {
+            crate::dial::Chosen::Current => (current.clone(), false),
+            crate::dial::Chosen::Switch(other) => (other, false),
+            crate::dial::Chosen::Ask(accounts) => {
+                *moqui_lib::sync::lock(&self.dial) = Some(crate::dial::DialChoice {
+                    number: number.to_string(),
+                    accounts,
+                    shown_on: Some(current.clone()),
+                    at: crate::native::now_ms(),
+                });
+                (current.clone(), true)
+            }
+        };
+        self.show_dialer(&state, &account, number, choose, current != account);
+    }
+
+    /// The Dialer of `account` with `number` filled in (`choose`: it asks which account), `switch`ing to it first.
+    fn show_dialer(
+        &self,
+        state: &moqui_client_tauri::ClientState,
+        account: &str,
+        number: &str,
+        choose: bool,
+        switch: bool,
+    ) {
+        if switch {
+            if let Err(err) = moqui_client_tauri::commands::switch_account(state, account) {
+                log::warn!("moqui-mobile: a number from the phone's dialer is not shown: {err}");
+                return;
+            }
+        }
+        let path = crate::dial::dialer_path(&state.core.comms_root_of(account), number, choose);
+        if switch {
+            // the shell is loading for the account, and takes it then
+            *moqui_lib::sync::lock(&state.open_pending) = Some(path);
+        } else {
+            self.open_shell_path(&path);
+        }
+        log::info!("moqui-mobile: a number from the phone's dialer is filled in on the Dialer");
+    }
+
+    /// The number from the phone's dialer waiting for the user's pick, and the accounts to pick from (`{id, label}`):
+    /// for the Dialer of the account it was shown on, within two minutes; none otherwise.
+    pub(crate) fn dial_choice(&self) -> Option<(String, Vec<(String, String)>)> {
+        let state = moqui_client_tauri::state(&self.app).ok()?;
+        let choice = moqui_lib::sync::lock(&self.dial).clone()?;
+        if !choice.current(self.signed_in().as_deref(), crate::native::now_ms()) {
+            return None;
+        }
+        let accounts = moqui_lib::sync::lock(state.core.accounts());
+        let listed = choice
+            .accounts
+            .iter()
+            .filter_map(|id| accounts.get(id))
+            .map(|account| {
+                let place = if account.server_name.is_empty() {
+                    &account.server
+                } else {
+                    &account.server_name
+                };
+                (account.id.clone(), format!("{} · {place}", account.username))
+            })
+            .collect();
+        Some((choice.number, listed))
+    }
+
+    /// The user picked `account` for the number waiting ([`Self::dial_choice`]): its Dialer, with the number filled in,
+    /// that account made current. Taken once.
+    pub(crate) fn dial_from(&self, account: &str) -> Result<(), String> {
+        let state = moqui_client_tauri::state(&self.app)?;
+        let choice = moqui_lib::sync::lock(&self.dial)
+            .take()
+            .ok_or("No number waits for an account")?;
+        if !choice.current(self.signed_in().as_deref(), crate::native::now_ms())
+            || !choice.accounts.iter().any(|id| id == account)
+        {
+            return Err("That account does not call this number".to_string());
+        }
+        let switch = self.signed_in().as_deref() != Some(account);
+        self.show_dialer(&state, account, &choice.number, false, switch);
+        Ok(())
+    }
+
+    /// The accounts that can call, kept to those still signed in here (a key revoked elsewhere is gone at the next
+    /// start), and the calling account registered to match.
+    pub(crate) fn prune_dial_accounts(&self, signed_in: &[String]) {
+        let mut accounts = crate::dial::DialAccounts::load(&self.dir);
+        if !accounts.keep_only(signed_in) {
+            return;
+        }
+        if let Err(err) = accounts.save(&self.dir) {
+            log::warn!("The accounts that call were not kept: {err}");
+        }
+        #[cfg(target_os = "android")]
+        if let Err(err) = crate::android::dial_account(accounts.any()) {
+            log::warn!("The calling account was not changed: {err}");
+        }
+    }
+
+    /// Whether `account` has a number to call from (the shell's word as it loads, or a sign-out): the calling account
+    /// for the phone's dialer is registered while one here has (`DialAccount.set`).
+    pub(crate) fn set_dial_account(&self, account: &str, on: bool) -> Result<(), String> {
+        let mut accounts = crate::dial::DialAccounts::load(&self.dir);
+        if accounts.set(account, on) {
+            accounts.save(&self.dir)?;
+        }
+        let any = accounts.any();
+        #[cfg(target_os = "android")]
+        if !crate::android::dial_account(any)? {
+            return Err("Telecom did not take the calling account".to_string());
+        }
+        #[cfg(not(target_os = "android"))]
+        log::info!("The calling account: {}", if any { "registered" } else { "none" });
+        Ok(())
+    }
+
     /// The answer the native code handed over for the call `id`, taken once by its call screen: only a call the user
     /// answered on the phone is answered by the page by itself.
     pub(crate) fn take_answer(&self, id: &str) -> bool {
@@ -364,8 +501,22 @@ impl MobileHost {
         false
     }
 
-    /// The shell leaves the call `id`, if it is in it (the call notification's Hang up, a headset's).
+    /// The native call tells the shell's call screen something ([`crate::calls::tell_script`]).
+    pub(crate) fn tell_call(&self, script: &str) {
+        if self.is_shell(MAIN) && self.page.has_nonce() {
+            self.eval(script);
+        }
+    }
+
+    /// The shell leaves the call `id`, if it is in it or has it on hold (the call notification's Hang up, a headset's).
     pub(crate) fn hang_up(&self, id: &str) {
+        // an answer handed over and not taken yet goes with the call (Hang up before the page joined)
+        {
+            let mut answer = moqui_lib::sync::lock(&self.answer);
+            if answer.as_deref() == Some(id) {
+                *answer = None;
+            }
+        }
         if self.is_shell(MAIN) && self.page.has_nonce() {
             self.eval(&crate::calls::hang_up_script(id));
         }
@@ -383,7 +534,7 @@ impl MobileHost {
 
     /// Show `url` in the one webview; its sockets go with the page that leaves.
     pub(crate) fn navigate(&self, url: &Url) {
-        self.page.navigating();
+        self.page_gone(true);
         if url.origin().ascii_serialization() == SHELL_ORIGIN {
             self.page.host_shows_shell();
         }
@@ -397,6 +548,21 @@ impl MobileHost {
                 }
             }
             None => log::warn!("No webview to show {url}"),
+        }
+    }
+
+    /// The page goes (a navigation of the host's, or any new document: `PageLoadEvent::Started`, a reload, the webview's
+    /// own history, a renderer gone and loaded again): with `navigating`, the page state too. The page leaves with its
+    /// calls' media, so the native calls it joined end with it; a ring, or a call answered on the phone and not joined
+    /// yet, stays. Under [`Self::calls`], so a `joined` on its way is told first.
+    pub(crate) fn page_gone(&self, navigating: bool) {
+        let _calls = moqui_lib::sync::lock(&self.calls);
+        if navigating {
+            self.page.navigating();
+        }
+        #[cfg(target_os = "android")]
+        if let Err(err) = crate::android::calls_page_gone() {
+            log::warn!("The native calls were not told the page went: {err}");
         }
     }
 
@@ -476,7 +642,7 @@ impl ShellHost for MobileHost {
         let path = server_path(path)?;
         // the shell, and its call screen, go: over the lock screen the app does not show a server page
         #[cfg(target_os = "android")]
-        if let Err(err) = crate::android::page_call_state("", "offScreen") {
+        if let Err(err) = crate::android::page_call_state("", "offScreen", "") {
             log::warn!("The native code was not told the call screen went: {err}");
         }
         let account = self.signed_in().ok_or("No account is signed in")?;
@@ -526,6 +692,10 @@ impl ShellHost for MobileHost {
     fn account_signing_out(&self, account: &Account, key: &str) {
         if let Some(core) = self.core() {
             crate::native::unregister_push(&core, &self.dir, account, key);
+        }
+        // its number no longer calls from the phone's dialer
+        if let Err(err) = self.set_dial_account(&account.id, false) {
+            log::warn!("The calling account was not changed for the sign-out: {err}");
         }
         unified_register_all();
     }

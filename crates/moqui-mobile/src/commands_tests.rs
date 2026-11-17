@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use super::{chat_room_of, clip, external_url, tag_id, under};
+use super::{call_name, chat_room_of, clip, contact_numbers, contact_term, external_url, tag_id, under};
 
 #[test]
 fn only_the_webs_and_the_handlers_links_open_outside_the_app() {
@@ -64,4 +64,38 @@ fn a_tag_is_one_notification_id_per_account() {
     assert_eq!(chat_room_of("chat-100"), Some("100"));
     assert_eq!(chat_room_of("call-100"), None);
     assert_eq!(chat_room_of("chat-a/b"), None);
+}
+
+/// A call's name as a car or a watch shows it: one line of at most 80 characters, none when the page gave none.
+#[test]
+fn a_calls_name_is_one_short_line() {
+    assert_eq!(call_name(Some(" Ann,\nBob ")), "Ann, Bob");
+    assert_eq!(call_name(Some(&"x".repeat(200))).len(), 80);
+    assert_eq!(call_name(None), "");
+    assert_eq!(call_name(Some("\u{7}")), "");
+}
+
+/// The contacts asked of the phone: a term of two characters or more, and only E.164 numbers, once each, at most 50.
+#[test]
+fn the_phone_book_is_asked_only_a_term_and_e164_numbers() {
+    assert_eq!(contact_term(" ann\n").as_deref(), Some("ann"));
+    assert_eq!(contact_term("a"), None, "one character searches nothing");
+    assert_eq!(contact_term(&"b".repeat(150)).map(|term| term.len()), Some(100));
+    let asked: Vec<String> = [
+        "+18015550100",
+        " +18015550100 ",
+        "8015550100",
+        "+1",
+        "+1801555010x",
+        "+447700900123",
+    ]
+    .iter()
+    .map(|number| number.to_string())
+    .collect();
+    assert_eq!(
+        contact_numbers(&asked),
+        vec!["+18015550100".to_string(), "+447700900123".to_string()]
+    );
+    let many: Vec<String> = (0..80).map(|n| format!("+1801555{n:04}")).collect();
+    assert_eq!(contact_numbers(&many).len(), 50);
 }

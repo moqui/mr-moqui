@@ -10,7 +10,9 @@ sent when the server can be reached. How it works on Android is [docs/ui/Mobile-
   (`commands.rs`), the page bridge (`bridge.js`), the lifecycle (`lib.rs`), and the incoming call on a locked phone
   (`calls.rs`, `native.rs` and the Kotlin `CallManager`, `CallConnectionService`, `CallService`,
   `IncomingCallActivity`, `Native`, `Push`; [Mobile-Client](../../docs/ui/Mobile-Client.md#the-incoming-call-mt2)),
-  and the outbox sent in the background (`native.rs` and the Kotlin `FlushWorker`, WorkManager).
+  the outbox sent in the background (`native.rs` and the Kotlin `FlushWorker`, WorkManager), and the phone's dialer and
+  contacts through the app (`dial.rs` and the Kotlin `DialAccount`, `PhoneBook`;
+  [Mobile-Client](../../docs/ui/Mobile-Client.md#the-phones-dialer-and-contacts)).
   The rest is shared with the desktop
   app: [moqui-client](../moqui-client/README.md) and [moqui-client-tauri](../moqui-client-tauri/README.md).
 - **The shell** is the desktop's (`crates/moqui-desktop/shell`), staged by `./moq android` into
@@ -62,4 +64,5 @@ scripts/android-smoke.sh      # on the emulator, when asked: the shell's ready l
 ```
 
 The Kotlin has JVM tests (`./gradlew :app:testUniversalDebugUnitTest` in `gen/android`) and, on the emulator when
-asked, the instrumented `ChatNotificationsTest` ([Mobile-Client, Tests](../../docs/ui/Mobile-Client.md#tests)).
+asked, the instrumented `CallTelecomTest`, `DialAccountTest` and `ChatNotificationsTest`
+([Mobile-Client, Tests](../../docs/ui/Mobile-Client.md#tests)).

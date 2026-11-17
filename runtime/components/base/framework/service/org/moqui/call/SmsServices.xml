@@ -17,13 +17,16 @@ along with this software (see the LICENSE.md file). If not, see
     provider's adapter is crates/moqui-channels (Telnyx), which calls receive#Sms from its webhook and check#SmsSend before
     each send. org.moqui.SmsServices.send#SmsMessage is the system's sender (a sign-in code). No Java counterpart.
 
-    Access. open#PairRoom and find#MyTextNumbers are the current user's; the rest are internal (allow-remote false). -->
+    Access. open#PairRoom, find#MyTextNumbers and find#PhoneNames are the current user's; the rest are internal (allow-remote
+    false). -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <service verb="open" noun="PairRoom">
         <description>Text a number: the room of the current user's number fromNumber (one they are granted that has messaging;
-            their only one when empty) and toNumber, found or made, with the user in it. Refusals carry reasonCode: notSignedIn,
-            badNumber, emergency, numberNotGranted, noMessaging, internationalNotEnabled, premiumNotEnabled.</description>
+            their only one when empty) and toNumber, found or made, with the user in it; several numbers in toNumber
+            (comma-separated, at most 8) are a group text, one room for that set of numbers (plans/Comms-Messaging.md §9,
+            group texts). Refusals carry reasonCode: notSignedIn, badNumber, emergency, numberNotGranted, noMessaging,
+            internationalNotEnabled, premiumNotEnabled, tooManyNumbers.</description>
         <in-parameters>
             <parameter name="toNumber" required="true"/>
             <parameter name="fromNumber"/>
@@ -31,10 +34,25 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="chatRoomId"/>
             <parameter name="ourNumber"><description>fromNumber in E.164</description></parameter>
-            <parameter name="theirNumber"><description>toNumber in E.164</description></parameter>
+            <parameter name="theirNumber"><description>toNumber in E.164 (a group's, comma-separated)</description></parameter>
+            <parameter name="theirNumberList" type="List"><description>A group text's outside numbers</description></parameter>
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Sms.js').execute('openPairRoom', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="PhoneNames">
+        <description>The current user's names of outside numbers (numbers comma-separated, or numberList; at most 50), from
+            the call-context providers of the apps they may open (the first contact's name each gives): nameMap, number to
+            name, a number no app knows left out. Only the numbers of phone rooms the user is in are asked, and at most 600
+            numbers an hour a user (past that none: reasonCode rateLimited). The phone rooms' names on the server's side
+            (plans/Comms-Messaging.md §9, Phone book); the app puts the phone's own contacts first.</description>
+        <in-parameters>
+            <parameter name="numbers"/>
+            <parameter name="numberList" type="List"/>
+        </in-parameters>
+        <out-parameters><parameter name="nameMap" type="Map"/><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Sms.js').execute('phoneNames', context))</script></actions>
     </service>
 
     <service verb="find" noun="MyTextNumbers">
@@ -49,10 +67,12 @@ along with this software (see the LICENSE.md file). If not, see
             messaging bridge (externalRoomId ours/theirs), found or made under the number's row lock, and the users our number
             reaches (its user or ring group, and its caller-ID grants) members of it; one who left stays out. reasonCode
             noMessaging when our number has no messaging bridge. Called in a transaction of its own before a text is taken in
-            and before a call links to it.</description>
+            and before a call links to it. With theirNumberList of two or more outside numbers, the group text's room of that
+            set (externalRoomId ours/a,b,c, the numbers in E.164 and sorted; at most 8, else tooManyNumbers).</description>
         <in-parameters>
             <parameter name="ourNumber" required="true"/>
-            <parameter name="theirNumber" required="true"/>
+            <parameter name="theirNumber"/>
+            <parameter name="theirNumberList" type="List"/>
         </in-parameters>
         <out-parameters>
             <parameter name="chatRoomId"/>
@@ -60,6 +80,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="chatRoomBridgeId"/>
             <parameter name="externalRoomId"/>
             <parameter name="created" type="Boolean"/>
+            <parameter name="isGroup" type="Boolean"/>
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Sms.js').execute('ensurePairRoom', context))</script></actions>
@@ -134,13 +155,15 @@ along with this software (see the LICENSE.md file). If not, see
             nothing again) and messageId, text and mediaList [{url, contentType, fileName, maxBytes}]. A STOP, START or HELP keeps
             the pair's opt-out; the pair room is found or made; the text goes through ChatBridgeServices.ingest#Event. outcome
             (accepted, duplicate, rejected, waiting, ignored for a number without messaging on this bridge, failed), reasonCode,
-            chatRoomId, eventSeq.</description>
+            chatRoomId, eventSeq. recipientList, every number a group text went to (our number among them): its room is the
+            group's, of the sender and the others.</description>
         <in-parameters>
             <parameter name="chatBridgeId" required="true"/>
             <parameter name="eventId" required="true"/>
             <parameter name="messageId" required="true"/>
             <parameter name="ourNumber" required="true"/>
             <parameter name="theirNumber" required="true"/>
+            <parameter name="recipientList" type="List"/>
             <parameter name="text" allow-html="any"/>
             <parameter name="mediaList" type="List"/>
             <parameter name="originMillis" type="Long"/>

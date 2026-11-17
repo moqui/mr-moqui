@@ -191,7 +191,8 @@ answered (plans/Mobile-Desktop.md MD6, MT2; a Rust native audio client is later)
 - **Permissions:** `POST_NOTIFICATIONS` (Android 13+) and `RECORD_AUDIO` are asked once an account is signed in, not at
   the first start's sign-in, notifications after a dialog that says why (messages, mentions and calls); Android's
   permission dialog asks for the unlock first, so on a locked phone the Answer does not ask and the page asks after the
-  unlock. `CAMERA` is asked at a video call's Answer or by the page. `MANAGE_OWN_CALLS`,
+  unlock. `CAMERA` is asked at a video call's Answer or by the page. `READ_CONTACTS` is asked at the first contacts
+  search ([The phone's dialer and contacts](#the-phones-dialer-and-contacts)). `MANAGE_OWN_CALLS`,
   `FOREGROUND_SERVICE_PHONE_CALL` and `USE_FULL_SCREEN_INTENT` are granted at install; Android 14+ lets the user (and
   Google Play's policy) turn the full-screen intent off, so after the notifications question the app says why calls
   need it and opens its setting, once. The notification check fixes either later.
@@ -231,6 +232,100 @@ above with its `callSessionId`; with the app in the foreground the `/notws` ring
 **What needs Firebase and a phone.** A real FCM message reaching the app, asleep or after the system ended its
 process; the token's registration from Firebase; a ring on a phone's own lock screen and its full-screen-intent
 setting; Bluetooth and speaker routing; two-way audio; and encrypted calls on a WebView 141+.
+
+## During a call (phase 4)
+
+The call's media stays the WebView's; the native code gives it what a phone's own calls have
+([plans/Comms-Messaging.md §8.2, §8.3 items 4 to 7](../../plans/Comms-Messaging.md)). The Kotlin is `CallManager`,
+`CallConnectionService`, `CallAudio`, `CallService` and `MainActivity`; the rules are `CallRules` (JVM-tested).
+
+- **Every call is in Telecom.** A call rung here is an incoming self-managed call; one the page joins by itself
+  (started from a chat, joined, moved to this phone) is placed as an outgoing self-managed call (`placeCall`), so it
+  has the audio routes, a headset's hang-up, and the hold of another call. The page says what the call does
+  (`call_state`): `joined` (with the call's name: the other people, or the room), `left`, `held`, `screen` and
+  `offScreen` (with the call screen's mount token: an older screen's `offScreen` after a newer one's `screen` is
+  dropped), and its kind, `video` or `voice` (sent once `joined` is told; one that comes first is kept for it). A car or
+  a watch shows the call's name, and a neutral address, not a call id.
+- **The page owns its calls.** When the page goes (every new document of the webview, `PageLoadEvent::Started`: a
+  server page opened, a reload, the shell's own `location.reload()`, the webview's Back, an account switch, another
+  account's ring answered, a renderer gone and loaded again; not a `pushState` or a hash), the calls it joined end
+  here, held ones too; a ring, or a call answered on the phone and not joined yet, stays. A `joined` that was on its
+  way from the page that went places nothing (the page's end and `call_state` hold one lock, and the native code
+  counts the page's loads). Another account's ring answered, or its notification tapped, during a call switches the
+  account and so drops the call this page was in without telling its server first; the server sees its leg go with the
+  socket. Every way the page loses a call on hold (it ended, moved to another device, or was left) tells the app
+  (`left`), and the ongoing notification's Hang up, and its person, are the call the app is in (not the one on hold):
+  it ends the native call at once, the page leaving it; one answered on the phone and not joined yet goes with the
+  answer the host kept for it.
+- **Audio** goes through Telecom (`CallAudio`), each call with its own state, so a second ring does not reset the call
+  the app is in, and only that call is routed: `CallEndpoint` on Android 14+, the `CallAudioState` routes before. A
+  Bluetooth or wired headset that is there takes the call (also at its start, when Telecom names the earpiece first),
+  one that comes takes it at once, and when it goes the call falls back to its kind's route: the earpiece for voice,
+  the speaker for video. The call screen's audio button lists the routes (earpiece, speaker, headphones, Bluetooth;
+  `call_audio`, `call_audio_route`, each read or asked on the main thread, the command waiting at most two seconds) and
+  the user's choice holds for that call, asked again when the call is the app's again after a Swap. The page hears
+  each change (`moqui.call.setHostAudio`), and Telecom's mute (a car, a watch) mutes the page (`setHostMute`); its
+  first report is the call's state at its start, not a change, so a page that joined muted stays muted. The page's own
+  mute is not shown by a car or a watch: a `ConnectionService` cannot set Telecom's mute (no `Connection.setMuted`).
+- **The screen off at the ear:** a voice call on the earpiece, with its call screen showing and the app in front,
+  holds the proximity wake lock; it follows the app going to the back and coming to the front.
+- **Leave the app:** the call keeps going. The `phoneCall` foreground service also takes the `microphone` type once
+  the app is in a call, and `camera` for a video call (Android 14 lets a service take them only from the app in front:
+  a ring alone keeps `phoneCall`). A video call with the call screen showing (whichever call it shows, a swapped one
+  too) goes to picture-in-picture when the user leaves the app (by itself on Android 12+, from `onUserLeaveHint`
+  before) or presses Back past the page; the window has Mute and Hang up, the call screen shows only the video
+  (`moqui.call.setHostPip`), and the window goes with the last joined call (not when the only call goes on hold). Its
+  shape is a fixed 3:4.
+- **Hold and call waiting:** the page's hold (Hold and answer, Swap) holds the Telecom call (`held`) and `joined`
+  takes it off; Telecom's own hold (another call, a watch, a car) reaches the page (`moqui.call.hostHold`), which holds
+  the call unless another is on hold already (the page holds one call at a time), so while one is held the call in use
+  has no `CAPABILITY_HOLD` and Telecom does not count on a hold (it has it again after); a hold already on its way
+  answers once, and one the server never answers gives up after 15 seconds. A second ring rings through Telecom.
+  Answering it on the phone does not make it active while the first is: the page puts the first on hold (Hold and
+  answer), and the second is active for Telecom as soon as the first is held, before the page's `joined`.
+- **Move to this device** is the page's (`move#Call`): a call moved to the phone is joined there and placed in Telecom
+  like any joined one, and one moved away from it is left, which ends its Telecom call.
+- **The Telecom library.** These use `android.telecom` directly, and so does the calling account below:
+  `androidx.core.telecom` has no managed account, and moving the self-managed calls alone is later work
+  ([plans/Comms-Messaging.md §9.1](../../plans/Comms-Messaging.md)).
+
+## The phone's dialer and contacts
+
+[plans/Comms-Messaging.md §9](../../plans/Comms-Messaging.md), phase 9. The Kotlin is `DialAccount` and `PhoneBook`;
+the Rust is `src/dial.rs` and the commands `call_dial_account`, `call_dial_choice`, `call_dial_from`, `contacts_search`
+and `contact_names`.
+
+- **A calling account.** The app registers a managed `tel` `PhoneAccount` (`CAPABILITY_CALL_PROVIDER`, on
+  `CallConnectionService`) while an account signed in here has a number to call from: the shell asks its Dialer's data
+  as it loads for an account (`Root.qvue` `tellDialAccount`) and tells the host (`call_dial_account`), which keeps the
+  accounts that can call (`client/dial.json`) and takes the account away when none can (a sign-out too). Android lists
+  it under Calling accounts, where only the user turns it on; the notification check has a row for it, which opens that
+  screen. Telecom tells the app whether it is on only with `READ_PHONE_NUMBERS`, which the app does not ask, so the row
+  (read again at each open of the check) says it is on once a number came through it, and not known again after a
+  number Telecom did not let through or a new registration. An account whose key was revoked elsewhere leaves the
+  list at the next start.
+- **A number dialed with it** (the phone's dialer, a contact's Call) reaches `CallConnectionService` as an outgoing
+  call of that account: `DialAccount.dialed` hands the number to Rust (`Native.dialLink`, a nonce for it, two minutes,
+  once), cancels Telecom's own call, and opens the app with `org.moqui.mobile:/dial?nonce=...`; when Android does not
+  let the app come to the front by itself a notification hands it over on a tap. The link carries no number, and one the
+  app did not make is refused; but any app may place a call with the account (`placeCall`, `ACTION_CALL`) and so
+  choose the number, so nothing is called by itself (the decision is for cost and fraud safety). The host shows the
+  Dialer with the number filled in, and the user presses Call, once: through `place#PhoneCall`, with the caller ID, the
+  fraud limits and the emergency path. The Dialer is the current account's when it can call (or none can: it says
+  why), the one account that can otherwise (made current); when several can and the current one cannot, the Dialer
+  asks which (`call_dial_choice`, the user's pick `call_dial_from`, for two minutes and for the account it was shown
+  on), and the app never switches accounts for a number on its own. A leading `*67` or `#31#` is Hide my number: the
+  Dialer takes it off and sets Hide my number. The call then is the page's, as any call the page joins. Numbers
+  Android treats as emergency numbers never come here: Telecom places them on the SIM.
+- **Contacts** (`READ_CONTACTS`), read on the phone only, for the shell's page; nothing goes to the server. A phone
+  room's numbers are named from them first (`contact_names`, `moqui.chat.nameRooms`), then from the server's
+  `call-context` (`find#PhoneNames`); the new-chat pickers find them as the user types (`contacts_search`,
+  `moqui.chat.contactOptions`, at least two characters, ten at most). The server is asked for every number of the
+  rooms, not only those the phone does not know, so it cannot tell which are in the phone's contacts. The first search
+  asks, after a dialog that says why; the names never ask (a room list opened is not a use), and the app does not ask
+  again by itself: the notification check's Contacts row asks on a tap, or opens the app's settings once Android no
+  longer asks. Contacts allowed later (the question, or Android's settings while the app was away) name the rooms again
+  with no reload (`moqui.chat.contactsChanged`, told by `PhoneBook.check`).
 
 ## Chat notifications
 
@@ -283,7 +378,7 @@ The chat's pushes are shown by Kotlin with no WebView, also when the push starte
   `push_check_fix`, `push_test`): the permission, each channel on or off, battery optimization (Android's own; a
   maker's task killer is not detected), the full-screen intent, the push service (Firebase, or the UnifiedPush
   distributor, with a Fix to pick one), whether the account's server has this device's registration, the last push
-  received, and a stop since; each item that is off has a Fix that opens its system setting (battery optimization
+  received, a stop since, the calling account for the phone's dialer and the contacts; each item that is off has a Fix that opens its system setting (battery optimization
   asks in place). "Send a test notification" asks the server for one (`/qapps/testClientPush`, `send#TestPush`, once a
   device in 10 seconds) and shows the time its own push took to arrive (its ack id among the recent ones).
 - **Stopped.** A force-stopped app gets no push until it is opened again; the app says once, at the next open, that it
@@ -320,8 +415,13 @@ What fills each gap of MT1 and MT2 is MT3's record ([Mobile-Desktop](../../plans
 - `cd crates/moqui-client-tauri && CARGO_TARGET_DIR=../../target cargo test`: the schemes' answer, with no network.
 - `scripts/check-android.sh`: clippy for both Android targets.
 - `./gradlew :app:testUniversalDebugUnitTest` in `gen/android` (`ANDROID_HOME` set): the Kotlin rules' JVM tests
-  (`CallRules`, `ChatRules`: channels, tags, links, mute).
-- Instrumented, on the emulator when asked: `ChatNotificationsTest` shows an opened push and checks its channel and
+  (`CallRules`: the ring's time, the audio route, the screen at the ear, picture-in-picture, the service's types, the
+  calling account's state, a contact's number, the contacts' question once; `ChatRules`: channels, tags, links, mute).
+- Instrumented, on the emulator when asked: `CallTelecomTest` (a joined call in Telecom, held and resumed by the page,
+  its audio on the earpiece for voice and the speaker for video, the page's choice holding, left); `DialAccountTest`
+  (the calling account registered and taken away, a dialed number handed to the app by a nonce only with Telecom's call
+  cancelled, a number the app does not call refused, a contact named and found); `ChatNotificationsTest`
+  shows an opened push and checks its channel and
   actions, another account's room as another notification, a mention's channel, an encrypted room's lack of text, Reply
   and Mark read through a stand-in outbox (ids from the intent's data, not its extras), a
   reply that could not be queued, `clear`, Mute, the room in view, and a push or ring that does not open. Build the
@@ -333,8 +433,7 @@ What fills each gap of MT1 and MT2 is MT3's record ([Mobile-Desktop](../../plans
       -x rustBuildX86_64Debug -x rustBuildArmDebug -x rustBuildX86Debug -x rustBuildUniversalDebug
   adb install -r -g app/build/outputs/apk/universal/debug/app-universal-debug.apk
   adb install -r -g app/build/outputs/apk/androidTest/universal/debug/app-universal-debug-androidTest.apk
-  adb shell am instrument -w -e class org.moqui.mobile.ChatNotificationsTest \
-      org.moqui.mobile.test/androidx.test.runner.AndroidJUnitRunner
+  adb shell am instrument -w org.moqui.mobile.test/androidx.test.runner.AndroidJUnitRunner   # all; -e class one
   ```
 - `scripts/android-smoke.sh`: on the emulator when asked (not in `./moq test-all`): install, start, the shell's ready
   line in logcat, a screenshot, the frame check, then back out and start again. With a release APK

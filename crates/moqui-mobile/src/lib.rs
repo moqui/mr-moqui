@@ -29,11 +29,14 @@
 //! - [`calls`] and [`native`]: the incoming call on a locked phone (MT2), shown by the native code
 //!   (`gen/android/.../CallManager.kt`) with the media in the webview: an Answer's deep link opens the call in the
 //!   shell, a Decline and the push token's registration go to the server from Rust with no webview.
+//! - [`dial`]: the phone's dialer and Contacts calling a number through the app's calling account, which the app's
+//!   Dialer places (plans/Comms-Messaging.md §9.1).
 
 #[cfg(target_os = "android")]
 mod android;
 mod calls;
 mod commands;
+mod dial;
 mod host;
 mod keystore;
 mod native;
@@ -127,7 +130,14 @@ pub fn run() {
             commands::push_test,
             commands::open_external,
             commands::call_state,
-            commands::call_take_answer
+            commands::call_take_answer,
+            commands::call_audio,
+            commands::call_audio_route,
+            commands::call_dial_account,
+            commands::call_dial_choice,
+            commands::call_dial_from,
+            commands::contacts_search,
+            commands::contact_names
         ])
         .setup(move |app| {
             let embedded = files.take().ok_or("the app was set up twice")?;
@@ -193,10 +203,16 @@ fn start(app: &AppHandle, files: Box<dyn tauri::Assets<tauri::DynRuntime>>) -> R
         }
     }
     native::set_host(&host);
-    // a call link that came before the host was made (a cold start's Answer)
+    // the accounts that call from the phone's dialer: only those still signed in (a key revoked elsewhere)
+    host.prune_dial_accounts(&native::signed_in_ids(&core));
+    // a call link that came before the host was made (a cold start's Answer), and a number from the phone's dialer
     if let Some(link) = moqui_lib::sync::lock(&EARLY_CALL).take() {
         let early = Arc::clone(&host);
         std::thread::spawn(move || early.open_call(&link));
+    }
+    if let Some(number) = moqui_lib::sync::lock(&EARLY_DIAL).take() {
+        let early = Arc::clone(&host);
+        std::thread::spawn(move || early.open_dial(&number));
     }
     core.warm();
     shell_webview(app, &host)?;
@@ -249,6 +265,9 @@ fn shell_webview(app: &AppHandle, host: &Arc<MobileHost>) -> tauri::Result<()> {
     .on_navigation(move |url| navigation(&navigation_host, url))
     .on_page_load(move |_window, payload| match payload.event() {
         PageLoadEvent::Started => {
+            // any new document (a reload, the webview's own Back, a renderer gone and loaded again, not a pushState or
+            // a hash): the calls the page joined end with it
+            load_host.page_gone(false);
             load_host.page.started(payload.url());
             if let Some(core) = moqui_lib::sync::lock(&load_host.client).clone() {
                 core.sockets().close_for(MAIN);
@@ -312,6 +331,21 @@ fn opened_call(app: &AppHandle, link: calls::CallLink) {
     }
 }
 
+/// A number from the phone's dialer taken before the app's host was made, opened once it is.
+static EARLY_DIAL: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// A number the phone's dialer handed over (plans/Comms-Messaging.md §9.1): the Dialer shows it, off the main thread,
+/// or it is kept until the host is made.
+fn opened_dial(app: &AppHandle, number: String) {
+    match app.try_state::<Arc<MobileHost>>() {
+        Some(host) => {
+            let host = Arc::clone(&host);
+            std::thread::spawn(move || host.open_dial(&number));
+        }
+        None => *moqui_lib::sync::lock(&EARLY_DIAL) = Some(number),
+    }
+}
+
 /// The app's events: the SSO hand-back, and the lifecycle.
 // on the desktop host, where tests build it, the mobile-only arms are gone and clippy would have the match collapsed
 #[cfg_attr(not(mobile), allow(clippy::collapsible_match))]
@@ -337,6 +371,12 @@ fn on_event(app: &AppHandle, event: RunEvent) {
                     match calls::link_of(&url).and_then(|(id, nonce)| native::take_link(&nonce, &id)) {
                         Some(link) => opened_call(app, link),
                         None => log::warn!("A call link the app did not make is refused"),
+                    }
+                } else if dial::is_dial_link(&url) {
+                    // as a call link: only a number the native code handed over (its nonce, taken once) is called
+                    match dial::nonce_of(&url).and_then(|nonce| native::take_dial_link(&nonce)) {
+                        Some(number) => opened_dial(app, number),
+                        None => log::warn!("A dial link the app did not make is refused"),
                     }
                 } else {
                     log::warn!("A link the app does not take: {}", url.scheme());

@@ -63,6 +63,13 @@ const COMMANDS: &[&str] = &[
     "open_external",
     "call_state",
     "call_take_answer",
+    "call_audio",
+    "call_audio_route",
+    "call_dial_account",
+    "call_dial_choice",
+    "call_dial_from",
+    "contacts_search",
+    "contact_names",
 ];
 
 fn main() {

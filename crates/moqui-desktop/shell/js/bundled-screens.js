@@ -58,11 +58,14 @@ module.exports = {
         // the new-chat picker: what is picked (moqui.chat.pickKind), and phone numbers offered when the user has one that texts
         pickKind() { return moqui.chat.pickKind(this.newUserIds); },
         pickParameters() { return { numbers: this.numbers.length ? 'true' : '' }; },
+        // the phone's own contacts with a number, as the picker's extra options (the mobile app only)
+        contactOptions() { return this.numbers.length && moqui.chat && moqui.chat.contactOptions ? moqui.chat.contactOptions : null; },
         toLabel() { return this.numbers.length ? t('To: people or a phone number') : t('To: one person or several'); },
         pickHint() {
             const kind = this.pickKind;
             if (kind === 'number') return t('A text from your number: the conversation with this number opens.');
-            if (kind === 'mixed') return t('A text goes to one phone number: start it with the number alone.');
+            if (kind === 'numbers') return t('A group text from your number: one conversation with these numbers.');
+            if (kind === 'mixed') return t('A text goes to phone numbers only: start it without the people.');
             if (kind === 'group') return t('A group chat; with a name it is a room, which can take more people later.');
             return this.numbers.length ? t('Pick one person for a direct chat, several for a group, or type a phone number to text it.')
                 : t('Pick one person for a direct chat, or several for a group.');
@@ -140,6 +143,8 @@ module.exports = {
                 this.me = memo.me = json.me || {};
                 this.prefs = memo.prefs = json.prefs || {};
                 this.rooms = memo.rooms = json.roomList || [];
+                // a phone room's numbers by their names (plans/Comms-Messaging.md §9)
+                if (moqui.chat && moqui.chat.nameRooms) moqui.chat.nameRooms(this.rooms);
                 if (moqui.chat) this.rooms.forEach((room) => {
                     if (room.isMember && room.chatRoomId !== this.roomId) moqui.chat.state.unread[room.chatRoomId] = { unread: room.unreadCount || 0, mentions: room.mentionCount || 0 };
                 });
@@ -471,8 +476,9 @@ module.exports = {
                                   "server-search": "",
                                   "options-url": _ctx.url('searchUsers'),
                                   "options-parameters": _ctx.pickParameters,
+                                  "options-extra": _ctx.contactOptions,
                                   label: _ctx.toLabel
-                                }, null, 8, ["modelValue", "onUpdate:modelValue", "options-url", "options-parameters", "label"]),
+                                }, null, 8, ["modelValue", "onUpdate:modelValue", "options-url", "options-parameters", "options-extra", "label"]),
                                 (_ctx.pickKind === 'group')
                                   ? (_openBlock(), _createBlock(_component_m_text_line, {
                                       key: 0,
@@ -483,7 +489,7 @@ module.exports = {
                                       class: "q-mt-xs"
                                     }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]))
                                   : _createCommentVNode("", true),
-                                (_ctx.pickKind === 'number' && _ctx.numbers.length > 1)
+                                ((_ctx.pickKind === 'number' || _ctx.pickKind === 'numbers') && _ctx.numbers.length > 1)
                                   ? (_openBlock(), _createBlock(_component_m_drop_down, {
                                       key: 1,
                                       modelValue: _ctx.fromNumber,
@@ -881,8 +887,9 @@ module.exports = {
                                           "server-search": "",
                                           "options-url": _ctx.url('searchUsers'),
                                           "options-parameters": _ctx.pickParameters,
+                                          "options-extra": _ctx.contactOptions,
                                           label: _ctx.toLabel
-                                        }, null, 8, ["modelValue", "onUpdate:modelValue", "options-url", "options-parameters", "label"]),
+                                        }, null, 8, ["modelValue", "onUpdate:modelValue", "options-url", "options-parameters", "options-extra", "label"]),
                                         (_ctx.pickKind === 'group')
                                           ? (_openBlock(), _createBlock(_component_m_text_line, {
                                               key: 0,
@@ -893,7 +900,7 @@ module.exports = {
                                               class: "q-mt-sm"
                                             }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]))
                                           : _createCommentVNode("", true),
-                                        (_ctx.pickKind === 'number' && _ctx.numbers.length > 1)
+                                        ((_ctx.pickKind === 'number' || _ctx.pickKind === 'numbers') && _ctx.numbers.length > 1)
                                           ? (_openBlock(), _createBlock(_component_m_drop_down, {
                                               key: 1,
                                               modelValue: _ctx.fromNumber,
@@ -1252,6 +1259,16 @@ module.exports = {
             if (state.socket) rows.push({ key: 'socket', ok: true, label: t('Messages arrive while the app runs') });
             if (state.lastPushDate !== undefined) rows.push({ key: 'lastPush', ok: !!state.lastPushDate, label: t('Last notification received'),
                 caption: state.lastPushDate ? this.when(state.lastPushDate) : t('None yet') });
+            // the phone's dialer and Contacts calling through the app (§9.1): Android's Calling accounts, where only the
+            // user turns it on; offered only to an account with a number to call from
+            // (registered: whether the user turned it on is not the app's to read until a number came through it)
+            if (state.dialAccount === 'on' || state.dialAccount === 'registered') rows.push({ key: 'dialAccount', ok: state.dialAccount === 'on',
+                label: t("The phone's dialer can call through this app"),
+                caption: state.dialAccount === 'on' ? '' : t('If it is not on yet, turn on MR Moqui under Calling accounts in the phone settings'),
+                fix: 'callingAccounts', fixLabel: t('Calling accounts') });
+            // the phone's contacts name numbers and are found in a new chat (§9.2), read on the phone only
+            if (state.contacts !== undefined) rows.push({ key: 'contacts', ok: state.contacts === true, label: t("Names from the phone's contacts"),
+                caption: state.contacts === true ? '' : t('Allow contacts to see names on texts and find people as you type'), fix: 'contacts' });
             // a force-stopped app gets no push until it is opened again
             if (state.forceStoppedDate) rows.push({ key: 'forceStopped', ok: Date.now() - Number(state.forceStoppedDate) > 86400000,
                 label: t('The app was stopped'), caption: this.when(state.forceStoppedDate) + ': ' + t('notifications may not have come until it was opened again') });
@@ -1550,6 +1567,19 @@ module.exports = {
                 poll();
             }, (err) => { done(''); this.failed(err); });
         },
+        // The phone's dialer through the app (plans/Comms-Messaging.md §9.1; the mobile app's dialAccount): whether this
+        // account has a number to call from (its Dialer's caller IDs), so the app's calling account is offered only then.
+        // Told again at each load (an account switch loads the shell); an answer that did not come changes nothing.
+        tellDialAccount() {
+            const desktop = host();
+            if (!desktop || typeof desktop.dialAccount !== 'function' || this.isOffline) return;
+            if (!this.callsOn || !this.componentOf('dialer')) { desktop.dialAccount(false); return; }
+            moqui.request(this.basePath + '/' + this.commsRel + '/Calls/Dialer/dialerData').then((result) => {
+                const json = result.json || {};
+                if (json.errors) return;
+                desktop.dialAccount(!!json.phoneActive && Array.isArray(json.callerIdList) && json.callerIdList.length > 0);
+            }, () => null);
+        },
         openDevices() {
             this.devicesOpen = true;
             this.devicesLoaded = false;
@@ -1620,6 +1650,7 @@ module.exports = {
         if (moqui.chat) moqui.chat.start(this);
         // calls: the pushes of the user's calls and the calls going on (WebrootCall.js), as m-qapps-root starts them
         if (this.callsOn) moqui.call.start(this);
+        this.tellDialAccount();
         // my presence on the tray, as m-qapps-root hands it
         const desktop = host();
         if (desktop && desktop.setPresence && moqui.chat) this.$watch(() => moqui.chat.myPresence(), (status) => { if (status) desktop.setPresence(status); },
@@ -6406,10 +6437,13 @@ module.exports = {
         // New direct message: what is picked (moqui.chat.pickKind), and phone numbers offered when the user has one that texts
         pickKind() { return moqui.chat.pickKind(this.newDirect.userIds); },
         pickParameters() { return { numbers: (this.newDirect.numbers || []).length ? 'true' : '' }; },
+        // the phone's own contacts with a number, as the picker's extra options (the mobile app only; plans/Comms-Messaging.md §9)
+        contactOptions() { return (this.newDirect.numbers || []).length && moqui.chat && moqui.chat.contactOptions ? moqui.chat.contactOptions : null; },
         pickHint() {
             const kind = this.pickKind;
             if (kind === 'number') return t('A text from your number: the conversation with this number opens.');
-            if (kind === 'mixed') return t('A text goes to one phone number: start it with the number alone.');
+            if (kind === 'numbers') return t('A group text from your number: one conversation with these numbers.');
+            if (kind === 'mixed') return t('A text goes to phone numbers only: start it without the people.');
             if (kind === 'group') return t('A group chat; with a name it is a room, which can take more people later.');
             return t('One person, or several for a group message. A conversation you already have with them opens again.');
         },
@@ -6692,6 +6726,8 @@ module.exports = {
                 this.me = json.me || {};
                 this.prefs = json.prefs || {};
                 this.rooms = json.roomList || [];
+                // a phone room's numbers by their names: the phone's contacts, the apps' call-context (plans/Comms-Messaging.md §9)
+                if (moqui.chat && moqui.chat.nameRooms) moqui.chat.nameRooms(this.rooms);
                 if (moqui.chat) this.rooms.forEach((room) => {
                     if (room.isMember && room.chatRoomId !== this.roomId) moqui.chat.state.unread[room.chatRoomId] = { unread: room.unreadCount || 0, mentions: room.mentionCount || 0 };
                     if (room.otherUserId && room.presence && !moqui.chat.state.presence[room.otherUserId]) moqui.chat.state.presence[room.otherUserId] = { presence: room.presence, at: Date.now() };
@@ -7904,8 +7940,9 @@ module.exports = {
                           "server-search": "",
                           "options-url": _ctx.url('searchUsers'),
                           "options-parameters": _ctx.pickParameters,
+                          "options-extra": _ctx.contactOptions,
                           label: (_ctx.newDirect.numbers || []).length ? _ctx.t('To: people or a phone number') : _ctx.t('To')
-                        }, null, 8, ["modelValue", "onUpdate:modelValue", "options-url", "options-parameters", "label"]),
+                        }, null, 8, ["modelValue", "onUpdate:modelValue", "options-url", "options-parameters", "options-extra", "label"]),
                         (_ctx.pickKind === 'group')
                           ? (_openBlock(), _createBlock(_component_m_text_line, {
                               key: 0,
@@ -7916,7 +7953,7 @@ module.exports = {
                               class: "q-mt-xs"
                             }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]))
                           : _createCommentVNode("", true),
-                        (_ctx.pickKind === 'number' && (_ctx.newDirect.numbers || []).length > 1)
+                        ((_ctx.pickKind === 'number' || _ctx.pickKind === 'numbers') && (_ctx.newDirect.numbers || []).length > 1)
                           ? (_openBlock(), _createBlock(_component_m_drop_down, {
                               key: 1,
                               modelValue: _ctx.newDirect.fromNumber,
@@ -22867,7 +22904,7 @@ module.exports = {
     inject: { mScreen: { default: null } },
     data() {
         return { loaded: false, data: { callerIdList: [], recentList: [], phoneActive: false }, text: '', number: null, results: [],
-            fromNumber: null, hideCallerId: false, busy: false, keys: KEYS, timer: null, seq: 0 };
+            fromNumber: null, hideCallerId: false, hideFromCode: false, busy: false, keys: KEYS, timer: null, seq: 0 };
     },
     computed: {
         base() { return (this.mScreen && this.mScreen.path) || (this.$root.basePath + '/BasicComms/Calls/Dialer'); },
@@ -22875,7 +22912,10 @@ module.exports = {
         // the desktop client's server out of reach (never on the web)
         noConnection() { return !!(moqui.connection && moqui.connection.offline); },
         // the number parameter (a tel: or sip: link)
-        numberParam() { return ((this.mScreen && this.mScreen.parameters) || this.$root.currentParameters || {}).number || ''; },
+        numberParam() { return this.params.number || ''; },
+        // the mobile app asks which account calls a number its dialer handed over
+        chooseParam() { return String(this.params.chooseAccount || '') === 'true'; },
+        params() { return (this.mScreen && this.mScreen.parameters) || this.$root.currentParameters || {}; },
         callerIdOptions() {
             return this.data.callerIdList.map((n) => ({ value: n.phoneNumber, label: n.phoneNumber + (n.description ? ' · ' + n.description : '') }));
         }
@@ -22883,24 +22923,50 @@ module.exports = {
     watch: {
         // another tel: or sip: link while the Dialer is shown (the desktop client's shell keeps the screen): its number
         numberParam(number) { this.fill(number); },
+        chooseParam(ask) { if (ask) this.askAccount(); },
         // the connection back: what the Dialer shows comes again
         noConnection(off) { if (!off) this.load(); }
     },
     mounted() {
         this.load();
         this.fill(this.numberParam);
+        if (this.chooseParam) this.askAccount();
     },
     beforeUnmount() { if (this.timer) clearTimeout(this.timer); },
     methods: {
         t,
         url(name) { return this.base + '/' + name; },
-        fill(number) { if (number) { this.text = String(number); this.search(); } },
+        fill(number) {
+            if (!number) return;
+            const coded = this.hideCode(String(number));
+            this.text = coded.number;
+            if (coded.hide) { this.hideCallerId = true; this.hideFromCode = true; }
+            this.search();
+        },
+        // a phone's Hide my number code before a number (*67 in North America, #31# on GSM): the number, and whether to hide
+        hideCode(text) {
+            const match = /^\s*(\*67|#31#)\s*(?=[+0-9(])/.exec(text);
+            return match ? { number: text.slice(match[0].length), hide: true } : { number: text, hide: false };
+        },
+        // The mobile app's number from its dialer, when the current account cannot call and several others can: which
+        // one calls it, the user's pick; that account's Dialer then shows it, and the user presses Call there.
+        askAccount() {
+            const desktop = window.moquiDesktop;
+            if (!desktop || typeof desktop.dialChoice !== 'function') return;
+            Promise.resolve(desktop.dialChoice()).then((choice) => {
+                if (!choice || !Array.isArray(choice.accounts) || !choice.accounts.length) return;
+                this.$q.dialog({ title: t('Call from which account?'), message: choice.number,
+                    options: { type: 'radio', model: choice.accounts[0].id, items: choice.accounts.map((one) => ({ label: one.label, value: one.id })) },
+                    cancel: { label: t('Cancel'), flat: true, noCaps: true }, ok: { label: t('Continue'), noCaps: true } })
+                    .onOk((account) => Promise.resolve(desktop.dialFrom(account)).catch((err) => moqui.notifyMessages([], String((err && err.message) || err))));
+            }, () => null);
+        },
         load() {
             return moqui.request(this.url('dialerData'), { params: {} }).then((result) => {
                 const json = result.json || {};
                 this.data = Object.assign({ callerIdList: [], recentList: [] }, json);
                 this.fromNumber = this.data.callerIdList.length ? this.data.callerIdList[0].phoneNumber : null;
-                this.hideCallerId = !!json.hideCallerId;
+                this.hideCallerId = !!json.hideCallerId || this.hideFromCode;
                 this.loaded = true;
             }, (err) => { this.loaded = true; if (!(moqui.unreachable && moqui.unreachable(err))) moqui.handleAjaxError(err); });
         },
@@ -22927,6 +22993,9 @@ module.exports = {
         },
         call() {
             if (!this.text || this.busy || this.noConnection) return;
+            // a Hide my number code typed on the keypad
+            const coded = this.hideCode(this.text);
+            if (coded.hide) { this.hideCallerId = true; this.text = coded.number; this.number = null; }
             this.busy = true;
             const params = { phoneNumber: this.number || this.text, fromNumber: this.fromNumber || '', hideCallerId: this.hideCallerId ? 'true' : 'false',
                 idempotencyKey: 'd' + Date.now() + Math.random().toString(36).slice(2) };
@@ -22945,6 +23014,7 @@ module.exports = {
                 }
                 this.text = '';
                 this.number = null;
+                this.hideFromCode = false;
                 this.load();
             }, (err) => { this.busy = false; moqui.handleAjaxError(err); });
         }

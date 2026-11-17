@@ -28,6 +28,7 @@
 
 # The native code Rust calls (the page's call state) and the library's entry points (src/native.rs).
 -keep class org.moqui.mobile.CallManager { *; }
+-keep class org.moqui.mobile.CallAudio { *; }
 -keep class org.moqui.mobile.Native { *; }
 -keep class org.moqui.mobile.ActivityEnd { *; }
 # Rust calls the notification check by name (src/android.rs push_check_state, push_check_fix)
@@ -35,6 +36,9 @@
 # ... and the chat notifications' clear and room shown, and UnifiedPush's registration (src/android.rs)
 -keep class org.moqui.mobile.ChatNotifications { *; }
 -keep class org.moqui.mobile.UnifiedPushes { *; }
+# ... and the phone's contacts and the calling account (src/android.rs contacts_search, contact_names, dial_account)
+-keep class org.moqui.mobile.PhoneBook { *; }
+-keep class org.moqui.mobile.DialAccount { *; }
 # Asked for by name (Push.kt) in a build with Firebase.
 -keep class org.moqui.mobile.FcmPush { *; }
 

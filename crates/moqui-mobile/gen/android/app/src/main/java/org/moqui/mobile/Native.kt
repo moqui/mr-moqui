@@ -25,6 +25,8 @@ object Native {
     @JvmStatic external fun ringAccount(dataDir: String, pushId: String): String?
     @JvmStatic external fun callLink(callSessionId: String, account: String, video: Boolean, hangUp: Boolean): String?
     @JvmStatic external fun hangUp(callSessionId: String)
+    /** A number the phone's dialer handed the app ([DialAccount]): the nonce of its link, or null for no number. */
+    @JvmStatic external fun dialLink(number: String): String?
     @JvmStatic external fun hasAccount(dataDir: String): Boolean
     @JvmStatic external fun flush(dataDir: String, budgetMs: Long): Long
     @JvmStatic external fun unifiedEndpoint(dataDir: String, account: String, endpoint: String)
@@ -65,6 +67,21 @@ object Native {
             } catch (err: Throwable) {
                 Log.e(TAG, "Opening a push failed", err)
             }
+        }
+    }
+
+    @JvmStatic external fun callTell(what: String, json: String)
+
+    /**
+     * Tell the shell's call screen what the native call did (`audio`: its route and routes; `pip`: picture-in-picture
+     * on or off; `hold`: Telecom holds or resumes the call), when the library is loaded; nothing otherwise.
+     */
+    fun tellPage(what: String, json: String) {
+        if (ready != true) return
+        try {
+            callTell(what, json)
+        } catch (err: Throwable) {
+            Log.w(TAG, "The page was not told of $what", err)
         }
     }
 

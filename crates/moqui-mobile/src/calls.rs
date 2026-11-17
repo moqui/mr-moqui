@@ -201,10 +201,44 @@ pub(crate) fn is_call_link(url: &tauri::Url) -> bool {
     url.scheme() == "org.moqui.mobile" && url.path() == CALL_LINK_PATH
 }
 
+/// What the shell runs when the native call tells it something (`Native.tellPage`): `audio` (its route and routes,
+/// JSON), `pip` (picture-in-picture, `true` or `false`), `hold` (`{callSessionId, hold}`: Telecom holds or resumes the
+/// call), `contacts` (the phone's contacts became readable: `moqui.chat.contactsChanged`). None for anything else, or a
+/// value that is not JSON of the right shape.
+pub(crate) fn tell_script(what: &str, json: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(json).ok()?;
+    let (function, args) = match what {
+        "audio" if value.is_object() => ("setHostAudio", value.to_string()),
+        "pip" if value.is_boolean() => ("setHostPip", value.to_string()),
+        "mute" if value.is_boolean() => ("setHostMute", value.to_string()),
+        // picture-in-picture's Mute: the page's microphone on or off
+        "muteToggle" if value.is_boolean() => ("toggleMute", String::new()),
+        "hold" => {
+            let id = call_id(value["callSessionId"].as_str()?)?;
+            let hold = value["hold"].as_bool()?;
+            ("hostHold", format!("{}, {hold}", serde_json::to_string(id).ok()?))
+        }
+        // the phone's contacts became readable: the phone rooms' names are asked of the phone again
+        "contacts" if value.is_boolean() => {
+            return Some(
+                "window.moqui && moqui.chat && typeof moqui.chat.contactsChanged === \"function\" && moqui.chat.contactsChanged()"
+                    .to_string(),
+            )
+        }
+        _ => return None,
+    };
+    Some(format!(
+        "window.moqui && moqui.call && typeof moqui.call.{function} === \"function\" && moqui.call.{function}({args})"
+    ))
+}
+
 /// What the shell runs to leave the call `id` it is in (the call notification's Hang up, a headset's).
 pub(crate) fn hang_up_script(id: &str) -> String {
     let quoted = serde_json::to_string(id).unwrap_or_else(|_| "\"\"".to_string());
-    format!("window.moqui && moqui.call && moqui.call.state.current === {quoted} && moqui.call.leave()")
+    format!(
+        "window.moqui && moqui.call && (moqui.call.state.current === {quoted} ? moqui.call.leave() : \
+         moqui.call.state.held && moqui.call.state.held.callSessionId === {quoted} && moqui.call.leaveHeld())"
+    )
 }
 
 /// The call's screen under the comms app at `root` (`/qapps/BasicComms`), which answers when the host hands it the

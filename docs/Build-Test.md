@@ -754,7 +754,8 @@ order; the other spec files run after it, by name. Each spec runs in its own exe
 database of the run, so a spec sees what the specs before it wrote.
 
 A component's `test/MoquiConf.xml` merges after its `MoquiConf.xml` in `moqui test` runs only, for a test-only setting
-or mount. `test/client/` holds client specs and `test/agent/` agent tasks, which `moqui test` does not read as specs.
+or mount, or test services: a `service-file` there under `test/service/` is found by its name as one under `service/`
+is (basic-comms' `test/screen/TextNamesApp.xml` and its provider). `test/client/` holds client specs and `test/agent/` agent tasks, which `moqui test` does not read as specs.
 
 ### A spec file
 

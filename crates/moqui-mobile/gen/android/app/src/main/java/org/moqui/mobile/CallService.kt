@@ -44,6 +44,8 @@ class CallService : Service() {
         const val ACTION_ANSWER = "org.moqui.mobile.ANSWER"
         const val ACTION_DECLINE = "org.moqui.mobile.DECLINE"
         const val ACTION_HANG_UP = "org.moqui.mobile.HANG_UP"
+        /** Picture-in-picture's Mute: the page's microphone on or off. */
+        const val ACTION_MUTE = "org.moqui.mobile.MUTE"
 
         @Volatile private var running = false
 
@@ -138,7 +140,8 @@ class CallService : Service() {
         fun notification(context: Context, foreground: Boolean): Notification {
             channels(context)
             val ringing = CallManager.ringing()
-            val answered = CallManager.calls().firstOrNull { it.state == CallManager.State.ANSWERED }
+            // the call the app is in (not the one on hold), else the first answered: its person and its Hang up
+            val answered = CallManager.activeCall() ?: CallManager.calls().firstOrNull { it.state == CallManager.State.ANSWERED }
             val builder: NotificationCompat.Builder
             if (ringing != null) {
                 val caller = Person.Builder().setName(ringing.caller).setImportant(true).build()
@@ -188,15 +191,42 @@ class CallService : Service() {
         }
     }
 
+    /**
+     * The service's types ([CallRules.serviceTypes]): phoneCall, and once the app is in a call the microphone (and the
+     * camera for a video call) with their permissions given, so the call keeps its media when the app is left.
+     */
+    private fun types(): Int {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return 0
+        val (inCall, video) = CallManager.inCallMedia()
+        val mic = checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val camera = checkSelfPermission(android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        var types = 0
+        for (name in CallRules.serviceTypes(inCall, video, mic, camera)) {
+            types = types or when (name) {
+                "microphone" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
+                "camera" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA else 0
+                else -> ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
+            }
+        }
+        return types
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         CallManager.know(this)
         val notification = notification(this, true)
         try {
-            val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL else 0
             val id = idFor(CallManager.ringing()?.id)
-            ServiceCompat.startForeground(this, id, notification, type)
+            try {
+                ServiceCompat.startForeground(this, id, notification, types())
+            } catch (err: SecurityException) {
+                // the microphone and camera types need the app in front when they are first taken (Android 14+): the
+                // call keeps its phoneCall type until the next refresh from the app
+                Log.w(CallManager.TAG, "The call service keeps the phoneCall type only: ${err.message}")
+                val phone = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL else 0
+                ServiceCompat.startForeground(this, id, notification, phone)
+            }
             if (id != postedId) NotificationManagerCompat.from(this).cancel(postedId)
             postedId = id
             running = true
@@ -227,6 +257,7 @@ class CallActionReceiver : BroadcastReceiver() {
         when (intent.action) {
             CallService.ACTION_DECLINE -> CallManager.decline(context, id)
             CallService.ACTION_HANG_UP -> CallManager.hangUp(context, id)
+            CallService.ACTION_MUTE -> if (CallManager.call(id) != null) Native.tellPage("muteToggle", "true")
         }
     }
 }

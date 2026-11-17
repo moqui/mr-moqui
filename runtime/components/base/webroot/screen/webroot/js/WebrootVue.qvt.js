@@ -3065,7 +3065,10 @@
             requiredManualSelect: Boolean, submitOnSelect: Boolean, optionsUrl: String, optionsParameters: Object, optionsLoadInit: Boolean, serverSearch: Boolean,
             serverDelay: { type: Number, default: 300 }, serverMinLength: { type: Number, default: 1 }, labelField: { type: String, default: "label" },
             valueField: { type: String, default: "value" }, dependsOn: Object, dependsOptional: Boolean, form: String, fields: Object, tooltip: String,
-            label: String, name: String, id: String, disable: Boolean, onSelectGoTo: String },
+            label: String, name: String, id: String, disable: Boolean, onSelectGoTo: String,
+            // a server search's extra options of the page's own: a function of the term, answering options (or a promise of them),
+            // added after the server's (the mobile app's phone contacts in Chat's new-chat pickers)
+            optionsExtra: Function },
         emits: ["update:modelValue"],
         data() { return { curOptions: this.options, allOptions: this.options, lastSearch: null, loading: false }; },
         // Selected text stays visible: hide-selected suppresses the chips as well as a single value.
@@ -3150,8 +3153,12 @@
                     const list = Array.isArray(data) ? data : data && data.options;
                     if (!list) return;
                     const processed = this.processOptionList(list);
-                    if (doneFn) doneFn(() => this.setNewOptions(processed));
-                    else this.setNewOptions(processed);
+                    const show = (options) => { if (doneFn) doneFn(() => this.setNewOptions(options)); else this.setNewOptions(options); };
+                    if (!this.optionsExtra || !reqData.term) { show(processed); return; }
+                    Promise.resolve(this.optionsExtra(reqData.term)).then((extra) => {
+                        const more = this.processOptionList(Array.isArray(extra) ? extra : []).filter((option) => !processed.some((known) => known.value === option.value));
+                        show(processed.concat(more));
+                    }, () => show(processed));
                 }, (err) => {
                     this.loading = false;
                     moqui.handleAjaxError(err);

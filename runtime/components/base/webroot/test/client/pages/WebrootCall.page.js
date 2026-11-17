@@ -194,3 +194,130 @@ test("call waiting: a refused hold keeps the call and answers nothing; a held le
         call.answer = answer;
     }
 });
+
+// plans/Comms-Messaging.md §8.3 items 4, 5 and 7, the mobile app's side: the speaker button chooses the native call's
+// route, the app's picture-in-picture shows the video only, and Telecom's hold and resume reach the call
+test("the mobile app's native call: its audio routes, picture-in-picture, Telecom's hold, and the held call left", async () => {
+    reset();
+    const host = window.moquiDesktop;
+    const told = [];
+    const routes = [];
+    window.moquiDesktop = {
+        callState: (id, what) => { told.push(id + ":" + what); return Promise.resolve(); },
+        callAudioRoute: (route) => { routes.push(route); return Promise.resolve(true); }
+    };
+    const request = moqui.request;
+    moqui.request = (url) => Promise.resolve({ json: url.endsWith("/holdOwnLeg") ? { callLegId: "L1" } : {} });
+    try {
+        assert.deepEqual(call.hostRoutes(), [], "no routes before the host tells them");
+        call.setHostAudio({ route: "earpiece", routes: ["earpiece", "speaker", "bluetooth"] });
+        assert.deepEqual(call.hostRoutes(), ["earpiece", "speaker", "bluetooth"]);
+        assert.equal(await call.chooseHostRoute("speaker"), true);
+        assert.deepEqual(routes, ["speaker"]);
+        assert.equal(state.hostAudio.route, "speaker");
+        call.setHostAudio({ route: "earpiece", routes: ["earpiece"] });
+        assert.deepEqual(call.hostRoutes(), [], "one route: nothing to choose");
+        call.setHostPip(true);
+        assert.equal(state.hostPip, true);
+        call.setHostPip(false);
+        // Telecom holds the call this page is in: the page holds it, and says so back
+        Object.assign(state, { current: "C1", legId: "L1", phase: "connected" });
+        await call.hostHold("C1", true);
+        assert.deepEqual(state.held && state.held.callSessionId, "C1");
+        assert.ok(told.includes("C1:held"));
+        // another call's hold: nothing
+        assert.equal(await call.hostHold("C9", true), null);
+        // the held call left from its banner: the native call on hold ends too
+        await call.leaveHeld();
+        assert.ok(told.includes("C1:left"));
+    } finally {
+        moqui.request = request;
+        window.moquiDesktop = host;
+        reset();
+        Object.assign(state, { hostAudio: null, hostPip: false });
+    }
+});
+
+// Review findings of phase 4's Android part: a held call that ends or moves tells the app; Telecom's hold of the call
+// this page is in, with another on hold, is refused; a hold on its way answers once; Telecom's mute; joined with its name
+test("the app's native calls: a held call gone tells the app, one hold at a time, Telecom's mute, joined with its name", async () => {
+    reset();
+    const host = window.moquiDesktop;
+    const told = [];
+    let holds = 0;
+    let release = null;
+    window.moquiDesktop = { callState: (id, what, name) => { told.push(id + ":" + what + (name ? ":" + name : "")); return Promise.resolve(); } };
+    const request = moqui.request;
+    moqui.request = (url) => {
+        if (url.endsWith("/holdOwnLeg")) {
+            holds++;
+            return new Promise((resolve) => { release = () => resolve({ json: { callLegId: "L1" } }); });
+        }
+        return Promise.resolve({ json: {} });
+    };
+    const toggles = [];
+    const toggleMute = call.toggleMute;
+    call.toggleMute = () => { toggles.push(true); state.muted = !state.muted; };
+    try {
+        // a hold on its way: Telecom's and the page's at once are one
+        Object.assign(state, { current: "C1", legId: "L1", phase: "connected" });
+        const first = call.hold();
+        const second = call.hostHold("C1", true);
+        assert.equal(holds, 1, "one hold asked");
+        release();
+        assert.deepEqual([(await first).callSessionId, (await second).callSessionId], ["C1", "C1"]);
+        // another call in, with C1 on hold: Telecom's hold of it is refused (C1 stays the held one)
+        Object.assign(state, { current: "C2", legId: "L2" });
+        assert.equal(await call.hostHold("C2", true), null);
+        assert.equal(state.held.callSessionId, "C1");
+        // the held call ends on the server: the app hears it left
+        call.receive({ topic: "chatUser:ann", message: { kind: "call", action: "ended", callSessionId: "C1" } });
+        assert.equal(state.held, null);
+        assert.ok(told.includes("C1:left"), told.join(" "));
+        // a held leg moved to another device: left too
+        state.held = { callSessionId: "C3", legId: "L3", video: false, name: "" };
+        call.movedElsewhere("C3", ["L3"]);
+        assert.ok(told.includes("C3:left"));
+        // Telecom's mute: the microphone follows, once
+        state.muted = false;
+        call.setHostMute(true);
+        call.setHostMute(true);
+        assert.equal(toggles.length, 1);
+        // joined goes with the call's name (the other people, else the room's), then its kind once joined is told
+        assert.equal(call.joinedName({ participants: [{ userId: call.me, displayName: "Me" }, { userId: "bob", displayName: "Bob" },
+            { userId: "cy", displayName: "Cy" }], roomName: "Ops" }), "Bob, Cy");
+        assert.equal(call.joinedName({ participants: [{ userId: call.me, displayName: "Me" }], roomName: "Ops" }), "Ops");
+        assert.equal(call.joinedName(null), "");
+        state.calls.C2 = { callSessionId: "C2", participants: [{ userId: "bob", displayName: "Bob" }], roomName: "Ops" };
+        let joinedDone = null;
+        const order = [];
+        window.moquiDesktop = { callState: (id, what, name) => {
+            order.push(what + (name ? ":" + name : ""));
+            return what === "joined" ? new Promise((resolve) => { joinedDone = resolve; }) : Promise.resolve();
+        } };
+        const told2 = call.tellJoined("C2", "video");
+        await Promise.resolve();
+        assert.deepEqual(order, ["joined:Bob"], "the kind waits for joined");
+        joinedDone();
+        await told2;
+        assert.deepEqual(order, ["joined:Bob", "video"]);
+        delete state.calls.C2;
+        // the call screen's token: each mount a newer one
+        assert.ok(Number(call.screenToken()) < Number(call.screenToken()));
+        // a hold that never settles gives up, and the next ask is not stuck on it
+        const wait = call.HOLD_WAIT_MS;
+        call.HOLD_WAIT_MS = 20;
+        moqui.request = () => new Promise(() => {});
+        Object.assign(state, { current: "C5", legId: "L5", phase: "connected", held: null });
+        assert.equal(await call.hold(), null);
+        assert.equal(call.holding, null);
+        call.HOLD_WAIT_MS = wait;
+    } finally {
+        moqui.request = request;
+        call.toggleMute = toggleMute;
+        window.moquiDesktop = host;
+        reset();
+        Object.assign(state, { muted: false, hostAudio: null, hostPip: false });
+        call.holding = null;
+    }
+});

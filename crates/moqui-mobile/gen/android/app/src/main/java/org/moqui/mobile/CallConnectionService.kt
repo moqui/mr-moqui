@@ -3,17 +3,23 @@
 package org.moqui.mobile
 
 import android.net.Uri
+import android.telecom.CallAudioState
+import android.telecom.CallEndpoint
 import android.telecom.Connection
 import android.telecom.ConnectionRequest
 import android.telecom.ConnectionService
+import android.telecom.PhoneAccount
 import android.telecom.PhoneAccountHandle
 import android.telecom.TelecomManager
 import android.util.Log
 
 /**
- * The app's self-managed calls (android.telecom, [CallManager]): Telecom knows of a ringing or answered call, so the
- * system gives it the audio focus and a headset's or a watch's answer, decline and hang-up, and asks the app to show
- * the ring ([CallConnection.onShowIncomingCallUi]). The media is the WebView's, not Telecom's.
+ * The app's self-managed calls (android.telecom, [CallManager]): Telecom knows of a ringing, answered or joined call,
+ * so the system gives it the audio focus, routes its audio ([CallAudio]), holds it for another call and gives a
+ * headset's or a watch's answer, decline and hang-up, and asks the app to show the ring
+ * ([CallConnection.onShowIncomingCallUi]). A call rung here is incoming; one the app joined by itself (started, joined
+ * from a chat, moved to this phone) is placed as outgoing. The media is the WebView's, not Telecom's. The same service
+ * has the app's managed calling account ([DialAccount]), whose numbers it hands to the app rather than calling them.
  */
 class CallConnectionService : ConnectionService() {
     override fun onCreateIncomingConnection(account: PhoneAccountHandle?, request: ConnectionRequest?): Connection {
@@ -21,11 +27,10 @@ class CallConnectionService : ConnectionService() {
             ?: request?.extras?.getBundle(TelecomManager.EXTRA_INCOMING_CALL_EXTRAS)?.getString(CallManager.EXTRA_CALL)
         val call = CallManager.call(id)
         val connection = CallConnection(this, id ?: "")
-        connection.connectionProperties = Connection.PROPERTY_SELF_MANAGED
-        connection.audioModeIsVoip = true
         if (call != null) {
             connection.setCallerDisplayName(call.caller, TelecomManager.PRESENTATION_ALLOWED)
-            connection.setAddress(Uri.fromParts("sip", call.id, null), TelecomManager.PRESENTATION_ALLOWED)
+            // a neutral address: a car or a watch shows the caller's name, not a call id
+            connection.setAddress(Uri.fromParts(PhoneAccount.SCHEME_SIP, "moqui", null), TelecomManager.PRESENTATION_ALLOWED)
             connection.setRinging()
         }
         CallManager.connected(id, connection)
@@ -38,10 +43,46 @@ class CallConnectionService : ConnectionService() {
         Log.w(CallManager.TAG, "Telecom did not make the call $id (another call?); its ring is shown without it")
         CallManager.notConnected(this, id)
     }
+
+    /**
+     * A call the app joined by itself ([CallManager.placeInTelecom]): active at once, its media is already up. A number
+     * the phone's dialer or Contacts called with the app's calling account goes to the app's Dialer ([DialAccount]).
+     */
+    override fun onCreateOutgoingConnection(account: PhoneAccountHandle?, request: ConnectionRequest?): Connection {
+        if (DialAccount.isDial(account ?: request?.accountHandle)) return DialAccount.dialed(this, request)
+        val id = request?.extras?.getString(CallManager.EXTRA_CALL)
+        val call = CallManager.call(id)
+        val connection = CallConnection(this, id ?: "")
+        connection.setAddress(Uri.fromParts(PhoneAccount.SCHEME_SIP, "moqui", null), TelecomManager.PRESENTATION_ALLOWED)
+        // the call's name (the room or the other people, the page's) for a car or a watch
+        val name = call?.caller?.takeIf { it.isNotEmpty() } ?: service().getString(R.string.call_in_app)
+        connection.setCallerDisplayName(name, TelecomManager.PRESENTATION_ALLOWED)
+        connection.setActive()
+        CallManager.connected(id, connection)
+        return connection
+    }
+
+    private fun service(): ConnectionService = this
+
+    override fun onCreateOutgoingConnectionFailed(account: PhoneAccountHandle?, request: ConnectionRequest?) {
+        if (DialAccount.isDial(account ?: request?.accountHandle)) {
+            Log.w(CallManager.TAG, "Telecom did not let the app take a number from the phone's dialer")
+            DialAccount.notTaken(this)
+            return
+        }
+        val id = request?.extras?.getString(CallManager.EXTRA_CALL)
+        Log.w(CallManager.TAG, "Telecom did not take the call $id the app joined: its audio is the WebView's own")
+    }
 }
 
-/** One call in Telecom, whose events go to [CallManager]. */
+/** One call in Telecom, whose events go to [CallManager] and [CallAudio]. */
 class CallConnection(private val service: ConnectionService, val id: String) : Connection() {
+    init {
+        connectionProperties = PROPERTY_SELF_MANAGED
+        connectionCapabilities = CAPABILITY_HOLD or CAPABILITY_SUPPORT_HOLD or CAPABILITY_MUTE
+        audioModeIsVoip = true
+    }
+
     override fun onShowIncomingCallUi() {
         CallManager.showRing(service.applicationContext, id)
     }
@@ -64,5 +105,33 @@ class CallConnection(private val service: ConnectionService, val id: String) : C
 
     override fun onAbort() {
         CallManager.disconnected(service.applicationContext, id)
+    }
+
+    /** Telecom holds the call (another call, the user's hold on a watch or a car): the page puts it on hold. */
+    override fun onHold() {
+        CallManager.telecomHold(id, true)
+    }
+
+    /** Telecom takes it off hold: the page resumes it. */
+    override fun onUnhold() {
+        CallManager.telecomHold(id, false)
+    }
+
+    override fun onAvailableCallEndpointsChanged(availableEndpoints: List<CallEndpoint>) {
+        CallAudio.endpointsChanged(this, availableEndpoints)
+    }
+
+    override fun onCallEndpointChanged(callEndpoint: CallEndpoint) {
+        CallAudio.endpointChanged(this, callEndpoint)
+    }
+
+    /** Android 14+: Telecom's mute (a car, a watch): the page's microphone follows. */
+    override fun onMuteStateChanged(isMuted: Boolean) {
+        CallAudio.muteChanged(this, isMuted)
+    }
+
+    @Deprecated("Android 14+ uses onCallEndpointChanged")
+    override fun onCallAudioStateChanged(state: CallAudioState) {
+        if (android.os.Build.VERSION.SDK_INT < 34) CallAudio.audioStateChanged(this, state)
     }
 }

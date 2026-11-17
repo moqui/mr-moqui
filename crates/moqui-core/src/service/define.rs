@@ -741,7 +741,9 @@ fn load_by_name(shared: &Shared, name: &str) -> Option<Arc<ServiceDef>> {
 }
 
 /// A file that defines `name`, `service/a/b/C.xml` for `a.b.C.verb#noun`, in the framework or the first component with
-/// it. Reading it reads the files of the same path in the other components too (see [`load_file`]).
+/// it, else a conf's `service-file` of that path under a `service` directory (a component's test conf may name a file
+/// of its `test/service`, as Java's service-file does). Reading it reads the files of the same path in the other
+/// components too (see [`load_file`]).
 fn service_file_of(name: &str) -> Option<PathBuf> {
     let path_name = name.split('#').next()?;
     let (file, _) = path_name.rsplit_once('.')?;
@@ -750,6 +752,12 @@ fn service_file_of(name: &str) -> Option<PathBuf> {
         .iter()
         .map(|root| root.join(&relative))
         .find(|candidate| moqui_lib::vfs::is_file(candidate))
+        .or_else(|| {
+            configured_paths()
+                .ok()?
+                .into_iter()
+                .find(|path| service_prefix(path) == file && moqui_lib::vfs::is_file(path))
+        })
 }
 
 /// The `service` directories of the framework and then each component, in Java's search order: the classpath first,

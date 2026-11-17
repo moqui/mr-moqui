@@ -19,7 +19,9 @@
 //! then hands Rust the context itself (`Native.init`, [`init_from_native`]), which is used before tao's; tao's
 //! `ndk-context` is never set here, since tao sets it once and would fail if it were set.
 //!
-//! The call path's call into the native code: the page's call state to `CallManager` ([`page_call_state`]).
+//! The call path's call into the native code: the page's call state to `CallManager` ([`page_call_state`]); the
+//! phone's contacts (`PhoneBook`, [`contacts_search`], [`contact_names`]) and the calling account of the phone's
+//! dialer (`DialAccount`, [`dial_account`]).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
@@ -149,18 +151,58 @@ pub(crate) fn call_busy() -> bool {
 
 /// The page's call `id` is in `state` (`crate::commands::CALL_STATES`; an empty id with `offScreen` for the shell
 /// leaving for a server page): the native code keeps or ends its call (`CallManager.pageCallState`).
-pub(crate) fn page_call_state(id: &str, state: &str) -> Result<(), String> {
+pub(crate) fn page_call_state(id: &str, state: &str, name: &str) -> Result<(), String> {
     with_context(|env, app| {
         let class = app_class(env, app, jni_str!("org.moqui.mobile.CallManager"))?;
         let id = env.new_string(id)?;
         let state = env.new_string(state)?;
+        let name = env.new_string(name)?;
         env.call_static_method(
             &class,
             jni_str!("pageCallState"),
-            jni_sig!("(Ljava/lang/String;Ljava/lang/String;)V"),
-            &[JValue::Object(&id), JValue::Object(&state)],
+            jni_sig!("(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V"),
+            &[JValue::Object(&id), JValue::Object(&state), JValue::Object(&name)],
         )?;
         Ok(())
+    })
+}
+
+/// The page that had the calls goes (another page, a reload, an account switch): the native calls it joined end
+/// (`CallManager.pageGone`); a ring, or a call answered on the phone and not joined yet, stays.
+pub(crate) fn calls_page_gone() -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.CallManager"))?;
+        env.call_static_method(&class, jni_str!("pageGone"), jni_sig!("()V"), &[])?;
+        Ok(())
+    })
+}
+
+/// The call's audio route and routes (`CallAudio.state()`, JSON `{route, routes}`).
+pub(crate) fn call_audio_state() -> Result<String, String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.CallAudio"))?;
+        let state = env
+            .call_static_method(&class, jni_str!("state"), jni_sig!("()Ljava/lang/String;"), &[])?
+            .l()?;
+        let state = env.cast_local::<jni::objects::JString>(state)?;
+        state.try_to_string(env)
+    })
+}
+
+/// The call's audio to `route` (`CallAudio.request(route)`): whether Telecom was asked.
+pub(crate) fn call_audio_route(route: &str) -> Result<bool, String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.CallAudio"))?;
+        let route = env.new_string(route)?;
+        let asked = env
+            .call_static_method(
+                &class,
+                jni_str!("request"),
+                jni_sig!("(Ljava/lang/String;)Z"),
+                &[JValue::Object(&route)],
+            )?
+            .z()?;
+        Ok(asked)
     })
 }
 
@@ -195,6 +237,58 @@ pub(crate) fn push_check_fix(what: &str) -> Result<(), String> {
             &[JValue::Object(app), JValue::Object(&what)],
         )?;
         Ok(())
+    })
+}
+
+/// The phone's contacts whose name or number has `term` (`PhoneBook.search`, JSON `[{name, number}]`); a first search
+/// asks for the permission and waits for the answer, so never on the main thread.
+pub(crate) fn contacts_search(term: &str, limit: i32) -> Result<String, String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.PhoneBook"))?;
+        let term = env.new_string(term)?;
+        let found = env
+            .call_static_method(
+                &class,
+                jni_str!("search"),
+                jni_sig!("(Landroid/content/Context;Ljava/lang/String;I)Ljava/lang/String;"),
+                &[JValue::Object(app), JValue::Object(&term), JValue::Int(limit)],
+            )?
+            .l()?;
+        let found = env.cast_local::<jni::objects::JString>(found)?;
+        found.try_to_string(env)
+    })
+}
+
+/// The names the phone's contacts have for `numbers` (`PhoneBook.names`, JSON `{number: name}`); never asks.
+pub(crate) fn contact_names(numbers: &[String]) -> Result<String, String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.PhoneBook"))?;
+        let numbers = env.new_string(numbers.join("\n"))?;
+        let named = env
+            .call_static_method(
+                &class,
+                jni_str!("names"),
+                jni_sig!("(Landroid/content/Context;Ljava/lang/String;)Ljava/lang/String;"),
+                &[JValue::Object(app), JValue::Object(&numbers)],
+            )?
+            .l()?;
+        let named = env.cast_local::<jni::objects::JString>(named)?;
+        named.try_to_string(env)
+    })
+}
+
+/// The app's calling account for the phone's dialer registered (`on`) or taken away (`DialAccount.set`): whether
+/// Telecom took it.
+pub(crate) fn dial_account(on: bool) -> Result<bool, String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.DialAccount"))?;
+        env.call_static_method(
+            &class,
+            jni_str!("set"),
+            jni_sig!("(Landroid/content/Context;Z)Z"),
+            &[JValue::Object(app), JValue::Bool(on)],
+        )?
+        .z()
     })
 }
 

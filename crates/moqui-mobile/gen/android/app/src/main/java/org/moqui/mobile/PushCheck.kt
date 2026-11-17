@@ -21,7 +21,8 @@ import org.json.JSONObject
  * through JNI, src/android.rs): whether notifications are allowed, each channel on, battery optimization off, the
  * full-screen intent of calls allowed (Android 14+), Firebase in the build, the UnifiedPush distributor, the last push
  * received and the ack ids of the recent ones (the test's own is looked for among them), and when the app was last
- * force-stopped; and the system screen that fixes each ([fix]).
+ * force-stopped, the app's calling account for the phone's dialer ([DialAccount]) and the contacts permission
+ * ([PhoneBook]); and the system screen that fixes each ([fix]).
  */
 object PushCheck {
     private const val PREFS = "moqui-push"
@@ -112,14 +113,18 @@ object PushCheck {
             .put("lastAckId", prefs.getString("lastAckId", null) ?: JSONObject.NULL)
             .put("recentAcks", recent)
             .put("forceStoppedDate", if (stopped > 0) stopped else JSONObject.NULL)
+            // the phone's dialer through the app (off: no number to call from here), and the contacts' names
+            .put("dialAccount", DialAccount.state(context))
+            .put("contacts", PhoneBook.granted(context))
             .toString()
     }
 
     /**
      * Open the system's screen that fixes `what`: `notifications` and `channels` (the app's notification settings),
      * `battery` (the request to leave the app out of battery optimization: one tap), `fullScreen` (Android 14+), and
-     * `distributor` (pick a UnifiedPush distributor, where the phone has one), and `firebase` (back from UnifiedPush to
-     * Firebase, where the build has it).
+     * `distributor` (pick a UnifiedPush distributor, where the phone has one), `firebase` (back from UnifiedPush to
+     * Firebase, where the build has it), `callingAccounts` (Android's Calling accounts, where the user turns the app's
+     * on) and `contacts` (the contacts permission asked again, or the app's settings).
      */
     @JvmStatic
     @SuppressLint("BatteryLife")
@@ -131,6 +136,14 @@ object PushCheck {
             }
             "firebase" -> {
                 UnifiedPushes.useFirebase(context)
+                return
+            }
+            "callingAccounts" -> {
+                DialAccount.fix(context)
+                return
+            }
+            "contacts" -> {
+                PhoneBook.fix(context)
                 return
             }
             "battery" -> Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}"))

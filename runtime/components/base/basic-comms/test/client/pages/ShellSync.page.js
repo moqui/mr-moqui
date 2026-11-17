@@ -1407,6 +1407,20 @@ test("the notification check shows the device's state, a fix for each item that 
         assert.deepEqual(fixes.slice(-1), ["firebase"]);
         state = Object.assign({}, state, { fcm: false, distributor: null });
         await root.readPushCheck();
+        // the phone's dialer through the app: offered (and turned on in Android's settings only) to an account with a
+        // number to call from; the contacts' names, asked again on a tap (plans/Comms-Messaging.md §9.1, §9.2)
+        assert.equal(row("dialAccount"), null, "no calling account: no row");
+        state = Object.assign({}, state, { dialAccount: "registered", contacts: false });
+        await root.readPushCheck();
+        await until(() => row("dialAccount") && row("contacts"), "the dialer's and the contacts' rows");
+        assert.ok(row("dialAccount").textContent.includes("Calling accounts in the phone settings"));
+        row("dialAccount").querySelector("button").click();
+        row("contacts").querySelector("button").click();
+        assert.deepEqual(fixes.slice(-2), ["callingAccounts", "contacts"]);
+        state = Object.assign({}, state, { dialAccount: "on", contacts: true });
+        await root.readPushCheck();
+        await until(() => !row("contacts").querySelector("button"), "the contacts allowed");
+        assert.ok(!row("dialAccount").textContent.includes("Calling accounts in the phone settings"), "turned on");
         const testButton = () => [...document.querySelectorAll(".m-shell-push-check button")].find((button) => button.textContent.includes("Send a test notification"));
         const result = () => (document.querySelector(".m-shell-push-result") || {}).textContent || "";
         testButton().click();
@@ -1421,6 +1435,57 @@ test("the notification check shows the device's state, a fix for each item that 
         delete desktop.pushCheck;
         delete desktop.pushCheckFix;
         delete desktop.pushTest;
+    }
+});
+
+// plans/Comms-Messaging.md §9.1: the phone's dialer and Contacts call through the mobile app; its Dialer fills the number
+// in and the user presses Call (nothing a link brings is called by itself); when several accounts can call and the
+// current one cannot, the user picks which; a leading *67 is Hide my number
+test("a number the phone's dialer handed the app is filled in, never placed by itself; the user picks the account; *67 hides the number", async () => {
+    answers["/apps/BasicComms/Calls/Dialer/dialerData"] = () => ({ phoneActive: true, callerIdList: [{ phoneNumber: "+15550100", description: "Desk" }],
+        recentList: [], hideCallerId: false });
+    answers["/apps/BasicComms/Calls/Dialer/dialSearch"] = () => ({ resultList: [], number: null });
+    // placed; no call view here (the call store is not loaded in this page)
+    answers["/apps/BasicComms/Calls/Dialer/dialNumber"] = () => ({ callSessionId: null, callLegId: null });
+    const desktop = window.moquiDesktop;
+    const picked = [];
+    let choice = null;
+    desktop.dialChoice = () => { const now = choice; choice = null; return Promise.resolve(now); };
+    desktop.dialFrom = (account) => { picked.push(account); return Promise.resolve(); };
+    const placed = () => asked("/apps/BasicComms/Calls/Dialer/dialNumber", "POST");
+    const field = () => document.querySelector(".m-shell-view .m-dialer input");
+    const callButton = () => Array.from(document.querySelectorAll(".m-shell-view .m-dialer button")).find((el) => /Call$/.test(el.textContent.trim()));
+    try {
+        await open("/qapps/BasicComms/Calls/Dialer?number=%2B15557777", "dialer");
+        await until(() => field() && field().value === "+15557777", "the handed number filled in");
+        await until(() => asked("/apps/BasicComms/Calls/Dialer/dialerData").length, "the Dialer's data");
+        await settle();
+        assert.equal(placed().length, 0, "not placed by itself");
+        callButton().click();
+        await until(() => placed().length === 1, "placed on the user's Call");
+        assert.equal(placed()[0].params.phoneNumber, "+15557777");
+        assert.equal(placed()[0].params.fromNumber, "+15550100", "from the user's number");
+        assert.equal(placed()[0].params.hideCallerId, "false");
+        // *67 before the number: taken off, and Hide my number set
+        await open("/qapps/BasicComms/Calls/Dialer?number=%2A67%2B15558888", "dialer");
+        await until(() => field() && field().value === "+15558888", "the number without *67");
+        await settle();
+        callButton().click();
+        await until(() => placed().length === 2, "the hidden call placed");
+        assert.equal(placed()[1].params.phoneNumber, "+15558888");
+        assert.equal(placed()[1].params.hideCallerId, "true");
+        // several accounts can call, the current one not: asked which; the pick goes to the host, nothing placed
+        choice = { number: "+15559999", accounts: [{ id: "a2", label: "ann · Office" }, { id: "a3", label: "ann · Shop" }] };
+        await open("/qapps/BasicComms/Calls/Dialer?number=%2B15559999&chooseAccount=true", "dialer");
+        const shop = await until(() => Array.from(document.querySelectorAll(".q-dialog .q-radio")).find((el) => el.textContent.includes("ann · Shop")), "the accounts to pick");
+        shop.click();
+        await answerDialog("Continue");
+        assert.deepEqual(picked, ["a3"]);
+        assert.equal(placed().length, 2, "a pick places nothing");
+    } finally {
+        delete desktop.dialChoice;
+        delete desktop.dialFrom;
+        root.goHome();
     }
 });
 

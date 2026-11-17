@@ -9,6 +9,11 @@
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <!-- A call keeps its microphone and camera when the app is left (CallService, plans/Comms-Messaging.md §8.2). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <!-- The screen off at the ear in a voice call (CallAudio's proximity wake lock). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- The call's media, in the WebView: asked at the Answer (IncomingCallActivity) or by the page. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.CAMERA" />
@@ -18,6 +23,9 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- A network change during a call (Wi-Fi to mobile data, MainActivity's NetworkWatch): the page restarts ICE. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- The phone's contacts (PhoneBook.kt, plans/Comms-Messaging.md §9.2): names of outside numbers and the new-chat
+        picker's search, read on the phone only; asked at the first search, with the reason. -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
@@ -41,6 +49,8 @@
             android:launchMode="singleTask"
             android:label="@string/main_activity_title"
             android:name=".MainActivity"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -75,7 +85,8 @@
             android:taskAffinity="org.moqui.mobile.ring"
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
-        <!-- The self-managed calls, bound by Telecom only. -->
+        <!-- The self-managed calls, and the calling account the phone's dialer hands numbers to (DialAccount.kt), bound
+            by Telecom only. -->
         <service
             android:name=".CallConnectionService"
             android:exported="true"
@@ -87,7 +98,7 @@
         <service
             android:name=".CallService"
             android:exported="false"
-            android:foregroundServiceType="phoneCall" />
+            android:foregroundServiceType="phoneCall|microphone|camera" />
         <receiver
             android:name=".CallActionReceiver"
             android:exported="false" />

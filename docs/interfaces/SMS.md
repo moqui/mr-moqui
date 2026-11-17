@@ -94,7 +94,46 @@ call. The outside person is an external actor of the bridge (`ChatExternalUser` 
 - **Text a number.** Calls History has it beside Call a number for a user with a number that texts:
   `open#PairRoom` (the same checks as a send) opens the room in Chat. Chat's new-chat pickers (New direct message, the
   phone's Start chat) do the same with a number typed in their search (`searchUsers` with `numbers=true`, then
-  `textRoom`).
+  `textRoom`); several numbers picked start a group text (below), and a number with people picked says a text goes to
+  numbers only. In the mobile app the pickers also find the phone's own contacts as the user types.
+- **Names.** A phone room is named by its numbers. The page shows a name for each number it can find: the phone's own
+  contacts in the mobile app first (read on the phone, never sent to the server), then the server's: `find#PhoneNames`
+  (Chat's `phoneNames`, at most 50 numbers a request and 600 an hour a user) asks the apps' `call-context` providers,
+  as the user, for each number's first contact's name, and only of numbers of the user's own phone rooms. The page asks
+  the server for all of a room list's numbers, not only those the phone does not know, so the server cannot tell
+  which numbers are in the phone's contacts. With no app that gives one, the numbers stay as they are; a contacts
+  permission given later names the rooms again without a reload.
+
+## Group texts
+
+A group MMS is one room for its set of outside numbers: `CrtExternal`, named the numbers (`+1801..., +1385...`), its
+`externalRoomId` `ours/<a>,<b>,...` with the others' numbers in E.164, unique and sorted (`Sms.js` `groupKey`), so the
+same people make the same room whoever writes first. A group is our number and at most 8 others: a send has 8
+recipients at most, and a group text that came in is its sender plus at most 7 others (`GROUP_MAX`; Telnyx's limit is
+the carrier's, about 10 in all); a send to more is refused (`tooManyNumbers`). Our own numbers are never a group's
+others: a group that has two of ours is ours, and a group MMS never goes to one of our numbers.
+
+- **In.** A `message.received` with more than one recipient (Telnyx's `to` and `cc`, `webhook.rs` `recipients_of`, at
+  most 32 read) passes `recipientList` to `receive#Sms`, which finds our number among them (one of this bridge's) and
+  the group's room of the sender and the other recipients: the sender is always kept, then the first 7 others in
+  order. A sender that is not a number in E.164 (a short code) keeps a room of its own, never another person's pair
+  room. A text to one number is the pair's room, as before.
+- **New groups are limited.** A new group room is made for at most 5 groups a day from one outside number and 50 a day
+  for one of our numbers (`SmsSendCount` `group:<ours>:<sender>` and `groups:<ours>`); past that a group text goes to
+  the sender's pair room, with a line that says it was a group text kept there, and no new room reaches the number's
+  users. A group whose room is there already still takes its texts.
+- **Out.** A reply in a group room goes as one group MMS (`POST /v2/messages/group_mms` with `to` as the list and no
+  `messaging_profile_id`, which that endpoint does not take) from our number. Each number is checked as a single text
+  is (`check#SmsSend`: opt-out, the destination's class, emergency) and counts as one text toward the day's limits
+  (the carrier bills a group MMS once a recipient); one refused (a STOP from one member, for one) refuses the whole
+  send before the provider and takes the counts back.
+- **Receipts.** Telnyx sends one receipt a recipient, each naming the group's message (`group_message_id`, the
+  delivery's remote id) and its recipient. Each recipient's is kept (`ChatBridgeDelivery.recipientReceipts`), and the
+  message's Info lists them by number. The delivery's receipt is theirs together (the least of those not failed); one
+  failed recipient does not fail the delivery while another got it, and the delivery fails only when every recipient
+  failed.
+- **Start one.** Text a number with several numbers (`open#PairRoom` with `toNumber` comma-separated, each checked as
+  a send), or several numbers picked in a new-chat picker.
 
 ## Texts that come in
 
@@ -196,7 +235,7 @@ sending profile's number, and Mantle answers the `sms-consent` hook from its con
 | Delivery receipts | yes (`receiptStatus`; a failed one fails the delivery) |
 | Edit, delete, reaction | no (refused before the change: `bridgeUnsupported`) |
 | Idempotent sends | no: a lost answer is uncertain |
-| Group texts | no: one room per pair of numbers |
+| Group texts | yes: group MMS, one room for a set of outside numbers (8 recipients at most, plus our number), receipts per recipient |
 
 ## Tests
 
@@ -214,10 +253,18 @@ sending profile's number, and Mantle answers the `sms-consent` hook from its con
   promotional text with no user asked of a conf's `sms-consent` provider (a yes sent, a no and no answer refused, a
   conf's other hook left out) and counted for its number's day of promotional texts, a sign-in code still sent after it; the pair room shared by a text and a call (`receive#PhoneCall`); a sign-in code through the real
   sender, in no room.
+- `crates/moqui-channels/src/tests.rs` also has group texts: one room for its numbers whoever writes first, the reply
+  out as one group MMS to them all (no messaging profile in its body, counted once a recipient); each recipient's
+  receipt, one failed not failing the delivery, all failed failing it; a STOP from one member refusing the whole send
+  before the provider; twelve recipients keeping the sender and seven others, two of our numbers both ours, a short
+  code in a room of its own, and a sixth new group of a day from one number kept in its pair room.
+- `basic-comms/test/BasicCommsTexts.spec.js` also has a group text opened in any order and with our own number left
+  out, more than 8 refused, and `phoneNames` from a `call-context` provider of the component's own test app root
+  (`test/screen/TextNamesApp.xml`) for the user's own phone rooms only.
 - `crates/moqui-core/src/service/chat_bridge_web.rs`: a file address signed for its bridge that runs out; a file from a
   network never kept as a page.
 - `basic-comms/test/BasicCommsTexts.spec.js`: Text a number in the browser and the terminal, the room it opens, the same
   post from a stranger, an international number.
 
 **Not checked live:** Telnyx itself (its signature and webhook shapes are from its documentation), carrier delivery,
-and 10DLC registration.
+group MMS between real phones, and 10DLC registration.

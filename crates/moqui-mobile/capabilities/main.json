@@ -41,6 +41,13 @@
     "allow-push-test",
     "allow-open-external",
     "allow-call-state",
-    "allow-call-take-answer"
+    "allow-call-take-answer",
+    "allow-call-audio",
+    "allow-call-audio-route",
+    "allow-call-dial-account",
+    "allow-call-dial-choice",
+    "allow-call-dial-from",
+    "allow-contacts-search",
+    "allow-contact-names"
   ]
 }

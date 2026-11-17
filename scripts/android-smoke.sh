@@ -53,7 +53,10 @@ JNI_NAMES=(
     org/moqui/mobile/Native#roomLink org/moqui/mobile/Native#unifiedEndpoint
     org/moqui/mobile/ChatNotifications#clearRoom org/moqui/mobile/ChatNotifications#roomShown
     org/moqui/mobile/UnifiedPushes#registerAll org/moqui/mobile/RegisterWorker#start
+    org/moqui/mobile/CallAudio#state org/moqui/mobile/CallAudio#request org/moqui/mobile/Native#callTell
     org/moqui/mobile/Native#registerPending org/moqui/mobile/PushCheck#state org/moqui/mobile/PushCheck#fix
+    org/moqui/mobile/CallManager#pageGone org/moqui/mobile/Native#dialLink org/moqui/mobile/DialAccount#set
+    org/moqui/mobile/PhoneBook#search org/moqui/mobile/PhoneBook#names
     org/moqui/mobile/Ipc#attach org/moqui/mobile/RustWebView#loadUrlMainThread org/moqui/mobile/RustWebView#evalScript
     org/moqui/mobile/WryActivity#getAppClass org/moqui/mobile/WryActivity#getVersion
     org/moqui/mobile/WryActivity#setWebView org/rustls/platformverifier/CertificateVerifier#verifyCertificateChain
