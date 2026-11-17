@@ -1,12 +1,14 @@
 # MR Moqui — UI review: BasicComms
 
-**Status — 2026-11-16:** review in progress. COM-B01–B07 cover mail setup/triage/compose/reply, identities/rules/automatic replies,
-shared mailbox permissions, phone-width chat, ordinary chat participants, membership/actions/files, encrypted
-exchange, key recovery and notification settings. Twenty-two open findings: thirteen observed UI/behavior issues,
-one observed HTTP pagination defect and eight source-grounded proposal revisions. The merged [Comms Messaging plan](Comms-Messaging.md) informs the review; implementation remains
-for a later combined pass. All activities remain incomplete; no application fixes. B03 ran only the existing fixture
-spec; B04–B07 reused existing users without tests/builds; B06 mail setup used the existing administrator fixture,
-and B07 shared-mailbox use included ordinary read/send members. No automated walk or acceptance suite was run.
+**Status — 2026-11-16:** review in progress. COM-B01–B09 cover mail setup/triage/compose/reply-all/forward, attachments,
+identities/text blocks/ordered rules/automatic replies, shared mailbox permissions/lifecycle, phone-width chat, ordinary chat
+participants, membership/actions/files, encrypted exchange, key recovery and notification settings. Twenty-nine open
+findings: eighteen observed UI/behavior issues, one observed HTTP pagination defect and ten source-grounded proposal
+revisions. The merged [Comms Messaging plan](Comms-Messaging.md) informs the review; implementation remains for a
+later combined pass. All activities remain incomplete; no application fixes. B03 ran only the existing fixture spec;
+B04–B07 reused existing users without tests/builds. B08 rebuilt the debug binary after the user's pull, reused those
+users and exercised an explicitly approved temporary mailbox Manage grant, since removed. B09 reused that binary
+without builds/tests, with captured reply/forward/unsubscribe mail and curl attachment transfers. No automated walk or acceptance suite was run.
 
 Contents: [scope](#1-purpose-scope-and-sources) · [method](#2-review-method-and-refinement-criteria) ·
 [inventory](#3-screen-and-surface-inventory) · [activities](#4-end-to-end-activities) ·
@@ -531,11 +533,11 @@ execution records it; “exercised” never implies that all modes and recovery 
 | Activity | Status | Outcome / remaining branches | Evidence / findings |
 | --- | --- | --- | --- |
 | COM-01 — Start from the right inbox and account | exercised — partial | B01/B06 empty entry and account setup navigation; B06 populated hosted account, unified/account folders, unread counter, saved-search recall and Sent with administrator fixture. B07 ordinary B/C shared-account Inbox and read/send boundaries. Other accounts and alternate modes pending. | COM-B01/B06/B07; B06 04, 06, 13–16, 19; B07 14–20 |
-| COM-02 — Set up and verify a mail account | exercised — partial | B06 ordinary B hosted-address refusal; existing administrator Address → Connect → Test (no remote sign-in) → Options → Finish → activated Account. Local SMTP sink attached separately as fixture setup. Narrow-holder positive blocked by grant approval review; external IMAP/POP/OAuth, transport setup/test, duplicate Finish/cancel/back and other modes pending. | COM-B01/B06; B06 01–04 |
-| COM-03 — Triage a thread and inspect its original evidence | exercised — partial | B06 three imported messages grouped into two conversations; expansion/body/header/source and attachment bytes; no-match/advanced search, saved search/reset/recall, mark unread/filter/read, archive/Undo. EML/Print links return 404 through absent Comms mount. B07 read member can read/mark read, but active Archive refuses; owner bulk-unflags rule fixtures. Label/move/snooze, spam/trust/invites and remaining modes pending. | COM-B06/B07; COM-UI-016/019/021; B06 05–08, 13–14; B07 15–16, 24 |
-| COM-04 — Compose, recover and send a message once | exercised — partial | B06 administrator reply, quote, pop-out/close, autosave and Drafts reopen; send/Undo/resend captured once; new-message missing/invalid-recipient recovery, schedule dialog cancel, To/Bcc capture and Sent; 390px composer inspection. Bcc-only refused. B07 alias/signature and ordinary shared sender captured; open draft refused after send-right downgrade, retained for owner after membership removal. Fast-entry commitment needs repeat; upload/Files, Reply all/forward, conflict/offline/provider failure, scheduled delivery and other modes pending. | COM-B01/B06/B07; COM-UI-017–019/021; B07 11, 17, 25 |
-| COM-05 — Make personal mail policy work for its consumer | exercised — partial | B07 alias/default/reply-to/signature → captured compose; rule preview/no-match/cancel, automatic inbound flag and manual run; OOO required-body refusal, contacts/internal audiences, repeated/automated sender suppression, distinct internal body and turn-off. No-hook contacts audience replies to unknown outsider. TextBlocks, reply signature placement, invalid/multiple/ordered rules, blocked senders, dates/apply-all, provider failures and other modes pending. | COM-B07; COM-UI-020/022; B07 01–13, 22–23, 26–27 |
-| COM-06 — Manage a shared mailbox without losing ownership | exercised — partial | B06 import/duplicate detection. B07 owner converts fixture to Shared, adds read and send members; read/send UI, downgrade refusal, leave cancel/confirm, former-member deep link and owner removal of C; retained draft and owner mailbox remain. Manager/last-owner, shared policy editing, pause/resume/provider sync, account removal/retention and other modes pending. | COM-B06/B07; COM-UI-021/022; B07 14–25 |
+| COM-02 — Set up and verify a mail account | exercised — partial | B08 owner created/activated a second Shared, delivered-here account through the wizard with no remote credentials. B06 ordinary B hosted-address refusal; existing administrator Address → Connect → Test (no remote sign-in) → Options → Finish → activated Account. Local SMTP sink attached separately as fixture setup. Narrow-holder positive blocked by grant approval review; external IMAP/POP/OAuth, transport setup/test, duplicate Finish/cancel/back and other modes pending. | COM-B01/B06/B08; B06 01–04; B08 25–27 |
+| COM-03 — Triage a thread and inspect its original evidence | exercised — partial | B09 label/create/apply/remove, custom-folder move, snooze refusal/preset/Undo, Spam/Not spam, Trash/Move to Inbox, block/unblock, mailto unsubscribe and framework-only invitation display; original triage fixture restored. B08 restored an incidental snooze through Undo and cleared the new rule flag; this is supporting recovery evidence, not the full snooze walk. B06 three imported messages grouped into two conversations; expansion/body/header/source and attachment bytes; no-match/advanced search, saved search/reset/recall, mark unread/filter/read, archive/Undo. EML/Print links return 404 through absent Comms mount. B07 read member can read/mark read, but active Archive refuses; owner bulk-unflags rule fixtures. Remote-image trust, automatic snooze wake-up/jobs, invitation-provider responses, URL/one-click unsubscribe, multi-row mixed outcomes and remaining modes pending. | COM-B06–B09; COM-UI-025–029; COM-UI-016/019/021; B06 05–08, 13–14; B07 15–16, 24 |
+| COM-04 — Compose, recover and send a message once | exercised — partial | B09 Reply all → saved/reopened draft → capture; original-message Forward with copied attachment; curl upload/remove/chunk resume and capture/hash comparison; Save to Files → Attach from Files → reopened draft, selected 390 layout. B08 text-block button insertion and saved unsent draft worked; slash opens the picker without focusing its search field (COM-UI-023). B06 administrator reply, quote, pop-out/close, autosave and Drafts reopen; send/Undo/resend captured once; new-message missing/invalid-recipient recovery, schedule dialog cancel, To/Bcc capture and Sent; 390px composer inspection. Bcc-only refused. B07 alias/signature and ordinary shared sender captured; open draft refused after send-right downgrade, retained for owner after membership removal. Fast-entry commitment needs repeat; UI upload progress/cancel, large/failed/inline files, plain-text conversion, quote removal, reply-signature placement, conflict/offline/provider failure, scheduled delivery and other modes pending. | COM-B01/B06–B09; COM-UI-028/029; COM-UI-017–019/021; B07 11, 17, 25 |
+| COM-05 — Make personal mail policy work for its consumer | exercised — partial | B09 sender block confirmation canceled then applied; Rules/Blocked senders → confirmed Unblock, list cleared. Future delivery filtering not exercised. B08 private/group text blocks create/search/edit-cancel/share/unshare and compose insertion; actual inbound ordered rules/stop; invalid, future, active and expired OOO windows with captured delivery and restored blank dates. B07 alias/default/reply-to/signature → captured compose; rule preview/no-match/cancel, automatic inbound flag and manual run; OOO required-body refusal, contacts/internal audiences, repeated/automated sender suppression, distinct internal body and turn-off. No-hook contacts audience replies to unknown outsider. Reply signature placement, rich/plain/long or duplicate blocks and cached sharing changes, invalid/failed rule actions, blocked-sender automatic delivery/re-blocking, natural date boundaries/DST/apply-all, provider failures and other modes pending. | COM-B07–B09; COM-UI-020/022–024; B07 01–13, 22–23, 26–27 |
+| COM-06 — Manage a shared mailbox without losing ownership | exercised — partial | B08 approved ordinary manager renamed the account, hit shared-to-personal refusal and removed own access; owner removed a separate populated gateway account with mail retained, checked Removed/deep-link/SMTP refusal and canceled purge. B06 import/duplicate detection. B07 owner converts fixture to Shared, adds read and send members; read/send UI, downgrade refusal, leave cancel/confirm, former-member deep link and owner removal of C; retained draft and owner mailbox remain. Manager account-wide removal/owner transfer/last-owner, shared policy editing, remote pause/resume/sync, record-linked retention/permanent purge and other modes pending. | COM-B08; COM-B06/B07; COM-UI-021/022/024; B07 14–25 |
 | COM-07 — Carry a conversation across rooms and threads | exercised — partial | B02/B03 persistence, DM picker, delivery/read clearing, replies/edit/pins/search/thread draft. B04 copy text/link, forward with comment, reaction add/remove/expanded picker, unread-from-message, edit cancel, delete confirm/cancel, poll create/two votes/close cancel+confirm. Membership in COM-08. Remaining branches include destructive delete submission, reaction-person disclosure, forward cancel/refusal, advanced polls, actual touch, native/host, dark and TUI. | COM-B02–B04; COM-UI-002/003/005–008 |
 | COM-08 — Share files and maintain room membership or bridge context | exercised — partial | B04 ordinary private-group owner/member, promotion/demotion, remove/re-add, last-owner succession and role restoration; populated All/Pictures, image viewer/Show in chat, curl upload/download and revoked/restored byte access. Two attachments on one event expose a limit=1 cursor defect. UI upload/progress/cancel, large/failed files, other media, three-person role competition, public/record/bridge/encrypted rooms and other modes pending. | COM-B03/B04; COM-UI-009/010 |
 | COM-09 — Recover encrypted chat and device trust | exercised — partial | B05 plain→encrypted presentation, two-user encrypted exchange, new-device missing-key state, rename, verification request/accept/cancel, stalled emoji comparison, backup recent-auth cancel/success, invalid-key refusal and successful second-device history recovery, verified-only exclusion, rotation/remove confirmations canceled. Actual revocation/start-over, verified completion/mismatch/QR, encrypted files/calls, outsider helpers and remaining modes pending. | COM-B02/B05; COM-UI-001/004/011–014 |
@@ -547,7 +549,7 @@ execution records it; “exercised” never implies that all modes and recovery 
 | COM-15 — Work a queue and resolve voicemail | pending | All steps, modes and recovery branches pending. | — |
 | COM-16 — Record with consent and inspect retained media | pending | All steps, modes and recovery branches pending. | — |
 | COM-17 — Recover host-only queued work and conflicts | pending | All steps, modes and recovery branches pending. | — |
-| COM-18 — Reconcile private content, helpers and mode limits | exercised — partial | B03 nonmember private-room refusal/recovery and author actions. B04 removed member lost the open Files pane/room list entry; stale permalink, files list and text/image byte requests refused; re-add restored access. B07 shared mail downgrade/leave/removal boundaries exercised. No-Comms identity, wider helper/byte matrix, encrypted/record/bridge boundaries, remaining variants/output modes pending. | COM-B03/B04/B07; COM-UI-007/021 |
+| COM-18 — Reconcile private content, helpers and mode limits | exercised — partial | B09 owner attachment downloads matched source/captured hashes; ordinary B without account membership received Attachment not found (HTTP 500), no bytes. B08 group text-block visibility/unshare and outsider absence of the removed owner-only mailbox; temporary manager self-removal restored denial. B03 nonmember private-room refusal/recovery and author actions. B04 removed member lost the open Files pane/room list entry; stale permalink, files list and text/image byte requests refused; re-add restored access. B07 shared mail downgrade/leave/removal boundaries exercised. No-Comms identity, wider helper/byte matrix, encrypted/record/bridge boundaries, remaining variants/output modes pending. | COM-B03/B04/B07–B09; COM-UI-007/021 |
 
 ### Findings register
 
@@ -578,6 +580,15 @@ presentation; P3 is a localized refinement. Label evidence as observed behavior,
 | COM-UI-020 / P1 | **Observed behavior / audience mismatch**; john.doe, account 100102; COM-05; Settings/OutOfOffice, Material light 1280×720; local SMTP only | Select **My contacts and people inside the organization** with no contacts hook installed, save On, then deliver mail from an unknown external address. The local sink captures a public automatic reply to that outsider. The selected audience silently behaves like Everyone for external senders, potentially disclosing an away message beyond the intended audience. Make unavailable contact classification explicit and resolve the fallback conservatively; never silently widen the selected audience. | B07 `06-ooo-outsider.json`, `10-ooo-contacts-enabled.{txt,jpg}`, `11-capture-summary.json`; [EmailClientServices.xml](../runtime/components/base/framework/service/org/moqui/mail/EmailClientServices.xml) `filter#ContactAddresses` explicitly defines null/no hook as all senders; `send#OutOfOfficeReplies` leaves `contacts` null and permits outsiders. [OutOfOffice.xml](../runtime/components/base/basic-comms/screen/BasicComms/Settings/OutOfOffice.xml) caption does not explain this fallback; its introductory comment instead says no hook means internal only. | Open; no fix/retest. All content synthetic and captured locally; no real disclosure. Internal-only correctly suppressed a separate outsider. Hook-present/failing/empty results and organization-domain classification require later coverage. Priority reflects the audience/privacy mismatch, not an authorization bypass. |
 | COM-UI-021 / P2 | **Observed capability/feedback mismatch**; ordinary B read member and C downgraded sender; COM-03/04/06; Inbox/Mail and open composer, Material light 1280×720 | A read member sees an active Archive action; clicking returns “You may not change the mail of email account 100102.” The reading pane correctly explains no-send access. Separately, downgrade C from Read and send to Read while a saved composer is open: Send remains available with its alias selected, then refuses “Choose a mail account to send from.” Align mutation controls with account capabilities and explain a permission change with a recovery route while preserving the draft. | B07 `15-readonly-archive-refusal.txt`, `16-readonly-message.txt`, `17-revoked-send.txt`, `25-retained-draft.txt`; [Mail.qvue](../runtime/components/base/basic-comms/screen/BasicComms/Inbox/Mail.qvue) row/selection actions versus `thread.canSend`; [ComposeServices.xml](../runtime/components/base/basic-comms/service/org/moqui/comms/ComposeServices.xml) `get#Identities` excludes accounts without canSend, send reports missing identity; [Compose.qvue](../runtime/components/base/basic-comms/screen/BasicComms/Inbox/Compose.qvue) owns open-composer feedback. | Open; no fix/retest. Server refused both mutations; no revoked-send MIME was captured. C could send before downgrade. After removal C's refreshed Inbox was empty; owner retained the unsent draft. Do not characterize this as an access-control failure. |
 | COM-UI-022 / P2 | **Proposal revision / mail policy and shared capabilities**; COM-05/06; Comms-Messaging §1–2/6–7 and unified/network-room design | Extend COM-UI-019's preservation criteria to account-scoped identities/reply-to/signatures, ordered server rules with explicit preview versus run scope, automatic-reply audiences and shared mailbox capabilities. Specify who owns shared policy and whose contacts classify senders; missing/failed classification must not silently broaden a promised audience. Keep mail OOO distinct from chat presence/DND or push suppression. A mail read member may mark read but may not archive or send; stale roles need clear draft-preserving recovery. Do not transplant chat membership/receipt semantics into shared mail. | B07 identity/rule/OOO consumers and ordinary shared users; [BasicEntities.xml](../runtime/components/base/framework/entity/BasicEntities.xml) EmailAccountUser EapRead/EapSend/EapManage; [MailSettingsServices.xml](../runtime/components/base/basic-comms/service/org/moqui/comms/MailSettingsServices.xml), [EmailClientServices.xml](../runtime/components/base/framework/service/org/moqui/mail/EmailClientServices.xml), [proposal](Comms-Messaging.md). | Open design handoff; no proposal/application edits. Future acceptance combines identity → incoming rule → audience-specific captured reply → shared role change/leave. Focused regressions cover audience fallback and capability/error contracts; full flows remain in acceptance. |
+| COM-UI-023 / P2 | **Observed UI / keyboard focus**; john.doe, COM-04/05; Inbox/Compose rich editor; Material light 1280×720 | Type `/` at a word start: the text-block menu opens, but focus lands on its popup container rather than **Find a text block**. Typing `b08reply` then leaves the search blank; the body retains `/`. Explicitly clicking the search field makes matching and insertion work, including removal of the pending slash. Focus search when opened, preserve the insertion point, contain shortcuts and return focus predictably after selection/cancel. | B08 `05-slash-repeat.{txt,jpg}`; [Compose.qvue](../runtime/components/base/basic-comms/screen/BasicComms/Inbox/Compose.qvue) menu/search (142–145), `insertBlock` (945–960), `onEditorKeyup` (964–970). Reproduced with separate open/type steps; menu has no explicit search focus. | Open; no fix/retest. Earlier fast typing also opened Snooze, but that shortcut interaction was not reliably reproduced and is not a separate confirmed defect. Later stale automation selected a snooze; it was undone, not attributed to typing. Focused keyboard regression after a fix; full compose walk in acceptance. |
+| COM-UI-024 / P2 | **Proposal revision / reusable text, automation and mailbox lifecycle**; COM-02/04–06/18; Comms-Messaging §1–2/7 and unified/network-room design | Preserve existing private/group text blocks, insertion-point and keyboard behavior; explicitly design rich/plain conversion and stale sharing-cache behavior. Keep ordered server rules and stop semantics, preview/run scope, and scheduled/active/ended automatic replies with user-zone windows; mail OOO is distinct from chat presence/DND/push. Distinguish mail owner/Manage/read/send from room roles, leaving from account-wide removal, and retained records from restorable trash. Define pending draft disposition and gateway versus remote-copy promises before unifying navigation. | B08 actual block sharing/insertion, order/stop delivery, date-window capture and mailbox lifecycle; [Compose.qvue](../runtime/components/base/basic-comms/screen/BasicComms/Inbox/Compose.qvue), [MailSettingsServices.xml](../runtime/components/base/basic-comms/service/org/moqui/comms/MailSettingsServices.xml), [Removed.qvue](../runtime/components/base/basic-comms/screen/BasicComms/Settings/MailAccounts/Removed.qvue), [proposal](Comms-Messaging.md). Named empty blocks are accepted; decide whether this is useful rather than assuming body-required validation. Removed offers permanent deletion, not Restore. | Open design handoff; complements COM-UI-019/022. No proposal/application edits. Future mail acceptance should join group block sharing/revocation → compose → ordered inbound rules → date-window replies → scoped manager change/leave → keep-mail removal. Boundary instants, cached revocation, remote sync and permanent purge remain untested. |
+| COM-UI-025 / P2 | **Observed UI / accessibility**; john.doe; COM-03; Inbox Labels dialog, Material light 1920×1080 | A label row visually toggles between empty and checked boxes, but its accessibility role remains button with only the label name. The check icon is aria-hidden; no checked, pressed or mixed state is exposed. A nonvisual reviewer cannot determine which labels Apply will add/remove. Expose checkbox semantics, including the mixed-selection state, while retaining keyboard activation. | B09 `10-label-selected.{txt,jpg}`, `10-label-dom.json`; [Mail.qvue](../runtime/components/base/basic-comms/screen/BasicComms/Inbox/Mail.qvue) Labels rows (678–682) use a clickable q-item and decorative icon. Applied label and cross-folder lookup worked. | Open; no fix/retest. Focused semantic-state regression later; assistive-technology and mixed-selection acceptance branches pending. |
+| COM-UI-026 / P2 | **Observed UI / persistent snooze recovery**; john.doe; COM-03; Snoozed list and Snooze dialog, Material light 1920×1080 | After snoozing and entering Snoozed, the row offers another Snooze but no explicit Unsnooze/return-now action. Reopened dialog offers future presets/custom date only. The short Undo notification is not a persistent recovery control after navigation/reload. A past custom date is refused, but the dialog closes; reopening loses the invalid value. Provide a durable wake-up action and retain invalid input for correction. | B09 `13-past-snooze-refused.txt`, `14-snoozed.txt`, `30-clean-state.json`; [Mail.qvue](../runtime/components/base/basic-comms/screen/BasicComms/Inbox/Mail.qvue) snooze dialog (640–654), `applySnooze` (2115), `offerUndo`/in-memory undo stack (1698–1726). Server supports unsnooze; UI uses it as Undo's inverse. | Open; no fix/retest. Re-snooze followed by prompt Undo in the same view cleared the fixture, verified by reload/read endpoint. Keyboard z supports the current in-memory undo stack; it is not a durable per-message control. Automatic wake-up not tested; jobs disabled. |
+| COM-UI-027 / P2 | **Observed UI / action naming, with source confirmation**; john.doe; COM-03; Spam and Trash detail/row controls, Material light 1920×1080 | In a Spam thread, the accessible button name is **Report spam**, while its tooltip says **Not spam** and clicking restores the message to Inbox. Trash row/detail buttons still say **Delete** even though their handlers select permanent deletion. Accessible names, visible help and actual operations must agree; distinguish recoverable Trash from permanent deletion before activation. | B09 `15-spam-detail-menu.txt`, `17-trash-detail.txt`, `29-spam-action-result.txt`; [Mail.qvue](../runtime/components/base/basic-comms/screen/BasicComms/Inbox/Mail.qvue) bulk deletion (147), row deletion (307), thread deletion/spam (372–374). Not-spam behavior observed both through bulk and the misleadingly named detail button. | Open; no fix/retest. Permanent-delete mapping is source-inspected only: no purge button was activated and no claim about a downstream confirmation is made. Focused name/operation checks later; full recovery in acceptance. |
+| COM-UI-028 / P3 | **Observed UI / recipient summary**; john.doe; COM-04; Drafts and reopened composer, Material light 1920×1080 | Save a new draft with subject/attachment and no recipient. Drafts labels it **To: me**, while reopening shows empty To/Cc/Bcc. The fallback invents a recipient. Reply/forward draft rows also derive their To summary from conversation participants, not solely the draft's actual recipients. Show an explicit no-recipient state and separate thread participants from delivery recipients. | B09 `32-final-draft.{txt,jpg}`, `30-clean-state.json`, reply-all evidence 03–04; [Mail.qvue](../runtime/components/base/basic-comms/screen/BasicComms/Inbox/Mail.qvue) `participantsText` (1513–1521) uses participantList and falls back to me in outgoing views. | Open; no fix/retest. Confirmed empty-recipient draft mismatch; no unintended delivery occurred. The saved Files draft remains unsent. Focused summary cases later, complete draft recovery in acceptance. |
+| COM-UI-029 / P2 | **Proposal revision / reply, attachment and triage contracts**; COM-03/04/05/18; Comms-Messaging §1–2/5/7 and unified inbox design | Preserve Reply-To, To/Cc/self-exclusion and quote/reference behavior separately from chat reply/forward semantics. Treat original attachment, forwarded copy, uploaded bytes and Files copy as distinct objects; retain removal, retry/resume, byte integrity and permission checks. Unifying mail with rooms must keep folder moves distinct from labels, expose persistent snooze/Spam/Trash recovery, and give controls accurate accessible states/names. Draft summaries must describe actual recipients. Distinguish an unsubscribe request sent from confirmed remote subscription removal, and parsed invitation details from provider-backed calendar responses. | B09 captured MIME/hash comparisons, Files round trip, triage/recovery and framework-only invitation; COM-UI-025–028; [Comms-Messaging](Comms-Messaging.md), [ComposeServices.xml](../runtime/components/base/basic-comms/service/org/moqui/comms/ComposeServices.xml), [Mail.qvue](../runtime/components/base/basic-comms/screen/BasicComms/Inbox/Mail.qvue). | Open design handoff; no proposal/application edits. Extend proposed mail acceptance with reply-all/forward → attachment/Files recovery → move/label/snooze/Spam/Trash → block/unsubscribe/provider limits. Keep focused regressions for fixes and full walks in acceptance. |
+
+
 
 ### Bounded batch record
 
@@ -1145,6 +1156,245 @@ three temporary tabs and verified empty browser inventory. Runtime SIGINT/sessio
 (expected Python KeyboardInterrupt). Verified server/scratch database processes and ports 18872/18873/18874 absent.
 Restored scratch configuration to remove the temporary incoming SMTP listener. No fixes, commit or test execution;
 review documentation remains uncommitted.
+
+### COM-B08 — Text blocks, rule ordering, date windows and shared mailbox lifecycle, 2026-11-16
+
+**Scope/current source.** COM-05/06 plus COM-02/03/04/18 consumers at pulled HEAD
+`5b7413eb14ce9b182e1d74e438b2b0b0dff9413c`. Reviewed the incoming changes before continuing: renderer/static form
+and TUI changes warranted a fresh binary; this batch's text-block/rule/OOO/lifecycle sources were unchanged. The
+Settings index Call handling card changed outside this batch. Earlier findings remain historical observations,
+not implicitly fixed or retested. `./moq build --debug -j 4` succeeded in about 35 seconds, with the linker warning
+that the large `__eh_frame` section may affect exception-handling performance. No tests or acceptance suite ran.
+
+Reused `/tmp/mr-ui-four-apps-zf5098dh`, the retained disposable database and six individually linked components
+(framework, webroot, tools, basic-comms, dev-aide, example), no addons. Binary SHA-256
+`1c73abd67625c37438be4fe385a5654cd84ab86e2ab5ad79ee04c51cc0e67c4b`; PID **45368**, started
+2026-11-17 03:00:31 UTC (Nov 16, 21:00 America/Chicago). HTTP 18872, incoming SMTP 18874 and capture sink 18873
+were loopback-only; inbound allowed 127.0.0.1, outgoing hosts restricted to localhost; jobs and IMAP IDLE disabled.
+Existing John Doe owner and ordinary Calls Client B/C used separate hostnames. John's displayed zone was
+**US/Central**; no clock or zone changes. Material light 1280×720 only; dark, 1920/390, Standard and TUI remain pending.
+
+**Text blocks → composer → ordinary group reader.** Owner created private **COM-B08 local response**, shortcut
+`b08reply`, body `COM-B08 reusable answer. Local review only.` Save/list/search by shortcut worked. Changed its
+name in Edit, canceled and reloaded: original retained. Compose's Text blocks button inserted its body; saved
+**COM-B08 text block draft** unsent with no recipient. Typing `/` in the rich editor opened the picker, but then
+typing the shortcut did not enter its search field. Repeated with separate open/type steps: focus was the popup
+container and search remained blank (COM-UI-023). Clicking search and typing matched; selection inserted the block
+and removed the pending slash. Escape returned focus to the editor. The retained draft contains the inserted text
+and review keystrokes; it was never sent.
+
+An earlier fast `/b08reply` attempt also opened Snooze; this was not reliably reproduced. While dismissing that
+interruption, a stale automation target selected a snooze for B07 message 100059. Restored it through Snooze →
+Tomorrow → Undo and verified Nothing snoozed. This is an automation detour with recovery evidence, not evidence
+that typing itself committed a snooze or completion of the planned snooze workflow.
+
+Empty block Save refused **Give it a name**, preserving the dialog. Supplying only **COM-B08 empty body check**
+then saved an empty private block; record the accepted behavior without inventing a required-body contract.
+Ordinary B initially saw none of the owner's blocks. B created **COM-B08 shared response**, shortcut `b08group`,
+shared with **Comms users**. C saw **From Calls Client B, shared with Comms users**, without Edit/Delete controls.
+B cleared the group and saved Just me; C's reloaded list was empty. No global grants changed for this check.
+Rich/plain conversion, long bodies, duplicate shortcuts, group changes in a cached open composer, unauthorized
+write attempts and alternate modes remain pending.
+
+**Rule order and stop, through actual inbound SMTP.** On 100102, retained the B07 rule Off. Added enabled
+**COM-B08 read and stop** (From contains `order-b08@review.invalid`, Mark it read, stop after match) followed by
+**COM-B08 flag after** (same condition, Flag it, no stop). Delivered **COM-B08 order stop first**: message 100103
+was read/unflagged; read/stop matched once and flag had not matched. Moved the flag rule above read/stop and
+reloaded to confirm order persistence. Delivered **COM-B08 order flag first**: read and flagged; counters showed
+flag once/read-stop twice. This demonstrates automatic delivery order and stopping, not a manual Run now repeat.
+Disabled both new rules afterward and removed the new flag; Flagged showed Nothing flagged. Failed actions,
+invalid conditions/actions, explicit stop-action variants, concurrent ordering and cross-account rules remain pending.
+
+**OOO windows, refusal and actual captured reply.** On 100102, enabled existing internal-only content with subject
+**COM-B08 window reply**. From Nov 17 09:00 / Until Nov 17 08:00 refused **The automatic reply ends before it
+starts**, retaining dates and subject. Corrected Until to 10:00: **Starts Tue Nov 17, 9:00 AM**, dates persisted on
+reload. A fresh sender `future-b08@review.invalid` produced no captured reply. Changed to Nov 16 20:00–23:00:
+**On now, until Mon Nov 16, 11:00 PM** at about 21:06 local; mail from `active-b08@review.invalid` produced exactly
+one captured reply with the expected subject, internal body and matching In-Reply-To. Changed to Nov 16
+18:00–19:00: **Ended Mon Nov 16, 7:00 PM**; `expired-b08@review.invalid` produced no additional reply.
+
+All three messages arrived through the real local SMTP listener, from distinct internal senders. The B08 sink
+contained exactly one MIME message, to the active-window sender. This checks window evaluation at incoming
+delivery, not a job wake-up or a natural boundary crossing. Date equality/exact boundaries, DST, apply-all,
+provider failure and the earlier contacts-audience defect were not retested. Turned OOO off, cleared both dates,
+restored **COM-B07 away reply** and verified Off with original bodies/audience/repeat interval retained.
+
+**Owner keep-mail lifecycle.** Inspected and canceled both Remove, keep mail and Remove and delete confirmations
+on existing account 100102; did not remove it or its drafts. Through Add Address → Connect → Test → Options →
+Finish created **com-b08-life@review.invalid**, Shared, delivered here, name **COM B08 retained lifecycle**,
+account **100204**. No incoming server, password or remote credentials; Test said Nothing to sign into; options
+showed Nobody shares it yet. Activated it and delivered **COM-B08 kept lifecycle mail** through local SMTP:
+Inbox showed message **100109**. Owner confirmed **Remove, keep mail**. Active accounts returned to 100102 only;
+Removed accounts showed 100204 with **1 message kept here**. Inspected **Delete with its mail** confirmation
+(permanent deletion, filed messages kept, server mail untouched), then canceled; no purge occurred.
+
+The old Account URL returned **Email account 100204 not found**. Supplemental RCPT-only SMTP probe to its old
+address returned **550 5.1.1 Recipient address rejected: User unknown**; reset without DATA. Ordinary outsider C's
+account list was empty without a Removed section. C had never belonged to this account: this is outsider list
+isolation, not former-member purge-right coverage. Removed exposes no Restore action; keep-mail retention must
+not be described as restorable trash. Remote Pause/Resume was not offered for these gateway accounts without an
+incoming server, consistent with `hasIncomingServer` gating in MailSettingsServices; actual IMAP/POP lifecycle,
+record-linked retention and permanent purge remain pending.
+
+**Approved ordinary manager lifecycle.** Automatic approval review initially rejected granting B Manage on 100102
+without explicit authorization. The user explicitly approved that named fixture grant; it was applied only after
+approval. Before that reply, the independent owner-only lifecycle above proceeded without additional membership.
+B then saw **Shared · shared with you: you may manage**, settings/members/removal controls. B renamed 100102 to
+**COM B08 manager rename** and saved; owner's reload confirmed persistence. B selected Personal and saved: refused
+**This account is shared with 1 more person: remove them first, so only one is left, to make it personal**. Reload
+retained Shared. B restored **COM B06 local mail**, inspected/canceled account-wide Remove, keep mail, then confirmed
+removal of B's own membership. B's Account returned not found; owner's reload showed the original name and
+**Nobody shares it yet**. Temporary permission fully removed; no global permission or credential changes.
+Manager account-wide removal, ownership transfer/last-owner cases and competing managers remain pending.
+
+**Evidence and verification handoff.** Added COM-UI-023 observed focus failure and COM-UI-024 proposal revision.
+Comms-Messaging recommendations stay in this register; the proposal and archived build record are unchanged.
+Source-read `BasicComms` feature **out of office retains user-zone date strings and supplies instants to the static
+form** covers date/zone mapping, DST examples, clearing and preservation of HTML omitted by TUI, not actual inbound
+window delivery. `BasicCommsTexts` tests phone/SMS text operations, not reusable email text blocks. Neither ran.
+A later focus fix needs a focused component keyboard regression; the combined private/group block → compose →
+ordered rules → OOO window → manager/retention flow belongs in the proposed **BasicCommsMailWalk** acceptance work,
+which does not yet exist. Acceptance runs only when requested or when those tests are added/changed.
+
+Ignored `plans/ui-refinement-evidence/basic-comms/batch-08/` contains `runtime.json`, text-block evidence 01–05 and
+24, rule delivery/order evidence 06–11 and 21, OOO evidence 12–20 and the sole captured MIME,
+confirmation/lifecycle evidence 22–23 and 25–31, manager evidence 32–37, final flags/outsider/retained mail 38–40,
+and `41-cleanup.json`. `05-slash-repeat.jpg` and `40-final-retained-mail.jpg` were visually inspected. No blanket
+console/network-clean claim; selected UI snapshots, reloads, SMTP outcomes and capture establish only the branches
+above. All activities remain partial.
+
+**Cleanup.** Original account name/default identity retained; OOO Off with original subject/bodies, blank dates,
+internal-only audience; all rules Off, no flags, incidental snooze undone, B membership removed. Retained only in
+the disposable database: two owner-private blocks (including named empty block), B's now-private block, two disabled
+rules, incoming fixtures, the unsent B08 text-block draft beside the B07 draft, and removed account 100204 with one
+message kept. No permanent purge. Closed all three browser tabs and verified empty inventory. Server SIGINT/exit 0;
+SMTP sink SIGINT/exit 1 with expected Python KeyboardInterrupt. Process/listener checks found no runtime, embedded
+database or sink processes and no listeners on 18872/18873/18874. Restored pre-B08 scratch configuration, removing
+the temporary incoming listener. No application fixes, test execution or commit; only this review document changed.
+
+### COM-B09 — Reply/forward, attachments and inbox triage, 2026-11-16
+
+**Scope/runtime.** COM-03/04 plus COM-05/18 consumers; unchanged HEAD
+`5b7413eb14ce9b182e1d74e438b2b0b0dff9413c`, B08 debug binary SHA-256
+`1c73abd67625c37438be4fe385a5654cd84ab86e2ab5ad79ee04c51cc0e67c4b`. Retained
+`/tmp/mr-ui-four-apps-zf5098dh`, its disposable embedded PostgreSQL and the same six individually linked tracked
+components, no addons. Server PID **46271** started 2026-11-17 03:21:59 UTC (Nov 16, 21:21:59 America/Chicago).
+HTTP 18872 and capture sink 18873 loopback-only; outgoing mail allowed only to localhost. Incoming SMTP was not
+enabled this batch: fixtures entered through the mailbox's actual import transition using curl. Jobs/IMAP IDLE
+remained disabled. Existing John Doe owned shared account 100102; ordinary B, still without membership, supplied
+one supplemental refused attachment download. No grants, credentials, global policy or application source changed.
+B08 documentation changes were already uncommitted at entry and are preserved. No build, tests or automated suite.
+
+Started Material light 1280×720 for reply-all, then measured **1920×1080** for desktop attachment/triage work and
+**390×844** for a saved attachment draft. No dark/Standard/TUI or physical keyboard/touch-device pass. Browser tool
+interaction is not a complete assistive-technology walk. All addresses/content were synthetic and sends stayed in
+the local capture sink.
+
+**Reply all → draft → capture.** Imported **COM-B09 reply all and attachment**, message 100153, from
+`sender-b09@review.invalid`, Reply-To `reply-b09@review.invalid`, To the fixture mailbox and Cc
+`colleague-b09@review.invalid`, with **COM-B09-original.txt** (29 bytes). Also imported independent triage message
+100154. Reply all selected the mailbox identity, the Reply-To as To and the colleague as Cc, excluding the mailbox
+itself. Wrote a distinct response and expanded the original quotation. Closed, entered Drafts, reopened: body,
+quote and recipients persisted. Sent once after the normal Undo window. Captured MIME had the expected To/Cc,
+`In-Reply-To: <com-b09-1@review.invalid>`, original quotation and no inherited attachment. Sent reply 100155 joined
+the original thread. Reply-signature placement, plain-text conversion, quote removal and other threading patterns
+remain pending.
+
+**Forward → upload/remove/resume → capture.** Used the original message's More → Forward, rather than the last
+sent reply. New draft **100156** had no recipient, Fwd subject, original headers/body quotation and an independent
+29-byte attachment copy. Wrote forward text and closed. The initial fast recipient-entry attempt did not survive
+reopening; entered again, observed the chip, then confirmed persistence before Send. Treat timing/commit behavior
+as the earlier pending fast-entry branch, not a proven new defect from an automation sequence.
+
+Used curl, as requested, to upload **COM-B09-upload.txt** (49 bytes) to that closed draft through Compose/upload.
+Reopened: original and added file both listed. Removed only the added file in the UI and closed. A supplemental
+chunked upload used a new **COM-B09-chunked.txt** of 262,188 bytes: first 262,144 accepted/incomplete, repeated offset
+0 refused with received still 262,144, final 44 bytes accepted/complete, then attached by upload ID. An initial
+probe omitted the required client-generated upload ID and was refused; corrected the fixture to the documented
+ID/minimum-chunk contract, without changing settings. This is HTTP upload/resume evidence, not browser file-picker,
+progress/cancel or offline-host coverage.
+
+Reopened the forward with the chosen recipient and exactly two attachments; sent to `forward-b09@review.invalid`.
+Capture contained original and chunked file with matching names, sizes and SHA-256, and no removed 49-byte file.
+Forward had no In-Reply-To; reply and forward headers were distinct. Curl download of original 100051, forward
+copy 100056 and chunked file 100057 all returned 200 and matched captured/source bytes. Ordinary B's otherwise
+identical original download returned **HTTP 500, Attachment not found: 100051**, without attachment bytes. This
+checks one owner/nonmember boundary, not every helper or changed-role race.
+
+**Save to Files → Attach from Files → recover draft.** Initial Attach from Files showed an empty My files view,
+disabled Attach and an effective Cancel. Saved the original attachment from its message into **My files**;
+Compose's next picker listed **COM-B09-original.txt · 29 B**. Selected it (real checkbox state exposed here), then
+**Attach 1**. New **COM-B09 Files round trip** draft **100159** retained its independent file on close/reopen.
+Download 100059 matched the original's SHA-256
+`6e744b87b3b7134a24ded513627a35f8d721e8828c193d45715eab3d91379431`. Phone-width inspection showed a readable
+attachment chip and reachable composer actions. No recipient/body added and no send: retained as a disposable
+recovery fixture. Drafts nevertheless says **To: me** (COM-UI-028). Provider-folder search, collisions, oversized
+link fallback, upload interruption, inline/CID files and missing-byte recovery remain pending.
+
+**Labels and folders.** Created **COM-B09 Follow-up** (label 100000); toggled/applied it to triage message 100154.
+The label dialog's visual check icon changed but its accessible button state did not (COM-UI-025). The label rail
+entry found the message. Selected it, opened Move to, tried a no-match folder search, cleared it, then **Create and
+move** to **COM-B09 Review** (folder 100102). That folder showed the message with its label; revisiting the label
+also found it across folders. Immediately after the move the optimistic label list temporarily said empty; revisiting
+resolved it. Do not report label loss or an Inbox-only label query. Removed the label assignment during cleanup;
+retained the empty disposable label/folder definitions.
+
+**Snooze, Spam and Trash.** A past custom snooze date Nov 15 08:00 refused **Snooze until a time in the future**.
+The dialog closed and reopened blank. Tomorrow's preset showed Nov 17 08:00 and Snoozed contained the fixture.
+No persistent Unsnooze action was offered (COM-UI-026). The notification expired during inspection; an early
+replacement/Undo attempt did not establish cleanup, so repeated in the same view using fresh controls and promptly
+clicked Undo. Final read endpoint showed no snooze. No job wake-up or natural clock-boundary claim.
+
+Report spam moved the fixture to Spam. Selected-row More → **Not spam** returned it to Inbox. Delete moved it to
+Trash; inspected its detail and restored through More → Move to → Inbox. No permanent deletion activated. Later,
+after Block sender moved the original back to Spam, clicking the detail button accessible as **Report spam** again
+returned it to Inbox; tooltip was **Not spam** (COM-UI-027). Trash row/detail Delete labels also fail to disclose
+permanence, confirmed from handlers only. This is a naming mismatch, not a claim that the Spam recovery operation
+was wrong. Final junk/trash/snoozed lists were empty and original message 100154 was read in Inbox with no flag or
+label. Multi-row mixed folders/failures, archived-thread variants and independent messages under selection remain
+pending.
+
+**Block, unsubscribe and invitation.** Canceled Block sender confirmation once, then applied it to
+`sender-b09@review.invalid`. It moved the original message to Spam; Rules showed the address under **Blocked
+senders**, not matched yet. Used Unblock → confirm; block entry disappeared, other three review rules remained
+Off. No subsequent inbound filtering or re-blocking claim. A fixture-script path mistake then reimported the first
+mbox: one existing message skipped and one duplicate triage message **100157** imported because the original was
+then in Spam. Corrected the path and imported invitation/list message **100158**. The extra synthetic row is
+retained; do not treat this setup detour as independent proof of a deduplication defect.
+
+The invitation displayed **COM-B09 local review**, Nov 17 10:00–10:30 local, location and organizer, plus its ICS
+attachment. Framework-only runtime offered no Accept/Decline controls, consistent with no invitation response
+provider. Its List-Unsubscribe mailto entry exposed Unsubscribe; confirmed the dialog and captured exactly one
+**COM-B09 unsubscribe** to `unsubscribe-b09@review.invalid`. This proves the request was sent, not that any external
+list stopped delivery. No network unsubscribe page, one-click HTTPS fallback, remote-image trust or provider-backed
+calendar event/response was exercised.
+
+**Findings and verification handoff.** Added COM-UI-025–028 as observed UI findings and COM-UI-029 as a proposal
+revision. Comms-Messaging itself and the archived build record remain unchanged. The existing `BasicCommsInbox`
+feature **the framework reads a message's invitation; with no invitation provider of an app the user may open it has
+no answers and its answer is refused** asserts parsed details, `canRespond == false` and a refused answer.
+`BasicCommsFiles` features **Attach from Files copies a drive file onto a draft; another user is refused the same
+file** and **Save to Files copies a mail attachment into a folder, renamed the second time; another user is refused**
+assert copied bytes/location, retained originals, collision renames and refused access; they do not establish the
+live picker, accessible state or mobile layout. Source-read only, none run. Fixes later need focused semantic/action
+and recipient-summary regressions; extend the proposed mail acceptance walk for complete reply/attachment/triage
+recovery, running acceptance only when requested or when those tests are added/changed.
+
+Ignored `plans/ui-refinement-evidence/basic-comms/batch-09/` holds runtime metadata; import/reply evidence 01–04;
+upload/picker/forward/capture 05–09; labels/folders/snooze 10–14; Spam/Trash 15–17; thread/download evidence 18–19;
+block confirmation 20; invitation import and reimport detour 21; Files round trip/phone/outsider refusal 22–24;
+invitation/unsubscribe/block cleanup 25–29; final state/download 30; final capture summary 31; reopened draft 32;
+and cleanup 33, plus three MIME captures. Screenshots 10, 23 and 32 visually inspected. No blanket console/network
+clean-bill claim. The final capture count is **three**: reply-all, forward and mailto unsubscribe. All activities
+remain partial with the named continuations above.
+
+**Cleanup.** Retained the new synthetic messages (including duplicate 100157), sent mail/captures, saved My files
+copy, one new unsent attachment draft, and empty custom label/folder only in the disposable runtime. Original triage
+message restored and sender unblocked; no grants or credentials changed and no purge. Prior B07/B08 drafts/settings
+retained. Removed curl cookie jars. Closed the one temporary browser tab, verified empty inventory and reset the
+viewport override. Runtime SIGINT/exit 0; sink SIGINT/exit 1 with expected Python KeyboardInterrupt. Process and
+listener checks found no review server, database or sink and no listeners on 18872/18873/18874. Scratch configuration
+unchanged. No application fixes, builds, tests or commit; only this review document changed.
 
 ## 7. Decisions
 
