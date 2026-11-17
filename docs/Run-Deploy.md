@@ -67,6 +67,7 @@ On the server:
    unzip mr-moqui-20261029.zip
    sudo install -d -o moqui -g moqui /opt/moqui
    sudo cp -a mr-moqui-20261029/. /opt/moqui/ && sudo chown -R moqui:moqui /opt/moqui
+   sudo chown -R root:root /opt/moqui/moqui /opt/moqui/MoquiConf.xml /opt/moqui/conf   # read-only to the server
    ```
 
 2. Put the certificate for your host in `/opt/moqui/cert/`, for example certbot's `cert/erp.example.com/fullchain.pem`
@@ -114,7 +115,7 @@ server, as in [Run one production server](#run-one-production-server) with the b
 
 ```sh
 sudo install -d -o moqui -g moqui /opt/moqui /etc/moqui
-gunzip -c moqui-20261114.gz | sudo install -o moqui -g moqui -m 755 /dev/stdin /opt/moqui/moqui
+gunzip -c moqui-20261114.gz | sudo install -o root -g root -m 755 /dev/stdin /opt/moqui/moqui
 sudo install -o moqui -g moqui -m 644 moqui-20261114.sha256 /opt/moqui/embedded.sha256
 sudo tee /etc/moqui/environment > /dev/null <<'EOF'
 MOQUI_RUNTIME=/opt/moqui
@@ -866,6 +867,12 @@ with the binary in it.
 
 `systemd/moqui.service` runs `/opt/moqui/moqui` as the `moqui` user.
 
+- The file system is read-only to it (`ProtectSystem=strict`) but `/opt/moqui` and `/opt/moqui/components`
+  (`ReadWritePaths`): the database, logs, certificates, `.env` and deployed components. The binary, `MoquiConf.xml`
+  and `conf/` are read-only inside it as well (`ReadOnlyPaths`), so a compromised server cannot change what runs at
+  its next start, and root owns them. A conf edit is made as root and reloaded with `systemctl reload moqui`; a
+  server that writes elsewhere under `/opt/moqui` needs a drop-in that adds the path to `ReadWritePaths`.
+
 - It is `Type=notify`: the server reports when the listener is bound and when it stops. An in-app restart runs the
   binary again in the same process and reports a reload, so the unit stays up.
 - `/etc/moqui/environment` is optional, for variables that must exist before the process starts (`MOQUI_CONF`,
@@ -898,6 +905,7 @@ OpenSearch, and `podman/quadlet/` runs the single container as a systemd service
    ```sh
    sudo rm -rf /opt/moqui/moqui /opt/moqui/components
    sudo cp -a mr-moqui-20261105/. /opt/moqui/ && sudo chown -R moqui:moqui /opt/moqui
+   sudo chown -R root:root /opt/moqui/moqui /opt/moqui/MoquiConf.xml /opt/moqui/conf
    ```
 
    `db/`, `.env`, `cert/` and `log/` are not in the archive, so they stay. `MoquiConf.xml` is replaced, which is why

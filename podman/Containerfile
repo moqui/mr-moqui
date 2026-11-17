@@ -33,8 +33,14 @@ COPY conf /opt/moqui/conf
 COPY components /opt/moqui/components
 COPY moqui /opt/moqui/moqui
 
+# The binary and the conf are root's and read-only to the moqui user; the components and the runtime directory are
+# writable (SEC-OUT-13). The runtime directory is root's, group moqui and sticky, so the server makes what it needs
+# there but cannot rename or replace the binary or the conf.
 RUN chmod 755 /opt/moqui/moqui /usr/local/bin/moqui-entrypoint \
-    && chown moqui:moqui /opt/moqui
+    && chmod -R go-w /opt/moqui/MoquiConf.xml /opt/moqui/conf \
+    && chown -R moqui:moqui /opt/moqui/components \
+    && chown root:moqui /opt/moqui \
+    && chmod 1775 /opt/moqui
 
 WORKDIR /opt/moqui
 VOLUME /var/lib/moqui
