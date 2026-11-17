@@ -701,6 +701,26 @@ pub fn note_all_applied(facade: &EntityFacade) {
     });
 }
 
+/// Why the edge node refuses a batch before it applies it (SEC-CLU-02), or `None`: more records than a sender puts in
+/// one ([`BATCH`]), a set this node's `<replicate>` conf (`sets`) does not name, or an entity that set does not have.
+/// A paired node then cannot write rows of any set or entity it names into the edge node's database.
+pub fn batch_refused(sets: &[ReplicaSet], batch: &Batch) -> Option<String> {
+    if batch.changes.len() > BATCH {
+        return Some(format!(
+            "a batch carries at most {BATCH} records, and this one {}",
+            batch.changes.len()
+        ));
+    }
+    let Some(set) = sets.iter().find(|set| set.name == batch.set_name) else {
+        return Some(format!("set {} is not replicated to this node", batch.set_name));
+    };
+    batch
+        .changes
+        .iter()
+        .find(|change| !set.entities.iter().any(|entity| entity.name == change.entity_name))
+        .map(|change| format!("set {} has no entity {}", set.name, change.entity_name))
+}
+
 /// Apply a batch from local node `node` on the edge node, with its cursor, in one transaction; once it commits, the
 /// set's [`applied_count`] moves.
 pub fn apply_batch(facade: &EntityFacade, node: &str, batch: &Batch) -> Result<BatchAnswer, Error> {

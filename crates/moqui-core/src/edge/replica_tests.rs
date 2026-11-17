@@ -330,3 +330,24 @@ fn the_edge_node_refuses_a_batch_from_an_earlier_sender() {
     let next = token(200, batch("e2", 1, 2, false, vec![change("A", Some("c"))]));
     assert_eq!(apply_batch(&facade, node, &next).unwrap(), BatchAnswer::Applied);
 }
+
+#[test]
+fn the_edge_node_takes_only_the_sets_and_entities_of_its_conf_in_batches_a_sender_makes() {
+    let sets = [groups()];
+    assert_eq!(
+        batch_refused(&sets, &batch("e1", 0, 1, false, vec![change("A", Some("a"))])),
+        None
+    );
+    // a set the edge node does not replicate
+    let mut other = batch("e1", 0, 1, false, vec![change("A", Some("a"))]);
+    other.set_name = "secrets".to_string();
+    assert!(batch_refused(&sets, &other).is_some_and(|why| why.contains("not replicated")));
+    // an entity its set does not have
+    let mut stranger = change("A", Some("a"));
+    stranger.entity_name = "moqui.security.UserAccount".to_string();
+    let refused = batch_refused(&sets, &batch("e1", 0, 1, false, vec![change("B", None), stranger]));
+    assert!(refused.is_some_and(|why| why.contains("no entity moqui.security.UserAccount")));
+    // more records than a sender puts in a batch
+    let many = (0..=BATCH).map(|n| change(&format!("G{n}"), Some("x"))).collect();
+    assert!(batch_refused(&sets, &batch("e1", 0, 1, false, many)).is_some());
+}
