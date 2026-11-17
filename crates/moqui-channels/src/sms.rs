@@ -396,6 +396,16 @@ pub trait SmsProvider: Send + Sync + Sized + 'static {
     ///
     /// Returns the answer to a body that names no event this adapter can work.
     fn parse(&self, request: &WebhookRequest) -> Result<SmsEvent, WebhookResponse>;
+    /// [`Self::parse`] with the bridge's settings, for a provider whose events need them (Sinch's opt-outs name no
+    /// number of ours: its `smsSender` is); by default [`Self::parse`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the answer to a body that names no event this adapter can work.
+    fn parse_with(&self, config: &Self::Config, request: &WebhookRequest) -> Result<SmsEvent, WebhookResponse> {
+        let _ = config;
+        self.parse(request)
+    }
     /// The answer the provider gets, from the core's (Twilio wants TwiML): on this node, and an edge node's to a request
     /// it queued (2xx) or refused for its rate (429). It leaves an unsigned request's 401 as it is. The default is the
     /// core's.
@@ -593,8 +603,18 @@ pub fn exchange<P: SmsProvider>(
     out: &Outgoing<'_>,
     request: &ApiRequest,
 ) -> DeliveryOutcome {
+    answer(provider, out, call(client, request))
+}
+
+/// The outcome of one send from what [`call`] gave, by class (see the module notes): for a provider that reads some
+/// answers itself first (Sinch's 401, 403 and 404) and leaves the rest to the core.
+pub fn answer<P: SmsProvider>(
+    provider: &P,
+    out: &Outgoing<'_>,
+    result: Result<RestResponse, moqui_lib::error::Error>,
+) -> DeliveryOutcome {
     let name = provider.name();
-    let response = match call(client, request) {
+    let response = match result {
         Err(error) if never_sent(&error) => {
             return DeliveryOutcome::Retry {
                 error: format!("{name} could not be reached: {}", error.message()),
@@ -892,9 +912,12 @@ impl<P: SmsProvider> SmsAdapter<P> {
     /// The event step of [`Self::handle`] alone, after the signature and replay checks: on any node after them, and on
     /// a local node for a request its edge node queued (verified there, or by `apply#EdgeWebhook` here).
     fn apply(&self, bridge: &BridgeInfo, request: &WebhookRequest) -> WebhookResponse {
-        let worked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match self.provider.parse(request) {
-            Ok(event) => self.work(bridge, event),
-            Err(answer) => answer,
+        let worked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let config = self.provider.config(&bridge.config);
+            match self.provider.parse_with(&config, request) {
+                Ok(event) => self.work(bridge, event),
+                Err(answer) => answer,
+            }
         }));
         let response = worked.unwrap_or_else(|_| WebhookResponse::text(500, "the request failed"));
         self.provider.respond(response)

@@ -26,7 +26,7 @@
 //!   the adapter: the provider's signature, a replay window and cache, then `SmsServices.receive#Sms` for a text (the
 //!   pair room, then `ingest#Event`) and `ChatBridgeServices.note#DeliveryReceipt` for a delivery receipt.
 //! - [`providers`]: one module a provider. [`providers::telnyx`] is the `sms` adapter's, on the Telnyx Messaging API
-//!   v2.
+//!   v2; [`providers::sinch`] is `sms-sinch`'s, on the Sinch Conversation API.
 //!
 //! The crate is on moqui-core (plans/archive/Crate-Split.md), which reaches it only through the
 //! [`moqui_core::extension`] entry below. moqui-host links it under its `channels` feature (Enterprise and Maximal);
@@ -54,7 +54,10 @@ moqui_core::extension::submit! {
 
 /// The adapters of this crate: one for each SMS provider, by its adapter name.
 pub fn adapters() -> Vec<Arc<dyn ChatBridgeAdapter>> {
-    vec![Arc::new(sms::SmsAdapter::new(providers::telnyx::Telnyx))]
+    vec![
+        Arc::new(sms::SmsAdapter::new(providers::telnyx::Telnyx)),
+        Arc::new(sms::SmsAdapter::new(providers::sinch::Sinch::default())),
+    ]
 }
 
 /// Call a framework service with authorization off (the adapters' internal calls), its recorded errors an error here and

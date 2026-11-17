@@ -243,6 +243,63 @@ sending profile's number, and Mantle answers the `sms-consent` hook from its con
 | Idempotent sends | no: a lost answer is uncertain |
 | Group texts | yes: group MMS, one room for a set of outside numbers (8 recipients at most, plus our number), receipts per recipient |
 
+## Providers
+
+### Sinch
+
+**Not yet tested with Sinch**: the adapter (`providers/sinch.rs`, adapter name `sms-sinch`) follows Sinch's
+documentation of the Conversation API ([API reference](https://developers.sinch.com/docs/conversation/api-reference/),
+[callbacks](https://developers.sinch.com/docs/conversation/callbacks),
+[MMS](https://developers.sinch.com/docs/conversation/channel-support/mms)), not the end-of-sale XMS `/batches` API.
+
+1. **In the Sinch dashboard**, in one project:
+   - a Conversation API app, in the region its data stays in (US, EU or BR); note the project id and the app id;
+   - the app's **SMS** channel (a service plan with our numbers), and for texts with files its **MMS** channel (a Sinch
+     MMS account, its sender the same number: plain-text replies to an MMS come on the SMS channel, so set up both);
+   - an access key (key id and secret) of the project;
+   - a webhook on the app to `https://<server>/channels/<chatBridgeId>/webhook` with a secret, its triggers
+     `MESSAGE_INBOUND`, `MESSAGE_DELIVERY`, `OPT_IN` and `OPT_OUT`. The delivery reports come through it, signed with
+     its secret: a send names no `callback_url`, whose reports Sinch would sign with another secret (the app's
+     `secret_for_overridden_callback_urls`) and not send again once refused.
+2. **The bridge**: network SMS, adapter name `sms-sinch`, configuration (besides the common keys above, whose defaults
+   here are `maxMediaCount` 1, `maxMediaBytes` 1 MiB, `maxTextLength` 1600):
+
+   | Key | What |
+   | --- | --- |
+   | `projectId`, `appId` | The project and the app, required |
+   | `keyId`, `keySecret` | The access key, required: an OAuth2 token from `https://auth.sinch.com/oauth2/token`, kept until a minute before it runs out (an hour) |
+   | `region` | `us` (default), `eu` or `br`, where the app was made; another is refused when the bridge starts, and an app in another region answers 404 (`wrongRegion`, the texts held) |
+   | `webhookSecret` | The webhook's secret, required; behind an edge node, a request queued while the local node has none waits for it |
+   | `smsSender` | Our number on the bridge, for an opt-out or opt-in Sinch reports (they name no number of ours) |
+   | `mmsSender` | The MMS channel's sender; a text with a file from another number, or with no `mmsSender`, is refused (`mmsNotSetUp`) |
+
+- **Out.** One text is one `messages:send` from the room's number: words on the SMS channel (`SMS_SENDER`), a file
+  on the MMS channel (`MMS_SENDER`; words and a file as one `card_message`, its `description` the words). A text has
+  at most one file (`tooManyFiles`: Sinch sends one a message). `correlation_id` is the delivery's id. Sinch dedupes
+  nothing, so a lost answer is uncertain. A 401 drops the token and sends once more with a new one. What the bridge's
+  setup stops (a second 401, a 403: `billingLimit` for the project's credit limit, else `providerRefused`; a 404:
+  `wrongRegion`) holds the texts, tried again with the bridge not connected and its last error saying which, until an
+  administrator fixes it; 429 and 503 are tried again; another 4xx fails (`providerRefused`).
+- **In.** The signature is checked on the server that holds the secret (behind an edge node, the local node:
+  [Behind an edge node](#setup)). Only the SMS and MMS channels are texts: a message on another channel of the app
+  (Messenger, WhatsApp) is left. Sinch keeps a text's files 7 days, and they are fetched as the text comes in.
+  `DELIVERED` and `READ` are delivered, `FAILED` fails the delivery with Sinch's reason; `QUEUED_ON_CHANNEL` and
+  `SWITCHING_CHANNEL` are left.
+- **Opt-out.** `OPT_IN` and `OPT_OUT` do not fire for a STOP texted on SMS: a STOP comes as a text and goes through
+  the keyword rule ([Opt-out](#opt-out)), as with any provider. An `OPT_OUT` or `OPT_IN` Sinch took (consent
+  management) is a STOP or START from their number to `smsSender`, applied once by its `request_id`.
+- **Known limit: an MMS with several files.** Each file comes as its own event, so each is its own message in the
+  room, and a caption sent with them is repeated on each.
+- **No group texts**: the Conversation API documents none, so the bridge's `groupMax` is 0 and a group room on it
+  refuses to send (`groupTextsNotSupported`).
+- **Tests**: `crates/moqui-channels/src/tests/sinch.rs`, against a fake Sinch on loopback: the token fetched once,
+  kept, refreshed and dropped on a 401; the SMS and MMS channels and their refusals; Sinch's answers by class; texts,
+  files, reports, opt-outs and opt-ins in, another channel's message left; the signature good, bad, missing, old,
+  ahead, not base64, of another algorithm and replayed; no group texts; a webhook an edge node queued checked on the
+  local node (a forged one refused and kept, a good one handed to the adapter, one with no secret here waiting). No
+  test takes a queued Sinch text into its room: the in-memory test database cannot store `ingest#Event`'s batch
+  inside the queue's transaction.
+
 ## Tests
 
 - `crates/moqui-channels/src/tests.rs`, against a fake Telnyx on loopback (each well under a second): a signed text in,
