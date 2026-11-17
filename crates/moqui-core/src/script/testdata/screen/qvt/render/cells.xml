@@ -4,7 +4,7 @@
     <transition name="saveNote"><default-response type="none"/></transition>
     <transition name="kindOptions"><default-response type="none"/></transition>
     <actions>
-        <set field="rowList" from="[{id: 'A1', on: true, note: 'first', kind: 'B'}, {id: 'A2', on: false, note: '', kind: ''}]"/>
+        <set field="rowList" from="[{id: 'A1', on: true, note: 'first &lt;b&gt;note&lt;/b&gt;', kind: 'B'}, {id: 'A2', on: false, note: '', kind: ''}]"/>
         <set field="chipList" from="[{name: 'All', on: true}, {name: 'Mine', on: false}]"/>
         <set field="wide" value="8"/>
         <set field="due" value="2026-10-19"/>

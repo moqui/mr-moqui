@@ -72,7 +72,8 @@ test("the bar shows the sentence the server ranks first and highlights its exact
         return new Response(JSON.stringify({ matches }), { status: 200, headers: { "Content-Type": "application/json" } });
     };
     try {
-        const finder = find.attach({ root: "#doc", token: () => "t1" });
+        // Ctrl+F on any machine: the page's platform is fixed, so the test reads the same on a Mac (Cmd+F there)
+        const finder = find.attach({ root: "#doc", token: () => "t1", isMac: false });
         document.dispatchEvent(new KeyboardEvent("keydown", { key: "f", ctrlKey: true, bubbles: true, cancelable: true }));
         const bar = document.querySelector(".moqui-find");
         assert.ok(bar, "Ctrl+F opens the bar");

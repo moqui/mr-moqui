@@ -1592,7 +1592,7 @@ async fn log_http(State(state): State<RequestTelemetry>, mut request: Request, n
             has_error = true;
         }
         if let Some(session) = &identity.session {
-            span.set_attribute("session.id", Value::string(session));
+            span.set_attribute("session.id", Value::string(session_tag(session)));
         }
         if let Some(user) = &identity.user_id {
             span.set_attribute("user.id", Value::string(user));
@@ -2152,6 +2152,19 @@ mod signal_tests {
             );
         }
     }
+}
+
+/// The `session.id` of a request span: a digest of the session id, the first half of the session cookie, so a span's
+/// reader (every `SYSTEM_APP` holder, and an outside collector with `otlp-endpoint`) can follow one session's requests
+/// without holding what signs it in (SEC-TLS-18). 32 hex characters of its SHA-256, the same for each request of it.
+pub(crate) fn session_tag(session_id: &str) -> String {
+    use sha2::Digest as _;
+    let digest = sha2::Sha256::digest(session_id.as_bytes());
+    let mut tag = String::with_capacity(32);
+    for byte in digest.iter().take(16) {
+        tag.push_str(&format!("{byte:02x}"));
+    }
+    tag
 }
 
 #[cfg(test)]

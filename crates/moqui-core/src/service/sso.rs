@@ -719,7 +719,16 @@ fn sync_account_rows(
     username: &str,
 ) -> Result<String, LibError> {
     let auth_flow_id = field(flow, "authFlowId");
-    let mapped = map_fields(facade, &auth_flow_id, &profile.attributes)?;
+    let mut mapped = map_fields(facade, &auth_flow_id, &profile.attributes)?;
+    // An address the provider has not verified is not the account's: a password reset by email finds an account by it
+    // (SEC-ADM-11). The account keeps the address it has; a new one gets none.
+    if mapped.contains_key("emailAddress") && !email_verified(profile) {
+        mapped.remove("emailAddress");
+        tracing::info!(
+            "AuthFlow {auth_flow_id}: the email address of {username} is not taken, as the provider did not say it is \
+             verified (email_verified)"
+        );
+    }
     let existing = match linked_account(facade, &auth_flow_id, &profile.id)? {
         Some(account) => Some(account),
         None => facade
@@ -954,6 +963,14 @@ fn unscoped_link_allowed(facade: &EntityFacade, auth_flow_id: &str, account: &En
 /// `AuthFlow.accountLinkEnumId`: an existing account is linked by the provider's verified email address.
 const LINK_VERIFIED_EMAIL: &str = "AflVerifiedEmail";
 
+/// Whether the provider says the profile's email address is verified: an `email_verified` claim that is true.
+fn email_verified(profile: &SsoProfile) -> bool {
+    profile
+        .attributes
+        .get("email_verified")
+        .is_some_and(|value| to_plain_string(value) == "true")
+}
+
 /// Whether this sign-in may link `account`, an existing account with no provider id: only under the flow's
 /// `AflVerifiedEmail` rule, with an `email_verified` claim that is true and an `email` equal to the account's address
 /// (ignoring case), and never an account in a group a sign-in may not give ([`sso_may_give`]). A provider's username
@@ -979,10 +996,7 @@ fn link_allowed(
     let claim = |name: &str| profile.attributes.get(name).map(to_plain_string).unwrap_or_default();
     let email = claim("email");
     let address = field(account, "emailAddress");
-    if claim("email_verified") != "true"
-        || email.trim().is_empty()
-        || !email.trim().eq_ignore_ascii_case(address.trim())
-    {
+    if !email_verified(profile) || email.trim().is_empty() || !email.trim().eq_ignore_ascii_case(address.trim()) {
         return Err(refuse(
             "the provider gave no verified email address equal to the account's",
         ));
