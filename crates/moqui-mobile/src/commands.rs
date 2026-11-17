@@ -87,6 +87,10 @@ pub(crate) fn tag_id(account: Option<&str>, tag: Option<&str>) -> Option<i32> {
     Some(i32::try_from(hash % 0x7fff_0000).unwrap_or(0) + 1000)
 }
 
+/// The tag that clears every room's notification of the account (the page's Mark all read).
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub(crate) const CHAT_ALL_TAG: &str = "chat-*";
+
 /// The room of a chat tag (`chat-<room>`): none for another tag.
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 pub(crate) fn chat_room_of(tag: &str) -> Option<&str> {
@@ -140,8 +144,13 @@ pub(crate) fn notify(
 pub(crate) fn notify_clear(app: AppHandle, tag: String) -> Result<(), String> {
     let account = host(&app).ok().and_then(|host| host.signed_in());
     #[cfg(target_os = "android")]
-    if let (Some(account), Some(room)) = (account.as_deref(), chat_room_of(&tag)) {
-        crate::android::chat_clear(account, room)?;
+    if let Some(account) = account.as_deref() {
+        // every room of the account (Mark all read), or one room
+        if tag.trim() == CHAT_ALL_TAG {
+            crate::android::chat_clear(account, "*")?;
+        } else if let Some(room) = chat_room_of(&tag) {
+            crate::android::chat_clear(account, room)?;
+        }
     }
     let Some(id) = tag_id(account.as_deref(), Some(&tag)) else {
         return Ok(());
@@ -156,6 +165,8 @@ pub(crate) fn notify_clear(app: AppHandle, tag: String) -> Result<(), String> {
 #[tauri::command(async)]
 pub(crate) fn chat_room_shown(app: AppHandle, room: Option<String>) -> Result<(), String> {
     let host = host(&app)?;
+    // the shell's comms screens only: a server's page cannot hide a room's notifications
+    shell_only(&host)?;
     let account = host.signed_in().unwrap_or_default();
     let room = room.as_deref().and_then(crate::calls::call_id).unwrap_or("");
     #[cfg(target_os = "android")]
@@ -200,7 +211,7 @@ pub(crate) fn push_check_fix(app: AppHandle, what: String) -> Result<(), String>
     shell_only(&host)?;
     if !matches!(
         what.as_str(),
-        "notifications" | "channels" | "battery" | "fullScreen" | "distributor"
+        "notifications" | "channels" | "battery" | "fullScreen" | "distributor" | "firebase"
     ) {
         return Err(format!("Nothing to fix: {what}"));
     }

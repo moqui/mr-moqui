@@ -221,8 +221,52 @@ fn a_token_another_account_of_the_server_takes_is_no_longer_the_first_ones() {
         ..Default::default()
     };
     let server = "https://one.example.com";
-    assert!(record.register(&[asked_on(A, server), asked_on(B, server)], &poster));
+    let both = [asked_on(A, server), asked_on(B, server)];
+    assert!(record.register(&both, &poster));
     assert_eq!(record.registered.keys().collect::<Vec<_>>(), vec![B]);
+    // review finding: A is not pending, so the retry worker does not take the token back for ever
+    assert!(!record.pending(&both));
+    let posted = poster.posted.borrow().len();
+    assert!(!record.register(&both, &poster));
+    assert_eq!(poster.posted.borrow().len(), posted, "A is not registered again");
+    // ... and a merge of that outcome keeps it so
+    let mut now = PushRecord {
+        token: Some("tok".to_string()),
+        registered: [(A.to_string(), "100050".to_string())].into(),
+        ..Default::default()
+    };
+    let before = now.clone();
+    assert!(now.merge(&before, &record));
+    assert!(!now.pending(&both));
+    assert_eq!(now.registered.keys().collect::<Vec<_>>(), vec![B]);
+    assert!(now.taken.contains(A));
+    // A signs in again, or a new token: A is tried again
+    assert!(record.forget(A));
+    assert!(record.pending(&both));
+    record.taken.insert(A.to_string());
+    assert!(record.set_token("tok-2"));
+    assert!(record.taken.is_empty());
+}
+
+/// Review finding: an account that registered its push keys gets its rings sealed, so an unsealed ring in its name (or
+/// its end) is refused, even when it is the only account the id can be.
+#[test]
+fn an_unsealed_ring_is_refused_for_an_account_with_keys() {
+    let mut record = PushRecord {
+        token: Some("tok".to_string()),
+        registered: [(A.to_string(), "100050".to_string())].into(),
+        ..Default::default()
+    };
+    let keyed = vec![A.to_string()];
+    assert_eq!(
+        ring_account(&record, "100050", &keyed).as_deref(),
+        Some(A),
+        "no keys: the one account"
+    );
+    record
+        .keys
+        .insert(A.to_string(), ("PUB".to_string(), "AUTH".to_string()));
+    assert_eq!(ring_account(&record, "100050", &keyed), None);
 }
 
 /// HIGH review finding: two servers give the same registration id, so a push id names the accounts it may be for;
@@ -267,6 +311,7 @@ fn a_sign_out_takes_the_registration_back_with_the_keys_and_endpoint() {
         registered: [(A.to_string(), "1".to_string()), (B.to_string(), "2".to_string())].into(),
         keys: [(A.to_string(), ("PUB".to_string(), "AUTH".to_string()))].into(),
         endpoints: [(B.to_string(), "https://up.example.net/b".to_string())].into(),
+        ..Default::default()
     };
     assert!(record.unregister(&asked(A), &poster));
     assert_eq!(record.registered.keys().collect::<Vec<_>>(), vec![B]);

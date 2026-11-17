@@ -36,7 +36,7 @@
 // Declines and registrations are the native code's, on Android; they are tested on the desktop.
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use moqui_client::account::Account;
@@ -282,6 +282,11 @@ pub(crate) struct PushRecord {
     /// in place of the FCM token.
     #[serde(default)]
     pub(crate) endpoints: BTreeMap<String, String>,
+    /// The accounts whose FCM registration another account of the same server took (the server keeps one user per
+    /// token): not registered, and not tried again, until the token, keys or endpoint change or the account signs in
+    /// again (else the two would take the token from each other for ever).
+    #[serde(default)]
+    pub(crate) taken: BTreeSet<String>,
 }
 
 /// What an account registers with: the provider and its token.
@@ -329,6 +334,7 @@ impl PushRecord {
         self.token = Some(token.to_string());
         let endpoints = &self.endpoints;
         self.registered.retain(|account, _| endpoints.contains_key(account));
+        self.taken.clear();
         true
     }
 
@@ -344,6 +350,7 @@ impl PushRecord {
             None => self.endpoints.remove(account),
         };
         self.registered.remove(account);
+        self.taken.remove(account);
         true
     }
 
@@ -360,13 +367,16 @@ impl PushRecord {
         self.keys
             .insert(account.to_string(), (public.to_string(), auth.to_string()));
         self.registered.remove(account);
+        self.taken.remove(account);
         true
     }
 
-    /// Whether an account of `accounts` has something to register with and is not registered yet (one to try again).
+    /// Whether an account of `accounts` has something to register with and is not registered yet (one to try again);
+    /// not one whose registration another account of its server took ([`Self::taken`]).
     pub(crate) fn pending(&self, accounts: &[Asked]) -> bool {
         accounts.iter().any(|asked| {
-            !self.registered.contains_key(&asked.account.id) && registration_of(self, &asked.account.id).is_some()
+            let id = &asked.account.id;
+            !self.registered.contains_key(id) && !self.taken.contains(id) && registration_of(self, id).is_some()
         })
     }
 
@@ -378,7 +388,7 @@ impl PushRecord {
         let mut changed = false;
         for asked in accounts {
             let id = &asked.account.id;
-            if self.registered.contains_key(id) {
+            if self.registered.contains_key(id) || self.taken.contains(id) {
                 continue;
             }
             let Some((provider, token)) = registration_of(self, id) else {
@@ -420,6 +430,7 @@ impl PushRecord {
                             .collect();
                         for other_id in moved {
                             self.registered.remove(&other_id);
+                            self.taken.insert(other_id);
                         }
                     }
                     self.registered.insert(id.clone(), push_id.to_string());
@@ -460,12 +471,16 @@ impl PushRecord {
                 changed = true;
             }
         }
+        for account in done.taken.difference(&before.taken) {
+            changed |= self.taken.insert(account.clone());
+        }
         changed
     }
 
     /// The account signs in again (a new key): registered again at the next [`Self::register`].
     pub(crate) fn forget(&mut self, account: &str) -> bool {
-        self.registered.remove(account).is_some()
+        let taken = self.taken.remove(account);
+        self.registered.remove(account).is_some() || taken
     }
 
     /// The account is gone here (signed out): its registration, keys and endpoint. Whether the record changed.
@@ -473,7 +488,8 @@ impl PushRecord {
         let registered = self.registered.remove(account).is_some();
         let keys = self.keys.remove(account).is_some();
         let endpoint = self.endpoints.remove(account).is_some();
-        registered || keys || endpoint
+        let taken = self.taken.remove(account);
+        registered || keys || endpoint || taken
     }
 
     /// Take the registration back from `asked`'s server before its key is revoked (which would delete it there too); a
@@ -517,10 +533,15 @@ pub(crate) fn push_accounts(record: &PushRecord, push_id: &str, keyed: &[String]
         .collect()
 }
 
-/// The account an unsealed ring (from a device registered before it had keys) is for: the one account `push_id` can be,
-/// none when two could.
+/// The account an unsealed ring or ring's end is for: the one account `push_id` can be that registered with no push
+/// keys (an account with keys gets its rings sealed, so an unsealed one in its name is refused); none when two could.
 pub(crate) fn ring_account(record: &PushRecord, push_id: &str, keyed: &[String]) -> Option<String> {
-    match push_accounts(record, push_id, keyed).as_slice() {
+    let accounts = push_accounts(record, push_id, keyed);
+    if accounts.iter().any(|account| record.keys.contains_key(account)) {
+        log::warn!("Push: an unsealed ring of {push_id}, an id an account with push keys has: refused");
+        return None;
+    }
+    match accounts.as_slice() {
         [one] => Some(one.clone()),
         _ => None,
     }

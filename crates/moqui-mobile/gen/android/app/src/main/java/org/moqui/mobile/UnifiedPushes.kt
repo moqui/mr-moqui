@@ -10,9 +10,11 @@ import org.unifiedpush.android.connector.UnifiedPush
  * UnifiedPush on a phone without Google Play (plans/Comms-Messaging.md §7.4): a distributor app (for example ntfy) gives
  * each account an endpoint of its own (the connector's instance is the account id), which Rust registers with that
  * account's server in place of the FCM token (`Native.unifiedEndpoint`), with the account's own push keys
- * ([RustKeyManager]). A build without Firebase uses the phone's default distributor by itself; the notification check
- * lets the user pick one ([pick]). [registerAll] registers each account signed in, and takes back the instances of
- * accounts signed out, at the app's start and at each run of [RegisterWorker].
+ * ([RustKeyManager]; [UnifiedPushService] opens the messages with them). A build without Firebase uses the phone's
+ * default distributor by itself; the notification check lets the user pick one ([pick]), where Firebase works only
+ * after asking, and go back to Firebase ([useFirebase]). [registerAll] registers each account signed in, and takes back
+ * the instances of accounts signed out or signing out, at the app's start, at a sign-in or sign-out, and at each run of
+ * [RegisterWorker].
  */
 object UnifiedPushes {
     private const val TAG = "moqui-push"
@@ -49,7 +51,36 @@ object UnifiedPushes {
         }
     }
 
-    /** The user picks a distributor (the notification check's fix); each account registers with it. */
+    /**
+     * Back to Firebase (the notification check, where the build has it): each account's instance is taken back and the
+     * distributor forgotten; the connector's `onUnregistered` hands each account back to the FCM token.
+     */
+    fun useFirebase(context: Context) {
+        val app = context.applicationContext
+        Native.work {
+            val keys = RustKeyManager(app)
+            for (account in Native.accounts(app)) {
+                try {
+                    UnifiedPush.unregister(app, account, keys)
+                } catch (err: Throwable) {
+                    Log.w(TAG, "UnifiedPush did not unregister $account", err)
+                }
+                // at once, should the distributor not answer
+                if (Native.ensure(app)) Native.unifiedEndpoint(Native.dataDir(app), account, "")
+            }
+            try {
+                UnifiedPush.removeDistributor(app, keys)
+            } catch (err: Throwable) {
+                Log.w(TAG, "The UnifiedPush distributor was not forgotten", err)
+            }
+            app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove("instances").apply()
+        }
+    }
+
+    /**
+     * The user picks a distributor (the notification check's fix; where Firebase works, only after the check asked
+     * whether to use UnifiedPush in its place); each account registers with it, in place of the FCM token.
+     */
     fun pick(context: Context) {
         try {
             UnifiedPush.tryPickDistributor(context) { ok ->

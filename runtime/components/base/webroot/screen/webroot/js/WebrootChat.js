@@ -677,6 +677,9 @@
             if (done.kind === "read" && done.userId === chat.me) {
                 // read here or on another device: the room's notification goes (rule 3)
                 const rooms = done.all ? Object.keys(chat.notifiedRooms) : done.chatRoomId ? [done.chatRoomId] : [];
+                // every room read (Mark all read): the app's notifications of the account all go, a phone's from its
+                // pushes too, which this page never showed
+                if (done.all && host.notifyClear) Promise.resolve(host.notifyClear("chat-*")).catch(() => null);
                 const shown = chat.readShown(host);
                 rooms.forEach((roomId) => {
                     delete chat.notifiedRooms[roomId];

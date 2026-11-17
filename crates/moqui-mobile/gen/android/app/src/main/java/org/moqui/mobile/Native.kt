@@ -33,6 +33,7 @@ object Native {
     @JvmStatic external fun openFor(dataDir: String, account: String, body: ByteArray): ByteArray?
     @JvmStatic external fun pushPublic(dataDir: String, account: String, make: Boolean): String?
     @JvmStatic external fun accountIds(dataDir: String): String?
+    @JvmStatic external fun pushKnown(dataDir: String, pushId: String): Boolean
     @JvmStatic external fun roomLink(dataDir: String, account: String, chatRoomId: String, eventSeq: Long): String?
     @JvmStatic external fun chatReply(dataDir: String, account: String, chatRoomId: String, text: String): String?
     @JvmStatic external fun chatRead(dataDir: String, account: String, chatRoomId: String, eventSeq: Long): String?

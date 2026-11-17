@@ -118,7 +118,8 @@ object PushCheck {
     /**
      * Open the system's screen that fixes `what`: `notifications` and `channels` (the app's notification settings),
      * `battery` (the request to leave the app out of battery optimization: one tap), `fullScreen` (Android 14+), and
-     * `distributor` (pick a UnifiedPush distributor, where the phone has one).
+     * `distributor` (pick a UnifiedPush distributor, where the phone has one), and `firebase` (back from UnifiedPush to
+     * Firebase, where the build has it).
      */
     @JvmStatic
     @SuppressLint("BatteryLife")
@@ -126,6 +127,10 @@ object PushCheck {
         val intent = when (what) {
             "distributor" -> {
                 UnifiedPushes.pick(context)
+                return
+            }
+            "firebase" -> {
+                UnifiedPushes.useFirebase(context)
                 return
             }
             "battery" -> Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}"))

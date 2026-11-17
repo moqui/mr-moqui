@@ -33,6 +33,9 @@ use sha2::Sha256;
 /// `<account>.chat-store`).
 pub(crate) const KEY_SUFFIX: &str = "push-keys";
 
+/// The key store entry of the one pair an earlier build kept for every account: deleted when seen.
+pub(crate) const OLD_KEY_ENTRY: &str = "app.push-keys";
+
 /// The longest push body taken (a push service takes 4096 bytes).
 const MAX_BODY: usize = 4096;
 

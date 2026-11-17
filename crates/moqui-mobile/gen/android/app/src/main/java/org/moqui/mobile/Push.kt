@@ -80,8 +80,11 @@ object Push {
                 null
             }
             if (json == null) {
-                Log.w(TAG, "A $kind that does not open: a missed call is shown in its place")
-                if (kind == "ring") main.post { ChatNotifications.ringNotOpened(app) }
+                // a missed call in its place, only when the push names an account here (not another app's or a
+                // signed-out account's)
+                val known = kind == "ring" && Native.ensure(app) && Native.pushKnown(Native.dataDir(app), data["pushId"] ?: "")
+                Log.w(TAG, "A $kind that does not open" + if (known) ": a missed call is shown in its place" else ": dropped")
+                if (known) main.post { ChatNotifications.ringNotOpened(app) }
                 return@open
             }
             main.post { onOpened(app, json, received) }

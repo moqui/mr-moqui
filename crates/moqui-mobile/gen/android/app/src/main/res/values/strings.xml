@@ -27,8 +27,8 @@
     <string name="chat_mute_hour">Mute 1 hour</string>
     <string name="chat_reply_failed">Your reply was not sent: tap to open the room</string>
     <string name="ring_not_opened">A call came that this phone could not read: open the app to see your calls</string>
-    <string name="force_stopped_title">Notifications were stopped</string>
-    <string name="force_stopped_reason">The app was force-stopped, so no messages or calls reached this phone until you opened it again. If any seem missing, see Notifications on this device in the account menu.</string>
+    <string name="force_stopped_title">The app was stopped</string>
+    <string name="force_stopped_reason">The app was stopped (force-stopped, or by the phone), so messages and calls may not have reached this phone until you opened it again. If any seem missing, see Notifications on this device in the account menu.</string>
     <string name="chat_summary">%1$d conversations</string>
     <string name="push_test_title">Test notification</string>
     <string name="push_test_body">Notifications reach this phone.</string>

@@ -1770,10 +1770,6 @@ pub(crate) fn queue_test(
     Ok(ids)
 }
 
-/// `send#TestPush`: a test notification to the calling device, through the full path (the outbox, encrypted, the push
-/// service): the registrations of this request's device key (the app), else the current user's browser with
-/// `endpoint`. Out: `ackIdList` (empty when the request is no device of the user's: `reasonCode` noDevice),
-/// `queuedDate` (Unix milliseconds); the worker is woken after the commit.
 /// Whether one of `subscriptions` had a test push queued in the last [`TEST_EVERY_MS`]: one a device in that time (the
 /// check screen's button, not a way to flood a phone).
 pub(crate) fn test_too_soon(facade: &EntityFacade, subscriptions: &[String], now: i64) -> Result<bool, LibError> {
@@ -1793,6 +1789,11 @@ pub(crate) fn test_too_soon(facade: &EntityFacade, subscriptions: &[String], now
         > 0)
 }
 
+/// `send#TestPush`: a test notification to the calling device, through the full path (the outbox, encrypted, the push
+/// service): the registrations of this request's device key (the app), else the current user's browser with
+/// `endpoint`. Out: `ackIdList` (empty when the request is no device of the user's: `reasonCode` noDevice, or one had
+/// a test in the last [`TEST_EVERY_MS`]: `reasonCode` tooSoon), `queuedDate` (Unix milliseconds); the worker is woken
+/// after the commit.
 fn send_test_push(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,

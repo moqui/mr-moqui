@@ -8,10 +8,11 @@ import org.unifiedpush.android.connector.data.PublicKeySet
 import org.unifiedpush.android.connector.keys.KeyManager
 
 /**
- * The UnifiedPush connector's keys are the account's own push keys in Rust (src/push.rs, sealed by the Keystore as the
- * device keys are), the same ones its FCM registration uses: the connector's instance is the account id, and a message
- * opens only with that account's keys (`Native.openFor`), so it is proven that account's server's. Keys are made only at
- * [generate] (a registration), never when opening.
+ * The key manager the app hands the connector when it registers an account's instance ([UnifiedPushes.registerAll]):
+ * the account's own push keys in Rust (src/push.rs, sealed by the Keystore as the device keys are), so the connector
+ * names them to the distributor. The connector's receiver does not use it to open a message (it uses its default key
+ * manager, which has no keys of the account); [UnifiedPushService] opens each message with the same keys in Rust
+ * (`Native.openFor`). Keys are made only at [generate] (a registration), never for an account signing out.
  */
 class RustKeyManager(context: Context) : KeyManager {
     private val app = context.applicationContext

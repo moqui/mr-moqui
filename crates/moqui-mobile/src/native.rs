@@ -108,13 +108,41 @@ pub(crate) fn take_link(nonce: &str, id: &str) -> Option<CallLink> {
         .take(nonce, id, now_ms())
 }
 
-/// The accounts here with a key (signed in).
+/// The accounts signing out now (`unregister_push` until they are gone): no push keys are made for them and UnifiedPush
+/// registers no instance of theirs, though their key is still there for a moment.
+static LEAVING: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// The accounts here with a key (signed in), not one signing out.
 fn keyed_ids(core: &Client) -> Vec<String> {
     let ids: Vec<String> = {
         let accounts = moqui_lib::sync::lock(core.accounts());
         accounts.list().iter().map(|account| account.id.clone()).collect()
     };
-    ids.into_iter().filter(|id| core.keys().get(id).is_some()).collect()
+    let leaving = moqui_lib::sync::lock(&LEAVING).clone();
+    ids.into_iter()
+        .filter(|id| !leaving.contains(id) && core.keys().get(id).is_some())
+        .collect()
+}
+
+/// An account signed in (again): it is no longer leaving.
+pub(crate) fn account_back(account: &str) {
+    moqui_lib::sync::lock(&LEAVING).retain(|leaving| leaving != account);
+}
+
+/// Mark `account` as signing out ([`LEAVING`]).
+pub(crate) fn account_leaving(account: &str) {
+    let mut leaving = moqui_lib::sync::lock(&LEAVING);
+    if !leaving.iter().any(|id| id == account) {
+        leaving.push(account.to_string());
+    }
+}
+
+/// Whether a push of `push_id` names an account here (a sealed ring that did not open is then shown as a missed call).
+pub(crate) fn push_known(dir: &Path, push_id: &str) -> bool {
+    let Ok(core) = core_in(dir) else {
+        return false;
+    };
+    !calls::push_accounts(&load_record(dir), push_id, &keyed_ids(&core)).is_empty()
 }
 
 /// The push record, read under the lock.
@@ -176,6 +204,9 @@ pub(crate) fn asked(core: &Client) -> Vec<Asked> {
     ordered
         .into_iter()
         .filter_map(|account| {
+            if moqui_lib::sync::lock(&LEAVING).contains(&account.id) {
+                return None;
+            }
             let key = core.keys().get(&account.id)?;
             let comms_root = core.comms_root_of(&account.id);
             Some(Asked {
@@ -243,6 +274,12 @@ pub(crate) fn decline_call(dir: &Path, id: &str, account: &str) -> String {
 /// Each account's push keys on `record` (made at its first registration, sealed as the device keys are; `again`, an
 /// account that just signed in, may have new ones made if its kept ones cannot be read): new ones register again.
 fn with_push_keys(core: &Client, record: &mut PushRecord, again: Option<&str>) -> bool {
+    // the one pair of every account an earlier build kept: each account has its own now
+    if core.keys().get(crate::push::OLD_KEY_ENTRY).is_some() {
+        if let Err(err) = core.keys().delete(crate::push::OLD_KEY_ENTRY) {
+            log::warn!("Push: the earlier build's push keys were not deleted: {err}");
+        }
+    }
     let mut changed = false;
     for id in keyed_ids(core) {
         let registered = if again == Some(id.as_str()) {
@@ -604,6 +641,8 @@ pub(crate) fn push_registered(dir: &Path, account: &str) -> bool {
 /// Take the registration back from `account`'s server before its key is revoked (the post with no lock held), and
 /// forget the account's registration, push keys and endpoint here.
 pub(crate) fn unregister_push(core: &Client, dir: &Path, account: &Account, key: &str) {
+    // no keys are made for it again, and UnifiedPush registers no instance of it, while it goes
+    account_leaving(&account.id);
     let mut copy = load_record(dir);
     if network_ready() && copy.registered.contains_key(&account.id) {
         let asked = Asked {
@@ -895,6 +934,21 @@ mod entries {
                 Some(public) => env.new_string(public),
                 None => Ok(JString::default()),
             }
+        })
+        .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.pushKnown(dataDir, pushId)`: whether a push of that registration names an account here.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_pushKnown<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+        push_id: JString<'caller>,
+    ) -> jboolean {
+        env.with_env(|env| -> Result<bool, jni::errors::Error> {
+            let dir = client_dir(&data_dir.try_to_string(env)?);
+            Ok(super::push_known(&dir, &push_id.try_to_string(env)?))
         })
         .resolve::<LogErrorAndDefault>()
     }

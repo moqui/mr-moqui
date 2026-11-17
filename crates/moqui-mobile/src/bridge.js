@@ -248,7 +248,7 @@
         if (Array.isArray(page.clearScopes) && page.clearScopes.length) clearScopes(page.clearScopes);
         const backToShell = () => ask("client_show_shell");
         // pushDelivers: the chat's notifications come by FCM, not from the page's socket (plans/Comms-Messaging.md §7.2 rule 7)
-        window.moquiDesktop = Object.freeze({ socket, outbox, drafts, notify, windowSeen, pushDelivers: true, roomShown,
+        window.moquiDesktop = Object.freeze({ socket, outbox, drafts, notify, windowSeen, pushDelivers: true,
             storageScope: String(page.storageScope || ""),
             openInShell: (path) => ask("open_in_shell", { path: String(path || "") }),
             openExternal: (url) => invoke("open_external", { url: String(url || "") }),

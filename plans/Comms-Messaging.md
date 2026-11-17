@@ -1225,7 +1225,8 @@ Notifications](../docs/ui/Desktop-Client.md#notifications)). Each account on the
 secret of its own, sealed by the Keystore (`src/push.rs`), and a push is the account's whose keys open it, so a server
 cannot make one that shows as another account's; Rust opens `enc` and Kotlin shows the chat (`ChatNotifications.kt`);
 a ring to a keyed device is sealed too. UnifiedPush is in the app (`org.unifiedpush.android:connector`, an instance per
-account opened with the same keys, `RustKeyManager.kt`). Left: the battery check finds Android's own optimization
+account, its messages opened in Rust with the account's same keys, `UnifiedPushService.kt`; Firebase stays unless
+the user switches in the check screen). Left: the battery check finds Android's own optimization
 only, not a maker's task killer; a chat push has no sender avatar; the desktop counts a thread reply at the mentions
 level only when the event names the thread's starter, which the server's events do not yet; UnifiedPush with a real
 distributor on a phone is not tried yet.

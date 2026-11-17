@@ -133,8 +133,8 @@ along with this software (see the LICENSE.md file). If not, see
                     <q-item-section avatar><q-icon :name="row.ok ? 'sym_o_check_circle' : 'sym_o_error'" :color="row.ok ? 'positive' : 'warning'"></q-icon></q-item-section>
                     <q-item-section><q-item-label>{{row.label}}</q-item-label>
                         <q-item-label v-if="row.caption" caption>{{row.caption}}</q-item-label></q-item-section>
-                    <q-item-section v-if="row.fix && !row.ok && pushFixable" side>
-                        <q-btn flat dense no-caps color="primary" :label="t('Fix')" @click="fixPush(row.fix)"></q-btn>
+                    <q-item-section v-if="row.fix && (!row.ok || row.fixLabel) && pushFixable" side>
+                        <q-btn flat dense no-caps color="primary" :label="row.fixLabel || t('Fix')" @click="askFix(row)"></q-btn>
                     </q-item-section>
                 </q-item>
                 <q-item v-if="pushBox.loaded && !pushRows.length"><q-item-section class="m-muted">{{t('This device says nothing of its notifications')}}</q-item-section></q-item>
@@ -143,6 +143,17 @@ along with this software (see the LICENSE.md file). If not, see
             <q-card-actions align="right">
                 <q-btn flat no-caps :loading="pushBox.testing" :label="t('Send a test notification')" @click="sendTestPush"></q-btn>
                 <q-btn flat no-caps :label="t('Close')" v-close-popup></q-btn>
+            </q-card-actions>
+        </q-card>
+    </q-dialog>
+    <!-- a fix that changes how notifications come (Firebase to UnifiedPush) asks first -->
+    <q-dialog v-model="pushBox.confirmOpen">
+        <q-card class="m-shell-push-confirm">
+            <q-card-section class="text-body2">{{pushBox.confirmRow && pushBox.confirmRow.confirm}}</q-card-section>
+            <q-card-actions align="right">
+                <q-btn flat no-caps :label="t('Cancel')" v-close-popup></q-btn>
+                <q-btn flat no-caps color="primary" :label="pushBox.confirmRow && pushBox.confirmRow.fixLabel" v-close-popup
+                    @click="fixPush(pushBox.confirmRow.fix)"></q-btn>
             </q-card-actions>
         </q-card>
     </q-dialog>
@@ -257,7 +268,7 @@ module.exports = {
             // what the client's screens ask of m-qapps-root's: the quick-create dialog (here its screen opens in an app window)
             quickCreateShow: false, quickCreateUrl: '', quickCreateTitle: '', trayOpen: false,
             signOutBox: { open: false, shared: false, items: [], checked: true, inCall: false },
-            pushBox: { open: false, loaded: false, state: {}, testing: false, result: '' }
+            pushBox: { open: false, loaded: false, state: {}, testing: false, result: '', confirmOpen: false, confirmRow: null }
         };
     },
     computed: {
@@ -281,13 +292,23 @@ module.exports = {
             if (state.fullScreen !== undefined) rows.push({ key: 'fullScreen', ok: state.fullScreen === true, label: t('Calls show on the lock screen'), fix: 'fullScreen' });
             // a push service: Firebase in the build, or a UnifiedPush distributor (a phone without Google Play), which the
             // user may pick when the phone has one
+            // where Firebase works it stays unless the user switches (asked first), and a switch can be undone here
             if (state.fcm !== undefined) {
                 const distributors = Number(state.distributors) || 0;
-                rows.push({ key: 'service', ok: state.fcm === true || !!state.distributor, label: t('A push service reaches this app'),
-                    caption: state.distributor ? t('UnifiedPush') + ': ' + state.distributor
-                        : state.fcm === true ? '' : distributors ? t('Pick a UnifiedPush distributor')
-                        : t('No push service: notifications come only while the app is open'),
-                    fix: distributors ? 'distributor' : null });
+                const label = t('A push service reaches this app');
+                if (state.distributor) {
+                    rows.push({ key: 'service', ok: true, label, caption: t('UnifiedPush') + ': ' + state.distributor
+                        + (state.fcm === true ? ' (' + t('in place of Firebase') + ')' : ''),
+                        fix: state.fcm === true ? 'firebase' : null, fixLabel: state.fcm === true ? t('Use Firebase') : null });
+                } else if (state.fcm === true) {
+                    rows.push({ key: 'service', ok: true, label, caption: t('Firebase'),
+                        fix: distributors ? 'distributor' : null, fixLabel: distributors ? t('Use UnifiedPush') : null,
+                        confirm: t('Notifications come by Firebase now. Use UnifiedPush through a distributor app on this phone instead? You can come back to Firebase here.') });
+                } else {
+                    rows.push({ key: 'service', ok: false, label,
+                        caption: distributors ? t('Pick a UnifiedPush distributor') : t('No push service: notifications come only while the app is open'),
+                        fix: distributors ? 'distributor' : null });
+                }
             }
             if (state.registered !== undefined) rows.push({ key: 'registered', ok: state.registered === true, label: t('This device is registered for push with the server') });
             if (state.socket) rows.push({ key: 'socket', ok: true, label: t('Messages arrive while the app runs') });
@@ -295,7 +316,7 @@ module.exports = {
                 caption: state.lastPushDate ? this.when(state.lastPushDate) : t('None yet') });
             // a force-stopped app gets no push until it is opened again
             if (state.forceStoppedDate) rows.push({ key: 'forceStopped', ok: Date.now() - Number(state.forceStoppedDate) > 86400000,
-                label: t('The app was force-stopped'), caption: this.when(state.forceStoppedDate) + ': ' + t('no notifications came until it was opened again') });
+                label: t('The app was stopped'), caption: this.when(state.forceStoppedDate) + ': ' + t('notifications may not have come until it was opened again') });
             return rows;
         },
         // the sign-out leaves something unsent, or could not tell
@@ -510,6 +531,12 @@ module.exports = {
                 this.pushBox.loaded = true;
                 return this.pushBox.state;
             }, (err) => { this.pushBox.loaded = true; this.failed(err); return {}; });
+        },
+        // a row's fix, after its question where it has one
+        askFix(row) {
+            if (!row.confirm) { this.fixPush(row.fix); return; }
+            this.pushBox.confirmRow = row;
+            this.pushBox.confirmOpen = true;
         },
         fixPush(what) {
             if (!host().pushCheckFix) return;

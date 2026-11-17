@@ -1124,7 +1124,7 @@ module.exports = {
             // what the client's screens ask of m-qapps-root's: the quick-create dialog (here its screen opens in an app window)
             quickCreateShow: false, quickCreateUrl: '', quickCreateTitle: '', trayOpen: false,
             signOutBox: { open: false, shared: false, items: [], checked: true, inCall: false },
-            pushBox: { open: false, loaded: false, state: {}, testing: false, result: '' }
+            pushBox: { open: false, loaded: false, state: {}, testing: false, result: '', confirmOpen: false, confirmRow: null }
         };
     },
     computed: {
@@ -1148,13 +1148,23 @@ module.exports = {
             if (state.fullScreen !== undefined) rows.push({ key: 'fullScreen', ok: state.fullScreen === true, label: t('Calls show on the lock screen'), fix: 'fullScreen' });
             // a push service: Firebase in the build, or a UnifiedPush distributor (a phone without Google Play), which the
             // user may pick when the phone has one
+            // where Firebase works it stays unless the user switches (asked first), and a switch can be undone here
             if (state.fcm !== undefined) {
                 const distributors = Number(state.distributors) || 0;
-                rows.push({ key: 'service', ok: state.fcm === true || !!state.distributor, label: t('A push service reaches this app'),
-                    caption: state.distributor ? t('UnifiedPush') + ': ' + state.distributor
-                        : state.fcm === true ? '' : distributors ? t('Pick a UnifiedPush distributor')
-                        : t('No push service: notifications come only while the app is open'),
-                    fix: distributors ? 'distributor' : null });
+                const label = t('A push service reaches this app');
+                if (state.distributor) {
+                    rows.push({ key: 'service', ok: true, label, caption: t('UnifiedPush') + ': ' + state.distributor
+                        + (state.fcm === true ? ' (' + t('in place of Firebase') + ')' : ''),
+                        fix: state.fcm === true ? 'firebase' : null, fixLabel: state.fcm === true ? t('Use Firebase') : null });
+                } else if (state.fcm === true) {
+                    rows.push({ key: 'service', ok: true, label, caption: t('Firebase'),
+                        fix: distributors ? 'distributor' : null, fixLabel: distributors ? t('Use UnifiedPush') : null,
+                        confirm: t('Notifications come by Firebase now. Use UnifiedPush through a distributor app on this phone instead? You can come back to Firebase here.') });
+                } else {
+                    rows.push({ key: 'service', ok: false, label,
+                        caption: distributors ? t('Pick a UnifiedPush distributor') : t('No push service: notifications come only while the app is open'),
+                        fix: distributors ? 'distributor' : null });
+                }
             }
             if (state.registered !== undefined) rows.push({ key: 'registered', ok: state.registered === true, label: t('This device is registered for push with the server') });
             if (state.socket) rows.push({ key: 'socket', ok: true, label: t('Messages arrive while the app runs') });
@@ -1162,7 +1172,7 @@ module.exports = {
                 caption: state.lastPushDate ? this.when(state.lastPushDate) : t('None yet') });
             // a force-stopped app gets no push until it is opened again
             if (state.forceStoppedDate) rows.push({ key: 'forceStopped', ok: Date.now() - Number(state.forceStoppedDate) > 86400000,
-                label: t('The app was force-stopped'), caption: this.when(state.forceStoppedDate) + ': ' + t('no notifications came until it was opened again') });
+                label: t('The app was stopped'), caption: this.when(state.forceStoppedDate) + ': ' + t('notifications may not have come until it was opened again') });
             return rows;
         },
         // the sign-out leaves something unsent, or could not tell
@@ -1377,6 +1387,12 @@ module.exports = {
                 this.pushBox.loaded = true;
                 return this.pushBox.state;
             }, (err) => { this.pushBox.loaded = true; this.failed(err); return {}; });
+        },
+        // a row's fix, after its question where it has one
+        askFix(row) {
+            if (!row.confirm) { this.fixPush(row.fix); return; }
+            this.pushBox.confirmRow = row;
+            this.pushBox.confirmOpen = true;
         },
         fixPush(what) {
             if (!host().pushCheckFix) return;
@@ -2157,7 +2173,7 @@ module.exports = {
                                           ]),
                                           _: 2
                                         }, 1024),
-                                        (row.fix && !row.ok && _ctx.pushFixable)
+                                        (row.fix && (!row.ok || row.fixLabel) && _ctx.pushFixable)
                                           ? (_openBlock(), _createBlock(_component_q_item_section, {
                                               key: 0,
                                               side: ""
@@ -2168,8 +2184,8 @@ module.exports = {
                                                   dense: "",
                                                   "no-caps": "",
                                                   color: "primary",
-                                                  label: _ctx.t('Fix'),
-                                                  onClick: $event => (_ctx.fixPush(row.fix))
+                                                  label: row.fixLabel || _ctx.t('Fix'),
+                                                  onClick: $event => (_ctx.askFix(row))
                                                 }, null, 8, ["label", "onClick"])
                                               ]),
                                               _: 2
@@ -2220,6 +2236,46 @@ module.exports = {
                                     "no-caps": "",
                                     label: _ctx.t('Close')
                                   }, null, 8, ["label"]), [
+                                    [_directive_close_popup]
+                                  ])
+                                ]),
+                                _: 1
+                              })
+                            ]),
+                            _: 1
+                          })
+                        ]),
+                        _: 1
+                      }, 8, ["modelValue", "onUpdate:modelValue"]),
+                      _createVNode(_component_q_dialog, {
+                        modelValue: _ctx.pushBox.confirmOpen,
+                        "onUpdate:modelValue": $event => ((_ctx.pushBox.confirmOpen) = $event)
+                      }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_card, { class: "m-shell-push-confirm" }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_card_section, { class: "text-body2" }, {
+                                default: _withCtx(() => [
+                                  _createTextVNode(_toDisplayString(_ctx.pushBox.confirmRow && _ctx.pushBox.confirmRow.confirm), 1)
+                                ]),
+                                _: 1
+                              }),
+                              _createVNode(_component_q_card_actions, { align: "right" }, {
+                                default: _withCtx(() => [
+                                  _withDirectives(_createVNode(_component_q_btn, {
+                                    flat: "",
+                                    "no-caps": "",
+                                    label: _ctx.t('Cancel')
+                                  }, null, 8, ["label"]), [
+                                    [_directive_close_popup]
+                                  ]),
+                                  _withDirectives(_createVNode(_component_q_btn, {
+                                    flat: "",
+                                    "no-caps": "",
+                                    color: "primary",
+                                    label: _ctx.pushBox.confirmRow && _ctx.pushBox.confirmRow.fixLabel,
+                                    onClick: $event => (_ctx.fixPush(_ctx.pushBox.confirmRow.fix))
+                                  }, null, 8, ["label", "onClick"]), [
                                     [_directive_close_popup]
                                   ])
                                 ]),

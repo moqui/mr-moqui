@@ -249,7 +249,7 @@ object ChatNotifications {
 
     /** The summary of an account's room notifications, which groups them. */
     private fun summary(context: Context, account: String) {
-        val rooms = roomTags(context, account)
+        val rooms = roomTags(context, account).size
         if (rooms < 2) return
         val builder = NotificationCompat.Builder(context, ChatRules.MESSAGES)
             .setSmallIcon(R.mipmap.ic_launcher)
@@ -262,26 +262,40 @@ object ChatNotifications {
         notify(context, ChatRules.summaryTag(account), SUMMARY_ID, builder)
     }
 
-    /** How many room notifications of `account` show. */
-    private fun roomTags(context: Context, account: String): Int {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return 0
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return 0
+    /** The room notifications of `account` that show, but for the one of `except` (a tag). */
+    private fun roomTags(context: Context, account: String, except: String? = null): List<String> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return emptyList()
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return emptyList()
         val prefix = ChatRules.tag(account, "")
-        return manager.activeNotifications.count { it.id == ROOM_ID && it.tag?.startsWith(prefix) == true }
+        return manager.activeNotifications
+            .filter { it.id == ROOM_ID && it.tag?.startsWith(prefix) == true && it.tag != except }
+            .mapNotNull { it.tag }
     }
 
-    /** A room of `account` read here or on another device: its notification goes, and the summary with the last one. */
+    /**
+     * A room of `account` read here or on another device: its notification goes, and the summary only when no other
+     * room's shows (cancelling a group's summary cancels its children, and the count is read before the cancel lands).
+     */
     fun clear(context: Context, account: String, room: String) {
         val plain = ChatRules.plainId(room) ?: return
-        manager(context).cancel(ChatRules.tag(account, plain), ROOM_ID)
-        if (roomTags(context, account) <= 1) manager(context).cancel(ChatRules.summaryTag(account), SUMMARY_ID)
+        val tag = ChatRules.tag(account, plain)
+        val others = roomTags(context, account, tag)
+        manager(context).cancel(tag, ROOM_ID)
+        if (others.isEmpty()) manager(context).cancel(ChatRules.summaryTag(account), SUMMARY_ID)
     }
 
-    /** The page read a room of `account` (`notify_clear`, src/commands.rs): its notification goes. */
+    /** Every room's notification of `account` goes (the page's Mark all read), and its summary. */
+    fun clearAll(context: Context, account: String) {
+        for (tag in roomTags(context, account)) manager(context).cancel(tag, ROOM_ID)
+        manager(context).cancel(ChatRules.summaryTag(account), SUMMARY_ID)
+    }
+
+    /** The page read a room of `account` (`notify_clear`, src/commands.rs; `*`: every room): its notification goes. */
     @JvmStatic
     fun clearRoom(context: Context, account: String, room: String) {
         val plainAccount = ChatRules.accountId(account) ?: return
-        clear(context.applicationContext, plainAccount, room)
+        if (room == "*") clearAll(context.applicationContext, plainAccount)
+        else clear(context.applicationContext, plainAccount, room)
     }
 
     /**

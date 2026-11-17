@@ -834,7 +834,8 @@ test("the app notifies a message by the room's level, not its own, not on do not
         chat.notifyMissed({ A: { counted: 1 }, B: { counted: 2 }, C: { counted: 1 }, D: { counted: 1 }, E: { counted: 1 }, F: { counted: 3 } });
         window.moquiDesktop.pushDelivers = true;
         chat.notifyApp({ kind: "event", chatRoomId: "R8", event: event({ chatRoomId: "R8", bodyText: "hi" }) });
-        assert.deepEqual(calls, [["notify", "chat-R7"], ["clear", "chat-R7"], ["notify", "chat-missed"]]);
+        // Mark all read: every room's notification of the account (chat-*), then the rooms this page showed
+        assert.deepEqual(calls, [["notify", "chat-R7"], ["clear", "chat-*"], ["clear", "chat-R7"], ["notify", "chat-missed"]]);
     } finally {
         try { localStorage.removeItem(chat.shownKey(window.moquiDesktop)); } catch (err) { /* no storage */ }
         chat.me = before.me;

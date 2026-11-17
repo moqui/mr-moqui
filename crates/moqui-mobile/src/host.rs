@@ -507,6 +507,7 @@ impl ShellHost for MobileHost {
     }
 
     fn account_signed_in(&self, account: &str) {
+        crate::native::account_back(account);
         let (Some(core), true) = (self.core(), self.network_ready()) else {
             return;
         };

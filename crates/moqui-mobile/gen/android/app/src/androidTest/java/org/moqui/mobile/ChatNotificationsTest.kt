@@ -195,11 +195,53 @@ class ChatNotificationsTest {
      * message"; a sealed ring that does not open shows a missed call rather than nothing.
      */
     @Test
-    fun aPushThatDoesNotOpenIsDroppedAndARingShowsAMissedCall() {
+    fun aPushThatDoesNotOpenIsDroppedAndARingOfNoAccountHereToo() {
         Push.onMessage(context, mapOf("kind" to "chat", "pushId" to "100050", "enc" to "bm90IGEgcHVzaA"))
         Push.onMessage(context, mapOf("kind" to "ring", "pushId" to "100050", "enc" to "bm90IGEgcHVzaA"))
-        assertNotNull("a ring that does not open: a missed call", shown("ring-not-opened"))
+        Thread.sleep(1_000)
+        // no account here has that push id: no missed call either (one is shown only for a ring of an account here)
+        assertNull("a ring of no account here: nothing", shownNow("ring-not-opened"))
         assertNull("a push that does not open: nothing", shownNow("chat-bare"))
+    }
+
+    /** Review finding: clearing one of two rooms of an account leaves the other, and its summary, showing. */
+    @Test
+    fun clearingOneOfTwoRoomsLeavesTheOther() {
+        ChatNotifications.show(context, payload())
+        Thread.sleep(400)
+        ChatNotifications.show(context, payload().put("chatRoomId", "101"))
+        val other = ChatRules.tag(A, "101")
+        assertNotNull(shown(TAG_A))
+        assertNotNull(shown(other))
+        waitFor { shownNow(ChatRules.summaryTag(A)) != null }
+        ChatNotifications.clear(context, A, "100")
+        assertNull(gone(TAG_A))
+        Thread.sleep(500)
+        assertNotNull("the other room stays", shownNow(other))
+        // Mark all read on the phone: every room of the account goes
+        ChatNotifications.clearRoom(context, A, "*")
+        assertNull(gone(other))
+        assertNull(gone(ChatRules.summaryTag(A)))
+    }
+
+    /**
+     * Review finding (HIGH): the connector's receiver opens with its own key manager, which has no keys of the account,
+     * so a message comes still sealed; the app opens it with the account's keys and shows it. One the connector says it
+     * opened (sealed to the connector's own keys) or that does not open is dropped.
+     */
+    @Test
+    fun aUnifiedPushMessageIsOpenedWithTheAccountsKeys() {
+        val sealed = "sealed".toByteArray()
+        val plain = payload().apply { remove("account") }.toString().toByteArray()
+        val opener: (ByteArray) -> ByteArray? = { bytes -> if (bytes.contentEquals(sealed)) plain else null }
+        UnifiedPushService.handle(context, org.unifiedpush.android.connector.data.PushMessage(sealed, false), A, opener)
+        assertNotNull("a sealed message opened with the account's keys shows", shown(TAG_A))
+        manager().cancelAll()
+        Thread.sleep(1_500)
+        UnifiedPushService.handle(context, org.unifiedpush.android.connector.data.PushMessage(plain, true), A, opener)
+        UnifiedPushService.handle(context, org.unifiedpush.android.connector.data.PushMessage("other".toByteArray(), false), A, opener)
+        Thread.sleep(800)
+        assertNull("opened by the connector's own keys, or not opening: nothing", shownNow(TAG_A))
     }
 
     private companion object {

@@ -1380,6 +1380,24 @@ test("the notification check shows the device's state, a fix for each item that 
         assert.ok(row("service").textContent.includes("Pick a UnifiedPush distributor"));
         row("service").querySelector("button").click();
         assert.deepEqual(fixes, ["battery", "distributor"]);
+        // where Firebase works it stays: switching to UnifiedPush asks first
+        state = Object.assign({}, state, { fcm: true });
+        await root.readPushCheck();
+        await until(() => row("service").textContent.includes("Firebase"), "Firebase in use");
+        [...row("service").querySelectorAll("button")].find((button) => button.textContent.includes("Use UnifiedPush")).click();
+        assert.deepEqual(fixes, ["battery", "distributor"], "not switched before the answer");
+        const confirm = await until(() => [...document.querySelectorAll(".m-shell-push-confirm button")]
+            .find((button) => button.textContent.includes("Use UnifiedPush")), "the question");
+        confirm.click();
+        assert.deepEqual(fixes, ["battery", "distributor", "distributor"]);
+        // switched: a way back
+        state = Object.assign({}, state, { distributor: "io.heckel.ntfy" });
+        await root.readPushCheck();
+        await until(() => row("service").textContent.includes("in place of Firebase"), "UnifiedPush in place of Firebase");
+        [...row("service").querySelectorAll("button")].find((button) => button.textContent.includes("Use Firebase")).click();
+        assert.deepEqual(fixes.slice(-1), ["firebase"]);
+        state = Object.assign({}, state, { fcm: false, distributor: null });
+        await root.readPushCheck();
         const testButton = () => [...document.querySelectorAll(".m-shell-push-check button")].find((button) => button.textContent.includes("Send a test notification"));
         const result = () => (document.querySelector(".m-shell-push-result") || {}).textContent || "";
         testButton().click();
