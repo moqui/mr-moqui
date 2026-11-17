@@ -200,6 +200,28 @@ fn a_sinch_token_is_fetched_once_kept_until_it_runs_out_and_dropped_on_a_401() {
     assert_eq!(bed.sinch_calls(TOKEN_PATH).len(), fetched + 1);
     assert_ne!(sinch.token(&client, &config, at + 3_550_000).unwrap(), token);
     assert_eq!(bed.sinch_calls(TOKEN_PATH).len(), fetched + 2);
+    // no expires_in: an hour; one shorter than the minute kept back: fetched again for the next send
+    bed.fake
+        .script(&[Reply::Status(200, r#"{"access_token": "tok-plain"}"#.to_string())]);
+    let plain = Sinch::default();
+    assert_eq!(plain.token(&client, &config, at).unwrap(), "tok-plain");
+    assert_eq!(plain.token(&client, &config, at + 3_500_000).unwrap(), "tok-plain");
+    bed.fake.script(&[Reply::Status(
+        200,
+        r#"{"access_token": "tok-short", "expires_in": 30}"#.to_string(),
+    )]);
+    let short = Sinch::default();
+    assert_eq!(short.token(&client, &config, at).unwrap(), "tok-short");
+    assert_ne!(short.token(&client, &config, at + 1).unwrap(), "tok-short");
+    // another keySecret under the same key id is another token
+    let mut rotated = config.clone();
+    rotated.key_secret = "rotated".to_string();
+    let fetched = bed.sinch_calls(TOKEN_PATH).len();
+    assert_ne!(sinch.token(&client, &rotated, at).unwrap(), token);
+    assert_eq!(bed.sinch_calls(TOKEN_PATH).len(), fetched + 1);
+    // the secrets are not in a Debug
+    let shown = format!("{config:?}");
+    assert!(!shown.contains("key-secret") && !shown.contains(SECRET), "{shown}");
     // the token service refusing the key, or away: Retry, the bridge not connected
     for status in [401, 500] {
         bed.fake.script(&[Reply::Status(status, "{}".to_string())]);
@@ -238,7 +260,8 @@ fn a_sinch_text_goes_on_the_sms_channel_and_a_file_on_the_mms_channel() {
     );
     assert_eq!(sent["message"], json!({"text_message": {"text": "Until six"}}));
     assert_eq!(sent["channel_properties"], json!({"SMS_SENDER": OURS}));
-    assert_eq!(sent["callback_url"], "https://moqui.example.test/channels/SMS1/webhook");
+    // no callback_url: the reports come through the app's webhook, signed with its secret
+    assert!(sent.get("callback_url").is_none(), "{sent}");
     let delivery_id = bed.one(
         "moqui.chat.ChatBridgeDelivery",
         &[("chatRoomId", text(&room)), ("eventSeq", Value::I64(words))],
@@ -305,7 +328,8 @@ fn a_sinch_text_goes_on_the_sms_channel_and_a_file_on_the_mms_channel() {
 }
 
 /// Sinch's answers: 429 tried again and taken; an answer lost after the request went uncertain, never sent again; the
-/// project's credit limit (403) and the wrong region (404) failed, saying so; another 4xx refused.
+/// project's credit limit, a key refused for the project (403) and the wrong region (404) held with the bridge not
+/// connected, saying which, and sent once fixed; another 4xx refused.
 #[test]
 fn sinch_answers_are_read_by_their_class() {
     let bed = bed_for(SINCH, "");
@@ -335,41 +359,43 @@ fn sinch_answers_are_read_by_their_class() {
     bed.round(140_000);
     assert_eq!(bed.sinch_calls(SEND_PATH).len(), sent, "not sent again");
 
+    // the bridge's setup (the credit limit, the key's project, the region): held, the bridge not connected, and sent
+    // once it is fixed; a text Sinch refuses for what it is fails
     let billing = r#"{"error":{"code":403,"message":"Credit limit breached","status":"PERMISSION_DENIED",
         "details":[{"type_url":"type.googleapis.com/google.rpc.ErrorInfo","value":"BILLING_CREDIT_LIMIT_BREACHED"}]}}"#;
+    let denied = r#"{"error":{"code":403,"message":"Permission denied","status":"PERMISSION_DENIED"}}"#;
     let region = r#"{"error":{"code":404,"message":"App not found","status":"NOT_FOUND"}}"#;
-    let invalid = r#"{"error":{"code":400,"message":"Invalid identity","status":"INVALID_ARGUMENT"}}"#;
-    bed.fake.script(&[
-        Reply::Status(403, billing.to_string()),
-        Reply::Status(404, region.to_string()),
-        Reply::Status(400, invalid.to_string()),
-    ]);
-    let refused: Vec<i64> = ["Billing", "Region", "Invalid"]
-        .iter()
-        .map(|body| bed.send(&room, body, &[]))
-        .collect();
-    bed.round(160_000);
-    let reasons: Vec<(String, String)> = refused
-        .iter()
-        .map(|seq| {
-            let (state, reason, ..) = bed.delivery(&room, *seq);
-            (state, reason)
-        })
-        .collect();
-    let failed = |reason: &str| ("CdsFailed".to_string(), reason.to_string());
-    assert_eq!(
-        reasons,
-        vec![failed("billingLimit"), failed("wrongRegion"), failed("providerRefused")]
-    );
-    let error = |seq: i64| {
-        bed.one(
+    let mut at = 200_000;
+    for (status, body, said) in [
+        (403, billing, "billingLimit"),
+        (403, denied, "providerRefused"),
+        (404, region, "wrongRegion"),
+    ] {
+        bed.fake.script(&[Reply::Status(status, body.to_string())]);
+        let held = bed.send(&room, said, &[]);
+        bed.round(at);
+        let row = bed.one(
             "moqui.chat.ChatBridgeDelivery",
-            &[("chatRoomId", text(&room)), ("eventSeq", Value::I64(seq))],
-        )["lastErrorText"]
-            .clone()
-    };
-    assert!(error(refused[0]).contains("credit limit"), "{}", error(refused[0]));
-    assert!(error(refused[1]).contains("region us"), "{}", error(refused[1]));
+            &[("chatRoomId", text(&room)), ("eventSeq", Value::I64(held))],
+        );
+        assert_eq!(row["statusEnumId"], "CdsPending", "{said}: {row:?}");
+        assert!(row["lastErrorText"].starts_with(said), "{row:?}");
+        assert_eq!(
+            bed.one("moqui.chat.ChatBridge", &[("chatBridgeId", text(BRIDGE))])["statusId"],
+            "CbsNotConnected",
+            "{said}"
+        );
+        at += 3_600_000;
+        bed.round(at);
+        assert_eq!(bed.delivery(&room, held).0, "CdsAccepted", "{said}: sent once fixed");
+        at += 3_600_000;
+    }
+    let invalid = r#"{"error":{"code":400,"message":"Invalid identity","status":"INVALID_ARGUMENT"}}"#;
+    bed.fake.script(&[Reply::Status(400, invalid.to_string())]);
+    let refused = bed.send(&room, "Invalid", &[]);
+    bed.round(at);
+    let (state, reason, ..) = bed.delivery(&room, refused);
+    assert_eq!((state.as_str(), reason.as_str()), ("CdsFailed", "providerRefused"));
 }
 
 /// In: a text (Sinch's numbers without `+` taken as E.164), a file fetched, delivery reports (delivered, failed with
@@ -446,6 +472,13 @@ fn sinch_texts_files_receipts_and_opt_outs_come_in() {
             .clone()
     };
     assert_eq!(opted(&bed), "Y");
+    // Sinch's retry of it (the same request_id under a new signature) is applied once: START after it still wins below
+    let resent = bed.signed(
+        &opt_notice("opt_out_notification", "req-1", "OPT_OUT_SUCCEEDED"),
+        now() / 1000,
+    );
+    let again = bed.hook(&resent);
+    assert_eq!(status(&again), 200, "{}", String::from_utf8_lossy(&again.body));
     // one that failed is left; an opt-in opts back in
     let failed = bed.signed(
         &opt_notice("opt_out_notification", "req-2", "OPT_OUT_FAILED"),
@@ -458,13 +491,24 @@ fn sinch_texts_files_receipts_and_opt_outs_come_in() {
     );
     assert_eq!(body_json(&bed.hook(&opt_in))["keyword"], "START");
     assert_eq!(opted(&bed), "N");
+    // a message on another channel of the app (Messenger) is no text: left, no room
+    let mut messenger = inbound(
+        "01MSGR1",
+        "+15550004444",
+        json!({"text_message": {"text": "Hi from Messenger"}}),
+    );
+    messenger["message"]["channel_identity"] =
+        json!({"channel": "MESSENGER", "identity": "2734981234", "app_id": "app-1"});
+    let left = bed.hook(&bed.signed(&messenger, now() / 1000));
+    assert_eq!(body_json(&left)["ignored"], "a message on channel MESSENGER");
+    assert!(bed.room("+2734981234").is_none() && bed.room("+15550004444").is_none());
     // another event is left
     let other_event = json!({"app_id": "app-1", "conversation_start_notification": {}});
     assert!(body_json(&bed.hook(&bed.signed(&other_event, now() / 1000)))["ignored"].is_string());
 }
 
-/// The signature: good; a changed body, another secret, none, a timestamp out of the window, another algorithm are the
-/// one refusal; the same request again is a duplicate, not worked again.
+/// The signature: good; a changed body, another secret, none, no nonce, a timestamp out of the window either side, a
+/// signature that is not base64, another algorithm are the one refusal; the same request again is a duplicate, not worked again.
 #[test]
 fn a_sinch_webhook_is_signed_with_its_secret_within_its_window() {
     let bed = bed_for(SINCH, "");
@@ -487,9 +531,25 @@ fn a_sinch_webhook_is_signed_with_its_secret_within_its_window() {
         .headers
         .retain(|(name, _)| name != "x-sinch-webhook-signature-nonce");
     let stale = bed.signed(&event, now() / 1000 - 600);
+    let ahead = bed.signed(&event, now() / 1000 + 600);
+    let mut not_base64 = bed.signed(&event, now() / 1000);
+    for (name, value) in &mut not_base64.headers {
+        if name == "x-sinch-webhook-signature" {
+            *value = "not base64 at all!".to_string();
+        }
+    }
     let mut other_algorithm = request.clone();
     other_algorithm.headers = sinch_headers(SECRET, &request.body, now() / 1000, "HmacSHA1");
-    for bad in [&tampered, &forged, &unsigned, &no_nonce, &stale, &other_algorithm] {
+    for bad in [
+        &tampered,
+        &forged,
+        &unsigned,
+        &no_nonce,
+        &stale,
+        &ahead,
+        &not_base64,
+        &other_algorithm,
+    ] {
         assert_eq!(bed.hook(bad), WebhookResponse::not_signed());
     }
     let room = bed.room(THEIRS).unwrap();
@@ -513,6 +573,7 @@ fn a_sinch_bridge_refuses_a_group_room() {
         chat_room_id: "R1".to_string(),
         event_seq: 1,
         external_room_id: format!("{OURS}/{THEIRS},+15553334444"),
+        external_thread_id: None,
         kind: DeliveryKind::Message,
         text: Some("Hi all".to_string()),
         html: None,
@@ -539,7 +600,9 @@ fn a_sinch_bridge_refuses_a_group_room() {
 }
 
 /// Behind an edge node: Sinch's webhooks are checked on the local node (the secret is never on the edge node), and one
-/// the edge node queued an hour ago is verified there with the time it came: a good one handed on, a forged one dropped.
+/// the edge node queued an hour ago is verified there with the time it came: a forged one refused and kept (the item
+/// done, nothing taken), a good one handed on to the adapter; a bridge with no webhookSecret here cannot check, and
+/// its item waits.
 #[test]
 fn a_sinch_webhook_an_edge_node_queued_is_verified_on_the_local_node() {
     use moqui_core::service::chat_bridge::{ChatBridgeAdapter as _, WebhookVerification};
@@ -587,27 +650,27 @@ fn a_sinch_webhook_an_edge_node_queued_is_verified_on_the_local_node() {
     let forged_event = inbound("01EDGE2", THEIRS, json!({"text_message": {"text": "Forged"}}));
     let mut forged = bed.signed(&forged_event, received / 1000);
     forged.headers = sinch_headers("guess", &forged.body, received / 1000, "HmacSHA256");
-    // dropped: answered as done (no retryLater, apply#EdgeQueueItem's one answer), not taken, counted
+    // refused: answered as done (no retryLater, apply#EdgeQueueItem's one answer), not taken, counted
     let answer = queued("item-2", &forged);
     assert!(!answer.contains_key("retryLater"), "{answer:?}");
     assert!(bed.room(THEIRS).is_none(), "the forged one was not taken");
     assert_eq!(
-        moqui_core::service::chat_bridge::dropped_webhooks(bed.ctx.factory(), BRIDGE),
+        moqui_core::service::chat_bridge::refused_webhooks(bed.ctx.factory(), BRIDGE),
         1
     );
 
     let event = inbound("01EDGE1", THEIRS, json!({"text_message": {"text": "Through the edge"}}));
     let good = bed.signed(&event, received / 1000);
-    // verified with the time it came and handed to the adapter, not dropped (the in-memory test facade cannot store
-    // ingest#Event's batch in a transaction of its own inside the queue's, so the adapter answers retryLater here; a
-    // database does: moqui-host's edge_chat)
-    let applied = queued("item-1", &good);
-    assert!(!applied.contains_key("dropped"), "{applied:?}");
+    // verified with the time it came and handed to the adapter, not refused. This test stops there: inside the queue's
+    // transaction the in-memory test facade cannot store ingest#Event's batch in a transaction of its own, so the
+    // adapter answers 503 and the item retryLater. No test here or in moqui-host takes a Sinch text through the queue
+    // into its room; the direct webhook tests above take the same request through the same parse and receive#Sms.
+    queued("item-1", &good);
     errors();
     assert_eq!(
-        moqui_core::service::chat_bridge::dropped_webhooks(bed.ctx.factory(), BRIDGE),
+        moqui_core::service::chat_bridge::refused_webhooks(bed.ctx.factory(), BRIDGE),
         1,
-        "only the forged one dropped"
+        "only the forged one refused"
     );
     // the same request checked at the time it came is good, and now (an hour on) out of the window
     let adapter = crate::sms::SmsAdapter::new(Sinch::default());
@@ -617,5 +680,23 @@ fn a_sinch_webhook_an_edge_node_queued_is_verified_on_the_local_node() {
     assert_eq!(
         adapter.verify_webhook(&bridge_info(&bed), &good),
         Some(WebhookResponse::not_signed())
+    );
+
+    // no webhookSecret on this node: it cannot check, so the item waits rather than being refused as forged
+    bed.reconfigure(|config| {
+        config.as_object_mut().unwrap().remove("webhookSecret");
+    });
+    let waiting = queued("item-3", &good);
+    assert!(
+        waiting
+            .get("retryLater")
+            .is_some_and(|why| to_plain_string(why).contains("webhookSecret")),
+        "{waiting:?}"
+    );
+    errors();
+    assert_eq!(
+        moqui_core::service::chat_bridge::refused_webhooks(bed.ctx.factory(), BRIDGE),
+        1,
+        "not refused"
     );
 }

@@ -39,20 +39,24 @@
 //!   file, a `media_message`, or a `card_message` (its `description` the words) for words and a file, so a text is one
 //!   call and a lost answer is `Uncertain` as for any provider. More than one file is refused (`tooManyFiles`), and a
 //!   file from a number that is not the bridge's `mmsSender` (`mmsNotSetUp`): a text never goes from another number than
-//!   its room's. `correlation_id` is the delivery's id, `callback_url` the bridge's webhook URL. Its answers: 2xx
-//!   `message_id`; a second 401 `Retry`, the bridge not connected; 403 `Failed` (`billingLimit` for
-//!   `BILLING_CREDIT_LIMIT_BREACHED`, else `providerRefused`); 404 `Failed` `wrongRegion` (the app is in another
-//!   region, or the ids are wrong); 429 and 503 `Retry`; another 4xx `providerRefused`; another 5xx `Uncertain` (the
-//!   core's classes: Sinch says to retry a 500, but a text it may have taken is never sent again on its own).
+//!   its room's. `correlation_id` is the delivery's id. No `callback_url`: Sinch signs the reports to one with the
+//!   app's `secret_for_overridden_callback_urls`, not the webhook's secret, so the reports come through the app's
+//!   webhook. Its answers: 2xx `message_id`; a second 401, a 403 and a 404 are the bridge's setup (the key, the
+//!   project's credit limit, `providerRefused`; `wrongRegion`: the app is in another region, or the ids are wrong), so
+//!   `Retry` with the bridge not connected: texts wait until an administrator fixes it; 429 and 503 `Retry`; another
+//!   4xx `providerRefused`; another 5xx `Uncertain` (the core's classes: Sinch says to retry a 500, but a text it may
+//!   have taken is never sent again on its own).
 //! - **In.** `x-sinch-webhook-signature` is the base64 HMAC-SHA256 under `webhookSecret` of
 //!   `{raw body}.{x-sinch-webhook-signature-nonce}.{x-sinch-webhook-signature-timestamp}`, the algorithm header
 //!   `HmacSHA256`, the timestamp (seconds) within `webhookToleranceSeconds`; the core's replay cache, by the signature,
 //!   catches a nonce sent again. The secret is the local node's alone, so behind an edge node the local node checks it.
-//!   The event is the body's key: `message` (`MESSAGE_INBOUND`: a text, a file, or a file with a caption; each file of
-//!   an MMS comes as its own event, so each is its own message), `message_delivery_report` (`MESSAGE_DELIVERY`:
+//!   The event is the body's key: `message` (`MESSAGE_INBOUND` on the SMS or MMS channel, any other channel's left: a
+//!   text, a file, or a file with a caption; each file of an MMS comes as its own event, so each is its own message, its
+//!   caption with each), `message_delivery_report` (`MESSAGE_DELIVERY`:
 //!   `DELIVERED` and `READ` delivered, `FAILED` failed with its reason; `QUEUED_ON_CHANNEL` and `SWITCHING_CHANNEL`
-//!   left), `opt_out_notification` and `opt_in_notification` (STOP and START for `smsSender`); others are left. Its files
-//!   are kept by Sinch 7 days, and the core fetches them as the text comes in.
+//!   left), `opt_out_notification` and `opt_in_notification` (STOP and START for `smsSender`, once by `request_id`;
+//!   Sinch sends none for a STOP texted on SMS, which comes as a text and is the keyword rule's); others are left. Its
+//!   files are kept by Sinch 7 days, and the core fetches them as the text comes in.
 //!
 //! Its encryption is `None` (plans/Comms-Messaging.md §6.3), as every SMS provider's.
 
@@ -68,8 +72,8 @@ use moqui_lib::http::{Method, RestClient, RestResponse};
 use serde_json::{json, Value as Json};
 
 use crate::sms::{
-    answer, call, callback_url, flag_of, text_of, ApiBody, ApiRequest, Defaults, Inbound, InboundMedia, Keyword,
-    OptSignal, Outgoing, ProviderError, Receipt, ReceiptStatus, Refusal, Settings, SmsEvent, SmsProvider,
+    answer, call, flag_of, text_of, ApiBody, ApiRequest, Defaults, Inbound, InboundMedia, Keyword, OptSignal, Outgoing,
+    ProviderError, Receipt, ReceiptStatus, Refusal, Settings, SmsEvent, SmsProvider,
 };
 
 /// The header Sinch signs a webhook in, and the others of its signature.
@@ -84,8 +88,8 @@ const TOKEN_MARGIN_MILLIS: i64 = 60_000;
 /// A token's life when the answer names none (Sinch's is an hour).
 const TOKEN_SECONDS: i64 = 3600;
 
-/// A Sinch bridge's own settings, from its `configJson`.
-#[derive(Clone, Debug)]
+/// A Sinch bridge's own settings, from its `configJson`. Its `Debug` leaves the secrets out.
+#[derive(Clone)]
 pub struct Config {
     pub project_id: String,
     pub app_id: String,
@@ -104,14 +108,43 @@ pub struct Config {
     pub allow_internal: bool,
 }
 
-/// An access token and when it is taken as run out.
-#[derive(Clone, Debug)]
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redacted = |value: &str| if value.is_empty() { "" } else { "[redacted]" };
+        f.debug_struct("Config")
+            .field("project_id", &self.project_id)
+            .field("app_id", &self.app_id)
+            .field("key_id", &self.key_id)
+            .field("key_secret", &redacted(&self.key_secret))
+            .field("region", &self.region)
+            .field("api_base", &self.api_base)
+            .field("auth_base", &self.auth_base)
+            .field("webhook_secret", &self.webhook_secret.as_deref().map(redacted))
+            .field("sms_sender", &self.sms_sender)
+            .field("mms_sender", &self.mms_sender)
+            .field("allow_internal", &self.allow_internal)
+            .finish()
+    }
+}
+
+/// An access token and when it is taken as run out. Its `Debug` leaves the token out.
+#[derive(Clone)]
 struct Token {
     value: String,
     good_until_millis: i64,
 }
 
-/// The Sinch provider of the `sms-sinch` adapter: its access tokens, by token service and key.
+impl std::fmt::Debug for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Token")
+            .field("value", &"[redacted]")
+            .field("good_until_millis", &self.good_until_millis)
+            .finish()
+    }
+}
+
+/// The Sinch provider of the `sms-sinch` adapter (one for every Sinch bridge): its access tokens, by token service,
+/// key id and a hash of the key's secret, so a bridge whose secret changed never takes another's token.
 #[derive(Debug, Default)]
 pub struct Sinch {
     tokens: Mutex<HashMap<String, Token>>,
@@ -119,7 +152,13 @@ pub struct Sinch {
 
 impl Sinch {
     fn token_key(config: &Config) -> String {
-        format!("{}|{}", config.auth_base, config.key_id)
+        let secret = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, config.key_secret.as_bytes());
+        format!(
+            "{}|{}|{}",
+            config.auth_base,
+            config.key_id,
+            moqui_lib::codec::hex_encode(secret.as_ref())
+        )
     }
 
     /// The access token of the bridge's key at `now_millis`: the one kept, else a new one from the token service, kept
@@ -191,6 +230,14 @@ pub fn e164(number: &str) -> String {
         format!("+{number}")
     } else {
         number.to_string()
+    }
+}
+
+/// A send the bridge's setup stops (the key, the region, the credit limit): tried again, the bridge not connected.
+fn held(error: String) -> DeliveryOutcome {
+    DeliveryOutcome::Retry {
+        error,
+        not_connected: true,
     }
 }
 
@@ -306,9 +353,6 @@ impl SmsProvider for Sinch {
         if !delivery.is_empty() && delivery.len() <= 128 {
             body["correlation_id"] = Json::String(delivery.clone());
         }
-        if let Some(url) = callback_url(out.bridge) {
-            body["callback_url"] = Json::String(url);
-        }
         ApiRequest {
             method: Method::Post,
             url: format!("{}/v1/projects/{}/messages:send", config.api_base, config.project_id),
@@ -385,39 +429,34 @@ impl SmsProvider for Sinch {
         }
         if let Ok(response) = &result {
             match response.status() {
+                // the bridge's setup, not the text: held, the bridge not connected, until an administrator fixes it
                 401 => {
-                    return DeliveryOutcome::Retry {
-                        error: "Sinch refused a new access token too (401); the next try fetches another".to_string(),
-                        not_connected: true,
-                    };
+                    return held(
+                        "Sinch refused a new access token too (401); the next try fetches another".to_string(),
+                    );
                 }
                 403 => {
                     let error = self.error_of(response.body());
-                    return if response.body().contains("BILLING_CREDIT_LIMIT_BREACHED") {
-                        failed(
-                            "billingLimit",
-                            format!(
-                                "Sinch refused the text: the project's credit limit is reached ({})",
-                                error.text
-                            ),
+                    return held(if response.body().contains("BILLING_CREDIT_LIMIT_BREACHED") {
+                        format!(
+                            "billingLimit: Sinch holds the project's texts, its credit limit is reached; texts wait until \
+                             it is raised ({})",
+                            error.text
                         )
                     } else {
-                        failed(
-                            "providerRefused",
-                            format!("Sinch refused the text (403): {}", error.text),
+                        format!(
+                            "providerRefused: Sinch refused the key for this project or app (403): {}",
+                            error.text
                         )
-                    };
+                    });
                 }
                 404 => {
-                    return failed(
-                        "wrongRegion",
-                        format!(
-                            "Sinch answered 404: the app is not in region {} (the bridge's region), or its projectId or \
-                             appId is wrong: {}",
-                            config.region,
-                            self.error_of(response.body()).text
-                        ),
-                    );
+                    return held(format!(
+                        "wrongRegion: Sinch answered 404: the app is not in region {} (the bridge's region), or its \
+                         projectId or appId is wrong: {}",
+                        config.region,
+                        self.error_of(response.body()).text
+                    ));
                 }
                 _ => {}
             }
@@ -432,6 +471,13 @@ impl SmsProvider for Sinch {
     fn verifies_on_edge(&self) -> bool {
         // signed with a secret only the local node holds
         false
+    }
+
+    fn can_verify(&self, config: &Config) -> Result<(), String> {
+        match config.webhook_secret {
+            Some(_) => Ok(()),
+            None => Err("the Sinch bridge has no webhookSecret".to_string()),
+        }
     }
 
     /// The signature under the bridge's `webhookSecret`, by `HmacSHA256`, its timestamp within the window.
@@ -493,10 +539,7 @@ impl SmsProvider for Sinch {
         } else {
             (None, None)
         };
-        let event_id = id.unwrap_or_else(|| {
-            let digest = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, &request.body);
-            format!("sha256:{}", moqui_lib::codec::hex_encode(digest.as_ref()))
-        });
+        let event_id = id.unwrap_or_else(|| body_hash(&request.body));
         Some(WebhookEventKey {
             event_id,
             conversation: conversation.map(e164),
@@ -529,7 +572,10 @@ impl Sinch {
             ("opt_in_notification", Keyword::Start, "OPT_IN_SUCCEEDED"),
         ] {
             if let Some(notice) = event.get(key) {
-                return Ok(opted(notice, keyword, succeeded, ours));
+                let event_id = str_at(notice, "/request_id")
+                    .map(str::to_string)
+                    .unwrap_or_else(|| body_hash(&request.body));
+                return Ok(opted(notice, &event_id, keyword, succeeded, ours));
             }
         }
         Ok(SmsEvent::Ignored(
@@ -553,6 +599,12 @@ pub fn signature_valid(secret: &str, body: &[u8], nonce: &str, timestamp: &str, 
     hmac::verify(&key, &message, &signature).is_ok()
 }
 
+/// An event's id when it names none: a hash of the body, which Sinch's retry sends unchanged.
+fn body_hash(body: &[u8]) -> String {
+    let digest = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, body);
+    format!("sha256:{}", moqui_lib::codec::hex_encode(digest.as_ref()))
+}
+
 fn str_at<'a>(value: &'a Json, pointer: &str) -> Option<&'a str> {
     value
         .pointer(pointer)
@@ -572,6 +624,14 @@ fn millis_of(text: Option<&str>) -> Option<i64> {
 fn received(event: &Json, message: &Json, ours: Option<&str>) -> Result<SmsEvent, WebhookResponse> {
     if str_at(message, "/direction").is_some_and(|direction| direction != "TO_APP") {
         return Ok(SmsEvent::Ignored("a message from the app".to_string()));
+    }
+    // an app may have other channels (Messenger, WhatsApp): their identities are no phone numbers
+    let channel = str_at(message, "/channel_identity/channel").or_else(|| str_at(message, "/channel"));
+    if !matches!(channel, Some("SMS" | "MMS")) {
+        return Ok(SmsEvent::Ignored(format!(
+            "a message on channel {}",
+            channel.unwrap_or("none")
+        )));
     }
     let (Some(id), Some(theirs)) = (str_at(message, "/id"), str_at(message, "/channel_identity/identity")) else {
         return Err(WebhookResponse::text(
@@ -613,8 +673,8 @@ fn received(event: &Json, message: &Json, ours: Option<&str>) -> Result<SmsEvent
         their_number: e164(theirs),
         text,
         media,
-        recipients: Vec::new(),
         origin_millis: millis_of(str_at(message, "/accept_time").or_else(|| str_at(event, "/accepted_time"))),
+        ..Inbound::default()
     }))
 }
 
@@ -646,7 +706,7 @@ fn receipt(event: &Json, report: &Json) -> Result<SmsEvent, WebhookResponse> {
 
 /// An `OPT_OUT` or `OPT_IN` Sinch took: STOP or START from their number to the bridge's `smsSender` (the notice names
 /// none of ours). Left when it did not succeed, is of another channel, or the bridge has no `smsSender`.
-fn opted(notice: &Json, keyword: Keyword, succeeded: &str, ours: Option<&str>) -> SmsEvent {
+fn opted(notice: &Json, event_id: &str, keyword: Keyword, succeeded: &str, ours: Option<&str>) -> SmsEvent {
     if str_at(notice, "/status") != Some(succeeded) {
         return SmsEvent::Ignored(str_at(notice, "/status").unwrap_or("no status").to_string());
     }
@@ -657,6 +717,7 @@ fn opted(notice: &Json, keyword: Keyword, succeeded: &str, ours: Option<&str>) -
         return SmsEvent::Ignored("an opt-out with no number, or no smsSender on the bridge".to_string());
     };
     SmsEvent::OptSignal(OptSignal {
+        event_id: event_id.to_string(),
         our_number: ours.to_string(),
         their_number: e164(theirs),
         keyword,
