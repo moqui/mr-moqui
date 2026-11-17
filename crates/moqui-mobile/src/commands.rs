@@ -331,6 +331,8 @@ pub(crate) fn call_state(
     name: Option<String>,
 ) -> Result<(), String> {
     let host = host(&app)?;
+    // the check and the telling under one lock with the page's end, so a joined of a page going is told before its end
+    let _calls = moqui_lib::sync::lock(&host.calls);
     if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
         return Err("Not the shell's page".to_string());
     }

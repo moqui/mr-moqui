@@ -1382,6 +1382,15 @@ Planned:
     quick text), `EncryptedCallFlow` (an encrypted voice-only start and the upgrade).
   - Left: on the direct path a move goes through the media server first (a short gap); the picture-in-picture window
     in the desktop client's CEF is not checked; §8.2 on real phones (§18.4).
+  - Android second review fixes: the ongoing notification's Hang up and person are the call in use, not the held one;
+    Telecom's first mute report skipped on Android 14+ too (the page's own mute cannot reach Telecom: no
+    `Connection.setMuted`); every new document ends the page's calls (`PageLoadEvent::Started`), and a `joined` on its
+    way from a page that went places nothing; the screen at the ear follows the app's front and back; no
+    `CAPABILITY_HOLD` on the call in use while another is held; picture-in-picture stays while a joined call remains;
+    `call_audio` on the main thread; the chosen route asked again after a Swap; a second call active for Telecom once
+    the first is held; the call screen's mount token; a hold that never settles gives up; a Hang up before the join
+    clears the kept answer. Another account's ring answered mid-call drops the call without telling its server
+    (documented, Mobile-Client "During a call").
 
 #### Phase 5: calls, network
 
@@ -1595,7 +1604,7 @@ These cannot be shown by a browser at phone width. They are collected here for e
 |---|---|
 | 1 | The keyboard does not cover the composer. A long press vibrates. Back closes a sheet, a pane and the room in order |
 | 2 | The soak cases of §7.6. Reply and Mark read from a notification. A notification after a reboot |
-| 4 | The rows of §8.2 between two phones and with the desktop app. A voice call on the earpiece with the screen off at the ear; a video call on the speaker; a Bluetooth and a wired headset taking the call at once and giving it back; the audio button's choices. Home during a video call: picture-in-picture with the video only; Home during a voice call: the call goes on with its microphone (and a video call's camera) for minutes, screen off. A second call while in one: it rings, Answer holds the first, Swap, and a car's or watch's hold. Move a call from the desktop to the phone and back with no gap. The lock screen. An encrypted call on the phone's WebView. Opening a server page or switching account mid-call (the native call ends with the page). The held party hanging up (the native call on hold goes). A Bluetooth headset connected at the call's start. Chromium WebRTC's own audio routing against Telecom's. A car's or watch's mute, and what a car or a watch shows of a call |
+| 4 | The rows of §8.2 between two phones and with the desktop app. A voice call on the earpiece with the screen off at the ear; a video call on the speaker; a Bluetooth and a wired headset taking the call at once and giving it back; the audio button's choices. Home during a video call: picture-in-picture with the video only; Home during a voice call: the call goes on with its microphone (and a video call's camera) for minutes, screen off. A second call while in one: it rings, Answer holds the first, Swap, and a car's or watch's hold. Move a call from the desktop to the phone and back with no gap. The lock screen. An encrypted call on the phone's WebView. Opening a server page or switching account mid-call (the native call ends with the page). The held party hanging up (the native call on hold goes). A Bluetooth headset connected at the call's start. Chromium WebRTC's own audio routing against Telecom's. A car's or watch's mute, and what a car or a watch shows of a call; a second call shown answered on a car or a watch once the first is held; the screen at the ear after the app goes to the back and comes back; a renderer crash mid-call |
 | 5 | Wi-Fi to mobile data during a call |
 | 7 | A voice note recorded and played |
 | 9 | The calling account turned on in Calling accounts; a number dialed in the phone's dialer and from Contacts with MR Moqui is filled in on the app's Dialer and placed on Call (and with the app closed, and the phone locked); the pick of an account with two that call; `*67`; an emergency number stays on the SIM; what a car or watch shows of the cancelled Telecom call. Names from the phone's contacts on phone rooms and in the new-chat search, the permission's question at the first search, and names after allowing contacts in Android's settings. A group MMS between three real phones: one room, a reply all of them get, and each one's receipt (Telnyx's group receipts are from its documentation) |

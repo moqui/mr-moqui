@@ -140,7 +140,8 @@ class CallService : Service() {
         fun notification(context: Context, foreground: Boolean): Notification {
             channels(context)
             val ringing = CallManager.ringing()
-            val answered = CallManager.calls().firstOrNull { it.state == CallManager.State.ANSWERED }
+            // the call the app is in (not the one on hold), else the first answered: its person and its Hang up
+            val answered = CallManager.activeCall() ?: CallManager.calls().firstOrNull { it.state == CallManager.State.ANSWERED }
             val builder: NotificationCompat.Builder
             if (ringing != null) {
                 val caller = Person.Builder().setName(ringing.caller).setImportant(true).build()

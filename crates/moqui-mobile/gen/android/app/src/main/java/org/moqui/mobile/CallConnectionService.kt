@@ -51,7 +51,6 @@ class CallConnectionService : ConnectionService() {
     override fun onCreateOutgoingConnection(account: PhoneAccountHandle?, request: ConnectionRequest?): Connection {
         if (DialAccount.isDial(account ?: request?.accountHandle)) return DialAccount.dialed(this, request)
         val id = request?.extras?.getString(CallManager.EXTRA_CALL)
-            ?: request?.address?.schemeSpecificPart
         val call = CallManager.call(id)
         val connection = CallConnection(this, id ?: "")
         connection.setAddress(Uri.fromParts(PhoneAccount.SCHEME_SIP, "moqui", null), TelecomManager.PRESENTATION_ALLOWED)
@@ -71,7 +70,7 @@ class CallConnectionService : ConnectionService() {
             DialAccount.notTaken(this)
             return
         }
-        val id = request?.extras?.getString(CallManager.EXTRA_CALL) ?: request?.address?.schemeSpecificPart
+        val id = request?.extras?.getString(CallManager.EXTRA_CALL)
         Log.w(CallManager.TAG, "Telecom did not take the call $id the app joined: its audio is the WebView's own")
     }
 }

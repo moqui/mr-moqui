@@ -246,6 +246,10 @@ pub(crate) struct MobileHost {
     answer: Mutex<Option<String>>,
     /// A number from the phone's dialer waiting for the user's pick of the account that calls it ([`Self::dial_choice`]).
     dial: Mutex<Option<crate::dial::DialChoice>>,
+    /// Held while the page's call state goes to the native code (`call_state`) and while a navigation tells it the page
+    /// went ([`Self::navigate`]): a `joined` checked against a page that is going is told before the page's end, which
+    /// then ends it, never after.
+    pub(crate) calls: Mutex<()>,
 }
 
 impl MobileHost {
@@ -258,6 +262,7 @@ impl MobileHost {
             dir,
             answer: Mutex::new(None),
             dial: Mutex::new(None),
+            calls: Mutex::new(()),
         }
     }
 
@@ -505,6 +510,13 @@ impl MobileHost {
 
     /// The shell leaves the call `id`, if it is in it or has it on hold (the call notification's Hang up, a headset's).
     pub(crate) fn hang_up(&self, id: &str) {
+        // an answer handed over and not taken yet goes with the call (Hang up before the page joined)
+        {
+            let mut answer = moqui_lib::sync::lock(&self.answer);
+            if answer.as_deref() == Some(id) {
+                *answer = None;
+            }
+        }
         if self.is_shell(MAIN) && self.page.has_nonce() {
             self.eval(&crate::calls::hang_up_script(id));
         }
@@ -522,13 +534,7 @@ impl MobileHost {
 
     /// Show `url` in the one webview; its sockets go with the page that leaves.
     pub(crate) fn navigate(&self, url: &Url) {
-        self.page.navigating();
-        // the page leaves with its calls' media: the native calls it joined end with it (a server page, a reload, an
-        // account switch); a ring, or a call answered on the phone and not joined yet, stays
-        #[cfg(target_os = "android")]
-        if let Err(err) = crate::android::calls_page_gone() {
-            log::warn!("The native calls were not told the page went: {err}");
-        }
+        self.page_gone(true);
         if url.origin().ascii_serialization() == SHELL_ORIGIN {
             self.page.host_shows_shell();
         }
@@ -542,6 +548,21 @@ impl MobileHost {
                 }
             }
             None => log::warn!("No webview to show {url}"),
+        }
+    }
+
+    /// The page goes (a navigation of the host's, or any new document: `PageLoadEvent::Started`, a reload, the webview's
+    /// own history, a renderer gone and loaded again): with `navigating`, the page state too. The page leaves with its
+    /// calls' media, so the native calls it joined end with it; a ring, or a call answered on the phone and not joined
+    /// yet, stays. Under [`Self::calls`], so a `joined` on its way is told first.
+    pub(crate) fn page_gone(&self, navigating: bool) {
+        let _calls = moqui_lib::sync::lock(&self.calls);
+        if navigating {
+            self.page.navigating();
+        }
+        #[cfg(target_os = "android")]
+        if let Err(err) = crate::android::calls_page_gone() {
+            log::warn!("The native calls were not told the page went: {err}");
         }
     }
 

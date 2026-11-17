@@ -104,6 +104,41 @@ class CallTelecomTest {
         assertNull(CallManager.call("T2"))
     }
 
+    /**
+     * The second review of phase 4: while one call is held the call the app is in cannot be held by Telecom (the page
+     * would refuse), and can again after; an older call screen's offScreen after a newer one's screen leaves it shown.
+     */
+    @Test
+    fun aCallIsNotHoldableWhileAnotherIsHeldAndAnOlderScreenGoesUnheard() {
+        CallManager.pageCallState("T1", "joined")
+        waitFor { connection("T1")?.state == Connection.STATE_ACTIVE }
+        val first = connection("T1")!!
+        assertTrue(first.connectionCapabilities and Connection.CAPABILITY_HOLD != 0)
+        CallManager.pageCallState("T1", "held")
+        waitFor { first.state == Connection.STATE_HOLDING }
+        CallManager.pageCallState("T2", "joined")
+        waitFor { connection("T2")?.state == Connection.STATE_ACTIVE }
+        val second = connection("T2")!!
+        waitFor { second.connectionCapabilities and Connection.CAPABILITY_HOLD == 0 }
+        assertEquals("the call in use, with another held: no hold", 0, second.connectionCapabilities and Connection.CAPABILITY_HOLD)
+        assertTrue("the held one keeps it", first.connectionCapabilities and Connection.CAPABILITY_HOLD != 0)
+        // the second call left: the held one back (Resume) can be held again
+        CallManager.pageCallState("T2", "left")
+        CallManager.pageCallState("T1", "joined")
+        waitFor { first.state == Connection.STATE_ACTIVE }
+        waitFor { first.connectionCapabilities and Connection.CAPABILITY_HOLD != 0 }
+        assertTrue(first.connectionCapabilities and Connection.CAPABILITY_HOLD != 0)
+        // the call screen: a newer mount's screen, then the older one's offScreen: still shown
+        CallManager.pageCallState("T1", "screen", "20")
+        CallManager.pageCallState("T1", "offScreen", "10")
+        waitFor { CallManager.screenShown }
+        Thread.sleep(200)
+        assertTrue("an older screen's offScreen is dropped", CallManager.screenShown)
+        CallManager.pageCallState("T1", "offScreen", "20")
+        waitFor { !CallManager.screenShown }
+        assertFalse(CallManager.screenShown)
+    }
+
     @Test
     fun aVoiceCallGoesToTheEarpieceAVideoCallToTheSpeakerAndThePageChooses() {
         CallManager.pageCallState("T2", "joined")

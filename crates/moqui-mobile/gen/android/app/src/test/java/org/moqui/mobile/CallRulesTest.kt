@@ -92,6 +92,35 @@ class CallRulesTest {
         assertEquals(listOf("phoneCall"), CallRules.serviceTypes(true, true, false, false))
     }
 
+    /** §8.3 item 7: while one call is held, the call the app is in may not be held by Telecom (the page refuses). */
+    @Test
+    fun theCallInUseIsNotHoldableWhileAnotherIsHeld() {
+        assertTrue(CallRules.holdable(anotherHeld = false, held = false))
+        assertFalse(CallRules.holdable(anotherHeld = true, held = false))
+        assertTrue("the held one itself", CallRules.holdable(anotherHeld = true, held = true))
+        assertTrue("one on hold keeps the window", CallRules.pipStays(1))
+        assertFalse(CallRules.pipStays(0))
+    }
+
+    /** An older call screen's offScreen after a newer one's screen leaves the screen shown. */
+    @Test
+    fun anOlderScreensOffScreenIsDropped() {
+        assertTrue(CallRules.screenGoes(5L, 5L))
+        assertFalse("an older mount", CallRules.screenGoes(4L, 5L))
+        assertTrue("the host's own, no token", CallRules.screenGoes(null, 5L))
+    }
+
+    /** §8.3 item 5: Telecom's first mute report is not a change; the user's route is asked again after a Swap. */
+    @Test
+    fun theFirstMuteReportIsNotAChangeAndAChosenRouteComesBack() {
+        assertFalse(CallRules.muteTold(first = true))
+        assertTrue(CallRules.muteTold(first = false))
+        assertEquals(CallRules.SPEAKER, CallRules.chosenAgain(CallRules.SPEAKER, listOf(CallRules.EARPIECE, CallRules.SPEAKER), CallRules.EARPIECE))
+        assertNull("in use already", CallRules.chosenAgain(CallRules.SPEAKER, listOf(CallRules.SPEAKER), CallRules.SPEAKER))
+        assertNull("gone", CallRules.chosenAgain(CallRules.BLUETOOTH, listOf(CallRules.EARPIECE), CallRules.EARPIECE))
+        assertNull("none chosen", CallRules.chosenAgain(null, listOf(CallRules.EARPIECE), CallRules.EARPIECE))
+    }
+
     /** §9.1: the calling account is off until registered, and known to be on once a number came through it. */
     @Test
     fun theCallingAccountIsOnOnceANumberCameThroughIt() {

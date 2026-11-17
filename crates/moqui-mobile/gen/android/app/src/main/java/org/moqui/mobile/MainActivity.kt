@@ -145,6 +145,8 @@ class MainActivity : TauriActivity() {
   override fun onResume() {
     super.onResume()
     ChatNotifications.foreground = true
+    // the screen off at the ear follows the app coming to the front
+    CallAudio.changed(null)
     // the contacts allowed in Android's settings while the app was away: the page names its phone rooms again
     PhoneBook.check(this)
     askForCallsOnce()
@@ -153,6 +155,8 @@ class MainActivity : TauriActivity() {
 
   override fun onPause() {
     ChatNotifications.foreground = false
+    // and the app going to the back: the lock goes
+    CallAudio.changed(null)
     super.onPause()
   }
 
@@ -286,7 +290,8 @@ class MainActivity : TauriActivity() {
     } catch (err: Exception) {
       Log.d(CallManager.TAG, "No picture-in-picture: ${err.message}")
     }
-    if (isInPictureInPictureMode && CallManager.activeCall() == null) moveTaskToBack(false)
+    // the small window goes with the last joined call, not when the only call goes on hold
+    if (isInPictureInPictureMode && !CallRules.pipStays(CallManager.calls().count { it.joined })) moveTaskToBack(false)
   }
 
   private fun enterPip(): Boolean = try {

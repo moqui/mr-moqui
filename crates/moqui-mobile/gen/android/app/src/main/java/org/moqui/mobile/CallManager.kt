@@ -252,6 +252,8 @@ object CallManager {
             return
         }
         call.connection = connection
+        // a call that comes while another is held cannot be held by Telecom
+        holdCapabilities()
     }
 
     /**
@@ -407,11 +409,17 @@ object CallManager {
      */
     @JvmStatic
     fun pageCallState(id: String, state: String, name: String) {
+        // the page this came from: a joined that comes after its page went ([pageGone]) places nothing
+        val epoch = pageEpoch
         onMain {
             val context = appContext ?: return@onMain
             val call = calls[id]
             when (state) {
                 "joined" -> {
+                    if (call == null && epoch != pageEpoch) {
+                        Log.i(TAG, "The call $id was joined by a page that has gone: not placed")
+                        return@onMain
+                    }
                     if (call == null) {
                         // a call joined in the app (not rung here): the foreground service keeps it while the screen is
                         // off, and Telecom routes its audio
@@ -450,6 +458,11 @@ object CallManager {
                     call.held = true
                     call.connection?.setOnHold()
                     Log.i(TAG, "The call $id is on hold")
+                    // a second call answered on the phone (Hold and answer) is active for Telecom now, not ringing until
+                    // the page's joined: a car or a watch shows it answered
+                    calls.values.firstOrNull { it !== call && it.state == State.ANSWERED && !it.held &&
+                        it.connection != null && it.connection?.state != android.telecom.Connection.STATE_ACTIVE }
+                        ?.connection?.setActive()
                 }
                 // the call's kind (voice to video and back): its default audio route and picture-in-picture follow
                 "video", "voice" -> if (call != null) {
@@ -458,11 +471,14 @@ object CallManager {
                 } else {
                     pendingKind[id] = state == "video"
                 }
+                // with the mount's token (`name`): an older screen's offScreen that comes after a newer one's screen is
+                // dropped, so the screen counts as shown ([CallRules.screenGoes])
                 "screen" -> {
                     screenShown = true
+                    screenToken = name.toLongOrNull() ?: screenToken
                     if (call != null && call.answerNonce != null && call.state == State.ANSWERED) appScreen?.get()?.showOverLock(true)
                 }
-                "offScreen" -> {
+                "offScreen" -> if (CallRules.screenGoes(name.toLongOrNull(), screenToken)) {
                     screenShown = false
                     leaveLockScreen()
                 }
@@ -487,7 +503,8 @@ object CallManager {
      */
     fun hangUp(context: Context, id: String) {
         val call = calls.remove(id) ?: return
-        if (call.joined) hangUpPage(id)
+        // joined, or answered on the phone and not joined yet: the page leaves it, and the host forgets the answer
+        if (call.joined || call.state == State.ANSWERED) hangUpPage(id)
         end(call, DisconnectCause.LOCAL)
         changed(context.applicationContext)
     }
@@ -498,6 +515,8 @@ object CallManager {
      */
     @JvmStatic
     fun pageGone() {
+        // at once, on the caller's thread: a joined of the page that went, still on its way, places nothing
+        pageEpoch++
         onMain {
             val context = appContext ?: return@onMain
             val gone = calls.values.filter { it.joined }
@@ -508,7 +527,29 @@ object CallManager {
                 Log.i(TAG, "The page with the call ${call.id} went: the call here ends")
             }
             screenShown = false
+            screenToken = 0L
             changed(context)
+        }
+    }
+
+    /** The token of the call screen shown last (its mount's, from the page). */
+    private var screenToken = 0L
+
+    /** The page's loads (incremented by [pageGone]): a page's message carries the one it came in. */
+    @Volatile private var pageEpoch = 0L
+
+    /**
+     * Telecom's hold of the call the app is in is refused while another is on hold (the page holds one call at a time):
+     * that call has no CAPABILITY_HOLD then, so Telecom does not take a hold for granted; it comes back after.
+     */
+    private fun holdCapabilities() {
+        val anyHeld = calls.values.any { it.held }
+        for (call in calls.values) {
+            val connection = call.connection ?: continue
+            val before = connection.connectionCapabilities
+            val after = if (CallRules.holdable(anyHeld, call.held)) before or android.telecom.Connection.CAPABILITY_HOLD
+            else before and android.telecom.Connection.CAPABILITY_HOLD.inv()
+            if (after != before) connection.connectionCapabilities = after
         }
     }
 
@@ -531,6 +572,7 @@ object CallManager {
     /** After any change: the service as the calls are, and no showing over the lock screen without a call answered
      *  here. */
     private fun changed(context: Context) {
+        holdCapabilities()
         CallService.refresh(context)
         if (calls.values.none { it.state == State.ANSWERED && it.answerNonce != null }) appScreen?.get()?.showOverLock(false)
         appScreen?.get()?.updatePip()

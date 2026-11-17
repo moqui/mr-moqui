@@ -221,6 +221,25 @@
         // its call screen shown or left (over the lock screen the app shows only that)
         // name: the call's name for a car or a watch (the room, or the other people), with joined; a promise of the ask, so
         // what follows goes after it
+        // the name a car or a watch shows of a call: the other people, else the room's name
+        joinedName(view) {
+            if (!view) return "";
+            return (view.participants || []).filter((p) => p.userId !== call.me).map((p) => p.displayName).filter((n) => n).join(", ")
+                || view.roomName || "";
+        },
+        // the mobile app's native call joined: joined with its name first, then its kind once that is told (the kind's
+        // default route needs the call there)
+        tellJoined(callSessionId, kind) {
+            return call.hostCallState(callSessionId, "joined", call.joinedName(state.calls[callSessionId]))
+                .then(() => call.hostCallState(callSessionId, kind));
+        },
+        // the call screen shown and gone, with a token of its mount: an older screen's offScreen that comes after a newer
+        // screen's screen is ignored by the app, so the call screen counts as shown
+        screenSeq: 0,
+        screenToken() {
+            call.screenSeq += 1;
+            return String(Math.floor(root.performance && performance.timeOrigin ? performance.timeOrigin : Date.now()) * 1000 + call.screenSeq);
+        },
         hostCallState(callSessionId, what, name) {
             const host = root.moquiDesktop;
             if (!host || typeof host.callState !== "function") return Promise.resolve();
@@ -718,11 +737,15 @@
             // one hold at a time: a second ask while one is on its way (Telecom's hold and the page's Hold and answer at
             // once) gets the same answer
             if (call.holding && call.holding.callSessionId === id) return call.holding.promise;
-            const promise = call.holdNow(id, legId).finally(() => { if (call.holding && call.holding.promise === promise) call.holding = null; });
+            // a hold that never settles (no answer from the server) gives up, so the next ask is not stuck on it
+            const gaveUp = new Promise((resolve) => setTimeout(() => resolve(null), call.HOLD_WAIT_MS));
+            const promise = Promise.race([call.holdNow(id, legId), gaveUp])
+                .finally(() => { if (call.holding && call.holding.promise === promise) call.holding = null; });
             call.holding = { callSessionId: id, promise };
             return promise;
         },
         holding: null,
+        HOLD_WAIT_MS: 15000,
         // the call on hold is no longer this page's (it ended, moved, or was left): the mobile app's native call on hold
         // ends with it
         dropHeld(held) {
@@ -1061,11 +1084,7 @@
                         if (state.current === callSessionId) {
                             // the mobile app's native call, with its name for a car or a watch; then its kind (the default
                             // audio route), after it, and its audio routes
-                            const kind = call.hasVideo() && !state.cameraOff ? "video" : "voice";
-                            const named = state.calls[callSessionId];
-                            const name = named ? (named.participants || []).filter((p) => p.userId !== call.me).map((p) => p.displayName).join(", ")
-                                || named.roomName || "" : "";
-                            call.hostCallState(callSessionId, "joined", name).then(() => call.hostCallState(callSessionId, kind));
+                            call.tellJoined(callSessionId, call.hasVideo() && !state.cameraOff ? "video" : "voice");
                             const host = root.moquiDesktop;
                             if (host && typeof host.callAudio === "function") Promise.resolve(host.callAudio()).then(call.setHostAudio, () => null);
                             call.listDevices();
@@ -2413,10 +2432,11 @@
         mounted() {
             this.load();
             this.timer = setInterval(() => (this.now = Date.now()), 1000);
-            if (this.callSessionId) moqui.call.hostCallState(this.callSessionId, "screen");
+            this.screenToken = moqui.call.screenToken();
+            if (this.callSessionId) moqui.call.hostCallState(this.callSessionId, "screen", this.screenToken);
         },
         beforeUnmount() {
-            if (this.callSessionId) moqui.call.hostCallState(this.callSessionId, "offScreen");
+            if (this.callSessionId) moqui.call.hostCallState(this.callSessionId, "offScreen", this.screenToken);
             clearInterval(this.timer);
             this.stopPreview();
         },

@@ -265,6 +265,9 @@ fn shell_webview(app: &AppHandle, host: &Arc<MobileHost>) -> tauri::Result<()> {
     .on_navigation(move |url| navigation(&navigation_host, url))
     .on_page_load(move |_window, payload| match payload.event() {
         PageLoadEvent::Started => {
+            // any new document (a reload, the webview's own Back, a renderer gone and loaded again, not a pushState or
+            // a hash): the calls the page joined end with it
+            load_host.page_gone(false);
             load_host.page.started(payload.url());
             if let Some(core) = moqui_lib::sync::lock(&load_host.client).clone() {
                 core.sockets().close_for(MAIN);

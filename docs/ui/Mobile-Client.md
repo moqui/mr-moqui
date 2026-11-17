@@ -242,34 +242,47 @@ The call's media stays the WebView's; the native code gives it what a phone's ow
 - **Every call is in Telecom.** A call rung here is an incoming self-managed call; one the page joins by itself
   (started from a chat, joined, moved to this phone) is placed as an outgoing self-managed call (`placeCall`), so it
   has the audio routes, a headset's hang-up, and the hold of another call. The page says what the call does
-  (`call_state`): `joined` (with the call's name: the other people, or the room), `left`, `held`, `screen`, `offScreen`,
-  and its kind, `video` or `voice` (sent after `joined`; one that comes first is kept for it). A car or a watch shows
-  the call's name, and a neutral address, not a call id.
-- **The page owns its calls.** When the page goes (a server page opened, a reload, an account switch, another
-  account's ring answered: every navigation of the webview), the calls it joined end here, held ones too; a ring, or a
-  call answered on the phone and not joined yet, stays. Every way the page loses a call on hold (it ended, moved to
-  another device, or was left) tells the app (`left`), and the ongoing notification's Hang up ends the native call at
-  once, the page leaving it, or the one it has on hold.
+  (`call_state`): `joined` (with the call's name: the other people, or the room), `left`, `held`, `screen` and
+  `offScreen` (with the call screen's mount token: an older screen's `offScreen` after a newer one's `screen` is
+  dropped), and its kind, `video` or `voice` (sent once `joined` is told; one that comes first is kept for it). A car or
+  a watch shows the call's name, and a neutral address, not a call id.
+- **The page owns its calls.** When the page goes (every new document of the webview, `PageLoadEvent::Started`: a
+  server page opened, a reload, the shell's own `location.reload()`, the webview's Back, an account switch, another
+  account's ring answered, a renderer gone and loaded again; not a `pushState` or a hash), the calls it joined end
+  here, held ones too; a ring, or a call answered on the phone and not joined yet, stays. A `joined` that was on its
+  way from the page that went places nothing (the page's end and `call_state` hold one lock, and the native code
+  counts the page's loads). Another account's ring answered, or its notification tapped, during a call switches the
+  account and so drops the call this page was in without telling its server first; the server sees its leg go with the
+  socket. Every way the page loses a call on hold (it ended, moved to another device, or was left) tells the app
+  (`left`), and the ongoing notification's Hang up, and its person, are the call the app is in (not the one on hold):
+  it ends the native call at once, the page leaving it; one answered on the phone and not joined yet goes with the
+  answer the host kept for it.
 - **Audio** goes through Telecom (`CallAudio`), each call with its own state, so a second ring does not reset the call
   the app is in, and only that call is routed: `CallEndpoint` on Android 14+, the `CallAudioState` routes before. A
   Bluetooth or wired headset that is there takes the call (also at its start, when Telecom names the earpiece first),
   one that comes takes it at once, and when it goes the call falls back to its kind's route: the earpiece for voice,
   the speaker for video. The call screen's audio button lists the routes (earpiece, speaker, headphones, Bluetooth;
-  `call_audio`, `call_audio_route`, run on the main thread) and the user's choice holds for that call. The page hears
-  each change (`moqui.call.setHostAudio`), and Telecom's mute (a car, a watch) mutes the page (`setHostMute`).
+  `call_audio`, `call_audio_route`, each read or asked on the main thread, the command waiting at most two seconds) and
+  the user's choice holds for that call, asked again when the call is the app's again after a Swap. The page hears
+  each change (`moqui.call.setHostAudio`), and Telecom's mute (a car, a watch) mutes the page (`setHostMute`); its
+  first report is the call's state at its start, not a change, so a page that joined muted stays muted. The page's own
+  mute is not shown by a car or a watch: a `ConnectionService` cannot set Telecom's mute (no `Connection.setMuted`).
 - **The screen off at the ear:** a voice call on the earpiece, with its call screen showing and the app in front,
-  holds the proximity wake lock.
+  holds the proximity wake lock; it follows the app going to the back and coming to the front.
 - **Leave the app:** the call keeps going. The `phoneCall` foreground service also takes the `microphone` type once
   the app is in a call, and `camera` for a video call (Android 14 lets a service take them only from the app in front:
   a ring alone keeps `phoneCall`). A video call with the call screen showing (whichever call it shows, a swapped one
   too) goes to picture-in-picture when the user leaves the app (by itself on Android 12+, from `onUserLeaveHint`
   before) or presses Back past the page; the window has Mute and Hang up, the call screen shows only the video
-  (`moqui.call.setHostPip`), and the window goes when the call is over. Its shape is a fixed 3:4.
+  (`moqui.call.setHostPip`), and the window goes with the last joined call (not when the only call goes on hold). Its
+  shape is a fixed 3:4.
 - **Hold and call waiting:** the page's hold (Hold and answer, Swap) holds the Telecom call (`held`) and `joined`
   takes it off; Telecom's own hold (another call, a watch, a car) reaches the page (`moqui.call.hostHold`), which holds
-  the call unless another is on hold already (the page holds one call at a time); a hold already on its way answers
-  once. A second ring rings through Telecom. Answering it on the phone does not make it active while the first is:
-  the page puts the first on hold (Hold and answer), and its `joined` makes the second active.
+  the call unless another is on hold already (the page holds one call at a time), so while one is held the call in use
+  has no `CAPABILITY_HOLD` and Telecom does not count on a hold (it has it again after); a hold already on its way
+  answers once, and one the server never answers gives up after 15 seconds. A second ring rings through Telecom.
+  Answering it on the phone does not make it active while the first is: the page puts the first on hold (Hold and
+  answer), and the second is active for Telecom as soon as the first is held, before the page's `joined`.
 - **Move to this device** is the page's (`move#Call`): a call moved to the phone is joined there and placed in Telecom
   like any joined one, and one moved away from it is left, which ends its Telecom call.
 - **The Telecom library.** These use `android.telecom` directly, and so does the calling account below:

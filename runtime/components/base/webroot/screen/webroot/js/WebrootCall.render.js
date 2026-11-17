@@ -1486,8 +1486,8 @@
               }, null, 512))
             }
         } },
-        "m-call-compact": { hash: "68de5fac", make: function (Vue) {
-            const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, createElementVNode: _createElementVNode, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, normalizeClass: _normalizeClass, normalizeStyle: _normalizeStyle, createElementBlock: _createElementBlock, renderList: _renderList, Fragment: _Fragment, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
+        "m-call-compact": { hash: "429d5d1b", make: function (Vue) {
+            const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, createElementVNode: _createElementVNode, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, vShow: _vShow, withDirectives: _withDirectives, normalizeClass: _normalizeClass, normalizeStyle: _normalizeStyle, createElementBlock: _createElementBlock, renderList: _renderList, Fragment: _Fragment, resolveDirective: _resolveDirective } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_tooltip = _resolveComponent("q-tooltip")
@@ -1509,7 +1509,7 @@
                 class: "m-call-compact column no-wrap",
                 style: _normalizeStyle(_ctx.panel ? 'min-height:calc(100vh - 140px)' : 'min-height:calc(100vh - 16px)')
               }, [
-                _createElementVNode("div", { class: "row items-center no-wrap q-mb-xs" }, [
+                _withDirectives(_createElementVNode("div", { class: "row items-center no-wrap q-mb-xs" }, [
                   _createVNode(_component_q_btn, {
                     flat: "",
                     round: "",
@@ -1584,8 +1584,10 @@
                         _: 1
                       }, 8, ["aria-label", "onClick"]))
                     : _createCommentVNode("", true)
+                ], 512), [
+                  [_vShow, !_ctx.call.hostPip]
                 ]),
-                (_ctx.call.held)
+                (_ctx.call.held && !_ctx.call.hostPip)
                   ? (_openBlock(), _createBlock(_component_q_banner, {
                       key: 0,
                       dense: "",
@@ -1620,7 +1622,7 @@
                       _: 1
                     }))
                   : _createCommentVNode("", true),
-                _createElementVNode("div", { class: "row q-mb-xs" }, [
+                _withDirectives(_createElementVNode("div", { class: "row q-mb-xs" }, [
                   _createVNode(_component_q_chip, {
                     dense: "",
                     square: "",
@@ -1639,6 +1641,8 @@
                     ]),
                     _: 1
                   }, 8, ["icon", "class", "data-e2ee"])
+                ], 512), [
+                  [_vShow, !_ctx.call.hostPip]
                 ]),
                 _createElementVNode("div", {
                   class: "col relative-position m-call-stage",
@@ -1755,7 +1759,7 @@
                       }), 128))
                     ]))
                   : _createCommentVNode("", true),
-                _createElementVNode("div", { class: "row justify-center items-center no-wrap q-gutter-sm q-py-sm m-call-controls" }, [
+                _withDirectives(_createElementVNode("div", { class: "row justify-center items-center no-wrap q-gutter-sm q-py-sm m-call-controls" }, [
                   _createVNode(_component_q_btn, {
                     round: "",
                     unelevated: "",
@@ -1774,9 +1778,64 @@
                     ]),
                     _: 1
                   }, 8, ["color", "icon", "aria-label", "onClick"]),
-                  (_ctx.canOutput)
+                  (_ctx.hostRoutes.length)
                     ? (_openBlock(), _createBlock(_component_q_btn, {
                         key: 0,
+                        round: "",
+                        unelevated: "",
+                        color: _ctx.call.hostAudio.route === 'speaker' ? 'primary' : 'grey-8',
+                        icon: _ctx.routeIcon,
+                        class: "m-call-route",
+                        "aria-label": _ctx.t('Audio')
+                      }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_tooltip, null, {
+                            default: _withCtx(() => [
+                              _createTextVNode(_toDisplayString(_ctx.t('Audio')), 1)
+                            ]),
+                            _: 1
+                          }),
+                          _createVNode(_component_q_menu, null, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_list, {
+                                dense: "",
+                                style: {"min-width":"200px"}
+                              }, {
+                                default: _withCtx(() => [
+                                  (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.hostRoutes, (r) => {
+                                    return _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                      key: r,
+                                      clickable: "",
+                                      active: _ctx.call.hostAudio.route === r,
+                                      "data-route": r,
+                                      onClick: $event => (_ctx.moquiCall().chooseHostRoute(r))
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_item_section, null, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(_ctx.routeLabel(r)), 1)
+                                          ]),
+                                          _: 2
+                                        }, 1024)
+                                      ]),
+                                      _: 2
+                                    }, 1032, ["active", "data-route", "onClick"])), [
+                                      [_directive_close_popup]
+                                    ])
+                                  }), 128))
+                                ]),
+                                _: 1
+                              })
+                            ]),
+                            _: 1
+                          })
+                        ]),
+                        _: 1
+                      }, 8, ["color", "icon", "aria-label"]))
+                    : _createCommentVNode("", true),
+                  (_ctx.canOutput)
+                    ? (_openBlock(), _createBlock(_component_q_btn, {
+                        key: 1,
                         round: "",
                         unelevated: "",
                         color: "grey-8",
@@ -1848,7 +1907,7 @@
                   }, 8, ["color", "icon", "aria-label", "onClick"]),
                   (_ctx.canFlip)
                     ? (_openBlock(), _createBlock(_component_q_btn, {
-                        key: 1,
+                        key: 2,
                         round: "",
                         unelevated: "",
                         color: "grey-8",
@@ -1869,7 +1928,7 @@
                     : _createCommentVNode("", true),
                   (_ctx.view.status !== 'ended')
                     ? (_openBlock(), _createBlock(_component_q_btn, {
-                        key: 2,
+                        key: 3,
                         round: "",
                         unelevated: "",
                         color: "grey-8",
@@ -1890,7 +1949,7 @@
                     : _createCommentVNode("", true),
                   (_ctx.hasPhone)
                     ? (_openBlock(), _createBlock(_component_q_btn, {
-                        key: 3,
+                        key: 4,
                         round: "",
                         unelevated: "",
                         color: "grey-8",
@@ -2050,6 +2109,8 @@
                     ]),
                     _: 1
                   }, 8, ["aria-label", "onClick"])
+                ], 512), [
+                  [_vShow, !_ctx.call.hostPip]
                 ])
               ], 4))
             }

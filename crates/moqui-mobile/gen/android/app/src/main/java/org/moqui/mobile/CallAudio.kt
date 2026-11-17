@@ -26,8 +26,10 @@ import java.util.concurrent.TimeUnit
  * call the app is in now ([CallManager.activeConnection]) is routed, told to the page and given the screen off at the
  * ear. A headset (Bluetooth or wired) takes the call when it is there or comes, and gives it back when it goes; else the
  * earpiece for a voice call and the speaker for a video call ([CallRules.defaultRoute]); the page's audio button
- * chooses ([request]) for the rest of that call. Android 14+ uses `CallEndpoint`, older ones the `CallAudioState`
- * routes. Telecom's mute (a car, a watch) reaches the page. Everything here runs on the main thread.
+ * chooses ([request]) for the rest of that call, asked again when the call is the app's again after a Swap. Android 14+
+ * uses `CallEndpoint`, older ones the `CallAudioState` routes. Telecom's mute (a car, a watch) reaches the page, its
+ * first report skipped. Everything here runs on the main thread: [request] and [state], called from Rust's command
+ * thread, post to it and wait.
  */
 object CallAudio {
     private const val TAG = "moqui-calls"
@@ -39,6 +41,8 @@ object CallAudio {
         var route: String? = null
         var routes: List<String> = emptyList()
         var chosen = false
+        /** The route the user chose for this call, asked again when the call is the app's again (after a Swap). */
+        var chosenRoute: String? = null
         val endpoints = HashMap<String, Any>()
         var muted: Boolean? = null
     }
@@ -59,9 +63,25 @@ object CallAudio {
         audios.remove(id)
     }
 
-    /** What the page shows: `{route, routes}` of the call the app is in, as JSON. */
+    /** What the page shows: `{route, routes}` of the call the app is in, as JSON; read on the main thread (Rust's
+     *  command thread waits for it, at most two seconds). */
     @JvmStatic
     fun state(): String {
+        if (Looper.myLooper() == Looper.getMainLooper()) return stateNow()
+        var text = JSONObject().put("route", JSONObject.NULL).put("routes", JSONArray()).toString()
+        val done = CountDownLatch(1)
+        main.post {
+            try {
+                text = stateNow()
+            } finally {
+                done.countDown()
+            }
+        }
+        done.await(2, TimeUnit.SECONDS)
+        return text
+    }
+
+    private fun stateNow(): String {
         val audio = active()?.let { audios[it.id] }
         return JSONObject().put("route", audio?.route ?: JSONObject.NULL).put("routes", JSONArray(audio?.routes ?: emptyList<String>())).toString()
     }
@@ -100,12 +120,17 @@ object CallAudio {
         changed(connection)
     }
 
-    /** Android 14+: Telecom's mute of a call. */
+    /**
+     * Android 14+: Telecom's mute of a call. Its first report is the state the call started with, not a change (a page
+     * that joined muted stays muted), as before Android 14. A ConnectionService cannot set Telecom's mute (there is no
+     * `Connection.setMuted`), so the page's own mute is not shown by a car or a watch.
+     */
     fun muteChanged(connection: CallConnection, muted: Boolean) = onMain {
         val audio = audioOf(connection.id)
         if (audio.muted == muted) return@onMain
+        val first = audio.muted == null
         audio.muted = muted
-        if (connection === active()) Native.tellPage("mute", muted.toString())
+        if (CallRules.muteTold(first) && connection === active()) Native.tellPage("mute", muted.toString())
     }
 
     /** Before Android 14: Telecom's audio state of a call. */
@@ -119,7 +144,7 @@ object CallAudio {
         if (audio.muted != state.isMuted) {
             val first = audio.muted == null
             audio.muted = state.isMuted
-            if (!first && connection === active()) Native.tellPage("mute", state.isMuted.toString())
+            if (CallRules.muteTold(first) && connection === active()) Native.tellPage("mute", state.isMuted.toString())
         }
     }
 
@@ -129,18 +154,26 @@ object CallAudio {
             val next = if (before.isEmpty()) CallRules.defaultRoute(video, audio.routes, audio.route, audio.chosen)
             else CallRules.afterRoutesChanged(video, before, audio.routes, audio.route)
             if (next != null) {
-                if (before.isNotEmpty() && (next == CallRules.BLUETOOTH || next == CallRules.WIRED)) audio.chosen = false
+                if (before.isNotEmpty() && (next == CallRules.BLUETOOTH || next == CallRules.WIRED)) {
+                    audio.chosen = false
+                    audio.chosenRoute = null
+                }
                 set(connection, audio, next)
             }
         }
         changed(connection)
     }
 
-    /** A call's kind changed (voice to video and back), or it became the call the app is in: its default route. */
+    /**
+     * A call's kind changed (voice to video and back), or it became the call the app is in (a Swap, back from hold): the
+     * route the user chose for it again, else its default route.
+     */
     fun kindChanged(connection: CallConnection, video: Boolean) = onMain {
         if (connection !== active()) return@onMain
         val audio = audioOf(connection.id)
-        CallRules.defaultRoute(video, audio.routes, audio.route, audio.chosen)?.let { set(connection, audio, it) }
+        val next = CallRules.chosenAgain(audio.chosenRoute, audio.routes, audio.route)
+            ?: CallRules.defaultRoute(video, audio.routes, audio.route, audio.chosen)
+        next?.let { set(connection, audio, it) }
         changed(connection)
     }
 
@@ -169,6 +202,7 @@ object CallAudio {
         val audio = audioOf(connection.id)
         if (name !in audio.routes) return false
         audio.chosen = true
+        audio.chosenRoute = name
         set(connection, audio, name)
         return true
     }

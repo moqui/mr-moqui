@@ -85,6 +85,32 @@ object CallRules {
     fun proximityWanted(inCall: Boolean, video: Boolean, route: String?, screenInFront: Boolean): Boolean =
         inCall && !video && route == EARPIECE && screenInFront
 
+    /**
+     * Whether Telecom may hold a call: not the call the app is in while another is on hold (the page holds one call at a
+     * time, and would refuse); a held call, or one with none held, may.
+     */
+    fun holdable(anotherHeld: Boolean, held: Boolean): Boolean = held || !anotherHeld
+
+    /**
+     * Whether the call screen goes at an `offScreen` with [token] (its mount's), the screen shown last having [shown]:
+     * not for an older mount's (a newer screen is up); one with no token (the host's own, leaving for a server page)
+     * always.
+     */
+    fun screenGoes(token: Long?, shown: Long): Boolean = token == null || token >= shown
+
+    /** Whether Telecom's mute report is told to the page: not its first, which is the call's own state at its start. */
+    fun muteTold(first: Boolean): Boolean = !first
+
+    /**
+     * The route the user chose for a call, asked again when it is the app's call again (a Swap, back from hold): when
+     * Telecom still offers it and does not use it now. Null: nothing to ask.
+     */
+    fun chosenAgain(chosen: String?, available: Collection<String>, current: String?): String? =
+        chosen?.takeIf { it in available && it != current }
+
+    /** The picture-in-picture window stays while a joined call remains (one on hold too); it goes with the last. */
+    fun pipStays(joinedCalls: Int): Boolean = joinedCalls > 0
+
     /** A video call, in the app and on its call screen, goes to picture-in-picture when the user leaves the app. */
     fun pipWanted(inCall: Boolean, video: Boolean, onCallScreen: Boolean): Boolean = inCall && video && onCallScreen
 

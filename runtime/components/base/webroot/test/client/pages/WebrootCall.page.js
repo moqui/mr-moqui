@@ -283,9 +283,35 @@ test("the app's native calls: a held call gone tells the app, one hold at a time
         call.setHostMute(true);
         call.setHostMute(true);
         assert.equal(toggles.length, 1);
-        // joined goes with the call's name, then its kind after it
-        await call.hostCallState("C2", "joined", "Bob");
-        assert.ok(told.includes("C2:joined:Bob"));
+        // joined goes with the call's name (the other people, else the room's), then its kind once joined is told
+        assert.equal(call.joinedName({ participants: [{ userId: call.me, displayName: "Me" }, { userId: "bob", displayName: "Bob" },
+            { userId: "cy", displayName: "Cy" }], roomName: "Ops" }), "Bob, Cy");
+        assert.equal(call.joinedName({ participants: [{ userId: call.me, displayName: "Me" }], roomName: "Ops" }), "Ops");
+        assert.equal(call.joinedName(null), "");
+        state.calls.C2 = { callSessionId: "C2", participants: [{ userId: "bob", displayName: "Bob" }], roomName: "Ops" };
+        let joinedDone = null;
+        const order = [];
+        window.moquiDesktop = { callState: (id, what, name) => {
+            order.push(what + (name ? ":" + name : ""));
+            return what === "joined" ? new Promise((resolve) => { joinedDone = resolve; }) : Promise.resolve();
+        } };
+        const told2 = call.tellJoined("C2", "video");
+        await Promise.resolve();
+        assert.deepEqual(order, ["joined:Bob"], "the kind waits for joined");
+        joinedDone();
+        await told2;
+        assert.deepEqual(order, ["joined:Bob", "video"]);
+        delete state.calls.C2;
+        // the call screen's token: each mount a newer one
+        assert.ok(Number(call.screenToken()) < Number(call.screenToken()));
+        // a hold that never settles gives up, and the next ask is not stuck on it
+        const wait = call.HOLD_WAIT_MS;
+        call.HOLD_WAIT_MS = 20;
+        moqui.request = () => new Promise(() => {});
+        Object.assign(state, { current: "C5", legId: "L5", phase: "connected", held: null });
+        assert.equal(await call.hold(), null);
+        assert.equal(call.holding, null);
+        call.HOLD_WAIT_MS = wait;
     } finally {
         moqui.request = request;
         call.toggleMute = toggleMute;
