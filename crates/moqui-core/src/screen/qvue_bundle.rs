@@ -15,10 +15,11 @@
 //! A `.qvue` compiled for a page on the runtime build of Vue, which has no template compiler and needs no
 //! `unsafe-eval` (SEC-PSF-04; docs/ui/Qvt-Client.md, "Bundled qvue"). A request `<path>.qvue?_qvt=bundle` (a script
 //! element sends no header of its choosing) for a screen whose qvue is a `template="false"` text, or for a `.qvue`
-//! file under a screen, is answered with the script of [`vue_check::qvue_make`] registered as
-//! `moqui.qvtBundled[<path>]` ([`vue_check::served_qvue`]), `text/javascript` with an `ETag` and
-//! `X-Moqui-Qvt: bundled-qvue`. The client loads it with a script element and makes the component with
-//! `moqui.bundledComponent(path)`.
+//! file under a screen, is answered with the script of [`vue_check::qvue_make`] ([`vue_check::served_qvue`]),
+//! `text/javascript` with an `ETag` and `X-Moqui-Qvt: bundled-qvue`. The client loads it with a script element, and it
+//! registers in `moqui.qvtBundled` under the name its loader gave, else the public path it was loaded from: not the
+//! screen path the server resolved, which a site route or a remote frontend maps from another. The client makes the
+//! component with `moqui.bundledComponent(path)`.
 //!
 //! The screen's render runs as for the plain `.qvue` request (its authorization, actions, status and caching), and its
 //! text is compiled once for each text the definition has, kept with the definition as a server-static template is
@@ -46,17 +47,6 @@ pub(crate) fn asked(request: &WebRequest) -> bool {
         .query
         .iter()
         .any(|(name, value)| name == "_qvt" && value == "bundle")
-}
-
-/// The name a bundle registers under: the request path up to the end of its `.qvue` name (without the extra path after
-/// it, and without the query), less the `.qvue`, as the client names the screen it loads (its route's `basePath`, which
-/// varies with the site's mount).
-pub(crate) fn bundle_name(path: &str) -> String {
-    let path = path.split(['?', '#']).next().unwrap_or(path);
-    if let Some(at) = path.find(".qvue/") {
-        return path[..at].to_string();
-    }
-    path.strip_suffix(".qvue").unwrap_or(path).to_string()
 }
 
 /// What one text compiled to: its `make` object, or why it could not be compiled.
@@ -108,7 +98,7 @@ pub(crate) fn answer_render(state: &RenderState, request: &WebRequest) {
     web::clear_output();
     let text = String::from_utf8_lossy(&body);
     let made = def.generated.qvue_bundle().made(&state.factory, &text);
-    respond(request, headers, &bundle_name(&request.path), made, &def.location);
+    respond(request, headers, made, &def.location);
 }
 
 /// A `.qvue` file under a screen, asked for as its bundle: its text compiled, with the conf's headers of a text file
@@ -145,13 +135,14 @@ pub(crate) fn answer_file(
             "public, max-age=31536000, immutable".to_string(),
         ));
     }
-    respond(request, headers, &bundle_name(&request.path), made, location);
+    respond(request, headers, made, location);
     Ok(())
 }
 
-/// Send the bundle of `made` named `name`, with `headers` (what the render or the conf set: `Cache-Control` and the
-/// render's own) less those of the text it replaces. A text that did not compile is a 500, logged with `what`.
-fn respond(request: &WebRequest, headers: Vec<(String, String)>, name: &str, made: Made, what: &str) {
+/// Send the bundle of `made`, whose script and `ETag` depend on the text alone, with `headers` (what the render or the
+/// conf set: `Cache-Control` and the render's own) less those of the text it replaces. A text that did not compile is a
+/// 500, logged with `what`.
+fn respond(request: &WebRequest, headers: Vec<(String, String)>, made: Made, what: &str) {
     let make = match made {
         Ok(make) => make,
         Err(reason) => {
@@ -173,7 +164,7 @@ fn respond(request: &WebRequest, headers: Vec<(String, String)>, name: &str, mad
         }
     }
     extra.push(("X-Moqui-Qvt".to_string(), HANDLER.to_string()));
-    let script = vue_check::served_qvue(name, &make);
+    let script = vue_check::served_qvue(&make);
     let etag = format!("W/\"{:x}\"", fnv1a(script.as_bytes()));
     super::static_files::respond_bytes(
         request,

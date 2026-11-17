@@ -782,6 +782,11 @@ fn bundled_screens_are_precompiled() {
 /// Run a bundle of `precompiled_qvue` as the shell does, with a stand-in Vue and `moqui`, and make each of `names`:
 /// what is wrong (a screen that is missing or does not make, a component left with a template or without a render).
 fn made_bundle(made: &str, names: &[&str]) -> Vec<String> {
+    made_bundle_in(made, names, "")
+}
+
+/// [`made_bundle`], with `prelude` run first (a stand-in `document` whose `currentScript` loads a served bundle).
+fn made_bundle_in(made: &str, names: &[&str], prelude: &str) -> Vec<String> {
     let js = crate::script::standalone::Standalone::start(256 * 1024 * 1024, || false);
     {
         js.run(
@@ -789,6 +794,9 @@ fn made_bundle(made: &str, names: &[&str]) -> Vec<String> {
              globalThis.Vue = new Proxy({}, { get: function () { return function () { return {}; }; } });",
         )
         .unwrap();
+        if !prelude.is_empty() {
+            js.run(prelude).unwrap();
+        }
         if let Err(err) = js.run(made) {
             return vec![format!("the bundle did not run: {err}")];
         }
@@ -894,9 +902,11 @@ module.exports = {
 }
 
 /// SEC-PSF-04: a `.qvue` asked for as its bundle (`?_qvt=bundle`, which a script element can send) is answered with the
-/// file's text compiled to render functions, registered under the request path without `.qvue` (the name the client
-/// loads it by), as `text/javascript` with an `ETag` and `X-Moqui-Qvt: bundled-qvue`: a screen's `template="false"` qvue
-/// (the screen's caching as for the plain request) and a `.qvue` file under a screen. The plain request is the text as
+/// file's text compiled to render functions, as `text/javascript` with an `ETag` and `X-Moqui-Qvt: bundled-qvue`: a
+/// screen's `template="false"` qvue (the screen's caching as for the plain request) and a `.qvue` file under a screen.
+/// The script registers under the name its loader gave, else the public path it was loaded from without `.qvue` (not
+/// the screen path, which a site route maps from another), so its text and `ETag` are the file's alone, whatever path
+/// served it. The plain request is the text as
 /// before, and a qvue the screen renders as a template has no bundle. The island's answer is kept for the client spec
 /// (`webroot/test/client/pages/WebrootPublic.island.bundle.js`, `UPDATE_GOLDEN=1` writes it).
 #[test]
@@ -928,6 +938,14 @@ fn a_qvue_asked_for_as_its_bundle_is_compiled_and_named_by_its_path() {
     write("Root/Loose.qvue", &source);
     let root = dir.join("Root.xml").to_string_lossy().into_owned();
     let world = super::World::open("");
+    // a stand-in document whose current script was loaded from `src`, with the loader's name
+    let loaded_from = |src: &str, name: Option<&str>| {
+        format!(
+            "globalThis.document = {{ currentScript: {{ src: {}, getAttribute: function () {{ return {}; }} }} }};",
+            serde_json::to_string(src).unwrap(),
+            serde_json::to_string(&name).unwrap()
+        )
+    };
     let bundle = |path: &str, tag: Option<&str>| {
         let mut asked = super::request("GET", path);
         asked.query.push(("_qvt".to_string(), "bundle".to_string()));
@@ -953,11 +971,25 @@ fn a_qvue_asked_for_as_its_bundle_is_compiled_and_named_by_its_path() {
         response.header("Cache-Control")
     );
     let tag = response.header("ETag").expect("an ETag").to_string();
-    assert!(body.contains(r#"moqui.qvtBundled["/Island"] = { make: function (Vue) {"#), "{body}");
+    assert!(body.contains("moqui.qvtBundled[name] = { make: function (Vue) {"), "{body}");
     for banned in ["new Function", "eval(", "with ("] {
         assert!(!body.contains(banned), "{banned}: {body}");
     }
-    assert_eq!(made_bundle(&body, &["/Island"]), Vec::<String>::new(), "{body}");
+    // it registers under the public path it was loaded from, not the screen path the server resolved (a site route
+    // answers /shop/Island.qvue with the screen at /Island), and under the name its loader gave when there is one
+    assert_eq!(
+        made_bundle_in(&body, &["/shop/Island"], &loaded_from("https://site.example/shop/Island.qvue?_uiType=mobile&_qvt=bundle", None)),
+        Vec::<String>::new(),
+        "{body}"
+    );
+    assert_eq!(
+        made_bundle_in(&body, &["/shop/Island"], &loaded_from("/shop/Island.qvue/extra?_qvt=bundle", None)),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        made_bundle_in(&body, &["/forum/Compose"], &loaded_from("https://edge.example/x/Island.qvue?_qvt=bundle", Some("/forum/Compose"))),
+        Vec::<String>::new()
+    );
     assert_eq!(bundle("/Island.qvue", Some(&tag)).status, 304);
     // the same text answers the same, from the definition's cache
     assert_eq!(bundle("/Island.qvue", None).body_text(), body);
@@ -966,8 +998,12 @@ fn a_qvue_asked_for_as_its_bundle_is_compiled_and_named_by_its_path() {
     let loose = bundle("/Loose.qvue", None);
     assert_eq!(loose.status, 200, "{}", loose.body_text());
     assert_eq!(loose.header("X-Moqui-Qvt"), Some("bundled-qvue"));
-    assert!(loose.body_text().contains(r#"moqui.qvtBundled["/Loose"]"#));
-    assert_eq!(made_bundle(&loose.body_text(), &["/Loose"]), Vec::<String>::new());
+    assert_eq!(
+        made_bundle_in(&loose.body_text(), &["/shop/Loose"], &loaded_from("/shop/Loose.qvue?_qvt=bundle", None)),
+        Vec::<String>::new()
+    );
+    assert_eq!(loose.body_text(), body, "the same text, served for another path, is the same script");
+    assert_eq!(loose.header("ETag"), Some(tag.as_str()));
     assert_eq!(plain("/Loose.qvue").body_text(), source);
 
     let templated = bundle("/Templated.qvue", None);

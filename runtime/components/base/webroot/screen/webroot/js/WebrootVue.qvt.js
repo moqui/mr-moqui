@@ -649,12 +649,15 @@
     };
 
     // A .qvue the server compiles for the runtime build (docs/ui/Qvt-Client.md, Bundled qvue): <url>?_qvt=bundle answers a
-    // script (X-Moqui-Qvt: bundled-qvue) that registers the screen in moqui.qvtBundled under its path, the url without
-    // .qvue. A script element loads it, as the static-template handler does: a policy without unsafe-eval allows that, and
-    // nothing here evaluates text. The promise is the component moqui.bundledComponent makes.
+    // script (X-Moqui-Qvt: bundled-qvue) that registers the screen in moqui.qvtBundled under the name its script element
+    // gives (data-moqui-bundle: the path asked for, without .qvue), else the path it was loaded from; never the screen
+    // path the server resolved, which a site route maps from the public one. A script element loads it, as the
+    // static-template handler does: a policy without unsafe-eval allows that, and nothing here evaluates text. The promise
+    // is the component moqui.bundledComponent makes.
     moqui.qvueBundleUrl = (url) => url + (url.indexOf("?") >= 0 ? "&" : "?") + "_qvt=bundle";
     moqui.loadBundledQvue = (url, path) => new Promise((resolve, reject) => {
         const script = root.document.createElement("script");
+        script.setAttribute("data-moqui-bundle", String(path || "").replace(/\.(qvue|qjs|qvt)$/, ""));
         script.src = moqui.qvueBundleUrl(url);
         script.onload = () => {
             script.remove();

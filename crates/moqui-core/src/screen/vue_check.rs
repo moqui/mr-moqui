@@ -475,16 +475,29 @@ pub fn qvue_make(compiler_source: &str, source: &str) -> Result<String, Error> {
 }
 
 /// The script a `.qvue?_qvt=bundle` request is answered with (`X-Moqui-Qvt: bundled-qvue`, docs/ui/Qvt-Client.md):
-/// `make`, from [`qvue_make`], registered as `moqui.qvtBundled[name]`, where `name` is the request path without its
-/// `.qvue`, as the client names the screen it loads. A page on the runtime build of Vue loads it with a script element
-/// and makes the component with `moqui.bundledComponent(name)`, so it needs no template compiler and no `unsafe-eval`.
-pub fn served_qvue(name: &str, make: &str) -> String {
-    let name_lit = serde_json::to_string(name).unwrap_or_else(|_| "\"\"".to_string());
+/// `make`, from [`qvue_make`], registered as `moqui.qvtBundled[name]`. The name is the one the client loads it by,
+/// which the server does not know (a site route or a remote frontend maps the public path to another screen path):
+/// the loading script element's `data-moqui-bundle` (`moqui.loadBundledQvue`), else the script's own URL path without
+/// its `.qvue`, extra path and query. So the text depends on the file alone, and its cache and `ETag` are per text. A
+/// page on the runtime build of Vue loads it with a script element and makes the component with
+/// `moqui.bundledComponent(name)`, so it needs no template compiler and no `unsafe-eval`.
+pub fn served_qvue(make: &str) -> String {
     format!(
         "/* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */\n\n\
          // A .qvue compiled for the runtime build of Vue (moqui_core::screen::vue_check::qvue_make), its templates as\n\
-         // render functions; moqui.bundledComponent(name) makes it when it is first used.\n\
-         (function (moqui) {{\n    moqui.qvtBundled = moqui.qvtBundled || {{}};\n    moqui.qvtBundled[{name_lit}] = {make};\n}})(globalThis.moqui);\n"
+         // render functions; moqui.bundledComponent(name) makes it when it is first used. Its name is the one its loader\n\
+         // gave (data-moqui-bundle), else this script's own path without .qvue.\n\
+         (function (moqui) {{\n\
+         \x20   const script = typeof document !== \"undefined\" ? document.currentScript : null;\n\
+         \x20   let name = script && script.getAttribute ? script.getAttribute(\"data-moqui-bundle\") : null;\n\
+         \x20   if (!name && script && script.src) {{\n\
+         \x20       const path = String(script.src).replace(/^[a-z][a-z0-9+.-]*:\\/\\/[^\\/]*/i, \"\").split(/[?#]/)[0];\n\
+         \x20       name = decodeURI(path).replace(/\\.qvue(\\/.*)?$/, \"\");\n\
+         \x20   }}\n\
+         \x20   if (!name) {{ console.error(\"A bundled .qvue loaded with no name: not registered\"); return; }}\n\
+         \x20   moqui.qvtBundled = moqui.qvtBundled || {{}};\n\
+         \x20   moqui.qvtBundled[name] = {make};\n\
+         }})(globalThis.moqui);\n"
     )
 }
 

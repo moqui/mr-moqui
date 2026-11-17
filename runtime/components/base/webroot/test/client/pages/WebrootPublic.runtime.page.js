@@ -4,7 +4,8 @@
 // /Island.qvue?_qvt=bundle for WebrootPublic.island.qvue (moqui-core's screen test
 // a_qvue_asked_for_as_its_bundle_is_compiled_and_named_by_its_path keeps it current). The offline origin serves files
 // only, so the island's bundle URL is pointed at that file; the page loads it with a script element as it would load
-// the server's answer.
+// the server's answer. The island's public path (/shop/Island) is not the screen path the bundle was served for
+// (/Island), as through a PASS site route: the bundle registers under the path the page asked for.
 "use strict";
 (function () {
 const BUNDLE = "/files/component/webroot/test/client/pages/WebrootPublic.island.bundle.js";
@@ -34,7 +35,7 @@ test("a runtime-build page mounts a bundled .qvue island with no eval and no new
     config.setAttribute("data-moqui-island", "bundle-island");
     config.textContent = JSON.stringify({ shell: "island", locale: "en", timeZone: "UTC", quasarLang: "enUS",
         qvt: { build: "runtime", handles: ["static-template", "bundled-qvue"] },
-        route: { name: "island", basePath: "/Island", title: "Island", renderModes: ["qvue"] },
+        route: { name: "island", basePath: "/shop/Island", title: "Island", renderModes: ["qvue"] },
         context: { note: "from the page" }, labels: { loading: "Loading", notFound: "" } });
 
     // what a policy without 'unsafe-eval' refuses, refused here
@@ -62,11 +63,12 @@ test("a runtime-build page mounts a bundled .qvue island with no eval and no new
         assert.ok(Array.from(document.querySelectorAll("style[data-mq-style]")).some((style) => style.textContent.includes(".island-note")),
             "the island's style is added");
         assert.equal(asked.length, 1);
-        assert.ok(/^\/Island\.qvue\?(.*&)?_qvt=bundle$/.test(asked[0]), asked[0]);
-        assert.equal(typeof moqui.qvtBundled["/Island"].make, "function", "registered under the island's path");
+        assert.ok(/^\/shop\/Island\.qvue\?(.*&)?_qvt=bundle$/.test(asked[0]), asked[0]);
+        assert.equal(typeof moqui.qvtBundled["/shop/Island"].make, "function", "registered under the island's public path");
+        assert.ok(!moqui.qvtBundled["/Island"], "not under the screen path it was served for");
         // a second load of the screen makes it from the bundle, with no request
         let again = null;
-        moqui.loadComponent({ path: "/Island", renderModes: ["qvue"] }, (comp) => { again = comp; });
+        moqui.loadComponent({ path: "/shop/Island", renderModes: ["qvue"] }, (comp) => { again = comp; });
         assert.ok(again && typeof again.render === "function");
         assert.equal(asked.length, 1);
         assert.deepEqual(evaluated, []);
@@ -77,6 +79,19 @@ test("a runtime-build page mounts a bundled .qvue island with no eval and no new
         for (const vm of Object.values(islands)) vm.$.appContext.app.unmount();
         for (const node of added) node.remove();
     }
+});
+
+test("a bundle loaded with no name from its loader registers under the path it was loaded from", async () => {
+    const script = document.createElement("script");
+    await new Promise((resolve, reject) => {
+        script.onload = resolve;
+        script.onerror = () => reject(new Error("the bundle did not load"));
+        script.src = BUNDLE + "?_qvt=bundle";
+        document.head.appendChild(script);
+    });
+    script.remove();
+    assert.equal(typeof (moqui.qvtBundled[BUNDLE] || {}).make, "function", Object.keys(moqui.qvtBundled).join(", "));
+    delete moqui.qvtBundled[BUNDLE];
 });
 
 test("on the runtime build a container's screen the server answers as qvue loads as its bundle", async () => {
