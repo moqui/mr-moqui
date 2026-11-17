@@ -7,8 +7,8 @@ reviewer reported them and have not been read a second time; the Status column s
 2026-11-16 the Medium findings were fixed in the same way, with follow-ups the same day: all 77 are fixed (SEC-RTE-02
 and SEC-OUT-08 finished later the same day), each entry's **Fix** in [Security-Review-Medium](Security-Review-Medium.md)
 saying how. The Low findings that were confirmed in code were then fixed in batches the same day, each entry's **Fix**
-in [Security-Review-Low](Security-Review-Low.md) saying how, and a first batch of the owner's decisions on the ones they
-left was carried out after them: of the 215 Low and Info findings 115 are fixed, 11 in part and 6 deferred, none refuted,
+in [Security-Review-Low](Security-Review-Low.md) saying how, and two batches of the owner's decisions on the ones they
+left were carried out after them: of the 215 Low and Info findings 122 are fixed, 5 in part and 5 deferred, none refuted,
 and 83 (40 Low, 43 Info) are as reported. What is left is under
 [What is left](#what-is-left).
 
@@ -176,26 +176,29 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
    approval, parsers of untrusted input, the mobile app's native code, and the helper-read parts of the PASS services.
 3. **Fixes.** The High findings are fixed (2026-11-15, what they left on 2026-11-16), and the Medium ones
    (2026-11-16). Of the Medium findings none is open, none deferred, none refuted and none fixed only in part. Of the
-   169 Low and 46 Info findings, 115 are fixed (112 Low, 3 Info), 11 Low are fixed in part and 6 Low deferred; none is
+   169 Low and 46 Info findings, 122 are fixed (119 Low, 3 Info), 5 Low are fixed in part and 5 Low deferred; none is
    refuted whole (SEC-GIT-19 and SEC-PSS-28 are in part); 40 Low and 43 Info are as reported. The first batch of the
    owner's decisions (2026-11-16) finished 14 of them: SEC-WEB-05, SEC-WEB-06, SEC-WEB-10, SEC-RTE-17, SEC-ADM-10,
-   SEC-GIT-18, SEC-GIT-19, SEC-COM-20, SEC-DAT-11, SEC-PSS-26, SEC-PSS-27, SEC-PSS-28, SEC-PSS-44 and SEC-OUT-13.
+   SEC-GIT-18, SEC-GIT-19, SEC-COM-20, SEC-DAT-11, SEC-PSS-26, SEC-PSS-27, SEC-PSS-28, SEC-PSS-44 and SEC-OUT-13. The
+   second (2026-11-17) finished 7: SEC-MAIL-06, SEC-MAIL-07, SEC-CLU-02, SEC-CLU-04, SEC-PSF-04, SEC-PSS-05 and
+   SEC-PSS-23.
 
    The Low findings fixed in part, by what is left: SEC-TLS-08 (the deploy fetch resolves the host again), SEC-TLS-17
-   (an ingest key is checked after the gRPC message is decoded), SEC-MAIL-06 (no SPF or DMARC gate on a delivered
-   notice), SEC-MAIL-07 (no hourly cap per address, no mailbox quota), SEC-COM-21 (no protocol scope on an app
-   password), SEC-CLU-02 (no total per pairing; received `PutContent` outside the queue cap), SEC-CLU-04 (an `ssh://`
-   peer's host is checked by its own row), SEC-DAT-09 (no page size cap on screens), SEC-PSF-04 (`'unsafe-eval'` while
-   PASS's islands compile in the browser), SEC-PSS-05 (a guest party made at the first add) and SEC-BAP-06 (no carrier
-   host list). Deferred, each for an owner's decision or a design: SEC-COM-19 and SEC-COM-26 (each a design of its
-   own), SEC-PSS-23 (a guest order link is a write credential), and SEC-CLI-03, SEC-CLI-04 and SEC-CLI-05 (the desktop
-   and Tauri clients, waiting for the desktop build machine). The owner has decided SEC-MAIL-06, SEC-MAIL-07, SEC-CLU-02,
-   SEC-CLU-04, SEC-PSF-04, SEC-PSS-05 and SEC-PSS-23 too; they wait for a later batch.
+   (an ingest key is checked after the gRPC message is decoded), SEC-COM-21 (no protocol scope on an app password),
+   SEC-DAT-09 (no page size cap on screens) and SEC-BAP-06 (no carrier host list). Deferred, each for an owner's
+   decision or a design: SEC-COM-19 and SEC-COM-26 (each a design of its own), and SEC-CLI-03, SEC-CLI-04 and
+   SEC-CLI-05 (the desktop and Tauri clients, waiting for the desktop build machine).
 
    Found while fixing and not fixed: with two `Party` members aliased (InvoiceFinance, PaymentFinance,
    InvoicePaymentApplicationSummary, WorkEffortProductionRunDetailFind), `filter.rs` `map_conditions` ANDs the two
    aliases inside one filter term, so a row with one shared party and one of the caller's own personal contacts is
    hidden from its owner too (it fails closed, not open; per-member conditions would be the exact rule; SEC-DAT-11).
+   An edge node does not know its local node's mailbox quotas, so it takes the `RCPT` of a full account and the local
+   node holds the item until the queue gives up; a full mailbox is told to its owner only in the log; no screen or
+   service sets `EmailAccount.quotaBytes`; and each `RCPT` and delivery sums the account's message sizes, with no kept
+   counter (SEC-MAIL-07). The number of content files an edge pairing receives is not capped (an empty one adds
+   nothing to the queue cap), and a local node past its own cap refuses its edge node's content with only a log line,
+   no pause or notice (SEC-CLU-02).
 
    Found while fixing and fixed the same day: an account-owned email server written or polled through `PATCH email/servers/{id}`, `/rest/e1` and `servers/{id}/poll` (`update#RelayServer`,
    `sensitive::account_owned_email_server`); IronStone's people search and mention ids outside the chat-target rule
@@ -389,8 +392,8 @@ Map file: [Attack-Surface-Mail.md](../docs/security/Attack-Surface-Mail.md). Rev
 | SEC-MAIL-62 | runtime/components/base/webroot/template/screen/BasicTransitions.xml:20-28 (and 29-37) | A GET mails a screen's full export to an address the request names | Medium | fixed |
 | SEC-MAIL-64 | runtime/components/addon/mr-marble/screen/SimpleScreens/Party/PartyEmails.xml:20 | mr-marble sendEmailMessage transitions send any stored message again | Medium | fixed |
 | SEC-MAIL-05 | `EmailClientServices.xml` `send#OutOfOfficeReplies` (5197-5412), `run#EmailRules` `forward` (4532-4571) | Out-of-office replies and rule forwards have no total limit and trust the From header | Low | reported (likely) |
-| SEC-MAIL-06 | `crates/moqui-mail/src/delivery.rs:601-725` | The "delivered" notice is backscatter with the sender's headers | Low | partly fixed |
-| SEC-MAIL-07 | `crates/moqui-host/src/smtp.rs` session loop (1169-1206), `rcpt` (1354-1450) | Internet mode has no cap on messages a session, refused recipients, or stored bytes | Low | partly fixed |
+| SEC-MAIL-06 | `crates/moqui-mail/src/delivery.rs:601-725` | The "delivered" notice is backscatter with the sender's headers | Low | fixed |
+| SEC-MAIL-07 | `crates/moqui-host/src/smtp.rs` session loop (1169-1206), `rcpt` (1354-1450) | Internet mode has no cap on messages a session, refused recipients, or stored bytes | Low | fixed |
 | SEC-MAIL-08 | `crates/moqui-mail/src/delivery.rs` `deliver_one` (753-772) | A message is dropped when its Message-ID is already in the account | Low | fixed |
 | SEC-MAIL-09 | `crates/moqui-core/src/service/mail_capture.rs` (`decide`, `enabled`) | The mail capture can be on in production | Low | fixed |
 | SEC-MAIL-65 | runtime/components/base/framework/service/org/moqui/impl/UserServices.xml:441-459 | Reset passwords and verification tokens are kept in clear in EmailMessage.body | Low | fixed |
@@ -468,9 +471,9 @@ Map file: [Attack-Surface-Cluster-Edge.md](../docs/security/Attack-Surface-Clust
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
 | SEC-CLU-01 | `crates/moqui-host/src/edge_link/down.rs:223` | The address an edge node names passes the member's loopback rules | Low | fixed |
-| SEC-CLU-02 | `crates/moqui-host/src/edge_link/accept.rs:2910`-`2923`, `:2893` | A paired node can fill the other end's database through Replicate and PutContent | Low | partly fixed |
+| SEC-CLU-02 | `crates/moqui-host/src/edge_link/accept.rs:2910`-`2923`, `:2893` | A paired node can fill the other end's database through Replicate and PutContent | Low | fixed |
 | SEC-CLU-03 | `crates/moqui-host/src/ssh/server.rs:939`-`952`, `:1099`-`1112` | The cluster login is accepted on the SSH port whatever the transport | Low | fixed |
-| SEC-CLU-04 | `crates/moqui-core/src/cluster/mod.rs:1327`-`1350`, `:1476`-`1483` | A `ClusterMember` row decides where cluster messages go and, for `ssh://`, which host key is trusted | Low | partly fixed |
+| SEC-CLU-04 | `crates/moqui-core/src/cluster/mod.rs:1327`-`1350`, `:1476`-`1483` | A `ClusterMember` row decides where cluster messages go and, for `ssh://`, which host key is trusted | Low | fixed |
 | SEC-CLU-05 | `crates/moqui-host/src/pass_authority/mod.rs:131`-`154`, `:189`-`213` | The PASS authority's wrong-secret limit is keyed by the exact TCP peer | Low | fixed |
 | SEC-CLU-06 | `runtime/components/base/webroot/screen/webroot/js/MoquiLib.js:736` | A notification's `link` is followed with no scheme check | Low | reported (to check) |
 | SEC-CLU-07 | `crates/moqui-devkit/src/deploy/git.rs:1023`-`1066`, `:798`-`801` | A cluster message makes a member load a commit the sender names | Info | reported (confirmed in code) |
@@ -504,7 +507,7 @@ Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PAS
 | SEC-PSF-01 | `service/pass/Facade.js:25-32` | In local mode a login key in a header drives every PASS page, without the session token | Medium | fixed |
 | SEC-PSF-02 | 57 transitions (list in A8), for example `screen/Forum/HeldMail.xml:13`, `screen/Shop/Checkout.xml:7,37,43`, `screen/Forum/Topics/TopicDetail.xml:37` | Write transitions without `method="post"` run on a GET that carries no query string, with no session token | Low | fixed |
 | SEC-PSF-03 | `service/pass/RouteServices.xml:46-49` | Bearer values in PASS URLs that the log and Visit redaction do not cover | Low | fixed |
-| SEC-PSF-04 | `screen/Shared/Headers.js:8-16`. | The shell's CSP has no `default-src` and allows `'unsafe-eval'` and every same-origin script | Low | partly fixed |
+| SEC-PSF-04 | `screen/Shared/Headers.js:8-16`. | The shell's CSP has no `default-src` and allows `'unsafe-eval'` and every same-origin script | Low | fixed |
 | SEC-PSF-05 | `service/pass/Transport.js:264-287`. | The REST transport sends the client secret and visitors' delegations to whatever scheme `pass_backend_url` names | Low | fixed |
 | SEC-PSF-08 | `screen/Smithy/SmithySite.js:392-398` | A Smithy release file is served from the site's origin with a script content type, so `script-src 'self'` stops no injected script | Low | fixed |
 | SEC-PSF-06 | `screen/Shop/ShopPreview.js:35-57` | The resolver's preview-host check fails open | Info | reported (confirmed in code) |
@@ -545,11 +548,11 @@ Map file: [Attack-Surface-Apps-PASS-Commerce.md](../docs/security/Attack-Surface
 | SEC-PSS-02 | `M/order/ShopCheckout.js:1212` | The checkout return key and the cart recovery token are query parameters the request log keeps | Low | fixed |
 | SEC-PSS-03 | `M/product/ShopFulfillment.js:490-506`, `:573-588` | A ten-minute download capability is accepted as an order link and can issue its successor | Low | fixed |
 | SEC-PSS-04 | `M/party/ShopCustomer.js:114-160` | A guest order with a typed email is merged into the account that verifies that email | Low | reported (to check) |
-| SEC-PSS-05 | `M/order/ShopCart.js:155-190` | Anonymous cart creation is limited per requester only | Low | partly fixed |
+| SEC-PSS-05 | `M/order/ShopCart.js:155-190` | Anonymous cart creation is limited per requester only | Low | fixed |
 | SEC-PSS-06 | `M/order/ShopCheckout.js:677`, `:1174` | A zero-total guest checkout mails any typed address | Low | reported (to check) |
 | SEC-PSS-08 | `M/product/ShopCatalog.js:560-600` | Shop search and catalog reads have no limit at the authority | Low | reported (to check) |
 | SEC-PSS-22 | `request/SupportPortal.js:751-761` | `createCustomerCase` stages and scans the upload before it checks who asks | Low | fixed |
-| SEC-PSS-23 | `request/SupportPortal.js:149-166` (`askers`), `order/CustomerOrders.js:133-162`, `order/CustomerReturns.js:287-341`, `request/SupportPortal.js:806-809` | A guest's order link (`OrderView`, a read scope) authorizes cancel, return and case writes | Low | deferred |
+| SEC-PSS-23 | `request/SupportPortal.js:149-166` (`askers`), `order/CustomerOrders.js:133-162`, `order/CustomerReturns.js:287-341`, `request/SupportPortal.js:806-809` | A guest's order link (`OrderView`, a read scope) authorizes cancel, return and case writes | Low | fixed |
 | SEC-PSS-24 | `account/Portal.js:426-438`, `:467-475` | The BillUpload page shows the purchase order's current total to a superseded or not-yet-sent revision's link | Low | fixed |
 | SEC-PSS-25 | `request/SupportPortal.js:466`, `:472-503` | `rateArticle`'s "nonce" is any text the client sends | Low | fixed |
 | SEC-PSS-26 | `account/Portal.js:309-360` (`startInvoicePayment`), `:485-554` (`submitSupplierBill`), `:195-206` (`getInvoice`) | Billing's and the bill upload's writes have no post limit; a signed-in contact has none at all | Low | fixed |
