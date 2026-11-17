@@ -1460,7 +1460,10 @@
         failed are kept queue-retention-days from their delivery or failure (receipts as long; both nodes should keep
         the same period), and an item still waiting after that fails, with a logged error naming it; when the waiting
         items pass queue-max-megabytes the oldest fail the same way. A payload is at most 1 MiB; a larger body (up to
-        64 MiB, counted in the cap) is the item's content, sent over the link before it. A receiver's refusal
+        64 MiB, counted in the cap) is the item's content, sent over the link before it; the content a receiver keeps
+        for its deliveries counts against the same cap, and on a node that takes links so do a pairing's replicated
+        records against replica-max-rows: at either the pairing pauses until an administrator resumes it (SEC-CLU-02).
+        A receiver's refusal
         is tried again after queue-retry-seconds, doubling up to 10 minutes, and fails the item after
         queue-max-attempts. Children, each merged by its key: delegate (service, allow-anonymous) lists the services an
         edge node runs on its local node for a synchronous call, and a local node runs only those; queue-kind (name)
@@ -1473,7 +1476,8 @@
         sends as mailOut, and the edge node answers each with a mailStatus (from its relay, or a later bounce to its
         VERP address); a mailOut that fails for good puts its message back in the Outbox. With the MTA in moqui (E5b) the
         edge node answers from its MX delivery: bounced for the recipients refused, accepted once all are delivered. -->
-    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5">
+    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5"
+            replica-max-rows="1000000">
         <queue-kind name="mail" service="org.moqui.mail.EmailServices.deliver#EdgeMail"/>
         <queue-kind name="mailOut" service="org.moqui.mail.EmailServices.deliver#EdgeOutboundMail"
                 failed-service="org.moqui.mail.EmailServices.fail#EdgeOutboundMail"/>

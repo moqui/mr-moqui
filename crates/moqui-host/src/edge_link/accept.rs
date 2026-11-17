@@ -2927,13 +2927,20 @@ impl Link for LinkService {
             .server
             .on_pool(move |factory| {
                 let facade = store::facade(factory)?;
-                moqui_core::edge::replica::apply_batch(&facade, &key, &batch)
+                // not while the pairing is paused, nor past its cap on replicated records, which pauses it (SEC-CLU-02)
+                let settings = moqui_core::edge::settings(factory);
+                match moqui_core::edge::caps::admit_batch(&facade, &settings, &key, &batch)? {
+                    moqui_core::edge::caps::Admit::Take => {}
+                    moqui_core::edge::caps::Admit::Paused(why) => return Ok(Err(why)),
+                }
+                moqui_core::edge::replica::apply_batch(&facade, &key, &batch).map(Ok)
             })
             .await
             .map_err(|err| {
                 tracing::error!("Edge link of {node}: a batch of set {set} was not applied: {err}");
                 Status::internal("the edge node could not apply the batch")
-            })?;
+            })?
+            .map_err(|why| super::queue::paused_status(&why))?;
         Ok(Response::new(ReplicateReply {
             resync: answer == moqui_core::edge::replica::BatchAnswer::Resync,
         }))

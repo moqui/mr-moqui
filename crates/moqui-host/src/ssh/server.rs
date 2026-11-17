@@ -115,6 +115,8 @@ struct Shared {
     agents: Arc<super::agent::AgentSessions>,
     /// The cluster topics received, shared with the HTTPS cluster listener.
     cluster_posts: Arc<std::sync::Mutex<Vec<String>>>,
+    /// The host key's SHA-256 fingerprint, which a cluster channel's proof is bound to (SEC-CLU-04).
+    host_fingerprint: String,
     /// Keyboard-interactive lets a client in with no user, for the login dialog (`ssh-server` `login-dialog`).
     #[cfg_attr(not(feature = "tui"), allow(dead_code))]
     dialog: bool,
@@ -288,6 +290,7 @@ pub fn start(
         #[cfg(feature = "tui")]
         agents: Arc::default(),
         cluster_posts,
+        host_fingerprint: fingerprint.clone(),
         dialog,
         git_password_auth,
         git_any_account,
@@ -1191,7 +1194,17 @@ impl russh::server::Handler for Connection {
             session.channel_success(channel)?;
             let factory = std::sync::Weak::clone(&self.shared.factory);
             let posts = Arc::clone(&self.shared.cluster_posts);
-            tokio::spawn(super::cluster::serve_channel(open.into_stream(), factory, posts, topic));
+            let side = super::cluster::ChannelSide {
+                peer: self.peer,
+                host: self.shared.host_fingerprint.clone(),
+            };
+            tokio::spawn(super::cluster::serve_channel(
+                open.into_stream(),
+                factory,
+                posts,
+                topic,
+                side,
+            ));
             return Ok(());
         }
         let line = String::from_utf8_lossy(data).into_owned();

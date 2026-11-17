@@ -2079,7 +2079,18 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="queue-max-megabytes" type="non-neg-int-expandable" default="1024">
                 <xs:annotation><xs:documentation>The waiting items' payloads and content at most, for each paired
                     node alone (on a node that takes links, a pairing's EdgeClient.queueMaxMegabytes above 0 in place of
-                    it); past it that node's oldest fail.
+                    it); past it that node's oldest fail. The content a paired node's link sends before its
+                    deliveries, kept until each is answered, counts against it too: at it the pairing pauses on an
+                    edge node (as at replica-max-rows), and a local node refuses more content from its edge node for
+                    now.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="replica-max-rows" type="non-neg-int-expandable" default="1000000">
+                <xs:annotation><xs:documentation>On a node that takes links, the replicated records it keeps for one
+                    pairing at most, all its sets together (a pairing's EdgeClient.replicaMaxRows above 0 in place of
+                    it). At it the pairing pauses: its Replicate and PutContent calls are refused as "try again
+                    later", nothing dropped, and the administrators are told (EdgePairingPaused), until one resumes
+                    it or raises its caps (System, Edge Clients).
                 </xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="queue-max-attempts" type="non-neg-int-expandable" default="10">

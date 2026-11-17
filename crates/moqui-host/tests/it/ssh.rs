@@ -691,6 +691,68 @@ fn sftp_and_the_admin_shell_run_on_the_built_in_server() {
         );
     })
     .unwrap();
+    // SEC-CLU-04: logged in with the cluster key, a channel's frames are still taken only after the channel's proof.
+    // A peer that sends a frame with no proof (as an older member) or proves another key is refused, nothing applied.
+    let before = gate.server.cluster_posts().len();
+    for proof_seed in [None, Some([9u8; 32])] {
+        let cluster_key = Arc::new(moqui_host::ssh::cluster::cluster_login_key().unwrap());
+        let host_fingerprint = real.clone();
+        let refused = moqui_host::edge::block_on(async move {
+            use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+            struct Accept;
+            impl russh::client::Handler for Accept {
+                type Error = russh::Error;
+                async fn check_server_key(&mut self, _: &russh::keys::PublicKeyOrCertificate) -> Result<bool, Self::Error> {
+                    Ok(true)
+                }
+            }
+            let mut handle = russh::client::connect(Arc::new(russh::client::Config::default()), address, Accept)
+                .await
+                .unwrap();
+            assert!(handle
+                .authenticate_publickey(
+                    "moqui-cluster",
+                    russh::keys::PrivateKeyWithHashAlg::new(cluster_key, None)
+                )
+                .await
+                .unwrap()
+                .success());
+            let channel = handle.channel_open_session().await.unwrap();
+            channel.exec(true, "cluster entity-cache-invalidate").await.unwrap();
+            let mut stream = tokio::io::BufReader::new(channel.into_stream());
+            match proof_seed {
+                None => {
+                    let mut challenge = String::new();
+                    let _ = tokio::time::timeout(Duration::from_secs(5), stream.read_line(&mut challenge)).await;
+                    assert!(challenge.starts_with("challenge "), "the server sends a challenge first: {challenge:?}");
+                    let frame = br#"{"origin_id": "peer-2", "message_id": "m-9", "body": {"entityName": "moqui.basic.Enumeration"}}"#;
+                    let out = stream.get_mut();
+                    out.write_all(format!("{}\n", frame.len()).as_bytes()).await.unwrap();
+                    out.write_all(frame).await.unwrap();
+                    out.flush().await.unwrap();
+                    let mut answer = String::new();
+                    let _ = tokio::time::timeout(Duration::from_secs(5), stream.read_line(&mut answer)).await;
+                    answer.trim().to_string()
+                }
+                Some(seed) => {
+                    let stranger = aws_lc_rs::signature::Ed25519KeyPair::from_seed_unchecked(&seed).unwrap();
+                    moqui_host::ssh::cluster::prove_client(&mut stream, &stranger, &host_fingerprint)
+                        .await
+                        .unwrap_err()
+                }
+            }
+        })
+        .unwrap();
+        assert!(
+            refused == "403" || refused.contains("refused this member's proof"),
+            "{proof_seed:?}: {refused}"
+        );
+    }
+    assert_eq!(
+        gate.server.cluster_posts().len(),
+        before,
+        "nothing applied without the channel's proof"
+    );
     let stranger = Arc::new(key(OTHER_SEED));
     let refused = moqui_host::edge::block_on(async move {
         struct Accept;

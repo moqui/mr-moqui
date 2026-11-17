@@ -26,6 +26,11 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.user.NotificationTopic topic="EdgeMemberTakeover" inboxEnumId="NinUpdates" description="Edge node: a new node took over a pairing"
             typeString="warning" showAlert="Y" persistOnSend="Y" receiveNotifications="N" isPrivate="Y"
             linkTemplate="/qapps/system/EdgeClients"/>
+    <!-- A pairing paused at a cap on what it gives this node to keep (SEC-CLU-02): its replicated records or the
+        content of its deliveries; it waits until an administrator resumes it or raises its caps -->
+    <moqui.security.user.NotificationTopic topic="EdgePairingPaused" inboxEnumId="NinUpdates" description="Edge node: a pairing paused at a cap"
+            typeString="danger" showAlert="Y" persistOnSend="Y" receiveNotifications="N" isPrivate="Y"
+            linkTemplate="/qapps/system/EdgeClients"/>
 
     <moqui.basic.EnumerationType enumTypeId="EdgeHostMode" description="Edge Host Mode"/>
     <moqui.basic.Enumeration enumId="EdgeHostPassthrough" enumTypeId="EdgeHostMode" sequenceNum="1" description="Passthrough"/>

@@ -84,6 +84,7 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::edge::get_edge_ports",
         "moqui_core::service::edge::add_edge_port",
         "moqui_core::service::edge::remove_edge_port",
+        "moqui_core::service::edge::resume_edge_client",
         "moqui_core::service::edge::resync_replication",
         "moqui_core::service::edge::revoke_edge_client",
         "moqui_core::service::edge::unpair_edge_node",

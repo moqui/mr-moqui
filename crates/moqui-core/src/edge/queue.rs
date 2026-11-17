@@ -189,11 +189,11 @@ pub fn local_node_id(factory: &ExecutionContextFactory) -> String {
     }
 }
 
-fn text(row: &EntityValue, field: &str) -> String {
+pub(super) fn text(row: &EntityValue, field: &str) -> String {
     row.get(field).map(to_plain_string).unwrap_or_default()
 }
 
-fn number(row: &EntityValue, field: &str) -> i64 {
+pub(super) fn number(row: &EntityValue, field: &str) -> i64 {
     match row.get(field) {
         Some(Value::I64(number)) => *number,
         Some(value) => {
@@ -211,7 +211,7 @@ fn millis(row: &EntityValue, field: &str) -> Option<i64> {
     row.get(field).and_then(value_millis)
 }
 
-fn transaction<T>(
+pub(super) fn transaction<T>(
     facade: &EntityFacade,
     attribute: TransactionAttribute,
     body: impl FnOnce() -> Result<T, Error>,
@@ -1206,7 +1206,7 @@ pub fn stats(facade: &EntityFacade, paired_node_id: Option<&str>) -> Result<Vec<
 
 /// The size cap of `node`'s waiting items: its `EdgeClient.queueMaxMegabytes` when set above 0 (on a node that takes
 /// links), else the conf's `queue-max-megabytes`. A row that cannot be read is logged and the conf's cap holds.
-fn node_cap(facade: &EntityFacade, settings: &EdgeSettings, node: &str) -> u64 {
+pub(super) fn node_cap(facade: &EntityFacade, settings: &EdgeSettings, node: &str) -> u64 {
     if !settings.takes_links() || node.is_empty() {
         return settings.max_bytes;
     }

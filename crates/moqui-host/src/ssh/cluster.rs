@@ -21,11 +21,27 @@
 //! channel for each topic. A message is a frame: the payload length on a line, then the payload, the same topic JSON as
 //! the HTTPS body. The peer answers each frame with a status line (204 applied, else the HTTP status the POST would
 //! give), after applying it through the same path as a POST.
+//!
+//! **The channel proof** (SEC-CLU-04). The host key a sender pins is a value of the peer's `ClusterMember` row, which
+//! whoever can write that table chooses, so it does not show that the peer is a member. Before any frame each side of a
+//! `cluster <topic>` channel proves it holds the cluster material: the server sends a random challenge
+//! (`challenge <nonce>`), the connecting member answers with a nonce of its own and its signature of both
+//! (`proof <nonce> <signature>`), and the server, once it has checked that, answers with its own signature
+//! (`proof <signature>`), or `403` and closes. Each signs with an Ed25519 key derived from `cluster_tls_key` (the key
+//! of the certificate whose fingerprint `cluster::same_material` compares) under a label of its own, over its role, the
+//! server's host key fingerprint and both nonces, so a proof is good for one channel to one host and for nothing else.
+//! The server takes no frame before the connecting member's proof, and the sender sends none before the server's: a
+//! host that has a row and a host key but not the cluster material gets no message. The host key itself is unchanged,
+//! so git and SFTP clients' pins stay.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
+use aws_lc_rs::rand::{SecureRandom as _, SystemRandom};
+use aws_lc_rs::signature::{Ed25519KeyPair, KeyPair as _, UnparsedPublicKey, ED25519};
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine as _;
 use moqui_core::cluster::Sender;
 use moqui_core::context::{Error as CoreError, ExecutionContextFactory};
 use moqui_lib::error::Error;
@@ -34,7 +50,7 @@ use russh::client;
 use russh::keys::{HashAlg, PrivateKey, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate};
 use russh::ChannelStream;
 use sha2::Digest;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 
 /// The user a cluster peer logs in as.
 pub const CLUSTER_USER: &str = "moqui-cluster";
@@ -43,6 +59,12 @@ const MAX_FRAME: usize = moqui_core::cluster::MAX_CLUSTER_BODY;
 const TIMEOUT: Duration = Duration::from_secs(30);
 /// How long a peer's session is kept with nothing sent on it.
 const PEER_IDLE: Duration = Duration::from_secs(600);
+/// What a channel proof signs before its fields, so the signature is good for nothing else.
+const PROOF_CONTEXT: &[u8] = b"moqui-cluster-channel-proof-v1\0";
+/// The bytes of a challenge's and of an answer's nonce.
+const NONCE: usize = 32;
+/// The longest line of the channel proof: a nonce and a signature in base64, with room to spare.
+const MAX_PROOF_LINE: u64 = 512;
 
 /// The login key every member derives from the shared `cluster_tls_key`.
 ///
@@ -58,6 +80,165 @@ pub fn cluster_login_key() -> Result<PrivateKey, Error> {
     Ok(PrivateKey::from(
         russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&seed),
     ))
+}
+
+/// The key a member proves the cluster material with on a cluster channel (SEC-CLU-04): Ed25519, derived from the
+/// shared `cluster_tls_key` as the login key is, under a label of its own.
+///
+/// # Errors
+///
+/// Returns an error when the cluster key is not configured.
+pub fn channel_proof_key() -> Result<Ed25519KeyPair, Error> {
+    let der = crate::cluster_edge::cluster_key_der()?;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(b"moqui cluster ssh channel proof\0");
+    hasher.update(&der);
+    let seed: [u8; 32] = hasher.finalize().into();
+    Ed25519KeyPair::from_seed_unchecked(&seed)
+        .map_err(|_| Error::new("the cluster channel proof key could not be made"))
+}
+
+/// What one side of a channel signs: its role, the server's host key fingerprint and both nonces.
+fn proof_message(role: &str, host: &str, challenge: &[u8], answer: &[u8]) -> Vec<u8> {
+    [
+        PROOF_CONTEXT,
+        role.as_bytes(),
+        b"\0",
+        host.as_bytes(),
+        b"\0",
+        challenge,
+        answer,
+    ]
+    .concat()
+}
+
+fn nonce() -> Result<[u8; NONCE], String> {
+    let mut bytes = [0u8; NONCE];
+    SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| "no random bytes for the channel proof".to_string())?;
+    Ok(bytes)
+}
+
+/// Whether `signature` is the cluster proof key's (`key`'s public half) of `message`.
+fn verified(key: &Ed25519KeyPair, message: &[u8], signature: &[u8]) -> bool {
+    UnparsedPublicKey::new(&ED25519, key.public_key().as_ref())
+        .verify(message, signature)
+        .is_ok()
+}
+
+/// One line of the proof, at most [`MAX_PROOF_LINE`] bytes, within [`TIMEOUT`]; empty when the other side closed.
+async fn proof_line<S: AsyncRead + Unpin>(stream: &mut BufReader<S>) -> Result<String, String> {
+    let mut line = String::new();
+    tokio::time::timeout(TIMEOUT, (&mut *stream).take(MAX_PROOF_LINE).read_line(&mut line))
+        .await
+        .map_err(|_| "no answer in time".to_string())?
+        .map_err(|err| err.to_string())?;
+    Ok(line.trim_end_matches(['\r', '\n']).to_string())
+}
+
+async fn write_line<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut BufReader<S>, line: &str) -> Result<(), String> {
+    let out = stream.get_mut();
+    tokio::time::timeout(TIMEOUT, async {
+        out.write_all(format!("{line}\n").as_bytes()).await?;
+        out.flush().await
+    })
+    .await
+    .map_err(|_| "the line was not sent in time".to_string())?
+    .map_err(|err| err.to_string())
+}
+
+fn decoded(text: Option<&str>, what: &str) -> Result<Vec<u8>, String> {
+    text.and_then(|text| STANDARD.decode(text).ok())
+        .ok_or_else(|| format!("its {what} is not base64"))
+}
+
+/// The server's side of a cluster channel's proof (SEC-CLU-04): challenge the connecting member, check that it signed
+/// the challenge with the cluster proof key `key` for this host (`host`, this server's host key fingerprint), and
+/// answer with this side's own signature. On a refusal `403` is sent and the reason returned; no frame is read before.
+///
+/// # Errors
+///
+/// Why the member's proof is refused: none (it sent a frame or closed), malformed, or not of the cluster key.
+pub async fn prove_server<S: AsyncRead + AsyncWrite + Unpin>(
+    stream: &mut BufReader<S>,
+    key: &Ed25519KeyPair,
+    host: &str,
+) -> Result<(), String> {
+    let challenge = nonce()?;
+    write_line(stream, &format!("challenge {}", STANDARD.encode(challenge))).await?;
+    let checked = async {
+        let line = proof_line(stream).await?;
+        let mut fields = line.split(' ');
+        if fields.next() != Some("proof") {
+            return Err(
+                "it sent no proof of the cluster key (a member of an older version, or not a member)".to_string(),
+            );
+        }
+        let answer = decoded(fields.next(), "nonce")?;
+        let signature = decoded(fields.next(), "signature")?;
+        if answer.len() != NONCE || fields.next().is_some() {
+            return Err("its proof is malformed".to_string());
+        }
+        if !verified(key, &proof_message("client", host, &challenge, &answer), &signature) {
+            return Err("its proof is not of the cluster key".to_string());
+        }
+        Ok(answer)
+    }
+    .await;
+    let answer = match checked {
+        Ok(answer) => answer,
+        Err(why) => {
+            let _ = write_line(stream, "403").await;
+            return Err(why);
+        }
+    };
+    let signature = key.sign(&proof_message("server", host, &challenge, &answer));
+    write_line(stream, &format!("proof {}", STANDARD.encode(signature.as_ref()))).await
+}
+
+/// The connecting member's side of a cluster channel's proof (SEC-CLU-04): answer the server's challenge with a nonce
+/// and the cluster proof key `key`'s signature for the host whose key it checked (`host`, its fingerprint), then check
+/// the server's own signature. Nothing is sent on the channel before this succeeds.
+///
+/// # Errors
+///
+/// Why the server is not taken as a member: no challenge, its refusal of this member's proof, or no proof of the cluster
+/// key of its own.
+pub async fn prove_client<S: AsyncRead + AsyncWrite + Unpin>(
+    stream: &mut BufReader<S>,
+    key: &Ed25519KeyPair,
+    host: &str,
+) -> Result<(), String> {
+    let line = proof_line(stream).await?;
+    let challenge = match line.strip_prefix("challenge ") {
+        Some(text) => decoded(Some(text), "challenge")?,
+        None => return Err("it sent no challenge (a member of an older version, or not a member)".to_string()),
+    };
+    let answer = nonce()?;
+    let signature = key.sign(&proof_message("client", host, &challenge, &answer));
+    write_line(
+        stream,
+        &format!(
+            "proof {} {}",
+            STANDARD.encode(answer),
+            STANDARD.encode(signature.as_ref())
+        ),
+    )
+    .await?;
+    let line = proof_line(stream).await?;
+    let Some(text) = line.strip_prefix("proof ") else {
+        return Err(if line == "403" {
+            "it refused this member's proof of the cluster key".to_string()
+        } else {
+            "it sent no proof of the cluster key".to_string()
+        });
+    };
+    let theirs = decoded(Some(text), "proof")?;
+    if !verified(key, &proof_message("server", host, &challenge, &answer), &theirs) {
+        return Err("its proof is not of the cluster key".to_string());
+    }
+    Ok(())
 }
 
 /// True when `key` is the cluster login key.
@@ -112,13 +293,15 @@ pub fn sender(factory: &Arc<ExecutionContextFactory>) -> Result<Arc<dyn Sender>,
         factory: Arc::downgrade(factory),
         https: crate::cluster_edge::https_sender()?,
         key: Arc::new(cluster_login_key()?),
+        proof: Arc::new(channel_proof_key()?),
         peers: Mutex::new(HashMap::new()),
     }))
 }
 
-/// One peer: the session and a channel for each topic.
+/// One peer: the session, the fingerprint of the host key it showed, and a channel for each topic, each proven.
 struct Peer {
     handle: client::Handle<PinnedKey>,
+    host: String,
     channels: HashMap<String, BufReader<ChannelStream<client::Msg>>>,
 }
 
@@ -128,6 +311,8 @@ pub struct SshSender {
     factory: Weak<ExecutionContextFactory>,
     https: Arc<dyn Sender>,
     key: Arc<PrivateKey>,
+    /// The key each channel's proof is signed with (SEC-CLU-04).
+    proof: Arc<Ed25519KeyPair>,
     /// The session slot of each peer and when it was last used.
     peers: Mutex<HashMap<String, (PeerSlot, Instant)>>,
 }
@@ -142,15 +327,18 @@ impl Sender for SshSender {
         };
         let fingerprint = self.pinned(base_url)?;
         let slot = self.slot(base_url);
-        let (address, topic, payload, key) = (
+        let (address, topic, payload, keys) = (
             address.to_string(),
             topic.to_string(),
             payload.to_vec(),
-            Arc::clone(&self.key),
+            Keys {
+                login: Arc::clone(&self.key),
+                proof: Arc::clone(&self.proof),
+            },
         );
         let status = crate::edge::block_on(async move {
             let mut peer = slot.lock().await;
-            let sent = send_frame(&mut peer, &address, &fingerprint, &key, &topic, &payload).await;
+            let sent = send_frame(&mut peer, &address, &fingerprint, &keys, &topic, &payload).await;
             if sent.is_err() {
                 // A broken session is opened again on the next post.
                 peer.take();
@@ -206,9 +394,16 @@ impl SshSender {
     }
 }
 
-/// Accepts only the pinned host key.
+/// This member's keys: the login key and the channel proof key.
+struct Keys {
+    login: Arc<PrivateKey>,
+    proof: Arc<Ed25519KeyPair>,
+}
+
+/// Accepts only the pinned host key, and keeps its fingerprint as the server showed it, for the channel proof.
 struct PinnedKey {
     fingerprint: String,
+    seen: Arc<OnceLock<String>>,
 }
 
 impl client::Handler for PinnedKey {
@@ -216,6 +411,7 @@ impl client::Handler for PinnedKey {
 
     async fn check_server_key(&mut self, server_public_key: &PublicKeyOrCertificate) -> Result<bool, Self::Error> {
         let actual = server_public_key.public_key().fingerprint(HashAlg::Sha256).to_string();
+        let _ = self.seen.set(actual.clone());
         let trusted = super::client::same_fingerprint(&self.fingerprint, &actual);
         if !trusted {
             tracing::warn!(
@@ -231,12 +427,12 @@ async fn send_frame(
     peer: &mut Option<Peer>,
     address: &str,
     fingerprint: &str,
-    key: &Arc<PrivateKey>,
+    keys: &Keys,
     topic: &str,
     payload: &[u8],
 ) -> Result<u16, Error> {
     if peer.as_ref().is_none_or(|open| open.handle.is_closed()) {
-        *peer = Some(connect(address, fingerprint, key).await?);
+        *peer = Some(connect(address, fingerprint, &keys.login).await?);
     }
     let Some(open) = peer.as_mut() else {
         return Err(Error::new("no cluster session"));
@@ -251,8 +447,15 @@ async fn send_frame(
             .exec(true, format!("cluster {topic}"))
             .await
             .map_err(|err| Error::new(format!("cluster channel to {address}: {err}")))?;
-        open.channels
-            .insert(topic.to_string(), BufReader::new(channel.into_stream()));
+        let mut stream = BufReader::new(channel.into_stream());
+        // no frame goes to a host that does not prove the cluster material (SEC-CLU-04)
+        if let Err(why) = prove_client(&mut stream, &keys.proof, &open.host).await {
+            tracing::warn!("cluster peer {address} is not sent {topic}: {why}");
+            return Err(Error::new(format!(
+                "cluster peer {address} did not prove the cluster key: {why}"
+            )));
+        }
+        open.channels.insert(topic.to_string(), stream);
     }
     let Some(stream) = open.channels.get_mut(topic) else {
         return Err(Error::new("no cluster channel"));
@@ -287,8 +490,10 @@ async fn connect(address: &str, fingerprint: &str, key: &Arc<PrivateKey>) -> Res
         keepalive_interval: Some(Duration::from_secs(60)),
         ..client::Config::default()
     });
+    let seen = Arc::new(OnceLock::new());
     let check = PinnedKey {
         fingerprint: fingerprint.to_string(),
+        seen: Arc::clone(&seen),
     };
     let mut handle = tokio::time::timeout(TIMEOUT, client::connect(config, address, check))
         .await
@@ -302,21 +507,43 @@ async fn connect(address: &str, fingerprint: &str, key: &Arc<PrivateKey>) -> Res
     if !auth.success() {
         return Err(Error::new(format!("cluster peer {address} refused the cluster key")));
     }
+    let Some(host) = seen.get().cloned() else {
+        return Err(Error::new(format!("cluster peer {address} showed no host key")));
+    };
     Ok(Peer {
         handle,
+        host,
         channels: HashMap::new(),
     })
 }
 
-/// The receiving side of a `cluster <topic>` exec channel: read frames until the peer closes it, apply each, answer
-/// each with its status.
+/// What the server of a cluster channel knows of it: who connected, and its own host key's fingerprint.
+pub(super) struct ChannelSide {
+    pub(super) peer: std::net::SocketAddr,
+    pub(super) host: String,
+}
+
+/// The receiving side of a `cluster <topic>` exec channel: the channel proof first (SEC-CLU-04), then read frames until
+/// the peer closes it, apply each, answer each with its status.
 pub(super) async fn serve_channel(
     stream: ChannelStream<russh::server::Msg>,
     factory: Weak<ExecutionContextFactory>,
     posts: Arc<Mutex<Vec<String>>>,
     topic: String,
+    side: ChannelSide,
 ) {
     let mut stream = BufReader::new(stream);
+    let proven = match channel_proof_key() {
+        Ok(key) => prove_server(&mut stream, &key, &side.host).await,
+        Err(err) => Err(format!("this member has no cluster key: {err}")),
+    };
+    if let Err(why) = proven {
+        tracing::warn!(
+            "cluster channel {topic} from {} refused before any message: {why}",
+            side.peer
+        );
+        return;
+    }
     loop {
         let mut line = String::new();
         match stream.read_line(&mut line).await {
@@ -355,67 +582,5 @@ pub(super) async fn serve_channel(
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
-    use std::sync::{Arc, Mutex, Weak};
-    use std::time::{Duration, Instant};
-
-    use moqui_core::cluster::Sender;
-    use moqui_core::context::Error as CoreError;
-    use russh::keys::PrivateKey;
-
-    use super::{login_refused, PeerSlot, SshSender, PEER_IDLE};
-
-    #[test]
-    fn the_cluster_login_is_taken_only_on_the_ssh_transport_from_a_member() {
-        let member: std::net::IpAddr = "10.0.0.5".parse().unwrap();
-        let stranger: std::net::IpAddr = "203.0.113.9".parse().unwrap();
-        let members = std::collections::HashSet::from([member]);
-        assert_eq!(login_refused(true, false, member, &members), None);
-        // an IPv4 member seen through a dual-stack socket
-        let mapped: std::net::IpAddr = "::ffff:10.0.0.5".parse().unwrap();
-        assert_eq!(login_refused(true, false, mapped, &members), None);
-        assert!(login_refused(true, false, stranger, &members).is_some(), "not a member's address");
-        assert!(login_refused(false, false, member, &members).is_some(), "the transport is https");
-        assert!(login_refused(true, true, member, &members).is_some(), "through an edge tunnel");
-    }
-
-    struct NoSender;
-
-    impl Sender for NoSender {
-        fn post(
-            &self,
-            _base_url: &str,
-            _topic: &str,
-            _payload: &[u8],
-        ) -> Result<moqui_core::cluster::PostOutcome, CoreError> {
-            Err(CoreError::new("not in this test"))
-        }
-    }
-
-    #[test]
-    fn a_peer_left_idle_is_dropped_on_the_next_post() {
-        let sender = SshSender {
-            factory: Weak::new(),
-            https: Arc::new(NoSender),
-            key: Arc::new(PrivateKey::from(
-                russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&[7; 32]),
-            )),
-            peers: Mutex::new(HashMap::new()),
-        };
-        let long_ago = Instant::now()
-            .checked_sub(PEER_IDLE + Duration::from_secs(1))
-            .expect("an instant before the idle limit");
-        sender
-            .peers
-            .lock()
-            .unwrap()
-            .insert("ssh://gone:22".to_string(), (PeerSlot::default(), long_ago));
-        let first = sender.slot("ssh://live:22");
-        let again = sender.slot("ssh://live:22");
-        assert!(Arc::ptr_eq(&first, &again));
-        let peers = sender.peers.lock().unwrap();
-        assert!(!peers.contains_key("ssh://gone:22"));
-        assert!(peers.contains_key("ssh://live:22"));
-    }
-}
+#[path = "cluster_tests.rs"]
+mod tests;
