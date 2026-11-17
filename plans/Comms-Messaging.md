@@ -580,10 +580,10 @@ Status of items 1 to 7 (phase 4, web part; [WebRTC, The call's flow](../docs/int
 | 1 | Built: Voice call and Video call in the room header on both layouts (the tray's narrow Chat tab has them in its menu); a direct room calls the person, a group room starts a group call its members join; an encrypted room passes `requireE2ee` |
 | 2 | Built on the web: `m-call-compact`, full screen at a phone's width (big avatar for voice, the video and self view for video, mute, speaker where the browser chooses its output, video, flip, add people, hang up), and the same in the desktop's side panel (`state.panel`); the header shows the call's label from `e2eeLabel`. The Android app's native call screen is later |
 | 3 | Built: `addVideo` and `dropVideo` on the same connection (renegotiation, SFrame on the new sender); the other side gets a prompt |
-| 4 | Built on the desktop web: a Document Picture-in-Picture window (Chrome and Edge, and their automatic one), else the floating LiveCall window. Android's picture-in-picture is later |
-| 5 | Later (Android: Telecom `CallEndpoint`, the proximity wake lock) |
-| 6 | Built: `move#Call`, a new leg that closes the user's others once its media connected (`note#MediaEvent`); the other side's connection goes on (acceptance `CallFlow`). On the direct path the move first goes to the media server, a short gap. From and to the Android app is later |
-| 7 | Built: Hold and answer (`hold#OwnLeg`), End and answer, Swap or Resume, Decline with a message (ready texts or one's own, to the caller's direct room; sealed in an encrypted room) |
+| 4 | Built on the desktop web: a Document Picture-in-Picture window (Chrome and Edge, and their automatic one), else the floating LiveCall window. On Android a video call on its call screen goes to picture-in-picture when the user leaves the app (by itself on Android 12+), the screen then showing only the video (phase 4, Android part) |
+| 5 | Built on Android (phase 4): every call in Telecom (a joined one placed as outgoing), its audio through `CallEndpoint` (14+) or the `CallAudioState` routes: the earpiece for voice, the speaker for video, a headset at once, the call screen's audio button choosing; the proximity wake lock for a voice call on the earpiece; the foreground service's microphone and camera types ([Mobile-Client, During a call](../docs/ui/Mobile-Client.md#during-a-call-phase-4)). Not checked on a real phone yet (§18.4) |
+| 6 | Built: `move#Call`, a new leg that closes the user's others once its media connected (`note#MediaEvent`); the other side's connection goes on (acceptance `CallFlow`). On the direct path the move first goes to the media server, a short gap. To and from the Android app (phase 4): the page's move, a moved-in call placed in Telecom and a moved-away one ended there |
+| 7 | Built: Hold and answer (`hold#OwnLeg`), End and answer, Swap or Resume, Decline with a message (ready texts or one's own, to the caller's direct room; sealed in an encrypted room). On Android (phase 4): the page's hold is Telecom's hold and Telecom's hold reaches the page; a second ring rings through Telecom, and its Answer on the phone holds the call the page is in first |
 
 **Network resilience** (the test results from §8.4 decide the order)
 
@@ -1320,8 +1320,16 @@ Planned:
 - Done when: the rows of §8.2 from Start to Leave the app, Move the call, Missed call and Second call, on real
   phones. The existing acceptance specs `CallFlow` and `EncryptedCallFlow` are extended for voice-only start and the
   upgrade.
-- Status (2026-11-17): the web part is built; the Android part (items 4's picture-in-picture, 5, the native call screen,
-  Move to and from the app) is pending.
+- Status (2026-11-17): the web part and the Android part are built; §8.2 on real phones is the user's (§18.4).
+  - Android part: every call in Telecom (a joined one placed as an outgoing self-managed call); audio routing through
+    `CallEndpoint` and the call screen's audio button (`call_audio`, `call_audio_route`); the proximity wake lock;
+    picture-in-picture for a video call; the foreground service's microphone and camera types; the page's `held` as
+    Telecom's hold and Telecom's hold to the page (`hostHold`); call waiting through Telecom with Hold and answer on the
+    phone's Answer; Move to and from the app through the page's move. Still `android.telecom`: the move to
+    `androidx.core.telecom` is phase 9's, with the managed account (§9). The native call screen stays the page's
+    `m-call-compact`. Tests: JVM `CallRulesTest` (routes, the ear, picture-in-picture, the service's types), instrumented
+    `CallTelecomTest` (a joined call in Telecom, hold and resume, the routes), Rust `tell_script`, the page's
+    `WebrootCall` (the host's audio, picture-in-picture, hold), acceptance `CallFlow` passes.
   - Built: §8.3 items 1, 2, 3, 4 (desktop), 6 and 7 (the status table there). `Chat.qvue`'s two buttons;
     `WebrootCall.js`'s side panel, `m-call-compact`, `addVideo`/`dropVideo` and the prompt, `openPip`, `moveHere`,
     `hold`/`resume` and `declineWithText`; `Calls.js` `move#Call` (finished on the new leg's `connected`) and
@@ -1340,8 +1348,8 @@ Planned:
     move's offer and push, the quick text sealed in an encrypted room), `notws::rtc` (the bindings). Acceptance:
     `CallFlow` (a voice-only start and the upgrade and downgrade, Move to this device, call waiting with swap and a
     quick text), `EncryptedCallFlow` (an encrypted voice-only start and the upgrade).
-  - Left: the Android parts; on the direct path a move goes through the media server first (a short gap); the
-    picture-in-picture window in the desktop client's CEF is not checked; §8.2 on real phones.
+  - Left: on the direct path a move goes through the media server first (a short gap); the picture-in-picture window
+    in the desktop client's CEF is not checked; §8.2 on real phones (§18.4).
 
 #### Phase 5: calls, network
 
@@ -1461,7 +1469,7 @@ These cannot be shown by a browser at phone width. They are collected here for e
 |---|---|
 | 1 | The keyboard does not cover the composer. A long press vibrates. Back closes a sheet, a pane and the room in order |
 | 2 | The soak cases of §7.6. Reply and Mark read from a notification. A notification after a reboot |
-| 4 | The rows of §8.2 between two phones and with the desktop app. Bluetooth, speaker, the lock screen. An encrypted call on the phone's WebView |
+| 4 | The rows of §8.2 between two phones and with the desktop app. A voice call on the earpiece with the screen off at the ear; a video call on the speaker; a Bluetooth and a wired headset taking the call at once and giving it back; the audio button's choices. Home during a video call: picture-in-picture with the video only; Home during a voice call: the call goes on with its microphone (and a video call's camera) for minutes, screen off. A second call while in one: it rings, Answer holds the first, Swap, and a car's or watch's hold. Move a call from the desktop to the phone and back with no gap. The lock screen. An encrypted call on the phone's WebView |
 | 5 | Wi-Fi to mobile data during a call |
 | 7 | A voice note recorded and played |
 

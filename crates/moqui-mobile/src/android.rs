@@ -164,6 +164,35 @@ pub(crate) fn page_call_state(id: &str, state: &str) -> Result<(), String> {
     })
 }
 
+/// The call's audio route and routes (`CallAudio.state()`, JSON `{route, routes}`).
+pub(crate) fn call_audio_state() -> Result<String, String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.CallAudio"))?;
+        let state = env
+            .call_static_method(&class, jni_str!("state"), jni_sig!("()Ljava/lang/String;"), &[])?
+            .l()?;
+        let state = env.cast_local::<jni::objects::JString>(state)?;
+        state.try_to_string(env)
+    })
+}
+
+/// The call's audio to `route` (`CallAudio.request(route)`): whether Telecom was asked.
+pub(crate) fn call_audio_route(route: &str) -> Result<bool, String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.CallAudio"))?;
+        let route = env.new_string(route)?;
+        let asked = env
+            .call_static_method(
+                &class,
+                jni_str!("request"),
+                jni_sig!("(Ljava/lang/String;)Z"),
+                &[JValue::Object(&route)],
+            )?
+            .z()?;
+        Ok(asked)
+    })
+}
+
 /// The phone's notification state, as the check screen shows it (`PushCheck.state(context)`, JSON: notifications
 /// allowed, channels on, battery optimization, the last push received).
 pub(crate) fn push_check_state() -> Result<String, String> {

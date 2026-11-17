@@ -9,6 +9,11 @@
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <!-- A call keeps its microphone and camera when the app is left (CallService, plans/Comms-Messaging.md §8.2). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <!-- The screen off at the ear in a voice call (CallAudio's proximity wake lock). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- The call's media, in the WebView: asked at the Answer (IncomingCallActivity) or by the page. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.CAMERA" />
@@ -41,6 +46,8 @@
             android:launchMode="singleTask"
             android:label="@string/main_activity_title"
             android:name=".MainActivity"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -87,7 +94,7 @@
         <service
             android:name=".CallService"
             android:exported="false"
-            android:foregroundServiceType="phoneCall" />
+            android:foregroundServiceType="phoneCall|microphone|camera" />
         <receiver
             android:name=".CallActionReceiver"
             android:exported="false" />

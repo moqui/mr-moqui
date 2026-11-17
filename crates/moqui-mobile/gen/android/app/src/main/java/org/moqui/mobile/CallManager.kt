@@ -52,11 +52,16 @@ object CallManager {
         val account: String,
         val caller: String,
         val title: String,
-        val video: Boolean,
+        /** A video call (the ring's kind; the page says when it changes: `video`, `voice`). */
+        var video: Boolean,
         val expiresAt: Long,
         var state: State,
     ) {
         var connection: CallConnection? = null
+        /** On hold here (call waiting: the page's `held`, or Telecom's hold). */
+        var held = false
+        /** The page shows its call screen (`screen`, `offScreen`): a video call then goes to picture-in-picture. */
+        var onScreen = false
         var shown = false
         /** The nonce of the Answer's link: the app shows over the lock screen for this call only. */
         var answerNonce: String? = null
@@ -78,6 +83,22 @@ object CallManager {
 
     fun know(context: Context) {
         appContext = context.applicationContext
+    }
+
+    /** The application context, once any part of the app ran. */
+    fun context(): Context? = appContext
+
+    /** The Telecom connection of the call the app is in now (joined, not on hold): its audio is routed ([CallAudio]). */
+    fun activeConnection(): CallConnection? =
+        calls.values.firstOrNull { it.joined && !it.held && it.connection != null }?.connection
+
+    /** A joined video call on its call screen, not on hold: the app goes to picture-in-picture when the user leaves it. */
+    fun pipWanted(): Boolean = calls.values.any { CallRules.pipWanted(it.joined && !it.held, it.video, it.onScreen) }
+
+    /** Whether a call is joined in the app, and whether one is a video call (the foreground service's types). */
+    fun inCallMedia(): Pair<Boolean, Boolean> {
+        val joined = calls.values.filter { it.joined && !it.held }
+        return Pair(joined.isNotEmpty(), joined.any { it.video })
     }
 
     private fun onMain(task: () -> Unit) {
@@ -223,6 +244,41 @@ object CallManager {
             return
         }
         call.connection = connection
+        CallAudio.reset()
+    }
+
+    /**
+     * A call the app joined by itself (started, joined from a chat, moved to this phone) goes into Telecom as an
+     * outgoing self-managed call, so it has its audio routes, the hold of another call and a headset's hang-up.
+     */
+    private fun placeInTelecom(context: Context, call: Call) {
+        val handle = accountHandle(context) ?: return
+        val telecom = context.getSystemService(TelecomManager::class.java) ?: return
+        try {
+            if (!telecom.isOutgoingCallPermitted(handle)) {
+                Log.i(TAG, "Telecom does not permit the call ${call.id} now: its audio is the WebView's own")
+                return
+            }
+            val extras = Bundle().apply {
+                putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, handle)
+                putBundle(TelecomManager.EXTRA_OUTGOING_CALL_EXTRAS, Bundle().apply { putString(EXTRA_CALL, call.id) })
+            }
+            telecom.placeCall(Uri.fromParts("sip", call.id, null), extras)
+        } catch (err: Exception) {
+            Log.w(TAG, "Telecom did not take the call ${call.id}: ${err.message}")
+        }
+    }
+
+    /**
+     * Telecom holds the call, or takes it off hold (another call, a watch, a car): the page holds or resumes it
+     * (`moqui.call.hostHold`), which says `held` or `joined` back.
+     */
+    fun telecomHold(id: String, hold: Boolean) {
+        onMain {
+            if (calls[id] == null) return@onMain
+            Log.i(TAG, if (hold) "Telecom holds the call $id" else "Telecom takes the call $id off hold")
+            Native.tellPage("hold", org.json.JSONObject().put("callSessionId", id).put("hold", hold).toString())
+        }
     }
 
     /** Telecom could not make it: the ring is shown without it. */
@@ -339,11 +395,19 @@ object CallManager {
             when (state) {
                 "joined" -> {
                     if (call == null) {
-                        // a call joined in the app (not rung here): the foreground service keeps it while the screen is off
-                        calls[id] = Call(id, "", "", "", false, 0, State.ANSWERED).also {
+                        // a call joined in the app (not rung here): the foreground service keeps it while the screen is
+                        // off, and Telecom routes its audio
+                        val joined = Call(id, "", "", "", false, 0, State.ANSWERED).also {
                             it.shown = true
                             it.joined = true
                         }
+                        calls[id] = joined
+                        placeInTelecom(context, joined)
+                    } else if (call.held) {
+                        // back from hold (Swap, Resume)
+                        call.held = false
+                        call.connection?.setActive()
+                        Log.i(TAG, "The call $id is back from hold")
                     } else {
                         if (call.state == State.RINGING) {
                             // answered in the app itself, not on the ring screen
@@ -360,10 +424,25 @@ object CallManager {
                     end(call, DisconnectCause.LOCAL)
                     Log.i(TAG, "The app left the call $id")
                 }
-                "screen" -> if (call != null && call.answerNonce != null && call.state == State.ANSWERED) {
-                    appScreen?.get()?.showOverLock(true)
+                // call waiting: the call goes on hold here, its Telecom call with it, and stays
+                "held" -> if (call != null) {
+                    call.held = true
+                    call.connection?.setOnHold()
+                    Log.i(TAG, "The call $id is on hold")
                 }
-                "offScreen" -> leaveLockScreen()
+                // the call's kind (voice to video and back): its default audio route and picture-in-picture follow
+                "video", "voice" -> if (call != null) {
+                    call.video = state == "video"
+                    call.connection?.let { CallAudio.kindChanged(it, call.video) }
+                }
+                "screen" -> {
+                    if (call != null) call.onScreen = true
+                    if (call != null && call.answerNonce != null && call.state == State.ANSWERED) appScreen?.get()?.showOverLock(true)
+                }
+                "offScreen" -> {
+                    calls.values.forEach { it.onScreen = false }
+                    leaveLockScreen()
+                }
             }
             changed(context)
         }
@@ -403,6 +482,7 @@ object CallManager {
         }
         call.connection = null
         if (ringing() == null) closeRingScreen()
+        if (calls.values.none { it.joined && !it.held }) appContext?.let { CallAudio.proximity(it, false) }
     }
 
     /** After any change: the service as the calls are, and no showing over the lock screen without a call answered
@@ -410,6 +490,8 @@ object CallManager {
     private fun changed(context: Context) {
         CallService.refresh(context)
         if (calls.values.none { it.state == State.ANSWERED && it.answerNonce != null }) appScreen?.get()?.showOverLock(false)
+        appScreen?.get()?.updatePip()
+        CallAudio.changed(activeConnection())
     }
 
     /** Over the lock screen the app shows the call's screen only: leaving it shows the lock screen, which asks for the

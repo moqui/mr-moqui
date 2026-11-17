@@ -194,3 +194,46 @@ test("call waiting: a refused hold keeps the call and answers nothing; a held le
         call.answer = answer;
     }
 });
+
+// plans/Comms-Messaging.md §8.3 items 4, 5 and 7, the mobile app's side: the speaker button chooses the native call's
+// route, the app's picture-in-picture shows the video only, and Telecom's hold and resume reach the call
+test("the mobile app's native call: its audio routes, picture-in-picture, Telecom's hold, and the held call left", async () => {
+    reset();
+    const host = window.moquiDesktop;
+    const told = [];
+    const routes = [];
+    window.moquiDesktop = {
+        callState: (id, what) => { told.push(id + ":" + what); return Promise.resolve(); },
+        callAudioRoute: (route) => { routes.push(route); return Promise.resolve(true); }
+    };
+    const request = moqui.request;
+    moqui.request = (url) => Promise.resolve({ json: url.endsWith("/holdOwnLeg") ? { callLegId: "L1" } : {} });
+    try {
+        assert.deepEqual(call.hostRoutes(), [], "no routes before the host tells them");
+        call.setHostAudio({ route: "earpiece", routes: ["earpiece", "speaker", "bluetooth"] });
+        assert.deepEqual(call.hostRoutes(), ["earpiece", "speaker", "bluetooth"]);
+        assert.equal(await call.chooseHostRoute("speaker"), true);
+        assert.deepEqual(routes, ["speaker"]);
+        assert.equal(state.hostAudio.route, "speaker");
+        call.setHostAudio({ route: "earpiece", routes: ["earpiece"] });
+        assert.deepEqual(call.hostRoutes(), [], "one route: nothing to choose");
+        call.setHostPip(true);
+        assert.equal(state.hostPip, true);
+        call.setHostPip(false);
+        // Telecom holds the call this page is in: the page holds it, and says so back
+        Object.assign(state, { current: "C1", legId: "L1", phase: "connected" });
+        await call.hostHold("C1", true);
+        assert.deepEqual(state.held && state.held.callSessionId, "C1");
+        assert.ok(told.includes("C1:held"));
+        // another call's hold: nothing
+        assert.equal(await call.hostHold("C9", true), null);
+        // the held call left from its banner: the native call on hold ends too
+        await call.leaveHeld();
+        assert.ok(told.includes("C1:left"));
+    } finally {
+        moqui.request = request;
+        window.moquiDesktop = host;
+        reset();
+        Object.assign(state, { hostAudio: null, hostPip: false });
+    }
+});

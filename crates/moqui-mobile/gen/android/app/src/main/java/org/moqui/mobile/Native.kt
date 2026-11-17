@@ -68,6 +68,21 @@ object Native {
         }
     }
 
+    @JvmStatic external fun callTell(what: String, json: String)
+
+    /**
+     * Tell the shell's call screen what the native call did (`audio`: its route and routes; `pip`: picture-in-picture
+     * on or off; `hold`: Telecom holds or resumes the call), when the library is loaded; nothing otherwise.
+     */
+    fun tellPage(what: String, json: String) {
+        if (ready != true) return
+        try {
+            callTell(what, json)
+        } catch (err: Throwable) {
+            Log.w(TAG, "The page was not told of $what", err)
+        }
+    }
+
     /** The accounts signed in here. */
     fun accounts(context: Context): List<String> {
         if (!ensure(context)) return emptyList()

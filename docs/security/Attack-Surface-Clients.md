@@ -68,7 +68,8 @@ What each command does and what it checks:
 | `file_save` | `name`, `data` (base64) | Writes a file `<16 hex>-<name>` into the account's store directory `data/<account>.files`, mode `0600`; the name keeps its last 80 characters and every character but letters, digits, `.`, `-`, `_` becomes `_` (`crates/moqui-client/src/store/attach.rs`) | the calling webview's account; the store's size cap |
 | `open_in_shell` (desktop `client/windows.rs`, mobile `commands.rs`) | `path` | Keeps a path for the shell to show and shows the main window | the path is a comms screen under the account's comms app; on the desktop the window's account is the current one |
 | `client_show_shell` (mobile) | none | The webview goes to the shell | none |
-| `call_state`, `call_take_answer` (mobile) | `nonce`, `call_session_id`, `state` | Tells the native call code a call's state; answers once whether the call was answered on the phone's call screen | shell page |
+| `call_state`, `call_take_answer` (mobile) | `nonce`, `call_session_id`, `state` (`joined`, `left`, `held`, `screen`, `offScreen`, `video`, `voice`) | Tells the native call code a call's state: a joined call is placed in Telecom as a self-managed call, `held` holds it there; answers once whether the call was answered on the phone's call screen | shell page |
+| `call_audio`, `call_audio_route` (mobile) | `nonce`, `route` (`earpiece`, `speaker`, `wired`, `bluetooth`) | The call's audio route and routes in Telecom, and the user's choice of one for the call the app is in; nothing without a call in Telecom | shell page |
 | `scheme_fetch` (mobile `scheme.rs`) | `method`, `url`, `headers`, `body` (base64) | Makes the request the scheme would have answered, for a request with a body | the webview's URL is on the shell or app origin and `url` is on that same origin |
 
 No command takes a path on the user's file system, reads a file outside the offline store, returns a device key, or starts a process other than the OS link opener.
@@ -146,7 +147,7 @@ The store keeps `GET` answers with a JSON content type and status 200 for the sh
 | `org.unifiedpush.android.connector.internal.RaiseToForegroundService`, `.LinkActivity` (the connector's) | the service yes | A distributor raising the app to the foreground to deliver; the link activity picks a distributor |
 | `.DebugRingReceiver` (the `debug` source set only) | yes | Only a holder of `android.permission.DUMP` (adb) |
 
-The app asks for `INTERNET`, `POST_NOTIFICATIONS`, `USE_FULL_SCREEN_INTENT`, `MANAGE_OWN_CALLS`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_PHONE_CALL`, `RECORD_AUDIO`, `CAMERA`, `MODIFY_AUDIO_SETTINGS` and `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` (the notification check's battery fix, which the system asks the user). `android:allowBackup` is `false`. `android:usesCleartextTraffic` is a build placeholder: `false` by default and `true` in the `debug` build type (`crates/moqui-mobile/gen/android/app/build.gradle.kts`, lines 45 and 58).
+The app asks for `INTERNET`, `POST_NOTIFICATIONS`, `USE_FULL_SCREEN_INTENT`, `MANAGE_OWN_CALLS`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_PHONE_CALL`, `FOREGROUND_SERVICE_MICROPHONE` and `FOREGROUND_SERVICE_CAMERA` (a call's service keeps its media when the app is left, taken only while the app is in a call), `WAKE_LOCK` (the screen off at the ear), `ACCESS_NETWORK_STATE`, `RECORD_AUDIO`, `CAMERA`, `MODIFY_AUDIO_SETTINGS` and `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` (the notification check's battery fix, which the system asks the user). `android:allowBackup` is `false`. `android:usesCleartextTraffic` is a build placeholder: `false` by default and `true` in the `debug` build type (`crates/moqui-mobile/gen/android/app/build.gradle.kts`, lines 45 and 58).
 
 ## The desktop updater
 

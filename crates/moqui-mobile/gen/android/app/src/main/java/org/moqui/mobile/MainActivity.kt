@@ -245,6 +245,42 @@ class MainActivity : TauriActivity() {
     super.onBackPressed()
   }
 
+  // ---- picture-in-picture (plans/Comms-Messaging.md §8.2 Leave the app, §8.3 item 4) ----
+
+  private fun pipParams(): android.app.PictureInPictureParams {
+    val builder = android.app.PictureInPictureParams.Builder().setAspectRatio(android.util.Rational(3, 4))
+    // Android 12+: the system takes the app to picture-in-picture by itself when the user leaves it in a video call
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) builder.setAutoEnterEnabled(CallManager.pipWanted())
+    return builder.build()
+  }
+
+  /** The call's state changed ([CallManager]): picture-in-picture is offered while a video call shows. */
+  fun updatePip() {
+    try {
+      setPictureInPictureParams(pipParams())
+    } catch (err: Exception) {
+      Log.d(CallManager.TAG, "No picture-in-picture: ${err.message}")
+    }
+  }
+
+  /** Before Android 12: the user leaves the app (Home, Recents) during a video call: it goes to picture-in-picture. */
+  override fun onUserLeaveHint() {
+    super.onUserLeaveHint()
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && CallManager.pipWanted()) {
+      try {
+        enterPictureInPictureMode(pipParams())
+      } catch (err: Exception) {
+        Log.w(CallManager.TAG, "Picture-in-picture did not start: ${err.message}")
+      }
+    }
+  }
+
+  /** In or out of picture-in-picture: the call screen shows only the video while in it (`moqui.call.setHostPip`). */
+  override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
+    super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+    Native.tellPage("pip", isInPictureInPictureMode.toString())
+  }
+
   /** Show over the lock screen and turn the screen on (a call), or not (the call is over). */
   fun showOverLock(on: Boolean) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {

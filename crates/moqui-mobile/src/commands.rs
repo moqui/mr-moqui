@@ -255,9 +255,60 @@ fn native_state() -> Result<serde_json::Value, String> {
 
 /// What the shell says of a call to the native code (MT2): `joined` (its media is up), `left` (left, ended, or never
 /// joined), `screen` and `offScreen` (its call screen shown or left: over the lock screen the app shows the call's
-/// screen only), and `held` (call waiting put it on hold: its leg stays in the call; the native code keeps its call,
-/// and will map it to Telecom's hold, plans/Comms-Messaging.md phase 4's Android part).
-pub(crate) const CALL_STATES: [&str; 5] = ["joined", "left", "screen", "offScreen", "held"];
+/// screen only), `held` (call waiting put it on hold: its leg stays in the call, and its Telecom call goes on hold;
+/// `joined` again takes it off), and `video` or `voice` (the call's kind now: its default audio route, and
+/// picture-in-picture for video; plans/Comms-Messaging.md §8.3 items 3 to 5).
+pub(crate) const CALL_STATES: [&str; 7] = ["joined", "left", "screen", "offScreen", "held", "video", "voice"];
+
+/// The call's audio for the shell's speaker button (plans/Comms-Messaging.md §8.3 item 5): `{route, routes}`, the
+/// route in use and the ones Telecom offers (`earpiece`, `speaker`, `wired`, `bluetooth`). The shell's only.
+#[tauri::command(async)]
+pub(crate) fn call_audio(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let host = host(&app)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
+    #[cfg(target_os = "android")]
+    {
+        let text = crate::android::call_audio_state()?;
+        serde_json::from_str(&text).map_err(|err| err.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    Ok(serde_json::json!({ "route": null, "routes": [] }))
+}
+
+/// The routes the shell's speaker button may choose.
+pub(crate) const AUDIO_ROUTES: [&str; 4] = ["earpiece", "speaker", "wired", "bluetooth"];
+
+/// The shell's speaker button: the call's audio to `route` ([`AUDIO_ROUTES`]) for the rest of the call. Whether
+/// Telecom was asked (false: no call in Telecom, or no such route now).
+#[tauri::command(async)]
+pub(crate) fn call_audio_route(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+    route: String,
+) -> Result<bool, String> {
+    let host = host(&app)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
+    let route = AUDIO_ROUTES
+        .iter()
+        .find(|known| **known == route)
+        .ok_or("Not an audio route")?;
+    #[cfg(target_os = "android")]
+    return crate::android::call_audio_route(route);
+    #[cfg(not(target_os = "android"))]
+    {
+        log::info!("The call's audio to {route}");
+        Ok(false)
+    }
+}
 
 /// The shell's call `callSessionId` is in `state` ([`CALL_STATES`]): the native call (the Telecom call, the foreground
 /// service, the showing over the lock screen) is kept while the page has the call and ended after. The shell's only

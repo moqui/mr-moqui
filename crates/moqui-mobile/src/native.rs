@@ -159,6 +159,15 @@ pub(crate) fn ring_account(dir: &Path, push_id: &str) -> Option<String> {
     calls::ring_account(&load_record(dir), push_id, &keyed)
 }
 
+/// The native call tells the shell's call screen something (`Native.callTell`: audio, pip, hold).
+pub(crate) fn tell_page(what: &str, json: &str) {
+    match (calls::tell_script(what, json), host()) {
+        (Some(script), Some(host)) => host.tell_call(&script),
+        (None, _) => log::warn!("Calls: the page is not told {what}: not one"),
+        (Some(_), None) => {}
+    }
+}
+
 /// Telecom ended an answered call (a headset's or a car's hang-up): the page leaves it.
 pub(crate) fn hang_up(id: &str) {
     match (calls::call_id(id), host()) {
@@ -833,6 +842,21 @@ mod entries {
     ) {
         env.with_env(|env| -> Result<(), jni::errors::Error> {
             super::hang_up(&call_session_id.try_to_string(env)?);
+            Ok(())
+        })
+        .resolve::<LogErrorAndDefault>();
+    }
+
+    /// `Native.callTell(what, json)`: the native call tells the shell's call screen something.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_callTell<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        what: JString<'caller>,
+        json: JString<'caller>,
+    ) {
+        env.with_env(|env| -> Result<(), jni::errors::Error> {
+            super::tell_page(&what.try_to_string(env)?, &json.try_to_string(env)?);
             Ok(())
         })
         .resolve::<LogErrorAndDefault>();

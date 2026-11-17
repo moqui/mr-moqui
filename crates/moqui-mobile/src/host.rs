@@ -365,6 +365,13 @@ impl MobileHost {
     }
 
     /// The shell leaves the call `id`, if it is in it (the call notification's Hang up, a headset's).
+    /// The native call tells the shell's call screen something ([`crate::calls::tell_script`]).
+    pub(crate) fn tell_call(&self, script: &str) {
+        if self.is_shell(MAIN) && self.page.has_nonce() {
+            self.eval(script);
+        }
+    }
+
     pub(crate) fn hang_up(&self, id: &str) {
         if self.is_shell(MAIN) && self.page.has_nonce() {
             self.eval(&crate::calls::hang_up_script(id));

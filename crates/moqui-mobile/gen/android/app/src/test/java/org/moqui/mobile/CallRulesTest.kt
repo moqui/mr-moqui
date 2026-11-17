@@ -4,6 +4,7 @@ package org.moqui.mobile
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -45,5 +46,44 @@ class CallRulesTest {
         assertFalse(CallRules.ownsLink("7", "hX", "7", "hN", true))
         assertFalse(CallRules.ownsLink("8", "hN", "7", "hN", true))
         assertFalse(CallRules.ownsLink("7", null, "7", null, true))
+    }
+
+    /** §8.2 During: earpiece for voice, speaker for video; a headset stays; the user's choice stays. */
+    @Test
+    fun aCallGoesToTheEarpieceForVoiceTheSpeakerForVideoAndAHeadsetStays() {
+        val phone = listOf(CallRules.EARPIECE, CallRules.SPEAKER)
+        assertEquals(CallRules.EARPIECE, CallRules.defaultRoute(false, phone, CallRules.SPEAKER, false))
+        assertEquals(CallRules.SPEAKER, CallRules.defaultRoute(true, phone, CallRules.EARPIECE, false))
+        assertNull(CallRules.defaultRoute(false, phone, CallRules.EARPIECE, false))
+        assertNull("chosen by the user", CallRules.defaultRoute(true, phone, CallRules.EARPIECE, true))
+        val headset = phone + CallRules.BLUETOOTH
+        assertNull("a headset stays", CallRules.defaultRoute(true, headset, CallRules.BLUETOOTH, false))
+        assertEquals("no earpiece (a tablet)", CallRules.SPEAKER, CallRules.defaultRoute(false, listOf(CallRules.SPEAKER), null, false))
+        // a headset that comes takes the call; when it goes, the call's default comes back
+        assertEquals(CallRules.BLUETOOTH, CallRules.afterRoutesChanged(false, phone, headset, CallRules.EARPIECE))
+        assertEquals(CallRules.WIRED, CallRules.afterRoutesChanged(true, phone, phone + CallRules.WIRED, CallRules.SPEAKER))
+        assertEquals(CallRules.EARPIECE, CallRules.afterRoutesChanged(false, headset, phone, CallRules.BLUETOOTH))
+        assertNull(CallRules.afterRoutesChanged(false, phone, phone, CallRules.EARPIECE))
+    }
+
+    @Test
+    fun theScreenGoesOffAtTheEarAndAVideoCallGoesToPictureInPicture() {
+        assertTrue(CallRules.proximityWanted(true, false, CallRules.EARPIECE))
+        assertFalse(CallRules.proximityWanted(true, false, CallRules.SPEAKER))
+        assertFalse(CallRules.proximityWanted(true, true, CallRules.EARPIECE))
+        assertFalse(CallRules.proximityWanted(false, false, CallRules.EARPIECE))
+        assertTrue(CallRules.pipWanted(true, true, true))
+        assertFalse(CallRules.pipWanted(true, false, true))
+        assertFalse(CallRules.pipWanted(true, true, false))
+    }
+
+    /** §8.2 Leave the app: a call keeps its microphone and camera; a ring alone (from the background) has neither. */
+    @Test
+    fun theServiceHasTheMicrophoneAndCameraOfACallNotOfARing() {
+        assertEquals(listOf("phoneCall"), CallRules.serviceTypes(false, true, true, true))
+        assertEquals(listOf("phoneCall", "microphone"), CallRules.serviceTypes(true, false, true, true))
+        assertEquals(listOf("phoneCall", "microphone", "camera"), CallRules.serviceTypes(true, true, true, true))
+        assertEquals(listOf("phoneCall", "microphone"), CallRules.serviceTypes(true, true, true, false))
+        assertEquals(listOf("phoneCall"), CallRules.serviceTypes(true, true, false, false))
     }
 }

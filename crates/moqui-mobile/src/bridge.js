@@ -306,7 +306,11 @@
             .catch((err) => console.info("The call state was not told to the app", err)),
         // whether the call screen answers this call by itself: once, for the call the user answered on the phone
         takeAnswer: (callSessionId) => shellAsk("call_take_answer", { callSessionId: String(callSessionId || "") })
-            .then((taken) => taken === true, () => false)
+            .then((taken) => taken === true, () => false),
+        // the call's audio through Telecom (plans/Comms-Messaging.md §8.3 item 5): {route, routes}, and the speaker
+        // button's choice of a route (earpiece, speaker, wired, bluetooth); changes come by moqui.call.setHostAudio
+        callAudio: () => shellAsk("call_audio").catch(() => ({ route: null, routes: [] })),
+        callAudioRoute: (route) => shellAsk("call_audio_route", { route: String(route || "") }).catch(() => false)
     });
     console.info("moqui-mobile: the shell's bridge is ready");
 })();

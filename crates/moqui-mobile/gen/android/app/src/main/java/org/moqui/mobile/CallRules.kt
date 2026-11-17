@@ -45,4 +45,55 @@ object CallRules {
     /** Whether a link with [linkId] and [linkNonce] is the one made for the call [callId] answered here ([callNonce]). */
     fun ownsLink(linkId: String?, linkNonce: String?, callId: String, callNonce: String?, answered: Boolean): Boolean =
         answered && callNonce != null && linkNonce == callNonce && linkId == callId
+
+    // ---- audio, the screen at the ear, picture-in-picture, the service (plans/Comms-Messaging.md §8.2, §8.3 item 5) ----
+
+    const val EARPIECE = "earpiece"
+    const val SPEAKER = "speaker"
+    const val BLUETOOTH = "bluetooth"
+    const val WIRED = "wired"
+
+    /** The routes in the order the page's menu lists them. */
+    val ROUTES = listOf(EARPIECE, SPEAKER, WIRED, BLUETOOTH)
+
+    /**
+     * The route a call goes to by itself, when the user has not chosen one in it: a headset (Bluetooth or wired) that
+     * Telecom took stays; else the speaker for a video call, the earpiece for a voice call (the speaker where the phone
+     * has no earpiece). Null: no change.
+     */
+    fun defaultRoute(video: Boolean, available: Collection<String>, current: String?, chosen: Boolean): String? {
+        if (chosen) return null
+        if (current == BLUETOOTH || current == WIRED) return null
+        val wanted = if (video) SPEAKER else if (EARPIECE in available) EARPIECE else SPEAKER
+        return wanted.takeIf { it != current && it in available }
+    }
+
+    /**
+     * After a headset comes or goes: a new headset takes the call at once (Telecom's own), and when the one in use goes
+     * the call falls back to the default of its kind, whatever the user chose before.
+     */
+    fun afterRoutesChanged(video: Boolean, before: Collection<String>, now: Collection<String>, current: String?): String? {
+        val added = now.filter { it !in before && (it == BLUETOOTH || it == WIRED) }
+        if (added.isNotEmpty()) return added.first().takeIf { it != current }
+        if (current != null && current !in now) return defaultRoute(video, now, null, false)
+        return null
+    }
+
+    /** The screen goes off at the ear: a voice call on the earpiece, in the app. */
+    fun proximityWanted(inCall: Boolean, video: Boolean, route: String?): Boolean = inCall && !video && route == EARPIECE
+
+    /** A video call, in the app and on its call screen, goes to picture-in-picture when the user leaves the app. */
+    fun pipWanted(inCall: Boolean, video: Boolean, onCallScreen: Boolean): Boolean = inCall && video && onCallScreen
+
+    /**
+     * The foreground service's types: `phoneCall` always; `microphone` once the app is in a call with the microphone
+     * allowed, and `camera` too for a video call with the camera allowed, so the call keeps its media when the app is
+     * left (a ring alone has neither: Android does not let a service started from the background have them).
+     */
+    fun serviceTypes(inCall: Boolean, video: Boolean, micAllowed: Boolean, cameraAllowed: Boolean): List<String> {
+        val types = mutableListOf("phoneCall")
+        if (inCall && micAllowed) types.add("microphone")
+        if (inCall && video && cameraAllowed) types.add("camera")
+        return types
+    }
 }

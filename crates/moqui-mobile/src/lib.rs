@@ -127,7 +127,9 @@ pub fn run() {
             commands::push_test,
             commands::open_external,
             commands::call_state,
-            commands::call_take_answer
+            commands::call_take_answer,
+            commands::call_audio,
+            commands::call_audio_route
         ])
         .setup(move |app| {
             let embedded = files.take().ok_or("the app was set up twice")?;
