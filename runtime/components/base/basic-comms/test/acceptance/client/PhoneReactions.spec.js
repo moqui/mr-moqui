@@ -1,7 +1,8 @@
 // Reactions, who reacted and Info by touch on a phone (plans/Comms-Messaging.md §4, "Done when"): the bundled shell at 390 x 844
 // with a stand-in host and server (pages/PhoneReactions.page.js), driven only by made touch events (a tap is touchstart,
 // touchend and the click a phone sends after it; a long press holds the touch past 450 ms). A long press on a message opens
-// its sheet, where a quick reaction reacts; a long press on the reaction's chip lists who reacted and is not a tap; a tap on
+// its sheet, where a quick reaction reacts; a long press on the reaction's chip (with the context menu Android's WebView
+// sends during it) lists who reacted, opens no sheet and is not a tap; a tap on
 // the chip takes the reaction back; "+" opens the emoji picker, where a search and a tap react; and Info, from the sheet,
 // shows when it was sent and who has read up to it. An acceptance test (a phone walk): ./moq accept basic-comms --spec PhoneReactions
 spec({
@@ -34,7 +35,11 @@ feature("a long press on a message opens its sheet, and a tap on a quick reactio
 
 feature("a long press on the reaction's chip lists who reacted, and is not a tap; a tap on the chip takes the reaction back", {
     when() { return page.evaluate("window.phone.whoReacted()") },
-    then({ people, title, reactsAfterHold, closed, removed, notMine }) {
+    then({ people, title, reactsAfterHold, sheet, lists, menuPrevented, closed, removed, notMine }) {
+        // Android's context menu of the long press opens neither the message's sheet nor the list twice
+        !sheet
+        lists == 1
+        menuPrevented
         people.slice().sort().join(",") == "Bob Baker,You"
         title.includes("👍")
         reactsAfterHold == 0

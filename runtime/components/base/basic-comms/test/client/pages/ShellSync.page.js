@@ -624,7 +624,7 @@ test("the Inbox: a thread change that conflicted says it changed on the server a
         assert.ok(disclosure.getAttribute("aria-label").startsWith("Collapse message from Pat Sender"));
         await until(() => {
             const frame = document.querySelector("#inbox-body-email_KEY1 iframe");
-            return frame && frame.contentDocument && frame.contentDocument.body.textContent.includes("Older body available by keyboard");
+            return frame && frame.contentDocument && frame.contentDocument.body && frame.contentDocument.body.textContent.includes("Older body available by keyboard");
         }, "the older message body");
         const recipients = document.getElementById("inbox-recipients-email_KEY1");
         assert.equal(recipients.tagName, "BUTTON");
@@ -1284,6 +1284,37 @@ test("one action list (COM-UI-035): the sheet, the More menu and a right click o
         link.dispatchEvent(onLink);
         link.remove();
         assert.equal(onLink.defaultPrevented, false);
+        // a picture keeps the browser's menu too; text selected in another message is not this one's
+        const picture = document.createElement("img");
+        picture.alt = "a picture";
+        row.querySelector(".m-chat-body").appendChild(picture);
+        const onPicture = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+        picture.dispatchEvent(onPicture);
+        picture.remove();
+        assert.equal(onPicture.defaultPrevented, false);
+        window.getSelection().selectAllChildren(vm.$el.querySelector('.m-chat-msg[data-seq="5"] .m-chat-body'));
+        const elsewhere = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 300, clientY: 200 });
+        row.querySelector(".m-chat-body").dispatchEvent(elsewhere);
+        assert.ok(elsewhere.defaultPrevented, "a selection in another message leaves this one's menu");
+        await closed(await until(() => document.querySelector(".m-chat-context-menu"), "the menu"), "the menu");
+        window.getSelection().removeAllRanges();
+        // a reaction chip's own context menu (Android's long press there) and Shift+Enter: who reacted, not the message's menu
+        eventOf(vm, 5).reactions = [{ key: "👀", count: 1, userIds: ["bob"], mine: false }];
+        const chip = await until(() => vm.$el.querySelector('.m-chat-msg[data-seq="5"] .m-chat-reaction'), "a reaction chip");
+        assert.ok(chip.getAttribute("aria-label").includes("Bob") && chip.getAttribute("aria-keyshortcuts") === "Shift+Enter", chip.getAttribute("aria-label"));
+        const onChip = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+        chip.dispatchEvent(onChip);
+        assert.ok(onChip.defaultPrevented);
+        const people = await until(() => document.querySelector(".m-chat-people [data-person='bob']") && document.querySelector(".m-chat-people"), "who reacted");
+        assert.equal(document.querySelector(".m-chat-context-menu"), null, "not the message's menu");
+        await closed(people, "who reacted");
+        // the click that may follow it (a key's, a touch's) is not a tap on the chip
+        chip.click();
+        await Vue.nextTick();
+        assert.ok(!eventOf(vm, 5).reactions.some((reaction) => reaction.mine), "no reaction from the click after it");
+        chip.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true }));
+        await closed(await until(() => document.querySelector(".m-chat-people"), "who reacted by the keyboard"), "who reacted");
+        eventOf(vm, 5).reactions = [];
     } finally {
         moqui.ext.items = priorItems;
         answers["/apps/BasicComms/Chat/timeline"] = priorTimeline;

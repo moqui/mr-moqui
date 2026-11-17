@@ -55,10 +55,13 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   browser's menu) opens them at the pointer, and the hover toolbar's More has them too. The sheet and the right-click
   menu start with the quick reactions and "+", which opens the emoji picker (a search by name, the groups, and your
   recent emoji, kept in this browser); then Reply, Reply in thread, Copy text, Copy link, Forward, Edit, Pin, Mark
-  unread from here, the apps' actions, File on a record, Info and Delete. A tap on a reaction adds or takes back yours;
-  a long press on it (or a hover) lists who reacted, and the same on a poll option lists who voted. **Info** says only
+  unread from here, the apps' actions, File on a record, Info, Who reacted (with reactions) and Delete. A tap on a
+  reaction adds or takes back yours; a long press on it (or a hover, or Shift+Enter or the menu key on it) lists who
+  reacted, and the same on a poll option lists who voted. On a phone the picker's search waits for a tap, so the
+  keyboard does not cover the sheet. **Info** says only
   what the server knows: when the message was sent, for a message that went to another network (SMS, a bridge) its
-  delivery there per network, and who has read up to it (the members' read markers, "and N more"). A member with read
+  delivery there per network (with the bridge's name when two share a network), and who has read up to it (the
+  members' read markers, "and N more"; not one who joined after it). A member with read
   receipts off is not listed, and with your own off you see no names: Info says so, and never "not read". A thread has
   no read markers, so its Info shows sent and delivery only; delivery to someone's devices is not known and is never
   shown. The terminal's room has Info for each message, as text. When the last owner leaves, the

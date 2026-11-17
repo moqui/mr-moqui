@@ -1190,7 +1190,7 @@
         // ---- a message's Info (Comms-Messaging §4, COM-UI-008): only what the server knows ----
         // event: as get#Timeline gives it (eventSeq, sentDate, senderUserId, senderExternal, delivery, threadRootEventSeq);
         // members: the room's memberList, whose lastReadEventSeq is a position ("has read up to here or later") and is blank
-        // for another member with read receipts off; opts: {me, receipts (false: the viewer's read receipts are off), inThread,
+        // for another member with read receipts off (one who joined after the message, joinedDate, is not a reader of it); opts: {me, receipts (false: the viewer's read receipts are off), inThread,
         // limit (the names shown, 8)}. Answers {sent (millis), from (the network a bridged message came from), delivered (per
         // network, only for a message that went out on a bridge: [{name, state, receipt, error}]), readBy (null in a thread,
         // which has no read markers; {off: true} when the viewer's receipts are off; else {people, more, count}), thread}.
@@ -1201,13 +1201,21 @@
             const seq = Number(it.eventSeq);
             const thread = !!options.inThread || (it.threadRootEventSeq != null && it.threadRootEventSeq !== "");
             const destinations = (it.delivery && it.delivery.destinations) || [];
-            const delivered = destinations.length ? destinations.map((one) => ({ name: one.networkName || one.bridgeName || "",
+            // two bridges of one network are told apart by their own names
+            const network = (one) => one.networkName || one.bridgeName || "";
+            const repeats = (name) => destinations.filter((one) => network(one) === name).length > 1;
+            const delivered = destinations.length ? destinations.map((one) => ({
+                name: repeats(network(one)) && one.bridgeName && one.bridgeName !== network(one) ? network(one) + " · " + one.bridgeName : network(one),
                 state: one.state || "pending", receipt: one.receipt || null, error: one.error || null })) : null;
             let readBy = null;
             if (!thread && options.receipts === false) readBy = { off: true };
             else if (!thread) {
+                // a member who joined after the message has a marker past it (a join reads to the latest) but never read it
+                const sent = it.sentDate != null && it.sentDate !== "" ? Number(it.sentDate) : null;
+                const joinedBefore = (member) => member.joinedDate == null || member.joinedDate === "" || sent == null || Number(member.joinedDate) <= sent;
                 const people = (members || []).filter((member) => member && member.userId && member.userId !== options.me && member.userId !== it.senderUserId
-                    && !member.isAgent && member.lastReadEventSeq != null && member.lastReadEventSeq !== "" && Number(member.lastReadEventSeq) >= seq)
+                    && !member.isAgent && member.lastReadEventSeq != null && member.lastReadEventSeq !== "" && Number(member.lastReadEventSeq) >= seq
+                    && joinedBefore(member))
                     .map((member) => ({ userId: member.userId, name: member.name || member.userId }));
                 const limit = options.limit || 8;
                 readBy = { people: people.slice(0, limit), more: Math.max(0, people.length - limit), count: people.length };

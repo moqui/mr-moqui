@@ -208,10 +208,14 @@ along with this software (see the LICENSE.md file). If not, see
                     const RECEIPTS = {delivered: "Delivered: the network's receipt says so", sent: 'Sent on by the network',
                         unconfirmed: 'Taken by the network; it has not confirmed delivery'}
                     const STATES = {pending: 'Sending', failed: 'Not delivered', uncertain: 'May not have arrived'}
-                    for (const one of Array.from((event.delivery && event.delivery.destinations) || [])) {
+                    const destinations = Array.from((event.delivery && event.delivery.destinations) || [])
+                    // two bridges of one network are told apart by their own names
+                    const network = (one) => one.networkName || one.bridgeName || ec.l10n.localize('Bridge')
+                    const repeats = (name) => destinations.filter((one) => network(one) === name).length > 1
+                    for (const one of destinations) {
                         const text = one.state === 'accepted' ? ec.l10n.localize(RECEIPTS[one.receipt] || 'Taken by the network')
                             : ec.l10n.localize(STATES[one.state] || one.state)
-                        infoList.push({label: one.networkName || one.bridgeName || ec.l10n.localize('Bridge'),
+                        infoList.push({label: repeats(network(one)) && one.bridgeName && one.bridgeName !== network(one) ? network(one) + ' · ' + one.bridgeName : network(one),
                             text: text + (one.error && one.state !== 'accepted' ? ': ' + one.error : '')})
                     }
                     const thread = event.threadRootEventSeq != null
@@ -220,7 +224,9 @@ along with this software (see the LICENSE.md file). If not, see
                     else {
                         const readers = Array.from(page.memberList || []).filter((member) => member.userId && member.userId !== ec.user.userId
                                 && member.userId !== event.senderUserId && !member.isAgent && member.lastReadEventSeq != null
-                                && Number(member.lastReadEventSeq) >= Number(event.eventSeq)).map((member) => member.name || member.userId)
+                                && Number(member.lastReadEventSeq) >= Number(event.eventSeq)
+                                // one who joined after it has a marker past it (a join reads to the latest) but never read it
+                                && (member.joinedDate == null || Number(member.joinedDate) <= Number(event.sentDate))).map((member) => member.name || member.userId)
                         say('Read by', !readers.length ? ec.l10n.localize('No one yet, of those with read receipts on')
                             : readers.slice(0, 8).join(', ') + (readers.length > 8 ? ' ' + fill('and {count} more', {count: readers.length - 8}) : ''))
                         infoNote = ec.l10n.localize('People with read receipts off are not listed. Read by means read up to here or later.')

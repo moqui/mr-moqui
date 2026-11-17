@@ -4630,7 +4630,7 @@
               return (_openBlock(), _createElementBlock("span", { class: "m-elapsed" }, _toDisplayString(_ctx.text), 1))
             }
         } },
-        "m-emoji-picker": { hash: "76b61247", make: function (Vue) {
+        "m-emoji-picker": { hash: "d360e538", make: function (Vue) {
             const { resolveComponent: _resolveComponent, createVNode: _createVNode, withModifiers: _withModifiers, withKeys: _withKeys, withCtx: _withCtx, renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, normalizeClass: _normalizeClass, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementVNode: _createElementVNode } = Vue
 
             return function render(_ctx, _cache) {
@@ -4665,7 +4665,9 @@
                   ? (_openBlock(), _createElementBlock("div", {
                       key: 0,
                       class: "row no-wrap q-px-xs m-emoji-tabs",
-                      role: "tablist"
+                      role: "tablist",
+                      "aria-label": _ctx.t('Emoji groups'),
+                      onKeydown: _ctx.tabKey
                     }, [
                       (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.tabs, (tab) => {
                         return (_openBlock(), _createBlock(_component_q_btn, {
@@ -4677,6 +4679,9 @@
                           role: "tab",
                           icon: tab.icon,
                           "aria-label": tab.label,
+                          id: _ctx.uid + '-tab-' + tab.slug,
+                          "aria-controls": _ctx.uid + '-panel',
+                          tabindex: tab.slug === _ctx.current ? 0 : -1,
                           "aria-selected": tab.slug === _ctx.current ? 'true' : 'false',
                           class: _normalizeClass(tab.slug === _ctx.current ? 'text-primary m-emoji-tab-on' : 'm-muted'),
                           "data-group": tab.slug,
@@ -4691,13 +4696,17 @@
                             }, 1024)
                           ]),
                           _: 2
-                        }, 1032, ["icon", "aria-label", "aria-selected", "class", "data-group", "onClick"]))
+                        }, 1032, ["icon", "aria-label", "id", "aria-controls", "tabindex", "aria-selected", "class", "data-group", "onClick"]))
                       }), 128))
-                    ]))
+                    ], 40, ["aria-label", "onKeydown"]))
                   : _createCommentVNode("", true),
                 _createElementVNode("div", {
                   ref: "grid",
-                  class: "scroll m-emoji-grid"
+                  class: "scroll m-emoji-grid",
+                  id: _ctx.uid + '-panel',
+                  role: _ctx.searching ? 'region' : 'tabpanel',
+                  "aria-labelledby": _ctx.searching ? undefined : _ctx.uid + '-tab-' + _ctx.current,
+                  "aria-label": _ctx.searching ? _ctx.heading : undefined
                 }, [
                   (!_ctx.loaded)
                     ? (_openBlock(), _createElementBlock("div", {
@@ -4713,19 +4722,26 @@
                         }, _toDisplayString(_ctx.t('The emoji did not load')), 1))
                       : (_openBlock(), _createElementBlock(_Fragment, { key: 2 }, [
                           _createElementVNode("div", { class: "text-caption m-muted q-px-sm m-emoji-heading" }, _toDisplayString(_ctx.heading), 1),
-                          _createElementVNode("div", { class: "row q-px-xs" }, [
-                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.shown, (one) => {
+                          _createElementVNode("div", {
+                            class: "row q-px-xs",
+                            role: "group",
+                            "aria-label": _ctx.heading,
+                            onKeydown: _ctx.gridKey
+                          }, [
+                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.shown, (one, index) => {
                               return (_openBlock(), _createElementBlock("button", {
                                 key: one[0],
                                 type: "button",
                                 class: "m-emoji-cell",
                                 title: one[1],
                                 "aria-label": one[1],
+                                tabindex: index === _ctx.activeIndex ? 0 : -1,
                                 "data-emoji": one[0],
+                                onFocus: $event => (_ctx.active = index),
                                 onClick: $event => (_ctx.pick(one[0]))
-                              }, _toDisplayString(one[0]), 9, ["title", "aria-label", "data-emoji", "onClick"]))
+                              }, _toDisplayString(one[0]), 41, ["title", "aria-label", "tabindex", "data-emoji", "onFocus", "onClick"]))
                             }), 128))
-                          ]),
+                          ], 40, ["aria-label", "onKeydown"]),
                           (_ctx.searching && !_ctx.shown.length)
                             ? (_openBlock(), _createElementBlock("div", {
                                 key: 0,
@@ -4733,7 +4749,7 @@
                               }, _toDisplayString(_ctx.t('No emoji match')), 1))
                             : _createCommentVNode("", true)
                         ], 64))
-                ], 512)
+                ], 8, ["id", "role", "aria-labelledby", "aria-label"])
               ]))
             }
         } },

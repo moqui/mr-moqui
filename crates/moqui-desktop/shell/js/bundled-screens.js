@@ -2779,11 +2779,14 @@ const messageTemplate = `
             <q-card v-if="item.poll" flat bordered class="q-mt-xs q-pa-sm m-chat-poll" style="max-width:440px">
                 <div class="row no-wrap items-start text-weight-medium q-mb-xs"><q-icon name="sym_o_ballot" size="18px" class="q-mr-xs text-primary"></q-icon>
                     <span style="overflow-wrap:anywhere">{{item.poll.question}}</span></div>
-                <!-- a tap votes; a long press shows who voted (a hover on the count, with a pointer) -->
+                <!-- a tap votes; a long press, its own context menu (Android's long press, the menu key) or Shift+Enter shows who
+                     voted (a hover on the count, with a pointer) -->
                 <q-item v-for="option in item.poll.options" :key="option.id" dense clickable class="rounded-borders q-px-xs" :disable="!room.canVote(item)"
-                        :data-option="option.id" @click.stop="room.pressed() || room.vote(item, option)"
+                        :data-option="option.id" :aria-keyshortcuts="option.voterIds && option.voterIds.length ? 'Shift+Enter' : undefined"
+                        @click.stop="room.pressed() || room.vote(item, option)"
                         @touchstart.passive="room.pressStart({ kind: 'voters', item, option }, $event)" @touchmove.passive="room.pressCancel()"
-                        @touchend="room.pressEnd($event)" @touchcancel="room.pressCancel()">
+                        @touchend="room.pressEnd($event)" @touchcancel="room.pressEnd($event)"
+                        @contextmenu.prevent.stop="room.pressMenu({ kind: 'voters', item, option })" @keydown.enter.shift.prevent.stop="room.pressMenu({ kind: 'voters', item, option })">
                     <q-item-section avatar style="min-width:28px"><q-icon :name="room.optionIcon(item, option)" :color="option.mine ? 'primary' : undefined" size="20px"></q-icon></q-item-section>
                     <q-item-section>
                         <q-item-label style="overflow-wrap:anywhere">{{option.text}}</q-item-label>
@@ -2821,13 +2824,16 @@ const messageTemplate = `
                 <m-record-card v-for="record in item.records" :key="record.entity + '|' + record.id" :record-entity="record.entity" :record-id="record.id"
                         :card-url="room.url('recordCard')" dense class="q-mb-xs"></m-record-card>
             </div>
-            <!-- a tap adds or takes back my reaction; a long press shows who reacted (a hover, with a pointer) -->
+            <!-- a tap adds or takes back my reaction; a long press, its own context menu (Android's long press, the menu key) or
+                 Shift+Enter shows who reacted (a hover, with a pointer) -->
             <div v-if="item.reactions.length" class="row items-center q-mt-xs">
                 <q-chip v-for="reaction in item.reactions" :key="reaction.key" dense clickable :outline="!reaction.mine" :color="reaction.mine ? 'primary' : undefined"
                         :text-color="reaction.mine ? 'white' : undefined" class="q-ml-none q-mr-xs m-chat-reaction" :data-reaction="reaction.key"
+                        :aria-label="room.reactionLabel(reaction)" aria-keyshortcuts="Shift+Enter"
                         :disable="!room.canPost || !room.bridgeCaps.reaction" @click.stop="room.pressed() || room.react(item, reaction.key)"
                         @touchstart.passive="room.pressStart({ kind: 'reactors', item, reaction }, $event)" @touchmove.passive="room.pressCancel()"
-                        @touchend="room.pressEnd($event)" @touchcancel="room.pressCancel()">
+                        @touchend="room.pressEnd($event)" @touchcancel="room.pressEnd($event)"
+                        @contextmenu.prevent.stop="room.pressMenu({ kind: 'reactors', item, reaction })" @keydown.enter.shift.prevent.stop="room.pressMenu({ kind: 'reactors', item, reaction })">
                     {{reaction.key}} {{reaction.count}}<q-tooltip v-if="!room.mobile">{{room.reactorsText(reaction)}}</q-tooltip></q-chip>
             </div>
             <div v-if="!inThread && item.threadReplyCount" class="q-mt-xs">
@@ -2873,7 +2879,7 @@ const messageTemplate = `
                             :aria-label="room.t('React with') + ' ' + key" @click="room.react(item, key)"></q-btn>
                     <q-btn flat round dense size="sm" icon="sym_o_add_reaction" :aria-label="room.t('React')"><q-tooltip>{{room.t('React')}}</q-tooltip>
                         <q-menu ref="reactMenu" anchor="bottom right" self="top right" @before-show="reactionMenu = true" @hide="reactionMenu = false">
-                            <m-emoji-picker :user-id="room.me.userId || ''" @pick="picked"></m-emoji-picker>
+                            <m-emoji-picker :user-id="room.me.userId || ''" :autofocus="!room.mobile" @pick="picked"></m-emoji-picker>
                         </q-menu>
                     </q-btn>
                 </template>
@@ -2956,7 +2962,7 @@ const composerTemplate = `
             </q-list></q-menu></q-btn>
         <q-btn flat round dense size="sm" icon="sym_o_mood" :aria-label="room.t('Emoji')"><q-tooltip>{{room.t('Emoji')}}</q-tooltip>
             <q-menu ref="emojiMenu" anchor="top left" self="bottom left" class="m-chat-emoji-menu">
-                <m-emoji-picker :user-id="room.me.userId || ''" @pick="(key) => { $refs.emojiMenu.hide(); insert(key); }"></m-emoji-picker>
+                <m-emoji-picker :user-id="room.me.userId || ''" :autofocus="!room.mobile" @pick="(key) => { $refs.emojiMenu.hide(); insert(key); }"></m-emoji-picker>
             </q-menu>
         </q-btn>
         <q-btn flat round dense size="sm" icon="sym_o_alternate_email" class="m-chat-mention-btn" :aria-label="room.t('Mention someone')" @click="insert('@')"><q-tooltip>{{room.t('Mention someone')}}</q-tooltip></q-btn>
@@ -3157,7 +3163,8 @@ const menuTemplate = `
                 :label="key" :aria-label="room.t('React with') + ' ' + key" @click="act(() => room.react(item, key))"></q-btn>
         <q-btn flat dense icon="sym_o_add_reaction" style="flex:1 1 0;min-width:0" :aria-label="room.t('More reactions')" class="m-chat-more-reactions" @click="picking = true"></q-btn>
     </div>
-    <m-emoji-picker v-if="picking" :user-id="room.me.userId || ''" class="q-mx-auto" @pick="(key) => act(() => room.react(item, key))"></m-emoji-picker>
+    <!-- on a phone the search line waits for a tap, so the keyboard does not cover the sheet -->
+    <m-emoji-picker v-if="picking" :user-id="room.me.userId || ''" :autofocus="!room.mobile" class="q-mx-auto" @pick="(key) => act(() => room.react(item, key))"></m-emoji-picker>
     <q-list v-else :dense="dense" :class="dense ? '' : 'q-pb-sm'">
         <template v-for="action in room.messageActions(item, inThread)" :key="action.key">
             <q-separator v-if="action.separator"></q-separator>
@@ -3193,14 +3200,17 @@ const chatMessage = {
     },
     methods: {
         // a right click: with bubbles (a phone) the sheet; on a row the menu at the pointer, but the browser's own menu on a
-        // link, in an editor or on selected text, so their Copy and Open stay
+        // link, a picture, a video or a sound, in an editor or on text selected in this message, so their Copy, Save and
+        // Open stay. A reaction chip's or poll option's (Android's long press there) is theirs: who reacted or voted.
         contextMenu(event) {
+            if (this.room.pressGuard(event)) return;
             if (this.room.useBubbles) { this.room.contextMenu(this.item, this.inThread, event); return; }
             if (!this.actionsAvailable) return;
             const target = event.target;
-            if (target && target.closest && target.closest('a[href], input, textarea, [contenteditable="true"], .q-menu')) return;
-            const selection = window.getSelection ? String(window.getSelection() || '') : '';
-            if (selection.trim()) return;
+            if (target && target.closest && target.closest('a[href], img, video, audio, input, textarea, [contenteditable="true"], [contenteditable=""], .q-menu')) return;
+            const selection = window.getSelection ? window.getSelection() : null;
+            if (selection && String(selection).trim() && ((selection.anchorNode && this.$el.contains(selection.anchorNode))
+                || (selection.focusNode && this.$el.contains(selection.focusNode)))) return;
             event.preventDefault();
             this.contextOpen = true;
             this.$nextTick(() => { if (this.$refs.contextMenu) this.$refs.contextMenu.show(event); });
@@ -3724,6 +3734,7 @@ const roomTemplate = `
                 <q-item v-for="person in peopleBox.people" :key="person.userId" :data-person="person.userId">
                     <q-item-section avatar><m-avatar :name="person.name" :user-id="person.userId" size="32px"></m-avatar></q-item-section>
                     <q-item-section>{{person.name}}</q-item-section>
+                    <q-item-section v-if="person.detail" side class="text-body1">{{person.detail}}</q-item-section>
                 </q-item>
             </q-list>
         </q-card>
@@ -4668,6 +4679,7 @@ const chatRoom = {
             return !inThread && this.swipeKey === 'm' + item.eventSeq && this.swipeDx ? { transform: 'translateX(' + this.swipeDx + 'px)' } : null;
         },
         contextMenu(item, inThread, event) {
+            if (this.pressGuard(event)) return;
             if (!this.useBubbles) return;
             event.preventDefault();
             if (!this.sheet.open) this.openSheet(item, inThread);
@@ -4698,6 +4710,7 @@ const chatRoom = {
             if (!this.sealed) list.push({ key: 'apps' });
             if (this.prefs.recordLink && !this.sealed) add('file', 'sym_o_add_link', t('File on a record…'), () => this.openFileOn(item));
             add('info', 'sym_o_info', t('Info'), () => this.openInfo(item, inThread));
+            if ((item.reactions || []).length) add('reactions', 'sym_o_add_reaction', t('Who reacted'), () => this.showReactions(item));
             if (this.canRedact(item)) {
                 list.push({ key: 'sep-delete', separator: true });
                 add('delete', 'sym_o_delete', t('Delete message'), () => this.redact(item), { negative: true });
@@ -4719,14 +4732,55 @@ const chatRoom = {
         pressCancel() { if (this.pressTimer) { clearTimeout(this.pressTimer); this.pressTimer = null; } },
         pressEnd(event) {
             this.pressCancel();
-            // the press that showed the people is not also a tap on the chip
-            if (this.pressHeld && event && event.cancelable) event.preventDefault();
+            if (!this.pressHeld) return;
+            // the press that showed the people is not also a tap on the chip; a click that comes later is one
+            if (event && event.cancelable) event.preventDefault();
+            this.pressRelease();
+        },
+        // a press held long enough: the click that may follow it does nothing, for a moment
+        pressRelease() {
+            clearTimeout(this.pressReset);
+            this.pressReset = setTimeout(() => { this.pressHeld = false; }, 400);
+        },
+        // a chip's or an option's own context menu (Android's long press, the menu key) or Shift+Enter: who reacted or voted,
+        // once (a long press may have shown them already), and the click its key or touch may send is not a tap
+        pressMenu(what) {
+            if (this.pressHeld) return;
+            this.pressCancel();
+            this.pressHeld = true;
+            this.pressRelease();
+            this.showPeople(what);
+        },
+        // a context menu that belongs to a chip or option, or comes while one is pressed, is not the message's
+        pressGuard(event) {
+            const target = event && event.target;
+            const own = !!(target && target.closest && target.closest('.m-chat-reaction, .m-chat-poll .q-item'));
+            if (!own && !this.pressTimer && !this.pressHeld) return false;
+            if (event && event.cancelable) event.preventDefault();
+            return true;
         },
         // whether a long press just showed the people: the click that may follow it does nothing
         pressed() {
             const held = !!this.pressHeld;
             this.pressHeld = false;
+            clearTimeout(this.pressReset);
             return held;
+        },
+        // a reaction chip's name: the emoji, how many, who, and the key that lists them
+        reactionLabel(reaction) {
+            return fill(t('{emoji} {count}: {names}. Shift+Enter shows who reacted'), { emoji: reaction.key, count: reaction.count, names: this.reactorsText(reaction) });
+        },
+        // Who reacted, from the message's menu: everyone with their emoji
+        showReactions(item) {
+            const byUser = {};
+            const order = [];
+            for (const reaction of item.reactions || []) for (const id of reaction.userIds || []) {
+                if (!byUser[id]) { byUser[id] = []; order.push(id); }
+                byUser[id].push(reaction.key);
+            }
+            if (!order.length) return;
+            this.peopleBox = { open: true, title: t('Who reacted'),
+                people: order.map((id) => ({ userId: id, name: id === this.me.userId ? t('You') : this.nameOf(id), detail: byUser[id].join(' ') })) };
         },
         showPeople(what) {
             const ids = what.kind === 'voters' ? (what.option.voterIds || []) : (what.reaction.userIds || []);
@@ -9842,7 +9896,19 @@ module.exports = {
                                           _createTextVNode(_toDisplayString(person.name), 1)
                                         ]),
                                         _: 2
-                                      }, 1024)
+                                      }, 1024),
+                                      (person.detail)
+                                        ? (_openBlock(), _createBlock(_component_q_item_section, {
+                                            key: 0,
+                                            side: "",
+                                            class: "text-body1"
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(person.detail), 1)
+                                            ]),
+                                            _: 2
+                                          }, 1024))
+                                        : _createCommentVNode("", true)
                                     ]),
                                     _: 2
                                   }, 1032, ["data-person"]))
@@ -10182,8 +10248,9 @@ module.exports = {
                             default: _withCtx(() => [
                               _createVNode(_component_m_emoji_picker, {
                                 "user-id": _ctx.room.me.userId || '',
+                                autofocus: !_ctx.room.mobile,
                                 onPick: (key) => { _ctx.$refs.emojiMenu.hide(); _ctx.insert(key); }
-                              }, null, 8, ["user-id", "onPick"])
+                              }, null, 8, ["user-id", "autofocus", "onPick"])
                             ]),
                             _: 1
                           }, 512)
@@ -10287,7 +10354,7 @@ module.exports = {
         {
             const target = component.components["chat-room"].components["chat-message"];
             target.render = (function () {
-                const { normalizeClass: _normalizeClass, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementBlock: _createElementBlock, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, withModifiers: _withModifiers, renderList: _renderList, Fragment: _Fragment, normalizeStyle: _normalizeStyle } = Vue
+                const { normalizeClass: _normalizeClass, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementBlock: _createElementBlock, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, withModifiers: _withModifiers, renderList: _renderList, Fragment: _Fragment, withKeys: _withKeys, normalizeStyle: _normalizeStyle } = Vue
 
                 return function render(_ctx, _cache) {
                   const _component_m_avatar = _resolveComponent("m-avatar")
@@ -10560,11 +10627,14 @@ module.exports = {
                                           class: "rounded-borders q-px-xs",
                                           disable: !_ctx.room.canVote(_ctx.item),
                                           "data-option": option.id,
+                                          "aria-keyshortcuts": option.voterIds && option.voterIds.length ? 'Shift+Enter' : undefined,
                                           onClick: _withModifiers($event => (_ctx.room.pressed() || _ctx.room.vote(_ctx.item, option)), ["stop"]),
                                           onTouchstartPassive: $event => (_ctx.room.pressStart({ kind: 'voters', item: _ctx.item, option }, $event)),
                                           onTouchmovePassive: $event => (_ctx.room.pressCancel()),
                                           onTouchend: $event => (_ctx.room.pressEnd($event)),
-                                          onTouchcancel: $event => (_ctx.room.pressCancel())
+                                          onTouchcancel: $event => (_ctx.room.pressEnd($event)),
+                                          onContextmenu: _withModifiers($event => (_ctx.room.pressMenu({ kind: 'voters', item: _ctx.item, option })), ["prevent","stop"]),
+                                          onKeydown: _withKeys(_withModifiers($event => (_ctx.room.pressMenu({ kind: 'voters', item: _ctx.item, option })), ["shift","prevent","stop"]), ["enter"])
                                         }, {
                                           default: _withCtx(() => [
                                             _createVNode(_component_q_item_section, {
@@ -10617,7 +10687,7 @@ module.exports = {
                                             }, 1024)
                                           ]),
                                           _: 2
-                                        }, 1032, ["disable", "data-option", "onClick", "onTouchstartPassive", "onTouchmovePassive", "onTouchend", "onTouchcancel"]))
+                                        }, 1032, ["disable", "data-option", "aria-keyshortcuts", "onClick", "onTouchstartPassive", "onTouchmovePassive", "onTouchend", "onTouchcancel", "onContextmenu", "onKeydown"]))
                                       }), 128)),
                                       _createElementVNode("div", { class: "row items-center no-wrap text-caption m-muted q-mt-xs" }, [
                                         _createElementVNode("span", { class: "ellipsis" }, _toDisplayString(_ctx.room.pollFooter(_ctx.item.poll)), 1),
@@ -10790,12 +10860,16 @@ module.exports = {
                                         "text-color": reaction.mine ? 'white' : undefined,
                                         class: "q-ml-none q-mr-xs m-chat-reaction",
                                         "data-reaction": reaction.key,
+                                        "aria-label": _ctx.room.reactionLabel(reaction),
+                                        "aria-keyshortcuts": "Shift+Enter",
                                         disable: !_ctx.room.canPost || !_ctx.room.bridgeCaps.reaction,
                                         onClick: _withModifiers($event => (_ctx.room.pressed() || _ctx.room.react(_ctx.item, reaction.key)), ["stop"]),
                                         onTouchstartPassive: $event => (_ctx.room.pressStart({ kind: 'reactors', item: _ctx.item, reaction }, $event)),
                                         onTouchmovePassive: $event => (_ctx.room.pressCancel()),
                                         onTouchend: $event => (_ctx.room.pressEnd($event)),
-                                        onTouchcancel: $event => (_ctx.room.pressCancel())
+                                        onTouchcancel: $event => (_ctx.room.pressEnd($event)),
+                                        onContextmenu: _withModifiers($event => (_ctx.room.pressMenu({ kind: 'reactors', item: _ctx.item, reaction })), ["prevent","stop"]),
+                                        onKeydown: _withKeys(_withModifiers($event => (_ctx.room.pressMenu({ kind: 'reactors', item: _ctx.item, reaction })), ["shift","prevent","stop"]), ["enter"])
                                       }, {
                                         default: _withCtx(() => [
                                           _createTextVNode(_toDisplayString(reaction.key) + " " + _toDisplayString(reaction.count), 1),
@@ -10809,7 +10883,7 @@ module.exports = {
                                             : _createCommentVNode("", true)
                                         ]),
                                         _: 2
-                                      }, 1032, ["outline", "color", "text-color", "data-reaction", "disable", "onClick", "onTouchstartPassive", "onTouchmovePassive", "onTouchend", "onTouchcancel"]))
+                                      }, 1032, ["outline", "color", "text-color", "data-reaction", "aria-label", "disable", "onClick", "onTouchstartPassive", "onTouchmovePassive", "onTouchend", "onTouchcancel", "onContextmenu", "onKeydown"]))
                                     }), 128))
                                   ]))
                                 : _createCommentVNode("", true),
@@ -11006,8 +11080,9 @@ module.exports = {
                                                 default: _withCtx(() => [
                                                   _createVNode(_component_m_emoji_picker, {
                                                     "user-id": _ctx.room.me.userId || '',
+                                                    autofocus: !_ctx.room.mobile,
                                                     onPick: _ctx.picked
-                                                  }, null, 8, ["user-id", "onPick"])
+                                                  }, null, 8, ["user-id", "autofocus", "onPick"])
                                                 ]),
                                                 _: 1
                                               }, 8, ["onBeforeShow", "onHide"])
@@ -11236,9 +11311,10 @@ module.exports = {
                       ? (_openBlock(), _createBlock(_component_m_emoji_picker, {
                           key: 1,
                           "user-id": _ctx.room.me.userId || '',
+                          autofocus: !_ctx.room.mobile,
                           class: "q-mx-auto",
                           onPick: (key) => _ctx.act(() => _ctx.room.react(_ctx.item, key))
-                        }, null, 8, ["user-id", "onPick"]))
+                        }, null, 8, ["user-id", "autofocus", "onPick"]))
                       : (_openBlock(), _createBlock(_component_q_list, {
                           key: 2,
                           dense: _ctx.dense,

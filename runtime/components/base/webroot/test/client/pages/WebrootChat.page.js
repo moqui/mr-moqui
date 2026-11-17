@@ -903,6 +903,9 @@ test("Info (Comms-Messaging §4, COM-UI-008): Sent, a bridged message's delivery
     assert.equal(lines[0].text, "at 1000");
     assert.equal(lines[1].text, "Bob, Cy");
     assert.ok(lines[2].text.includes("read receipts off are not listed") && lines[2].text.includes("devices is not known"));
+    // one who joined after the message has a marker past it (a join reads to the latest) but did not read it
+    const joined = members.concat([{ userId: "fay", name: "Fay", lastReadEventSeq: 9, joinedDate: 1500 }, { userId: "gus", name: "Gus", lastReadEventSeq: 9, joinedDate: 1000 }]);
+    assert.deepEqual(chat.messageInfo(message, joined, { me: "ann" }).readBy.people.map((person) => person.userId), ["bob", "cy", "gus"]);
     // and N more
     const many = Array.from({ length: 11 }, (unused, n) => ({ userId: "u" + n, name: "User " + n, lastReadEventSeq: 6 }));
     const more = chat.messageInfo(message, many, { me: "ann", limit: 8 });
@@ -925,6 +928,11 @@ test("Info (Comms-Messaging §4, COM-UI-008): Sent, a bridged message's delivery
     lines = chat.messageInfoLines(chat.messageInfo(bridged, members, { me: "ann" }), when).filter((line) => line.key === "delivered");
     assert.deepEqual(lines.map((line) => line.label + ": " + line.text), ["SMS: Delivered: the network's receipt says so", "Ops Slack: Not delivered: Channel archived",
         "Telegram: May not have arrived", "Matrix: Taken by the network", "XMPP: Sending"]);
+    // two bridges of one network: each with its own name
+    const twice = event({ eventSeq: 5, sentDate: 1000, senderUserId: "ann", delivery: { state: "accepted", destinations: [
+        { networkName: "SMS", bridgeName: "Office line", state: "accepted" }, { networkName: "SMS", bridgeName: "Shop line", state: "pending" },
+        { networkName: "Matrix", bridgeName: "Matrix bridge", state: "accepted" }] } });
+    assert.deepEqual(chat.messageInfo(twice, members, { me: "ann" }).delivered.map((one) => one.name), ["SMS · Office line", "SMS · Shop line", "Matrix"]);
     // a thread: Sent and Delivered only, it has no read markers
     const reply = event({ eventSeq: 7, sentDate: 2000, senderUserId: "ann", threadRootEventSeq: 5, delivery: bridged.delivery });
     const thread = chat.messageInfo(reply, members, { me: "ann" });
