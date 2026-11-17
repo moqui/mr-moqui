@@ -33,6 +33,10 @@ Everything is off until `xmpp_domain` is set; each listener is off until its por
 | `xmpp_resume_seconds` | 300 | How long a dropped session waits for resumption |
 | `xmpp_fast_token_days` | 14 | How long a FAST token lasts |
 | `xmpp_upload_seconds` | 300 | The longest a PUT to an upload slot may take |
+| `xmpp_upload_unattached_hours` | 24 | An upload no message was given is deleted this long after its PUT (by the daily `clean#Uploads`; 0 keeps it) |
+| `xmpp_pep_max_bytes` | 20971520 | A user's PEP items in all, in bytes |
+| `xmpp_block_max_jids` | 1000 | The JIDs a user blocks |
+| `xmpp_push_max_registrations` | 50 | A user's push registrations (XEP-0357) |
 | `xmpp_turn_enabled` | `false` | External services (XEP-0215) hand out TURN credentials ([Calls](#calls)) |
 | `xmpp_turn_per_hour` | 30 | TURN credentials a user gets an hour |
 | `xmpp_scram_decoy_key` | generated | Derives the SCRAM salts of unknown users, the same across restarts and nodes |
@@ -140,8 +144,12 @@ with a second factor signs in with an app password, which is made after it.
 - A stanza acts on at most 20 reactions, invitations or linked uploads; a session asks a client about at most 4
   capability hashes at a time.
 - MAM pages are at most 250 messages, a room join's history 100. PEP: 200 nodes a user, 256 items a node, 256 KiB an
-  item. Uploads: 60 slots a user an hour, asking for at most ten times `xmpp_upload_max_bytes` in all; a slot takes
-  its PUT within an hour.
+  item, `xmpp_pep_max_bytes` (20 MiB) a user in all. A user blocks at most `xmpp_block_max_jids` (1,000) JIDs and has at
+  most `xmpp_push_max_registrations` (50) push registrations. Past one of these three the request is refused with
+  `resource-constraint` and nothing is kept. Uploads: 60 slots a user an hour, asking for at most ten times
+  `xmpp_upload_max_bytes` in all; a slot takes its PUT within an hour, and an upload no message of a room was given
+  is deleted `xmpp_upload_unattached_hours` (24) after it was put, by the daily job (so a file shared only inside an
+  OMEMO-encrypted message, whose URL the server cannot see, is gone a day or two later).
 
 ## Chat
 

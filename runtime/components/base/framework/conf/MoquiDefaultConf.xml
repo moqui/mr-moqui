@@ -372,7 +372,11 @@
         xmpp_upload_url is the HTTPS base of upload URLs (https://<domain> by default) and xmpp_upload_max_bytes their
         largest size; xmpp_upload_secret derives the URLs of chat files sent to XMPP clients. xmpp_resume_seconds is how
         long a dropped session waits for stream resumption, xmpp_fast_token_days how long a FAST token lasts.
-        xmpp_upload_seconds is the longest a PUT to an upload slot may take. xmpp_turn_enabled true lets external services
+        xmpp_upload_seconds is the longest a PUT to an upload slot may take; an upload no message was given is deleted
+        xmpp_upload_unattached_hours after it was put (by clean#Uploads, daily; 0 keeps it). A user's PEP items hold at
+        most xmpp_pep_max_bytes in all, the block list xmpp_block_max_jids JIDs and the push registrations
+        xmpp_push_max_registrations; past one the request is refused with resource-constraint (0: no cap).
+        xmpp_turn_enabled true lets external services
         (XEP-0215) hand a user's XMPP app a TURN credential (never an external user's, EXTERNAL_USER), at most
         xmpp_turn_per_hour a user an hour; off, the feature is not advertised. xmpp_scram_decoy_key derives the SCRAM salts
         of names that are no user's, so they stay the same across restarts and nodes (generated when unset).
@@ -395,6 +399,10 @@
     <default-property name="xmpp_resume_seconds" value="300"/>
     <default-property name="xmpp_fast_token_days" value="14"/>
     <default-property name="xmpp_upload_seconds" value="300"/>
+    <default-property name="xmpp_upload_unattached_hours" value="24"/>
+    <default-property name="xmpp_pep_max_bytes" value="20971520"/>
+    <default-property name="xmpp_block_max_jids" value="1000"/>
+    <default-property name="xmpp_push_max_registrations" value="50"/>
     <default-property name="xmpp_turn_enabled" value="false"/>
     <default-property name="xmpp_turn_per_hour" value="30"/>
     <default-property name="xmpp_scram_decoy_key" value="CHANGEME" is-secret="true"/>

@@ -58,8 +58,17 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="node" type="text-medium" is-pk="true"/>
         <field name="itemId" type="text-medium" is-pk="true"/>
         <field name="payloadXml" type="text-very-long"/>
+        <field name="payloadBytes" type="number-integer"><description>The payload's UTF-8 bytes, counted against
+            xmpp_pep_max_bytes</description></field>
         <field name="publishedDate" type="date-time"/>
     </entity>
+
+    <view-entity entity-name="XmppPepItemBytes" package="moqui.xmpp">
+        <description>The bytes of a user's PEP items in all (publish#PepItem holds them to xmpp_pep_max_bytes).</description>
+        <member-entity entity-alias="PI" entity-name="moqui.xmpp.XmppPepItem"/>
+        <alias entity-alias="PI" name="userId"/>
+        <alias entity-alias="PI" name="totalBytes" field="payloadBytes" function="sum"/>
+    </view-entity>
 
     <entity entity-name="XmppBlockedJid" package="moqui.xmpp" use="transactional" cache="never">
         <description>A JID a user blocked (XEP-0191): its messages and presence do not reach the user's XMPP

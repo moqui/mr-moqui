@@ -495,20 +495,45 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Publish an item to one of the current user's PEP nodes, made on first publish with options
             (access_model, max_items; persist_items is always true). A node that exists keeps its options: a publish whose
             access_model or max_items differs is not made (preconditionFailed true, XEP-0060 §7.1.5). A user has at most
-            200 nodes, each with at most 256 items (the oldest go). Out the users to notify (notifyUserIdList, who may
-            read it).</description>
+            200 nodes, each with at most 256 items (the oldest go), and items of at most xmpp_pep_max_bytes (20 MiB) in
+            all: past it the item is not kept (resourceConstraint true). Out the users to notify (notifyUserIdList, who
+            may read it).</description>
         <in-parameters>
             <parameter name="node" required="true"/><parameter name="itemId" required="true"/>
             <parameter name="payloadXml" required="true" allow-html="any"/><parameter name="options" type="Map"/>
         </in-parameters>
         <out-parameters>
-            <parameter name="preconditionFailed" type="Boolean"/><parameter name="notifyUserIdList" type="List"/>
+            <parameter name="preconditionFailed" type="Boolean"/><parameter name="resourceConstraint" type="Boolean"/>
+            <parameter name="notifyUserIdList" type="List"/>
         </out-parameters>
         <actions><script><![CDATA[
-            preconditionFailed = false; notifyUserIdList = []
+            preconditionFailed = false; resourceConstraint = false; notifyUserIdList = []
             const me = ec.user.userId
             if (String(node).length > 250 || String(itemId).length > 250) { ec.message.addError('The node or item id is too long'); return }
             if (String(payloadXml).length > 262144) { ec.message.addError('The item is too large'); return }
+            // a user's PEP items are bounded in bytes too, the item it replaces not counted (SEC-COM-20)
+            const utf8Bytes = (text) => {
+                let bytes = 0
+                for (let i = 0; i < text.length; i++) {
+                    const code = text.charCodeAt(i)
+                    if (code < 0x80) bytes += 1
+                    else if (code < 0x800) bytes += 2
+                    else if (code >= 0xd800 && code < 0xdc00) { bytes += 4; i++ }
+                    else bytes += 3
+                }
+                return bytes
+            }
+            const payloadBytes = utf8Bytes(String(payloadXml))
+            const maxBytes = Number(System.getProperty('xmpp_pep_max_bytes') || 20971520)
+            if (maxBytes > 0) {
+                const held = Array.from(ec.entity.find('moqui.xmpp.XmppPepItemBytes').condition('userId', me).disableAuthz().list())
+                const replaced = ec.entity.find('moqui.xmpp.XmppPepItem').condition({userId: me, node: node, itemId: itemId})
+                        .selectField('payloadBytes').disableAuthz().one()
+                // a sum is a decimal
+                const count = (value) => value == null ? 0 : typeof value.toNumber === 'function' ? value.toNumber() : Number(value)
+                const total = count(held[0] && held[0].totalBytes) - count(replaced && replaced.payloadBytes)
+                if (total + payloadBytes > maxBytes) { resourceConstraint = true; return }
+            }
             const ACCESS = ['open', 'presence', 'whitelist']
             const asked = options || {}
             const access = asked.access_model ? String(asked.access_model) : null
@@ -532,7 +557,8 @@ along with this software (see the LICENSE.md file). If not, see
                 preconditionFailed = true; return
             }
             const item = ec.entity.makeValue('moqui.xmpp.XmppPepItem')
-            item.setFields({userId: me, node: node, itemId: itemId, payloadXml: String(payloadXml), publishedDate: ec.user.nowTimestamp}, true, null, null)
+            item.setFields({userId: me, node: node, itemId: itemId, payloadXml: String(payloadXml), payloadBytes: payloadBytes,
+                publishedDate: ec.user.nowTimestamp}, true, null, null)
             item.createOrUpdate()
             const keep = nodeRow.maxItems != null && Number(nodeRow.maxItems) > 0 ? Math.min(Number(nodeRow.maxItems), MAX_ITEMS) : MAX_ITEMS
             if (ec.entity.find('moqui.xmpp.XmppPepItem').condition('userId', me).condition('node', node).disableAuthz().count() > keep) {
@@ -591,11 +617,26 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>jidList = Array.from(ec.entity.find('moqui.xmpp.XmppBlockedJid').condition('userId', ec.user.userId).disableAuthz().list()).map((row) => row.jid)</script></actions>
     </service>
     <service verb="block" noun="Jids">
+        <description>Block the JIDs of jidList (at most 500 a call). A user blocks at most xmpp_block_max_jids (1000):
+            a call that would pass it blocks none (resourceConstraint true).</description>
         <in-parameters><parameter name="jidList" type="List" required="true"/></in-parameters>
+        <out-parameters><parameter name="resourceConstraint" type="Boolean"/></out-parameters>
         <actions><script><![CDATA[
+            resourceConstraint = false
+            const asked = new Set()
             for (const jid of Array.from(jidList).slice(0, 500)) {
                 const text = String(jid).trim().toLowerCase()
-                if (!text || text.length > 250) continue
+                if (text && text.length <= 250) asked.add(text)
+            }
+            // a user's block list is bounded (SEC-COM-20)
+            const most = Number(System.getProperty('xmpp_block_max_jids') || 1000)
+            if (most > 0) {
+                const held = new Set(Array.from(ec.entity.find('moqui.xmpp.XmppBlockedJid').condition('userId', ec.user.userId)
+                        .selectField('jid').disableAuthz().list()).map((row) => row.jid))
+                const adding = Array.from(asked).filter((text) => !held.has(text)).length
+                if (held.size + adding > most) { resourceConstraint = true; return }
+            }
+            for (const text of asked) {
                 const row = ec.entity.makeValue('moqui.xmpp.XmppBlockedJid')
                 row.setFields({userId: ec.user.userId, jid: text, createdDate: ec.user.nowTimestamp}, true, null, null)
                 row.createOrUpdate()
@@ -614,14 +655,23 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="enable" noun="Push">
         <description>Keep a client's push registration (XEP-0357): its app server and node, and its options (with the app
-            server's secret), encrypted. The same app server and node replace the one before.</description>
+            server's secret), encrypted. The same app server and node replace the one before. A user has at most
+            xmpp_push_max_registrations (50): one more is not kept (resourceConstraint true).</description>
         <in-parameters>
             <parameter name="pushJid" required="true"/><parameter name="node"/><parameter name="resource"/>
             <parameter name="options" type="Map"/>
         </in-parameters>
+        <out-parameters><parameter name="resourceConstraint" type="Boolean"/></out-parameters>
         <actions><script><![CDATA[
+            resourceConstraint = false
             const me = ec.user.userId
-            ec.entity.find('moqui.xmpp.XmppPushRegistration').condition('userId', me).condition('pushJid', pushJid).condition('node', node || null).disableAuthz().deleteAll()
+            const same = () => ec.entity.find('moqui.xmpp.XmppPushRegistration').condition('userId', me).condition('pushJid', pushJid)
+                    .condition('node', node || null).disableAuthz()
+            // a user's push registrations are bounded (SEC-COM-20); one that replaces another is not one more
+            const most = Number(System.getProperty('xmpp_push_max_registrations') || 50)
+            const others = ec.entity.find('moqui.xmpp.XmppPushRegistration').condition('userId', me).disableAuthz().count() - same().count()
+            if (most > 0 && others >= most) { resourceConstraint = true; return }
+            same().deleteAll()
             const row = ec.entity.makeValue('moqui.xmpp.XmppPushRegistration')
             row.setSequencedIdPrimary()
             row.setFields({userId: me, pushJid: String(pushJid).slice(0, 250), node: node ? String(node).slice(0, 250) : null,
@@ -740,16 +790,33 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="clean" noun="Uploads" authenticate="anonymous-all">
-        <description>Daily: upload slots never put within an hour go, with their files, and so do expired FAST tokens.
-            Each on its own: one that cannot be removed is logged and the rest go on.</description>
+        <description>Daily: upload slots never put within an hour go, with their files, and so do uploads put more than
+            xmpp_upload_unattached_hours (24) ago that no message of a room was given (no chat file has their file;
+            0 keeps them), and expired FAST tokens. Each on its own: one that cannot be removed is logged and the rest
+            go on.</description>
         <actions><script><![CDATA[
-            const hourAgo = new Date(Number(ec.user.nowTimestamp) - 3600000)
-            for (const row of ec.entity.find('moqui.xmpp.XmppUpload').condition('completedDate', null).condition('createdDate', '<', hourAgo).disableAuthz().list()) {
+            const removeUpload = (row) => {
                 try {
                     const ref = ec.resource.getLocationReference(row.location)
                     if (ref && ref.exists) ref.delete()
                     row.delete()
                 } catch (err) { ec.logger.warn(`XMPP upload ${row.xmppUploadId} not removed: ${err}`) }
+            }
+            const hourAgo = new Date(Number(ec.user.nowTimestamp) - 3600000)
+            for (const row of ec.entity.find('moqui.xmpp.XmppUpload').condition('completedDate', null).condition('createdDate', '<', hourAgo).disableAuthz().list()) {
+                removeUpload(row)
+            }
+            // a user's upload no message was given goes too, so uploads are not kept storage of their own (SEC-COM-20);
+            // one a message has is a chat file of its room and goes with it (SEC-COM-14)
+            const hours = Number(System.getProperty('xmpp_upload_unattached_hours') || 24)
+            if (hours > 0) {
+                const before = new Date(Number(ec.user.nowTimestamp) - hours * 3600000)
+                for (const row of ec.entity.find('moqui.xmpp.XmppUpload').condition('chatAttachmentId', null).condition('completedDate', '<', before)
+                        .disableAuthz().list()) {
+                    if (!row.userId || !row.location) continue
+                    if (ec.entity.find('moqui.chat.ChatAttachment').condition('location', row.location).disableAuthz().count() > 0) continue
+                    removeUpload(row)
+                }
             }
             ec.entity.find('moqui.xmpp.XmppFastToken').condition('expireDate', '<', ec.user.nowTimestamp).disableAuthz().deleteAll()
         ]]></script></actions>
