@@ -756,6 +756,7 @@ pub fn render_text_value(state: &RenderState, location: &str, template: &str) ->
         }
         return Ok(text);
     }
+    state.templated_text.set(true);
     if location.ends_with(".ftl") {
         return Err(Error::new(format!(
             "FreeMarker template {location} is not supported; port it to the fancy dialect"

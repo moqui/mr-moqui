@@ -34,6 +34,7 @@ pub(crate) mod menu;
 pub mod overlay;
 mod pdf;
 mod public_site;
+mod qvue_bundle;
 pub use public_site::hosts as public_site_hosts;
 pub use public_site::is_site_host as is_public_site_host;
 pub use public_site::screen_path_names;

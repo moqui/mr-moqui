@@ -559,8 +559,15 @@
 
     moqui.componentCache = new moqui.LruMap(50);
 
-    moqui.NotFound = markRaw({ template: '<div id="current-page-root"><h4>Screen not found at {{$root.currentPath}}</h4></div>' });
-    moqui.EmptyComponent = markRaw({ template: '<div id="current-page-root"><div class="spinner"><div>&nbsp;</div></div></div>' });
+    // render functions, so the runtime build of Vue (no template compiler) shows them too
+    moqui.NotFound = markRaw({ name: "mNotFound", render() {
+        const h = root.Vue.h;
+        return h("div", { id: "current-page-root" }, [h("h4", "Screen not found at " + root.Vue.toDisplayString(this.$root.currentPath))]);
+    } });
+    moqui.EmptyComponent = markRaw({ name: "mEmptyComponent", render() {
+        const h = root.Vue.h;
+        return h("div", { id: "current-page-root" }, [h("div", { class: "spinner" }, [h("div", " ")])]);
+    } });
 
     // The screen a component was loaded as (docs/ui/Qvt-Client.md, Loading a screen): {url, path, parameters, containerId}, the path without its
     // query and its .qvt, .qvue or .qjs, the parameters its query. Each m-dynamic-container and m-dynamic-dialog provides it as mScreen
@@ -641,6 +648,24 @@
         return markRaw(bundled.made.component);
     };
 
+    // A .qvue the server compiles for the runtime build (docs/ui/Qvt-Client.md, Bundled qvue): <url>?_qvt=bundle answers a
+    // script (X-Moqui-Qvt: bundled-qvue) that registers the screen in moqui.qvtBundled under its path, the url without
+    // .qvue. A script element loads it, as the static-template handler does: a policy without unsafe-eval allows that, and
+    // nothing here evaluates text. The promise is the component moqui.bundledComponent makes.
+    moqui.qvueBundleUrl = (url) => url + (url.indexOf("?") >= 0 ? "&" : "?") + "_qvt=bundle";
+    moqui.loadBundledQvue = (url, path) => new Promise((resolve, reject) => {
+        const script = root.document.createElement("script");
+        script.src = moqui.qvueBundleUrl(url);
+        script.onload = () => {
+            script.remove();
+            const comp = moqui.bundledComponent(path);
+            if (comp) resolve(comp);
+            else reject(new Error("The bundled .qvue of " + path + " did not register or did not make"));
+        };
+        script.onerror = () => { script.remove(); reject(new Error("Could not load the bundled .qvue of " + path)); };
+        root.document.head.appendChild(script);
+    });
+
     // path: the screen path, extraPath, search and bodyParameters as the router has them. renderModes lists the render
     // modes the screen says it supports: qjs or qvue makes the request for that companion instead of qvt. Without them (a string
     // URL: an m-dynamic-container or m-dynamic-dialog, a tray tab, a quick-create kind) the request is .qvt with
@@ -703,9 +728,22 @@
         else { url += "." + qvtExt; negotiate = !renderModes; }
         if (extraPath && extraPath.length > 0) url += "/" + extraPath;
         if (search && search.length > 0) url += "?" + search;
-        // A client on the runtime build (no template compiler, no eval: a desktop client's shell) cannot make a component of a
-        // .qvue or .qjs it has not bundled; its caller gets none, and can open the screen another way.
+        // A client on the runtime build (no template compiler, no eval: a desktop client's shell, a page whose policy has no
+        // unsafe-eval) cannot make a component of a .qvue or .qjs it has not bundled. One that handles bundled-qvue (a PASS
+        // island) loads a .qvue as its bundle, compiled by the server; any other caller gets none, and can open the screen
+        // another way.
         const runtimeBuild = moqui.config && moqui.config.qvt && moqui.config.qvt.build === "runtime";
+        const handles = (runtimeBuild && moqui.config.qvt.handles) || [];
+        const loadBundled = (qvueUrl) => {
+            moqui.loadBundledQvue(qvueUrl, path).then(give, (err) => {
+                console.error(err);
+                callback(null);
+            });
+        };
+        if (runtimeBuild && kind === vueExt && handles.indexOf("bundled-qvue") >= 0) {
+            loadBundled(url);
+            return { abort() {} };
+        }
         if (runtimeBuild && (kind === vueExt || kind === jsExt)) {
             console.info("loadComponent " + url + ": not bundled, and this client cannot load it");
             callback(null);
@@ -737,6 +775,14 @@
             // the mode the server chose for a .qvt request that named the client modes
             const answered = negotiate ? result.headers.get("X-Moqui-Qvt") : null;
             if (answered === vueExt || answered === jsExt) kind = answered;
+            // a component file this page cannot evaluate: on the runtime build a qvue loads as its bundle, when the page
+            // loads those, and anything else is none, as above
+            if (runtimeBuild && (kind === vueExt || kind === jsExt)) {
+                if (kind === vueExt && handles.indexOf("bundled-qvue") >= 0) {
+                    loadBundled(path + "." + vueExt + (extraPath && extraPath.length > 0 ? "/" + extraPath : "") + (search && search.length > 0 ? "?" + search : ""));
+                } else callback(null);
+                return;
+            }
             if (result.json && moqui.isPlainObject(result.json) && kind === qvtExt) {
                 if (result.json.screenUrl) rootVm().setUrl(result.json.screenUrl);
                 else if (result.json.redirectUrl) root.location.replace(result.json.redirectUrl);

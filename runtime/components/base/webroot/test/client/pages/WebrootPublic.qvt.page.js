@@ -92,7 +92,8 @@ test("the islands of a page are found by their configs, each at its own mount el
         const found = moqui.publicIslandConfigs(document);
         assert.deepEqual(found.map((config) => [config.mount, config.shell, config.route.basePath]),
             [["cart-island", "island", "/shop/cart"], ["review-island", "island", "/shop/reviews/10000"]]);
-        assert.ok(!moqui.publicIslandTemplate.includes("q-layout"), "an island has no layout");
+        // the roots are render functions (their output: WebrootPublic.runtime.spec.js, on the runtime build of Vue)
+        assert.deepEqual([typeof moqui.publicRenders.root, typeof moqui.publicRenders.island], ["function", "function"]);
         // Page markup with the config's id (a theme's <div>) is not a config.
         const fake = document.createElement("div");
         fake.id = "moqui-public-config";

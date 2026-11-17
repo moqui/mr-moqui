@@ -893,6 +893,101 @@ module.exports = {
     assert!(setup.to_string().contains("Setup"), "{setup}");
 }
 
+/// SEC-PSF-04: a `.qvue` asked for as its bundle (`?_qvt=bundle`, which a script element can send) is answered with the
+/// file's text compiled to render functions, registered under the request path without `.qvue` (the name the client
+/// loads it by), as `text/javascript` with an `ETag` and `X-Moqui-Qvt: bundled-qvue`: a screen's `template="false"` qvue
+/// (the screen's caching as for the plain request) and a `.qvue` file under a screen. The plain request is the text as
+/// before, and a qvue the screen renders as a template has no bundle. The island's answer is kept for the client spec
+/// (`webroot/test/client/pages/WebrootPublic.island.bundle.js`, `UPDATE_GOLDEN=1` writes it).
+#[test]
+fn a_qvue_asked_for_as_its_bundle_is_compiled_and_named_by_its_path() {
+    let pages = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/webroot/test/client/pages");
+    let source = std::fs::read_to_string(pages.join("WebrootPublic.island.qvue")).unwrap();
+    let dir = std::env::temp_dir().join(format!("moqui-qvue-bundle-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root")).unwrap();
+    let write = |name: &str, text: &str| std::fs::write(dir.join(name), text).unwrap();
+    write(
+        "Root.xml",
+        r#"<screen require-authentication="false"><widgets><subscreens-active/></widgets></screen>"#,
+    );
+    write("Root/Island.qvue", &source);
+    let island = dir.join("Root/Island.qvue").to_string_lossy().into_owned();
+    write(
+        "Root/Island.xml",
+        &format!(
+            r#"<screen require-authentication="false" render-modes="html,qvue" server-static="qvue"><widgets><render-mode>
+                <text type="qvue" template="false" location="{island}"/></render-mode></widgets></screen>"#
+        ),
+    );
+    write(
+        "Root/Templated.xml",
+        r#"<screen require-authentication="false" render-modes="qvue"><widgets><render-mode><text type="qvue"><![CDATA[<template><p>${'made'}</p></template>]]></text></render-mode></widgets></screen>"#,
+    );
+    // a file under a screen with no screen of its own: an island's .qvue served as content
+    write("Root/Loose.qvue", &source);
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = super::World::open("");
+    let bundle = |path: &str, tag: Option<&str>| {
+        let mut asked = super::request("GET", path);
+        asked.query.push(("_qvt".to_string(), "bundle".to_string()));
+        if let Some(tag) = tag {
+            asked.set_header("if-none-match", tag);
+        }
+        crate::screen::serve_at(&world.factory, asked, &root)
+    };
+    let plain = |path: &str| crate::screen::serve_at(&world.factory, super::request("GET", path), &root);
+
+    let response = bundle("/Island.qvue", None);
+    let body = response.body_text();
+    assert_eq!(response.status, 200, "{body}");
+    assert!(
+        response.header("Content-Type").is_some_and(|kind| kind.starts_with("text/javascript")),
+        "{:?}",
+        response.header("Content-Type")
+    );
+    assert_eq!(response.header("X-Moqui-Qvt"), Some("bundled-qvue"));
+    assert!(
+        response.header("Cache-Control").is_some_and(|cache| cache.contains("public")),
+        "a public island stays cacheable: {:?}",
+        response.header("Cache-Control")
+    );
+    let tag = response.header("ETag").expect("an ETag").to_string();
+    assert!(body.contains(r#"moqui.qvtBundled["/Island"] = { make: function (Vue) {"#), "{body}");
+    for banned in ["new Function", "eval(", "with ("] {
+        assert!(!body.contains(banned), "{banned}: {body}");
+    }
+    assert_eq!(made_bundle(&body, &["/Island"]), Vec::<String>::new(), "{body}");
+    assert_eq!(bundle("/Island.qvue", Some(&tag)).status, 304);
+    // the same text answers the same, from the definition's cache
+    assert_eq!(bundle("/Island.qvue", None).body_text(), body);
+    assert_eq!(plain("/Island.qvue").body_text(), source, "the plain request is the file's text");
+
+    let loose = bundle("/Loose.qvue", None);
+    assert_eq!(loose.status, 200, "{}", loose.body_text());
+    assert_eq!(loose.header("X-Moqui-Qvt"), Some("bundled-qvue"));
+    assert!(loose.body_text().contains(r#"moqui.qvtBundled["/Loose"]"#));
+    assert_eq!(made_bundle(&loose.body_text(), &["/Loose"]), Vec::<String>::new());
+    assert_eq!(plain("/Loose.qvue").body_text(), source);
+
+    let templated = bundle("/Templated.qvue", None);
+    assert_eq!(templated.status, 404, "{}", templated.body_text());
+    assert!(plain("/Templated.qvue").body_text().contains("<p>made</p>"));
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let golden = pages.join("WebrootPublic.island.bundle.js");
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(&golden, &body).unwrap();
+        return;
+    }
+    assert!(
+        std::fs::read_to_string(&golden).unwrap_or_default() == body,
+        "{} is not the island's bundle as it is: UPDATE_GOLDEN=1 cargo test -p moqui-core --lib \
+         a_qvue_asked_for_as_its_bundle_is_compiled_and_named_by_its_path",
+        golden.display()
+    );
+}
+
 /// `WebrootVue.qvt.render.js` is the render functions of the client components as their templates are now: the file
 /// is made again and compared. `UPDATE_GOLDEN=1` writes it.
 #[test]
