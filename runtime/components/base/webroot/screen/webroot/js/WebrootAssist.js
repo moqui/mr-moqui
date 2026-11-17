@@ -83,6 +83,7 @@
             adjust: "Ask Assist to change this canvas", adjustSend: "Adjust", canvasProblems: "The canvas reported", canvasUpdating: "Updating the canvas",
             canvasFailed: "The canvas could not be loaded", canvasWriteCanceled: "Not saved: the write was not confirmed",
             canvasWriteTitle: "Save with {transition}?", canvasWriteNone: "No parameters",
+            externalTitle: "Open this link?", externalNote: "The answer's link carries data in its address, which goes to {host}:", externalOpen: "Open",
             attach: "Attach a file", remove: "Remove", attachTooMany: "At most {n} files", attachTooBig: "{name} is larger than {size}",
             attachType: "{name}: this kind of file cannot be attached", attachFailed: "{name} was not attached", uploading: "Uploading",
             waitUploads: "Wait for the files to upload", dictate: "Dictate", stopDictation: "Stop dictation", transcribing: "Transcribing",
@@ -286,10 +287,34 @@
                 return segment.chip.url ? "[" + label + "](" + segment.chip.url + ' "assist-chip")' : label;
             }).join("");
         },
-        // The host of an absolute URL, "" for none.
+        // The host of an absolute URL, "" for none: after any user and password, without the port.
         hostOf(url) {
-            const match = /^(?:[a-z][a-z0-9+.-]*:)?\/\/([^/?#:]+)/i.exec(String(url || "").trim());
-            return match ? match[1].toLowerCase() : "";
+            const match = /^(?:[a-z][a-z0-9+.-]*:)?\/\/([^/?#]*)/i.exec(String(url || "").trim());
+            if (!match) return "";
+            const host = match[1].slice(match[1].lastIndexOf("@") + 1);
+            return (host.charAt(0) === "[" ? host.slice(0, host.indexOf("]") + 1) : host.split(":")[0]).toLowerCase();
+        },
+        // Whether an external link carries data past its host and path: a query, a fragment, or a user and password. A model
+        // the conversation's text steered can put the conversation's data there (SEC-AI-04), so such a link shows its whole
+        // address and opens only on the user's OK.
+        externalCarries(url) {
+            const match = /^(?:[a-z][a-z0-9+.-]*:)?\/\/([^/?#]*)([^?#]*)(.*)$/i.exec(String(url || "").trim());
+            return !!match && (match[1].indexOf("@") >= 0 || match[3].length > 0);
+        },
+        // Ask before opening an external link that carries data (externalCarries), showing its whole address; resolves true
+        // on the user's OK.
+        confirmExternal(url) {
+            const vm = moqui.webrootVue;
+            const open = vm && vm.$q && vm.$q.dialog ? (o) => vm.$q.dialog(o) : root.Quasar && root.Quasar.Dialog ? (o) => root.Quasar.Dialog.create(o) : null;
+            if (!open) return Promise.resolve(false);
+            const esc = (text) => String(text == null ? "" : text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+            const message = "<div>" + esc(assist.labels.externalNote.replace("{host}", assist.hostOf(url))) + "</div>"
+                + "<div class=\"q-mt-sm\" style=\"word-break: break-all\" data-assist-external-url>" + esc(url) + "</div>";
+            return new Promise((resolve) => {
+                open({ title: esc(assist.labels.externalTitle), message, html: true, persistent: true,
+                    ok: { label: assist.labels.externalOpen, color: "primary", unelevated: true, noCaps: true }, cancel: { label: assist.labels.cancel, flat: true, noCaps: true } })
+                    .onOk(() => resolve(true)).onCancel(() => resolve(false)).onDismiss(() => resolve(false));
+            });
         },
         // Images of the HTML as placeholders with the host, never fetched; an image of this site's own path stays. srcset,
         // video, audio, picture and source go (DOMPurify's options below remove what is left).
@@ -379,6 +404,10 @@
                 if (invented.some((item) => item && (target === item || target.indexOf(item) >= 0))) return { href: plain, external: false };
                 if (/^(https?:)?\/\//i.test(target)) {
                     if (opts.strict || !/^https?:\/\//i.test(target)) return { href: plain, external: false };
+                    // a link that carries data shows its whole address and asks before it opens (onClick, SEC-AI-04)
+                    if (assist.externalCarries(target)) {
+                        return { href: target, external: true, className: "m-assist-external m-assist-external-data", title: target.slice(0, 500) };
+                    }
                     return { href: target, external: true, className: "m-assist-external", title: assist.hostOf(target) };
                 }
                 if (target.charAt(0) === "/") {
@@ -3138,7 +3167,8 @@
         data() { return { html: "", failed: false, frame: null }; },
         template: '<div class="m-assist-markdown m-markdown" @click="onClick"><div v-if="failed" class="m-assist-pre">{{text}}</div><div v-else class="m-markdown-body" v-html="html"></div></div>',
         watch: { text() { this.schedule(); }, invented() { this.schedule(); } },
-        mounted() { this.schedule(); },
+        // a middle click is an auxclick, not a click: it goes through onClick too (an external link that carries data)
+        mounted() { this.schedule(); if (this.$el && this.$el.addEventListener) this.$el.addEventListener("auxclick", this.onClick); },
         beforeUnmount() { if (this.frame && root.cancelAnimationFrame) root.cancelAnimationFrame(this.frame); },
         methods: {
             schedule() {
@@ -3159,16 +3189,25 @@
             },
             onClick(event) {
                 const anchor = event.target && event.target.closest ? event.target.closest("a[href]") : null;
-                if (!anchor || event.ctrlKey || event.metaKey || event.shiftKey || event.button) return;
+                if (!anchor) return;
+                const plain = !(event.ctrlKey || event.metaKey || event.shiftKey || event.button);
                 // a link that is exactly one of this run's trusted Constitution references opens in the reference dialog
-                const reference = !anchor.hasAttribute("data-md-link") && this.runId && moqui.constitution
+                const reference = plain && !anchor.hasAttribute("data-md-link") && this.runId && moqui.constitution
                     ? moqui.constitution.knownReference(this.runId, anchor.getAttribute("href")) : null;
                 if (reference) {
                     event.preventDefault();
                     moqui.constitution.openReference(moqui.constitution.chatDialog(), { referenceId: reference.referenceId, runId: this.runId, title: reference.title }, anchor);
                     return;
                 }
-                if (!anchor.hasAttribute("data-md-link")) return;
+                // an external link that carries data opens only on the user's OK, whatever the click (a modified or middle
+                // click too: auxclick)
+                const href = anchor.getAttribute("href") || "";
+                if (anchor.classList && anchor.classList.contains("m-assist-external") && assist.externalCarries(href)) {
+                    event.preventDefault();
+                    assist.confirmExternal(href).then((ok) => { if (ok) root.open(href, "_blank", "noopener,noreferrer"); });
+                    return;
+                }
+                if (!plain || !anchor.hasAttribute("data-md-link")) return;
                 event.preventDefault();
                 const checked = assist.safePath(anchor.getAttribute("href"), null, { linkBase: this.$root.linkBasePath || "/qapps" });
                 if (checked.ok) this.$root.setUrl(checked.url);
