@@ -3307,9 +3307,12 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="mentions" type="Integer"/>
             <parameter name="unreadRoomCount" type="Integer"/>
             <parameter name="roomCounts" type="Map"/>
+            <parameter name="levelMap" type="Map"><description>chatRoomId to the level the room notifies at: all, mentions (also
+                a muted room) or none, for each room the user is in; an app's socket notifications follow it
+                (plans/Comms-Messaging.md §7.5)</description></parameter>
         </out-parameters>
         <actions><script><![CDATA[
-            total = 0; unread = 0; mentions = 0; unreadRoomCount = 0; roomCounts = {}
+            total = 0; unread = 0; mentions = 0; unreadRoomCount = 0; roomCounts = {}; levelMap = {}
             const currentUserId = ec.user.userId
             if (!userId) userId = currentUserId
             if (!userId) return
@@ -3335,13 +3338,15 @@ along with this software (see the LICENSE.md file). If not, see
             for (const count of ec.entity.find('moqui.chat.ChatMemberMentions').condition('userId', userId).condition('leftDate', null)
                     .selectField('chatRoomId').selectField('mentionCount').list())
                 mentionsOf[count.chatRoomId] = Number(count.mentionCount || 0)
+            const LEVELS = {CnlAll: 'all', CnlMentions: 'mentions', CnlNone: 'none'}
             for (const row of rows) {
                 if (!rooms.has(row.chatRoomId)) continue
+                const level = row.notificationLevelEnumId || 'CnlAll'
+                const effective = level === 'CnlNone' ? 'CnlNone' : (row.isMuted === 'Y' ? 'CnlMentions' : level)
+                levelMap[row.chatRoomId] = LEVELS[effective] || 'all'
                 const roomUnread = unreadOf[row.chatRoomId] || 0
                 const roomMentions = mentionsOf[row.chatRoomId] || 0
                 if (!roomUnread && !roomMentions) continue
-                const level = row.notificationLevelEnumId || 'CnlAll'
-                const effective = level === 'CnlNone' ? 'CnlNone' : (row.isMuted === 'Y' ? 'CnlMentions' : level)
                 const counted = effective === 'CnlAll' ? roomUnread : (effective === 'CnlMentions' ? roomMentions : 0)
                 roomCounts[row.chatRoomId] = {unread: roomUnread, mentions: roomMentions, counted: counted}
                 if (effective === 'CnlAll') unread += roomUnread

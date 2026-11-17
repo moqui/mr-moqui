@@ -30,6 +30,8 @@
 -keep class org.moqui.mobile.CallManager { *; }
 -keep class org.moqui.mobile.Native { *; }
 -keep class org.moqui.mobile.ActivityEnd { *; }
+# Rust calls the notification check by name (src/android.rs push_check_state, push_check_fix)
+-keep class org.moqui.mobile.PushCheck { *; }
 # Asked for by name (Push.kt) in a build with Firebase.
 -keep class org.moqui.mobile.FcmPush { *; }
 
@@ -39,3 +41,4 @@
 # its (Context, WorkerParameters) constructor.
 -keep class * extends androidx.room.RoomDatabase { <init>(); }
 -keep class org.moqui.mobile.FlushWorker { public <init>(android.content.Context, androidx.work.WorkerParameters); }
+-keep class org.moqui.mobile.RegisterWorker { public <init>(android.content.Context, androidx.work.WorkerParameters); }

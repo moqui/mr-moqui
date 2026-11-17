@@ -122,7 +122,7 @@ fn web_provider() -> moqui_db::sql::Condition {
     ])
 }
 
-fn endpoint_hash(endpoint: &str) -> String {
+pub(crate) fn endpoint_hash(endpoint: &str) -> String {
     sha2::Sha256::digest(endpoint.as_bytes())
         .iter()
         .map(|byte| format!("{byte:02x}"))

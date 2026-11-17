@@ -1236,6 +1236,43 @@ test("the shell's history: a link forward to a place on the stack is a new entry
     assert.ok(!root.currentParameters.thread);
 });
 
+// plans/Comms-Messaging.md §7.6: the account view's notification check, as the host (the app) answers it
+test("the notification check shows the device's state, a fix for each item that is off, and a test's time to arrive", async () => {
+    await open("/qapps/BasicComms/Chat?chatRoomId=R1", "chat");
+    let state = { permission: true, channels: { "chat-messages": true, "chat-mentions": false }, batteryOptimized: true, fullScreen: true,
+        fcm: true, registered: true, lastPushDate: null, lastAckId: null };
+    const fixes = [];
+    const desktop = window.moquiDesktop;
+    Object.assign(desktop, {
+        pushCheck: () => Promise.resolve(state),
+        pushCheckFix: (what) => { fixes.push(what); return Promise.resolve(); },
+        // the server queues one; it arrives a little later, as the phone's check then says
+        pushTest: () => {
+            setTimeout(() => { state = Object.assign({}, state, { lastPushDate: Date.now(), lastAckId: "P1" }); }, 300);
+            return Promise.resolve({ ackIdList: ["P1"], queuedDate: Date.now() });
+        }
+    });
+    try {
+        root.openPushCheck();
+        const row = (key) => document.querySelector(".m-shell-push-row[data-check='" + key + "']");
+        await until(() => row("battery"), "the check's items");
+        assert.ok(row("permission").textContent.includes("Notifications are allowed"));
+        assert.ok(!row("permission").querySelector("button"), "an item that is on has no fix");
+        assert.ok(row("channels").textContent.includes("chat-mentions"), "the channel that is off is named");
+        assert.ok(row("registered") && row("lastPush").textContent.includes("None yet"));
+        row("battery").querySelector("button").click();
+        assert.deepEqual(fixes, ["battery"]);
+        [...document.querySelectorAll(".m-shell-push-check button")].find((button) => button.textContent.includes("Send a test notification")).click();
+        await until(() => (document.querySelector(".m-shell-push-result") || {}).textContent?.includes("Arrived in"), "the test's time");
+        assert.ok(row("lastPush").textContent.trim().length > "Last notification received".length, "the last push shows when");
+    } finally {
+        root.pushBox.open = false;
+        delete desktop.pushCheck;
+        delete desktop.pushCheckFix;
+        delete desktop.pushTest;
+    }
+});
+
 test("with no host, as on the web, a message's changes are asked of the server as before", async () => {
     const vm = await openRoom();
     const desktop = window.moquiDesktop;

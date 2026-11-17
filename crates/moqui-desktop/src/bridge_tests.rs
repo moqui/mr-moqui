@@ -259,3 +259,14 @@ fn the_main_window_is_told_whether_the_user_sees_it() {
     assert_eq!(focus_script(false), "window.__moquiWindowFocused = false;");
     assert!(SCRIPT.contains("windowSeen: () =>") && SCRIPT.contains("window.__moquiWindowFocused"));
 }
+
+// plans/Comms-Messaging.md §7.5: a room's tag is one notification, replaced and removed by it
+#[test]
+fn a_tag_is_one_notification_id() {
+    let room = tag_id(Some("chat-100")).unwrap();
+    assert_eq!(tag_id(Some(" chat-100 ")), Some(room));
+    assert_ne!(tag_id(Some("chat-101")), Some(room));
+    assert!(room >= 1000);
+    assert_eq!(tag_id(Some("")), None);
+    assert_eq!(tag_id(None), None);
+}

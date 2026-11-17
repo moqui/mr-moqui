@@ -178,8 +178,8 @@ fn a_token_is_registered_once_with_each_account_and_its_id_kept() {
     // no token yet: nothing is sent
     assert!(!record.register(&[asked("a")], &poster));
     assert!(poster.posted.borrow().is_empty());
-    assert!(record.set_token("tok-1"));
-    assert!(!record.set_token("tok-1"));
+    assert!(record.set_token_of("fcm", "tok-1"));
+    assert!(!record.set_token_of("fcm", "tok-1"));
     assert!(record.register(&[asked("a"), asked("b"), asked("c")], &poster));
     // b refused, c gave no id: neither is kept
     assert_eq!(record.registered.get("a").map(String::as_str), Some("100050"));
@@ -194,7 +194,7 @@ fn a_token_is_registered_once_with_each_account_and_its_id_kept() {
     poster.posted.borrow_mut().clear();
     assert!(!record.register(&[asked("a"), asked("b")], &poster));
     assert_eq!(poster.posted.borrow().len(), 1, "a is not sent again");
-    assert!(record.set_token("tok-2"));
+    assert!(record.set_token_of("fcm", "tok-2"));
     assert!(record.registered.is_empty());
 }
 
@@ -207,6 +207,7 @@ fn a_token_another_account_of_the_server_takes_is_no_longer_the_first_ones() {
     let mut record = PushRecord {
         token: Some("tok".to_string()),
         registered: [("a".to_string(), "100050".to_string())].into(),
+        ..Default::default()
     };
     let server = "https://one.example.com";
     assert!(record.register(&[asked_on("a", server), asked_on("b", server)], &poster));
@@ -223,6 +224,7 @@ fn a_ring_is_the_account_it_was_registered_with_or_none() {
             ("c".to_string(), "100050".to_string()),
         ]
         .into(),
+        ..Default::default()
     };
     let keyed = vec!["a".to_string(), "b".to_string(), "c".to_string()];
     assert_eq!(ring_account(&record, "100051", &keyed, None).as_deref(), Some("b"));
@@ -240,6 +242,7 @@ fn a_sign_out_takes_the_token_back() {
     let mut record = PushRecord {
         token: Some("tok".to_string()),
         registered: [("a".to_string(), "1".to_string()), ("b".to_string(), "2".to_string())].into(),
+        ..Default::default()
     };
     assert!(record.unregister(&asked("a"), &poster));
     assert_eq!(record.registered.keys().collect::<Vec<_>>(), vec!["b"]);
@@ -248,4 +251,64 @@ fn a_sign_out_takes_the_token_back() {
     assert!(record.unregister(&asked("b"), &poster));
     assert!(record.registered.is_empty());
     assert!(!record.forget("c"));
+}
+
+/// plans/Comms-Messaging.md §7.4: the registration carries the app's push keys, new keys or a UnifiedPush endpoint
+/// register again with every account, and an account not yet registered is one to try again.
+#[test]
+fn the_push_keys_and_a_unifiedpush_endpoint_register_again() {
+    let poster = fake(vec![(
+        "a",
+        Ok((200, json!({"registered": true, "subscriptionId": "7"}))),
+    )]);
+    let mut record = PushRecord::default();
+    assert!(record.set_token_of("fcm", "tok"));
+    assert!(record.set_keys("PUB", "AUTH"));
+    assert!(!record.set_keys("PUB", "AUTH"));
+    assert!(record.pending(&[asked("a")]));
+    assert!(record.register(&[asked("a")], &poster));
+    assert!(!record.pending(&[asked("a")]));
+    assert_eq!(
+        poster.posted.borrow()[0].2,
+        "provider=fcm&token=tok&appId=org.moqui.mobile&platform=android&p256dhKey=PUB&authSecret=AUTH"
+    );
+    // other keys: registered again
+    assert!(record.set_keys("PUB2", "AUTH"));
+    assert!(record.registered.is_empty());
+    // a distributor's endpoint in place of the FCM token
+    assert!(record.register(&[asked("a")], &poster));
+    assert!(record.set_token_of("unifiedpush", "https://up.example.net/x"));
+    assert!(!record.set_token_of("unifiedpush", "https://up.example.net/x"));
+    assert!(record.register(&[asked("a")], &poster));
+    assert!(poster
+        .posted
+        .borrow()
+        .last()
+        .unwrap()
+        .2
+        .starts_with("provider=unifiedpush&token=https://up.example.net/x"));
+    assert!(record.set_token_of("fcm", "tok"), "back to FCM is a new token");
+}
+
+/// A chat notification's tap: a plain account, room and message only.
+#[test]
+fn a_room_link_names_a_plain_account_room_and_message() {
+    let url = |text: &str| tauri::Url::parse(text).unwrap();
+    assert_eq!(
+        room_link_of(&url("org.moqui.mobile:/room?account=a1&chatRoomId=100&eventSeq=7")),
+        Some(("a1".to_string(), "100".to_string(), Some(7)))
+    );
+    assert_eq!(
+        room_link_of(&url("org.moqui.mobile:/room?account=a1&chatRoomId=100")),
+        Some(("a1".to_string(), "100".to_string(), None))
+    );
+    assert_eq!(
+        room_link_of(&url("org.moqui.mobile:/room?account=a1&chatRoomId=../x")),
+        None
+    );
+    assert_eq!(room_link_of(&url("org.moqui.mobile:/room?chatRoomId=100")), None);
+    assert_eq!(
+        room_link_of(&url("org.moqui.mobile:/call?account=a1&chatRoomId=100")),
+        None
+    );
 }

@@ -769,3 +769,39 @@ test("the new-chat pickers: one person is a direct chat, several a group (with a
     assert.deepEqual(chat.numberOptions([{ phoneNumber: "+15550004000", description: "Office" }, { phoneNumber: "+15550004001" }]),
         [{ value: "+15550004000", label: "+15550004000 · Office" }, { value: "+15550004001", label: "+15550004001" }]);
 });
+
+// plans/Comms-Messaging.md §7.5: the app's notification of a socket event follows the rules of the server's pushes
+test("the app notifies a message by the room's level, not its own, not on do not disturb or while shown, and no text sealed", () => {
+    const message = event({ eventSeq: 9, senderName: "Bob", bodyText: "Lunch\n at noon?", mentions: [] });
+    const base = { me: "ann", levels: { R1: "all" }, appRoot: "/qapps/Comms" };
+    assert.deepEqual(chat.notification(message, "R1", base),
+        { title: "Bob", body: "Lunch at noon?", tag: "chat-R1", link: "/qapps/Comms/Chat?chatRoomId=R1&eventSeq=9" });
+    assert.equal(chat.notification(event({ senderUserId: "ann" }), "R1", base), null, "my own message");
+    assert.equal(chat.notification(message, "R1", Object.assign({}, base, { quiet: true })), null, "do not disturb");
+    assert.equal(chat.notification(message, "R1", Object.assign({}, base, { seen: true })), null, "the room shows");
+    assert.equal(chat.notification(message, "R1", Object.assign({}, base, { levels: { R1: "none" } })), null, "nothing");
+    assert.equal(chat.notification(message, "R1", Object.assign({}, base, { levels: { R1: "mentions" } })), null, "mentions only, not mentioned");
+    assert.ok(chat.notification(event({ mentions: ["ann"] }), "R1", Object.assign({}, base, { levels: { R1: "mentions" } })));
+    assert.equal(chat.notification(message, "R1", Object.assign({}, base, { preview: false })).body, null, "previews off");
+    assert.equal(chat.notification(event({ encrypted: true, bodyText: "x" }), "R1", base).body, "New message", "encrypted: no text");
+    assert.equal(chat.notification(event({ type: "reaction" }), "R1", base), null, "only messages");
+    // what was missed while closed: each room with a count not shown yet
+    assert.deepEqual(chat.missed({ R1: { counted: 2 }, R2: { counted: 0 }, R3: { counted: 1 } }, { R3: 1 }), [{ chatRoomId: "R1", count: 2 }]);
+    // the app's host: a socket message notifies with the room's tag, a read of the room clears it; a phone's host
+    // (pushDelivers) leaves its notifications to its pushes
+    const calls = [];
+    const before = { me: chat.me, host: window.moquiDesktop };
+    chat.me = "ann";
+    window.moquiDesktop = { notify: (shown) => { calls.push(["notify", shown.tag]); return Promise.resolve(); },
+        notifyClear: (tag) => { calls.push(["clear", tag]); return Promise.resolve(); } };
+    try {
+        chat.notifyApp({ kind: "event", chatRoomId: "R7", event: event({ chatRoomId: "R7", senderName: "Bob", bodyText: "hi" }) });
+        chat.notifyApp({ kind: "read", chatRoomId: null, userId: "ann", all: true });
+        window.moquiDesktop.pushDelivers = true;
+        chat.notifyApp({ kind: "event", chatRoomId: "R8", event: event({ chatRoomId: "R8", bodyText: "hi" }) });
+        assert.deepEqual(calls, [["notify", "chat-R7"], ["clear", "chat-R7"]]);
+    } finally {
+        chat.me = before.me;
+        window.moquiDesktop = before.host;
+    }
+});

@@ -79,6 +79,9 @@ pub(crate) fn setup(builder: tauri::Builder) -> tauri::Builder {
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             notify,
+            notify_clear,
+            push_check,
+            push_test,
             set_counts,
             set_presence,
             open_external,
@@ -209,8 +212,21 @@ fn open_in_page(app: &AppHandle, link: &str) {
     }
 }
 
-/// A native notification. A click shows the window and follows `link` when it is on the node's origin. `tag` is
-/// taken for the page's sake (a Web Notification's tag) and not used: the platform notifications here have none.
+/// The notification id of a page's `tag` (a room's `chat-<id>`, a call's `call-<id>`): the same tag replaces and removes
+/// the same notification (plans/Comms-Messaging.md §7.5). None for no tag.
+pub(crate) fn tag_id(tag: Option<&str>) -> Option<i32> {
+    let tag = tag.map(str::trim).filter(|tag| !tag.is_empty())?;
+    let mut hash: u32 = 0x811c_9dc5;
+    for byte in tag.bytes() {
+        hash ^= u32::from(byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    Some(i32::try_from(hash % 0x7fff_0000).unwrap_or(0) + 1000)
+}
+
+/// A native notification. A click shows the window and follows `link` when it is on the node's origin. A `tag` (a
+/// room's) replaces the notification of the same tag: the earlier one is closed first where the platform can (Linux and
+/// the BSDs; on macOS and Windows a shown notification stays, `remove_active`).
 #[tauri::command]
 pub(crate) fn notify(
     app: AppHandle,
@@ -219,7 +235,6 @@ pub(crate) fn notify(
     link: Option<String>,
     tag: Option<String>,
 ) -> Result<(), String> {
-    let _ = tag;
     let title = clip(&title, TITLE_MAX);
     if title.is_empty() {
         return Err("A notification needs a title".to_string());
@@ -228,11 +243,49 @@ pub(crate) fn notify(
     if let Some(body) = body.map(|body| clip(&body, BODY_MAX)).filter(|body| !body.is_empty()) {
         builder = builder.body(body);
     }
+    if let Some(id) = tag_id(tag.as_deref()) {
+        let _ = app.notification().remove_active(vec![id]);
+        builder = builder.id(id);
+    }
     let node = app.state::<Bridge>().node.get().cloned();
     if let Some(link) = link.and_then(|link| node_link(&link, node.as_ref())) {
         builder = builder.extra("link", link.as_str());
     }
     builder.show().map_err(|err| err.to_string())
+}
+
+/// Remove the notification of `tag` (a room read: its notification goes, §7.2 rule 3), where the platform can.
+#[tauri::command]
+pub(crate) fn notify_clear(app: AppHandle, tag: String) -> Result<(), String> {
+    match tag_id(Some(&tag)) {
+        Some(id) => app
+            .notification()
+            .remove_active(vec![id])
+            .map_err(|err| err.to_string()),
+        None => Ok(()),
+    }
+}
+
+/// The desktop's part of the shell's notification check (plans/Comms-Messaging.md §7.6): whether the platform lets the
+/// app notify. The desktop gets its messages by its socket while it runs, so it has no push token, channels or battery
+/// optimization: `{platform: desktop, permission, socket: true}`.
+#[tauri::command]
+pub(crate) fn push_check(app: AppHandle) -> serde_json::Value {
+    let permission = app
+        .notification()
+        .permission_state()
+        .map(|state| matches!(state, tauri_plugin_notification::PermissionState::Granted))
+        .unwrap_or(false);
+    serde_json::json!({ "platform": "desktop", "permission": permission, "socket": true })
+}
+
+/// The check's test on the desktop: a notification shown by the app, as its socket's notifications are; how long it
+/// took to hand to the platform, in milliseconds.
+#[tauri::command]
+pub(crate) fn push_test(app: AppHandle, title: String, body: Option<String>) -> Result<serde_json::Value, String> {
+    let started = std::time::Instant::now();
+    notify(app, title, body, None, Some("moqui-test".to_string()))?;
+    Ok(serde_json::json!({ "shownMs": u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX) }))
 }
 
 /// The shell's counts (`shellCounts`, each a number): their total on the tray and the dock or launcher badge.

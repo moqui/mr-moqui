@@ -1330,3 +1330,73 @@ fn an_outside_number_calling_again_rings_through() {
     assert_eq!(ring("+15550100"), set(["bob"]));
     assert!(ring("+15550199").is_empty());
 }
+
+/// §7.6: a test notification goes through the outbox, encrypted to the device, and is acknowledged by its id.
+#[test]
+fn a_test_push_goes_the_full_path_to_the_device() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    login("bob");
+    let ids = queue_test(&bed.facade, "bob", &["BOB-PHONE".to_string()], bed.now).unwrap();
+    run(bed.now);
+    let posts = bed.net.take();
+    assert_eq!(devices(&posts), set(["BOB-PHONE"]));
+    let data = posts[0].fcm.as_ref().unwrap()["message"]["data"]
+        .as_object()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        data.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+        BTreeSet::from(["enc", "kind", "pushId"])
+    );
+    let said = payload(&posts[0]);
+    assert_eq!(said["kind"], "test");
+    assert_eq!(said["ackId"], ids[0].as_str());
+    assert_eq!(said["sentDate"], bed.now);
+    assert_eq!(
+        field_of(
+            &ok(
+                "org.moqui.ui.NotificationServices.ack#Push",
+                &[("ackId", text(&ids[0]))]
+            ),
+            "acked"
+        ),
+        "true"
+    );
+    // a request that is no device of the user's queues nothing
+    let out = ok("org.moqui.ui.NotificationServices.send#TestPush", &[]);
+    assert_eq!(field_of(&out, "reasonCode"), "noDevice");
+}
+
+/// A ring to a device with keys has its caller and call sealed: only its kind and registration in clear text.
+#[test]
+fn a_ring_to_a_keyed_device_is_sealed() {
+    let notice = super::super::fcm::Notice {
+        title: "Call from Ann".to_string(),
+        link: "/qapps/comms/Calls?callSessionId=CS1".to_string(),
+        topic: "IncomingCall".to_string(),
+        tag: "call-CS1".to_string(),
+        kind: super::super::fcm::Kind::Ring(super::super::fcm::Ring {
+            call_session_id: "CS1".to_string(),
+            chat_room_id: "ROOM1".to_string(),
+            caller: "Ann".to_string(),
+            video: true,
+            expires_at: 1_800_000_045_000,
+        }),
+        high: true,
+        ttl: 45,
+    };
+    let body = super::super::fcm::device_message("t", "D1", Some((UA_PUBLIC, AUTH)), &notice, 1_800_000_000);
+    let data = body["message"]["data"].as_object().unwrap();
+    assert_eq!(
+        data.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+        BTreeSet::from(["enc", "kind", "pushId"])
+    );
+    assert_eq!(data["kind"], "ring");
+    assert!(!body.to_string().contains("Ann"));
+    let opened = decrypt(&push_crypto::decode_b64(data["enc"].as_str().unwrap()).unwrap());
+    assert_eq!(opened["caller"], "Ann");
+    assert_eq!(opened["callSessionId"], "CS1");
+    assert_eq!(opened["ringSeconds"], "45");
+    assert_eq!(body["message"]["android"]["priority"], "HIGH");
+}

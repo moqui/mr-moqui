@@ -49,6 +49,8 @@ android {
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
         buildConfigField("boolean", "FCM", fcm.toString())
+        // the instrumented tests (src/androidTest: the chat notifications on a device, ./moq android test)
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     if (fcm) {
         sourceSets.getByName("main").java.srcDir("src/fcm/java")
@@ -125,6 +127,7 @@ dependencies {
     }
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.4")
+    androidTestImplementation("androidx.test:runner:1.5.2")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")
 }
 

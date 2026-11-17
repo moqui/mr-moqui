@@ -230,7 +230,8 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
                 const out = ec.service.sync().name('org.moqui.chat.ChatServices.get#UnreadCounts').disableAuthz().call() || {}
-                ec.web.sendJsonResponse({total: out.total ?? 0, unread: out.unread ?? 0, mentions: out.mentions ?? 0, roomCounts: out.roomCounts ?? {}})
+                ec.web.sendJsonResponse({total: out.total ?? 0, unread: out.unread ?? 0, mentions: out.mentions ?? 0, roomCounts: out.roomCounts ?? {},
+                    levelMap: out.levelMap ?? {}})
             }
             ]]></script></actions>
         <default-response type="none"/>

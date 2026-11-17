@@ -28,7 +28,9 @@ sent when the server can be reached. How it works on Android is [docs/ui/Mobile-
   on each build.
 - **Firebase** (native push) is in the build only with `gen/android/app/google-services.json`, the Firebase
   project's, which git ignores; without it push is off and the app still builds. Debug builds take a ring from adb
-  (`DebugRingReceiver`, [Mobile-Client](../../docs/ui/Mobile-Client.md#the-incoming-call-mt2)).
+  (`DebugRingReceiver`, [Mobile-Client](../../docs/ui/Mobile-Client.md#the-incoming-call-mt2)). The chat's pushes are
+  sealed to the app's push key and shown by Kotlin with no WebView ([Chat
+  notifications](../../docs/ui/Mobile-Client.md#chat-notifications)).
 - **`patches/wry`**: wry with Tauri's scripts and IPC for the main frame of the app's own origins only, through
   `[patch.crates-io]` ([patches/README.md](patches/README.md)).
 
@@ -57,3 +59,6 @@ scripts/check-android.sh      # clippy for aarch64-linux-android and x86_64-linu
 scripts/android-smoke.sh      # on the emulator, when asked: the shell's ready line, the frame check, a relaunch
                               # (MOQUI_MOBILE_APK=<a release APK>: what R8 kept for JNI instead of the frame check)
 ```
+
+The Kotlin has JVM tests (`./gradlew :app:testUniversalDebugUnitTest` in `gen/android`) and, on the emulator when
+asked, the instrumented `ChatNotificationsTest` ([Mobile-Client, Tests](../../docs/ui/Mobile-Client.md#tests)).

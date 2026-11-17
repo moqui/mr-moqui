@@ -360,7 +360,7 @@
 
         // ---- the store of the page ----
 
-        state: reactive({ me: null, presence: {}, unread: {}, typing: {}, reads: {}, openRooms: {}, statusDialog: false, outbox: [], sending: {},
+        state: reactive({ me: null, presence: {}, unread: {}, levels: {}, typing: {}, reads: {}, openRooms: {}, statusDialog: false, outbox: [], sending: {},
             online: true, connected: null, changes: [], hostKinds: [] }),
         listeners: {},
         vm: null,
@@ -386,10 +386,18 @@
             const prefs = (moqui.config && moqui.config.preferences) || {};
             chat.autoAwayMinutes = Number(prefs.CHAT_AUTO_AWAY_MINUTES) || 10;
             chat.request("/userStatus").then((json) => { if (json && json.myStatus) chat.setMe(json.myStatus); });
-            chat.request("/chatUnread").then((json) => {
+            const readCounts = () => chat.request("/chatUnread").then((json) => {
                 const counts = json && moqui.isPlainObject(json.roomCounts) ? json.roomCounts : {};
                 Object.keys(counts).forEach((roomId) => { chat.state.unread[roomId] = { unread: counts[roomId].unread || 0, mentions: counts[roomId].mentions || 0 }; });
+                if (json && moqui.isPlainObject(json.levelMap)) chat.state.levels = json.levelMap;
+                // in an app: what was missed while it was closed or offline (§7.5)
+                if (json) chat.notifyMissed(counts);
             });
+            readCounts();
+            if (client && client.onState) {
+                let closed = false;
+                client.onState((socketState) => { if (socketState === "closed") closed = true; else if (socketState === "open" && closed) { closed = false; readCounts(); } });
+            }
             const doc = root.document;
             if (doc && doc.addEventListener) {
                 const input = () => chat.onInput();
@@ -572,7 +580,89 @@
             // my message arrived: it waits no more (it was sent from another tab, or its answer was lost)
             if (done.kind === "event" && done.event.clientRef && done.event.senderUserId === chat.me) chat.dropOutbox(done.event.clientRef);
             if (done.kind === "presence" && done.userId === chat.me) chat.applyQuiet();
+            chat.notifyApp(done);
             chat.emit(done.kind, done);
+        },
+
+        // ---- the app's own notifications (plans/Comms-Messaging.md §7.5) ----
+
+        // What the desktop or mobile app (window.moquiDesktop.notify) shows of a socket event, by the rules of the server's
+        // pushes (§7.2): a message from someone else, by the room's level (levels: chatRoomId to all, mentions or none, a
+        // muted room is mentions; /chatUnread levelMap), not on do not disturb (quiet), not while its room shows in a
+        // window the user sees (seen); no text for an encrypted room or with previews off. {title, body, tag, link}, or null.
+        notification(event, roomId, options) {
+            const given = options || {};
+            if (!event || event.type !== "message" || !event.senderUserId && !event.senderActorId) return null;
+            if (event.senderUserId && event.senderUserId === given.me) return null;
+            if (given.quiet || given.seen) return null;
+            const level = (given.levels || {})[roomId] || "all";
+            const mention = (event.mentions || []).indexOf(given.me) >= 0;
+            if (level === "none" || (level === "mentions" && !mention)) return null;
+            const tr = given.localize || ((text) => text);
+            const text = event.encrypted ? null : String(event.bodyText || "").replace(/\s+/g, " ").trim();
+            const body = event.encrypted ? tr("New message") : given.preview === false ? null : (text ? text.slice(0, 140) : null);
+            return { title: String(event.senderName || tr("New message")), body, tag: "chat-" + roomId,
+                link: (given.appRoot || "/qapps/BasicComms") + "/Chat?chatRoomId=" + encodeURIComponent(roomId) + (event.eventSeq ? "&eventSeq=" + event.eventSeq : "") };
+        },
+        // The rooms whose unread messages the app missed while it was closed or offline (counted, the server's count by
+        // level) and has not shown yet (shown: chatRoomId to the count shown), as one notification each: [{chatRoomId,
+        // count}].
+        missed(roomCounts, shown) {
+            const out = [];
+            Object.keys(roomCounts || {}).forEach((roomId) => {
+                const counted = Number((roomCounts[roomId] || {}).counted) || 0;
+                if (counted > 0 && counted !== Number((shown || {})[roomId] || 0)) out.push({ chatRoomId: roomId, count: counted });
+            });
+            return out;
+        },
+        // the app's notify and clear, when the page runs in one
+        notifyHost() {
+            const host = root.moquiDesktop;
+            return host && host.notify ? host : null;
+        },
+        notifyApp(done) {
+            const host = chat.notifyHost();
+            if (!host) return;
+            if (done.kind === "read" && done.userId === chat.me) {
+                // read here or on another device: the room's notification goes (rule 3)
+                const rooms = done.all ? Object.keys(chat.notifiedRooms) : done.chatRoomId ? [done.chatRoomId] : [];
+                rooms.forEach((roomId) => {
+                    delete chat.notifiedRooms[roomId];
+                    if (host.notifyClear) Promise.resolve(host.notifyClear("chat-" + roomId)).catch(() => null);
+                });
+                return;
+            }
+            // a phone's chat notifications come by its pushes (pushDelivers, §7.2 rule 7), the desktop's from the socket
+            if (done.kind !== "event" || host.pushDelivers) return;
+            const prefs = (moqui.config && moqui.config.preferences) || {};
+            const seen = !!chat.state.openRooms[done.chatRoomId] && (host.windowSeen ? host.windowSeen() : !(root.document && root.document.hidden));
+            const shown = chat.notification(done.event, done.chatRoomId, { me: chat.me, levels: chat.state.levels, quiet: chat.quiet(), seen,
+                preview: prefs.CHAT_NOTIFY_PREVIEW !== "N", appRoot: moqui.call && moqui.call.appRoot ? moqui.call.appRoot() : null,
+                localize: (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text) });
+            if (!shown) return;
+            chat.notifiedRooms[done.chatRoomId] = true;
+            Promise.resolve(host.notify(shown)).catch((err) => console.info("The app's notification was not shown", err));
+        },
+        // the rooms this page notified, which a read of all rooms clears
+        notifiedRooms: {},
+        // On start and when the socket comes back: the rooms with unread messages the app missed, one notification each.
+        notifyMissed(roomCounts) {
+            const host = chat.notifyHost();
+            if (!host || host.pushDelivers || chat.quiet()) return;
+            let shown = {};
+            const key = "moqui.chat.notified." + chat.me;
+            try { shown = JSON.parse(root.localStorage.getItem(key) || "{}") || {}; } catch (err) { shown = {}; }
+            const tr = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+            const appRoot = moqui.call && moqui.call.appRoot ? moqui.call.appRoot() : "/qapps/BasicComms";
+            chat.missed(roomCounts, shown).forEach((room) => {
+                const title = room.count === 1 ? tr("1 new message") : tr("${count} new messages").replace("${count}", String(room.count));
+                Promise.resolve(host.notify({ title, tag: "chat-" + room.chatRoomId, link: appRoot + "/Chat?chatRoomId=" + encodeURIComponent(room.chatRoomId) }))
+                    .catch(() => null);
+                shown[room.chatRoomId] = room.count;
+                chat.notifiedRooms[room.chatRoomId] = true;
+            });
+            Object.keys(shown).forEach((roomId) => { if (!roomCounts[roomId]) delete shown[roomId]; });
+            try { root.localStorage.setItem(key, JSON.stringify(shown)); } catch (err) { /* no storage: shown again next time */ }
         },
         // listeners of the screens: kind is event, update, typing, read, room or presence; outbox (the outbox changed), sent
         // ({clientRef, chatRoomId, threadRootEventSeq, json}: a message of the outbox was answered), changed ({kind, clientRef,

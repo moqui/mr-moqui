@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use super::{clip, external_url, under};
+use super::{clip, external_url, tag_id, under};
 
 #[test]
 fn only_the_webs_and_the_handlers_links_open_outside_the_app() {
@@ -46,4 +46,15 @@ fn a_server_page_shows_in_the_shell_only_its_comms_apps_screens() {
 fn a_notification_is_plain_text_within_its_limit() {
     assert_eq!(clip(" a\nb\tc ", 10), "a b c");
     assert_eq!(clip("abcdef", 3), "abc");
+}
+
+/// A tag is one notification id, the same each time and clear of the app's own ids; no tag, none.
+#[test]
+fn a_tag_is_one_notification_id() {
+    let room = tag_id(Some("chat-100")).unwrap();
+    assert_eq!(tag_id(Some("chat-100")), Some(room));
+    assert_ne!(tag_id(Some("chat-101")), Some(room));
+    assert!(room >= 1000);
+    assert_eq!(tag_id(Some(" ")), None);
+    assert_eq!(tag_id(None), None);
 }

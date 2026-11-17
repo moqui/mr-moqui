@@ -25,6 +25,12 @@ object Native {
     @JvmStatic external fun hangUp(callSessionId: String)
     @JvmStatic external fun hasAccount(dataDir: String): Boolean
     @JvmStatic external fun flush(dataDir: String, budgetMs: Long): Long
+    @JvmStatic external fun pushTokenOf(dataDir: String, provider: String, token: String)
+    @JvmStatic external fun registerPending(dataDir: String): Boolean
+    @JvmStatic external fun openPush(dataDir: String, pushId: String, enc: String): String?
+    @JvmStatic external fun chatReply(dataDir: String, account: String, chatRoomId: String, text: String): String?
+    @JvmStatic external fun chatRead(dataDir: String, account: String, chatRoomId: String, eventSeq: Long): String?
+    @JvmStatic external fun ackPush(dataDir: String, account: String, ackId: String)
 
     /** The library loaded and given the context; whether it may make requests (its TLS verifier started). */
     @Synchronized

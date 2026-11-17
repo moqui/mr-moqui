@@ -47,7 +47,9 @@ JNI_NAMES=(
     org/moqui/mobile/KeyVault#ready org/moqui/mobile/KeyVault#seal org/moqui/mobile/KeyVault#open
     org/moqui/mobile/CallManager#pageCallState org/moqui/mobile/ActivityEnd#endedForGood
     org/moqui/mobile/Native#init org/moqui/mobile/Native#pushToken org/moqui/mobile/Native#decline
-    org/moqui/mobile/Native#hasAccount org/moqui/mobile/Native#flush
+    org/moqui/mobile/Native#hasAccount org/moqui/mobile/Native#flush org/moqui/mobile/Native#openPush
+    org/moqui/mobile/Native#chatReply org/moqui/mobile/Native#chatRead org/moqui/mobile/Native#ackPush
+    org/moqui/mobile/Native#registerPending org/moqui/mobile/PushCheck#state org/moqui/mobile/PushCheck#fix
     org/moqui/mobile/Ipc#attach org/moqui/mobile/RustWebView#loadUrlMainThread org/moqui/mobile/RustWebView#evalScript
     org/moqui/mobile/WryActivity#getAppClass org/moqui/mobile/WryActivity#getVersion
     org/moqui/mobile/WryActivity#setWebView org/rustls/platformverifier/CertificateVerifier#verifyCertificateChain

@@ -110,6 +110,28 @@ pub(crate) fn link_of(url: &tauri::Url) -> Option<(String, String)> {
     Some((id?, nonce?))
 }
 
+/// The deep link's path a chat notification's tap opens the app with (`ChatNotifications.kt`).
+pub(crate) const ROOM_LINK_PATH: &str = "/room";
+
+/// The account, room and message of an `org.moqui.mobile:/room?account=...&chatRoomId=...&eventSeq=...` link: none for
+/// any other link or an id that is not one. The activity is exported, so any app may send one: it only shows a room
+/// of an account signed in here, which the user may read, and does nothing in it.
+pub(crate) fn room_link_of(url: &tauri::Url) -> Option<(String, String, Option<i64>)> {
+    if url.scheme() != "org.moqui.mobile" || url.path() != ROOM_LINK_PATH {
+        return None;
+    }
+    let (mut account, mut room, mut seq) = (None, None, None);
+    for (name, value) in url.query_pairs() {
+        match name.as_ref() {
+            "account" => account = call_id(&value).map(str::to_string),
+            "chatRoomId" => room = call_id(&value).map(str::to_string),
+            "eventSeq" => seq = value.parse::<i64>().ok().filter(|seq| *seq > 0),
+            _ => {}
+        }
+    }
+    Some((account?, room?, seq))
+}
+
 /// Whether `url` is a call link at all (taken or refused, never another kind of link).
 pub(crate) fn is_call_link(url: &tauri::Url) -> bool {
     url.scheme() == "org.moqui.mobile" && url.path() == CALL_LINK_PATH
@@ -187,6 +209,13 @@ pub(crate) struct PushRecord {
     pub(crate) token: Option<String>,
     #[serde(default)]
     pub(crate) registered: BTreeMap<String, String>,
+    /// The provider of the token: `fcm` (none: fcm), or `unifiedpush` (the token is a distributor's endpoint).
+    #[serde(default)]
+    pub(crate) provider: Option<String>,
+    /// The app's push public key and auth secret the registrations were made with (`crate::push`): new keys register
+    /// again, so every server encrypts to them.
+    #[serde(default)]
+    pub(crate) keys: Option<(String, String)>,
 }
 
 impl PushRecord {
@@ -217,14 +246,40 @@ impl PushRecord {
         std::fs::rename(&temp, &path).map_err(|err| format!("{}: {err}", path.display()))
     }
 
-    /// A token from Firebase: a new one is registered with no account yet. Whether it changed.
-    pub(crate) fn set_token(&mut self, token: &str) -> bool {
-        if self.token.as_deref() == Some(token) {
+    /// A token of `provider` (`fcm`, or `unifiedpush` with a distributor's endpoint): a new one, or another provider's,
+    /// is registered with no account yet. Whether it changed.
+    pub(crate) fn set_token_of(&mut self, provider: &str, token: &str) -> bool {
+        let same_provider = self.provider.as_deref().unwrap_or("fcm") == provider;
+        if self.token.as_deref() == Some(token) && same_provider {
             return false;
         }
         self.token = Some(token.to_string());
+        self.provider = (provider != "fcm").then(|| provider.to_string());
         self.registered.clear();
         true
+    }
+
+    /// The app's push keys (public key, auth secret): other ones than the registrations were made with register again
+    /// with every account. Whether they changed.
+    pub(crate) fn set_keys(&mut self, public: &str, auth: &str) -> bool {
+        if self
+            .keys
+            .as_ref()
+            .is_some_and(|(kept_public, kept_auth)| kept_public == public && kept_auth == auth)
+        {
+            return false;
+        }
+        self.keys = Some((public.to_string(), auth.to_string()));
+        self.registered.clear();
+        true
+    }
+
+    /// Whether an account of `accounts` has no registration of the token yet (one to try again).
+    pub(crate) fn pending(&self, accounts: &[Asked]) -> bool {
+        self.token.is_some()
+            && accounts
+                .iter()
+                .any(|asked| !self.registered.contains_key(&asked.account.id))
     }
 
     /// Register the token with each of `accounts` it is not registered with yet; one that fails is logged and tried
@@ -239,12 +294,16 @@ impl PushRecord {
             if self.registered.contains_key(&asked.account.id) {
                 continue;
             }
-            let form = [
-                ("provider", "fcm"),
+            let mut form = vec![
+                ("provider", self.provider.as_deref().unwrap_or("fcm")),
                 ("token", token.as_str()),
                 ("appId", "org.moqui.mobile"),
                 ("platform", "android"),
             ];
+            if let Some((public, auth)) = &self.keys {
+                form.push(("p256dhKey", public.as_str()));
+                form.push(("authSecret", auth.as_str()));
+            }
             match poster.post(&asked.account, &asked.key, "/qapps/registerClientPush", &form) {
                 Ok((status, json)) if status < 400 && json["registered"].as_bool() == Some(true) => {
                     let Some(push_id) = json["subscriptionId"].as_str().filter(|id| !id.is_empty()) else {

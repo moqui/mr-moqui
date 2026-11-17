@@ -231,19 +231,40 @@ pub(crate) fn decline_call(dir: &Path, id: &str, account: &str) -> String {
     }
 }
 
+/// The app's push keys on `record` (made on first use, sealed as the device keys are): new ones register again.
+fn with_push_keys(core: &Client, record: &mut PushRecord) -> bool {
+    match crate::push::keys_of(core.keys()) {
+        Ok(keys) => record.set_keys(&keys.public_b64(), &keys.auth_b64()),
+        Err(err) => {
+            // registered without keys: the server then pushes no text to this device
+            log::error!("Push: no push keys: {err}");
+            false
+        }
+    }
+}
+
 /// A token from Firebase: kept, and registered with each account signed in.
 pub(crate) fn push_token(dir: &Path, token: &str) {
+    push_token_of(dir, "fcm", token);
+}
+
+/// A token of `provider` (`fcm`, or `unifiedpush` with a distributor's https endpoint): kept, and registered with each
+/// account signed in, with the app's push keys.
+pub(crate) fn push_token_of(dir: &Path, provider: &str, token: &str) {
     let token = token.trim();
-    if token.is_empty() || token.len() > 4096 {
+    if token.is_empty() || token.len() > 4096 || !matches!(provider, "fcm" | "unifiedpush") {
         log::warn!("Push: a token that is not one was passed over");
         return;
     }
     let _one = moqui_lib::sync::lock(&PUSH);
     let mut record = PushRecord::load(dir);
-    let mut changed = record.set_token(token);
+    let mut changed = record.set_token_of(provider, token);
     if network_ready() {
         match core_in(dir) {
-            Ok(core) => changed |= record.register(&asked(&core), &ProxyPoster(&core)),
+            Ok(core) => {
+                changed |= with_push_keys(&core, &mut record);
+                changed |= record.register(&asked(&core), &ProxyPoster(&core));
+            }
             Err(err) => log::warn!("Push: no client to register with: {err}"),
         }
     }
@@ -255,23 +276,174 @@ pub(crate) fn push_token(dir: &Path, token: &str) {
 }
 
 /// Register the kept token with the accounts it is not registered with (the app's start), or again with `again`
-/// (it signed in, with a new key). Nothing without a token.
-pub(crate) fn register_push(core: &Client, dir: &Path, again: Option<&str>) {
+/// (it signed in, with a new key). Nothing without a token. Whether every account signed in has it registered now
+/// (the native code tries again until then: `RegisterWorker.kt`).
+pub(crate) fn register_push(core: &Client, dir: &Path, again: Option<&str>) -> bool {
     if !network_ready() {
-        return;
+        return false;
     }
     let _one = moqui_lib::sync::lock(&PUSH);
     let mut record = PushRecord::load(dir);
     if record.token.is_none() {
-        return;
+        return true;
     }
     let mut changed = again.is_some_and(|id| record.forget(id));
-    changed |= record.register(&asked(core), &ProxyPoster(core));
+    changed |= with_push_keys(core, &mut record);
+    let accounts = asked(core);
+    changed |= record.register(&accounts, &ProxyPoster(core));
     if changed {
         if let Err(err) = record.save(dir) {
             log::error!("Push: the registrations were not kept: {err}");
         }
     }
+    !record.pending(&accounts)
+}
+
+/// [`register_push`] from the native code (its retry worker), with no activity: whether it is done.
+pub(crate) fn register_pending(dir: &Path) -> bool {
+    match core_in(dir) {
+        Ok(core) => register_push(&core, dir, None),
+        Err(err) => {
+            log::warn!("Push: no client to register with: {err}");
+            false
+        }
+    }
+}
+
+/// Open a push (`enc`, encrypted to the app's push keys) of the registration `push_id`: its JSON with `account`, the
+/// account it is for, as a text for the native code. None for a push that is no account's here or does not open.
+pub(crate) fn open_push(dir: &Path, push_id: &str, enc: &str) -> Option<String> {
+    let account = ring_account(dir, push_id)?;
+    let core = core_in(dir).ok()?;
+    let keys = match crate::push::keys_of(core.keys()) {
+        Ok(keys) => keys,
+        Err(err) => {
+            log::error!("Push: no push keys to open a push with: {err}");
+            return None;
+        }
+    };
+    match keys.open_b64(enc) {
+        Ok(mut opened) => {
+            opened["account"] = Value::String(account);
+            Some(opened.to_string())
+        }
+        Err(err) => {
+            log::warn!("Push: a push of {push_id} did not open: {err}");
+            None
+        }
+    }
+}
+
+/// The chat send transition of the comms app at `root`, as WebrootChat.js posts it: `/qapps/BasicComms` →
+/// `/apps/BasicComms/Chat/send`.
+pub(crate) fn chat_send_url(root: &str) -> String {
+    let root = root.trim_end_matches('/');
+    let rest = root.strip_prefix("/qapps").unwrap_or(root);
+    format!("/apps{rest}/Chat/send")
+}
+
+/// `text` as the safe HTML of a chat message: escaped, a paragraph, its line breaks kept.
+pub(crate) fn reply_html(text: &str) -> String {
+    let mut out = String::from("<p>");
+    for c in text.trim().chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            '\n' => out.push_str("<br>"),
+            '\r' => {}
+            other => out.push(other),
+        }
+    }
+    out.push_str("</p>");
+    out
+}
+
+/// Queue an operation of `kind` for `account` in its outbox, as a page would (`moqui_client::sync::outbox`), and wake
+/// the app's sender: the notification's Reply and Mark read (plans/Comms-Messaging.md §7.4, Actions), sent with no
+/// WebView, offline too (the native code also asks `FlushWorker.kt` to send).
+fn queue_op(dir: &Path, account: &str, kind: &str, payload: &Value) -> Result<(), String> {
+    let core = core_in(dir)?;
+    if core.keys().get(account).is_none() {
+        return Err(format!("the account {account} is not signed in here"));
+    }
+    let server = core.server_sync_of(account);
+    let now = moqui_client::sync::outbox::now_ms();
+    let op = moqui_client::sync::outbox::check_with(kind, payload, &[], now, &server)?;
+    core.with_store(account, |store| moqui_client::sync::outbox::add_kept(store, op))
+        .ok_or_else(|| format!("no store for {account}"))??;
+    core.flusher().wake();
+    if let Some(host) = moqui_lib::sync::lock(&APP_HOST).clone() {
+        host.notify_pages(account, &serde_json::json!({ "kind": "changed" }));
+    }
+    Ok(())
+}
+
+/// The notification's Reply: `text` to the room, queued in `account`'s outbox.
+pub(crate) fn chat_reply(dir: &Path, account: &str, room: &str, text: &str) -> Result<(), String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("an empty reply".to_string());
+    }
+    let core = core_in(dir)?;
+    let client_ref = moqui_client::store::new_client_ref().map_err(|err| err.to_string())?;
+    let url = chat_send_url(&core.comms_root_of(account));
+    let payload = serde_json::json!({
+        "clientRef": client_ref, "chatRoomId": room, "url": url,
+        "params": { "body": reply_html(text) }, "text": text,
+        "createdDate": moqui_client::sync::outbox::now_ms(),
+    });
+    queue_op(dir, account, "chat-send", &payload)
+}
+
+/// The notification's Mark read: the room read up to `seq`, queued in `account`'s outbox.
+pub(crate) fn chat_read(dir: &Path, account: &str, room: &str, seq: i64) -> Result<(), String> {
+    queue_op(
+        dir,
+        account,
+        "chat-read",
+        &serde_json::json!({ "chatRoomId": room, "lastReadEventSeq": seq }),
+    )
+}
+
+/// Tell `account`'s server the app showed the push `ack_id` (`/qapps/ackClientPush`, System, Push Health); a failure is
+/// logged, and the push is shown all the same.
+pub(crate) fn ack_push(dir: &Path, account: &str, ack_id: &str) {
+    if ack_id.is_empty() || !network_ready() {
+        return;
+    }
+    let Ok(core) = core_in(dir) else {
+        return;
+    };
+    let Some(asked) = asked(&core).into_iter().find(|asked| asked.account.id == account) else {
+        return;
+    };
+    match ProxyPoster(&core).post(&asked.account, &asked.key, "/qapps/ackClientPush", &[("ackId", ack_id)]) {
+        Ok((status, _)) if status < 400 => {}
+        Ok((status, _)) => log::info!("Push: {account} did not take the acknowledgement: HTTP {status}"),
+        Err(err) => log::info!("Push: the acknowledgement did not reach {account}: {err}"),
+    }
+}
+
+/// The check screen's test (plans/Comms-Messaging.md §7.6): `account`'s server pushes a test to this device through
+/// the full path (`/qapps/testClientPush`). Its answer: `{ackIdList, queuedDate, reasonCode}`.
+pub(crate) fn test_push(core: &Client, account: &str) -> Result<Value, String> {
+    let asked = asked(core)
+        .into_iter()
+        .find(|asked| asked.account.id == account)
+        .ok_or_else(|| format!("the account {account} is not signed in here"))?;
+    match ProxyPoster(core).post(&asked.account, &asked.key, "/qapps/testClientPush", &[])? {
+        (status, json) if status < 400 => Ok(json),
+        (status, _) => Err(format!("HTTP {status}")),
+    }
+}
+
+/// Whether the push token is registered with `account`'s server (the check screen).
+pub(crate) fn push_registered(dir: &Path, account: &str) -> bool {
+    let _one = moqui_lib::sync::lock(&PUSH);
+    PushRecord::load(dir).registered.contains_key(account)
 }
 
 /// Take the token back from `account`'s server before its key is revoked.
@@ -516,6 +688,123 @@ mod entries {
             )
         })
         .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.pushTokenOf(dataDir, provider, token)`: a UnifiedPush distributor's endpoint (provider unifiedpush).
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_pushTokenOf<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+        provider: JString<'caller>,
+        token: JString<'caller>,
+    ) {
+        env.with_env(|env| -> Result<(), jni::errors::Error> {
+            let dir = client_dir(&data_dir.try_to_string(env)?);
+            let provider = provider.try_to_string(env)?;
+            let token = token.try_to_string(env)?;
+            super::push_token_of(&dir, &provider, &token);
+            Ok(())
+        })
+        .resolve::<LogErrorAndDefault>();
+    }
+
+    /// `Native.registerPending(dataDir)`: the token registered with every account signed in; whether that is done.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_registerPending<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+    ) -> jboolean {
+        env.with_env(|env| -> Result<bool, jni::errors::Error> {
+            Ok(super::register_pending(&client_dir(&data_dir.try_to_string(env)?)))
+        })
+        .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.openPush(dataDir, pushId, enc)`: the push opened (JSON with its `account`), or null.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_openPush<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+        push_id: JString<'caller>,
+        enc: JString<'caller>,
+    ) -> JString<'caller> {
+        env.with_env(|env| -> Result<JString<'caller>, jni::errors::Error> {
+            let dir = client_dir(&data_dir.try_to_string(env)?);
+            let push_id = push_id.try_to_string(env)?;
+            let enc = enc.try_to_string(env)?;
+            match super::open_push(&dir, &push_id, &enc) {
+                Some(opened) => env.new_string(opened),
+                None => Ok(JString::default()),
+            }
+        })
+        .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.chatReply(dataDir, account, chatRoomId, text)`: queued; null, or why not.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_chatReply<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+        account: JString<'caller>,
+        room: JString<'caller>,
+        text: JString<'caller>,
+    ) -> JString<'caller> {
+        env.with_env(|env| -> Result<JString<'caller>, jni::errors::Error> {
+            let dir = client_dir(&data_dir.try_to_string(env)?);
+            let (account, room, text) = (
+                account.try_to_string(env)?,
+                room.try_to_string(env)?,
+                text.try_to_string(env)?,
+            );
+            match super::chat_reply(&dir, &account, &room, &text) {
+                Ok(()) => Ok(JString::default()),
+                Err(err) => env.new_string(err),
+            }
+        })
+        .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.chatRead(dataDir, account, chatRoomId, eventSeq)`: queued; null, or why not.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_chatRead<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+        account: JString<'caller>,
+        room: JString<'caller>,
+        seq: jlong,
+    ) -> JString<'caller> {
+        env.with_env(|env| -> Result<JString<'caller>, jni::errors::Error> {
+            let dir = client_dir(&data_dir.try_to_string(env)?);
+            let (account, room) = (account.try_to_string(env)?, room.try_to_string(env)?);
+            match super::chat_read(&dir, &account, &room, seq) {
+                Ok(()) => Ok(JString::default()),
+                Err(err) => env.new_string(err),
+            }
+        })
+        .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.ackPush(dataDir, account, ackId)`.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_ackPush<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+        account: JString<'caller>,
+        ack_id: JString<'caller>,
+    ) {
+        env.with_env(|env| -> Result<(), jni::errors::Error> {
+            let dir = client_dir(&data_dir.try_to_string(env)?);
+            let (account, ack_id) = (account.try_to_string(env)?, ack_id.try_to_string(env)?);
+            super::ack_push(&dir, &account, &ack_id);
+            Ok(())
+        })
+        .resolve::<LogErrorAndDefault>();
     }
 
     /// The client's directory under the app's data directory, as the app's setup has it (`app_data_dir()/client`).

@@ -53,6 +53,8 @@ What each command does and what it checks:
 | `restart_node` (`splash.rs`) | none | Stops and starts the node | The webview's URL is the splash page's origin or `tauri.localhost` |
 | `notify` (desktop `bridge.rs`, mobile `commands.rs`) | `title`, `body`, `link`, `tag` | An OS notification; title cut to 200 characters and body to 1000, control characters removed. On the desktop a click opens `link` only when it is on the node's (or app) origin | none on the caller |
 | `set_counts`, `set_presence` (desktop) | numbers; one of four presence names | Tray title, tooltip and badge | none |
+| `notify_clear` (desktop, mobile) | `tag` | Removes the app's notification of that tag (an id hashed from it); only the app's own notifications | none |
+| `push_check`, `push_check_fix`, `push_test` (mobile; desktop `push_check`, `push_test`) | `what` (fix: `notifications`, `channels`, `battery`, `fullScreen`) | The notification check: the device's notification permission, channels, battery optimization, full-screen intent, whether the server has this device's push registration (no token or key is answered), the last push's time and ack id; a fix opens the system setting or asks the system's battery question; a test asks the server for one push to this device (`/qapps/testClientPush`) or, on the desktop, shows one | mobile: shell page |
 | `open_external` (desktop, mobile) | `url`, at most 8192 bytes | Starts the OS handler for an `http` or `https` URL with a host that is not the node's or the app's own, or a `mailto:`, `tel:` or `sip:` URL. Other schemes are refused | none on the caller |
 | `set_comms_root` (desktop) | `root` | Writes the file `comms-root` in the app config directory; it is the path prefix OS links open under | `/qapps/` then letters, digits, `_`, `-`, `/`, at most 200 characters |
 | `client_state`, `client_take_open` | `nonce` | Answers the account list (server, username, display name, signed in or not, device mode) and no key | shell page (see below) |
@@ -94,6 +96,7 @@ The desktop app registers the schemes `mailto`, `tel`, `sip` and `org.moqui.desk
 | `org.moqui.desktop:/sso?code=…&state=…` | Taken only when an SSO sign-in is waiting and the link's `state` equals its state; otherwise logged and dropped | `sso_returned`, `crates/moqui-client-tauri/src/commands.rs` |
 | `org.moqui.mobile:/sso?…` (mobile) | The same | `on_event`, `crates/moqui-mobile/src/lib.rs` |
 | A call link (mobile) | Taken only when it carries a nonce the native code made for the user's Answer or Hang up, once | `calls::link_of`, `native::take_link` (not read) |
+| A room link (mobile, `org.moqui.mobile:/room?account=…&chatRoomId=…&eventSeq=…`, a chat notification's tap) | Opens the comms Chat screen at the room for an account signed in here (plain ids only); no nonce, since it shows only what that account's own screen shows, and nothing for an account not here | `calls::room_link_of`, `host::open_room` |
 
 The comms root is, in order: a client account's server's; the file `comms-root` a node page wrote with `set_comms_root`; `comms_app_root`; `/qapps/BasicComms`. The page opens on the node's origin or, in client mode, in the shell or an app window of the current account.
 
@@ -134,13 +137,13 @@ The store keeps `GET` answers with a JSON content type and status 200 for the sh
 
 | Component | Exported | Reached by |
 |---|---|---|
-| `.MainActivity` (`singleTask`) | yes | The launcher, and a `VIEW` intent for `org.moqui.mobile:/sso` (browsable): any app or web page can send one. The app takes an SSO link only for a waiting sign-in of the same state, and a call link only with a nonce the native code made (`on_event`, `crates/moqui-mobile/src/lib.rs`) |
+| `.MainActivity` (`singleTask`) | yes | The launcher, and a `VIEW` intent for `org.moqui.mobile:/sso` and `/room` (browsable): any app or web page can send one. The app takes an SSO link only for a waiting sign-in of the same state, a call link only with a nonce the native code made, and a room link only for an account signed in here (`on_event`, `crates/moqui-mobile/src/lib.rs`) |
 | `.CallConnectionService` | yes | Only a holder of `android.permission.BIND_TELECOM_CONNECTION_SERVICE` (the system) |
-| `.IncomingCallActivity`, `.CallService`, `.CallActionReceiver`, the `FileProvider` | no | The app |
+| `.IncomingCallActivity`, `.CallService`, `.CallActionReceiver`, `.ChatActionReceiver` (a chat notification's Reply, Mark read and Mute, through `PendingIntent`s of the app), the `FileProvider` | no | The app |
 | `.PushService` (the `fcm` source set) | no | Firebase messaging events |
 | `.DebugRingReceiver` (the `debug` source set only) | yes | Only a holder of `android.permission.DUMP` (adb) |
 
-The app asks for `INTERNET`, `POST_NOTIFICATIONS`, `USE_FULL_SCREEN_INTENT`, `MANAGE_OWN_CALLS`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_PHONE_CALL`, `RECORD_AUDIO`, `CAMERA` and `MODIFY_AUDIO_SETTINGS`. `android:allowBackup` is `false`. `android:usesCleartextTraffic` is a build placeholder: `false` by default and `true` in the `debug` build type (`crates/moqui-mobile/gen/android/app/build.gradle.kts`, lines 45 and 58).
+The app asks for `INTERNET`, `POST_NOTIFICATIONS`, `USE_FULL_SCREEN_INTENT`, `MANAGE_OWN_CALLS`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_PHONE_CALL`, `RECORD_AUDIO`, `CAMERA`, `MODIFY_AUDIO_SETTINGS` and `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` (the notification check's battery fix, which the system asks the user). `android:allowBackup` is `false`. `android:usesCleartextTraffic` is a build placeholder: `false` by default and `true` in the `debug` build type (`crates/moqui-mobile/gen/android/app/build.gradle.kts`, lines 45 and 58).
 
 ## The desktop updater
 

@@ -182,9 +182,40 @@ class MainActivity : TauriActivity() {
           if (isFinishing || isDestroyed) return@post
           prefs.edit().putBoolean("askedForCalls", true).apply()
           Log.i(CallManager.TAG, "Asking for what calls need: $missing")
-          requestPermissions(missing.toTypedArray(), 2)
+          // the reason first (plans/Comms-Messaging.md §7.4, Permissions), then the system's question
+          if (Manifest.permission.POST_NOTIFICATIONS in missing) {
+            android.app.AlertDialog.Builder(this)
+              .setTitle(R.string.ask_notifications_title)
+              .setMessage(R.string.ask_notifications_reason)
+              .setPositiveButton(R.string.ask_continue) { _, _ -> requestPermissions(missing.toTypedArray(), 2) }
+              .setNegativeButton(R.string.ask_not_now, null)
+              .setOnDismissListener { askForFullScreenOnce() }
+              .show()
+          } else {
+            requestPermissions(missing.toTypedArray(), 2)
+            askForFullScreenOnce()
+          }
         }
       }
     }
+  }
+
+  /**
+   * Android 14+ lets the user turn off the full-screen intent a call's ring shows over the lock screen with: asked
+   * once, with the reason, by opening its setting (there is no run-time dialog for it).
+   */
+  private fun askForFullScreenOnce() {
+    if (Build.VERSION.SDK_INT < 34) return
+    val notifications = getSystemService(android.app.NotificationManager::class.java) ?: return
+    if (notifications.canUseFullScreenIntent()) return
+    val prefs = getSharedPreferences("moqui-calls", MODE_PRIVATE)
+    if (prefs.getBoolean("askedForFullScreen", false)) return
+    prefs.edit().putBoolean("askedForFullScreen", true).apply()
+    android.app.AlertDialog.Builder(this)
+      .setTitle(R.string.ask_full_screen_title)
+      .setMessage(R.string.ask_full_screen_reason)
+      .setPositiveButton(R.string.ask_open_settings) { _, _ -> PushCheck.fix(this, "fullScreen") }
+      .setNegativeButton(R.string.ask_not_now, null)
+      .show()
   }
 }

@@ -164,6 +164,40 @@ pub(crate) fn page_call_state(id: &str, state: &str) -> Result<(), String> {
     })
 }
 
+/// The phone's notification state, as the check screen shows it (`PushCheck.state(context)`, JSON: notifications
+/// allowed, channels on, battery optimization, the last push received).
+pub(crate) fn push_check_state() -> Result<String, String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.PushCheck"))?;
+        let state = env
+            .call_static_method(
+                &class,
+                jni_str!("state"),
+                jni_sig!("(Landroid/content/Context;)Ljava/lang/String;"),
+                &[JValue::Object(app)],
+            )?
+            .l()?;
+        let state = env.cast_local::<jni::objects::JString>(state)?;
+        state.try_to_string(env)
+    })
+}
+
+/// Open the system's screen that fixes `what` (`notifications`, `channels`, `battery`, `fullScreen`:
+/// `PushCheck.fix(context, what)`).
+pub(crate) fn push_check_fix(what: &str) -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.PushCheck"))?;
+        let what = env.new_string(what)?;
+        env.call_static_method(
+            &class,
+            jni_str!("fix"),
+            jni_sig!("(Landroid/content/Context;Ljava/lang/String;)V"),
+            &[JValue::Object(app), JValue::Object(&what)],
+        )?;
+        Ok(())
+    })
+}
+
 /// The phone's model (`android.os.Build.MODEL`), for its name in the user's device list.
 pub(crate) fn device_model() -> Result<String, String> {
     with_context(|env, _| {

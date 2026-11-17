@@ -37,6 +37,7 @@ mod commands;
 mod host;
 mod keystore;
 mod native;
+mod push;
 mod scheme;
 
 use std::borrow::Cow;
@@ -119,6 +120,10 @@ pub fn run() {
             commands::client_show_shell,
             commands::open_in_shell,
             commands::notify,
+            commands::notify_clear,
+            commands::push_check,
+            commands::push_check_fix,
+            commands::push_test,
             commands::open_external,
             commands::call_state,
             commands::call_take_answer
@@ -169,6 +174,23 @@ fn start(app: &AppHandle, files: Box<dyn tauri::Assets<tauri::DynRuntime>>) -> R
         Box::new(shell),
     ));
     app.manage(Arc::clone(&host));
+    // a tap on a page's notification (`notify`): its link in the shell (plans/Comms-Messaging.md §7.5)
+    #[cfg(mobile)]
+    {
+        use tauri_plugin_notification::NotificationExt;
+        let tapped = app.clone();
+        let listened = app.notification().on_action(move |performed| {
+            let link = performed
+                .notification()
+                .and_then(|notification| notification.extra().get("link"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            commands::notification_opened(&tapped, link.as_deref());
+        });
+        if let Err(err) = listened {
+            log::warn!("The taps of the page's notifications are not followed: {err}");
+        }
+    }
     native::set_host(&host);
     // a call link that came before the host was made (a cold start's Answer)
     if let Some(link) = moqui_lib::sync::lock(&EARLY_CALL).take() {
@@ -298,6 +320,17 @@ fn on_event(app: &AppHandle, event: RunEvent) {
             for url in urls {
                 if url.scheme() == "org.moqui.mobile" && url.path() == "/sso" {
                     moqui_client_tauri::commands::sso_returned(app, &url);
+                } else if url.scheme() == "org.moqui.mobile" && url.path() == calls::ROOM_LINK_PATH {
+                    match (calls::room_link_of(&url), app.try_state::<Arc<MobileHost>>()) {
+                        (Some((account, room, seq)), Some(host)) => {
+                            let host = Arc::clone(&host);
+                            std::thread::spawn(move || host.open_room(&account, &room, seq));
+                        }
+                        (None, _) => log::warn!("A room link that is not one is refused"),
+                        (Some(_), None) => {
+                            log::info!("A room link before the app was set up: the shell opens as it is")
+                        }
+                    }
                 } else if calls::is_call_link(&url) {
                     // the activity is exported, so any app may send a call link: only one the native code made for
                     // the user's Answer or Hang up (its nonce, taken once) is taken
