@@ -31,8 +31,8 @@ along with this software (see the LICENSE.md file). If not, see
     and its send refuses (reasonCode encryptedRoom from send#Message). Of the details tabs (Comms-Messaging §5) the terminal
     has Links, a room's links as a list (chatView links: find#RoomLinks, with the cached title, and More by its cursor;
     none in an encrypted room), and of the feed across rooms Activity (chatView activity with no room: find#ChatActivity,
-    the user's mentions, replies and reactions, each opening its room) and Threads (chatView threads: its thread replies,
-    one row per thread); the media grid, the files by type, voice and
+    the user's mentions, replies and reactions, each opening its room) and Threads (chatView threads: find#ChatThreads,
+    one row per thread, the threads the user started or replied in); the media grid, the files by type, voice and
     reactions are the browser's. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Chat" default-menu-include="false">
@@ -258,23 +258,27 @@ along with this software (see the LICENSE.md file). If not, see
             // my Activity across rooms (chatView activity, no room): mentions, replies and reactions, newest first
             activityList = []
             activityNext = null
-            // and the Threads I am in (chatView threads: the thread replies of the same feed, one row per thread, its newest)
+            // and the Threads I am in (chatView threads: ChatScreenServices.find#ChatThreads, one row per thread, the latest
+            // reply first, paged by its own cursor)
             showThreads = !chatRoomId && chatView === 'threads'
             showActivity = !chatRoomId && (chatView === 'activity' || showThreads)
-            if (showActivity) {
+            if (showThreads) {
+                const out = ec.service.sync().name('org.moqui.comms.ChatScreenServices.find#ChatThreads').parameters({limit: 40,
+                    cursor: activityCursor || null}).call()
+                if (!ec.message.hasError()) {
+                    activityNext = out.nextCursor ?? null
+                    activityList = Array.from(out.items || []).map((item) => ({chatRoomId: item.chatRoomId,
+                        kindText: item.startedByMe ? ec.l10n.localize('Your thread') : ec.l10n.localize('A thread you replied in'),
+                        roomText: item.roomName || item.chatRoomId, actorName: item.lastUserName || '',
+                        snippet: item.encrypted ? ec.l10n.localize('Encrypted message') : item.lastSnippet || item.rootSnippet || '', timeText: when(item.lastDate)}))
+                }
+            } else if (showActivity) {
                 const out = ec.service.sync().name('org.moqui.chat.ChatServices.find#ChatActivity').parameters({limit: 40,
-                    kinds: showThreads ? ['threadReply'] : null, cursor: activityCursor || null}).call()
+                    cursor: activityCursor || null}).call()
                 if (!ec.message.hasError()) {
                     activityNext = out.nextCursor ?? null
                     const KINDS = {mention: 'Mentioned you', reply: 'Replied to you', threadReply: 'Replied in a thread', reaction: 'Reacted to your message'}
-                    const seen = new Set()
-                    activityList = Array.from(out.items || []).filter((item) => {
-                        if (!showThreads) return true
-                        const key = item.chatRoomId + ' ' + (item.threadRootEventSeq ?? item.messageEventSeq)
-                        if (seen.has(key)) return false
-                        seen.add(key)
-                        return true
-                    }).map((item) => ({chatRoomId: item.chatRoomId,
+                    activityList = Array.from(out.items || []).map((item) => ({chatRoomId: item.chatRoomId,
                         kindText: ec.l10n.localize(KINDS[item.kind] || item.kind) + (item.reactionKey ? ' ' + item.reactionKey : ''),
                         roomText: item.roomName || item.chatRoomId, actorName: item.actorName || '',
                         snippet: item.encrypted ? ec.l10n.localize('Encrypted message') : item.snippet || '', timeText: when(item.date)}))
@@ -305,8 +309,11 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="snippet"><default-field title="Message"><display style="text-caption m-muted"/></default-field></field>
                     <field name="timeText"><default-field title="When"><display/></default-field></field>
                 </form-list>
-                <section name="ChatTuiNoActivity" condition="!activityList.length"><widgets>
+                <section name="ChatTuiNoActivity" condition="!activityList.length &amp;&amp; !showThreads"><widgets>
                     <label type="p" text="Nothing yet: mentions of you, replies to you and reactions to your messages are listed here" style="m-muted"/>
+                </widgets></section>
+                <section name="ChatTuiNoThreads" condition="!activityList.length &amp;&amp; showThreads"><widgets>
+                    <label type="p" text="No threads yet: a thread you start or reply in is listed here" style="m-muted"/>
                 </widgets></section>
                 <link url="../Chat" text="More" condition="activityNext" parameter-map="{chatView:showThreads ? 'threads' : 'activity', activityCursor:activityNext}"/>
             </widgets></section>

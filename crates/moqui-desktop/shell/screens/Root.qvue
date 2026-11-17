@@ -483,6 +483,8 @@ module.exports = {
                 params: this.bodyParameters || {}, fullPath: this.currentLinkUrl, meta: {}, hash: '', matched: [{ path: this.currentPath }] });
         },
         openPalette() { this.paletteOpen = true; },
+        // the palette's Ctrl+Enter (a new tab on the web): the server's page in an app window
+        openNewTab(url) { host().openRemote(this.getLinkPath(String(url || ''))).catch((err) => this.failed(err)); },
         // the link of a dm or record room in place of the link itself (Chat.qvue replaceRoom)
         replaceUrl(url) { this.setUrl(url, null, null, false); },
         setParameters(parameters) {

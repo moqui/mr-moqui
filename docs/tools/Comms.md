@@ -84,19 +84,20 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   the browser's. The lists are the services `find#RoomFiles`, `find#RoomLinks`, `find#RoomReactions` and
   `find#ChatActivity` of `org.moqui.chat.ChatServices`, which page by a cursor that never cuts a message in two.
 - <a id="chat-desktop"></a>**Finding your way in Chat** (Comms-Messaging §3). **The palette** (Search, Ctrl+K or ⌘K, on
-  the web and in the desktop and mobile app) has Chat rooms: your rooms and the public ones by name, a phone number's
-  room by its digits, and the people you have no direct chat with, where choosing one starts it. While Comms is the
-  current app (always in the app's shell) the rooms come first with no `#`, so two letters and Enter open a room; `#`
-  keeps the rooms alone anywhere. Chat adds no key of its own. **Activity** and **Threads** are entries beside the
+  the web and in the desktop and mobile app) has Chat rooms: your rooms and the public ones by name, and a phone
+  number's room by its digits. While Comms is the current app (always in the app's shell) the rooms come first with no
+  `#`, so two letters and Enter open a room; `#` keeps the rooms alone anywhere. People to message, the people you have
+  no direct chat with, come after Screens and never first: choosing one opens a message to them, and the direct chat is
+  made only when you send it. Chat adds no key of its own. **Activity** and **Threads** are entries beside the
   filters: Activity lists your mentions, replies to you and reactions to your messages across rooms, newest first;
-  Threads the threads you started or wrote in, one row each, its newest reply first (a thread shows once someone else
-  replies). Each loads more as it scrolls and opens the message, or the thread; an encrypted room's text is decrypted in
-  the page. **All** groups the rooms: Pinned, Recent, Phone (a phone number's rooms) and Bridged (rooms a bridge carries
+  Threads the threads you started or wrote in (`find#ChatThreads`), one row each, the latest reply first. Each loads more
+  as it scrolls, keeps what it loaded when something new comes in at the top, and opens the message, or the thread; an
+  encrypted room's text is decrypted in the page. **All** groups the rooms: Pinned, Recent, Phone (a phone number's rooms) and Bridged (rooms a bridge carries
   to another network); a group's header folds it, kept per user in this browser. Phone is a filter too, and the phone's
   home has All and Phone. **Mail on a person's row:** a direct chat with a user of this server shows their latest mail
-  thread in the mail you may read (your accounts and those shared with you), matched by their account's mail address
-  and their own mail accounts' addresses, as a line "Email: subject", which says "Email is not end-to-end encrypted" and
-  opens the thread in the Inbox. Mail stays in the Inbox: there are no mail-only rows, and an outside person waits for
+  thread of the last 180 days in the mail you may read (your accounts and those shared with you), matched by their
+  user account's mail address only (not a mail account they own or share), as a line "Email: subject", which says
+  "Email is not end-to-end encrypted" and opens the thread in the Inbox (a link: Tab and Enter reach it). Mail stays in the Inbox: there are no mail-only rows, and an outside person waits for
   unified contacts (`find#DirectChatMail` of `org.moqui.comms.ChatScreenServices`, the `mailLines` transition, one query
   for the list).
 - <a id="encrypted-rooms"></a>**Encrypted rooms** (C7). New room has Encrypted for a private room (and an encrypted direct

@@ -9214,6 +9214,7 @@
                 clearTimeout(this.timer);
                 this.seq += 1;
                 this.pendingEnter = null;
+                this.offlineSaid = false;
                 this.text = "";
                 this.remote = [];
                 this.remoteKey = "";
@@ -9260,6 +9261,13 @@
                     this.searching = false;
                     this.remote = [];
                     settled();
+                    // the server out of reach (the desktop app offline): said once while the palette is open, no error each time
+                    if (moqui.unreachable && moqui.unreachable(err)) {
+                        if (!this.offlineSaid) moqui.notifyMessages([{ type: "info", message: moqui.l10n && moqui.l10n.localize
+                            ? moqui.l10n.localize("Searching needs a connection to the server: screens and actions are still found") : "Searching needs a connection to the server: screens and actions are still found" }]);
+                        this.offlineSaid = true;
+                        return;
+                    }
                     moqui.handleAjaxError(err);
                 });
             },
@@ -9310,7 +9318,9 @@
                 if (!row || !row.url) return;
                 const newTab = !!(event && (event.ctrlKey || event.metaKey));
                 this.$root.paletteOpen = false;
-                if (newTab) root.open(this.$root.getLinkPath(row.url), "_blank");
+                // a new tab, or the root's own place for one (the desktop and mobile shell: an app window)
+                if (newTab && this.$root.openNewTab) this.$root.openNewTab(row.url);
+                else if (newTab) root.open(this.$root.getLinkPath(row.url), "_blank");
                 else this.$root.setUrl(row.url);
             }
         }

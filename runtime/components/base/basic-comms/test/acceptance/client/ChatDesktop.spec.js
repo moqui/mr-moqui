@@ -1,8 +1,9 @@
 // The desktop gaps of Chat (plans/Comms-Messaging.md §3, "Done when") in the bundled shell of the desktop and mobile app,
 // with a stand-in host and server (pages/ChatDesktop.page.js): Mod+K, two letters and Enter open a room, though a screen
-// starts with the same letters (the comms app's Chat rooms lead the palette), and a person with no direct chat starts one;
-// the Activity view lists a mention and a reaction from another user and opens the message; the Threads view lists each
-// thread once, with its newest reply; All has the Recent, Phone and Bridged groups, and Phone folds and is kept so; a
+// starts with the same letters (the comms app's Chat rooms lead the palette), and a person with no direct chat gets an unsaved
+// message, the chat made by its first send;
+// the Activity view lists a mention and a reaction from another user and opens the message; the Threads view lists the
+// threads I am in (find#ChatThreads), with their latest reply; All has the Recent, Phone and Bridged groups, and Phone folds and is kept so; a
 // person's direct chat has their latest mail thread as a line that says email is not end-to-end encrypted and opens it in
 // the Inbox, on a desktop (1280 x 800) and on the phone's home (390 x 844), whose Phone filter keeps the number's room.
 // The same palette walk on the web, against a server, is ChatPalette. An acceptance test (a walk at two widths):
@@ -57,15 +58,23 @@ feature("in the desktop app Mod+K, two letters and Enter open a room, before a s
     }
 })
 
-feature("a person with no direct chat, chosen in the palette, starts one", {
+feature("a person with no direct chat, chosen in the palette, opens an unsaved message; the direct chat is made by its first send", {
     when() {
-        palette(desktop, "de")
-        return desktop.evaluate("window.desk.afterPerson()")
+        desktop.keyboard.press("Control+K")
+        desktop.evaluate("window.desk.paletteReady()")
+        desktop.keyboard.type("dee")
+        return desktop.evaluate("window.desk.person()")
     },
-    then({ view, parameters, made }) {
-        view == "chat"
+    then({ order, title, madeBefore, dm, after, made, sent }) {
+        // People to message never leads: after the messages
+        order.indexOf("People to message") > order.indexOf("Messages")
+        title == "Dee Dunn"
+        madeBefore == 0
+        dm == "dee"
         made.join(",") == "dee"
-        parameters.chatRoomId == "D_dee"
+        sent.join("|") == "D_dee <p>Hi Dee</p>"
+        after.view == "chat"
+        after.parameters.chatRoomId == "D_dee"
     }
 })
 
@@ -83,13 +92,15 @@ feature("the Activity view lists a mention and a reaction from another user, new
     }
 })
 
-feature("the Threads view lists each thread I am in once, its newest reply first, and opens the thread", {
+feature("the Threads view lists the threads I am in, mine with only my reply too, the latest reply first, and opens the thread", {
     when() { return desktop.evaluate("window.desk.threads()") },
     then({ titles, rooms, asked, opened }) {
-        asked == "threadReply"
-        rooms.join(",") == "R2,B1"
+        asked
+        rooms.join(",") == "R2,B1,R1"
+        // "and others" by people: two others replied in General, one in the lounge; my own last reply in my thread
         titles[0].startsWith("Bob Baker and others replied in a thread")
         titles[1].startsWith("Bob Baker replied in a thread")
+        titles[2].startsWith("You replied in a thread")
         opened.parameters.chatRoomId == "R2"
         opened.parameters.thread == "5"
     }

@@ -148,6 +148,15 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- the Threads view: the threads I am in across rooms, the latest reply first (ChatScreenServices.find#ChatThreads) -->
+    <transition name="myThreads" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.comms.ChatScreenServices.find#ChatThreads').parameters({limit: limit ? Number(limit) : 40,
+                cursor: cursor || null}).call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {items: out.items, nextCursor: out.nextCursor})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- the mail line of a person's direct chat row (Comms-Messaging §3): each person's latest mail thread in the mail I may read -->
     <transition name="mailLines" method="get" read-only="true">
         <actions><script><![CDATA[

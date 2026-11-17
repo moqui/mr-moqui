@@ -63,7 +63,7 @@ along with this software (see the LICENSE.md file). If not, see
     color names and Quasar classes only (style-guide §4.8, §5); the m-* inputs for what is typed. -->
 <template><div class="m-chat-root"><div class="m-chat row no-wrap" :style="{height: height + 'px'}">
     <!-- the rail -->
-    <div v-show="!stacked || !roomId" class="column no-wrap" :style="stacked ? 'width:100%' : 'width:300px;min-width:300px'">
+    <div v-show="!stacked || !(roomId || pendingDirect)" class="column no-wrap" :style="stacked ? 'width:100%' : 'width:300px;min-width:300px'">
         <div class="row items-center no-wrap q-px-sm q-pt-sm q-pb-xs">
             <q-btn flat dense no-caps align="left" class="col q-px-xs" :aria-label="t('My status')">
                 <div class="row items-center no-wrap full-width" style="min-width:0">
@@ -150,7 +150,7 @@ along with this software (see the LICENSE.md file). If not, see
             <div v-if="feed.loading" class="row justify-center q-pa-sm"><q-spinner size="20px" color="grey-6"></q-spinner></div>
             <div v-else-if="feed.loaded && !feedRows.length" class="column items-center q-pa-lg text-center m-chat-feed-empty">
                 <q-icon :name="filter === 'threads' ? 'sym_o_forum' : 'sym_o_notifications'" size="40px" class="m-muted"></q-icon>
-                <div class="text-caption m-muted q-mt-sm">{{filter === 'threads' ? t('No threads yet: a thread you start or reply in is listed here once someone else replies') : t('Nothing yet: mentions of you, replies to you and reactions to your messages are listed here')}}</div>
+                <div class="text-caption m-muted q-mt-sm">{{filter === 'threads' ? t('No threads yet: a thread you start or reply in is listed here') : t('Nothing yet: mentions of you, replies to you and reactions to your messages are listed here')}}</div>
             </div>
         </div>
         <div v-else class="col scroll" style="min-height:0">
@@ -195,9 +195,11 @@ along with this software (see the LICENSE.md file). If not, see
                                 <q-badge v-else-if="countsOf(room).unread" :color="room.isMuted || room.notificationLevelEnumId !== 'CnlAll' ? 'grey-6' : 'primary'" rounded
                                         class="q-ml-xs">{{countsOf(room).unread}}</q-badge>
                             </q-item-label>
-                            <!-- the person's latest mail thread, which opens in the Inbox; mail is never end-to-end encrypted (§6.1 rule 7) -->
-                            <q-item-label v-if="mailOf(room)" caption class="row no-wrap items-center m-chat-mail-line" :data-mail="room.chatRoomId"
-                                    :aria-label="mailText(mailOf(room)) + '. ' + mailLabel.text" @click.stop="go(mailOf(room).url)">
+                            <!-- the person's latest mail thread, which opens in the Inbox (a link of its own: Tab reaches it, Enter
+                                opens it); mail is never end-to-end encrypted (§6.1 rule 7) -->
+                            <q-item-label v-if="mailOf(room)" caption class="row no-wrap items-center m-chat-mail-line" :data-mail="room.chatRoomId" role="link" tabindex="0"
+                                    :aria-label="mailText(mailOf(room)) + '. ' + mailLabel.text" @click.stop="go(mailOf(room).url)"
+                                    @keydown.enter.stop.prevent="go(mailOf(room).url)" @keydown.space.stop.prevent="go(mailOf(room).url)">
                                 <q-icon name="sym_o_mail" size="12px" class="m-muted q-mr-xs"></q-icon>
                                 <span class="ellipsis col m-muted">{{mailText(mailOf(room))}}<span class="m-chat-mail-label"> · {{mailLabel.text}}</span></span>
                                 <q-tooltip>{{mailLabel.text}}</q-tooltip>
@@ -221,10 +223,30 @@ along with this software (see the LICENSE.md file). If not, see
     <q-separator v-if="!stacked" vertical></q-separator>
 
     <!-- the room -->
-    <div v-show="!stacked || roomId" class="col column no-wrap" style="min-width:0">
+    <div v-show="!stacked || roomId || pendingDirect" class="col column no-wrap" style="min-width:0">
         <chat-room v-if="roomId && loaded" :key="roomId" ref="room" :bubbles="stacked" :base="base" :room-id="roomId" :me="me" :prefs="prefs" :seq="seq" :thread="thread"
                 :can-go-back="stacked" :link-base="linkBase" @back="closeRoom" @thread="setThread" @changed="scheduleRooms" @left="onLeft"
                 @read="onRoomRead"></chat-room>
+        <!-- a dm link to people with no direct chat (the palette's People to message): an unsaved message; the direct chat is
+            made with its first send, so a link followed by mistake makes nothing the other person sees -->
+        <div v-else-if="pendingDirect" class="col column no-wrap m-chat-pending-direct">
+            <div class="row items-center no-wrap q-pa-sm">
+                <q-btn v-if="stacked" flat round dense icon="sym_o_arrow_back" :aria-label="t('Back to chats')" @click="closeRoom"></q-btn>
+                <q-icon name="sym_o_person_add" size="22px" class="q-mx-sm m-muted"></q-icon>
+                <div class="col text-subtitle1 ellipsis">{{pendingDirect.name || t('New direct message')}}</div>
+            </div>
+            <q-separator></q-separator>
+            <div class="col column items-center justify-center q-pa-lg text-center m-muted">
+                <q-icon name="sym_o_chat" size="48px"></q-icon>
+                <div class="text-caption q-mt-sm">{{t('No conversation yet: it starts when you send your first message.')}}</div>
+            </div>
+            <div class="row items-end no-wrap q-pa-sm q-gutter-x-sm">
+                <div class="col"><m-text-area v-model="pendingDirect.text" name="pendingDirectText" autogrow rows="1" :label="t('Message')"
+                        @keydown.enter.exact.prevent="sendPendingDirect"></m-text-area></div>
+                <q-btn unelevated round color="primary" icon="sym_o_send" class="m-chat-pending-send" :aria-label="t('Send')" :loading="pendingDirect.busy"
+                        :disable="!String(pendingDirect.text || '').trim()" @click="sendPendingDirect"></q-btn>
+            </div>
+        </div>
         <div v-else class="col column items-center justify-center q-pa-lg text-center m-muted">
             <q-icon name="sym_o_chat" size="56px"></q-icon>
             <div class="text-subtitle1 q-mt-sm">{{t('Pick a conversation')}}</div>
@@ -3606,7 +3628,9 @@ module.exports = {
             browse: { open: false, search: '', list: [], loading: false },
             // the folded groups of the rail, by key (kept per user: foldKey), the Activity or Threads feed and each direct
             // chat's mail line, by room
-            folded: {}, feed: { view: null, list: [], next: null, loading: false, loaded: false, seq: 0 }, mailLines: {}
+            folded: {}, feed: { view: null, list: [], next: null, loading: false, loaded: false, seq: 0 }, mailLines: {},
+            // a dm link's unsaved message to people with no direct chat yet: {userIds, name, text, busy}
+            pendingDirect: null
         };
     },
     computed: {
@@ -3649,21 +3673,8 @@ module.exports = {
         },
         // Activity and Threads replace the rooms in the rail, until a search there finds rooms
         feedShown() { return (this.filter === 'activity' || this.filter === 'threads') && !String(this.search || '').trim(); },
-        // Activity: each item; Threads: one row per thread, its newest reply (the feed is newest first), with how many
-        feedRows() {
-            const list = this.feed.view === this.filter ? this.feed.list : [];
-            if (this.filter !== 'threads') return list;
-            const out = [];
-            const byThread = {};
-            for (const item of list) {
-                const root = item.threadRootEventSeq != null ? item.threadRootEventSeq : item.messageEventSeq;
-                const key = item.chatRoomId + ':' + root;
-                if (byThread[key]) { byThread[key].replyCount++; continue; }
-                byThread[key] = Object.assign({}, item, { key: 'thread:' + key, threadRootEventSeq: root, replyCount: 1 });
-                out.push(byThread[key]);
-            }
-            return out;
-        },
+        // Activity: each item; Threads: one row per thread (find#ChatThreads), its latest reply first
+        feedRows() { return this.feed.view === this.filter ? this.feed.list : []; },
         mailLabel() { return moqui.chat.e2eeLabel({ mail: true }); },
         shownRooms() {
             const text = String(this.search || '').trim().toLowerCase();
@@ -3769,7 +3780,17 @@ module.exports = {
             try { window.localStorage.setItem(this.foldKey(), JSON.stringify(next)); } catch (err) { /* kept for this page only */ }
         },
 
-        // ---- Activity and Threads (find#ChatActivity, the activity transition) ----
+        // ---- Activity (find#ChatActivity, the activity transition) and Threads (find#ChatThreads, myThreads) ----
+        // the rows of a page: a key each, and a thread's as its last reply (who wrote it, when, its text)
+        feedItems(view, items) {
+            if (view !== 'threads') return items.map((item) => Object.assign(item, { key: [item.kind, item.chatRoomId, item.eventSeq].join(':') }));
+            return items.map((item) => Object.assign(item, { key: 'thread:' + item.chatRoomId + ':' + item.threadRootEventSeq, kind: 'thread',
+                actorUserId: item.lastUserId, actorName: item.lastUserName, date: item.lastDate, snippet: item.lastSnippet || item.rootSnippet,
+                eventSeq: item.lastEventSeq, messageEventSeq: item.lastEventSeq }));
+        },
+        feedRequest(view, cursor) {
+            return view === 'threads' ? this.get('myThreads', { limit: 40, cursor }) : this.get('activity', { limit: 40, cursor });
+        },
         // the first page (more false) or the next by the cursor; an encrypted room's text decrypted here
         loadFeed(more) {
             const view = this.filter;
@@ -3780,11 +3801,8 @@ module.exports = {
             // another view's list is not shown under this one; the same view's stays until its first page is read again
             if (!more && feed.view !== view) { feed.view = view; feed.list = []; feed.next = null; feed.loaded = false; }
             feed.loading = true;
-            const params = { limit: 40, cursor: more ? feed.next : null };
-            if (view === 'threads') params.kinds = 'threadReply';
-            this.get('activity', params).then((json) => this.openFeed(json.items || []).then((items) => {
+            this.feedRequest(view, more ? feed.next : null).then((json) => this.openFeed(this.feedItems(view, json.items || [])).then((list) => {
                 if (seq !== feed.seq) return;
-                const list = items.map((item) => Object.assign(item, { key: [item.kind, item.chatRoomId, item.eventSeq].join(':') }));
                 feed.list = more ? feed.list.concat(list.filter((item) => !feed.list.some((other) => other.key === item.key))) : list;
                 feed.next = json.nextCursor == null ? null : json.nextCursor;
                 feed.view = view;
@@ -3793,13 +3811,26 @@ module.exports = {
                 this.$nextTick(() => this.fillFeed());
             })).catch(() => { if (seq === feed.seq) { feed.loading = false; feed.loaded = true; } });
         },
+        // what is new at the top: the first page read again and merged above the rows already loaded (a thread moves up with
+        // its new reply), so the pages scrolled to stay
+        refreshFeedTop() {
+            const view = this.filter;
+            const feed = this.feed;
+            if ((view !== 'activity' && view !== 'threads') || feed.view !== view || feed.loading) return;
+            const seq = feed.seq;
+            this.feedRequest(view, null).then((json) => this.openFeed(this.feedItems(view, json.items || [])).then((list) => {
+                if (seq !== feed.seq || feed.view !== view) return;
+                const fresh = new Set(list.map((item) => item.key));
+                feed.list = list.concat(feed.list.filter((item) => !fresh.has(item.key)));
+            })).catch(() => null);
+        },
         // an encrypted room's items: the message's text and a reaction's key, decrypted in this page (moqui.chat.openSealed);
         // one this device cannot read says so
         openFeed(items) {
             const me = this.me.userId;
             const sealed = items.filter((item) => item.encrypted && moqui.chat.openSealed);
             return Promise.all(sealed.map((item) => {
-                // a reaction is to my message; the rest are the actor's own messages
+                // a reaction is to my message; the rest are the actor's own messages (a thread's, its last reply)
                 const sender = item.kind === 'reaction' ? me : item.actorUserId;
                 const text = item.encryptedContent ? moqui.chat.openSealed(item.chatRoomId, item.encryptedEventSeq || item.messageEventSeq, item.encryptedSentDate || item.date,
                     sender, item.encryptedContent).then((opened) => {
@@ -3821,11 +3852,15 @@ module.exports = {
             if (el && this.feed.next != null && !this.feed.loading && el.scrollHeight <= el.clientHeight + 8) this.loadFeed(true);
         },
         feedIcon(item) {
-            return { mention: 'sym_o_alternate_email', reply: 'sym_o_reply', threadReply: 'sym_o_forum', reaction: 'sym_o_add_reaction' }[item.kind] || 'sym_o_chat';
+            return { mention: 'sym_o_alternate_email', reply: 'sym_o_reply', threadReply: 'sym_o_forum', thread: 'sym_o_forum', reaction: 'sym_o_add_reaction' }[item.kind] || 'sym_o_chat';
         },
         feedTitle(item) {
             const name = item.actorName || t('Someone');
-            if (this.filter === 'threads') return item.replyCount > 1 ? fill(t('{name} and others replied in a thread'), { name }) : fill(t('{name} replied in a thread'), { name });
+            if (item.kind === 'thread') {
+                // "and others": more than one other person replied (by people, not by replies)
+                if (item.actorUserId === this.me.userId) return item.replierCount > 0 ? t('You and others replied in a thread') : t('You replied in a thread');
+                return item.replierCount > 1 ? fill(t('{name} and others replied in a thread'), { name }) : fill(t('{name} replied in a thread'), { name });
+            }
             if (item.kind === 'mention') return fill(t('{name} mentioned you'), { name });
             if (item.kind === 'reply') return fill(t('{name} replied to you'), { name });
             if (item.kind === 'threadReply') return fill(t('{name} replied in a thread'), { name });
@@ -3836,31 +3871,32 @@ module.exports = {
             if (item.encrypted) return item.text != null ? item.text : (item.unreadable ? t('Encrypted message') : '');
             return item.snippet || '';
         },
-        // the message: in its room, at it; a thread reply in its thread
+        // the message: in its room, at it; a thread reply, or a thread, in its thread
         openFeedItem(item) {
             const params = { chatRoomId: item.chatRoomId };
             const root = item.threadRootEventSeq;
-            if (root != null && Number(root) !== Number(item.messageEventSeq)) { params.eventSeq = root; params.thread = root; }
-            else if (this.filter === 'threads') { params.eventSeq = root; params.thread = root; }
+            if (item.kind === 'thread' || (root != null && Number(root) !== Number(item.messageEventSeq))) { params.eventSeq = root; params.thread = root; }
             else params.eventSeq = item.messageEventSeq;
             this.$root.setUrl(this.linkBase + '?' + moqui.objToSearch(params));
         },
-        // a push that may add to the feed shown (a message or a reaction of someone else): the first page again, soon
+        // A push that concerns the feed shown: of someone else, a message or an edit that mentions me or replies to me, a
+        // reply in a thread, or a reaction (Activity), and a reply in a thread (Threads). What is new is merged at the top.
         feedTouched(event) {
             if (!this.feedShown || !event || event.senderUserId === this.me.userId) return;
-            if (event.type !== 'message' && event.type !== 'reaction' && event.type !== 'edit') return;
+            const me = this.me.userId;
+            const inThread = event.type === 'message' && event.threadRootEventSeq != null;
+            const concerns = this.filter === 'threads' ? inThread
+                : event.type === 'reaction' || inThread || ((event.type === 'message' || event.type === 'edit')
+                    && (((event.mentions || []).includes(me)) || (!!event.replyTo && event.replyTo.senderUserId === me)));
+            if (!concerns) return;
             clearTimeout(this.feedTimer);
-            this.feedTimer = setTimeout(() => this.loadFeed(false), 600);
+            this.feedTimer = setTimeout(() => this.refreshFeedTop(), 600);
         },
 
         // ---- the mail line of a person's direct chat (find#DirectChatMail, the mailLines transition) ----
         loadMail() {
             if (noConnection()) return;
-            moqui.request(this.url('mailLines')).then((result) => {
-                const out = {};
-                ((result.json && result.json.mailList) || []).forEach((mail) => { if (mail && mail.chatRoomId && mail.url) out[mail.chatRoomId] = mail; });
-                this.mailLines = out;
-            }, () => {});
+            moqui.chat.mailLines(this.url('mailLines')).then((lines) => { this.mailLines = lines; });
         },
         mailOf(room) { return room && room.roomTypeEnumId === 'CrtDirect' ? this.mailLines[room.chatRoomId] || null : null; },
         mailText(mail) { return fill(t('Email: {subject}'), { subject: mail.subject || t('(no subject)') }); },
@@ -3868,7 +3904,8 @@ module.exports = {
         // ---- the room in the URL ----
         applyParams() {
             const p = this.params;
-            if (p.dm) { this.startDirect(String(p.dm).split(','), true); return; }
+            if (!p.dm) this.pendingDirect = null;
+            if (p.dm) { this.openDirectLink(String(p.dm).split(','), p.dmName ? String(p.dmName) : ''); return; }
             if (p.recordEntity && p.recordId) { this.openRecordRoom(p.recordEntity, p.recordId); return; }
             this.roomId = p.chatRoomId || null;
             this.seq = p.eventSeq ? Number(p.eventSeq) : null;
@@ -3908,12 +3945,42 @@ module.exports = {
                 });
                 if (!this.loaded) this.readFolded();
                 this.loaded = true;
-                // the people's mail lines, one request for the list, again at most every five minutes as the rooms change
-                if (this.rooms.some((room) => room.roomTypeEnumId === 'CrtDirect') && !(this.mailAt && Date.now() - this.mailAt < 300000)) {
-                    this.mailAt = Date.now();
-                    this.loadMail();
-                }
+                // the people's mail lines: one request for the page, shared with the panel (moqui.chat.mailLines)
+                if (this.rooms.some((room) => room.roomTypeEnumId === 'CrtDirect')) this.loadMail();
             }, () => { this.loaded = true; });
+        },
+        // A dm link: the direct chat of exactly those people when there is one, else an unsaved message to them whose first
+        // send makes it (moqui.chat.directRoomFor; the rooms are read first)
+        openDirectLink(userIds, name) {
+            const ids = (userIds || []).map((id) => String(id).trim()).filter((id) => id);
+            if (!ids.length) { this.replaceRoom(null); return; }
+            const ready = this.roomsReady || Promise.resolve();
+            ready.then(() => {
+                const params = this.params;
+                if (String(params.dm || '') !== ids.join(',')) return;
+                const found = moqui.chat.directRoomFor(this.rooms, ids, this.me.userId);
+                if (found) { this.pendingDirect = null; this.replaceRoom(found); return; }
+                this.roomId = null;
+                const kept = this.pendingDirect && this.pendingDirect.userIds.join(',') === ids.join(',') ? this.pendingDirect.text : '';
+                this.pendingDirect = { userIds: ids, name, text: kept, busy: false };
+            });
+        },
+        // the unsaved message's Send: the direct chat made now, the message sent in it, and the room shown in place of the link
+        sendPendingDirect() {
+            const pending = this.pendingDirect;
+            const text = pending ? String(pending.text || '').trim() : '';
+            if (!pending || !text || pending.busy || needsConnection()) return;
+            pending.busy = true;
+            const escape = (line) => line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            const body = text.split(/\n{2,}/).map((part) => '<p>' + part.split('\n').map(escape).join('<br>') + '</p>').join('');
+            this.post('createDirect', { userIds: pending.userIds.join(',') }).then((json) => {
+                if (!json || !json.chatRoomId) { pending.busy = false; return; }
+                return this.post('send', { chatRoomId: json.chatRoomId, body }).then(() => json.chatRoomId, () => json.chatRoomId).then((id) => {
+                    this.pendingDirect = null;
+                    this.scheduleRooms();
+                    this.replaceRoom(id);
+                });
+            }, () => { pending.busy = false; });
         },
         scheduleRooms() { clearTimeout(this.roomsTimer); this.roomsTimer = setTimeout(() => this.loadRooms(), 400); },
         sortRooms() {
@@ -4021,15 +4088,16 @@ module.exports = {
             }, () => { this.newDirect.busy = false; });
         },
         openNewRoom() { if (needsConnection()) return; this.newRoom = { open: true, type: 'private', name: '', topic: '', userIds: [], busy: false, encrypted: false }; },
-        startDirect(userIds, fromLink) {
+        // New direct message's people (or those given) in their direct chat, made or found now
+        startDirect(userIds) {
             const ids = (userIds || this.newDirect.userIds || []).map((id) => String(id).trim()).filter((id) => id);
             if (!ids.length) return;
             this.newDirect.busy = true;
             this.post('createDirect', { userIds: ids.join(',') }).then((json) => {
                 Object.assign(this.newDirect, { open: false, userIds: [], busy: false, name: '' });
                 this.scheduleRooms();
-                if (fromLink) this.replaceRoom(json.chatRoomId); else this.openRoom(json.chatRoomId);
-            }, () => { this.newDirect.busy = false; if (fromLink) this.replaceRoom(null); });
+                this.openRoom(json.chatRoomId);
+            }, () => { this.newDirect.busy = false; });
         },
         createRoom() {
             this.newRoom.busy = true;
@@ -4104,7 +4172,8 @@ module.exports = {
             this.unsubscribe.push(moqui.chat.on('read', (payload) => this.onReadSignal(payload)));
         }
         this.registerKeys();
-        this.loadRooms().then(() => this.$nextTick(() => this.measure()));
+        this.roomsReady = this.loadRooms();
+        this.roomsReady.then(() => this.$nextTick(() => this.measure()));
         this.applyParams();
         setTimeout(() => this.measure(), 300);
     },

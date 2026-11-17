@@ -330,7 +330,9 @@ and the libraries they load (tiptap, the crypto library) are in `libs.txt`; a go
 - **The palette:** the header's Search and Mod+K (Ctrl+K, ⌘K on a Mac) open the web's palette (`m-shell-palette`,
   [Qvt-Client](Qvt-Client.md#the-shell-in-the-client)) over the server's `shellSearch`, with the apps' screens and actions
   (which open in app windows) and no Recent or Saved finds. The comms app is the current one here, so its Chat rooms come
-  first with no `#` (Comms-Messaging §3): two letters and Enter open a room, and a person with no direct chat starts one.
+  first with no `#` (Comms-Messaging §3): two letters and Enter open a room, and a person with no direct chat gets a
+  message, the chat made when it is sent. Ctrl+Enter opens the row in an app window (the root's `openNewTab`); offline,
+  the palette says once that searching needs the server and still finds screens and actions.
   Root listens for the keys of `moqui.keymap` as the web's root does, so Chat's own keys work in the shell too; the
   `KEYMAP` preference is not read here yet.
 - **In app windows:** every other screen, the server's own `/qapps`: Calls' History, Voicemail and Recordings; Settings,

@@ -725,10 +725,9 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The palette's Chat rooms group (design §13, the # prefix is the room switcher; Comms-Messaging §3, the
             group the palette shows first while Comms is the current app): the user's rooms and the public ones whose name
             or topic has the text (org.moqui.chat.ChatServices.find#Rooms), the latest first; then, for a text with three
-            digits or more, the user's phone-number rooms (CrtExternal) whose number has those digits; then the people the
-            user has no direct chat with (CommsServices.search#Users, so only the people the user may reach), each opening
-            Chat with dm, which starts the direct chat. Each a row {title, subtitle, icon, url}, at most limit in all. moreUrl
-            is the Chat screen.</description>
+            digits or more, the user's phone-number rooms (CrtExternal) whose number (the room's, or its bridge's) has those
+            digits, of all the user's rooms. Each a row {title, subtitle, icon, url}, at most limit in all. moreUrl is the
+            Chat screen. The people to message are search#PalettePeople, a group of their own that never leads.</description>
         <in-parameters>
             <parameter name="text"/>
             <parameter name="limit" type="Integer" default="5"/>
@@ -765,45 +764,198 @@ along with this software (see the LICENSE.md file). If not, see
                     rows.push({title: room.displayName, subtitle: parts.join(' · '), icon: kind[0], url: chatUrl + '?chatRoomId=' + encodeURIComponent(room.chatRoomId)})
                 }
                 Array.from(out.roomList || []).forEach(addRoom)
-                // a number typed as it is written (+1 555-0100, (555) 0100): the phone rooms whose number has its digits
+                // a number typed as it is written (+1 555-0100, (555) 0100): the user's phone rooms whose number has its digits, by
+                // the room's number and its bridge's (externalRoomId ours/theirs), of all the user's rooms
                 const digits = term.replace(/[^0-9]/g, '')
-                if (rows.length < max && digits.length >= 3 && /^\+?[0-9 ().-]+$/.test(term)) {
-                    const mine = ec.service.sync().name('org.moqui.chat.ChatServices.find#Rooms').parameters({limit: 200}).call()
-                    if (!ec.message.hasError()) for (const room of Array.from(mine.roomList || []))
-                        if (room.roomTypeEnumId === 'CrtExternal' && String(room.displayName || '').replace(/[^0-9]/g, '').includes(digits)) addRoom(room)
-                    ec.message.clearErrors()
-                }
-                // the people found with no direct chat of their own with the user: choosing one starts it (Chat's dm)
-                if (rows.length < max && term && me) {
-                    const people = Array.from(ec.service.sync().name('org.moqui.comms.CommsServices.search#Users').parameters({term: term, limit: max}).call()?.userList || [])
-                            .filter((person) => person.id && person.id !== me)
-                    ec.message.clearErrors()
-                    const withRoom = new Set()
-                    if (people.length) {
-                        const myRooms = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('userId', me).condition('leftDate', null)
-                                .selectField('chatRoomId').disableAuthz().list()).map((row) => row.chatRoomId)
-                        const direct = myRooms.length ? Array.from(ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', 'in', myRooms)
-                                .condition('roomTypeEnumId', 'CrtDirect').selectField('chatRoomId').disableAuthz().list()).map((row) => row.chatRoomId) : []
-                        const membersOf = {}
-                        if (direct.length) for (const row of ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', 'in', direct)
-                                .selectField('chatRoomId').selectField('userId').disableAuthz().list())
-                            if (row.userId) (membersOf[row.chatRoomId] = membersOf[row.chatRoomId] || []).push(row.userId)
-                        // a direct chat of the two of them (a group's direct chat is not that person's own)
-                        for (const ids of Object.values(membersOf)) {
-                            const others = Array.from(new Set(ids)).filter((id) => id !== me)
-                            if (others.length === 1) withRoom.add(others[0])
-                        }
-                    }
-                    for (const person of people) {
-                        if (rows.length >= max) break
-                        if (withRoom.has(person.id)) continue
-                        rows.push({title: person.label, subtitle: L('Person') + ' · ' + L('Start a direct message'), icon: 'sym_o_person_add',
-                            url: chatUrl + '?dm=' + encodeURIComponent(person.id)})
-                    }
+                if (rows.length < max && digits.length >= 3 && /^\+?[0-9 ().-]+$/.test(term) && me) {
+                    const myRooms = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('userId', me).condition('leftDate', null)
+                            .selectField('chatRoomId').disableAuthz().list()).map((row) => row.chatRoomId)
+                    const phoneRooms = myRooms.length ? Array.from(ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', 'in', myRooms)
+                            .condition('roomTypeEnumId', 'CrtExternal').condition('archivedDate', null).selectField('chatRoomId').selectField('roomName')
+                            .selectField('topic').selectField('lastEventDate').disableAuthz().list()) : []
+                    const byId = {}
+                    for (const row of phoneRooms) byId[row.chatRoomId] = row
+                    const found = new Set(phoneRooms.filter((row) => String(row.roomName || '').replace(/[^0-9]/g, '').includes(digits)).map((row) => row.chatRoomId))
+                    if (phoneRooms.length) for (const bridge of ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatRoomId', 'in', Object.keys(byId))
+                            .condition('externalRoomId', 'like', '%/%' + digits + '%').selectField('chatRoomId').disableAuthz().list()) found.add(bridge.chatRoomId)
+                    Array.from(found).map((id) => byId[id]).sort((left, right) => Number(right.lastEventDate || 0) - Number(left.lastEventDate || 0))
+                        .forEach((row) => addRoom({chatRoomId: row.chatRoomId, roomTypeEnumId: 'CrtExternal', displayName: row.roomName || row.chatRoomId,
+                            isMember: true, topic: row.topic || null}))
                 }
             } catch (err) {
                 ec.logger.warn(`Palette chat rooms for ${term} failed: ${err && err.message ? err.message : err}`)
             } finally { ec.message.clearErrors(); ec.message.popErrors() }
+        ]]></script></actions>
+    </service>
+
+    <service verb="search" noun="PalettePeople">
+        <description>The palette's People to message group (Comms-Messaging §3; no prefix, so it never leads and comes after
+            Screens): the people the text finds (CommsServices.search#Users, so only those the user may reach) with no direct
+            chat of the two of them with the user, each opening Chat with dm, which opens an unsaved message to them: the
+            direct chat is made with the first message sent, so a quick Enter makes nothing another person sees. A person
+            with a direct chat is the Chat rooms group's room.</description>
+        <in-parameters>
+            <parameter name="text"/>
+            <parameter name="limit" type="Integer" default="5"/>
+            <parameter name="docTypes" type="List"/>
+            <parameter name="idMatch" type="Boolean"/>
+        </in-parameters>
+        <out-parameters><parameter name="rows" type="List"/><parameter name="moreUrl"/></out-parameters>
+        <actions><script><![CDATA[
+            rows = []
+            const chatUrl = (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat'
+            const L = (text) => ec.l10n.localize(text)
+            const term = String(text || '').trim()
+            const max = Math.max(1, Math.min(limit || 5, 20))
+            const me = ec.user.userId
+            if (!term || !me) return
+            ec.message.pushErrors()
+            try {
+                const people = Array.from(ec.service.sync().name('org.moqui.comms.CommsServices.search#Users').parameters({term: term, limit: max}).call()?.userList || [])
+                        .filter((person) => person.id && person.id !== me)
+                if (ec.message.hasError() || !people.length) return
+                const myRooms = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('userId', me).condition('leftDate', null)
+                        .selectField('chatRoomId').disableAuthz().list()).map((row) => row.chatRoomId)
+                const direct = myRooms.length ? Array.from(ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', 'in', myRooms)
+                        .condition('roomTypeEnumId', 'CrtDirect').selectField('chatRoomId').disableAuthz().list()).map((row) => row.chatRoomId) : []
+                const membersOf = {}
+                if (direct.length) for (const row of ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', 'in', direct)
+                        .selectField('chatRoomId').selectField('userId').disableAuthz().list())
+                    if (row.userId) (membersOf[row.chatRoomId] = membersOf[row.chatRoomId] || []).push(row.userId)
+                // a direct chat of the two of them (a group's direct chat is not that person's own)
+                const withRoom = new Set()
+                for (const ids of Object.values(membersOf)) {
+                    const others = Array.from(new Set(ids)).filter((id) => id !== me)
+                    if (others.length === 1) withRoom.add(others[0])
+                }
+                for (const person of people) {
+                    if (rows.length >= max) break
+                    if (withRoom.has(person.id)) continue
+                    rows.push({title: person.label, subtitle: L('Person') + ' · ' + L('Write a direct message'), icon: 'sym_o_person_add',
+                        url: chatUrl + '?dm=' + encodeURIComponent(person.id) + '&dmName=' + encodeURIComponent(person.label || '')})
+                }
+            } catch (err) {
+                ec.logger.warn(`Palette people for ${term} failed: ${err && err.message ? err.message : err}`)
+            } finally { ec.message.clearErrors(); ec.message.popErrors() }
+        ]]></script></actions>
+    </service>
+
+    <!-- ========== The Threads view ========== -->
+
+    <service verb="find" noun="ChatThreads">
+        <description>The threads the current user is in across rooms (Comms-Messaging §3, the Threads view): each thread whose
+            root the user sent or in which the user replied, with at least one reply, in a room the user can still read
+            (get#RoomAccess, once a room), the one with the latest reply first. Items [{chatRoomId, roomName, roomTypeEnumId,
+            threadRootEventSeq, startedByMe, rootSenderName, rootSnippet, replyCount, lastDate, lastEventSeq, lastUserId,
+            lastUserName, lastSnippet, replierCount (the other people who replied, not the user), encrypted, and for an
+            encrypted room the last reply's ciphertext (encryptedContent, encryptedEventSeq, encryptedSentDate)}]. Its own
+            reply the user wrote last counts, and so does a thread it started that only it replied in. limit 1 to 100 (40);
+            paged by cursor, an opaque text of the last thread's date, room and root; nextCursor null at the end. A reply
+            is no activity of its own (ChatUserActivity), so nothing here notifies anyone.</description>
+        <in-parameters>
+            <parameter name="limit" type="Integer" default="40"/>
+            <parameter name="cursor"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="items" type="List"><parameter name="item" type="Map"/></parameter>
+            <parameter name="nextCursor"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            items = []; nextCursor = null
+            const me = ec.user.userId
+            if (!me) return
+            const toMillis = (value) => {
+                if (value == null || value === '') return null
+                const number = Number(value)
+                return Number.isNaN(number) ? new Date(String(value)).getTime() : number
+            }
+            const size = Math.max(1, Math.min(100, Number(limit) || 40))
+            const cf = ec.entity.conditionFactory
+            const decode = (text) => {
+                const parts = String(text || '').split('~')
+                if (parts.length < 3 || !/^\d+$/.test(parts[0]) || !/^\d+$/.test(parts[1])) return null
+                return {date: Number(parts[0]), eventSeq: Number(parts[1]), chatRoomId: parts.slice(2).join('~')}
+            }
+            const encode = (row) => [toMillis(row.threadLastDate), Number(row.eventSeq), row.chatRoomId].join('~')
+            let at = cursor ? decode(cursor) : null
+            if (cursor && !at) { ec.message.addError(ec.l10n.localize('This list was changed: read it again from the start')); return }
+            // the threads I replied in, by room (at most the latest 2000 of my replies)
+            const repliedIn = {}
+            for (const row of ec.entity.find('moqui.chat.ChatEvent').condition('senderUserId', me).condition('threadRootEventSeq', 'not-equals', null)
+                    .selectField('chatRoomId').selectField('threadRootEventSeq').distinct(true).orderBy('-threadRootEventSeq').limit(2000).disableAuthz().list())
+                (repliedIn[row.chatRoomId] = repliedIn[row.chatRoomId] || new Set()).add(Number(row.threadRootEventSeq))
+            const mine = [cf.makeCondition('senderUserId', 'equals', me)]
+            for (const roomId of Object.keys(repliedIn)) mine.push(cf.makeCondition([cf.makeCondition('chatRoomId', 'equals', roomId),
+                cf.makeCondition('eventSeq', 'in', Array.from(repliedIn[roomId]))], 'and'))
+            const after = (point) => cf.makeCondition([cf.makeCondition('threadLastDate', 'less', String(point.date)),
+                cf.makeCondition([cf.makeCondition('threadLastDate', 'equals', String(point.date)), cf.makeCondition([
+                    cf.makeCondition('chatRoomId', 'less', point.chatRoomId),
+                    cf.makeCondition([cf.makeCondition('chatRoomId', 'equals', point.chatRoomId), cf.makeCondition('eventSeq', 'less', point.eventSeq)], 'and')], 'or')], 'and')], 'or')
+            const readable = {}
+            const canRead = (roomId) => {
+                if (!(roomId in readable)) {
+                    const access = ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', roomId).call()
+                    readable[roomId] = access && access.canRead ? access.room : null
+                }
+                return readable[roomId]
+            }
+            // read in batches until the page is full and one more is seen (rooms no longer readable are left out, and the
+            // cursor goes on past them), ten batches at most
+            const kept = []
+            let last = null
+            let more = false
+            const BATCH = Math.max(50, size + 1)
+            for (let round = 0; round < 10 && !more; round++) {
+                let find = ec.entity.find('moqui.chat.ChatEvent').condition('eventTypeEnumId', 'CetMessage').condition('threadRootEventSeq', null)
+                        .condition('threadReplyCount', 'greater', 0).condition('threadLastDate', 'not-equals', null).condition(cf.makeCondition(mine, 'or'))
+                if (at) find = find.condition(after(at))
+                const batch = Array.from(find.orderBy('-threadLastDate').orderBy('-chatRoomId').orderBy('-eventSeq').limit(BATCH).disableAuthz().list())
+                for (const row of batch) {
+                    if (kept.length === size) { more = true; break }
+                    last = row
+                    if (canRead(row.chatRoomId)) kept.push(row)
+                }
+                if (more || batch.length < BATCH) break
+                at = decode(encode(last))
+                if (round === 9) more = true
+            }
+            if (more && last) nextCursor = encode(last)
+            if (!kept.length) return
+            // what each thread shows: its root and last reply (as the room's lists summarize them), who replied, names
+            const byRoom = {}
+            for (const row of kept) (byRoom[row.chatRoomId] = byRoom[row.chatRoomId] || []).push(row)
+            const summaries = {}
+            const repliers = {}
+            for (const roomId of Object.keys(byRoom)) {
+                const rows = byRoom[roomId]
+                summaries[roomId] = ec.service.sync().name('org.moqui.chat.ChatServices.get#MessageSummaries').parameters({chatRoomId: roomId,
+                    eventSeqList: rows.map((row) => Number(row.eventSeq)).concat(rows.filter((row) => row.threadLastEventSeq != null).map((row) => Number(row.threadLastEventSeq)))})
+                        .call()?.summaryMap || {}
+                for (const reply of ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', roomId).condition('threadRootEventSeq', 'in', rows.map((row) => Number(row.eventSeq)))
+                        .condition('senderUserId', 'not-equals', me).selectField('threadRootEventSeq').selectField('senderUserId').distinct(true).disableAuthz().list())
+                    if (reply.senderUserId) (repliers[roomId + ' ' + Number(reply.threadRootEventSeq)] = repliers[roomId + ' ' + Number(reply.threadRootEventSeq)] || new Set()).add(reply.senderUserId)
+            }
+            const userIds = Array.from(new Set(kept.flatMap((row) => [row.senderUserId, row.threadLastUserId]).filter((id) => id)))
+            const names = {}
+            if (userIds.length) for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', userIds)
+                    .selectField('userId').selectField('userFullName').selectField('username').disableAuthz().list())
+                names[account.userId] = account.userFullName || account.username || account.userId
+            for (const row of kept) {
+                const room = readable[row.chatRoomId]
+                const sealed = !!room.encrypted
+                const map = summaries[row.chatRoomId]
+                const root = map[String(Number(row.eventSeq))] || {}
+                const lastReply = row.threadLastEventSeq != null ? map[String(Number(row.threadLastEventSeq))] || {} : {}
+                items.push({chatRoomId: row.chatRoomId, roomName: room.roomName ?? null, roomTypeEnumId: room.roomTypeEnumId ?? null,
+                    threadRootEventSeq: Number(row.eventSeq), startedByMe: row.senderUserId === me,
+                    rootSenderName: row.senderUserId ? names[row.senderUserId] || row.senderUserId : null, rootSnippet: sealed ? null : root.snippet ?? null,
+                    replyCount: Number(row.threadReplyCount || 0), lastDate: toMillis(row.threadLastDate),
+                    lastEventSeq: row.threadLastEventSeq != null ? Number(row.threadLastEventSeq) : null, lastUserId: row.threadLastUserId ?? null,
+                    lastUserName: row.threadLastUserId ? names[row.threadLastUserId] || row.threadLastUserId : null,
+                    lastSnippet: sealed ? null : lastReply.snippet ?? null, replierCount: (repliers[row.chatRoomId + ' ' + Number(row.eventSeq)] || new Set()).size,
+                    encrypted: sealed, encryptedContent: sealed ? lastReply.encrypted ?? null : null,
+                    encryptedEventSeq: sealed ? lastReply.encryptedEventSeq ?? null : null, encryptedSentDate: sealed ? lastReply.encryptedSentDate ?? null : null})
+            }
         ]]></script></actions>
     </service>
 
@@ -813,12 +965,12 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The mail line of the Chat list (Comms-Messaging §3, §19.1): for each person the current user has a
             direct chat of the two of them with (a member of it now), that person's latest mail thread among the mail the
             user may read (get#EmailAccountAccess: owned accounts and those shared with the user, at any level), matched by
-            the person's addresses (their user account's mail address and the addresses of the mail accounts they own): a
-            message from that address, or to or copied to it. Drafts, Spam and Trash are left out. mailList: [{userId,
-            chatRoomId, subject, date, threadKey (email:rootEmailMessageId), url (the thread in the Inbox under
-            comms_app_root)}], one per person with mail. Read-only, in one query of the mail for all of them (the latest
-            300 matching messages; a person whose mail is older than those has no line). An outside person (no user of this
-            server) waits for unified contacts and has none.</description>
+            the mail address of the person's user account only (§19.1: a mail account they own or share, an alias, is not
+            theirs to be credited with): a message from that address, or with it in its To or Cc as a whole address. Drafts,
+            Spam and Trash are left out. mailList: [{userId, chatRoomId, subject, date, threadKey (email:rootEmailMessageId),
+            url (the thread in the Inbox under comms_app_root)}], one per person with mail. Read-only, in one query of the
+            mail for all of them: the last 180 days, the latest 300 matching messages (a person whose mail is older than
+            those has no line). An outside person (no user of this server) waits for unified contacts and has none.</description>
         <out-parameters><parameter name="mailList" type="List"><parameter name="mail" type="Map"/></parameter></out-parameters>
         <actions><script><![CDATA[
             mailList = []
@@ -870,28 +1022,35 @@ along with this software (see the LICENSE.md file). If not, see
             if (!accountIds.length) return
             const mine = new Set([lower(ec.user.userAccount?.emailAddress)])
             for (const account of Array.from(access.accountList || [])) mine.add(lower(account.emailAddress))
-            // each person's addresses: the user account's, and those of the mail accounts they own
+            // each person's address: their user account's alone
             const addressOwner = {}
-            const own = (address, userId) => { const one = lower(address); if (one && one.includes('@') && !mine.has(one) && !addressOwner[one]) addressOwner[one] = userId }
             for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', people).selectField('userId').selectField('emailAddress')
-                    .disableAuthz().list()) own(account.emailAddress, account.userId)
-            for (const account of ec.entity.find('moqui.basic.email.EmailAccount').condition('ownerUserId', 'in', people)
-                    .condition('accountKindEnumId', 'not-equals', 'EakInternal', true).condition('statusId', 'not-equals', 'EasRemoved', true)
-                    .selectField('ownerUserId').selectField('emailAddress').disableAuthz().list()) own(account.emailAddress, account.ownerUserId)
+                    .disableAuthz().list()) {
+                const one = lower(account.emailAddress)
+                if (one && one.includes('@') && !mine.has(one) && !addressOwner[one]) addressOwner[one] = account.userId
+            }
             const addresses = Object.keys(addressOwner)
             if (!addresses.length) return
             const cf = ec.entity.conditionFactory
-            const likeText = (address) => '%' + address.replace(/[\\%_]/g, '\\$&') + '%'
+            // the address as a whole entry of a To or Cc list ("Name" <a@b>, a@b, c@d): alone, in angle brackets, first, or after
+            // a comma, so a longer address that ends with it (xa@b) is not taken; each match is checked again below
+            const escaped = (address) => address.replace(/[\\%_]/g, '\\$&')
+            const listMatches = (field, address) => {
+                const one = escaped(address)
+                return [cf.makeCondition(field, 'equals', address).ignoreCase()].concat(['%<' + one + '>%', one + ',%', '%,' + one, '%, ' + one,
+                    '%,' + one + ',%', '%, ' + one + ',%'].map((pattern) => cf.makeCondition(field, 'like', pattern).ignoreCase()))
+            }
             const matches = []
             for (const address of addresses) {
                 matches.push(cf.makeCondition('fromAddress', 'equals', address).ignoreCase())
-                matches.push(cf.makeCondition('toAddresses', 'like', likeText(address)).ignoreCase())
-                matches.push(cf.makeCondition('ccAddresses', 'like', likeText(address)).ignoreCase())
+                matches.push(...listMatches('toAddresses', address), ...listMatches('ccAddresses', address))
             }
             const leftOut = Array.from(ec.entity.find('moqui.basic.email.EmailFolder').condition('emailAccountId', 'in', accountIds)
                     .condition('folderKindEnumId', 'in', ['EfkTrash', 'EfkJunk']).selectField('emailFolderId').disableAuthz().list()).map((row) => row.emailFolderId)
+            const since = String(Date.now() - 180 * 86400000)
             let find = ec.entity.find('moqui.basic.email.EmailMessage').condition('emailAccountId', 'in', accountIds)
-                    .condition('statusId', 'not-equals', 'ES_DRAFT', true).condition(cf.makeCondition(matches, 'or'))
+                    .condition('messageDate', 'greater-equals', since).condition('statusId', 'not-equals', 'ES_DRAFT', true)
+                    .condition(cf.makeCondition(matches, 'or'))
             if (leftOut.length) find = find.condition(cf.makeCondition([cf.makeCondition('emailFolderId', 'not-in', leftOut), cf.makeCondition('emailFolderId', 'equals', null)], 'or'))
             const found = Array.from(find.selectField('emailMessageId').selectField('rootEmailMessageId').selectField('subject').selectField('messageDate')
                     .selectField('sentDate').selectField('fromAddress').selectField('toAddresses').selectField('ccAddresses')

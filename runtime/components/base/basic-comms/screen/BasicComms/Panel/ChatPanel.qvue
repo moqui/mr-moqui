@@ -95,8 +95,9 @@ along with this software (see the LICENSE.md file). If not, see
                                     class="q-ml-xs">{{countsOf(room).unread}}</q-badge>
                         </q-item-label>
                         <!-- the person's latest mail thread, opening in the Inbox; email is never end-to-end encrypted (§6.1 rule 7) -->
-                        <q-item-label v-if="mailOf(room)" caption class="row no-wrap items-center m-chat-mail-line" :data-mail="room.chatRoomId"
-                                :aria-label="mailText(mailOf(room)) + '. ' + mailLabel.text" @click.stop="go(mailOf(room).url)">
+                        <q-item-label v-if="mailOf(room)" caption class="row no-wrap items-center m-chat-mail-line" :data-mail="room.chatRoomId" role="link" tabindex="0"
+                                :aria-label="mailText(mailOf(room)) + '. ' + mailLabel.text" @click.stop="go(mailOf(room).url)"
+                                @keydown.enter.stop.prevent="go(mailOf(room).url)" @keydown.space.stop.prevent="go(mailOf(room).url)">
                             <q-icon name="sym_o_mail" size="12px" class="m-muted q-mr-xs"></q-icon>
                             <span class="ellipsis col m-muted">{{mailText(mailOf(room))}}<span class="m-chat-mail-label"> · {{mailLabel.text}}</span></span>
                         </q-item-label>
@@ -177,7 +178,7 @@ const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) =
 // the list's time in the user's zone, by calendar day, as in Chat (moqui.chat, WebrootChat.js; COM-UI-007)
 const shortWhen = (millis) => moqui.chat.shortWhen(millis);
 // kept for the page: the tray mounts this component again when it reloads the tab, and a reopened tab shows what it had
-const memo = { roomId: null, rooms: null, me: null, prefs: null, roomComponent: null, loading: null, mailLines: null, mailAt: 0 };
+const memo = { roomId: null, rooms: null, me: null, prefs: null, roomComponent: null, loading: null, mailLines: null };
 const MAX_SHOWN = 30;
 
 module.exports = {
@@ -305,19 +306,14 @@ module.exports = {
                     if (room.isMember && room.chatRoomId !== this.roomId) moqui.chat.state.unread[room.chatRoomId] = { unread: room.unreadCount || 0, mentions: room.mentionCount || 0 };
                 });
                 this.loaded = true;
-                // the people's mail lines, one request for the list, again at most every five minutes
-                if (this.rooms.some((room) => room.roomTypeEnumId === 'CrtDirect') && Date.now() - memo.mailAt >= 300000) this.loadMail();
+                // the people's mail lines: one request for the page, shared with Chat (moqui.chat.mailLines)
+                if (this.rooms.some((room) => room.roomTypeEnumId === 'CrtDirect')) this.loadMail();
             }, (err) => { this.loaded = true; console.info('Chat panel: the rooms could not be read', err && err.status); });
         },
         // the mail line of a person's direct chat (Comms-Messaging §3): the Chat screen's mailLines (find#DirectChatMail)
         loadMail() {
             if (moqui.connection && moqui.connection.offline) return;
-            memo.mailAt = Date.now();
-            moqui.request(this.url('mailLines')).then((result) => {
-                const out = {};
-                ((result.json && result.json.mailList) || []).forEach((mail) => { if (mail && mail.chatRoomId && mail.url) out[mail.chatRoomId] = mail; });
-                this.mailLines = memo.mailLines = out;
-            }, () => {});
+            moqui.chat.mailLines(this.url('mailLines')).then((lines) => { this.mailLines = memo.mailLines = lines; });
         },
         mailOf(room) { return room && room.roomTypeEnumId === 'CrtDirect' ? this.mailLines[room.chatRoomId] || null : null; },
         mailText(mail) { return fill(t('Email: {subject}'), { subject: mail.subject || t('(no subject)') }); },

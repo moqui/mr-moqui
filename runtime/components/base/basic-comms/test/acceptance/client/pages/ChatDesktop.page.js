@@ -34,9 +34,12 @@ const item = (kind, roomId, roomName, seq, extra) => Object.assign({ kind, chatR
     threadRootEventSeq: null, actorUserId: "bob", actorName: "Bob Baker", snippet: null, reactionKey: null, date: NOW - 1000 * seq, encrypted: false }, extra || {});
 const activity = [item("mention", "R2", "General", 7, { snippet: "@Ann can you look at the plan?" }),
     item("reaction", "R1", "Bob Baker", 9, { messageEventSeq: 2, snippet: "Lunch at noon?", reactionKey: "👍" })];
-const threadReplies = [item("threadReply", "R2", "General", 12, { threadRootEventSeq: 5, snippet: "Second reply" }),
-    item("threadReply", "R2", "General", 11, { threadRootEventSeq: 5, actorUserId: "cy", actorName: "Cy Cole", snippet: "First reply" }),
-    item("threadReply", "B1", "Matrix lounge", 10, { threadRootEventSeq: 4, snippet: "Another thread" })];
+// find#ChatThreads: the threads Ann is in, the latest reply first, with the other people who replied
+const thread = (roomId, roomName, root, extra) => Object.assign({ chatRoomId: roomId, roomName, roomTypeEnumId: "CrtPrivate", threadRootEventSeq: root,
+    startedByMe: false, rootSenderName: "Bob Baker", rootSnippet: "The root", replyCount: 2, lastDate: NOW - 5000, lastEventSeq: root + 2,
+    lastUserId: "bob", lastUserName: "Bob Baker", lastSnippet: "Second reply", replierCount: 2, encrypted: false }, extra || {});
+const threads = [thread("R2", "General", 5), thread("B1", "Matrix lounge", 4, { replyCount: 3, replierCount: 1, lastDate: NOW - 9000, lastSnippet: "Another thread" }),
+    thread("R1", "Bob Baker", 1, { startedByMe: true, replyCount: 1, replierCount: 0, lastUserId: "ann", lastUserName: "Ann", lastDate: NOW - 20000, lastSnippet: "Mine alone" })];
 const people = [{ userId: "dee", name: "Dee Dunn" }];
 const posted = [];
 const asked = [];
@@ -47,16 +50,19 @@ const answers = {
     "/shellData": () => ({ apps: [{ name: "BasicComms", title: "Comms", path: "/qapps/BasicComms", image: "sym_o_forum", imageType: "icon",
         menu: [{ title: "Getting started", path: "/qapps/BasicComms/GettingStarted", depth: 1 }, { title: "Inbox", path: "/qapps/BasicComms/Inbox", depth: 1 }],
         providers: { paletteSources: [{ group: "Messages", label: "Messages", icon: "sym_o_mail", prefix: null },
-            { group: "Rooms", label: "Chat rooms", icon: "sym_o_chat", prefix: "#" }] } }], counts: {} }),
-    // as search#PaletteRooms: the rooms by name, then the people with no direct chat (dm); Messages beside them
+            { group: "Rooms", label: "Chat rooms", icon: "sym_o_chat", prefix: "#" }, { group: "ChatPeople", label: "People to message", icon: "sym_o_person_add", prefix: null }] } }],
+        counts: {} }),
+    // as search#PaletteRooms (the rooms by name) and search#PalettePeople (the people with no direct chat, dm), Messages beside them
     "/shellSearch": (params) => {
         const text = String(params.text || "").toLowerCase();
         const rows = rooms.filter((one) => one.displayName.toLowerCase().indexOf(text) >= 0)
-            .map((one) => ({ title: one.displayName, subtitle: "Room", icon: "sym_o_groups", url: "/qapps/BasicComms/Chat?chatRoomId=" + one.chatRoomId }))
-            .concat(people.filter((one) => one.name.toLowerCase().indexOf(text) >= 0)
-                .map((one) => ({ title: one.name, subtitle: "Person · Start a direct message", icon: "sym_o_person_add", url: "/qapps/BasicComms/Chat?dm=" + one.userId })));
+            .map((one) => ({ title: one.displayName, subtitle: "Room", icon: "sym_o_groups", url: "/qapps/BasicComms/Chat?chatRoomId=" + one.chatRoomId }));
+        const found = people.filter((one) => one.name.toLowerCase().indexOf(text) >= 0)
+            .map((one) => ({ title: one.name, subtitle: "Person · Write a direct message", icon: "sym_o_person_add",
+                url: "/qapps/BasicComms/Chat?dm=" + one.userId + "&dmName=" + encodeURIComponent(one.name) }));
         const groups = [{ group: "Messages", label: "Messages", icon: "sym_o_mail", rows: [{ title: "Re: " + text, url: "/qapps/BasicComms/Inbox?thread=email%3AM9" }] }];
         if (rows.length) groups.push({ group: "Rooms", label: "Chat rooms", icon: "sym_o_chat", prefix: "#", rows, moreUrl: "/qapps/BasicComms/Chat" });
+        if (found.length) groups.push({ group: "ChatPeople", label: "People to message", icon: "sym_o_person_add", rows: found });
         return { groups };
     },
     "/apps/l10nCatalog": () => ({}),
@@ -65,10 +71,12 @@ const answers = {
         member: { lastReadEventSeq: 3 }, access: { isMember: true, canPost: true }, memberList: [{ userId: "ann", name: "Ann" }, { userId: "bob", name: "Bob Baker" }],
         timeline: { eventList: [event(1, "One"), event(2, "Lunch at noon?"), event(3, "Three")], hasMoreBefore: false, hasMoreAfter: false } }),
     "/apps/BasicComms/Chat/timeline": () => ({ eventList: [event(1, "One"), event(2, "Lunch at noon?"), event(3, "Three")], hasMoreBefore: false, hasMoreAfter: false }),
-    "/apps/BasicComms/Chat/activity": (params) => ({ items: clone(String(params.kinds || "") === "threadReply" ? threadReplies : activity), nextCursor: null }),
+    "/apps/BasicComms/Chat/activity": () => ({ items: clone(activity), nextCursor: null }),
+    "/apps/BasicComms/Chat/myThreads": () => ({ items: clone(threads), nextCursor: null }),
     "/apps/BasicComms/Chat/mailLines": () => ({ mailList: [{ userId: "bob", chatRoomId: "R1", subject: "Q3 plan", date: NOW - 3600000, threadKey: "email:M1",
         url: "/qapps/BasicComms/Inbox?view=all&thread=email%3AM1" }] }),
-    "/apps/BasicComms/Chat/createDirect": (params) => ({ chatRoomId: "D_" + params.userIds, created: true })
+    "/apps/BasicComms/Chat/createDirect": (params) => ({ chatRoomId: "D_" + params.userIds, created: true }),
+    "/apps/BasicComms/Chat/send": (params) => ({ eventSeq: 1, event: event(1, String(params.body || "")) })
 };
 moqui.request = (url, options) => {
     const path = String(url).split("?")[0];
@@ -142,10 +150,24 @@ window.desk = {
         await toChat();
         return out;
     },
-    // a person with no direct chat (dm): Chat makes it and shows it in place of the link
-    async afterPerson() {
+    // a person with no direct chat: after the rooms, the messages and Screens (People to message never leads), a click opens an
+    // unsaved message to them, and nothing is made until its first send, which makes the direct chat and sends it there
+    async person() {
+        const row = await until(() => Array.from(document.querySelectorAll("#m-palette .q-item")).find((el) => el.textContent.includes("Dee Dunn")), "the person's row");
+        const order = Array.from(document.querySelectorAll("#m-palette .q-item-label.q-item__label--header, #m-palette .q-item__label--header")).map((el) => textOf(el));
+        row.click();
+        const pending = await until(() => document.querySelector(".m-chat-pending-direct"), "the unsaved message");
+        const out = { order, title: textOf(pending.querySelector(".text-subtitle1")), madeBefore: posted.filter((one) => one.path.endsWith("/createDirect")).length,
+            dm: root.currentParameters.dm };
+        const box = pending.querySelector("textarea");
+        box.value = "Hi Dee";
+        box.dispatchEvent(new Event("input", { bubbles: true }));
+        await until(() => !pending.querySelector(".m-chat-pending-send").disabled, "Send enabled");
+        pending.querySelector(".m-chat-pending-send").click();
         await until(() => root.currentParameters.chatRoomId === "D_dee", "the new direct chat", 4000).catch(() => null);
-        const out = Object.assign(where(), { made: posted.filter((one) => one.path === "/apps/BasicComms/Chat/createDirect").map((one) => one.params.userIds) });
+        out.after = where();
+        out.made = posted.filter((one) => one.path.endsWith("/createDirect")).map((one) => one.params.userIds);
+        out.sent = posted.filter((one) => one.path.endsWith("/send")).map((one) => one.params.chatRoomId + " " + one.params.body);
         await toChat();
         return out;
     },
@@ -163,13 +185,13 @@ window.desk = {
         await toChat();
         return out;
     },
-    // Threads: one row per thread, its newest reply; a row opens the thread
+    // Threads: one row per thread I am in, its latest reply; a row opens the thread
     async threads() {
         chip("threads").click();
-        await until(() => document.querySelectorAll(".m-chat-feed[data-feed='threads'] .m-chat-feed-row").length === 2, "the thread rows");
+        await until(() => document.querySelectorAll(".m-chat-feed[data-feed='threads'] .m-chat-feed-row").length === 3, "the thread rows");
         const rows = Array.from(document.querySelectorAll(".m-chat-feed .m-chat-feed-row"));
         const out = { titles: rows.map((row) => textOf(row.querySelector(".q-item__label .ellipsis"))), rooms: rows.map((row) => row.getAttribute("data-room")),
-            asked: asked.filter((one) => one.path === "/apps/BasicComms/Chat/activity").map((one) => one.params.kinds || "").slice(-1)[0] };
+            asked: asked.some((one) => one.path === "/apps/BasicComms/Chat/myThreads") };
         rows[0].click();
         await until(() => root.currentParameters.thread, "the thread");
         out.opened = where();

@@ -16,7 +16,7 @@ const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) =
 // the list's time in the user's zone, by calendar day, as in Chat (moqui.chat, WebrootChat.js; COM-UI-007)
 const shortWhen = (millis) => moqui.chat.shortWhen(millis);
 // kept for the page: the tray mounts this component again when it reloads the tab, and a reopened tab shows what it had
-const memo = { roomId: null, rooms: null, me: null, prefs: null, roomComponent: null, loading: null, mailLines: null, mailAt: 0 };
+const memo = { roomId: null, rooms: null, me: null, prefs: null, roomComponent: null, loading: null, mailLines: null };
 const MAX_SHOWN = 30;
 
 module.exports = {
@@ -144,19 +144,14 @@ module.exports = {
                     if (room.isMember && room.chatRoomId !== this.roomId) moqui.chat.state.unread[room.chatRoomId] = { unread: room.unreadCount || 0, mentions: room.mentionCount || 0 };
                 });
                 this.loaded = true;
-                // the people's mail lines, one request for the list, again at most every five minutes
-                if (this.rooms.some((room) => room.roomTypeEnumId === 'CrtDirect') && Date.now() - memo.mailAt >= 300000) this.loadMail();
+                // the people's mail lines: one request for the page, shared with Chat (moqui.chat.mailLines)
+                if (this.rooms.some((room) => room.roomTypeEnumId === 'CrtDirect')) this.loadMail();
             }, (err) => { this.loaded = true; console.info('Chat panel: the rooms could not be read', err && err.status); });
         },
         // the mail line of a person's direct chat (Comms-Messaging §3): the Chat screen's mailLines (find#DirectChatMail)
         loadMail() {
             if (moqui.connection && moqui.connection.offline) return;
-            memo.mailAt = Date.now();
-            moqui.request(this.url('mailLines')).then((result) => {
-                const out = {};
-                ((result.json && result.json.mailList) || []).forEach((mail) => { if (mail && mail.chatRoomId && mail.url) out[mail.chatRoomId] = mail; });
-                this.mailLines = memo.mailLines = out;
-            }, () => {});
+            moqui.chat.mailLines(this.url('mailLines')).then((lines) => { this.mailLines = memo.mailLines = lines; });
         },
         mailOf(room) { return room && room.roomTypeEnumId === 'CrtDirect' ? this.mailLines[room.chatRoomId] || null : null; },
         mailText(mail) { return fill(t('Email: {subject}'), { subject: mail.subject || t('(no subject)') }); },
@@ -282,7 +277,7 @@ module.exports = {
         {
             const target = component;
             target.render = (function () {
-                const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createTextVNode: _createTextVNode, normalizeClass: _normalizeClass, withCtx: _withCtx, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, normalizeStyle: _normalizeStyle, withModifiers: _withModifiers, createSlots: _createSlots, resolveDirective: _resolveDirective, withDirectives: _withDirectives, resolveDynamicComponent: _resolveDynamicComponent } = Vue
+                const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createTextVNode: _createTextVNode, normalizeClass: _normalizeClass, withCtx: _withCtx, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, normalizeStyle: _normalizeStyle, withModifiers: _withModifiers, withKeys: _withKeys, createSlots: _createSlots, resolveDirective: _resolveDirective, withDirectives: _withDirectives, resolveDynamicComponent: _resolveDynamicComponent } = Vue
 
                 return function render(_ctx, _cache) {
                   const _component_q_btn = _resolveComponent("q-btn")
@@ -683,8 +678,14 @@ module.exports = {
                                                         caption: "",
                                                         class: "row no-wrap items-center m-chat-mail-line",
                                                         "data-mail": room.chatRoomId,
+                                                        role: "link",
+                                                        tabindex: "0",
                                                         "aria-label": _ctx.mailText(_ctx.mailOf(room)) + '. ' + _ctx.mailLabel.text,
-                                                        onClick: _withModifiers($event => (_ctx.go(_ctx.mailOf(room).url)), ["stop"])
+                                                        onClick: _withModifiers($event => (_ctx.go(_ctx.mailOf(room).url)), ["stop"]),
+                                                        onKeydown: [
+                                                          _withKeys(_withModifiers($event => (_ctx.go(_ctx.mailOf(room).url)), ["stop","prevent"]), ["enter"]),
+                                                          _withKeys(_withModifiers($event => (_ctx.go(_ctx.mailOf(room).url)), ["stop","prevent"]), ["space"])
+                                                        ]
                                                       }, {
                                                         default: _withCtx(() => [
                                                           _createVNode(_component_q_icon, {
@@ -698,7 +699,7 @@ module.exports = {
                                                           ])
                                                         ]),
                                                         _: 2
-                                                      }, 1032, ["data-mail", "aria-label", "onClick"]))
+                                                      }, 1032, ["data-mail", "aria-label", "onClick", "onKeydown"]))
                                                     : _createCommentVNode("", true)
                                                 ]),
                                                 _: 2
@@ -1413,6 +1414,8 @@ module.exports = {
                 params: this.bodyParameters || {}, fullPath: this.currentLinkUrl, meta: {}, hash: '', matched: [{ path: this.currentPath }] });
         },
         openPalette() { this.paletteOpen = true; },
+        // the palette's Ctrl+Enter (a new tab on the web): the server's page in an app window
+        openNewTab(url) { host().openRemote(this.getLinkPath(String(url || ''))).catch((err) => this.failed(err)); },
         // the link of a dm or record room in place of the link itself (Chat.qvue replaceRoom)
         replaceUrl(url) { this.setUrl(url, null, null, false); },
         setParameters(parameters) {
@@ -6378,7 +6381,9 @@ module.exports = {
             browse: { open: false, search: '', list: [], loading: false },
             // the folded groups of the rail, by key (kept per user: foldKey), the Activity or Threads feed and each direct
             // chat's mail line, by room
-            folded: {}, feed: { view: null, list: [], next: null, loading: false, loaded: false, seq: 0 }, mailLines: {}
+            folded: {}, feed: { view: null, list: [], next: null, loading: false, loaded: false, seq: 0 }, mailLines: {},
+            // a dm link's unsaved message to people with no direct chat yet: {userIds, name, text, busy}
+            pendingDirect: null
         };
     },
     computed: {
@@ -6421,21 +6426,8 @@ module.exports = {
         },
         // Activity and Threads replace the rooms in the rail, until a search there finds rooms
         feedShown() { return (this.filter === 'activity' || this.filter === 'threads') && !String(this.search || '').trim(); },
-        // Activity: each item; Threads: one row per thread, its newest reply (the feed is newest first), with how many
-        feedRows() {
-            const list = this.feed.view === this.filter ? this.feed.list : [];
-            if (this.filter !== 'threads') return list;
-            const out = [];
-            const byThread = {};
-            for (const item of list) {
-                const root = item.threadRootEventSeq != null ? item.threadRootEventSeq : item.messageEventSeq;
-                const key = item.chatRoomId + ':' + root;
-                if (byThread[key]) { byThread[key].replyCount++; continue; }
-                byThread[key] = Object.assign({}, item, { key: 'thread:' + key, threadRootEventSeq: root, replyCount: 1 });
-                out.push(byThread[key]);
-            }
-            return out;
-        },
+        // Activity: each item; Threads: one row per thread (find#ChatThreads), its latest reply first
+        feedRows() { return this.feed.view === this.filter ? this.feed.list : []; },
         mailLabel() { return moqui.chat.e2eeLabel({ mail: true }); },
         shownRooms() {
             const text = String(this.search || '').trim().toLowerCase();
@@ -6541,7 +6533,17 @@ module.exports = {
             try { window.localStorage.setItem(this.foldKey(), JSON.stringify(next)); } catch (err) { /* kept for this page only */ }
         },
 
-        // ---- Activity and Threads (find#ChatActivity, the activity transition) ----
+        // ---- Activity (find#ChatActivity, the activity transition) and Threads (find#ChatThreads, myThreads) ----
+        // the rows of a page: a key each, and a thread's as its last reply (who wrote it, when, its text)
+        feedItems(view, items) {
+            if (view !== 'threads') return items.map((item) => Object.assign(item, { key: [item.kind, item.chatRoomId, item.eventSeq].join(':') }));
+            return items.map((item) => Object.assign(item, { key: 'thread:' + item.chatRoomId + ':' + item.threadRootEventSeq, kind: 'thread',
+                actorUserId: item.lastUserId, actorName: item.lastUserName, date: item.lastDate, snippet: item.lastSnippet || item.rootSnippet,
+                eventSeq: item.lastEventSeq, messageEventSeq: item.lastEventSeq }));
+        },
+        feedRequest(view, cursor) {
+            return view === 'threads' ? this.get('myThreads', { limit: 40, cursor }) : this.get('activity', { limit: 40, cursor });
+        },
         // the first page (more false) or the next by the cursor; an encrypted room's text decrypted here
         loadFeed(more) {
             const view = this.filter;
@@ -6552,11 +6554,8 @@ module.exports = {
             // another view's list is not shown under this one; the same view's stays until its first page is read again
             if (!more && feed.view !== view) { feed.view = view; feed.list = []; feed.next = null; feed.loaded = false; }
             feed.loading = true;
-            const params = { limit: 40, cursor: more ? feed.next : null };
-            if (view === 'threads') params.kinds = 'threadReply';
-            this.get('activity', params).then((json) => this.openFeed(json.items || []).then((items) => {
+            this.feedRequest(view, more ? feed.next : null).then((json) => this.openFeed(this.feedItems(view, json.items || [])).then((list) => {
                 if (seq !== feed.seq) return;
-                const list = items.map((item) => Object.assign(item, { key: [item.kind, item.chatRoomId, item.eventSeq].join(':') }));
                 feed.list = more ? feed.list.concat(list.filter((item) => !feed.list.some((other) => other.key === item.key))) : list;
                 feed.next = json.nextCursor == null ? null : json.nextCursor;
                 feed.view = view;
@@ -6565,13 +6564,26 @@ module.exports = {
                 this.$nextTick(() => this.fillFeed());
             })).catch(() => { if (seq === feed.seq) { feed.loading = false; feed.loaded = true; } });
         },
+        // what is new at the top: the first page read again and merged above the rows already loaded (a thread moves up with
+        // its new reply), so the pages scrolled to stay
+        refreshFeedTop() {
+            const view = this.filter;
+            const feed = this.feed;
+            if ((view !== 'activity' && view !== 'threads') || feed.view !== view || feed.loading) return;
+            const seq = feed.seq;
+            this.feedRequest(view, null).then((json) => this.openFeed(this.feedItems(view, json.items || [])).then((list) => {
+                if (seq !== feed.seq || feed.view !== view) return;
+                const fresh = new Set(list.map((item) => item.key));
+                feed.list = list.concat(feed.list.filter((item) => !fresh.has(item.key)));
+            })).catch(() => null);
+        },
         // an encrypted room's items: the message's text and a reaction's key, decrypted in this page (moqui.chat.openSealed);
         // one this device cannot read says so
         openFeed(items) {
             const me = this.me.userId;
             const sealed = items.filter((item) => item.encrypted && moqui.chat.openSealed);
             return Promise.all(sealed.map((item) => {
-                // a reaction is to my message; the rest are the actor's own messages
+                // a reaction is to my message; the rest are the actor's own messages (a thread's, its last reply)
                 const sender = item.kind === 'reaction' ? me : item.actorUserId;
                 const text = item.encryptedContent ? moqui.chat.openSealed(item.chatRoomId, item.encryptedEventSeq || item.messageEventSeq, item.encryptedSentDate || item.date,
                     sender, item.encryptedContent).then((opened) => {
@@ -6593,11 +6605,15 @@ module.exports = {
             if (el && this.feed.next != null && !this.feed.loading && el.scrollHeight <= el.clientHeight + 8) this.loadFeed(true);
         },
         feedIcon(item) {
-            return { mention: 'sym_o_alternate_email', reply: 'sym_o_reply', threadReply: 'sym_o_forum', reaction: 'sym_o_add_reaction' }[item.kind] || 'sym_o_chat';
+            return { mention: 'sym_o_alternate_email', reply: 'sym_o_reply', threadReply: 'sym_o_forum', thread: 'sym_o_forum', reaction: 'sym_o_add_reaction' }[item.kind] || 'sym_o_chat';
         },
         feedTitle(item) {
             const name = item.actorName || t('Someone');
-            if (this.filter === 'threads') return item.replyCount > 1 ? fill(t('{name} and others replied in a thread'), { name }) : fill(t('{name} replied in a thread'), { name });
+            if (item.kind === 'thread') {
+                // "and others": more than one other person replied (by people, not by replies)
+                if (item.actorUserId === this.me.userId) return item.replierCount > 0 ? t('You and others replied in a thread') : t('You replied in a thread');
+                return item.replierCount > 1 ? fill(t('{name} and others replied in a thread'), { name }) : fill(t('{name} replied in a thread'), { name });
+            }
             if (item.kind === 'mention') return fill(t('{name} mentioned you'), { name });
             if (item.kind === 'reply') return fill(t('{name} replied to you'), { name });
             if (item.kind === 'threadReply') return fill(t('{name} replied in a thread'), { name });
@@ -6608,31 +6624,32 @@ module.exports = {
             if (item.encrypted) return item.text != null ? item.text : (item.unreadable ? t('Encrypted message') : '');
             return item.snippet || '';
         },
-        // the message: in its room, at it; a thread reply in its thread
+        // the message: in its room, at it; a thread reply, or a thread, in its thread
         openFeedItem(item) {
             const params = { chatRoomId: item.chatRoomId };
             const root = item.threadRootEventSeq;
-            if (root != null && Number(root) !== Number(item.messageEventSeq)) { params.eventSeq = root; params.thread = root; }
-            else if (this.filter === 'threads') { params.eventSeq = root; params.thread = root; }
+            if (item.kind === 'thread' || (root != null && Number(root) !== Number(item.messageEventSeq))) { params.eventSeq = root; params.thread = root; }
             else params.eventSeq = item.messageEventSeq;
             this.$root.setUrl(this.linkBase + '?' + moqui.objToSearch(params));
         },
-        // a push that may add to the feed shown (a message or a reaction of someone else): the first page again, soon
+        // A push that concerns the feed shown: of someone else, a message or an edit that mentions me or replies to me, a
+        // reply in a thread, or a reaction (Activity), and a reply in a thread (Threads). What is new is merged at the top.
         feedTouched(event) {
             if (!this.feedShown || !event || event.senderUserId === this.me.userId) return;
-            if (event.type !== 'message' && event.type !== 'reaction' && event.type !== 'edit') return;
+            const me = this.me.userId;
+            const inThread = event.type === 'message' && event.threadRootEventSeq != null;
+            const concerns = this.filter === 'threads' ? inThread
+                : event.type === 'reaction' || inThread || ((event.type === 'message' || event.type === 'edit')
+                    && (((event.mentions || []).includes(me)) || (!!event.replyTo && event.replyTo.senderUserId === me)));
+            if (!concerns) return;
             clearTimeout(this.feedTimer);
-            this.feedTimer = setTimeout(() => this.loadFeed(false), 600);
+            this.feedTimer = setTimeout(() => this.refreshFeedTop(), 600);
         },
 
         // ---- the mail line of a person's direct chat (find#DirectChatMail, the mailLines transition) ----
         loadMail() {
             if (noConnection()) return;
-            moqui.request(this.url('mailLines')).then((result) => {
-                const out = {};
-                ((result.json && result.json.mailList) || []).forEach((mail) => { if (mail && mail.chatRoomId && mail.url) out[mail.chatRoomId] = mail; });
-                this.mailLines = out;
-            }, () => {});
+            moqui.chat.mailLines(this.url('mailLines')).then((lines) => { this.mailLines = lines; });
         },
         mailOf(room) { return room && room.roomTypeEnumId === 'CrtDirect' ? this.mailLines[room.chatRoomId] || null : null; },
         mailText(mail) { return fill(t('Email: {subject}'), { subject: mail.subject || t('(no subject)') }); },
@@ -6640,7 +6657,8 @@ module.exports = {
         // ---- the room in the URL ----
         applyParams() {
             const p = this.params;
-            if (p.dm) { this.startDirect(String(p.dm).split(','), true); return; }
+            if (!p.dm) this.pendingDirect = null;
+            if (p.dm) { this.openDirectLink(String(p.dm).split(','), p.dmName ? String(p.dmName) : ''); return; }
             if (p.recordEntity && p.recordId) { this.openRecordRoom(p.recordEntity, p.recordId); return; }
             this.roomId = p.chatRoomId || null;
             this.seq = p.eventSeq ? Number(p.eventSeq) : null;
@@ -6680,12 +6698,42 @@ module.exports = {
                 });
                 if (!this.loaded) this.readFolded();
                 this.loaded = true;
-                // the people's mail lines, one request for the list, again at most every five minutes as the rooms change
-                if (this.rooms.some((room) => room.roomTypeEnumId === 'CrtDirect') && !(this.mailAt && Date.now() - this.mailAt < 300000)) {
-                    this.mailAt = Date.now();
-                    this.loadMail();
-                }
+                // the people's mail lines: one request for the page, shared with the panel (moqui.chat.mailLines)
+                if (this.rooms.some((room) => room.roomTypeEnumId === 'CrtDirect')) this.loadMail();
             }, () => { this.loaded = true; });
+        },
+        // A dm link: the direct chat of exactly those people when there is one, else an unsaved message to them whose first
+        // send makes it (moqui.chat.directRoomFor; the rooms are read first)
+        openDirectLink(userIds, name) {
+            const ids = (userIds || []).map((id) => String(id).trim()).filter((id) => id);
+            if (!ids.length) { this.replaceRoom(null); return; }
+            const ready = this.roomsReady || Promise.resolve();
+            ready.then(() => {
+                const params = this.params;
+                if (String(params.dm || '') !== ids.join(',')) return;
+                const found = moqui.chat.directRoomFor(this.rooms, ids, this.me.userId);
+                if (found) { this.pendingDirect = null; this.replaceRoom(found); return; }
+                this.roomId = null;
+                const kept = this.pendingDirect && this.pendingDirect.userIds.join(',') === ids.join(',') ? this.pendingDirect.text : '';
+                this.pendingDirect = { userIds: ids, name, text: kept, busy: false };
+            });
+        },
+        // the unsaved message's Send: the direct chat made now, the message sent in it, and the room shown in place of the link
+        sendPendingDirect() {
+            const pending = this.pendingDirect;
+            const text = pending ? String(pending.text || '').trim() : '';
+            if (!pending || !text || pending.busy || needsConnection()) return;
+            pending.busy = true;
+            const escape = (line) => line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            const body = text.split(/\n{2,}/).map((part) => '<p>' + part.split('\n').map(escape).join('<br>') + '</p>').join('');
+            this.post('createDirect', { userIds: pending.userIds.join(',') }).then((json) => {
+                if (!json || !json.chatRoomId) { pending.busy = false; return; }
+                return this.post('send', { chatRoomId: json.chatRoomId, body }).then(() => json.chatRoomId, () => json.chatRoomId).then((id) => {
+                    this.pendingDirect = null;
+                    this.scheduleRooms();
+                    this.replaceRoom(id);
+                });
+            }, () => { pending.busy = false; });
         },
         scheduleRooms() { clearTimeout(this.roomsTimer); this.roomsTimer = setTimeout(() => this.loadRooms(), 400); },
         sortRooms() {
@@ -6793,15 +6841,16 @@ module.exports = {
             }, () => { this.newDirect.busy = false; });
         },
         openNewRoom() { if (needsConnection()) return; this.newRoom = { open: true, type: 'private', name: '', topic: '', userIds: [], busy: false, encrypted: false }; },
-        startDirect(userIds, fromLink) {
+        // New direct message's people (or those given) in their direct chat, made or found now
+        startDirect(userIds) {
             const ids = (userIds || this.newDirect.userIds || []).map((id) => String(id).trim()).filter((id) => id);
             if (!ids.length) return;
             this.newDirect.busy = true;
             this.post('createDirect', { userIds: ids.join(',') }).then((json) => {
                 Object.assign(this.newDirect, { open: false, userIds: [], busy: false, name: '' });
                 this.scheduleRooms();
-                if (fromLink) this.replaceRoom(json.chatRoomId); else this.openRoom(json.chatRoomId);
-            }, () => { this.newDirect.busy = false; if (fromLink) this.replaceRoom(null); });
+                this.openRoom(json.chatRoomId);
+            }, () => { this.newDirect.busy = false; });
         },
         createRoom() {
             this.newRoom.busy = true;
@@ -6876,7 +6925,8 @@ module.exports = {
             this.unsubscribe.push(moqui.chat.on('read', (payload) => this.onReadSignal(payload)));
         }
         this.registerKeys();
-        this.loadRooms().then(() => this.$nextTick(() => this.measure()));
+        this.roomsReady = this.loadRooms();
+        this.roomsReady.then(() => this.$nextTick(() => this.measure()));
         this.applyParams();
         setTimeout(() => this.measure(), 300);
     },
@@ -6915,11 +6965,11 @@ module.exports = {
                   const _component_q_skeleton = _resolveComponent("q-skeleton")
                   const _component_q_badge = _resolveComponent("q-badge")
                   const _component_chat_room = _resolveComponent("chat-room")
+                  const _component_m_text_area = _resolveComponent("m-text-area")
                   const _component_m_drop_down = _resolveComponent("m-drop-down")
                   const _component_m_dialog = _resolveComponent("m-dialog")
                   const _component_q_btn_toggle = _resolveComponent("q-btn-toggle")
                   const _component_q_toggle = _resolveComponent("q-toggle")
-                  const _component_m_text_area = _resolveComponent("m-text-area")
                   const _component_q_inner_loading = _resolveComponent("q-inner-loading")
                   const _directive_close_popup = _resolveDirective("close-popup")
 
@@ -7387,7 +7437,7 @@ module.exports = {
                                         size: "40px",
                                         class: "m-muted"
                                       }, null, 8, ["name"]),
-                                      _createElementVNode("div", { class: "text-caption m-muted q-mt-sm" }, _toDisplayString(_ctx.filter === 'threads' ? _ctx.t('No threads yet: a thread you start or reply in is listed here once someone else replies') : _ctx.t('Nothing yet: mentions of you, replies to you and reactions to your messages are listed here')), 1)
+                                      _createElementVNode("div", { class: "text-caption m-muted q-mt-sm" }, _toDisplayString(_ctx.filter === 'threads' ? _ctx.t('No threads yet: a thread you start or reply in is listed here') : _ctx.t('Nothing yet: mentions of you, replies to you and reactions to your messages are listed here')), 1)
                                     ]))
                                   : _createCommentVNode("", true)
                             ], 40, ["data-feed", "onScroll"]))
@@ -7632,8 +7682,14 @@ module.exports = {
                                                           caption: "",
                                                           class: "row no-wrap items-center m-chat-mail-line",
                                                           "data-mail": room.chatRoomId,
+                                                          role: "link",
+                                                          tabindex: "0",
                                                           "aria-label": _ctx.mailText(_ctx.mailOf(room)) + '. ' + _ctx.mailLabel.text,
-                                                          onClick: _withModifiers($event => (_ctx.go(_ctx.mailOf(room).url)), ["stop"])
+                                                          onClick: _withModifiers($event => (_ctx.go(_ctx.mailOf(room).url)), ["stop"]),
+                                                          onKeydown: [
+                                                            _withKeys(_withModifiers($event => (_ctx.go(_ctx.mailOf(room).url)), ["stop","prevent"]), ["enter"]),
+                                                            _withKeys(_withModifiers($event => (_ctx.go(_ctx.mailOf(room).url)), ["stop","prevent"]), ["space"])
+                                                          ]
                                                         }, {
                                                           default: _withCtx(() => [
                                                             _createVNode(_component_q_icon, {
@@ -7653,7 +7709,7 @@ module.exports = {
                                                             })
                                                           ]),
                                                           _: 2
-                                                        }, 1032, ["data-mail", "aria-label", "onClick"]))
+                                                        }, 1032, ["data-mail", "aria-label", "onClick", "onKeydown"]))
                                                       : _createCommentVNode("", true)
                                                   ]),
                                                   _: 2
@@ -7712,7 +7768,7 @@ module.exports = {
                                   : _createCommentVNode("", true)
                             ]))
                       ], 4), [
-                        [_vShow, !_ctx.stacked || !_ctx.roomId]
+                        [_vShow, !_ctx.stacked || !(_ctx.roomId || _ctx.pendingDirect)]
                       ]),
                       (!_ctx.stacked)
                         ? (_openBlock(), _createBlock(_component_q_separator, {
@@ -7743,37 +7799,94 @@ module.exports = {
                               onLeft: _ctx.onLeft,
                               onRead: _ctx.onRoomRead
                             }, null, 8, ["bubbles", "base", "room-id", "me", "prefs", "seq", "thread", "can-go-back", "link-base", "onBack", "onThread", "onChanged", "onLeft", "onRead"]))
-                          : (_openBlock(), _createElementBlock("div", {
-                              key: 1,
-                              class: "col column items-center justify-center q-pa-lg text-center m-muted"
-                            }, [
-                              _createVNode(_component_q_icon, {
-                                name: "sym_o_chat",
-                                size: "56px"
-                              }),
-                              _createElementVNode("div", { class: "text-subtitle1 q-mt-sm" }, _toDisplayString(_ctx.t('Pick a conversation')), 1),
-                              _createElementVNode("div", { class: "text-caption q-mb-md" }, _toDisplayString(_ctx.t('Or start a new one: a direct message or a room.')), 1),
-                              _createElementVNode("div", { class: "row q-gutter-sm justify-center" }, [
-                                _createVNode(_component_q_btn, {
-                                  unelevated: "",
-                                  "no-caps": "",
-                                  color: "primary",
-                                  icon: "sym_o_person_add",
-                                  label: _ctx.t('New direct message'),
-                                  onClick: $event => (_ctx.openNewDirect())
-                                }, null, 8, ["label", "onClick"]),
-                                _createVNode(_component_q_btn, {
-                                  unelevated: "",
-                                  "no-caps": "",
-                                  class: "m-btn-tonal",
-                                  icon: "sym_o_group_add",
-                                  label: _ctx.t('New room'),
-                                  onClick: $event => (_ctx.openNewRoom())
-                                }, null, 8, ["label", "onClick"])
-                              ])
-                            ]))
+                          : (_ctx.pendingDirect)
+                            ? (_openBlock(), _createElementBlock("div", {
+                                key: 1,
+                                class: "col column no-wrap m-chat-pending-direct"
+                              }, [
+                                _createElementVNode("div", { class: "row items-center no-wrap q-pa-sm" }, [
+                                  (_ctx.stacked)
+                                    ? (_openBlock(), _createBlock(_component_q_btn, {
+                                        key: 0,
+                                        flat: "",
+                                        round: "",
+                                        dense: "",
+                                        icon: "sym_o_arrow_back",
+                                        "aria-label": _ctx.t('Back to chats'),
+                                        onClick: _ctx.closeRoom
+                                      }, null, 8, ["aria-label", "onClick"]))
+                                    : _createCommentVNode("", true),
+                                  _createVNode(_component_q_icon, {
+                                    name: "sym_o_person_add",
+                                    size: "22px",
+                                    class: "q-mx-sm m-muted"
+                                  }),
+                                  _createElementVNode("div", { class: "col text-subtitle1 ellipsis" }, _toDisplayString(_ctx.pendingDirect.name || _ctx.t('New direct message')), 1)
+                                ]),
+                                _createVNode(_component_q_separator),
+                                _createElementVNode("div", { class: "col column items-center justify-center q-pa-lg text-center m-muted" }, [
+                                  _createVNode(_component_q_icon, {
+                                    name: "sym_o_chat",
+                                    size: "48px"
+                                  }),
+                                  _createElementVNode("div", { class: "text-caption q-mt-sm" }, _toDisplayString(_ctx.t('No conversation yet: it starts when you send your first message.')), 1)
+                                ]),
+                                _createElementVNode("div", { class: "row items-end no-wrap q-pa-sm q-gutter-x-sm" }, [
+                                  _createElementVNode("div", { class: "col" }, [
+                                    _createVNode(_component_m_text_area, {
+                                      modelValue: _ctx.pendingDirect.text,
+                                      "onUpdate:modelValue": $event => ((_ctx.pendingDirect.text) = $event),
+                                      name: "pendingDirectText",
+                                      autogrow: "",
+                                      rows: "1",
+                                      label: _ctx.t('Message'),
+                                      onKeydown: _withKeys(_withModifiers(_ctx.sendPendingDirect, ["exact","prevent"]), ["enter"])
+                                    }, null, 8, ["modelValue", "onUpdate:modelValue", "label", "onKeydown"])
+                                  ]),
+                                  _createVNode(_component_q_btn, {
+                                    unelevated: "",
+                                    round: "",
+                                    color: "primary",
+                                    icon: "sym_o_send",
+                                    class: "m-chat-pending-send",
+                                    "aria-label": _ctx.t('Send'),
+                                    loading: _ctx.pendingDirect.busy,
+                                    disable: !String(_ctx.pendingDirect.text || '').trim(),
+                                    onClick: _ctx.sendPendingDirect
+                                  }, null, 8, ["aria-label", "loading", "disable", "onClick"])
+                                ])
+                              ]))
+                            : (_openBlock(), _createElementBlock("div", {
+                                key: 2,
+                                class: "col column items-center justify-center q-pa-lg text-center m-muted"
+                              }, [
+                                _createVNode(_component_q_icon, {
+                                  name: "sym_o_chat",
+                                  size: "56px"
+                                }),
+                                _createElementVNode("div", { class: "text-subtitle1 q-mt-sm" }, _toDisplayString(_ctx.t('Pick a conversation')), 1),
+                                _createElementVNode("div", { class: "text-caption q-mb-md" }, _toDisplayString(_ctx.t('Or start a new one: a direct message or a room.')), 1),
+                                _createElementVNode("div", { class: "row q-gutter-sm justify-center" }, [
+                                  _createVNode(_component_q_btn, {
+                                    unelevated: "",
+                                    "no-caps": "",
+                                    color: "primary",
+                                    icon: "sym_o_person_add",
+                                    label: _ctx.t('New direct message'),
+                                    onClick: $event => (_ctx.openNewDirect())
+                                  }, null, 8, ["label", "onClick"]),
+                                  _createVNode(_component_q_btn, {
+                                    unelevated: "",
+                                    "no-caps": "",
+                                    class: "m-btn-tonal",
+                                    icon: "sym_o_group_add",
+                                    label: _ctx.t('New room'),
+                                    onClick: $event => (_ctx.openNewRoom())
+                                  }, null, 8, ["label", "onClick"])
+                                ])
+                              ]))
                       ], 512), [
-                        [_vShow, !_ctx.stacked || _ctx.roomId]
+                        [_vShow, !_ctx.stacked || _ctx.roomId || _ctx.pendingDirect]
                       ])
                     ], 4),
                     _createVNode(_component_m_dialog, {

@@ -1313,6 +1313,31 @@
             return z.formatZoned(at, { year: "numeric", month: "short", day: "numeric" });
         },
         roomIcon(room) { return (room && room.record && room.record.icon) || (room && chat.ROOM_ICONS[room.roomTypeEnumId]) || "sym_o_chat"; },
+        // The plain direct room of exactly these people with me (the rooms of find#Rooms, otherUserIdList), or null: Chat's
+        // dm link opens it, else an unsaved message whose first send makes the room (Comms-Messaging §3), so a link
+        // followed by mistake makes nothing the other person sees.
+        directRoomFor(rooms, userIds, me) {
+            const wanted = Array.from(new Set((userIds || []).map(String).filter((id) => id && id !== me))).sort().join(",");
+            if (!wanted) return null;
+            const found = (rooms || []).find((room) => room && room.roomTypeEnumId === "CrtDirect" && room.isMember && !room.encrypted
+                && Array.from(new Set((room.otherUserIdList || (room.otherUserId ? [room.otherUserId] : [])).map(String))).sort().join(",") === wanted);
+            return found ? found.chatRoomId : null;
+        },
+        // The mail lines of the people's direct chats (the Chat screen's mailLines, find#DirectChatMail) by room, asked once for
+        // the page and shared by Chat and the tray's or the home's panel: a request within maxAge (five minutes) answers
+        // what the last one did. request(url) is moqui.request's; a failure keeps nothing, so the next asks again.
+        mailLines(url, request, maxAge) {
+            const now = Date.now();
+            const kept = chat.mailCache;
+            if (kept && kept.url === url && now - kept.at < (maxAge || 300000)) return kept.promise;
+            const promise = (request || moqui.request)(url).then((result) => {
+                const out = {};
+                ((result && result.json && result.json.mailList) || []).forEach((mail) => { if (mail && mail.chatRoomId && mail.url) out[mail.chatRoomId] = mail; });
+                return out;
+            }, () => { if (chat.mailCache && chat.mailCache.promise === promise) chat.mailCache = null; return {}; });
+            chat.mailCache = { url, at: now, promise };
+            return promise;
+        },
         // archived by me, until a message after the archive (ChatRoomMember.archivedEventSeq)
         isArchived(room) {
             return !!room.isMember && room.archivedEventSeq != null && Number(room.lastMessage ? room.lastMessage.eventSeq : 0) <= Number(room.archivedEventSeq);
