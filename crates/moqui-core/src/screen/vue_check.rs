@@ -402,61 +402,90 @@ pub fn precompiled_qvue(compiler_source: &str, screens: &[BundledQvue<'_>]) -> R
     );
     for screen in screens {
         let named = |err: Error| Error::new(format!("bundled screen {}: {err}", screen.name));
-        let parts = qvue_parts(screen.source);
-        if let Some((attrs, _)) = parts.script {
-            if attrs.contains("setup") || attrs.contains("module") {
-                return Err(named(Error::new("a <script setup> or module script is not bundled")));
-            }
-        }
-        let script = parts.script.map(|(_, body)| body);
-        let mut templates = match script {
-            Some(script) => script_templates(script, COMPILE_TIME_LIMIT).map_err(named)?,
-            None => Vec::new(),
-        };
-        // the file's template, unless the script gives the component one of its own
-        if !templates.iter().any(|(path, _)| path.is_empty()) {
-            if let Some(template) = parts.template {
-                templates.insert(0, (Vec::new(), template.to_string()));
-            }
-        }
+        let make = qvue_make(compiler_source, screen.source).map_err(named)?;
         let name_lit = serde_json::to_string(screen.name).map_err(|err| Error::new(err.to_string()))?;
-        let body = script.map(script_body).unwrap_or_default();
-        out.push_str(&format!(
-            "    moqui.qvtBundled[{name_lit}] = {{ make: function (Vue) {{\n\
-             \x20       const module = {{ exports: {{}} }};\n\
-             \x20       const define = moqui.define;\n\
-             \x20       // the file's script as it is (not indented: a template string in it keeps its text)\n\
-             \x20       const returned = (function (exports) {{\n{body}\n        }})(module.exports);\n\
-             \x20       const component = Object.assign({{}}, returned !== undefined ? returned : module.exports);\n"
-        ));
-        for (path, template) in &templates {
-            let code = bundled_render(compiler_source, template)
-                .map_err(|err| named(Error::new(format!("component {}: {err}", path.join("/")))))?;
-            let mut target = String::from("component");
-            for name in path {
-                let lit = serde_json::to_string(name).map_err(|err| Error::new(err.to_string()))?;
-                target.push_str(&format!(".components[{lit}]"));
-            }
-            out.push_str(&format!(
-                "        {{\n\
-                 \x20           const target = {target};\n\
-                 \x20           target.render = (function () {{\n{code}\n            }})();\n\
-                 \x20           delete target.template;\n\
-                 \x20       }}\n"
-            ));
-        }
-        let (style, scoped) = parts.style.unwrap_or(("", false));
-        let style_lit = if style.trim().is_empty() {
-            "null".to_string()
-        } else {
-            serde_json::to_string(style).map_err(|err| Error::new(err.to_string()))?
-        };
-        out.push_str(&format!(
-            "        return {{ component: component, style: {style_lit}, scoped: {scoped} }};\n    }} }};\n"
-        ));
+        out.push_str(&format!("    moqui.qvtBundled[{name_lit}] = {make};\n"));
     }
     out.push_str("})(globalThis.moqui);\n");
     Ok(out)
+}
+
+/// The `{ make(Vue) }` object of one `.qvue` file, as [`precompiled_qvue`] registers it: `make` runs the file's script
+/// and answers `{ component, style, scoped }`, the component with render functions compiled from its templates (the
+/// file's, and its components' string templates, set in place), with no `with` and no eval. A `.qvue?_qvt=bundle`
+/// answer registers it under the request's name ([`served_qvue`]).
+///
+/// # Errors
+///
+/// Returns an error when the script cannot be bundled (`<script setup>`, a module, one that does not run) or the
+/// compiler rejects a template.
+pub fn qvue_make(compiler_source: &str, source: &str) -> Result<String, Error> {
+    let parts = qvue_parts(source);
+    if let Some((attrs, _)) = parts.script {
+        if attrs.contains("setup") || attrs.contains("module") {
+            return Err(Error::new("a <script setup> or module script is not bundled"));
+        }
+    }
+    let script = parts.script.map(|(_, body)| body);
+    let mut templates = match script {
+        Some(script) => script_templates(script, COMPILE_TIME_LIMIT)?,
+        None => Vec::new(),
+    };
+    // the file's template, unless the script gives the component one of its own
+    if !templates.iter().any(|(path, _)| path.is_empty()) {
+        if let Some(template) = parts.template {
+            templates.insert(0, (Vec::new(), template.to_string()));
+        }
+    }
+    let body = script.map(script_body).unwrap_or_default();
+    let mut out = format!(
+        "{{ make: function (Vue) {{\n\
+         \x20       const module = {{ exports: {{}} }};\n\
+         \x20       const define = moqui.define;\n\
+         \x20       // the file's script as it is (not indented: a template string in it keeps its text)\n\
+         \x20       const returned = (function (exports) {{\n{body}\n        }})(module.exports);\n\
+         \x20       const component = Object.assign({{}}, returned !== undefined ? returned : module.exports);\n"
+    );
+    for (path, template) in &templates {
+        let code = bundled_render(compiler_source, template)
+            .map_err(|err| Error::new(format!("component {}: {err}", path.join("/"))))?;
+        let mut target = String::from("component");
+        for name in path {
+            let lit = serde_json::to_string(name).map_err(|err| Error::new(err.to_string()))?;
+            target.push_str(&format!(".components[{lit}]"));
+        }
+        out.push_str(&format!(
+            "        {{\n\
+             \x20           const target = {target};\n\
+             \x20           target.render = (function () {{\n{code}\n            }})();\n\
+             \x20           delete target.template;\n\
+             \x20       }}\n"
+        ));
+    }
+    let (style, scoped) = parts.style.unwrap_or(("", false));
+    let style_lit = if style.trim().is_empty() {
+        "null".to_string()
+    } else {
+        serde_json::to_string(style).map_err(|err| Error::new(err.to_string()))?
+    };
+    out.push_str(&format!(
+        "        return {{ component: component, style: {style_lit}, scoped: {scoped} }};\n    }} }}"
+    ));
+    Ok(out)
+}
+
+/// The script a `.qvue?_qvt=bundle` request is answered with (`X-Moqui-Qvt: bundled-qvue`, docs/ui/Qvt-Client.md):
+/// `make`, from [`qvue_make`], registered as `moqui.qvtBundled[name]`, where `name` is the request path without its
+/// `.qvue`, as the client names the screen it loads. A page on the runtime build of Vue loads it with a script element
+/// and makes the component with `moqui.bundledComponent(name)`, so it needs no template compiler and no `unsafe-eval`.
+pub fn served_qvue(name: &str, make: &str) -> String {
+    let name_lit = serde_json::to_string(name).unwrap_or_else(|_| "\"\"".to_string());
+    format!(
+        "/* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */\n\n\
+         // A .qvue compiled for the runtime build of Vue (moqui_core::screen::vue_check::qvue_make), its templates as\n\
+         // render functions; moqui.bundledComponent(name) makes it when it is first used.\n\
+         (function (moqui) {{\n    moqui.qvtBundled = moqui.qvtBundled || {{}};\n    moqui.qvtBundled[{name_lit}] = {make};\n}})(globalThis.moqui);\n"
+    )
 }
 
 #[cfg(test)]

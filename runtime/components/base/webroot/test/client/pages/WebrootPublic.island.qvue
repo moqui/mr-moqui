@@ -1,0 +1,26 @@
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License.
+    A public island for the bundled qvue (SEC-PSF-04): moqui-core's screen test (tests/qvt.rs
+    a_qvue_asked_for_as_its_bundle_is_compiled_and_named_by_its_path) serves it as /Island.qvue?_qvt=bundle and keeps
+    the answer in WebrootPublic.island.bundle.js, which WebrootPublic.qvt.spec.js mounts on the runtime build of Vue. -->
+<template>
+    <div class="island-fixture">
+        <p class="island-title">{{ title }}</p>
+        <ul><li v-for="item in items" :key="item">{{ item }}</li></ul>
+        <button type="button" class="island-add" @click="count++">Added {{ count }}</button>
+        <island-note :text="$root.context.note"></island-note>
+    </div>
+</template>
+<script>
+module.exports = {
+    name: 'IslandFixture',
+    components: {
+        'island-note': { props: ['text'], template: '<small class="island-note">{{ text }}</small>' },
+    },
+    data() {
+        return { title: 'Bundled island', items: ['one', 'two'], count: 0 }
+    },
+}
+</script>
+<style>
+.island-fixture .island-note { font-style: italic; }
+</style>

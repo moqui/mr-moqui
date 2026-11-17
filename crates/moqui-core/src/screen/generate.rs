@@ -140,6 +140,8 @@ pub struct Generated {
     /// The service names looked up while what is kept here was made, found or not ([`Self::recorded`]): a service reload
     /// that changes one of them drops the definition (plans/archive/High-Level-Review.md HL-015).
     services: Mutex<std::collections::BTreeSet<String>>,
+    /// The screen's qvue compiled for the runtime build of Vue, for a `.qvue?_qvt=bundle` request ([`super::qvue_bundle`]).
+    qvue_bundle: super::qvue_bundle::Slot,
 }
 
 impl Default for Generated {
@@ -154,6 +156,7 @@ impl Default for Generated {
             static_failures: Mutex::default(),
             static_build: Mutex::default(),
             services: Mutex::default(),
+            qvue_bundle: super::qvue_bundle::Slot::default(),
         }
     }
 }
@@ -226,6 +229,10 @@ impl Generated {
 
     pub(super) fn static_build_lock(&self) -> std::sync::MutexGuard<'_, ()> {
         lock(&self.static_build)
+    }
+
+    pub(super) fn qvue_bundle(&self) -> &super::qvue_bundle::Slot {
+        &self.qvue_bundle
     }
 
     pub(super) fn eligibility(&self, key: &str) -> Option<Arc<Eligibility>> {
