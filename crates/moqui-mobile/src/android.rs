@@ -149,17 +149,28 @@ pub(crate) fn call_busy() -> bool {
 
 /// The page's call `id` is in `state` (`crate::commands::CALL_STATES`; an empty id with `offScreen` for the shell
 /// leaving for a server page): the native code keeps or ends its call (`CallManager.pageCallState`).
-pub(crate) fn page_call_state(id: &str, state: &str) -> Result<(), String> {
+pub(crate) fn page_call_state(id: &str, state: &str, name: &str) -> Result<(), String> {
     with_context(|env, app| {
         let class = app_class(env, app, jni_str!("org.moqui.mobile.CallManager"))?;
         let id = env.new_string(id)?;
         let state = env.new_string(state)?;
+        let name = env.new_string(name)?;
         env.call_static_method(
             &class,
             jni_str!("pageCallState"),
-            jni_sig!("(Ljava/lang/String;Ljava/lang/String;)V"),
-            &[JValue::Object(&id), JValue::Object(&state)],
+            jni_sig!("(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V"),
+            &[JValue::Object(&id), JValue::Object(&state), JValue::Object(&name)],
         )?;
+        Ok(())
+    })
+}
+
+/// The page that had the calls goes (another page, a reload, an account switch): the native calls it joined end
+/// (`CallManager.pageGone`); a ring, or a call answered on the phone and not joined yet, stays.
+pub(crate) fn calls_page_gone() -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.CallManager"))?;
+        env.call_static_method(&class, jni_str!("pageGone"), jni_sig!("()V"), &[])?;
         Ok(())
     })
 }

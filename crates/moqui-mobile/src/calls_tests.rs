@@ -120,7 +120,7 @@ fn the_call_screen_and_transitions_are_under_the_comms_app() {
     );
     assert_eq!(
         hang_up_script("7"),
-        "window.moqui && moqui.call && moqui.call.state.current === \"7\" && moqui.call.leave()"
+        "window.moqui && moqui.call && (moqui.call.state.current === \"7\" ? moqui.call.leave() : moqui.call.state.held && moqui.call.state.held.callSessionId === \"7\" && moqui.call.leaveHeld())"
     );
     assert_eq!(
         transition_path("/qapps/BasicComms", "declineCall"),
@@ -451,6 +451,12 @@ fn the_native_call_tells_the_page_its_audio_picture_in_picture_and_hold() {
     assert!(tell_script("pip", "true")
         .unwrap()
         .ends_with("moqui.call.setHostPip(true)"));
+    assert!(tell_script("mute", "false")
+        .unwrap()
+        .ends_with("moqui.call.setHostMute(false)"));
+    assert!(tell_script("muteToggle", "true")
+        .unwrap()
+        .ends_with("moqui.call.toggleMute()"));
     assert!(tell_script("hold", r#"{"callSessionId":"100231","hold":true}"#)
         .unwrap()
         .ends_with("moqui.call.hostHold(\"100231\", true)"));

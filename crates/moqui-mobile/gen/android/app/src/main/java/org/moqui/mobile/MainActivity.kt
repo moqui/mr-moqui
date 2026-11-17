@@ -213,6 +213,8 @@ class MainActivity : TauriActivity() {
     val callback = object : OnBackPressedCallback(true) {
       // Tauri's back, past this callback
       fun onwards() {
+        // in a video call on its call screen, Back past the page takes the call to picture-in-picture, not away
+        if (CallManager.pipWanted() && enterPip()) return
         isEnabled = false
         onBackPressedDispatcher.onBackPressed()
         isEnabled = true
@@ -247,32 +249,51 @@ class MainActivity : TauriActivity() {
 
   // ---- picture-in-picture (plans/Comms-Messaging.md §8.2 Leave the app, §8.3 item 4) ----
 
+  /** The window's actions in picture-in-picture: Mute and Hang up the call the app is in. */
+  private fun pipActions(): List<android.app.RemoteAction> {
+    val call = CallManager.activeCall() ?: return emptyList()
+    fun action(icon: Int, title: Int, what: String): android.app.RemoteAction {
+      val intent = android.content.Intent(this, CallActionReceiver::class.java).setAction(what).putExtra(CallManager.EXTRA_CALL, call.id)
+      val pending = android.app.PendingIntent.getBroadcast(this, what.hashCode(), intent,
+        android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+      val label = getString(title)
+      return android.app.RemoteAction(android.graphics.drawable.Icon.createWithResource(this, icon), label, label, pending)
+    }
+    return listOf(
+      action(android.R.drawable.ic_lock_silent_mode, R.string.pip_mute, CallService.ACTION_MUTE),
+      action(android.R.drawable.ic_menu_close_clear_cancel, R.string.pip_hang_up, CallService.ACTION_HANG_UP),
+    )
+  }
+
   private fun pipParams(): android.app.PictureInPictureParams {
-    val builder = android.app.PictureInPictureParams.Builder().setAspectRatio(android.util.Rational(3, 4))
+    val builder = android.app.PictureInPictureParams.Builder().setAspectRatio(android.util.Rational(3, 4)).setActions(pipActions())
     // Android 12+: the system takes the app to picture-in-picture by itself when the user leaves it in a video call
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) builder.setAutoEnterEnabled(CallManager.pipWanted())
     return builder.build()
   }
 
-  /** The call's state changed ([CallManager]): picture-in-picture is offered while a video call shows. */
+  /** The call's state changed ([CallManager]): picture-in-picture is offered while a video call shows; the call over,
+   *  the small window goes. */
   fun updatePip() {
     try {
       setPictureInPictureParams(pipParams())
     } catch (err: Exception) {
       Log.d(CallManager.TAG, "No picture-in-picture: ${err.message}")
     }
+    if (isInPictureInPictureMode && CallManager.activeCall() == null) moveTaskToBack(false)
+  }
+
+  private fun enterPip(): Boolean = try {
+    enterPictureInPictureMode(pipParams())
+  } catch (err: Exception) {
+    Log.w(CallManager.TAG, "Picture-in-picture did not start: ${err.message}")
+    false
   }
 
   /** Before Android 12: the user leaves the app (Home, Recents) during a video call: it goes to picture-in-picture. */
   override fun onUserLeaveHint() {
     super.onUserLeaveHint()
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && CallManager.pipWanted()) {
-      try {
-        enterPictureInPictureMode(pipParams())
-      } catch (err: Exception) {
-        Log.w(CallManager.TAG, "Picture-in-picture did not start: ${err.message}")
-      }
-    }
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && CallManager.pipWanted()) enterPip()
   }
 
   /** In or out of picture-in-picture: the call screen shows only the video while in it (`moqui.call.setHostPip`). */

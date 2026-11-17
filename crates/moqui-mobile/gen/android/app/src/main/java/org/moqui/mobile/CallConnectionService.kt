@@ -8,6 +8,7 @@ import android.telecom.CallEndpoint
 import android.telecom.Connection
 import android.telecom.ConnectionRequest
 import android.telecom.ConnectionService
+import android.telecom.PhoneAccount
 import android.telecom.PhoneAccountHandle
 import android.telecom.TelecomManager
 import android.util.Log
@@ -27,7 +28,8 @@ class CallConnectionService : ConnectionService() {
         val connection = CallConnection(this, id ?: "")
         if (call != null) {
             connection.setCallerDisplayName(call.caller, TelecomManager.PRESENTATION_ALLOWED)
-            connection.setAddress(Uri.fromParts("sip", call.id, null), TelecomManager.PRESENTATION_ALLOWED)
+            // a neutral address: a car or a watch shows the caller's name, not a call id
+            connection.setAddress(Uri.fromParts(PhoneAccount.SCHEME_SIP, "moqui", null), TelecomManager.PRESENTATION_ALLOWED)
             connection.setRinging()
         }
         CallManager.connected(id, connection)
@@ -47,12 +49,16 @@ class CallConnectionService : ConnectionService() {
             ?: request?.address?.schemeSpecificPart
         val call = CallManager.call(id)
         val connection = CallConnection(this, id ?: "")
-        connection.setAddress(request?.address ?: Uri.fromParts("sip", id ?: "", null), TelecomManager.PRESENTATION_ALLOWED)
-        if (call != null && call.caller.isNotEmpty()) connection.setCallerDisplayName(call.caller, TelecomManager.PRESENTATION_ALLOWED)
+        connection.setAddress(Uri.fromParts(PhoneAccount.SCHEME_SIP, "moqui", null), TelecomManager.PRESENTATION_ALLOWED)
+        // the call's name (the room or the other people, the page's) for a car or a watch
+        val name = call?.caller?.takeIf { it.isNotEmpty() } ?: service().getString(R.string.call_in_app)
+        connection.setCallerDisplayName(name, TelecomManager.PRESENTATION_ALLOWED)
         connection.setActive()
         CallManager.connected(id, connection)
         return connection
     }
+
+    private fun service(): ConnectionService = this
 
     override fun onCreateOutgoingConnectionFailed(account: PhoneAccountHandle?, request: ConnectionRequest?) {
         val id = request?.extras?.getString(CallManager.EXTRA_CALL) ?: request?.address?.schemeSpecificPart
@@ -108,6 +114,11 @@ class CallConnection(private val service: ConnectionService, val id: String) : C
 
     override fun onCallEndpointChanged(callEndpoint: CallEndpoint) {
         CallAudio.endpointChanged(this, callEndpoint)
+    }
+
+    /** Android 14+: Telecom's mute (a car, a watch): the page's microphone follows. */
+    override fun onMuteStateChanged(isMuted: Boolean) {
+        CallAudio.muteChanged(this, isMuted)
     }
 
     @Deprecated("Android 14+ uses onCallEndpointChanged")

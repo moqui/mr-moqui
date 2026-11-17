@@ -58,6 +58,10 @@ class CallRulesTest {
         assertNull("chosen by the user", CallRules.defaultRoute(true, phone, CallRules.EARPIECE, true))
         val headset = phone + CallRules.BLUETOOTH
         assertNull("a headset stays", CallRules.defaultRoute(true, headset, CallRules.BLUETOOTH, false))
+        // review finding: a headset that is there takes the call at its start, though Telecom named the earpiece first
+        assertEquals(CallRules.BLUETOOTH, CallRules.defaultRoute(false, headset, CallRules.EARPIECE, false))
+        assertEquals(CallRules.WIRED, CallRules.defaultRoute(true, phone + CallRules.WIRED, CallRules.SPEAKER, false))
+        assertNull("the user's choice stays", CallRules.defaultRoute(false, headset, CallRules.EARPIECE, true))
         assertEquals("no earpiece (a tablet)", CallRules.SPEAKER, CallRules.defaultRoute(false, listOf(CallRules.SPEAKER), null, false))
         // a headset that comes takes the call; when it goes, the call's default comes back
         assertEquals(CallRules.BLUETOOTH, CallRules.afterRoutesChanged(false, phone, headset, CallRules.EARPIECE))
@@ -68,10 +72,11 @@ class CallRulesTest {
 
     @Test
     fun theScreenGoesOffAtTheEarAndAVideoCallGoesToPictureInPicture() {
-        assertTrue(CallRules.proximityWanted(true, false, CallRules.EARPIECE))
-        assertFalse(CallRules.proximityWanted(true, false, CallRules.SPEAKER))
-        assertFalse(CallRules.proximityWanted(true, true, CallRules.EARPIECE))
-        assertFalse(CallRules.proximityWanted(false, false, CallRules.EARPIECE))
+        assertTrue(CallRules.proximityWanted(true, false, CallRules.EARPIECE, true))
+        assertFalse(CallRules.proximityWanted(true, false, CallRules.SPEAKER, true))
+        assertFalse(CallRules.proximityWanted(true, true, CallRules.EARPIECE, true))
+        assertFalse(CallRules.proximityWanted(false, false, CallRules.EARPIECE, true))
+        assertFalse("not with the call screen gone or the app behind", CallRules.proximityWanted(true, false, CallRules.EARPIECE, false))
         assertTrue(CallRules.pipWanted(true, true, true))
         assertFalse(CallRules.pipWanted(true, false, true))
         assertFalse(CallRules.pipWanted(true, true, false))

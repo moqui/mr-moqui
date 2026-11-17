@@ -44,6 +44,8 @@ class CallService : Service() {
         const val ACTION_ANSWER = "org.moqui.mobile.ANSWER"
         const val ACTION_DECLINE = "org.moqui.mobile.DECLINE"
         const val ACTION_HANG_UP = "org.moqui.mobile.HANG_UP"
+        /** Picture-in-picture's Mute: the page's microphone on or off. */
+        const val ACTION_MUTE = "org.moqui.mobile.MUTE"
 
         @Volatile private var running = false
 
@@ -254,6 +256,7 @@ class CallActionReceiver : BroadcastReceiver() {
         when (intent.action) {
             CallService.ACTION_DECLINE -> CallManager.decline(context, id)
             CallService.ACTION_HANG_UP -> CallManager.hangUp(context, id)
+            CallService.ACTION_MUTE -> if (CallManager.call(id) != null) Native.tellPage("muteToggle", "true")
         }
     }
 }

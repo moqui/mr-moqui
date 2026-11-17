@@ -60,8 +60,6 @@ object CallManager {
         var connection: CallConnection? = null
         /** On hold here (call waiting: the page's `held`, or Telecom's hold). */
         var held = false
-        /** The page shows its call screen (`screen`, `offScreen`): a video call then goes to picture-in-picture. */
-        var onScreen = false
         var shown = false
         /** The nonce of the Answer's link: the app shows over the lock screen for this call only. */
         var answerNonce: String? = null
@@ -92,8 +90,18 @@ object CallManager {
     fun activeConnection(): CallConnection? =
         calls.values.firstOrNull { it.joined && !it.held && it.connection != null }?.connection
 
-    /** A joined video call on its call screen, not on hold: the app goes to picture-in-picture when the user leaves it. */
-    fun pipWanted(): Boolean = calls.values.any { CallRules.pipWanted(it.joined && !it.held, it.video, it.onScreen) }
+    /** The call screen shows (the page's `screen`, until `offScreen`), whichever call it shows. */
+    @Volatile var screenShown = false
+        private set
+
+    /** The kind (video) the page said of a call before its `joined`. */
+    private val pendingKind = HashMap<String, Boolean>()
+
+    /** The call the app is in now (joined, not on hold). */
+    fun activeCall(): Call? = calls.values.firstOrNull { it.joined && !it.held }
+
+    /** A joined video call, not on hold, with the call screen showing: the app goes to picture-in-picture when left. */
+    fun pipWanted(): Boolean = activeCall()?.let { CallRules.pipWanted(true, it.video, screenShown) } ?: false
 
     /** Whether a call is joined in the app, and whether one is a video call (the foreground service's types). */
     fun inCallMedia(): Pair<Boolean, Boolean> {
@@ -244,7 +252,6 @@ object CallManager {
             return
         }
         call.connection = connection
-        CallAudio.reset()
     }
 
     /**
@@ -263,7 +270,8 @@ object CallManager {
                 putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, handle)
                 putBundle(TelecomManager.EXTRA_OUTGOING_CALL_EXTRAS, Bundle().apply { putString(EXTRA_CALL, call.id) })
             }
-            telecom.placeCall(Uri.fromParts("sip", call.id, null), extras)
+            // a neutral address: what a car or a watch shows is the call's name ([CallConnectionService])
+            telecom.placeCall(Uri.fromParts(PhoneAccount.SCHEME_SIP, "moqui", null), extras)
         } catch (err: Exception) {
             Log.w(TAG, "Telecom did not take the call ${call.id}: ${err.message}")
         }
@@ -310,7 +318,9 @@ object CallManager {
         call.state = State.ANSWERED
         call.answerNonce = nonce
         call.answeredAt = System.currentTimeMillis()
-        call.connection?.setActive()
+        // a second call (call waiting): not active here while the first is, or Telecom would hold the first on its own
+        // while the page holds it too; the page's joined makes it active once the first is on hold
+        if (activeConnection() == null) call.connection?.setActive()
         closeRingScreen()
         CallService.refresh(app)
         main.postDelayed({ watchdog(app, call) }, CallRules.JOIN_WATCHDOG_MS)
@@ -388,7 +398,15 @@ object CallManager {
      * (with an empty id: the shell left for a server page).
      */
     @JvmStatic
-    fun pageCallState(id: String, state: String) {
+    fun pageCallState(id: String, state: String) = pageCallState(id, state, "")
+
+    /**
+     * [pageCallState] with the call's name (with `joined`: the room or the other people, which a car or a watch shows).
+     * `video` and `voice` for a call not here yet are kept for it (they may come before its `joined`); `screen` and
+     * `offScreen` say whether the call screen shows, whatever call it shows (picture-in-picture, the screen at the ear).
+     */
+    @JvmStatic
+    fun pageCallState(id: String, state: String, name: String) {
         onMain {
             val context = appContext ?: return@onMain
             val call = calls[id]
@@ -397,7 +415,7 @@ object CallManager {
                     if (call == null) {
                         // a call joined in the app (not rung here): the foreground service keeps it while the screen is
                         // off, and Telecom routes its audio
-                        val joined = Call(id, "", "", "", false, 0, State.ANSWERED).also {
+                        val joined = Call(id, "", name.take(80), "", pendingKind.remove(id) ?: false, 0, State.ANSWERED).also {
                             it.shown = true
                             it.joined = true
                         }
@@ -412,12 +430,15 @@ object CallManager {
                         if (call.state == State.RINGING) {
                             // answered in the app itself, not on the ring screen
                             call.state = State.ANSWERED
-                            call.connection?.setActive()
                             closeRingScreen()
                         }
+                        // active now (a second call answered on the phone waited for the first to be held)
+                        if (call.connection != null && call.connection?.state != android.telecom.Connection.STATE_ACTIVE) call.connection?.setActive()
                         call.joined = true
                     }
                     Log.i(TAG, "The app is in the call $id")
+                    // the call the app is in now: its own audio route (one that waited, held or rung second, too)
+                    calls[id]?.let { now -> now.connection?.let { CallAudio.kindChanged(it, now.video) } }
                 }
                 "left" -> if (call != null && call.state == State.ANSWERED) {
                     calls.remove(id)
@@ -434,13 +455,15 @@ object CallManager {
                 "video", "voice" -> if (call != null) {
                     call.video = state == "video"
                     call.connection?.let { CallAudio.kindChanged(it, call.video) }
+                } else {
+                    pendingKind[id] = state == "video"
                 }
                 "screen" -> {
-                    if (call != null) call.onScreen = true
+                    screenShown = true
                     if (call != null && call.answerNonce != null && call.state == State.ANSWERED) appScreen?.get()?.showOverLock(true)
                 }
                 "offScreen" -> {
-                    calls.values.forEach { it.onScreen = false }
+                    screenShown = false
                     leaveLockScreen()
                 }
             }
@@ -458,15 +481,34 @@ object CallManager {
         }
     }
 
-    /** The ongoing call notification's Hang up: the page leaves the call (and says so), or it ends here. */
+    /**
+     * The ongoing call notification's Hang up: the page leaves the call, or the call it has on hold (and says so), and the
+     * native call ends here at once, so one the page no longer has does not stay.
+     */
     fun hangUp(context: Context, id: String) {
-        val call = calls[id] ?: return
-        if (call.joined) {
-            hangUpPage(id)
-        } else {
-            calls.remove(id)
-            end(call, DisconnectCause.LOCAL)
-            changed(context.applicationContext)
+        val call = calls.remove(id) ?: return
+        if (call.joined) hangUpPage(id)
+        end(call, DisconnectCause.LOCAL)
+        changed(context.applicationContext)
+    }
+
+    /**
+     * The page that had the calls goes (another page, a reload, an account switch; Rust's navigate): the calls it joined
+     * end here with its media, held ones too; a ring, or a call answered on the phone and not joined yet, stays.
+     */
+    @JvmStatic
+    fun pageGone() {
+        onMain {
+            val context = appContext ?: return@onMain
+            val gone = calls.values.filter { it.joined }
+            if (gone.isEmpty()) return@onMain
+            for (call in gone) {
+                calls.remove(call.id)
+                end(call, DisconnectCause.LOCAL)
+                Log.i(TAG, "The page with the call ${call.id} went: the call here ends")
+            }
+            screenShown = false
+            changed(context)
         }
     }
 
@@ -481,6 +523,7 @@ object CallManager {
             it.destroy()
         }
         call.connection = null
+        CallAudio.forget(call.id)
         if (ringing() == null) closeRingScreen()
         if (calls.values.none { it.joined && !it.held }) appContext?.let { CallAudio.proximity(it, false) }
     }

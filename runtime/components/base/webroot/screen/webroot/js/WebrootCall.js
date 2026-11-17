@@ -219,14 +219,17 @@
         // joined, left, and its call screen shown or left (over the lock screen the app shows only that)
         // joined, left, held (call waiting: the native call stays; an older app that does not know it keeps "joined"), and
         // its call screen shown or left (over the lock screen the app shows only that)
-        hostCallState(callSessionId, what) {
+        // name: the call's name for a car or a watch (the room, or the other people), with joined; a promise of the ask, so
+        // what follows goes after it
+        hostCallState(callSessionId, what, name) {
             const host = root.moquiDesktop;
-            if (!host || typeof host.callState !== "function") return;
+            if (!host || typeof host.callState !== "function") return Promise.resolve();
             try {
-                const asked = host.callState(callSessionId, what);
-                if (asked && typeof asked.catch === "function") asked.catch(() => null);
+                const asked = host.callState(callSessionId, what, name || "");
+                return Promise.resolve(asked).catch(() => null);
             } catch (e) {
                 /* an app that does not know this state */
+                return Promise.resolve();
             }
         },
         // whether this call screen answers the call by itself: only the mobile app's host says so, once, for the call
@@ -259,7 +262,7 @@
             const held = state.held;
             if (held && held.callSessionId === view.callSessionId) {
                 const leg = (view.participants || []).flatMap((p) => p.legs || []).find((l) => l.callLegId === held.legId);
-                if (view.status === "ended" || !leg || leg.status !== "answered") state.held = null;
+                if (view.status === "ended" || !leg || leg.status !== "answered") call.dropHeld(held);
                 return;
             }
             if (held || view.status === "ended" || view.callSessionId === state.current || view.myLegStatus !== "answered") return;
@@ -302,7 +305,7 @@
             if (data.action === "moved" && data.toCallSessionId && state.current === data.callSessionId) call.moveTo(data.toCallSessionId);
             if (data.action === "ended" && state.current === data.callSessionId) call.hangUp("ended");
             // the call on hold ended: nothing to resume
-            if (data.action === "ended" && state.held && state.held.callSessionId === data.callSessionId) state.held = null;
+            if (data.action === "ended" && state.held && state.held.callSessionId === data.callSessionId) call.dropHeld(state.held);
             // Move to this device: this page's leg was moved to the user's other device, which is connected now
             if (data.action === "legMoved") call.movedElsewhere(data.callSessionId, data.fromLegIds || []);
             if (data.action === "captions" && data.callSessionId === state.current) call.loadCaptions(data.callSessionId);
@@ -562,10 +565,22 @@
             state.hostPip = !!on;
         },
         // Telecom holds the call or takes it off hold (another call, a watch, a car): the page does it, and says so back
+        // A call already on hold is not overwritten: the page holds one call at a time, so Telecom's hold of the call this
+        // page is in, with another on hold, is refused (the call goes on); a hold on its way answers once.
         hostHold(callSessionId, hold) {
-            if (hold && state.current === callSessionId) return call.hold();
+            if (hold && state.current === callSessionId) {
+                if (state.held && state.held.callSessionId !== callSessionId && !(call.holding && call.holding.callSessionId === callSessionId)) {
+                    return Promise.resolve(null);
+                }
+                return call.hold();
+            }
             if (!hold && state.held && state.held.callSessionId === callSessionId) return call.resume();
             return Promise.resolve(null);
+        },
+        // Telecom's mute (a car, a watch, a headset's button): the page's microphone follows
+        setHostMute(muted) {
+            if (!state.current || !!state.muted === !!muted) return;
+            call.toggleMute();
         },
         // The other side's video came or went: a prompt, not a new call. "on": they turned theirs on and this page sends
         // none; "off": they turned theirs off and this page still sends.
@@ -686,7 +701,7 @@
             const last = call.lastLeg && call.lastLeg.callSessionId === callSessionId && fromLegIds.includes(call.lastLeg.legId);
             // the call on hold here was taken to another device: it is held here no more
             const held = state.held && state.held.callSessionId === callSessionId && fromLegIds.includes(state.held.legId);
-            if (held) state.held = null;
+            if (held) call.dropHeld(state.held);
             if (!mine && !last && !held) return;
             if (mine) call.hangUp("moved");
             state.movedAway = { callSessionId };
@@ -700,6 +715,22 @@
             const id = state.current;
             const legId = state.legId;
             if (!id) return Promise.resolve(null);
+            // one hold at a time: a second ask while one is on its way (Telecom's hold and the page's Hold and answer at
+            // once) gets the same answer
+            if (call.holding && call.holding.callSessionId === id) return call.holding.promise;
+            const promise = call.holdNow(id, legId).finally(() => { if (call.holding && call.holding.promise === promise) call.holding = null; });
+            call.holding = { callSessionId: id, promise };
+            return promise;
+        },
+        holding: null,
+        // the call on hold is no longer this page's (it ended, moved, or was left): the mobile app's native call on hold
+        // ends with it
+        dropHeld(held) {
+            if (!held) return;
+            if (state.held === held) state.held = null;
+            call.hostCallState(held.callSessionId, "left");
+        },
+        holdNow(id, legId) {
             const video = call.hasVideo() && !state.cameraOff;
             const view = state.calls[id];
             const name = view ? (view.participants || []).filter((p) => p.userId !== call.me).map((p) => p.displayName).join(", ") : "";
@@ -725,7 +756,7 @@
                 const view = json.call;
                 const leg = view && (view.participants || []).flatMap((p) => (p.userId === call.me ? p.legs || [] : [])).find((l) => l.callLegId === held.legId);
                 if (!view || view.status === "ended" || !leg || leg.status !== "answered") {
-                    if (state.held === held) state.held = null;
+                    call.dropHeld(held);
                     if (moqui.notifyMessages) moqui.notifyMessages([{ type: "info", message: t("The call on hold has ended or moved to another device") }]);
                     return null;
                 }
@@ -753,9 +784,7 @@
         leaveHeld() {
             const held = state.held;
             if (!held) return Promise.resolve({});
-            state.held = null;
-            // the mobile app's native call on hold ends with it
-            call.hostCallState(held.callSessionId, "left");
+            call.dropHeld(held);
             call.send({ rtc: "leave", callSessionId: held.callSessionId, callLegId: held.legId, id: call.nextId++ });
             return call.request("leaveCall", { callSessionId: held.callSessionId, callLegId: held.legId });
         },
@@ -1030,9 +1059,13 @@
                     state.muted = !!(stream && stream.getAudioTracks().some((track) => !track.enabled));
                     return call.connect(stream).then((done) => {
                         if (state.current === callSessionId) {
-                            call.hostCallState(callSessionId, "joined");
-                            // the mobile app's native call: its kind (the default audio route) and its audio routes
-                            call.hostCallState(callSessionId, call.hasVideo() && !state.cameraOff ? "video" : "voice");
+                            // the mobile app's native call, with its name for a car or a watch; then its kind (the default
+                            // audio route), after it, and its audio routes
+                            const kind = call.hasVideo() && !state.cameraOff ? "video" : "voice";
+                            const named = state.calls[callSessionId];
+                            const name = named ? (named.participants || []).filter((p) => p.userId !== call.me).map((p) => p.displayName).join(", ")
+                                || named.roomName || "" : "";
+                            call.hostCallState(callSessionId, "joined", name).then(() => call.hostCallState(callSessionId, kind));
                             const host = root.moquiDesktop;
                             if (host && typeof host.callAudio === "function") Promise.resolve(host.callAudio()).then(call.setHostAudio, () => null);
                             call.listDevices();

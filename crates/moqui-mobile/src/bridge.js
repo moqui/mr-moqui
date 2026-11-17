@@ -302,7 +302,8 @@
             deviceMode: deviceMode ? String(deviceMode) : null }),
         ssoCancel: () => shellAsk("client_sso_cancel"),
         // the shell's call joined or over (WebrootCall.js): the phone's native call (MT2) is kept while it lasts
-        callState: (callSessionId, state) => shellAsk("call_state", { callSessionId: String(callSessionId || ""), state: String(state || "") })
+        callState: (callSessionId, state, name) => shellAsk("call_state", { callSessionId: String(callSessionId || ""), state: String(state || ""),
+            name: name ? String(name) : null })
             .catch((err) => console.info("The call state was not told to the app", err)),
         // whether the call screen answers this call by itself: once, for the call the user answered on the phone
         takeAnswer: (callSessionId) => shellAsk("call_take_answer", { callSessionId: String(callSessionId || "") })

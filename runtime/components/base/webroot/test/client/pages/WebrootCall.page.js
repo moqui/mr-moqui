@@ -237,3 +237,61 @@ test("the mobile app's native call: its audio routes, picture-in-picture, Teleco
         Object.assign(state, { hostAudio: null, hostPip: false });
     }
 });
+
+// Review findings of phase 4's Android part: a held call that ends or moves tells the app; Telecom's hold of the call
+// this page is in, with another on hold, is refused; a hold on its way answers once; Telecom's mute; joined with its name
+test("the app's native calls: a held call gone tells the app, one hold at a time, Telecom's mute, joined with its name", async () => {
+    reset();
+    const host = window.moquiDesktop;
+    const told = [];
+    let holds = 0;
+    let release = null;
+    window.moquiDesktop = { callState: (id, what, name) => { told.push(id + ":" + what + (name ? ":" + name : "")); return Promise.resolve(); } };
+    const request = moqui.request;
+    moqui.request = (url) => {
+        if (url.endsWith("/holdOwnLeg")) {
+            holds++;
+            return new Promise((resolve) => { release = () => resolve({ json: { callLegId: "L1" } }); });
+        }
+        return Promise.resolve({ json: {} });
+    };
+    const toggles = [];
+    const toggleMute = call.toggleMute;
+    call.toggleMute = () => { toggles.push(true); state.muted = !state.muted; };
+    try {
+        // a hold on its way: Telecom's and the page's at once are one
+        Object.assign(state, { current: "C1", legId: "L1", phase: "connected" });
+        const first = call.hold();
+        const second = call.hostHold("C1", true);
+        assert.equal(holds, 1, "one hold asked");
+        release();
+        assert.deepEqual([(await first).callSessionId, (await second).callSessionId], ["C1", "C1"]);
+        // another call in, with C1 on hold: Telecom's hold of it is refused (C1 stays the held one)
+        Object.assign(state, { current: "C2", legId: "L2" });
+        assert.equal(await call.hostHold("C2", true), null);
+        assert.equal(state.held.callSessionId, "C1");
+        // the held call ends on the server: the app hears it left
+        call.receive({ topic: "chatUser:ann", message: { kind: "call", action: "ended", callSessionId: "C1" } });
+        assert.equal(state.held, null);
+        assert.ok(told.includes("C1:left"), told.join(" "));
+        // a held leg moved to another device: left too
+        state.held = { callSessionId: "C3", legId: "L3", video: false, name: "" };
+        call.movedElsewhere("C3", ["L3"]);
+        assert.ok(told.includes("C3:left"));
+        // Telecom's mute: the microphone follows, once
+        state.muted = false;
+        call.setHostMute(true);
+        call.setHostMute(true);
+        assert.equal(toggles.length, 1);
+        // joined goes with the call's name, then its kind after it
+        await call.hostCallState("C2", "joined", "Bob");
+        assert.ok(told.includes("C2:joined:Bob"));
+    } finally {
+        moqui.request = request;
+        call.toggleMute = toggleMute;
+        window.moquiDesktop = host;
+        reset();
+        Object.assign(state, { muted: false, hostAudio: null, hostPip: false });
+        call.holding = null;
+    }
+});

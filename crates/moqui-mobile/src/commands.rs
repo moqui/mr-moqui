@@ -320,6 +320,7 @@ pub(crate) fn call_state(
     nonce: Option<String>,
     call_session_id: String,
     state: String,
+    name: Option<String>,
 ) -> Result<(), String> {
     let host = host(&app)?;
     if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
@@ -330,11 +331,18 @@ pub(crate) fn call_state(
         .iter()
         .find(|known| **known == state)
         .ok_or("Not a call state")?;
+    // the call's name for a car or a watch (with joined): the room, or the other people
+    let name = call_name(name.as_deref());
     #[cfg(target_os = "android")]
-    crate::android::page_call_state(id, state)?;
+    crate::android::page_call_state(id, state, &name)?;
     #[cfg(not(target_os = "android"))]
-    log::info!("The call {id} is {state}");
+    log::info!("The call {id} is {state} {name}");
     Ok(())
+}
+
+/// A call's name as a car or a watch shows it: one line, at most 80 characters, no control characters.
+pub(crate) fn call_name(name: Option<&str>) -> String {
+    clip(name.unwrap_or(""), 80).trim().to_string()
 }
 
 /// Whether the shell's call screen of `callSessionId` answers it by itself: only once, for the call the user answered

@@ -241,22 +241,34 @@ The call's media stays the WebView's; the native code gives it what a phone's ow
 - **Every call is in Telecom.** A call rung here is an incoming self-managed call; one the page joins by itself
   (started from a chat, joined, moved to this phone) is placed as an outgoing self-managed call (`placeCall`), so it
   has the audio routes, a headset's hang-up, and the hold of another call. The page says what the call does
-  (`call_state`): `joined`, `left`, `held`, `screen`, `offScreen`, and its kind, `video` or `voice`.
-- **Audio** goes through Telecom (`CallAudio`): `CallEndpoint` on Android 14+, the `CallAudioState` routes before.
-  The earpiece for a voice call and the speaker for a video call by themselves; a Bluetooth or wired headset takes the
-  call when it comes, and when it goes the call falls back to its kind's route. The call screen's audio button lists
-  the routes Telecom offers (earpiece, speaker, headphones, Bluetooth; `call_audio`, `call_audio_route`) and the
-  user's choice holds for the rest of the call. The page hears each change (`moqui.call.setHostAudio`).
-- **The screen off at the ear:** a voice call on the earpiece holds the proximity wake lock.
+  (`call_state`): `joined` (with the call's name: the other people, or the room), `left`, `held`, `screen`, `offScreen`,
+  and its kind, `video` or `voice` (sent after `joined`; one that comes first is kept for it). A car or a watch shows
+  the call's name, and a neutral address, not a call id.
+- **The page owns its calls.** When the page goes (a server page opened, a reload, an account switch, another
+  account's ring answered: every navigation of the webview), the calls it joined end here, held ones too; a ring, or a
+  call answered on the phone and not joined yet, stays. Every way the page loses a call on hold (it ended, moved to
+  another device, or was left) tells the app (`left`), and the ongoing notification's Hang up ends the native call at
+  once, the page leaving it, or the one it has on hold.
+- **Audio** goes through Telecom (`CallAudio`), each call with its own state, so a second ring does not reset the call
+  the app is in, and only that call is routed: `CallEndpoint` on Android 14+, the `CallAudioState` routes before. A
+  Bluetooth or wired headset that is there takes the call (also at its start, when Telecom names the earpiece first),
+  one that comes takes it at once, and when it goes the call falls back to its kind's route: the earpiece for voice,
+  the speaker for video. The call screen's audio button lists the routes (earpiece, speaker, headphones, Bluetooth;
+  `call_audio`, `call_audio_route`, run on the main thread) and the user's choice holds for that call. The page hears
+  each change (`moqui.call.setHostAudio`), and Telecom's mute (a car, a watch) mutes the page (`setHostMute`).
+- **The screen off at the ear:** a voice call on the earpiece, with its call screen showing and the app in front,
+  holds the proximity wake lock.
 - **Leave the app:** the call keeps going. The `phoneCall` foreground service also takes the `microphone` type once
   the app is in a call, and `camera` for a video call (Android 14 lets a service take them only from the app in front:
-  a ring alone keeps `phoneCall`). A video call on its call screen goes to picture-in-picture when the user leaves the
-  app (by itself on Android 12+, from `onUserLeaveHint` before), and the call screen then shows only the video
-  (`moqui.call.setHostPip`).
+  a ring alone keeps `phoneCall`). A video call with the call screen showing (whichever call it shows, a swapped one
+  too) goes to picture-in-picture when the user leaves the app (by itself on Android 12+, from `onUserLeaveHint`
+  before) or presses Back past the page; the window has Mute and Hang up, the call screen shows only the video
+  (`moqui.call.setHostPip`), and the window goes when the call is over. Its shape is a fixed 3:4.
 - **Hold and call waiting:** the page's hold (Hold and answer, Swap) holds the Telecom call (`held`) and `joined`
   takes it off; Telecom's own hold (another call, a watch, a car) reaches the page (`moqui.call.hostHold`), which holds
-  or resumes it. A second ring while in a call rings through Telecom; Answer on the phone's ring puts the call the page
-  is in on hold first (Hold and answer).
+  the call unless another is on hold already (the page holds one call at a time); a hold already on its way answers
+  once. A second ring rings through Telecom. Answering it on the phone does not make it active while the first is:
+  the page puts the first on hold (Hold and answer), and its `joined` makes the second active.
 - **Move to this device** is the page's (`move#Call`): a call moved to the phone is joined there and placed in Telecom
   like any joined one, and one moved away from it is left, which ends its Telecom call.
 - **The Telecom library.** These use `android.telecom` directly. Moving to the current Telecom library

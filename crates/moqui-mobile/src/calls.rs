@@ -209,6 +209,9 @@ pub(crate) fn tell_script(what: &str, json: &str) -> Option<String> {
     let (function, args) = match what {
         "audio" if value.is_object() => ("setHostAudio", value.to_string()),
         "pip" if value.is_boolean() => ("setHostPip", value.to_string()),
+        "mute" if value.is_boolean() => ("setHostMute", value.to_string()),
+        // picture-in-picture's Mute: the page's microphone on or off
+        "muteToggle" if value.is_boolean() => ("toggleMute", String::new()),
         "hold" => {
             let id = call_id(value["callSessionId"].as_str()?)?;
             let hold = value["hold"].as_bool()?;
@@ -224,7 +227,10 @@ pub(crate) fn tell_script(what: &str, json: &str) -> Option<String> {
 /// What the shell runs to leave the call `id` it is in (the call notification's Hang up, a headset's).
 pub(crate) fn hang_up_script(id: &str) -> String {
     let quoted = serde_json::to_string(id).unwrap_or_else(|_| "\"\"".to_string());
-    format!("window.moqui && moqui.call && moqui.call.state.current === {quoted} && moqui.call.leave()")
+    format!(
+        "window.moqui && moqui.call && (moqui.call.state.current === {quoted} ? moqui.call.leave() : \
+         moqui.call.state.held && moqui.call.state.held.callSessionId === {quoted} && moqui.call.leaveHeld())"
+    )
 }
 
 /// The call's screen under the comms app at `root` (`/qapps/BasicComms`), which answers when the host hands it the

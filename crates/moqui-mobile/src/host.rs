@@ -364,7 +364,6 @@ impl MobileHost {
         false
     }
 
-    /// The shell leaves the call `id`, if it is in it (the call notification's Hang up, a headset's).
     /// The native call tells the shell's call screen something ([`crate::calls::tell_script`]).
     pub(crate) fn tell_call(&self, script: &str) {
         if self.is_shell(MAIN) && self.page.has_nonce() {
@@ -372,6 +371,7 @@ impl MobileHost {
         }
     }
 
+    /// The shell leaves the call `id`, if it is in it or has it on hold (the call notification's Hang up, a headset's).
     pub(crate) fn hang_up(&self, id: &str) {
         if self.is_shell(MAIN) && self.page.has_nonce() {
             self.eval(&crate::calls::hang_up_script(id));
@@ -391,6 +391,12 @@ impl MobileHost {
     /// Show `url` in the one webview; its sockets go with the page that leaves.
     pub(crate) fn navigate(&self, url: &Url) {
         self.page.navigating();
+        // the page leaves with its calls' media: the native calls it joined end with it (a server page, a reload, an
+        // account switch); a ring, or a call answered on the phone and not joined yet, stays
+        #[cfg(target_os = "android")]
+        if let Err(err) = crate::android::calls_page_gone() {
+            log::warn!("The native calls were not told the page went: {err}");
+        }
         if url.origin().ascii_serialization() == SHELL_ORIGIN {
             self.page.host_shows_shell();
         }
@@ -483,7 +489,7 @@ impl ShellHost for MobileHost {
         let path = server_path(path)?;
         // the shell, and its call screen, go: over the lock screen the app does not show a server page
         #[cfg(target_os = "android")]
-        if let Err(err) = crate::android::page_call_state("", "offScreen") {
+        if let Err(err) = crate::android::page_call_state("", "offScreen", "") {
             log::warn!("The native code was not told the call screen went: {err}");
         }
         let account = self.signed_in().ok_or("No account is signed in")?;

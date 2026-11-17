@@ -67,6 +67,43 @@ class CallTelecomTest {
         assertNull(CallManager.call("T1"))
     }
 
+    /**
+     * Review findings: a call's kind that comes before its joined is kept for it; the call screen's screen counts for
+     * picture-in-picture whichever call it shows; the page gone (a server page, a reload, an account switch) ends the
+     * calls it joined; the notification's Hang up ends a native call at once, one on hold too.
+     */
+    @Test
+    fun aKindBeforeJoinedTheScreenAndThePageGoneOrHangUpEndTheNativeCall() {
+        CallManager.pageCallState("T1", "video")
+        CallManager.pageCallState("T1", "screen")
+        CallManager.pageCallState("T1", "joined", "Ann Example")
+        waitFor { connection("T1")?.state == Connection.STATE_ACTIVE }
+        assertTrue("the kind that came first", CallManager.call("T1")!!.video)
+        assertEquals("Ann Example", CallManager.call("T1")!!.caller)
+        assertEquals("Ann Example", connection("T1")!!.callerDisplayName)
+        waitFor { CallManager.pipWanted() }
+        assertTrue("a video call on the call screen goes to picture-in-picture", CallManager.pipWanted())
+        CallManager.pageCallState("T1", "offScreen")
+        waitFor { !CallManager.pipWanted() }
+        assertFalse(CallManager.pipWanted())
+        // the page goes: the call it joined ends here
+        val telecom = connection("T1")!!
+        CallManager.pageGone()
+        waitFor { telecom.state == Connection.STATE_DISCONNECTED }
+        assertEquals(Connection.STATE_DISCONNECTED, telecom.state)
+        assertNull(CallManager.call("T1"))
+        // a held call: the notification's Hang up ends it here at once
+        CallManager.pageCallState("T2", "joined")
+        waitFor { connection("T2")?.state == Connection.STATE_ACTIVE }
+        CallManager.pageCallState("T2", "held")
+        val held = connection("T2")!!
+        waitFor { held.state == Connection.STATE_HOLDING }
+        InstrumentationRegistry.getInstrumentation().runOnMainSync { CallManager.hangUp(context, "T2") }
+        waitFor { held.state == Connection.STATE_DISCONNECTED }
+        assertEquals(Connection.STATE_DISCONNECTED, held.state)
+        assertNull(CallManager.call("T2"))
+    }
+
     @Test
     fun aVoiceCallGoesToTheEarpieceAVideoCallToTheSpeakerAndThePageChooses() {
         CallManager.pageCallState("T2", "joined")

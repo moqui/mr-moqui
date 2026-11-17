@@ -58,13 +58,15 @@ object CallRules {
 
     /**
      * The route a call goes to by itself, when the user has not chosen one in it: a headset (Bluetooth or wired) that
-     * Telecom took stays; else the speaker for a video call, the earpiece for a voice call (the speaker where the phone
-     * has no earpiece). Null: no change.
+     * Telecom took stays, and one that is there takes the call (at a call's start Telecom may name the earpiece before
+     * Bluetooth's audio is up); else the speaker for a video call, the earpiece for a voice call (the speaker where the
+     * phone has no earpiece). Null: no change.
      */
     fun defaultRoute(video: Boolean, available: Collection<String>, current: String?, chosen: Boolean): String? {
         if (chosen) return null
         if (current == BLUETOOTH || current == WIRED) return null
-        val wanted = if (video) SPEAKER else if (EARPIECE in available) EARPIECE else SPEAKER
+        val headset = listOf(BLUETOOTH, WIRED).firstOrNull { it in available }
+        val wanted = headset ?: if (video) SPEAKER else if (EARPIECE in available) EARPIECE else SPEAKER
         return wanted.takeIf { it != current && it in available }
     }
 
@@ -79,8 +81,9 @@ object CallRules {
         return null
     }
 
-    /** The screen goes off at the ear: a voice call on the earpiece, in the app. */
-    fun proximityWanted(inCall: Boolean, video: Boolean, route: String?): Boolean = inCall && !video && route == EARPIECE
+    /** The screen goes off at the ear: a voice call on the earpiece, with its call screen showing in the app in front. */
+    fun proximityWanted(inCall: Boolean, video: Boolean, route: String?, screenInFront: Boolean): Boolean =
+        inCall && !video && route == EARPIECE && screenInFront
 
     /** A video call, in the app and on its call screen, goes to picture-in-picture when the user leaves the app. */
     fun pipWanted(inCall: Boolean, video: Boolean, onCallScreen: Boolean): Boolean = inCall && video && onCallScreen
