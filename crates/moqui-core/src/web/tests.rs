@@ -285,6 +285,21 @@ fn percent_decode_keeps_bad_escapes_and_never_panics() {
     assert_eq!(percent_decode("%C3%A9"), "\u{e9}");
 }
 
+/// Over https the session cookie is `__Host-moqui.session` only: a plain `moqui.session`, which another host of the
+/// domain or a plain-http page could have set, is no session there (SEC-WEB-05). Over http the plain name is read.
+#[test]
+fn an_https_request_reads_only_the_host_prefixed_session_cookie() {
+    let mut request = super::WebRequest::new("GET", "/apps");
+    request.set_header("cookie", "moqui.session=planted.mac");
+    assert_eq!(super::session_cookie_of(&request).as_deref(), Some("planted.mac"));
+    request.https = true;
+    assert_eq!(super::session_cookie_of(&request), None, "the plain name over https");
+    request.set_header("cookie", "moqui.session=planted.mac; __Host-moqui.session=own.mac");
+    assert_eq!(super::session_cookie_of(&request).as_deref(), Some("own.mac"));
+    request.https = false;
+    assert_eq!(super::session_cookie_of(&request).as_deref(), Some("planted.mac"));
+}
+
 #[test]
 fn cookie_value_skips_parts_without_an_equals_sign() {
     assert_eq!(

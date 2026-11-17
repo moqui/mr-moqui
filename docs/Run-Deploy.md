@@ -950,7 +950,9 @@ every host gets `webroot.xml`, the apps on paths under it, until a `root-screen`
   `root-screen` pattern names counts, as a plain host name, never another `Host` header. On a `refuse` host it is
   `webapp_http_host`'s, as a link made outside a request (mail, a report, a job) always is: such links are often to the
   apps, which that host does not serve.
-- **Sessions.** The session cookie is tied to its host, with no cookie domain: a person signs in to each host. A
+- **Sessions.** The session cookie is tied to its host, with no cookie domain: a person signs in to each host. Over
+  https it is `__Host-moqui.session`, which no other host of the domain and no plain-http page can set or shadow; a
+  browser that still holds a `moqui.session` cookie from an older server signs in once again. A
   deployment's own sites share accounts through SSO; mr-pass's Account does that for PASS sites. A server that is the
   sign-in provider for its own other hosts is later work.
 - **Per origin.** Each host is its own origin: CORS, the service worker, the PWA manifest and Web Push subscriptions
@@ -1211,7 +1213,7 @@ The cluster itself is as in [Cluster](#cluster): one external database, the same
 
 | Traffic | To the member |
 |---|---|
-| A terminate host's requests | Of the session cookie (`moqui.session`, or the host's own, set on Edge Clients › Domains), by rendezvous hashing over the live members, so a browser stays on one member and every edge node picks the same; with no cookie, in turn. A WebSocket as its opening request |
+| A terminate host's requests | Of the session cookie (`__Host-moqui.session` over https, else `moqui.session`, or the host's own, set on Edge Clients › Domains), by rendezvous hashing over the live members, so a browser stays on one member and every edge node picks the same; with no cookie, in turn. A WebSocket as its opening request |
 | A passthrough host's connections, SSH and XMPP tunnels | Of the client's address, an IPv6 address by its /64 |
 | PASS authority calls | Of the session handle while a sign-in is in progress, else the one with the fewest calls in flight |
 | Delegated calls | Of the call's conversation (its call session, else its phone call), so one call's events reach one member |

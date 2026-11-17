@@ -1,7 +1,9 @@
 // A02 Security Misconfiguration over HTTP, ported from Moqui Java's pytest proofs (framework/test/test_a02_headers.py;
 // the catalog in README.md): the headers of an HTML page, the session cookie's attributes, caching of the login page,
 // CORS for a request with no Origin, and no H2 console. Passes on any conf; SecurityCors has the proofs that need the
-// production conf. The session cookie is moqui.session (Java's is JSESSIONID).
+// production conf. The session cookie is moqui.session, and __Host-moqui.session over https (SEC-WEB-05; Java's is
+// JSESSIONID).
+const SESSION_COOKIE = server.secure ? "__Host-moqui.session" : "moqui.session"
 
 // test_a02_headers.py: test_html_response_has_csp_and_frame_options
 feature("A02 an HTML page has a CSP with frame-ancestors and form-action, X-Frame-Options and nosniff", {
@@ -17,7 +19,7 @@ feature("A02 an HTML page has a CSP with frame-ancestors and form-action, X-Fram
 
 // test_a02_headers.py: test_session_cookie_is_httponly, test_session_cookie_samesite_lax
 feature("A02 the session cookie is HttpOnly and SameSite=Lax", {
-    when() { return { cookie: session().get("/Login").cookie("moqui.session") } },
+    when() { return { cookie: session().get("/Login").cookie(SESSION_COOKIE) } },
     then({ cookie }) {
         cookie != null
         cookie.httpOnly
@@ -131,7 +133,7 @@ feature("A01 the login does not follow a returnTo from a spoofed Host", {
     },
     then({ page, res, split }) {
         page.status == 200
-        page.cookie("moqui.session") != null
+        page.cookie(SESSION_COOKIE) != null
         res.status == 301 || res.status == 302 || res.status == 303 || res.status == 307 || res.status == 308
         !(res.location ?? "").toLowerCase().includes("evil.example")
         !(res.location ?? "").includes("/phish")

@@ -8,7 +8,7 @@ this directory, and the deliberate differences from Java. How to run the specs i
 Recorded in [Parity-Diffs](../../../../../../plans/Parity-Diffs.md) (P9-06 and the client test harness rows):
 
 - A preflight answers 204, not 200.
-- The session cookie is `moqui.session`, not `JSESSIONID`.
+- The session cookie is `moqui.session`, and `__Host-moqui.session` over https (SEC-WEB-05), not `JSESSIONID`.
 - The session-token failure is 401 "Session token is missing or is not valid" (`crates/moqui-core/src/screen/render.rs`),
   where Java says "Session token required" or "Session token does not match".
 - An anonymous `/notws` upgrade is 401; Java accepts it and ignores the null user. So the foreign-origin proof uses a

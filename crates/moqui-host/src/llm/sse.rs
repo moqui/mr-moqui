@@ -118,7 +118,7 @@ async fn user_of(state: &HttpState, headers: &HeaderMap, site: &RequestSite) -> 
         return Err(Box::new(plain(403, "origin not allowed")));
     }
     let factory = Arc::clone(&state.factory);
-    let loaded = match session_cookie(headers) {
+    let loaded = match session_cookie(headers, site.https()) {
         Some(cookie) => {
             let session_id = match verify_session_cookie(&cookie) {
                 Ok(Some(id)) if !id.is_empty() => id,

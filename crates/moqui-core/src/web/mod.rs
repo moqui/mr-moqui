@@ -2322,13 +2322,15 @@ pub fn cookie_value(header: &str, name: &str) -> Option<String> {
     None
 }
 
+/// The session cookie of a request, by the name of its scheme ([`crate::user::session_cookie_name`]): over https only
+/// `__Host-moqui.session`, so a plain `moqui.session` another host of the domain set is no session there (SEC-WEB-05).
 pub(crate) fn session_cookie_of(request: &WebRequest) -> Option<String> {
     if let Some(value) = request.session_cookie.as_ref().filter(|text| !text.is_empty()) {
         return Some(value.clone());
     }
     request
         .header("cookie")
-        .and_then(|header| cookie_value(header, crate::user::SESSION_COOKIE_NAME))
+        .and_then(|header| cookie_value(header, crate::user::session_cookie_name(request.https)))
 }
 
 pub(crate) fn visitor_cookie_of(request: &WebRequest) -> Option<String> {

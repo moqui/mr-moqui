@@ -174,7 +174,9 @@ fn request_host<B>(request: &http::Request<B>) -> Option<String> {
         })
 }
 
-/// The value of the cookie `name` in `headers` (each `Cookie` header, as HTTP/2 splits them), when it is not empty.
+/// The value of the cookie `name` in `headers` (each `Cookie` header, as HTTP/2 splits them), when it is not empty. For
+/// the session cookie's name (the default), the https name `__Host-moqui.session` first (SEC-WEB-05), so a browser on
+/// https stays on its member too.
 fn sticky_value(headers: &HeaderMap, name: &str) -> Option<String> {
     let cookies: Vec<&str> = headers
         .get_all(header::COOKIE)
@@ -184,7 +186,14 @@ fn sticky_value(headers: &HeaderMap, name: &str) -> Option<String> {
     if cookies.is_empty() {
         return None;
     }
-    moqui_core::web::cookie_value(&cookies.join("; "), name).filter(|value| !value.is_empty())
+    let cookies = cookies.join("; ");
+    let value = |name: &str| moqui_core::web::cookie_value(&cookies, name).filter(|value| !value.is_empty());
+    if name == moqui_core::user::SESSION_COOKIE_NAME {
+        if let Some(secure) = value(moqui_core::user::SECURE_SESSION_COOKIE_NAME) {
+            return Some(secure);
+        }
+    }
+    value(name)
 }
 
 /// Whether a request may go once more to another member after it was sent and failed before any answer: a GET or HEAD

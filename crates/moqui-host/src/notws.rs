@@ -33,7 +33,7 @@ use axum::http::HeaderMap;
 use axum::response::Response;
 use moqui_core::context::{ErrorKind, ExecutionContext, ExecutionContextFactory};
 use moqui_core::notify::{TopicMessage, NOTIFICATION_MESSAGE};
-use moqui_core::user::{verify_session_cookie, SESSION_COOKIE_NAME};
+use moqui_core::user::{session_cookie_name, verify_session_cookie};
 use moqui_core::web::cookie_value;
 use moqui_core::web::origin::{origin_allowed_by, own_origins, request_site, SiteOrigin};
 use moqui_lib::object::Value;
@@ -206,7 +206,7 @@ pub(crate) async fn upgrade(
     }
     // A browser has its session cookie; the terminal client (`moqui tui --server`) has its login key, and no session.
     let factory = Arc::clone(&state.factory);
-    let (session_id, credential, loaded) = match session_cookie(&headers) {
+    let (session_id, credential, loaded) = match session_cookie(&headers, site.https()) {
         Some(cookie) => {
             let session_id = match verify_session_cookie(&cookie) {
                 Ok(Some(id)) if !id.is_empty() => id,
@@ -266,9 +266,15 @@ pub(crate) async fn upgrade(
 /// The origin a request was made to (scheme, host and port), as the screens' CORS check works it out
 /// (`web::origin::request_site`): https over this listener's TLS or a believed proxy's `X-Forwarded-Proto`, and the
 /// host and port of a believed proxy's `X-Forwarded-Host` and `X-Forwarded-Port`, else of `Host`.
-pub(crate) struct RequestSite(Option<SiteOrigin>, Option<std::net::IpAddr>);
+pub(crate) struct RequestSite(Option<SiteOrigin>, Option<std::net::IpAddr>, bool);
 
 impl RequestSite {
+    /// Whether the request is https (this listener's TLS, or a believed proxy's `X-Forwarded-Proto`): its session
+    /// cookie's name ([`moqui_core::user::session_cookie_name`]).
+    pub(crate) fn https(&self) -> bool {
+        self.2
+    }
+
     /// The client's address as web protection sees it (a believed proxy's client header, else the peer).
     pub(crate) fn client(&self) -> Option<std::net::IpAddr> {
         self.1
@@ -302,6 +308,7 @@ impl FromRequestParts<Arc<HttpState>> for RequestSite {
                 header("x-forwarded-port"),
             ),
             peer.map(|peer| state.guard.client_of(peer, &parts.headers)),
+            https,
         ))
     }
 }
@@ -324,13 +331,14 @@ pub(crate) fn origin_allowed(
     allowed
 }
 
-pub(crate) fn session_cookie(headers: &HeaderMap) -> Option<String> {
+/// The session cookie of a request, by the name of its scheme: over https only `__Host-moqui.session` (SEC-WEB-05).
+pub(crate) fn session_cookie(headers: &HeaderMap, https: bool) -> Option<String> {
     let cookies: Vec<&str> = headers
         .get_all(axum::http::header::COOKIE)
         .iter()
         .filter_map(|value| value.to_str().ok())
         .collect();
-    cookie_value(&cookies.join("; "), SESSION_COOKIE_NAME).filter(|value| !value.is_empty())
+    cookie_value(&cookies.join("; "), session_cookie_name(https)).filter(|value| !value.is_empty())
 }
 
 /// The userId of an HTTP session, or none when no one is logged in to it. Blocks on the request pool.
