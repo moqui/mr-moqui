@@ -4,7 +4,9 @@ November 1, 2026 — initial design, not implemented. The selected browser rende
 the framework Maps app, reusable map interface, configuration, resource delivery and geographic lookup work.
 [BOSS shared maps](../runtime/components/addon/mr-boss/plan/design-crosscut.md#332-maps-and-record-location-dialogs)
 and [HOME Maps](../runtime/components/addon/mr-home/plan/initial-design.md#39-maps-places-and-geographic-information)
-own their application contexts. No pre-release data migration plan is required.
+own their application contexts. 3D layers over this app (terrain, extruded buildings, a facility on the map) are
+[mr-three's](../runtime/components/addon/mr-three/plan/design-technical.md#63-3d-for-maps), after P1, and Maps
+needs nothing from it. No pre-release data migration plan is required.
 
 ## 1. Decisions and scope
 
