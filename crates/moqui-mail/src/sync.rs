@@ -1499,7 +1499,7 @@ impl From<LibError> for FolderError {
 }
 
 /// The conf's `email-client` attribute `name` as a positive number, else `default`.
-fn property_number(name: &str, default: i64) -> i64 {
+pub(super) fn property_number(name: &str, default: i64) -> i64 {
     super::client_setting(name)
         .parse::<i64>()
         .ok()

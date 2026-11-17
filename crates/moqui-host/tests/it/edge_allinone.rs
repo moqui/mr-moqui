@@ -862,6 +862,18 @@ fn mail_to_recipients_on_both_sides_is_delivered_once_to_each() {
     );
     std::thread::sleep(Duration::from_millis(500));
     assert_eq!(stored("<both@example.org>"), (1, 1), "a resend stores nothing new");
+    // the server's own account is held to its mailbox quota at RCPT, as on a normal node (SEC-MAIL-07)
+    server.write(
+        "moqui.basic.email.EmailAccount",
+        json!({"emailAccountId": sales, "quotaBytes": 1}),
+    );
+    let (rcpt, after) = smtp(smtp_at, &[SALES], &message("<full@example.org>", SALES, "Full"));
+    assert!(rcpt[0].starts_with("452 4.2.2"), "{rcpt:?}");
+    assert!(after.is_empty(), "{after}");
+    server.write(
+        "moqui.basic.email.EmailAccount",
+        json!({"emailAccountId": sales, "quotaBytes": 1_u64 << 40}),
+    );
 
     // the server's own services refuse an address the node holds, naming it
     let (_, errors) = server.call(

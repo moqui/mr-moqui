@@ -1265,6 +1265,10 @@
         no syncIntervalMinutes. sync-batch: the most new messages a folder brings in one sync. flag-scan: minutes
         between reading every message's flags, on a server without CONDSTORE. sync-push-now: make a local change (read,
         move, delete) on the server right after it commits; false waits for the next sync.
+        mailbox-quota: the bytes of mail (the sum of its messages' messageSize, attachments included) a hosted or shared
+        account keeps when its EmailAccount.quotaBytes is empty, 10 GiB; once an account has that much, the SMTP listener
+        answers its recipients 452 4.2.2 and holds mail an edge node queued for it until it is under (a warning is
+        logged the first time it goes over).
         autoconfig-urls: discover#EmailServer's Thunderbird autoconfig URLs, comma-separated, with {domain} and
         {email}; empty for autoconfig.{domain}, the domain's .well-known URL and the Thunderbird ISPDB. dns-server: the
         DNS server (host:port) for its SRV lookups; empty for the first in /etc/resolv.conf. tls-ca-file: a PEM file of
@@ -1272,7 +1276,7 @@
         oauth-redirect-uri: see email_oauth_redirect_uri.
     -->
     <email-client allowed-hosts="" idle-enabled="true" idle-max="8" sync-interval="5" sync-batch="500" flag-scan="15"
-            sync-push-now="true" autoconfig-urls="" dns-server="" tls-ca-file=""
+            sync-push-now="true" mailbox-quota="10737418240" autoconfig-urls="" dns-server="" tls-ca-file=""
             oauth-redirect-uri="${email_oauth_redirect_uri}"/>
 
     <!--
@@ -1436,14 +1440,21 @@
         session). protocol: smtp, or lmtp (LHLO, and a reply per recipient after the data). starttls: offer STARTTLS,
         with the tls-cert-file and tls-key-file pair (see the smtp_tls_ properties) or else runtime/cert by the name the
         gateway asks for or hostname; with no certificate the listener does not start. require-tls: refuse MAIL before
-        STARTTLS. chunking: BDAT (RFC 3030). dsn: the DSN parameters (RFC 3461) and "delivered" reports.
+        STARTTLS. chunking: BDAT (RFC 3030). dsn: the DSN parameters (RFC 3461) and "delivered" reports; a delivered
+        report goes only when the sender is authenticated: authserv-id is set and its Authentication-Results show
+        spf=pass, or dmarc=pass with header.from aligned with the envelope sender's domain.
+        internet-messages-per-hour and internet-bytes-per-hour: in internet mode, the messages and their bytes stored in
+        an hour from one client address (IPv6 by its /64) and from one envelope sender, whichever is reached first; a
+        MAIL that would go past one (with its SIZE) is answered 451 4.7.1. A message counts once, whatever its
+        recipients.
     -->
     <smtp-server listen-port="${smtp_listen_port}" listen-host="${smtp_listen_host}"
             allowed-addresses="${smtp_allowed_addresses}" hostname="${smtp_hostname}" authserv-id="${smtp_authserv_id}"
             proxy-protocol="false" spam-headers="X-Spam-Flag,X-Spam-Status,X-Spam" plus-separator="+"
             max-message-size="26214400" max-recipients="100" max-connections="20" command-timeout="300"
             session-timeout="1800" protocol="smtp" starttls="false" require-tls="false"
-            tls-cert-file="${smtp_tls_cert_file}" tls-key-file="${smtp_tls_key_file}" chunking="true" dsn="false"/>
+            tls-cert-file="${smtp_tls_cert_file}" tls-key-file="${smtp_tls_key_file}" chunking="true" dsn="false"
+            internet-messages-per-hour="1000" internet-bytes-per-hour="1073741824"/>
 
     <!-- How work crosses the edge link (plans/archive/Edge-Node.md §5.2), read by both ends. The queue: items delivered or
         failed are kept queue-retention-days from their delivery or failure (receipts as long; both nodes should keep
