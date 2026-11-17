@@ -716,6 +716,7 @@ fn send_bridge_direct(
         chat_room_id: String::new(),
         event_seq: 0,
         external_room_id: param(parameters, "externalRoomId").unwrap_or_default(),
+        external_thread_id: None,
         kind: DeliveryKind::Message,
         text: parameters
             .get("text")

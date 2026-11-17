@@ -200,6 +200,9 @@ pub struct DeliveryRequest {
     pub chat_room_id: String,
     pub event_seq: i64,
     pub external_room_id: String,
+    /// The provider's conversation the mapping is kept as (`ChatRoomBridge.externalThreadId`: a Twilio Conversation of a
+    /// group text), once the adapter stored one (`ChatBridgeServices.store#MappingThread`).
+    pub external_thread_id: Option<String>,
     pub kind: DeliveryKind,
     /// The text (a message, the new text of an edit), plain.
     pub text: Option<String>,
@@ -279,6 +282,24 @@ pub trait ChatBridgeAdapter: Send + Sync {
     /// or on the local node, for a network that signs with a secret the edge node never holds.
     fn webhook_verification(&self) -> WebhookVerification {
         WebhookVerification::Edge
+    }
+    /// Whether this node holds what [`Self::verify_webhook`] needs for the bridge (its key or secret, a configuration
+    /// that was read): an error names what is missing. A local node keeps a queued request it cannot check
+    /// (`apply#EdgeWebhook` answers `retryLater`) rather than refusing it as forged.
+    ///
+    /// # Errors
+    ///
+    /// Returns what the check lacks.
+    fn webhook_verifiable(&self, bridge: &BridgeInfo) -> Result<(), String> {
+        let _ = bridge;
+        Ok(())
+    }
+    /// The answer an edge node gives the network for a request it queued (2xx) or refused for its rate (429), in the
+    /// network's shape (Twilio wants TwiML). Any other answer, an unsigned request's above all, is left as it is. The
+    /// default leaves it.
+    fn edge_answer(&self, bridge: &BridgeInfo, response: WebhookResponse) -> WebhookResponse {
+        let _ = bridge;
+        response
     }
     /// The network's id of the event a request [`Self::verify_webhook`] passed, and what orders it with others (their
     /// number), for an edge node that queues it for its local node (plans/archive/Edge-Node.md §5.4): the id is the queue
@@ -835,6 +856,8 @@ pub fn round(factory: &ExecutionContextFactory, facade: &EntityFacade, now: i64)
             tracing::error!("the chat bridges' waiting input could not be worked: {error}");
         }
         clean(&worker, facade, now);
+        // the queued webhooks refused since the last line, logged even once refusals stop
+        edge::log_refused(factory, now);
     }
     let mut report = RoundReport::default();
     // the mappings with a pending row, each worked from its oldest
@@ -990,6 +1013,17 @@ fn clean(worker: &Worker, facade: &EntityFacade, now: i64) {
     });
     if let Err(error) = result {
         tracing::error!("Could not remove the old chat bridge batches: {error}");
+    }
+    // the queued webhooks refused here, kept as long as a batch (replayable until then: replay#RefusedWebhooks)
+    let result = force_new(facade, edge::REFUSED, || {
+        facade
+            .find(edge::REFUSED)?
+            .condition(Condition::less("refusedDate", stamp(now - 30 * 86_400_000)))
+            .disable_authz()
+            .delete_all()
+    });
+    if let Err(error) = result {
+        tracing::error!("Could not remove the old refused chat bridge webhooks: {error}");
     }
 }
 
@@ -1404,6 +1438,7 @@ fn request_of(
         chat_room_id: room_id,
         event_seq: int_of(row, "eventSeq").unwrap_or(0),
         external_room_id: text_of(mapping, "externalRoomId").unwrap_or_default(),
+        external_thread_id: text_of(mapping, "externalThreadId"),
         kind,
         text: text_of(event, "bodyText"),
         html,
@@ -1615,8 +1650,8 @@ pub use web::{
 #[path = "chat_bridge_edge.rs"]
 mod edge;
 pub use edge::{
-    dropped_webhooks, fill_webhook_keys, media_urls, sweep_edge_media, MediaUrls, KIND_MEDIA, KIND_WEBHOOK,
-    MEDIA_RETRY_MILLIS, REPLICA_SET,
+    fill_webhook_keys, media_urls, refused_webhooks, sweep_edge_media, MediaUrls, KIND_MEDIA, KIND_WEBHOOK,
+    MEDIA_RETRY_MILLIS, REFUSED, REPLICA_SET,
 };
 
 #[cfg(test)]

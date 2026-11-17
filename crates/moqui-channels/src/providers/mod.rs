@@ -15,10 +15,14 @@
 //! The SMS providers: each module implements [`crate::sms::SmsProvider`] for one provider's messaging API and
 //! webhooks, and [`crate::adapters`] registers one [`crate::sms::SmsAdapter`] for it (docs/interfaces/SMS.md).
 //!
-//! | Module | Adapter (`adapterName`) | Webhook signature, checked on |
-//! | --- | --- | --- |
-//! | [`telnyx`] | `sms` | Ed25519 under the account's public key: the edge node |
-//! | [`sinch`] | `sms-sinch` | HMAC-SHA256 under the webhook's secret: the local node |
+//! | Module | Adapter (`adapterName`) | Webhook signature, checked on | Replay | Retries a 5xx |
+//! | --- | --- | --- | --- | --- |
+//! | [`telnyx`] | `sms` | Ed25519 under the account's public key: the edge node, and the local node again | its timestamp's window, then the core's dedupes | yes |
+//! | [`sinch`] | `sms-sinch` | HMAC-SHA256 under the webhook's secret: the local node | its timestamp's window, then the core's dedupes | yes |
+//!
+//! A provider whose signature has no timestamp (Twilio) relies on the replay cache and then the core's dedupes (texts by
+//! their ids, receipts never backwards, opt signals once by event id); one that does not retry a 5xx (Twilio, without
+//! a fallback URL or connection overrides) loses an event the server answered 503 (docs/interfaces/Chat-Bridges.md).
 
 pub mod sinch;
 pub mod telnyx;

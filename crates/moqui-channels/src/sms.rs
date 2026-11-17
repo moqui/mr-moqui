@@ -29,21 +29,23 @@
 //!   `Uncertain`); 429 and 503 `Retry`; 401 and 403 `Retry` with the bridge not connected; another 4xx as the provider
 //!   reads it ([`SmsProvider::refusal`]); 5xx `Uncertain`. No provider dedupes a send, so a request whose answer was lost
 //!   is `Uncertain` and never sent again on its own; only one that never reached the provider (a refused connection) is
-//!   `Retry`.
+//!   `Retry`. A refusal read as `optedOut` marks the pair opted out (the STOP table agrees with the provider).
 //! - **In.** A webhook is a POST; its signature is the provider's to check ([`SmsProvider::verify`]); the replay cache
 //!   (`replay_take`, by the signature header's value) answers a copy worked before 200 `duplicate` and one being worked
 //!   409; the provider parses the body into a neutral [`SmsEvent`], worked under `catch_unwind`: a text goes to
-//!   `SmsServices.receive#Sms`, a receipt to `ChatBridgeServices.note#DeliveryReceipt`, an opt-out or opt-in to
-//!   `SmsServices.note#SmsKeyword`. A failure of the server's own is 503 (the provider, or an edge node's queue, tries
+//!   `SmsServices.receive#Sms` (in a provider's conversation, `thread_id`, to its mapping's room), a receipt to
+//!   `ChatBridgeServices.note#DeliveryReceipt`, an opt-out or opt-in to `SmsServices.note#SmsOptSignal` (once per event). A failure of the server's own is 503 (the provider, or an edge node's queue, tries
 //!   again); a text `ingest#Event` refuses for what it is ([`REFUSALS`]) is 422.
 //! - **Behind an edge node** (plans/archive/Edge-Node.md §5.4): a provider that signs with a public key the bridge's
 //!   copy holds (Telnyx) is verified on the edge node; one that signs with a secret (Twilio, Sinch) on the local node
-//!   ([`WebhookVerification::Core`], `chat_bridge_edge.rs`).
+//!   only ([`WebhookVerification::Core`], `chat_bridge_edge.rs`); the local node checks every queued request again
+//!   ([`SmsProvider::can_verify`] says when it cannot). The edge node's answers are the provider's shape
+//!   ([`SmsProvider::respond`]).
 //!
 //! The settings every provider reads from the bridge's `configJson` ([`Settings`]): `apiBaseUrl`, `maxTextLength`,
 //! `maxMediaCount`, `maxMediaBytes`, `maxInboundMediaBytes`, `webhookToleranceSeconds`, `sendsPerMinute` (the bridge's
-//! own `sendsPerMinute` wins), `allowInternalAddresses`, `webhookUrl` (the URL the provider posts to, for a signature
-//! over it: [`moqui_core::service::chat_bridge::webhook_public_url`]).
+//! own `sendsPerMinute` wins), `allowInternalAddresses`; and `webhookUrl`, the URL the provider posts to, read only by
+//! [`moqui_core::service::chat_bridge::webhook_public_url`] (a signature over the URL) and [`callback_url`].
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -93,8 +95,6 @@ pub struct Settings {
     /// The API and file addresses may be internal (a test's fake provider); never on a production instance, where an
     /// inbound text's media URL would otherwise make the server fetch an internal address (SEC-COM-10).
     pub allow_internal: bool,
-    /// The URL the provider posts the bridge's webhooks to, when it is not `channels_public_url`'s.
-    pub webhook_url: Option<String>,
 }
 
 impl Settings {
@@ -126,7 +126,6 @@ impl Settings {
                 .and_then(|n| u32::try_from(n).ok())
                 .unwrap_or(DEFAULT_SENDS_PER_MINUTE),
             allow_internal: !moqui_core::web::is_production() && flag_of(config, "allowInternalAddresses"),
-            webhook_url: text_of(config, "webhookUrl"),
         }
     }
 }
@@ -242,6 +241,9 @@ pub struct Inbound {
     /// Every number a group text went to, our number among them (none or one for a text to one number).
     pub recipients: Vec<String>,
     pub origin_millis: Option<i64>,
+    /// The provider's conversation it came in (a Twilio Conversation of a group text): the room of the mapping that keeps
+    /// it (`ChatRoomBridge.externalThreadId`, [`store_thread`]), whoever writes.
+    pub thread_id: Option<String>,
 }
 
 /// A file a text that came in names, for the core to fetch ([`SmsProvider::media_auth`]).
@@ -296,6 +298,9 @@ pub enum Keyword {
 /// A person opted out of our number, or back in, as the provider tells it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OptSignal {
+    /// The provider's id of the event: applied once (`SmsServices.note#SmsOptSignal` keeps it), so a copy the replay
+    /// cache no longer holds changes nothing.
+    pub event_id: String,
     pub our_number: String,
     pub their_number: String,
     pub keyword: Keyword,
@@ -312,7 +317,14 @@ pub enum SmsEvent {
 }
 
 /// What differs between SMS providers. One value serves every bridge of its adapter; each bridge's settings are its own
-/// (`Self::Config`, parsed from the bridge's `configJson` on each call).
+/// (`Self::Config`, parsed from the bridge's `configJson` on each call). State a provider keeps in itself (an OAuth
+/// token cache) is shared by every bridge of the adapter and every thread: key it by the bridge id or the credential's
+/// id, never by nothing, and guard it with `moqui_lib::sync`.
+///
+/// Replay: the core's replay cache drops a copy of a signature it saw within its window; past that, texts dedupe by
+/// their ids (`ingest#Event`), receipts never move a delivery back, and an [`OptSignal`] is applied once by its event
+/// id. A provider whose signature has a timestamp (Telnyx, Sinch) also refuses an old one in [`Self::verify`]; one
+/// whose signature has none (Twilio) relies on those.
 pub trait SmsProvider: Send + Sync + Sized + 'static {
     /// The provider's own settings: keys, account ids, the webhook's key or secret.
     type Config;
@@ -358,12 +370,25 @@ pub trait SmsProvider: Send + Sync + Sized + 'static {
     /// Whether an edge node can check its signature with the bridge's replicated copy (a public key: Telnyx); else the
     /// local node checks it, with the secret only it holds.
     fn verifies_on_edge(&self) -> bool;
-    /// Whether `request` is the provider's: its signature, within the replay window at `request.now_millis`. It keeps no
-    /// replay state (the core's replay cache does), so it can check a queued request again.
+    /// Whether `request` is the provider's: its signature (over [`webhook_public_url`] when the provider signs the URL),
+    /// and when the signature has a timestamp, that it is within `settings.tolerance_seconds` of `request.now_millis`
+    /// (when the request came, also for one an edge node queued). It keeps no replay state (the core's replay cache
+    /// does), so it can check a queued request again.
     fn verify(&self, bridge: &BridgeInfo, config: &Self::Config, settings: &Settings, request: &WebhookRequest)
         -> bool;
+    /// Whether this node has what [`Self::verify`] needs for the bridge (its key or secret): an error names what is
+    /// missing, and a queued request waits instead of being refused as forged. The default has all it needs.
+    ///
+    /// # Errors
+    ///
+    /// Returns what is missing.
+    fn can_verify(&self, config: &Self::Config) -> Result<(), String> {
+        let _ = config;
+        Ok(())
+    }
     /// The event a webhook carries, for an edge node's queue: its id (a repeat has the same) and their number. None when
-    /// the body cannot be read.
+    /// the body cannot be read. For a provider that verifies on the local node it reads a body nobody verified yet (at
+    /// most `channels_edge_unverified_max_bytes`): read only the key.
     fn event_key(&self, request: &WebhookRequest) -> Option<WebhookEventKey>;
     /// The event a verified webhook carries; or the answer, when it is malformed (400).
     ///
@@ -381,7 +406,9 @@ pub trait SmsProvider: Send + Sync + Sized + 'static {
         let _ = config;
         self.parse(request)
     }
-    /// The answer the provider gets, from the core's (Twilio wants TwiML); the default is the core's.
+    /// The answer the provider gets, from the core's (Twilio wants TwiML): on this node, and an edge node's to a request
+    /// it queued (2xx) or refused for its rate (429). It leaves an unsigned request's 401 as it is. The default is the
+    /// core's.
     fn respond(&self, response: WebhookResponse) -> WebhookResponse {
         response
     }
@@ -533,6 +560,42 @@ pub fn call(client: &RestClient, request: &ApiRequest) -> Result<RestResponse, m
     call.send(false)
 }
 
+/// The provider refused a text to `out`'s one number as opted out (Twilio 21610, Telnyx 40300): the pair's opt-out
+/// (`SmsServices.note#SmsKeyword` STOP), so the STOP table agrees with the provider.
+fn mark_opted_out(out: &Outgoing<'_>) {
+    let Some(theirs) = out.theirs.first() else {
+        return;
+    };
+    let parameters = BTreeMap::from([
+        ("ourNumber".to_string(), Value::string(out.ours)),
+        ("theirNumber".to_string(), Value::string(theirs)),
+        ("keyword".to_string(), Value::string("STOP")),
+    ]);
+    if let Err(error) = crate::call("org.moqui.call.SmsServices.note#SmsKeyword", parameters) {
+        tracing::warn!(
+            "SMS bridge {}: the provider's opt-out of {theirs} was not kept: {error}",
+            out.bridge.chat_bridge_id
+        );
+    }
+}
+
+/// Keep `thread_id`, the conversation the provider made for the mapping of `external_room_id` (a Twilio Conversation
+/// of a group text), on that mapping (`ChatBridgeServices.store#MappingThread`, in a transaction of its own): later
+/// sends carry it ([`DeliveryRequest::external_thread_id`]) and a text that names it ([`Inbound::thread_id`]) comes to
+/// the mapping's room.
+///
+/// # Errors
+///
+/// Returns why it was not kept (no active mapping, another mapping of the bridge has it).
+pub fn store_thread(bridge: &BridgeInfo, external_room_id: &str, thread_id: &str) -> Result<(), String> {
+    let parameters = BTreeMap::from([
+        ("chatBridgeId".to_string(), Value::string(&bridge.chat_bridge_id)),
+        ("externalRoomId".to_string(), Value::string(external_room_id)),
+        ("externalThreadId".to_string(), Value::string(thread_id)),
+    ]);
+    crate::call("org.moqui.chat.ChatBridgeServices.store#MappingThread", parameters).map(|_| ())
+}
+
 /// Send `request` for `out` and read its answer by class (see the module notes): the outcome of one send.
 pub fn exchange<P: SmsProvider>(
     provider: &P,
@@ -586,7 +649,14 @@ pub fn answer<P: SmsProvider>(
         400..=499 => {
             let error = provider.error_of(response.body());
             match provider.refusal(status, &error) {
-                Refusal::Failed(reason) => failed(reason, error.text),
+                Refusal::Failed(reason) => {
+                    // the provider holds the person's STOP: the pair's opt-out says so too, so the next text is
+                    // refused before the provider (a group text's refusal names no one recipient)
+                    if reason == "optedOut" && !out.group() {
+                        mark_opted_out(out);
+                    }
+                    failed(reason, error.text)
+                }
                 Refusal::Retry => DeliveryOutcome::Retry {
                     error: format!("{name} answered {status}: {}", error.text),
                     not_connected: false,
@@ -721,6 +791,14 @@ impl<P: SmsProvider> ChatBridgeAdapter for SmsAdapter<P> {
     fn verify_webhook(&self, bridge: &BridgeInfo, request: &WebhookRequest) -> Option<WebhookResponse> {
         let config = self.provider.config(&bridge.config);
         (!self.provider.verify(bridge, &config, &self.settings(bridge), request)).then(WebhookResponse::not_signed)
+    }
+
+    fn webhook_verifiable(&self, bridge: &BridgeInfo) -> Result<(), String> {
+        self.provider.can_verify(&self.provider.config(&bridge.config))
+    }
+
+    fn edge_answer(&self, _bridge: &BridgeInfo, response: WebhookResponse) -> WebhookResponse {
+        self.provider.respond(response)
     }
 
     fn webhook_verification(&self) -> WebhookVerification {
@@ -935,6 +1013,9 @@ fn received(bridge: &BridgeInfo, settings: &Settings, text: &Inbound) -> Webhook
     if let Some(words) = &text.text {
         parameters.insert("text".to_string(), Value::string(words));
     }
+    if let Some(thread) = text.thread_id.as_deref().filter(|thread| !thread.is_empty()) {
+        parameters.insert("externalThreadId".to_string(), Value::string(thread));
+    }
     if let Some(at) = text.origin_millis {
         parameters.insert("originMillis".to_string(), Value::I64(at));
     }
@@ -1018,38 +1099,28 @@ fn noted(bridge: &BridgeInfo, receipt: &Receipt) -> WebhookResponse {
     }
 }
 
-/// An opt-out or opt-in the provider tells of, to `SmsServices.note#SmsKeyword`, for a number of ours on this bridge
-/// only.
+/// An opt-out or opt-in the provider tells of, to `SmsServices.note#SmsOptSignal`: for a number of ours on this bridge
+/// only, and once for its event.
 fn opted(bridge: &BridgeInfo, signal: &OptSignal) -> WebhookResponse {
     let keyword = match signal.keyword {
         Keyword::Stop => "STOP",
         Keyword::Start => "START",
     };
-    let ours = moqui_core::context::ExecutionContext::with_current(|ec| {
-        let facade = ec.factory().entity()?;
-        facade
-            .find("moqui.call.PhoneNumber")
-            .and_then(|find| {
-                find.eq("phoneNumber", Value::string(&signal.our_number))
-                    .disable_authz()
-                    .one()
-            })
-            .ok()
-            .flatten()
-    })
-    .flatten()
-    .and_then(|row| row.get("messagingBridgeId").map(to_plain_string))
-    .is_some_and(|id| id == bridge.chat_bridge_id);
-    if !ours {
-        return WebhookResponse::json(200, &json!({"outcome": "ignored", "reasonCode": "unknownNumber"}));
-    }
     let parameters = BTreeMap::from([
+        ("chatBridgeId".to_string(), Value::string(&bridge.chat_bridge_id)),
+        ("eventId".to_string(), Value::string(&signal.event_id)),
         ("ourNumber".to_string(), Value::string(&signal.our_number)),
         ("theirNumber".to_string(), Value::string(&signal.their_number)),
         ("keyword".to_string(), Value::string(keyword)),
     ]);
-    match crate::call("org.moqui.call.SmsServices.note#SmsKeyword", parameters) {
-        Ok(_) => WebhookResponse::json(200, &json!({"outcome": "noted", "keyword": keyword})),
+    match crate::call("org.moqui.call.SmsServices.note#SmsOptSignal", parameters) {
+        Ok(out) => {
+            let field = |key: &str| out.get(key).map(to_plain_string).unwrap_or_default();
+            WebhookResponse::json(
+                200,
+                &json!({"outcome": field("outcome"), "reasonCode": field("reasonCode"), "keyword": keyword}),
+            )
+        }
         Err(error) => {
             tracing::error!(
                 "SMS bridge {}: a {keyword} of {} was not kept: {error}",
