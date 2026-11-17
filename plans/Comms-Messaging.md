@@ -296,9 +296,12 @@ and three reactions, on a phone and on a desktop (acceptance client spec).
 7. Mail is never shown with a lock or a chat E2EE label. Where a person's mail shows beside their chats, it says
    "Email is not end-to-end encrypted" (COM-UI-019).
 
-Rules 1, 2, 4, 6 and 7 are built (phase 3, `fdd1ab597`): the labels of §6.2 in the room and its lists, and rule 4 on the
-server. Rule 3's check marks are the lock's check of a room whose devices are all verified; the warning before a send
-to a verified person's new device is not built. Rule 5 is phase 10.
+Rules 1 to 4, 6 and 7 are built (phase 3, `fdd1ab597`, and its review, `1de64af65`): the labels of §6.2 in the room, its
+lists, its members pane and settings; rule 3's checks by a verified person (Members, their messages), verifying another
+person by emoji in Chat, and the warning before a send to a verified person's new device or new identity (Verify, or
+Send anyway); rule 4 on the server and in Chat's call. Rule 7: no lock in Mail; the "Email is not end-to-end encrypted"
+line waits for the place a person's mail shows beside their chats (phase 8, the `mail` state of the label). Rule 5 is
+phase 10.
 
 Server work for rule 4 (built):
 - `roomRequiresE2ee` read only the room's `callE2eeRequired`. It now also returns true for a room with `encrypted`.
@@ -1255,9 +1258,17 @@ Done 2026-11-17 in `fdd1ab597` ([review](ui-review-basic-comms.md) COM-UI-001, 0
   (`BasicCommsBridges`, `chat_bridge_tests`, moqui-channels). Acceptance: `ChatLabels` (each room state at 390×844 and
   1280×800 in the bundled shell, offline) and `EncryptedChatFlow`'s verified-only feature (who was left out, and
   `m.unverified` to the reader).
-- Left: the call screen's label (phase 4, from `e2eeLabel`'s call states); the warning before a send to a verified
-  person's new device (rule 3); the label in a notification (phase 2's payload); Mail's line beside a person's chats
-  (phase 8, the `mail` state).
+- Review (`1de64af65`): verifying another person (Members' Verify, the banner's and the "Not readable by" line's, over the
+  to-device SAS/QR flow, in the shared `m-chat-verification` card My devices uses too; a request from another person in
+  the open room); rule 3 (the checks, `verifiedUserProblem` with Verify or Send anyway, `onTrust` refreshes); the label in
+  the members pane and Room settings; no lock in New room's Private, the not-available state, Mail and Remove the PIN; the
+  "Not readable by" note kept per account; a members-only record room plain, SMS with another bridge, an inbound-only
+  bridge; the withheld code when the sync fails; `requireE2ee` on an encrypted room's call. Tests: `WebrootChat`;
+  acceptance `EncryptedChatFlow` (john.doe verifies b by emoji and the label has its check; b's new device stops the next
+  send until Send anyway) and `ChatLabels` (the members pane, Verify from the banner).
+- Left: the call screen's label (phase 4, from `e2eeLabel`'s call states); the label in a notification (phase 2's
+  payload); Mail's line beside a person's chats (phase 8, the `mail` state); a request from another person when no
+  encrypted room is open shows only on My devices.
 
 Planned:
 - The label state function in `moqui.chat`; the lock and the room type icons; the banners and composer hints of §6.2
