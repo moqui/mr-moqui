@@ -3878,17 +3878,13 @@ along with this software (see the LICENSE.md file). If not, see
             const size = Math.max(1, Math.min(100, Number(limit) || 40))
             const cf = ec.entity.conditionFactory
             const text = String(searchText || '').trim().replace(/[%_]/g, '')
-            // a search by title: the cached previews whose title has it (a bounded list of their hashes)
-            const titled = text ? Array.from(ec.entity.find('moqui.chat.ChatLinkPreview').condition(cf.makeCondition('title', 'like', '%' + text + '%').ignoreCase())
-                    .condition('failed', 'not-equals', 'Y').selectField('urlHash').limit(500).disableAuthz().list()).map((row) => row.urlHash) : []
+            // a search: the room's own links joined to their cached previews (ChatEventLinkPreview), by URL or title
             const linksFind = () => {
-                let find = ec.entity.find('moqui.chat.ChatEventLink').condition('chatRoomId', chatRoomId)
-                if (text) {
-                    const ors = [cf.makeCondition('url', 'like', '%' + text + '%').ignoreCase()]
-                    if (titled.length) ors.push(cf.makeCondition('urlHash', 'in', titled))
-                    find = find.condition(cf.makeCondition(ors, 'or'))
-                }
-                return find
+                if (!text) return ec.entity.find('moqui.chat.ChatEventLink').condition('chatRoomId', chatRoomId)
+                return ec.entity.find('moqui.chat.ChatEventLinkPreview').condition('chatRoomId', chatRoomId).condition(cf.makeCondition([
+                    cf.makeCondition('url', 'like', '%' + text + '%').ignoreCase(),
+                    cf.makeCondition([cf.makeCondition('title', 'like', '%' + text + '%').ignoreCase(), cf.makeCondition('previewFailed', 'equals', 'N')], 'and')], 'or'))
+                    .disableAuthz()
             }
             let first = linksFind()
             if (beforeEventSeq != null) first = first.condition('eventSeq', 'less', beforeEventSeq)
@@ -4013,13 +4009,13 @@ along with this software (see the LICENSE.md file). If not, see
                 for (const row of batch) {
                     const seq = Number(row.relatesToEventSeq)
                     if (!decided.has(seq)) {
-                        // a message not yet decided: the page is full, so there is more after it
-                        if (shown.length === size) { more = true; break }
                         decided.add(seq)
                         const target = targets[seq]
                         // left out: on an earlier page, gone, removed, or another's with onlyToMe
                         const kept = !earlier.has(seq) && target && target.eventTypeEnumId === 'CetMessage' && !target.redactedDate
                             && (!onlyToMe || target.senderUserId === me)
+                        // the page is full and another message passes: there is more after the page's last
+                        if (kept && shown.length === size) { more = true; break }
                         if (kept) { shown.push(seq); latest[seq] = {seq: Number(row.eventSeq), date: toMillis(row.sentDate)} }
                     }
                     lastSeen = Number(row.eventSeq)
@@ -4073,8 +4069,8 @@ along with this software (see the LICENSE.md file). If not, see
             about), threadRootEventSeq, actorUserId, actorName, snippet (the message's current text), reactionKey (a reaction
             in a plain room), date, encrypted}]. kinds (a List, or text with commas) keeps those kinds. Only rooms the user can
             still read (get#RoomAccess, for each room once): the rows of a room left are kept but not listed. limit 1 to 100
-            (40). Paged by cursor, one opaque text of the date, room, event and kind of the page's last row, so rows with the
-            same date keep their order across pages; nextCursor is where the next page starts, null at the end. Rows left out
+            (40). Paged by cursor, one opaque text of the date, room, event, kind and row of the page's last row, so rows with
+            the same date keep their order across pages (a cursor that is not one, or with a date out of range, is refused); nextCursor is where the next page starts, null at the end. Rows left out
             (a room no longer readable) never end the list early: the cursor says there is more.
 
             An encrypted room (C7): no snippet and no reaction key; encrypted true, and the message's ciphertext
@@ -4107,22 +4103,31 @@ along with this software (see the LICENSE.md file). If not, see
             const kindIds = asked.map((kind) => KINDS[kind] || (CODES[kind] ? kind : null)).filter((id) => id)
             if (asked.length && !kindIds.length) return
             const cf = ec.entity.conditionFactory
-            // the cursor: date, eventSeq, kind and room, joined by ~ (the room last, whatever its id has); the order is the
-            // date, then the room, the event and the kind, each newest (highest) first
+            // the cursor: date, eventSeq, kind, the row's id and room, joined by ~ (the room last, whatever its id has); the
+            // order is the date, then the room, the event, the kind and the row, each newest (highest) first, so two rows
+            // alike in all but their id are not cut apart. A date out of range (before 1970, or past a century from now)
+            // or a part that is not a number is a bad cursor
+            const LATEST = Number(ec.user.nowTimestamp) + 100 * 366 * 86400000
             const decode = (text) => {
                 const parts = String(text || '').split('~')
-                if (parts.length < 4 || !/^\d+$/.test(parts[0]) || !/^\d+$/.test(parts[1]) || !CODES[parts[2]]) return null
-                return {date: Number(parts[0]), eventSeq: Number(parts[1]), kind: parts[2], chatRoomId: parts.slice(3).join('~')}
+                if (parts.length < 5 || !/^\d{1,15}$/.test(parts[0]) || !/^\d{1,15}$/.test(parts[1]) || !CODES[parts[2]] || !parts[3]) return null
+                const date = Number(parts[0])
+                if (!Number.isSafeInteger(date) || date > LATEST) return null
+                return {date: date, eventSeq: Number(parts[1]), kind: parts[2], id: parts[3], chatRoomId: parts.slice(4).join('~')}
             }
-            const encode = (row) => [toMillis(row.activityDate), Number(row.eventSeq), row.activityKindEnumId, row.chatRoomId].join('~')
-            const after = (at) => cf.makeCondition([cf.makeCondition('activityDate', 'less', String(at.date)),
-                cf.makeCondition([cf.makeCondition('activityDate', 'equals', String(at.date)), cf.makeCondition([
+            const encode = (row) => [toMillis(row.activityDate), Number(row.eventSeq), row.activityKindEnumId, row.chatUserActivityId, row.chatRoomId].join('~')
+            const both = (list) => cf.makeCondition(list, 'and')
+            const either = (list) => cf.makeCondition(list, 'or')
+            const after = (at) => either([cf.makeCondition('activityDate', 'less', String(at.date)),
+                both([cf.makeCondition('activityDate', 'equals', String(at.date)), either([
                     cf.makeCondition('chatRoomId', 'less', at.chatRoomId),
-                    cf.makeCondition([cf.makeCondition('chatRoomId', 'equals', at.chatRoomId), cf.makeCondition([
+                    both([cf.makeCondition('chatRoomId', 'equals', at.chatRoomId), either([
                         cf.makeCondition('eventSeq', 'less', at.eventSeq),
-                        cf.makeCondition([cf.makeCondition('eventSeq', 'equals', at.eventSeq), cf.makeCondition('activityKindEnumId', 'less', at.kind)], 'and')], 'or')], 'and')], 'or')], 'and')], 'or')
+                        both([cf.makeCondition('eventSeq', 'equals', at.eventSeq), either([
+                            cf.makeCondition('activityKindEnumId', 'less', at.kind),
+                            both([cf.makeCondition('activityKindEnumId', 'equals', at.kind), cf.makeCondition('chatUserActivityId', 'less', at.id)])])])])])])])])
             let at = cursor ? decode(cursor) : null
-            if (cursor && !at) { ec.message.addError(ec.l10n.localize('This list was changed: read it again from the start')); return }
+            if (cursor && !at) { ec.message.addError(ec.l10n.localize('This list cursor is not valid: read the list again from the start')); return }
             // the rooms the user can read, asked once each
             const readable = {}
             const canRead = (roomId) => {
@@ -4143,7 +4148,7 @@ along with this software (see the LICENSE.md file). If not, see
                 let find = ec.entity.find('moqui.chat.ChatUserActivity').condition('userId', me)
                 if (kindIds.length) find = find.condition('activityKindEnumId', 'in', kindIds)
                 if (at) find = find.condition(after(at))
-                const batch = Array.from(find.orderBy('-activityDate').orderBy('-chatRoomId').orderBy('-eventSeq').orderBy('-activityKindEnumId')
+                const batch = Array.from(find.orderBy('-activityDate').orderBy('-chatRoomId').orderBy('-eventSeq').orderBy('-activityKindEnumId').orderBy('-chatUserActivityId')
                         .limit(BATCH).disableAuthz().list())
                 for (const row of batch) {
                     if (kept.length === size) { more = true; break }

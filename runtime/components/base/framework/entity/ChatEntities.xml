@@ -345,6 +345,16 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one-nofk" related="moqui.chat.ChatLinkPreview" short-alias="preview">
             <key-map field-name="urlHash"/></relationship>
     </entity>
+    <view-entity entity-name="ChatEventLinkPreview" package="moqui.chat">
+        <description>A room's links with their cached previews, for find#RoomLinks' search by URL or title: every link, and
+            its preview's title when it has one.</description>
+        <member-entity entity-alias="CEL" entity-name="moqui.chat.ChatEventLink"/>
+        <member-entity entity-alias="CLP" entity-name="moqui.chat.ChatLinkPreview" join-from-alias="CEL" join-optional="true">
+            <key-map field-name="urlHash"/></member-entity>
+        <alias-all entity-alias="CEL"/>
+        <alias entity-alias="CLP" name="title"/>
+        <alias entity-alias="CLP" name="previewFailed" field="failed"/>
+    </view-entity>
 
     <entity entity-name="ChatRoomChange" package="moqui.chat" use="transactional" cache="never">
         <description>A message of a room changed after it was sent: an edit, a reaction or its removal, a redaction, a pin,

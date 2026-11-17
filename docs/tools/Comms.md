@@ -78,7 +78,7 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   an encrypted room the server knows no file's type and no link, so this browser sorts the files into the tabs and lists
   the links of the messages it has opened. **Voice notes:** with no text in the message box, its Send button is a
   microphone; a tap records (the time shows, with Cancel and Send; ten minutes at most, then it is sent), and Send sends
-  it as a sound file, which plays in the message and in Voice. **Activity** across rooms (your mentions, replies to you,
+  it alone as a sound file (text typed meanwhile stays in the box), which plays in the message and in Voice. **Activity** across rooms (your mentions, replies to you,
   replies in your threads and reactions to your messages) is the `activity` transition, which the Activity view of the
   desktop builds on. The terminal has a room's Links and your Activity as lists; the media grid, voice and reactions are
   the browser's. The lists are the services `find#RoomFiles`, `find#RoomLinks`, `find#RoomReactions` and

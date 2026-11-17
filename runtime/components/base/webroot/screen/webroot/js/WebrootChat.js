@@ -724,6 +724,12 @@
             return moqui.crypto.encryptRoom(roomId, memberIds, "m.room.message", content).then((encrypted) => ({
                 encryptedJson: JSON.stringify(encrypted), mentionUserIds: chat.mentionsIn(html).join(",") }));
         },
+        // the files of an encrypted message (decrypted, each with its key: sealed) as sealMessage takes them, so an edit
+        // carries them in its ciphertext too: the timeline and the details' tabs read an edited message's files there
+        keptFiles(attachments) {
+            return (attachments || []).filter((file) => file && file.chatAttachmentId && file.sealed).map((file) => ({ chatAttachmentId: file.chatAttachmentId,
+                fileName: file.fileName || null, contentType: file.contentType || null, fileSize: file.fileSize || null, info: file.sealed }));
+        },
         sealReaction(roomId, memberIds, key) {
             return moqui.crypto.encryptRoom(roomId, memberIds, "m.reaction", { key }).then((encrypted) => JSON.stringify(encrypted));
         },
