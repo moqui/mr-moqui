@@ -1,6 +1,14 @@
 //! Shared host identity and credential-name classification.
 use std::sync::OnceLock;
-const SECRET_PARAMETER_NAMES: &[&str] = &["code", "moquisessiontoken", "sessiontoken", "sql", "sharedsecret"];
+/// Whole names of secrets: `returnkey` reads a PASS payment attempt's outcome (`getPaymentResult`, SEC-PSA-09).
+const SECRET_PARAMETER_NAMES: &[&str] = &[
+    "code",
+    "moquisessiontoken",
+    "sessiontoken",
+    "sql",
+    "sharedsecret",
+    "returnkey",
+];
 
 /// Parts that make any name a secret's, wherever they are in it.
 const SECRET_NAME_PARTS: &[&str] = &[
