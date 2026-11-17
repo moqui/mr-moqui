@@ -722,9 +722,13 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ========== The palette ========== -->
 
     <service verb="search" noun="PaletteRooms">
-        <description>The palette's Chat rooms group (design §13, the # prefix is the room switcher): the user's rooms and the
-            public ones whose name or topic has the text (org.moqui.chat.ChatServices.find#Rooms), the latest first, or the
-            latest rooms for no text; each a row {title, subtitle, icon, url} to the room. moreUrl is the Chat screen.</description>
+        <description>The palette's Chat rooms group (design §13, the # prefix is the room switcher; Comms-Messaging §3, the
+            group the palette shows first while Comms is the current app): the user's rooms and the public ones whose name
+            or topic has the text (org.moqui.chat.ChatServices.find#Rooms), the latest first; then, for a text with three
+            digits or more, the user's phone-number rooms (CrtExternal) whose number has those digits; then the people the
+            user has no direct chat with (CommsServices.search#Users, so only the people the user may reach), each opening
+            Chat with dm, which starts the direct chat. Each a row {title, subtitle, icon, url}, at most limit in all. moreUrl
+            is the Chat screen.</description>
         <in-parameters>
             <parameter name="text"/>
             <parameter name="limit" type="Integer" default="5"/>
@@ -734,29 +738,179 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="rows" type="List"/><parameter name="moreUrl"/></out-parameters>
         <actions><script><![CDATA[
             rows = []
-            moreUrl = (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat'
+            const chatUrl = (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat'
+            moreUrl = chatUrl
             const L = (text) => ec.l10n.localize(text)
             const term = String(text || '').replace(/^#/, '').trim()
             const max = Math.max(1, Math.min(limit || 5, 20))
+            const me = ec.user.userId
             ec.message.pushErrors()
             try {
                 const out = ec.service.sync().name('org.moqui.chat.ChatServices.find#Rooms').parameters({searchText: term || null, includeJoinable: true,
                     limit: max}).call()
                 if (ec.message.hasError()) { ec.logger.warn(`Palette chat rooms for ${term} failed: ${ec.message.errorsString}`); return }
-                const kinds = {CrtDirect: ['sym_o_person', 'Direct message'], CrtPrivate: ['sym_o_lock', 'Private room'], CrtPublic: ['sym_o_tag', 'Public room'],
-                    CrtRecord: ['sym_o_description', 'Record room']}
-                for (const room of Array.from(out.roomList || [])) {
+                // a private room is not a lock: a lock means end-to-end encrypted only (Comms-Messaging §6.1 rule 6)
+                const kinds = {CrtDirect: ['sym_o_person', 'Direct message'], CrtPrivate: ['sym_o_groups', 'Private room'], CrtPublic: ['sym_o_tag', 'Public room'],
+                    CrtRecord: ['sym_o_description', 'Record room'], CrtExternal: ['sym_o_sms', 'Phone number']}
+                const seen = new Set()
+                const addRoom = (room) => {
+                    if (seen.has(room.chatRoomId) || rows.length >= max) return
+                    seen.add(room.chatRoomId)
                     const kind = kinds[room.roomTypeEnumId] || ['sym_o_chat', 'Room']
                     const parts = [L(kind[1])]
+                    if (room.encrypted) parts.push(L('End-to-end encrypted'))
                     if (!room.isMember) parts.push(L('not joined'))
                     if (room.unreadCount) parts.push(ec.resource.expand('${count} unread', '', {count: room.unreadCount}))
                     if (room.topic) parts.push(room.topic)
-                    rows.push({title: room.displayName, subtitle: parts.join(' · '), icon: kind[0],
-                        url: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(room.chatRoomId)})
+                    rows.push({title: room.displayName, subtitle: parts.join(' · '), icon: kind[0], url: chatUrl + '?chatRoomId=' + encodeURIComponent(room.chatRoomId)})
+                }
+                Array.from(out.roomList || []).forEach(addRoom)
+                // a number typed as it is written (+1 555-0100, (555) 0100): the phone rooms whose number has its digits
+                const digits = term.replace(/[^0-9]/g, '')
+                if (rows.length < max && digits.length >= 3 && /^\+?[0-9 ().-]+$/.test(term)) {
+                    const mine = ec.service.sync().name('org.moqui.chat.ChatServices.find#Rooms').parameters({limit: 200}).call()
+                    if (!ec.message.hasError()) for (const room of Array.from(mine.roomList || []))
+                        if (room.roomTypeEnumId === 'CrtExternal' && String(room.displayName || '').replace(/[^0-9]/g, '').includes(digits)) addRoom(room)
+                    ec.message.clearErrors()
+                }
+                // the people found with no direct chat of their own with the user: choosing one starts it (Chat's dm)
+                if (rows.length < max && term && me) {
+                    const people = Array.from(ec.service.sync().name('org.moqui.comms.CommsServices.search#Users').parameters({term: term, limit: max}).call()?.userList || [])
+                            .filter((person) => person.id && person.id !== me)
+                    ec.message.clearErrors()
+                    const withRoom = new Set()
+                    if (people.length) {
+                        const myRooms = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('userId', me).condition('leftDate', null)
+                                .selectField('chatRoomId').disableAuthz().list()).map((row) => row.chatRoomId)
+                        const direct = myRooms.length ? Array.from(ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', 'in', myRooms)
+                                .condition('roomTypeEnumId', 'CrtDirect').selectField('chatRoomId').disableAuthz().list()).map((row) => row.chatRoomId) : []
+                        const membersOf = {}
+                        if (direct.length) for (const row of ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', 'in', direct)
+                                .selectField('chatRoomId').selectField('userId').disableAuthz().list())
+                            if (row.userId) (membersOf[row.chatRoomId] = membersOf[row.chatRoomId] || []).push(row.userId)
+                        // a direct chat of the two of them (a group's direct chat is not that person's own)
+                        for (const ids of Object.values(membersOf)) {
+                            const others = Array.from(new Set(ids)).filter((id) => id !== me)
+                            if (others.length === 1) withRoom.add(others[0])
+                        }
+                    }
+                    for (const person of people) {
+                        if (rows.length >= max) break
+                        if (withRoom.has(person.id)) continue
+                        rows.push({title: person.label, subtitle: L('Person') + ' · ' + L('Start a direct message'), icon: 'sym_o_person_add',
+                            url: chatUrl + '?dm=' + encodeURIComponent(person.id)})
+                    }
                 }
             } catch (err) {
                 ec.logger.warn(`Palette chat rooms for ${term} failed: ${err && err.message ? err.message : err}`)
             } finally { ec.message.clearErrors(); ec.message.popErrors() }
+        ]]></script></actions>
+    </service>
+
+    <!-- ========== The mail line on a person's row ========== -->
+
+    <service verb="find" noun="DirectChatMail">
+        <description>The mail line of the Chat list (Comms-Messaging §3, §19.1): for each person the current user has a
+            direct chat of the two of them with (a member of it now), that person's latest mail thread among the mail the
+            user may read (get#EmailAccountAccess: owned accounts and those shared with the user, at any level), matched by
+            the person's addresses (their user account's mail address and the addresses of the mail accounts they own): a
+            message from that address, or to or copied to it. Drafts, Spam and Trash are left out. mailList: [{userId,
+            chatRoomId, subject, date, threadKey (email:rootEmailMessageId), url (the thread in the Inbox under
+            comms_app_root)}], one per person with mail. Read-only, in one query of the mail for all of them (the latest
+            300 matching messages; a person whose mail is older than those has no line). An outside person (no user of this
+            server) waits for unified contacts and has none.</description>
+        <out-parameters><parameter name="mailList" type="List"><parameter name="mail" type="Map"/></parameter></out-parameters>
+        <actions><script><![CDATA[
+            mailList = []
+            const me = ec.user.userId
+            if (!me) return
+            const toMillis = (value) => {
+                if (value == null || value === '') return null
+                if (typeof value === 'number') return value
+                if (value instanceof Date) return value.getTime()
+                const number = Number(value)
+                return Number.isNaN(number) ? new Date(String(value)).getTime() : number
+            }
+            const lower = (text) => String(text || '').trim().toLowerCase()
+            // the addresses of a To or Cc text ("Name" <a@b>, c@d), in lower case
+            const addressesOf = (text) => {
+                const out = []
+                let current = '', quote = false, angle = 0
+                for (const ch of String(text || '')) {
+                    if (ch === '"') quote = !quote
+                    else if (ch === '<' && !quote) angle++
+                    else if (ch === '>' && !quote && angle > 0) angle--
+                    else if ((ch === ',' || ch === ';') && !quote && angle === 0) { out.push(current); current = ''; continue }
+                    current += ch
+                }
+                out.push(current)
+                return out.map((entry) => { const match = /<([^>]+)>\s*$/.exec(entry); return lower(match ? match[1] : entry.replace(/^"|"$/g, '')) }).filter((one) => one)
+            }
+            // the people of my direct chats of two: the other member, a user of this server
+            const myRooms = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('userId', me).condition('leftDate', null)
+                    .selectField('chatRoomId').disableAuthz().list()).map((row) => row.chatRoomId)
+            if (!myRooms.length) return
+            // a person's plain and encrypted direct chats both get the line
+            const directAll = Array.from(ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', 'in', myRooms).condition('roomTypeEnumId', 'CrtDirect')
+                    .selectField('chatRoomId').disableAuthz().list()).map((row) => row.chatRoomId)
+            if (!directAll.length) return
+            const membersOf = {}
+            for (const row of ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', 'in', directAll).selectField('chatRoomId').selectField('userId')
+                    .disableAuthz().list()) if (row.userId) (membersOf[row.chatRoomId] = membersOf[row.chatRoomId] || new Set()).add(row.userId)
+            const roomsOf = {}
+            for (const roomId of Object.keys(membersOf)) {
+                const others = Array.from(membersOf[roomId]).filter((id) => id !== me)
+                if (others.length === 1) (roomsOf[others[0]] = roomsOf[others[0]] || []).push(roomId)
+            }
+            const people = Object.keys(roomsOf)
+            if (!people.length) return
+            // the mail I may read, and my own addresses (a person never matches by one of mine)
+            const access = ec.service.sync().name('org.moqui.mail.EmailClientServices.get#EmailAccountAccess').call() || {}
+            const accountIds = Array.from(access.accountList || []).filter((account) => !account.isInternal && account.level >= 1).map((account) => account.emailAccountId)
+            if (!accountIds.length) return
+            const mine = new Set([lower(ec.user.userAccount?.emailAddress)])
+            for (const account of Array.from(access.accountList || [])) mine.add(lower(account.emailAddress))
+            // each person's addresses: the user account's, and those of the mail accounts they own
+            const addressOwner = {}
+            const own = (address, userId) => { const one = lower(address); if (one && one.includes('@') && !mine.has(one) && !addressOwner[one]) addressOwner[one] = userId }
+            for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', people).selectField('userId').selectField('emailAddress')
+                    .disableAuthz().list()) own(account.emailAddress, account.userId)
+            for (const account of ec.entity.find('moqui.basic.email.EmailAccount').condition('ownerUserId', 'in', people)
+                    .condition('accountKindEnumId', 'not-equals', 'EakInternal', true).condition('statusId', 'not-equals', 'EasRemoved', true)
+                    .selectField('ownerUserId').selectField('emailAddress').disableAuthz().list()) own(account.emailAddress, account.ownerUserId)
+            const addresses = Object.keys(addressOwner)
+            if (!addresses.length) return
+            const cf = ec.entity.conditionFactory
+            const likeText = (address) => '%' + address.replace(/[\\%_]/g, '\\$&') + '%'
+            const matches = []
+            for (const address of addresses) {
+                matches.push(cf.makeCondition('fromAddress', 'equals', address).ignoreCase())
+                matches.push(cf.makeCondition('toAddresses', 'like', likeText(address)).ignoreCase())
+                matches.push(cf.makeCondition('ccAddresses', 'like', likeText(address)).ignoreCase())
+            }
+            const leftOut = Array.from(ec.entity.find('moqui.basic.email.EmailFolder').condition('emailAccountId', 'in', accountIds)
+                    .condition('folderKindEnumId', 'in', ['EfkTrash', 'EfkJunk']).selectField('emailFolderId').disableAuthz().list()).map((row) => row.emailFolderId)
+            let find = ec.entity.find('moqui.basic.email.EmailMessage').condition('emailAccountId', 'in', accountIds)
+                    .condition('statusId', 'not-equals', 'ES_DRAFT', true).condition(cf.makeCondition(matches, 'or'))
+            if (leftOut.length) find = find.condition(cf.makeCondition([cf.makeCondition('emailFolderId', 'not-in', leftOut), cf.makeCondition('emailFolderId', 'equals', null)], 'or'))
+            const found = Array.from(find.selectField('emailMessageId').selectField('rootEmailMessageId').selectField('subject').selectField('messageDate')
+                    .selectField('sentDate').selectField('fromAddress').selectField('toAddresses').selectField('ccAddresses')
+                    .orderBy('-messageDate').limit(300).disableAuthz().list())
+            const inbox = (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Inbox'
+            const done = new Set()
+            for (const message of found) {
+                const involved = [lower(message.fromAddress)].concat(addressesOf(message.toAddresses), addressesOf(message.ccAddresses))
+                for (const address of involved) {
+                    const userId = addressOwner[address]
+                    if (!userId || done.has(userId)) continue
+                    done.add(userId)
+                    const threadKey = 'email:' + (message.rootEmailMessageId || message.emailMessageId)
+                    for (const chatRoomId of roomsOf[userId]) mailList.push({userId: userId, chatRoomId: chatRoomId, subject: message.subject ?? null,
+                        date: toMillis(message.messageDate) ?? toMillis(message.sentDate), threadKey: threadKey,
+                        url: inbox + '?view=all&thread=' + encodeURIComponent(threadKey)})
+                }
+                if (done.size === people.length) break
+            }
         ]]></script></actions>
     </service>
 </services>

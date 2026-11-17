@@ -8895,8 +8895,10 @@
         // The groups shown for a parsed text, in this order: Recent before any text; else Screens, Saved finds and Actions,
         // which the client has, then the provider groups the server answered (input.remote, shellSearch), each with up to
         // LIMIT rows and a last "more" row to its moreUrl. A > text shows only Actions and a : text only Screens, with more
-        // rows each; a source prefix only the provider groups of its sources. Every row is a copy with its index in the
-        // whole list (the arrow keys move over it).
+        // rows each; a source prefix only the provider groups of its sources. The provider groups of input.lead (the
+        // current app's switcher sources, those with a prefix: Comms' Chat rooms) come first with no prefix, before
+        // Screens, so a few letters and Enter open one. Every row is a copy with its index in the whole list (the arrow keys
+        // move over it).
         groups(query, input) {
             const given = input || {};
             const labels = given.labels || {};
@@ -8921,18 +8923,22 @@
             } else if (query.mode === "ask") {
                 // nothing else: the Ask row comes last, below
             } else {
-                if (query.mode === "all") {
-                    add("screens", screensLabel, "sym_o_web", palette.rank(given.screens, text), palette.LIMIT);
-                    add("savedFinds", findsLabel, "sym_o_saved_search", palette.rank(given.savedFinds, text), palette.LIMIT);
-                    add("actions", actionsLabel, "sym_o_bolt", palette.rank(given.actions, text), palette.LIMIT);
-                }
-                (given.remote || []).forEach((group) => {
+                const lead = query.mode === "all" && Array.isArray(given.lead) ? given.lead : [];
+                const addRemote = (leading) => (given.remote || []).forEach((group) => {
                     if (!group || (query.mode === "sources" && query.groups.indexOf(group.group) < 0)) return;
+                    if ((lead.indexOf(group.group) >= 0) !== leading) return;
                     // a row of a record keeps its entity and id (recordEntity, recordId), so Assist's @ inserts the record
                     const rows = (group.rows || []).filter((row) => row && row.url).map((row) => Object.assign({ title: row.title || row.url, subtitle: row.subtitle || "",
                         icon: row.icon || group.icon || null, url: row.url }, row.recordEntity && row.recordId ? { recordEntity: String(row.recordEntity), recordId: String(row.recordId) } : {}));
                     add("source:" + group.group, group.label || group.group, group.icon, rows, palette.LIMIT, group.moreUrl);
                 });
+                if (lead.length) addRemote(true);
+                if (query.mode === "all") {
+                    add("screens", screensLabel, "sym_o_web", palette.rank(given.screens, text), palette.LIMIT);
+                    add("savedFinds", findsLabel, "sym_o_saved_search", palette.rank(given.savedFinds, text), palette.LIMIT);
+                    add("actions", actionsLabel, "sym_o_bolt", palette.rank(given.actions, text), palette.LIMIT);
+                }
+                addRemote(false);
             }
             // the last group: Ask Assist the text (given.ask: Assist is there for this user), alone after ?
             if (given.ask && text && (query.mode === "all" || query.mode === "ask")) {
@@ -8945,6 +8951,16 @@
             return out;
         },
         rows(groups) { return [].concat(...(groups || []).map((group) => group.rows)); },
+        // The lead groups of the current app (palette.groups input.lead): the groups of its palette sources with a prefix,
+        // which are its switchers (Comms' Chat rooms), from the shell data's app of that name.
+        leadGroups(apps, appName) {
+            const app = (apps || []).find((one) => one && one.name === appName);
+            const out = [];
+            ((app && app.providers && app.providers.paletteSources) || []).forEach((source) => {
+                if (source && source.prefix && source.group && out.indexOf(source.group) < 0) out.push(source.group);
+            });
+            return out;
+        },
         // Actions of the client's own (the terminal's, Terminal-Fancy §9.6): rows with run(), not a url, by source. A source
         // registers its rows again to change them, and a function gives them anew each time the palette asks.
         client: (root.Vue && root.Vue.reactive ? root.Vue.reactive({}) : {}),
@@ -9170,8 +9186,10 @@
             groups() {
                 const root_ = this.$root;
                 return palette.groups(this.query, { recent: root_.paletteRecent, screens: root_.paletteScreens, savedFinds: root_.paletteSavedFinds,
-                    actions: root_.paletteActions, remote: this.remote, labels: root_.labels, ask: !!root_.assistOn });
+                    actions: root_.paletteActions, remote: this.remote, labels: root_.labels, ask: !!root_.assistOn, lead: root_.paletteLead || [] });
             },
+            // a lead group (the current app's switcher) may answer this text: Enter waits for the answer
+            leadWanted() { return this.query.mode === "all" && !!this.query.text && (this.$root.paletteLead || []).length > 0; },
             rows() { return palette.rows(this.groups); },
             // the keys and the prefixes, under the results
             hint() {
@@ -9183,7 +9201,9 @@
         },
         watch: {
             query(next) { this.selected = 0; this.schedule(next); },
-            rows(list) { if (this.selected >= list.length) this.selected = 0; }
+            rows(list) { if (this.selected >= list.length) this.selected = 0; },
+            // each opening starts empty, also when the last one's hide was cut short (a row that changed the screen at once)
+            "$root.paletteOpen"(open) { if (open) this.onHide(); }
         },
         methods: {
             onShow() {
@@ -9193,6 +9213,7 @@
             onHide() {
                 clearTimeout(this.timer);
                 this.seq += 1;
+                this.pendingEnter = null;
                 this.text = "";
                 this.remote = [];
                 this.remoteKey = "";
@@ -9202,6 +9223,8 @@
             // the provider groups of the text, 250 ms after it stops changing; an answer to an older text is dropped
             schedule(query) {
                 clearTimeout(this.timer);
+                this.timer = null;
+                this.pendingEnter = null;
                 const wanted = query.text && (query.mode === "all" || query.mode === "sources") && (this.$root.paletteSources || []).length;
                 if (!wanted) {
                     this.seq += 1;
@@ -9213,22 +9236,30 @@
                 const key = query.mode + "|" + query.groups.join(",") + "|" + query.text;
                 if (key === this.remoteKey) return;
                 this.searching = true;
-                this.timer = setTimeout(() => this.search(query, key), 250);
+                this.timer = setTimeout(() => { this.timer = null; this.search(query, key); }, 250);
             },
             search(query, key) {
                 this.seq += 1;
                 const seq = this.seq;
                 const params = { text: query.text, limit: String(palette.LIMIT) };
                 if (query.groups.length) params.groups = query.groups.join(",");
+                const settled = () => {
+                    // an Enter that waited for this answer opens the first row now
+                    const enter = this.pendingEnter;
+                    this.pendingEnter = null;
+                    if (enter) this.$nextTick(() => this.open(this.rows[0], enter));
+                };
                 moqui.request(this.$root.appRootPath + "/shellSearch", { params }).then((result) => {
                     if (seq !== this.seq) return;
                     this.searching = false;
                     this.remoteKey = key;
                     this.remote = result.json && Array.isArray(result.json.groups) ? result.json.groups : [];
+                    settled();
                 }, (err) => {
                     if (seq !== this.seq) return;
                     this.searching = false;
                     this.remote = [];
+                    settled();
                     moqui.handleAjaxError(err);
                 });
             },
@@ -9249,6 +9280,18 @@
                     this.open(this.rows.find((row) => row.ask), event);
                 } else if (key === "Enter") {
                     event.preventDefault();
+                    // typed and Enter at once, while the current app's switcher (Comms' rooms) may still answer: its first row
+                    // when the answer comes, the search asked now rather than after its pause
+                    if (this.searching && this.selected === 0 && this.leadWanted) {
+                        this.pendingEnter = { ctrlKey: !!event.ctrlKey, metaKey: !!event.metaKey };
+                        if (this.timer) {
+                            clearTimeout(this.timer);
+                            this.timer = null;
+                            const query = this.query;
+                            this.search(query, query.mode + "|" + query.groups.join(",") + "|" + query.text);
+                        }
+                        return;
+                    }
                     this.open(this.rows.find((row) => row.index === this.selected) || this.rows[0], event);
                 }
             },
@@ -10558,6 +10601,8 @@
                 return out;
             },
             paletteScreens() { return palette.screens(this.shellApps); },
+            // the current app's switcher groups, first in the palette with no prefix (Comms' Chat rooms)
+            paletteLead() { return palette.leadGroups(this.shellApps, this.currentAppName); },
             paletteActions() {
                 const seen = {};
                 const out = [];

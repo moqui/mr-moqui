@@ -18,7 +18,9 @@ along with this software (see the LICENSE.md file). If not, see
     for a user with a number that texts, opens its room), Mark all read and Open in Comms; and a room opened in place,
     which is Chat.qvue's chat-room component at 400 px (compact: its side panes and threads open over the timeline), loaded
     the first time a room opens, with a back arrow and Open in Chat. The room, the picker, a room's actions and the archive
-    are back layers (moqui.back), so Back closes them one at a time.
+    are back layers (moqui.back), so Back closes them one at a time. A person's direct chat has their latest mail thread as a
+    line, which opens in the Inbox and says that email is not end-to-end encrypted (Chat's mailLines; Comms-Messaging §3);
+    the phone home has All and Phone (the phone-number rooms) when there is one.
 
     The transitions are those of Comms/Chat. The panel listens to the page's chat store (moqui.chat.on), so a chat push updates
     the rooms instead of reloading the tab; the tray's refresh of the tab (the shell's shellCounts push and its poll) calls
@@ -39,6 +41,13 @@ along with this software (see the LICENSE.md file). If not, see
         </div>
         <q-input v-if="home && rooms.length > 6" v-model="filter" dense outlined rounded clearable class="q-px-sm q-pb-sm m-chat-home-search" :placeholder="t('Search conversations')">
             <template #prepend><q-icon name="sym_o_search"></q-icon></template></q-input>
+        <!-- the phone layout's phone filter (Comms-Messaging §9.1): the rooms of a phone number alone -->
+        <div v-if="home && !archivedView && hasPhoneRooms" class="row q-px-sm q-pb-xs m-chat-home-filters">
+            <q-chip dense clickable :outline="phoneOnly" :color="phoneOnly ? undefined : 'primary'" :text-color="phoneOnly ? undefined : 'white'" class="q-ml-none"
+                    data-filter="all" @click="phoneOnly = false">{{t('All')}}</q-chip>
+            <q-chip dense clickable :outline="!phoneOnly" :color="phoneOnly ? 'primary' : undefined" :text-color="phoneOnly ? 'white' : undefined" icon="sym_o_sms"
+                    data-filter="phone" @click="phoneOnly = true">{{t('Phone')}}</q-chip>
+        </div>
         <div v-if="newOpen && !home" class="q-pb-sm">
             <m-drop-down v-model="newUserIds" name="panelDirectUserIds" multiple server-search :options-url="url('searchUsers')" :options-parameters="pickParameters" :label="toLabel"></m-drop-down>
             <m-text-line v-if="pickKind === 'group'" v-model="newName" name="panelRoomName" :label="t('Name (optional): makes a room')" class="q-mt-xs"></m-text-line>
@@ -84,6 +93,12 @@ along with this software (see the LICENSE.md file). If not, see
                             <q-badge v-if="countsOf(room).mentions" color="negative" rounded class="q-ml-xs">@{{countsOf(room).mentions}}</q-badge>
                             <q-badge v-else-if="countsOf(room).unread" :color="room.isMuted || room.notificationLevelEnumId !== 'CnlAll' ? 'grey-6' : 'primary'" rounded
                                     class="q-ml-xs">{{countsOf(room).unread}}</q-badge>
+                        </q-item-label>
+                        <!-- the person's latest mail thread, opening in the Inbox; email is never end-to-end encrypted (§6.1 rule 7) -->
+                        <q-item-label v-if="mailOf(room)" caption class="row no-wrap items-center m-chat-mail-line" :data-mail="room.chatRoomId"
+                                :aria-label="mailText(mailOf(room)) + '. ' + mailLabel.text" @click.stop="go(mailOf(room).url)">
+                            <q-icon name="sym_o_mail" size="12px" class="m-muted q-mr-xs"></q-icon>
+                            <span class="ellipsis col m-muted">{{mailText(mailOf(room))}}<span class="m-chat-mail-label"> · {{mailLabel.text}}</span></span>
                         </q-item-label>
                     </q-item-section>
                 </q-item>
@@ -162,7 +177,7 @@ const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) =
 // the list's time in the user's zone, by calendar day, as in Chat (moqui.chat, WebrootChat.js; COM-UI-007)
 const shortWhen = (millis) => moqui.chat.shortWhen(millis);
 // kept for the page: the tray mounts this component again when it reloads the tab, and a reopened tab shows what it had
-const memo = { roomId: null, rooms: null, me: null, prefs: null, roomComponent: null, loading: null };
+const memo = { roomId: null, rooms: null, me: null, prefs: null, roomComponent: null, loading: null, mailLines: null, mailAt: 0 };
 const MAX_SHOWN = 30;
 
 module.exports = {
@@ -174,7 +189,7 @@ module.exports = {
     data() {
         return { loaded: !!memo.rooms, rooms: memo.rooms || [], me: memo.me || {}, prefs: memo.prefs || {}, roomId: null, componentVersion: 0,
             height: 520, newOpen: false, newUserIds: [], newName: '', fromNumber: '', numbers: [], busy: false, filter: '', archivedView: false,
-            roomSheet: { open: false, room: null } };
+            roomSheet: { open: false, room: null }, mailLines: memo.mailLines || {}, phoneOnly: false };
     },
     computed: {
         // Qvue screens have no container ID wrapper; the loader supplies its identity before mount or measurement.
@@ -191,7 +206,9 @@ module.exports = {
             const matches = (room) => { const text = (room.displayName + ' ' + this.snippetOf(room)).toLowerCase(); return words.every((word) => text.indexOf(word) >= 0); };
             // the home is the phone's list: pinned first, then the latest; the archive is apart (a search finds both)
             const archived = (room) => this.isArchived(room);
-            const list = this.rooms.filter((room) => room.isMember && (!words.length ? (this.archivedView ? archived(room) : !archived(room)) : matches(room))).sort((left, right) => {
+            const phone = this.home && this.phoneOnly && this.hasPhoneRooms && !this.archivedView;
+            const list = this.rooms.filter((room) => room.isMember && (!phone || room.roomTypeEnumId === 'CrtExternal')
+                    && (!words.length ? (this.archivedView ? archived(room) : !archived(room)) : matches(room))).sort((left, right) => {
                 if (this.home && left.isPinned !== right.isPinned) return left.isPinned ? -1 : 1;
                 const byRank = this.home ? 0 : rank(right) - rank(left);
                 if (byRank !== 0) return byRank;
@@ -212,6 +229,8 @@ module.exports = {
                 : t('Pick one person for a direct chat, or several for a group.');
         },
         archivedCount() { return this.rooms.filter((room) => room.isMember && this.isArchived(room)).length; },
+        hasPhoneRooms() { return this.rooms.some((room) => room.isMember && room.roomTypeEnumId === 'CrtExternal'); },
+        mailLabel() { return moqui.chat.e2eeLabel({ mail: true }); },
         unreadTotal() { return this.rooms.reduce((sum, room) => sum + (this.countsOf(room).unread || 0), 0); }
     },
     methods: {
@@ -286,8 +305,22 @@ module.exports = {
                     if (room.isMember && room.chatRoomId !== this.roomId) moqui.chat.state.unread[room.chatRoomId] = { unread: room.unreadCount || 0, mentions: room.mentionCount || 0 };
                 });
                 this.loaded = true;
+                // the people's mail lines, one request for the list, again at most every five minutes
+                if (this.rooms.some((room) => room.roomTypeEnumId === 'CrtDirect') && Date.now() - memo.mailAt >= 300000) this.loadMail();
             }, (err) => { this.loaded = true; console.info('Chat panel: the rooms could not be read', err && err.status); });
         },
+        // the mail line of a person's direct chat (Comms-Messaging §3): the Chat screen's mailLines (find#DirectChatMail)
+        loadMail() {
+            if (moqui.connection && moqui.connection.offline) return;
+            memo.mailAt = Date.now();
+            moqui.request(this.url('mailLines')).then((result) => {
+                const out = {};
+                ((result.json && result.json.mailList) || []).forEach((mail) => { if (mail && mail.chatRoomId && mail.url) out[mail.chatRoomId] = mail; });
+                this.mailLines = memo.mailLines = out;
+            }, () => {});
+        },
+        mailOf(room) { return room && room.roomTypeEnumId === 'CrtDirect' ? this.mailLines[room.chatRoomId] || null : null; },
+        mailText(mail) { return fill(t('Email: {subject}'), { subject: mail.subject || t('(no subject)') }); },
         scheduleRooms() { clearTimeout(this.roomsTimer); this.roomsTimer = setTimeout(() => this.refresh(), 400); },
         // the tray's refresh of this tab (m-dynamic-container.shellRefresh): the rooms in place, the open room stays
         shellRefresh() { this.refresh(); },

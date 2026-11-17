@@ -19,7 +19,8 @@ along with this software (see the LICENSE.md file). If not, see
     place); and the bundled BasicComms Chat, Inbox (Mail), Compose, Calls/Call and Calls/Dialer, shown here as the comms app's
     screens under its root (calls.appRoot), so their transitions go to the server, and to the account's store offline; and
     the calls of the account (WebrootCall.js: the ring bar, the LiveCall window and the call's audio, m-call-dock), whose
-    encrypted ones this window takes, as it holds the crypto device. Any other screen, and those not bundled, open in an
+    encrypted ones this window takes, as it holds the crypto device; the palette (m-shell-palette, Search and Mod+K, with the
+    keys of moqui.keymap), whose Chat rooms come first, the comms app being the current one here (Comms-Messaging §3). Any other screen, and those not bundled, open in an
     app window. The root of its Vue app, so it is the $root the client's components and those
     screens ask for: basePath, linkBasePath, currentPathList, currentParameters, setUrl, setParameters, the containers,
     userId and the notification client, as m-qapps-root has them, with a history of its own (the shell's page stays /).
@@ -34,6 +35,9 @@ along with this software (see the LICENSE.md file). If not, see
                 <q-tooltip>{{shared ? t('A shared device keeps only the recent rooms and mail for offline use.') : t('What you send waits here and goes when the server can be reached.')}}</q-tooltip></q-chip>
             <q-chip v-if="updateNeeded" dense square color="warning" text-color="black" icon="sym_o_system_update">{{t('The server is newer than this app: update the app')}}</q-chip>
             <q-chip v-else-if="socketState === 'closed'" dense square color="grey-7" text-color="white" icon="sym_o_sync_problem"><span class="gt-xs">{{t('Reconnecting')}}</span><q-tooltip>{{t('Reconnecting')}}</q-tooltip></q-chip>
+            <!-- the palette (m-shell-palette, as on the web: Mod+K), its Chat rooms first in this shell, which is the comms app's -->
+            <q-btn flat dense no-caps id="m-search" icon="sym_o_search" :aria-label="t('Search')" :round="!$q.screen.gt.sm" :label="$q.screen.gt.sm ? t('Search') : undefined"
+                    @click="openPalette()"><q-tooltip>{{t('Search')}} ({{paletteKeyHint}})</q-tooltip></q-btn>
             <q-btn v-for="item in countItems" :key="item.key" flat dense no-caps :icon="item.icon" :aria-label="item.count ? item.label + ': ' + item.count : item.label" @click="setUrl(item.link)">
                 <q-badge v-if="item.count" floating rounded color="red">{{item.count > 99 ? '99+' : item.count}}</q-badge>
                 <q-tooltip>{{item.label}}</q-tooltip>
@@ -185,6 +189,7 @@ along with this software (see the LICENSE.md file). If not, see
             </q-card-actions>
         </q-card>
     </q-dialog>
+    <m-shell-palette></m-shell-palette>
     <!-- calls: the ring bar, the LiveCall window off the call's screen and the call's audio (WebrootCall.js) -->
     <m-call-dock v-if="callsOn"></m-call-dock>
     <q-page-container>
@@ -267,6 +272,8 @@ module.exports = {
             view: null, currentPathList: [], extraPathList: [], currentParameters: {}, bodyParameters: null, backStack: [], activeContainers: {},
             // what the client's screens ask of m-qapps-root's: the quick-create dialog (here its screen opens in an app window)
             quickCreateShow: false, quickCreateUrl: '', quickCreateTitle: '', trayOpen: false,
+            // the palette (m-shell-palette reads these of its $root, as of m-qapps-root's)
+            paletteOpen: false, assistOn: false,
             signOutBox: { open: false, shared: false, items: [], checked: true, inCall: false },
             pushBox: { open: false, loaded: false, state: {}, testing: false, result: '', confirmOpen: false, confirmRow: null }
         };
@@ -359,6 +366,39 @@ module.exports = {
             }));
             return out;
         },
+        // ---- the palette, as m-qapps-root gives it (WebrootVue.qvt.js moqui.shellPalette): the apps' screens and actions,
+        // which open in app windows here, and the shellSearch groups; the comms app is the current one in this shell, so its
+        // Chat rooms come first with no prefix (Comms-Messaging §3). No Recent or Saved finds: the shell keeps no titles
+        // of the screens it showed, and has no menu data.
+        labels() {
+            const out = {};
+            const given = (moqui.qvt && moqui.qvt.shellLabels) || {};
+            Object.keys(given).forEach((key) => { out[key] = t(given[key]); });
+            return out;
+        },
+        commsAppName() { return this.commsRel.split('/')[0]; },
+        paletteSources() {
+            const out = [];
+            this.apps.forEach((app) => ((app.providers && app.providers.paletteSources) || []).forEach((source) => {
+                if (!out.some((other) => other.group === source.group)) out.push(source);
+            }));
+            return out;
+        },
+        paletteLead() { return moqui.shellPalette ? moqui.shellPalette.leadGroups(this.apps, this.commsAppName) : []; },
+        paletteScreens() { return moqui.shellPalette ? moqui.shellPalette.screens(this.apps) : []; },
+        paletteActions() {
+            const seen = {};
+            const out = [];
+            this.apps.forEach((app) => ((app.providers && app.providers.paletteActions) || []).forEach((action) => {
+                if (!action.url || seen[action.url]) return;
+                seen[action.url] = true;
+                out.push({ title: action.label, subtitle: app.title, icon: action.icon || 'sym_o_bolt', url: action.url });
+            }));
+            return out.concat(moqui.shellPalette ? moqui.shellPalette.clientActions() : []);
+        },
+        paletteSavedFinds() { return []; },
+        paletteRecent() { return []; },
+        paletteKeyHint() { return moqui.keymap && moqui.keymap.isMac ? '⌘K' : 'Ctrl K'; },
         currentId() { return this.state && this.state.current; },
         keyStore() { return this.state && this.state.keyStore; },
         // the server's clientApi is newer than this app knows (moqui_client::login::CLIENT_API)
@@ -442,6 +482,7 @@ module.exports = {
             if (onComplete) onComplete({ name: this.currentPathList[this.currentPathList.length - 1], path: this.currentPath, query: this.currentParameters,
                 params: this.bodyParameters || {}, fullPath: this.currentLinkUrl, meta: {}, hash: '', matched: [{ path: this.currentPath }] });
         },
+        openPalette() { this.paletteOpen = true; },
         // the link of a dm or record room in place of the link itself (Chat.qvue replaceRoom)
         replaceUrl(url) { this.setUrl(url, null, null, false); },
         setParameters(parameters) {
@@ -627,6 +668,20 @@ module.exports = {
             // the drawer over the page (a narrow screen) is a layer too
             this.backOff = moqui.back.track(this, () => this.drawer && this.$q.screen.lt.md, () => { this.drawer = false; });
         }
+        // the keys, as m-qapps-root has them (moqui.keymap, WebrootVue.qvt.js): the shell's own Mod+K opens the palette (not
+        // in a rich-text editor, whose Ctrl+K is its own), and the screens' scopes (Chat's) work here too; single keys wait
+        // while a dialog is open
+        const keys = moqui.keymap;
+        if (keys && keys.registerScope) {
+            const nav = window.navigator || {};
+            keys.isMac = /Mac|iPhone|iPad|iPod/.test(nav.platform || nav.userAgent || '');
+            keys.typedBlocked = () => !!document.querySelector('.q-dialog');
+            this.shellKeysOff = keys.registerScope('global', [
+                { keys: 'Mod+K', action: 'palette', label: t('Search'), notInEditor: true, run: () => { this.openPalette(); } }
+            ]);
+            this.onShellKeydown = (event) => keys.handle(event);
+            document.addEventListener('keydown', this.onShellKeydown);
+        }
         // what the host had to tell after the sign-in (an account kept as a personal device's)
         if (this.state && this.state.notice) this.$q.notify({ type: 'info', message: t(this.state.notice), timeout: 12000 });
         if (moqui.chat) moqui.chat.start(this);
@@ -647,6 +702,8 @@ module.exports = {
     },
     unmounted() {
         clearInterval(this.countsTimer);
+        if (this.shellKeysOff) this.shellKeysOff();
+        if (this.onShellKeydown) document.removeEventListener('keydown', this.onShellKeydown);
         if (moqui.back && moqui.back.base) moqui.back.base = null;
         if (this.backOff) this.backOff();
     }

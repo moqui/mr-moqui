@@ -445,8 +445,12 @@ is kept with the float places and comes back at a load; the tray's open state st
 Ctrl+K). Groups (`moqui.shellPalette.groups`): Recent (the screens of this page before the current one) before any text; then Screens (the
 apps' menus by title), Saved finds (the current menu data's), Actions (the apps' `paletteActions`), and the `shellSearch` groups, asked
 250 ms after the text stops changing, each up to five rows with a "more" row to its `moreUrl`. `>` shows the actions alone, `:` the screens
-alone, and a source's prefix (`@`, `#`, `~`) only its sources' groups (`groups` of the request). The arrow keys move, Enter opens the selected
-row (the first by default), Ctrl+Enter or Cmd+Enter opens it in a new tab.
+alone, and a source's prefix (`@`, `#`, `~`) only its sources' groups (`groups` of the request). The current app's switchers, its
+sources with a prefix (`paletteLead`, `moqui.shellPalette.leadGroups`: Comms' Chat rooms, the gallery's `~`), come first with no
+prefix, before Screens, so a few letters and Enter open one (Comms-Messaging §3); another app's keep their place. The arrow keys move,
+Enter opens the selected row (the first by default), Ctrl+Enter or Cmd+Enter opens it in a new tab; Enter typed with the text, while a
+lead group may still answer, asks the search at once and opens its first row when the answer comes. Each opening starts empty. The
+desktop and mobile shell has the same palette ([Desktop-Client](Desktop-Client.md#bundled-screens-and-app-windows)).
 
 **Keys** (`moqui.keymap`, design §1.7): `registerScope(scope, bindings)` returns the function that takes them back; a binding is
 `{keys, label, run(event), action, when(), notInEditor}`, keys like `Mod+K` (Ctrl or Cmd), `Ctrl+Shift+A`, `Esc`, `?` or the chord `g c`

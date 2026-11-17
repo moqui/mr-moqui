@@ -31,7 +31,8 @@ along with this software (see the LICENSE.md file). If not, see
     and its send refuses (reasonCode encryptedRoom from send#Message). Of the details tabs (Comms-Messaging §5) the terminal
     has Links, a room's links as a list (chatView links: find#RoomLinks, with the cached title, and More by its cursor;
     none in an encrypted room), and of the feed across rooms Activity (chatView activity with no room: find#ChatActivity,
-    the user's mentions, replies and reactions, each opening its room); the media grid, the files by type, voice and
+    the user's mentions, replies and reactions, each opening its room) and Threads (chatView threads: its thread replies,
+    one row per thread); the media grid, the files by type, voice and
     reactions are the browser's. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Chat" default-menu-include="false">
@@ -257,14 +258,23 @@ along with this software (see the LICENSE.md file). If not, see
             // my Activity across rooms (chatView activity, no room): mentions, replies and reactions, newest first
             activityList = []
             activityNext = null
-            showActivity = !chatRoomId && chatView === 'activity'
+            // and the Threads I am in (chatView threads: the thread replies of the same feed, one row per thread, its newest)
+            showThreads = !chatRoomId && chatView === 'threads'
+            showActivity = !chatRoomId && (chatView === 'activity' || showThreads)
             if (showActivity) {
                 const out = ec.service.sync().name('org.moqui.chat.ChatServices.find#ChatActivity').parameters({limit: 40,
-                    cursor: activityCursor || null}).call()
+                    kinds: showThreads ? ['threadReply'] : null, cursor: activityCursor || null}).call()
                 if (!ec.message.hasError()) {
                     activityNext = out.nextCursor ?? null
                     const KINDS = {mention: 'Mentioned you', reply: 'Replied to you', threadReply: 'Replied in a thread', reaction: 'Reacted to your message'}
-                    activityList = Array.from(out.items || []).map((item) => ({chatRoomId: item.chatRoomId,
+                    const seen = new Set()
+                    activityList = Array.from(out.items || []).filter((item) => {
+                        if (!showThreads) return true
+                        const key = item.chatRoomId + ' ' + (item.threadRootEventSeq ?? item.messageEventSeq)
+                        if (seen.has(key)) return false
+                        seen.add(key)
+                        return true
+                    }).map((item) => ({chatRoomId: item.chatRoomId,
                         kindText: ec.l10n.localize(KINDS[item.kind] || item.kind) + (item.reactionKey ? ' ' + item.reactionKey : ''),
                         roomText: item.roomName || item.chatRoomId, actorName: item.actorName || '',
                         snippet: item.encrypted ? ec.l10n.localize('Encrypted message') : item.snippet || '', timeText: when(item.date)}))
@@ -281,11 +291,12 @@ along with this software (see the LICENSE.md file). If not, see
                 <label type="h5" text="Chat" style="q-my-none"/>
                 <container style="col"/>
                 <link url="../Chat" text="Rooms" condition="showActivity"/>
-                <link url="../Chat" text="Activity" condition="!showActivity" parameter-map="{chatView:'activity'}"/>
+                <link url="../Chat" text="Activity" condition="!showActivity || showThreads" parameter-map="{chatView:'activity'}"/>
+                <link url="../Chat" text="Threads" condition="!showThreads" parameter-map="{chatView:'threads'}"/>
                 <link url="markAllRead" link-type="hidden-form-link" text="Mark all read" condition="unreadTotal > 0"/>
             </container>
             <section name="ChatTuiActivity" condition="showActivity"><widgets>
-                <label type="h6" text="Activity" style="q-my-none"/>
+                <label type="h6" text="${showThreads ? ec.l10n.localize('Threads') : ec.l10n.localize('Activity')}" style="q-my-none"/>
                 <form-list name="ChatTuiActivityList" list="activityList" skip-form="true" paginate="false">
                     <field name="kindText"><default-field title="What"><display style="text-weight-medium"/></default-field></field>
                     <field name="roomText"><default-field title="Room">
@@ -297,7 +308,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <section name="ChatTuiNoActivity" condition="!activityList.length"><widgets>
                     <label type="p" text="Nothing yet: mentions of you, replies to you and reactions to your messages are listed here" style="m-muted"/>
                 </widgets></section>
-                <link url="../Chat" text="More" condition="activityNext" parameter-map="{chatView:'activity', activityCursor:activityNext}"/>
+                <link url="../Chat" text="More" condition="activityNext" parameter-map="{chatView:showThreads ? 'threads' : 'activity', activityCursor:activityNext}"/>
             </widgets></section>
             <section name="ChatTuiRoomsList" condition="!showActivity"><widgets>
                 <form-list name="ChatTuiRoomList" list="roomList" skip-form="true" paginate="false">
