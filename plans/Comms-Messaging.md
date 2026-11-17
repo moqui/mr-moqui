@@ -1055,7 +1055,7 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 
 | # | Phase | Sections | Size |
 |---|---|---|---|
-| 0 | Fixes from the UI review | §5.2 paging, §6.5 | Small |
+| 0 | Fixes from the UI review: done 2026-11-16 (`82affc535`) | §5.2 paging, §6.5 | Small |
 | 1 | Shared helpers and the rest of the phone layout | §2 | Medium |
 | 2 | Notifications | §7 | Large |
 | 3 | E2EE labels and the call rule | §6.1–§6.4 | Medium |
@@ -1107,7 +1107,9 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 
 #### Phase 0: fixes from the UI review
 
-Chat defects that the [review](ui-review-basic-comms.md) found, fixed before new work is built on them.
+Done 2026-11-16 in `82affc535` ([review](ui-review-basic-comms.md), COM-R01). Chat defects that the review found,
+fixed before new work is built on them. Emoji verification stalled because nothing called `Sas.accept()` on the device
+that did not start the comparison; My devices overflowed because its Quasar `column` wraps.
 
 | Work | Finding | Files |
 |---|---|---|
@@ -1123,13 +1125,14 @@ Chat defects that the [review](ui-review-basic-comms.md) found, fixed before new
 Tests: a regression spec for each paging boundary, and for the time format with a user zone that is not the
 browser's. The verification fix extends the client spec `CryptoFlow`.
 
-The mail defects of the review (COM-UI-016, 017, 018, 020, 021) are not part of this plan; they are fixed in the
-review's own pass. COM-UI-020 (P1: an automatic reply meant for contacts goes to everyone when no contacts hook is
-installed) should be fixed first and on its own.
+The mail defects of the review (COM-UI-016, 017, 018, 020, 021, 023, 025–028) are not part of this plan; the review's
+own pass fixed them (`d34cc6645` for COM-UI-020, then `5f4787d0f`).
 
 #### Phase 1: shared helpers and the rest of the phone layout
 
-Work: §2.2 steps 2 to 7. The helpers of step 1 are done in phase 0.
+Work: §2.2 steps 2 to 7. The helpers of step 1 are built (phase 0): `moqui.chat` has the times, room icon, counts,
+archive, snippet and thresholds. The Send button (step 5) and the home list's icon and `setNotification` (step 6) are
+done too.
 - `moqui.back` and its three callers (Esc, the shell's Back, Android back in `WryActivity.kt`).
 - Swipe to reply. The picker's phone number and named room. The attach choice.
 - Files: `WebrootChat.js`, `WebrootVue.qvt.js`, `Chat.qvue`, `ChatPanel.qvue`, `Root.qvue`,
