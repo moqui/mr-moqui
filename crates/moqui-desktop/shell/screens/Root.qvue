@@ -650,6 +650,8 @@ module.exports = {
     created() {
         // the root the client's helpers talk to (toasts, links, a 401), as m-qapps-root is on /qapps
         moqui.webrootVue = this;
+        // the keys' Mod is Cmd on a Mac (moqui.keymap; the Search tooltip says so from the first render)
+        if (moqui.keymap) { const nav = window.navigator || {}; moqui.keymap.isMac = /Mac|iPhone|iPad|iPod/.test(nav.platform || nav.userAgent || ''); }
         moqui.appRootPath = '';
         // the account's /notws, held by the host (moqui.openSocket): counts, notifications, the chat store
         if (this.config.notificationEndpoint) {
@@ -673,8 +675,6 @@ module.exports = {
         // while a dialog is open
         const keys = moqui.keymap;
         if (keys && keys.registerScope) {
-            const nav = window.navigator || {};
-            keys.isMac = /Mac|iPhone|iPad|iPod/.test(nav.platform || nav.userAgent || '');
             keys.typedBlocked = () => !!document.querySelector('.q-dialog');
             this.shellKeysOff = keys.registerScope('global', [
                 { keys: 'Mod+K', action: 'palette', label: t('Search'), notInEditor: true, run: () => { this.openPalette(); } }
