@@ -39,7 +39,7 @@ The eight services of `org.moqui.terminal.TerminalServices` are Rust functions i
 `open#TerminalSession` with kind `apps` is open to any signed-in user, within the session limits. For a command line or a host session `access::check` (`crates/moqui-host/src/term/access.rs`) asks, in order:
 
 - The build: the `devtools` feature, and for a host session also unix.
-- The switch: `terminal` `command-line` or `host-sessions`. Unset or `dev` is on only on a dev instance. `false` is off. Any other value is on whatever the instance purpose.
+- The switch: `terminal` `command-line` or `host-sessions`. Unset or `dev` is on only on a dev instance. `true` is on whatever the instance purpose, a warning in the log on a production instance. `false`, and any other value (logged as an error), is off (SEC-FIL-65).
 - The permission: `SSH_SHELL` or `TERMINAL_HOST`.
 - The origin: the `Origin` header equals the request's own scheme, host and port. A request with a `login_key` header and no `Origin`, an SSH session and an in-process request are excepted. A request with no `Origin` header is otherwise refused.
 - The place. Local is an in-process request; an SSH peer on loopback that no edge tunnel handed over; or an HTTP request with a loopback peer, none of the headers `forwarded`, `x-forwarded-for`, `x-forwarded-host`, `x-forwarded-proto`, `x-forwarded-port`, `x-real-ip` or the configured client-address header, a direct request (`RequestVia::Direct`), its own origin, and a `Host` that is `localhost`, `*.localhost` or a loopback address. Anything else is remote and needs `remote` true, a secure request, and a sign-in within `remote-reauth-minutes` or a ticket. An SSH peer that is not on loopback counts as a secure remote request.

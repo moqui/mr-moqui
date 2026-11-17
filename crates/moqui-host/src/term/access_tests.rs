@@ -358,3 +358,18 @@ fn a_device_key_with_no_origin_is_taken_and_its_place_is_its_peers() {
         Err(Refusal::NotAvailable)
     );
 }
+
+/// SEC-FIL-65: a terminal switch is on for `true`, on a dev instance only for `dev` or nothing, and off for `false` and
+/// for any other value, so a typo never opens the command line or host sessions.
+#[test]
+fn a_switch_is_on_only_for_true_or_dev_on_a_dev_instance() {
+    for dev_instance in [false, true] {
+        assert_eq!(super::switch_on(None, dev_instance), dev_instance);
+        assert_eq!(super::switch_on(Some("dev"), dev_instance), dev_instance);
+        assert!(super::switch_on(Some("true"), dev_instance));
+        assert!(!super::switch_on(Some("false"), dev_instance));
+        for typo in ["ture", "yes", "on", "TRUE", "1", ""] {
+            assert!(!super::switch_on(Some(typo), dev_instance), "{typo}");
+        }
+    }
+}

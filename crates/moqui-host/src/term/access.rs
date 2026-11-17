@@ -246,12 +246,46 @@ impl Switches {
     }
 }
 
-/// A switch of the conf: `dev` (the default) on a dev instance only, `false` off, anything else on.
+/// A switch of the conf: `dev` (the default) on a dev instance only, `true` on, `false` off. Any other value is off, an
+/// error logged once, so a typo never opens the command line or host sessions; `true` on a production instance is
+/// logged as a warning once (SEC-FIL-65).
 fn switched_on(factory: &ExecutionContextFactory, name: &str) -> bool {
-    match factory.conf_setting_if_set("terminal", name).as_deref().map(str::trim) {
-        None | Some("dev") => moqui_core::devtools::is_dev_instance(),
-        Some("false") => false,
-        Some(_) => true,
+    let value = factory.conf_setting_if_set("terminal", name);
+    let value = value.as_deref().map(str::trim);
+    match value {
+        Some("dev" | "true" | "false") | None => {}
+        Some(other) => note_once(name, other, || {
+            tracing::error!(
+                "terminal {name}=\"{other}\" is not dev, true or false: it is off (the command line and host sessions \
+                 open only by one of those)"
+            );
+        }),
+    }
+    if value == Some("true") && moqui_core::web::is_production() {
+        note_once(name, "true", || {
+            tracing::warn!(
+                "terminal {name}=\"true\" on a production instance: it is on, for every holder of its permission"
+            );
+        });
+    }
+    switch_on(value, moqui_core::devtools::is_dev_instance())
+}
+
+/// [`switched_on`] of a value: `dev` and none on a dev instance only, `true` on, anything else off.
+fn switch_on(value: Option<&str>, dev_instance: bool) -> bool {
+    match value {
+        None | Some("dev") => dev_instance,
+        Some("true") => true,
+        Some(_) => false,
+    }
+}
+
+/// Run `log` the first time switch `name` is read with `value`, so a request's check does not fill the log.
+fn note_once(name: &str, value: &str, log: impl FnOnce()) {
+    static NOTED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::LazyLock::new(Default::default);
+    if moqui_lib::sync::lock(&NOTED).insert(format!("{name}={value}")) {
+        log();
     }
 }
 

@@ -207,6 +207,49 @@ fn a_username_linked_to_another_provider_id_is_refused_and_a_linked_id_wins() {
     assert_eq!(field(&account(&facade, "SSO_ADMIN"), "userFullName"), "New Name");
 }
 
+/// SEC-ADM-11: an email address the provider has not verified is not written to the account, made or updated: a password
+/// reset by email finds an account by it. A verified one is.
+#[test]
+fn an_email_address_is_taken_only_when_the_provider_verified_it() {
+    let (facade, context) = entered();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    crate::service::load_definitions().unwrap();
+    let flow = flow(&facade);
+    seed(
+        &facade,
+        "moqui.security.sso.AuthFlowFieldMap",
+        &[
+            ("authFlowId", Value::string("TEST_FLOW")),
+            ("ruleSeqId", Value::string("02")),
+            ("srcFieldName", Value::string("email")),
+            ("dstFieldName", Value::string("emailAddress")),
+        ],
+    );
+    let mut unverified = profile("sub-eve", "sso.eve", &[]);
+    unverified
+        .attributes
+        .insert("email_verified".to_string(), Value::Bool(false));
+    sync_account(&facade, &flow, &unverified, "sso.eve").unwrap();
+    let address = || {
+        let row = facade
+            .find(ACCOUNT)
+            .unwrap()
+            .eq("username", Value::string("sso.eve"))
+            .one()
+            .unwrap()
+            .expect("the account");
+        field(&row, "emailAddress")
+    };
+    assert_eq!(address(), "", "made with no address");
+    let mut unsaid = unverified.clone();
+    unsaid.attributes.remove("email_verified");
+    sync_account(&facade, &flow, &unsaid, "sso.eve").unwrap();
+    assert_eq!(address(), "", "no email_verified claim is no verification");
+    sync_account(&facade, &flow, &profile("sub-eve", "sso.eve", &[]), "sso.eve").unwrap();
+    assert_eq!(address(), "sso.eve@example.com");
+}
+
 #[test]
 fn a_zero_or_false_claim_is_not_mapped_as_groovy_truth_has_it() {
     let (facade, context) = entered();

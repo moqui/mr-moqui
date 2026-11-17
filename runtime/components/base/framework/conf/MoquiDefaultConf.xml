@@ -1302,8 +1302,8 @@
         command sessions at once, and max-sessions-per-user of them for one user; a session in its login dialog counts toward
         the first only. A kept apps session with no window ends after detach-seconds, a command or host session after
         host-detach-hours; a command or host session keeps replay-kb of its output for a window that comes back.
-        On a dev instance (terminal_command_line and terminal_host_sessions: dev by default, false off, empty on for any
-        purpose) the browser terminal offers the moqui> command line to a user with SSH_SHELL and programs on the server's
+        On a dev instance (terminal_command_line and terminal_host_sessions: dev by default, false off, true on for any
+        purpose; any other value off, logged) the browser terminal offers the moqui> command line to a user with SSH_SHELL and programs on the server's
         operating system (the host-profile elements, and the shell profile: the server user's own shell) to a user with
         TERMINAL_HOST. From anywhere but this machine those need terminal_remote=true, HTTPS and a sign-in within
         remote-reauth-minutes (docs/ui/Terminal.md). -->

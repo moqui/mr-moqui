@@ -193,7 +193,8 @@ permission hooks: start the server outside it, or `claude` with those variables 
 ```
 
 `terminal_command_line` and `terminal_host_sessions` are `dev` by default (on for a dev instance), `false` turns one
-off, and empty turns it on for any purpose. To reach them from another machine, `terminal_remote=true` in
+off, and `true` turns it on for any purpose; any other value, empty included, is off, with an error in the log, so a
+typo never turns it on (and `true` on a production instance is a warning in the log). To reach them from another machine, `terminal_remote=true` in
 `runtime/.env` (this host only), the environment for one run, or a `default-property` in a runtime conf
 ([Run-Deploy](../Run-Deploy.md#properties)). A `host-profile` takes `command`, `args` (words, or a JSON list),
 `resume-args`, `directory`, `login`, `integration`, `agent` and `env` children.

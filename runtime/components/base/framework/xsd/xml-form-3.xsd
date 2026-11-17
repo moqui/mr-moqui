@@ -866,12 +866,11 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:attribute>
         <xs:attribute name="value" type="xs:string"><xs:annotation><xs:documentation>The current value of a select (the
             key of its option) when the text is its label; by default the option whose label is the text.</xs:documentation></xs:annotation></xs:attribute>
-        <xs:attribute name="encode" type="boolean" default="false">
+        <xs:attribute name="encode" type="boolean" default="true">
             <xs:annotation><xs:documentation>
-                If true text will be encoded so that it does not interfere with markup of the target output.
-
-                For example, if output is HTML then data presented will be HTML encoded so that all
-                HTML-specific characters are escaped.
+                The text is HTML encoded, its line breaks shown as such, so that a record's text shows as written and
+                never runs as markup; false writes the text as HTML, for a text the screen built from markup it controls.
+                True by default, as label and display (SEC-SCR-08; Java's default was false).
             </xs:documentation></xs:annotation>
         </xs:attribute>
         <xs:attribute name="display-if-empty" type="boolean" default="false">
