@@ -131,7 +131,7 @@ Screen JSON removes credential fields at any depth, case-insensitive: `password`
 
 ### Response headers
 
-Every response of the screen servlet chain (a screen, a transition, REST, a script servlet, an early error) gets the `screen-render` headers it did not set itself: `Content-Security-Policy: frame-ancestors 'none'; form-action 'self';`, `X-Frame-Options: sameorigin`, `X-XSS-Protection: 1; mode=block`, and `X-Content-Type-Options: nosniff`. `Strict-Transport-Security: max-age=31536000` (type `screen-secure`, no `includeSubDomains`) is added only to an https request whose `Host` is not `localhost` or a name under it. A stricter CSP in the conf comment is commented out. The Assist sandbox frame uses its own policy, under [Assist](Attack-Surface-AI.md#assist).
+Every response of the screen servlet chain (a screen, a transition, REST, a script servlet, an early error) gets the `screen-render` headers it did not set itself: `Content-Security-Policy: frame-ancestors 'none'; form-action 'self';`, `X-Frame-Options: sameorigin`, `X-XSS-Protection: 1; mode=block`, and `X-Content-Type-Options: nosniff`. `Strict-Transport-Security: max-age=31536000` (type `screen-secure`, no `includeSubDomains`) is added only to an https request whose `Host` is not `localhost` or a name under it. A stricter CSP in the conf comment is commented out. A user's file the engine sends from its storage (`send#RunArtifact`, `web::send_file_response`) and a PASS download the frontend forwards from the authority over gRPC carry their type only when it is inert (images, fonts, audio and video, PDF, plain text and CSV, archives; `web::is_inert_content_type`), else `application/octet-stream`, with `Content-Security-Policy: default-src 'none'; sandbox` (`web::USER_FILE_SANDBOX`; an inline PDF aside). The Assist sandbox frame uses its own policy, under [Assist](Attack-Surface-AI.md#assist).
 
 ### CORS
 
@@ -147,7 +147,7 @@ An `OPTIONS` preflight is 204 with an empty body, before the servlet chain (`cra
 
 On every node that takes links (`node_role` `front`, `front_edge`, `edge` or `all-in-one`) a header with an empty trusted-proxy list is ignored, with an error at startup: the edge node faces the internet and passes the client address to its local nodes ([Edge node](../Run-Deploy.md#a-local-server-with-an-edge-node)).
 
-`/health` and `/metrics` use the TCP peer, not this header, so a request that a proxy on the same host forwards has a loopback peer and is allowed. `/status` uses `ec.user.getClientIp()`, which can differ.
+`/health` and `/metrics` check the TCP peer and, when a believed header names another client, that client too: it must be an entry of `status-ips`, and a loopback address a header or an edge node names is not this machine (`http::status_request_allowed`). `/status` uses `ec.user.getClientIp()`, which can differ.
 Both take any address in 127.0.0.0/8 as loopback.
 
 A server of `moqui test --serve` (and only that: the command sets it in code before its server starts; no property or

@@ -114,10 +114,11 @@ source address. A connection that sends
 nothing for 30 seconds is closed. Each carries
 RFC 4571 frames of up to 2,048 bytes into the same SFU, which accepts only what a peer's ICE session takes.
 
-A bound leg's `mute`, `hand`, `reaction` and `unpublish` call frames are sent to every other leg of the room as the
-client wrote them, with `id` removed and `from` set to the sender's leg by the media node
-(`crates/moqui-host/src/rtc/driver.rs`). An admitted guest's leg sends them too. A call frame is at most 128 KiB; a
-larger one is refused (`tooLarge`). No rate limit applies to these frames. Any other `rtc` value is answered as an error.
+A bound leg's `mute`, `hand`, `reaction` and `unpublish` call frames are sent to every other leg of the room as a new
+frame of only that frame's own fields (booleans, an emoji of at most 64 bytes, a short `mid` or `source`), with `from`
+and `callLegId` the sender's, made by the media node (`crates/moqui-host/src/rtc/driver.rs` `relayed_frame`). An
+admitted guest's leg sends them too. A call frame is at most 128 KiB; a larger one is refused (`tooLarge`). A leg
+relays at most 20 of these at once and 5 a second after (`RelayBucket`); the rest are answered `rateLimited`. Any other `rtc` value is answered as an error.
 
 End-to-end encrypted calls (W8, [WebRTC, Encrypted calls](../interfaces/WebRTC.md#encrypted-calls)) open nothing new.
 Each browser SFrame-encrypts its frames (RFC 9605, AES-128-GCM on WebCrypto, in an `RTCRtpScriptTransform` worker) with
@@ -313,8 +314,10 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   from. Plain RTP is taken only from the SDP's address (for a registered phone, also the address it signals from; from any
   address when the SDP's address is unspecified, 0.0.0.0) and, once the first packet latched, only from that source;
   anything else is dropped, so a guessed port neither injects audio nor takes the call's audio. RTCP is dropped.
-  Until a packet latches, a leg sends its RTP to the address and port the SDP names; no address range (loopback,
-  private, link-local, the server's own) is refused there.
+  Until a packet latches, a leg sends its RTP to the address and port the SDP names, but never to an address no phone
+  can be (`moqui-sip` `media::media_target_allowed`): an unspecified, multicast or broadcast address, port 0, the leg
+  socket's own address, and loopback or link-local unless the socket is bound in that scope. A private address stays
+  allowed (a phone behind NAT names one); the first refusal per target is logged.
   rsipstack logs whole SIP messages (SDES keys, digest answers) at INFO, so the host keeps only its warnings.
 - **Floods.** rsipstack has no caps of its own, so the engine's transport inspector holds new requests (outside a
   dialog) to `sip_request_rate` a second per source (`sip_request_burst` at once; 20 and 100 by default, an IPv6
@@ -425,7 +428,7 @@ for 600 seconds is closed, and a write the client does not take for 60 seconds e
   user's slots are limited to 60 an hour and ten times `xmpp_upload_max_bytes` an hour; there is no total per user and
   no drive quota. `attach#Upload` makes a `ChatAttachment` of the room on the same stored file, with the uploader's file
   name and content type. It refuses an upload that is not the caller's own completed one, and the session then logs the
-  whole URL, token included, at WARN. `clean_XmppUploads_daily` (`XmppServices.clean#Uploads`) removes only slots never
+  upload by its file name at WARN, never the URL whose token reads it. `clean_XmppUploads_daily` (`XmppServices.clean#Uploads`) removes only slots never
   put within an hour, and expired FAST tokens. `ChatServices.clear#MessageContent` and `clean#PendingAttachments` remove each chat
   file through `ChatServices.remove#AttachmentFile`: a file under the upload root goes, with its `XmppUpload` rows, when
   no other `ChatAttachment` has its location, so a file put over XMPP goes with the last message that has it (deletion or
