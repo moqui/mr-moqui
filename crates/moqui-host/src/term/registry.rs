@@ -260,8 +260,10 @@ impl Registry {
         let (output, input) = tokio::io::split(ours);
         let weak = Arc::downgrade(factory);
         let username = spec.username.clone();
-        let running = crate::edge::handle()
-            .spawn(async move { crate::command::interactive(theirs, &weak, &username, true, Ok(apps), host).await });
+        let from = spec.facts.client_ip.clone();
+        let running = crate::edge::handle().spawn(async move {
+            crate::command::interactive(theirs, &weak, &username, &from, true, Ok(apps), host).await
+        });
         let program = Program {
             output: Box::pin(output),
             input: Box::pin(input),
