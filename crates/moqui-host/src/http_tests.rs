@@ -86,13 +86,18 @@ async fn a_screen_request_has_a_root_span_with_identity_and_health_is_independen
             super::RequestTelemetry {
                 telemetry: Arc::clone(&telemetry),
                 token_routes: Arc::new(Arc::default),
+                all_query_values: Arc::new(|| false),
             },
             super::log_http,
         ));
     app.clone()
         .oneshot(
             Request::builder()
-                .uri("/screen?tab=1&password=private")
+                .uri("/screen?tab=1&password=private&q=Ann%20Smith&pageIndex=2")
+                .header(
+                    "referer",
+                    "https://erp.example.com/apps/find?q=ann%40example.com&pageSize=50#results",
+                )
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )
@@ -122,7 +127,15 @@ async fn a_screen_request_has_a_root_span_with_identity_and_health_is_independen
     assert_ne!(super::session_tag("session-1"), super::session_tag("session-2"));
     assert_eq!(screen["user.id"].as_str(), Some("user-1"));
     assert_eq!(screen["moqui.visitor.id"].as_str(), Some("visitor-1"));
-    assert!(!screen["url.query"].as_str().unwrap().contains("private"));
+    // names kept, values only of paging and the like, a secret's redacted (SEC-TLS-18)
+    let query = screen["url.query"].as_str().unwrap();
+    assert!(query.starts_with("tab=[…]&password="), "{query}");
+    assert!(query.ends_with("&q=[…]&pageIndex=2"), "{query}");
+    assert!(!query.contains("private") && !query.contains("Ann"), "{query}");
+    assert_eq!(
+        screen["http.request.header.referer"].as_str(),
+        Some("https://erp.example.com/apps/find?q=[…]&pageSize=50")
+    );
     assert!(
         !entries
             .iter()
@@ -183,6 +196,8 @@ async fn a_token_routes_token_stays_out_of_the_request_root() {
             super::RequestTelemetry {
                 telemetry: Arc::clone(&telemetry),
                 token_routes: Arc::new(move || Arc::clone(&redaction)),
+                // every query value kept, so a token in one is seen taken out (the default keeps none of these)
+                all_query_values: Arc::new(|| true),
             },
             super::log_http,
         ));
@@ -321,6 +336,7 @@ async fn request_roots_keep_real_errors_and_name_the_page_without_joining_its_tr
             super::RequestTelemetry {
                 telemetry: Arc::clone(&telemetry),
                 token_routes: Arc::new(Arc::default),
+                all_query_values: Arc::new(|| false),
             },
             super::log_http,
         ));
@@ -383,7 +399,7 @@ async fn request_roots_keep_real_errors_and_name_the_page_without_joining_its_tr
         Value::Bool(false),
         "the client's sampled flag does not turn sampling on"
     );
-    assert_eq!(page_trace(root("/page", "bad=")), None);
+    assert_eq!(page_trace(root("/page", "bad=[…]")), None);
     drop(entries);
     telemetry.shutdown();
 }
@@ -443,6 +459,7 @@ async fn streamed_request_roots_finish_on_consumption_failure_or_cancellation() 
             super::RequestTelemetry {
                 telemetry: telemetry.clone(),
                 token_routes: Arc::new(Arc::default),
+                all_query_values: Arc::new(|| false),
             },
             super::log_http,
         ));
@@ -1329,4 +1346,25 @@ fn a_loopback_peer_is_secure_only_when_it_is_the_client() {
     assert!(super::secure_request(false, &request(moqui_core::web::RequestVia::default()), loopback, &direct));
     assert!(!super::secure_request(false, &request(moqui_core::web::RequestVia::Edge), loopback, &direct));
     assert!(super::secure_request(true, &request(moqui_core::web::RequestVia::Edge), loopback, &direct));
+}
+
+/// SEC-TLS-18: `query-values="all"` keeps every value for debugging, a secret's still redacted and a referrer's fragment
+/// kept; the default keeps names and the paging values only.
+#[test]
+fn a_span_keeps_query_values_only_when_the_conf_says_all() {
+    let routes = moqui_core::screen::token_route::Redaction::default();
+    assert_eq!(
+        super::redacted_query("q=Ann&api_key=k&orderByField=-name", &routes, true),
+        "q=Ann&api_key=[REDACTED]&orderByField=-name"
+    );
+    assert_eq!(
+        super::redacted_query("q=Ann&api_key=k&orderByField=-name", &routes, false),
+        "q=[…]&api_key=[REDACTED]&orderByField=-name"
+    );
+    assert_eq!(
+        super::redacted_referer("https://h/p?q=Ann#x", &routes, true),
+        "https://h/p?q=Ann#x"
+    );
+    assert_eq!(super::redacted_referer("https://h/p#x", &routes, false), "https://h/p");
+    assert_eq!(super::redacted_referer("", &routes, false), "");
 }

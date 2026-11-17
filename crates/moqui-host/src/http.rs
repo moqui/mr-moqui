@@ -242,6 +242,9 @@ struct RequestTelemetry {
     telemetry: Arc<moqui_core::telemetry::Telemetry>,
     /// The token routes and token paths of the conf now, whose tokens the request log leaves out.
     token_routes: TokenRoutes,
+    /// Whether the conf now keeps every query value in a span (`<telemetry query-values="all">`), not only
+    /// [`KEPT_QUERY_VALUES`] (SEC-TLS-18).
+    all_query_values: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
 type TokenRoutes = Arc<dyn Fn() -> Arc<moqui_core::screen::token_route::Redaction> + Send + Sync>;
@@ -407,6 +410,10 @@ pub(crate) async fn listen(
         token_routes: {
             let factory = Arc::clone(&factory);
             Arc::new(move || moqui_core::screen::token_route::redaction(&factory))
+        },
+        all_query_values: {
+            let factory = Arc::clone(&factory);
+            Arc::new(move || factory.conf_setting("telemetry", "query-values") == "all")
         },
     };
     // inside the request log: on an edge node, a terminate host's request goes down its node's link here
@@ -1534,13 +1541,14 @@ async fn log_http(State(state): State<RequestTelemetry>, mut request: Request, n
     span.set_attribute("server.address", Value::string(&host));
     span.set_attribute("client.address", Value::string(&client_ip));
     span.set_attribute("user_agent.original", Value::string(&agent));
-    span.set_attribute("url.query", Value::string(redacted_query(&query, &token_routes)));
+    let all_values = (state.all_query_values)();
+    span.set_attribute(
+        "url.query",
+        Value::string(redacted_query(&query, &token_routes, all_values)),
+    );
     span.set_attribute(
         "http.request.header.referer",
-        Value::string(moqui_core::screen::token_route::redact_url(
-            &token_routes,
-            &moqui_core::telemetry::redact_text(&referrer),
-        )),
+        Value::string(redacted_referer(&referrer, &token_routes, all_values)),
     );
     span.set_attribute("network.protocol.version", Value::string(format!("{version:?}")));
     // A browser page's later requests name the page's trace; it is recorded, never used as a parent.
@@ -1727,21 +1735,57 @@ impl Drop for TelemetryBody {
     }
 }
 
-fn redacted_query(query: &str, token_routes: &moqui_core::screen::token_route::Redaction) -> String {
+/// The query parameters whose values a request span keeps by default: paging, order and render mode, which carry no
+/// person's data and say what the request did.
+const KEPT_QUERY_VALUES: [&str; 6] = [
+    "pageIndex",
+    "pageSize",
+    "orderByField",
+    "renderMode",
+    "lastStandalone",
+    "_uiType",
+];
+
+/// The `url.query` of a request span (SEC-TLS-18): every parameter's name, and the value only of [`KEPT_QUERY_VALUES`],
+/// the rest `[…]`, since a value is often a search term (a name, an address, a phone number) or a record id, and spans
+/// go to every `SYSTEM_APP` reader and to an outside collector. With `<telemetry query-values="all">` every value is
+/// kept, for debugging, but a secret's (the framework's one secret-name rule: `api_key` is, `primaryKeyId` is not) is
+/// `[REDACTED]` and a path or URL under a token route (a sign-in step's `returnTo`) loses its token.
+fn redacted_query(query: &str, token_routes: &moqui_core::screen::token_route::Redaction, all_values: bool) -> String {
     moqui_core::web::form_pairs(query)
         .into_iter()
         .map(|(name, value)| {
-            // The framework's one secret-name rule: `api_key` is redacted, `primaryKeyId` is not. A path or URL under a
-            // token route (a sign-in step's `returnTo`) loses its token.
             let value = if moqui_core::telemetry::sensitive_key(&name) {
                 "[REDACTED]".into()
-            } else {
+            } else if all_values || KEPT_QUERY_VALUES.contains(&name.as_str()) {
                 moqui_core::screen::token_route::redact_url(token_routes, &value).into_owned()
+            } else {
+                "[…]".into()
             };
             format!("{name}={value}")
         })
         .collect::<Vec<_>>()
         .join("&")
+}
+
+/// The Referer of a request span: its token route's token and any secret it writes out taken out, and its query as
+/// [`redacted_query`] keeps one, with no fragment (SEC-TLS-18).
+fn redacted_referer(
+    referrer: &str,
+    token_routes: &moqui_core::screen::token_route::Redaction,
+    all_values: bool,
+) -> String {
+    let cleaned =
+        moqui_core::screen::token_route::redact_url(token_routes, &moqui_core::telemetry::redact_text(referrer))
+            .into_owned();
+    if all_values {
+        return cleaned;
+    }
+    let without_fragment = cleaned.split_once('#').map_or(cleaned.as_str(), |(before, _)| before);
+    match without_fragment.split_once('?') {
+        Some((base, query)) => format!("{base}?{}", redacted_query(query, token_routes, false)),
+        None => without_fragment.to_string(),
+    }
 }
 
 fn request_header(headers: &axum::http::HeaderMap, name: &str) -> String {
