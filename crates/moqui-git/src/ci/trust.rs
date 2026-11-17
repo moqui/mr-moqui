@@ -317,6 +317,42 @@ pub fn mask(text: &str, patterns: &[String]) -> String {
     out.into_owned()
 }
 
+/// One batch of a job's log [`mask`]ed, and at its ends what may be part of a secret a runner cut between two batches
+/// (SEC-GIT-08): at the end a start of a pattern, and at the start an end of one when the batch `continues` a line
+/// the batch before left open, each of at least [`MASK_MIN`] bytes and the longest one. A secret cut that way shows
+/// fewer than [`MASK_MIN`] bytes on one side of the cut at most, as a value that short is never masked.
+pub fn mask_batch(text: &str, patterns: &[String], continues: bool) -> String {
+    let mut out = mask(text, patterns);
+    let open_end = patterns
+        .iter()
+        .filter_map(|pattern| {
+            (MASK_MIN..pattern.len())
+                .rev()
+                .find(|n| pattern.get(..*n).is_some_and(|head| out.ends_with(head)))
+        })
+        .max();
+    if let Some(cut) = open_end {
+        out.truncate(out.len() - cut);
+        out.push_str(MASK);
+    }
+    if continues {
+        let open_start = patterns
+            .iter()
+            .filter_map(|pattern| {
+                (MASK_MIN..pattern.len()).rev().find(|n| {
+                    pattern
+                        .get(pattern.len() - n..)
+                        .is_some_and(|tail| out.starts_with(tail))
+                })
+            })
+            .max();
+        if let Some(cut) = open_start {
+            out.replace_range(..cut, MASK);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 #[path = "trust_tests.rs"]
 mod tests;

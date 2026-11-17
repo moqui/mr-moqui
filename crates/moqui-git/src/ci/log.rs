@@ -88,13 +88,14 @@ fn state() -> Option<Arc<LogState>> {
     ExecutionContext::with_current(|ec| ec.factory().extension(|_| LogState::default()))
 }
 
-/// What to mask in the log of `job`: the values of the secrets it is given.
-fn patterns(entity: &EntityFacade, job: &EntityValue) -> Arc<Vec<String>> {
+/// What to mask in the log of `job`: the values of the secrets it is given. An error when they cannot be read: then
+/// nothing of the job's log is stored, rather than stored with nothing masked (SEC-GIT-08); the runner sends it again.
+fn patterns(entity: &EntityFacade, job: &EntityValue) -> Result<Arc<Vec<String>>, Error> {
     let id = field(job, "jobRunId").unwrap_or_default();
     let state = state();
     let now = super::now_millis();
     if let Some(known) = state.as_ref().and_then(|state| state.known(&id, now)) {
-        return known;
+        return Ok(known);
     }
     let made = (|| -> Result<Vec<String>, Error> {
         let Some(run) = field(job, "pipelineRunId")
@@ -112,14 +113,22 @@ fn patterns(entity: &EntityFacade, job: &EntityValue) -> Arc<Vec<String>> {
             .collect();
         Ok(trust::mask_patterns(&values))
     })();
-    let made = Arc::new(made.unwrap_or_else(|err| {
+    let made = Arc::new(made.map_err(|err| {
         tracing::error!(job = %id, "the secrets to mask in a job's log were not read: {err}");
-        Vec::new()
-    }));
+        Error::new(format!(
+            "the log of job {id} is not stored now: its secrets to mask were not read"
+        ))
+    })?);
     if let Some(state) = state {
         state.keep(id, Arc::clone(&made), now);
     }
-    made
+    Ok(made)
+}
+
+/// `text` from the runner of `job` (its result's message) with the job's secrets masked; an error when they cannot be
+/// read.
+pub(crate) fn masked(entity: &EntityFacade, job: &EntityValue, text: &str) -> Result<String, Error> {
+    Ok(trust::mask(text, &patterns(entity, job)?))
 }
 
 /// Forget what is kept in memory for a job that ended.
@@ -214,7 +223,15 @@ pub fn append(entity: &EntityFacade, job: &EntityValue, step_seq: Option<i64>, t
     if bytes >= max {
         return Ok(next);
     }
-    let masked = trust::mask(text, &patterns(entity, job));
+    // a batch that goes on a line the last one left open may start with the rest of a secret cut between them
+    let continues = next > 1
+        && entity
+            .find(LOG_CHUNK)?
+            .eq("jobRunId", Value::string(&job_run_id))
+            .eq("chunkSeq", int(next - 1))
+            .one()?
+            .is_some_and(|chunk| !field_text(&chunk).ends_with('\n'));
+    let masked = trust::mask_batch(text, &patterns(entity, job)?, continues);
     let room = usize::try_from(max - bytes).unwrap_or(usize::MAX);
     let mut kept = masked.as_str();
     let mut truncated = false;

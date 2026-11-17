@@ -413,10 +413,15 @@ fn post_result(
         Some("error") => "error",
         _ => return Err(Refused::new(400, "status is success, failure or error")),
     };
-    let message: Option<String> = body["message"]
-        .as_str()
-        .map(|message| message.chars().take(500).collect());
     let job_run_id = field(job, "jobRunId").unwrap_or_default();
+    // the message is shown with the job as its log is, so the job's secrets are masked in it as in the log; when they
+    // cannot be read it is left out, and the job still ends (SEC-GIT-08)
+    let message: Option<String> = body["message"].as_str().and_then(|message| {
+        let message: String = message.chars().take(500).collect();
+        super::log::masked(entity, job, &message)
+            .inspect_err(|err| tracing::error!(job = %job_run_id, "a job's result message is not kept: {err}"))
+            .ok()
+    });
     engine::finish_job(
         entity,
         &job_run_id,

@@ -15,7 +15,7 @@
 //! Masking, which needs no database. Who is trusted and which secrets a job is given are tested with the engine
 //! (`server/ci_tests.rs`).
 
-use super::{mask, mask_patterns, MASK};
+use super::{mask, mask_batch, mask_patterns, MASK};
 
 #[test]
 fn secret_values_are_masked_whole_and_by_line() {
@@ -37,4 +37,23 @@ fn secret_values_are_masked_whole_and_by_line() {
     assert_eq!(mask("nothing here", &patterns), "nothing here");
     assert!(mask_patterns(&[]).is_empty());
     assert_eq!(mask("as written", &[]), "as written");
+}
+
+/// A secret a runner cut between two log batches is masked on each side of the cut that is long enough to be one
+/// (SEC-GIT-08): the end of a batch that starts it, the start of the next that goes on with it.
+#[test]
+fn a_secret_cut_between_two_batches_is_masked_on_both_sides() {
+    let patterns = mask_patterns(&["s3cr3t-token-value".to_string()]);
+    let (first, second) = "key=s3cr3t-token-value done\n".split_at(13);
+    assert_eq!(first, "key=s3cr3t-to");
+    assert_eq!(mask_batch(first, &patterns, false), format!("key={MASK}"));
+    assert_eq!(mask_batch(second, &patterns, true), format!("{MASK} done\n"));
+    // a batch that starts a line of its own is not taken as the rest of one
+    assert_eq!(mask_batch("value done\n", &patterns, false), "value done\n");
+    // the whole value in one batch, and text that only looks like a short end of it, as before
+    assert_eq!(
+        mask_batch("key=s3cr3t-token-value\n", &patterns, true),
+        format!("key={MASK}\n")
+    );
+    assert_eq!(mask_batch("a line\n", &patterns, true), "a line\n");
 }
