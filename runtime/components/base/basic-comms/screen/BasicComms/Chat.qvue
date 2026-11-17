@@ -193,10 +193,10 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- NewDirect: one person, or several for a group message (with a name, a room), or a phone number to text -->
     <m-dialog v-model="newDirect.open" :title="t('New direct message')" width="520">
-        <m-drop-down v-model="newDirect.userIds" name="directUserIds" multiple server-search :options-url="url('searchUsers')" :options-parameters="pickParameters"
+        <m-drop-down v-model="newDirect.userIds" name="directUserIds" multiple server-search :options-url="url('searchUsers')" :options-parameters="pickParameters" :options-extra="contactOptions"
                 :label="(newDirect.numbers || []).length ? t('To: people or a phone number') : t('To')"></m-drop-down>
         <m-text-line v-if="pickKind === 'group'" v-model="newDirect.name" name="directRoomName" :label="t('Name (optional): makes a room')" class="q-mt-xs"></m-text-line>
-        <m-drop-down v-if="pickKind === 'number' && (newDirect.numbers || []).length > 1" v-model="newDirect.fromNumber" name="directFromNumber" :options="newDirect.numbers"
+        <m-drop-down v-if="(pickKind === 'number' || pickKind === 'numbers') && (newDirect.numbers || []).length > 1" v-model="newDirect.fromNumber" name="directFromNumber" :options="newDirect.numbers"
                 :label="t('From')" class="q-mt-xs"></m-drop-down>
         <div class="text-caption m-muted q-mt-xs">{{pickHint}}</div>
         <div class="row q-gutter-sm q-mt-md">
@@ -3580,10 +3580,13 @@ module.exports = {
         // New direct message: what is picked (moqui.chat.pickKind), and phone numbers offered when the user has one that texts
         pickKind() { return moqui.chat.pickKind(this.newDirect.userIds); },
         pickParameters() { return { numbers: (this.newDirect.numbers || []).length ? 'true' : '' }; },
+        // the phone's own contacts with a number, as the picker's extra options (the mobile app only; plans/Comms-Messaging.md §9)
+        contactOptions() { return (this.newDirect.numbers || []).length && moqui.chat && moqui.chat.contactOptions ? moqui.chat.contactOptions : null; },
         pickHint() {
             const kind = this.pickKind;
             if (kind === 'number') return t('A text from your number: the conversation with this number opens.');
-            if (kind === 'mixed') return t('A text goes to one phone number: start it with the number alone.');
+            if (kind === 'numbers') return t('A group text from your number: one conversation with these numbers.');
+            if (kind === 'mixed') return t('A text goes to phone numbers only: start it without the people.');
             if (kind === 'group') return t('A group chat; with a name it is a room, which can take more people later.');
             return t('One person, or several for a group message. A conversation you already have with them opens again.');
         },
@@ -3706,6 +3709,8 @@ module.exports = {
                 this.me = json.me || {};
                 this.prefs = json.prefs || {};
                 this.rooms = json.roomList || [];
+                // a phone room's numbers by their names: the phone's contacts, the apps' call-context (plans/Comms-Messaging.md §9)
+                if (moqui.chat && moqui.chat.nameRooms) moqui.chat.nameRooms(this.rooms);
                 if (moqui.chat) this.rooms.forEach((room) => {
                     if (room.isMember && room.chatRoomId !== this.roomId) moqui.chat.state.unread[room.chatRoomId] = { unread: room.unreadCount || 0, mentions: room.mentionCount || 0 };
                     if (room.otherUserId && room.presence && !moqui.chat.state.presence[room.otherUserId]) moqui.chat.state.presence[room.otherUserId] = { presence: room.presence, at: Date.now() };

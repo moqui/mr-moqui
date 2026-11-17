@@ -170,12 +170,39 @@ impl TelnyxSms {
     }
 }
 
-/// Our number and theirs, from a mapping's external room id (`ours/theirs`).
+/// Our number and theirs, from a mapping's external room id (`ours/theirs`); none for a group's.
 pub fn pair_of(external_room_id: &str) -> Option<(String, String)> {
+    match numbers_of(external_room_id)? {
+        (ours, theirs) if theirs.len() == 1 => Some((ours, theirs.into_iter().next()?)),
+        _ => None,
+    }
+}
+
+/// The most outside numbers of a group text (Telnyx's group MMS: our number and eight others).
+pub const GROUP_MAX: usize = 8;
+
+/// Our number and the outside numbers, from a mapping's external room id: a pair's (`ours/theirs`) or a group text's
+/// (`ours/a,b,c`, plans/Comms-Messaging.md §9). None for anything else.
+pub fn numbers_of(external_room_id: &str) -> Option<(String, Vec<String>)> {
     let (ours, theirs) = external_room_id.split_once('/')?;
     let valid =
         |number: &str| number.starts_with('+') && number.len() > 4 && number[1..].bytes().all(|b| b.is_ascii_digit());
-    (valid(ours) && valid(theirs)).then(|| (ours.to_string(), theirs.to_string()))
+    let theirs: Vec<String> = theirs.split(',').map(str::to_string).collect();
+    let fits = !theirs.is_empty() && theirs.len() <= GROUP_MAX && theirs.iter().all(|number| valid(number));
+    (valid(ours) && fits && !theirs.iter().any(|number| number == ours)).then(|| (ours.to_string(), theirs))
+}
+
+/// A text that did not reach the provider: its place in the day's count (check#SmsSend reserve) goes back.
+fn release(bridge: &BridgeInfo, reserved: Option<BTreeMap<String, Value>>) {
+    let Some(parameters) = reserved else {
+        return;
+    };
+    if let Err(error) = crate::call("org.moqui.call.SmsServices.release#SmsSend", parameters) {
+        tracing::warn!(
+            "a text of bridge {} was not taken off the day's count: {error}",
+            bridge.chat_bridge_id
+        );
+    }
 }
 
 fn failed(reason: &str, error: impl Into<String>) -> DeliveryOutcome {
@@ -260,7 +287,7 @@ impl ChatBridgeAdapter for TelnyxSms {
         if request.kind != DeliveryKind::Message {
             return failed("bridgeUnsupported", "A text cannot be changed once sent");
         }
-        let Some((ours, theirs)) = pair_of(&request.external_room_id) else {
+        let Some((ours, theirs)) = numbers_of(&request.external_room_id) else {
             return failed("badMapping", "The room's mapping is not a pair of numbers");
         };
         let config = Config::of(&bridge.config);
@@ -273,48 +300,50 @@ impl ChatBridgeAdapter for TelnyxSms {
             let Some(user) = request.sender_user_id.as_deref().filter(|user| !user.is_empty()) else {
                 return failed("numberNotGranted", "A text goes from a user granted the number");
             };
-            let parameters = BTreeMap::from([
-                ("fromNumber".to_string(), Value::string(&ours)),
-                ("toNumber".to_string(), Value::string(&theirs)),
-                ("userId".to_string(), Value::string(user)),
-                ("reserve".to_string(), Value::Bool(true)),
-            ]);
-            match crate::call("org.moqui.call.SmsServices.check#SmsSend", parameters) {
-                Ok(out) if out.get("allowed") == Some(&Value::Bool(true)) => {
-                    reserved = Some(BTreeMap::from([
-                        ("userId".to_string(), Value::string(user)),
-                        (
-                            "counterDay".to_string(),
-                            out.get("counterDay").cloned().unwrap_or(Value::Null),
-                        ),
-                    ]));
-                }
-                Ok(out) => {
-                    let text = |key: &str| out.get(key).map(moqui_lib::object::to_plain_string).unwrap_or_default();
-                    return failed(&text("reasonCode"), text("message"));
-                }
-                Err(error) => {
-                    return DeliveryOutcome::Retry {
+            // each number a group text goes to is checked as a text to it would be; the text counts once, for the first
+            for (index, to) in theirs.iter().enumerate() {
+                let reserve = index == 0;
+                let parameters = BTreeMap::from([
+                    ("fromNumber".to_string(), Value::string(&ours)),
+                    ("toNumber".to_string(), Value::string(to)),
+                    ("userId".to_string(), Value::string(user)),
+                    ("reserve".to_string(), Value::Bool(reserve)),
+                ]);
+                let refusal = match crate::call("org.moqui.call.SmsServices.check#SmsSend", parameters) {
+                    Ok(out) if out.get("allowed") == Some(&Value::Bool(true)) => {
+                        if reserve {
+                            reserved = Some(BTreeMap::from([
+                                ("userId".to_string(), Value::string(user)),
+                                (
+                                    "counterDay".to_string(),
+                                    out.get("counterDay").cloned().unwrap_or(Value::Null),
+                                ),
+                            ]));
+                        }
+                        None
+                    }
+                    Ok(out) => {
+                        let text = |key: &str| out.get(key).map(moqui_lib::object::to_plain_string).unwrap_or_default();
+                        Some(failed(&text("reasonCode"), text("message")))
+                    }
+                    Err(error) => Some(DeliveryOutcome::Retry {
                         error: format!("The send could not be checked: {error}"),
                         not_connected: false,
-                    }
+                    }),
+                };
+                if let Some(refusal) = refusal {
+                    release(bridge, reserved.take());
+                    return refusal;
                 }
             }
         }
         let outcome = self.send(bridge, request, &config, &ours, &theirs);
         // not sent (refused here or by the provider, or to be tried again): its place in the day's count goes back
-        if let Some(parameters) = reserved {
-            if matches!(
-                outcome,
-                DeliveryOutcome::Failed { .. } | DeliveryOutcome::Retry { .. } | DeliveryOutcome::Wait { .. }
-            ) {
-                if let Err(error) = crate::call("org.moqui.call.SmsServices.release#SmsSend", parameters) {
-                    tracing::warn!(
-                        "a text of bridge {} was not taken off the day's count: {error}",
-                        bridge.chat_bridge_id
-                    );
-                }
-            }
+        if matches!(
+            outcome,
+            DeliveryOutcome::Failed { .. } | DeliveryOutcome::Retry { .. } | DeliveryOutcome::Wait { .. }
+        ) {
+            release(bridge, reserved);
         }
         outcome
     }
@@ -341,14 +370,14 @@ impl ChatBridgeAdapter for TelnyxSms {
 }
 
 impl TelnyxSms {
-    /// A checked text, to the provider.
+    /// A checked text, to the provider: to one number (`/v2/messages`), or a group text to several (`/v2/messages/group_mms`).
     fn send(
         &self,
         bridge: &BridgeInfo,
         request: &DeliveryRequest,
         config: &Config,
         ours: &str,
-        theirs: &str,
+        theirs: &[String],
     ) -> DeliveryOutcome {
         let text = request.text.clone().unwrap_or_default();
         if text.chars().count() > config.max_text_length {
@@ -386,7 +415,12 @@ impl TelnyxSms {
         if text.trim().is_empty() && media_urls.is_empty() {
             return failed("empty", "A text has words or a file");
         }
-        let mut body = json!({"from": ours, "to": theirs});
+        let group = theirs.len() > 1;
+        let mut body = if group {
+            json!({"from": ours, "to": theirs})
+        } else {
+            json!({"from": ours, "to": theirs.first().cloned().unwrap_or_default()})
+        };
         if !text.trim().is_empty() {
             body["text"] = Json::String(text);
         }
@@ -396,9 +430,14 @@ impl TelnyxSms {
         if let Some(profile) = &config.messaging_profile_id {
             body["messaging_profile_id"] = Json::String(profile.clone());
         }
+        let path = if group {
+            "/v2/messages/group_mms"
+        } else {
+            "/v2/messages"
+        };
         let sent = self
             .client(config.allow_internal)
-            .post(format!("{}/v2/messages", config.api_base_url))
+            .post(format!("{}{path}", config.api_base_url))
             .header("authorization", format!("Bearer {}", config.api_key))
             .header("idempotency-key", request.idempotency_key.clone())
             .json(&body)

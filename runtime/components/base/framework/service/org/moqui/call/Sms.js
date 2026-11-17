@@ -63,6 +63,24 @@ function pairKey(ours, theirs) {
   return ours + '/' + theirs
 }
 
+/** The most outside numbers a group text has (the provider's group MMS takes our number and eight others). */
+const GROUP_MAX = 8
+
+/** A set of outside numbers: in E.164, each once, in order (so a group has one key whoever writes first). */
+function numberSet(list) {
+  const out = []
+  for (const value of Array.from(list || [])) {
+    const number = voice('toE164', { phoneNumber: String(value || '').trim() }).number
+    if (number && !out.includes(number)) out.push(number)
+  }
+  return out.sort()
+}
+
+/** The external room id of a group text: our number and the outside numbers, comma-separated (`ours/a,b,c`). */
+function groupKey(ours, theirsList) {
+  return ours + '/' + theirsList.join(',')
+}
+
 /** The deployment's SMS limits and system number, the defaults filling what VoicePolicy leaves empty. */
 function smsPolicy() {
   const row = one(POLICY, { voicePolicyId: 'DEFAULT' }) || {}
@@ -106,14 +124,19 @@ function textNumbersOf(userId) {
  */
 function ensurePairRoom(p) {
   const ours = p.ourNumber
-  const theirs = p.theirNumber
+  // a group text (theirNumberList of two or more outside numbers): one room for that set of numbers
+  const group = numberSet(p.theirNumberList).filter((number) => number !== ours)
+  if (group.length > GROUP_MAX) return refuse('tooManyNumbers', `A group text has at most ${GROUP_MAX} other numbers`)
+  if (group.length === 1 && blank(p.theirNumber)) p.theirNumber = group[0]
+  const isGroup = group.length > 1
+  const theirs = isGroup ? group.join(', ') : p.theirNumber
   if (blank(ours) || blank(theirs)) return refuse('badNumber', 'A conversation is between two numbers')
   // the number's row lock: two first texts of a pair at once make one room
   const number = find(NUMBER).condition('phoneNumber', ours).forUpdate(true).one()
   if (!number || blank(number.messagingBridgeId)) return { reasonCode: 'noMessaging' }
   if (!one(BRIDGE, { chatBridgeId: number.messagingBridgeId })) return { reasonCode: 'noMessaging' }
   const chatBridgeId = number.messagingBridgeId
-  const externalRoomId = pairKey(ours, theirs)
+  const externalRoomId = isGroup ? groupKey(ours, group) : pairKey(ours, theirs)
   const now = ec.user.nowTimestamp
   let mapping = Array.from(find(MAPPING).condition('chatBridgeId', chatBridgeId).condition('externalRoomId', externalRoomId)
     .condition('thruDate', null).list())[0]
@@ -122,8 +145,10 @@ function ensurePairRoom(p) {
   if (!room) {
     room = ec.entity.makeValue(ROOM)
     room.setSequencedIdPrimary()
-    room.setFields({ roomTypeEnumId: 'CrtExternal', roomName: theirs, topic: ec.resource.expand('Texts and calls with ${theirs} on ${ours}', '',
-      { theirs, ours }), visibilityEnumId: 'CrvMembers', createdDate: now, lastEventSeq: 0, lastEventDate: now }, true, null, null)
+    const topic = isGroup ? ec.resource.expand('Group texts with ${theirs} on ${ours}', '', { theirs, ours })
+      : ec.resource.expand('Texts and calls with ${theirs} on ${ours}', '', { theirs, ours })
+    room.setFields({ roomTypeEnumId: 'CrtExternal', roomName: theirs, topic, visibilityEnumId: 'CrvMembers', createdDate: now, lastEventSeq: 0,
+      lastEventDate: now }, true, null, null)
     room.create()
     // a mapping whose room is gone ends, and the pair gets a new one
     if (mapping) {
@@ -155,7 +180,7 @@ function ensurePairRoom(p) {
     if (present.size) changes.push({ userIdList: Array.from(present), changeKind: 'room', chatRoomId: room.chatRoomId, change: { reason: 'members' } })
     ec.service.sync().name('org.moqui.chat.ChatServices.record#UserChange').parameter('changeList', changes).disableAuthz().call()
   }
-  return { chatRoomId: room.chatRoomId, chatBridgeId, chatRoomBridgeId: mapping.chatRoomBridgeId, externalRoomId, created }
+  return { chatRoomId: room.chatRoomId, chatBridgeId, chatRoomBridgeId: mapping.chatRoomBridgeId, externalRoomId, created, isGroup }
 }
 
 /**
@@ -227,9 +252,14 @@ function pairRoomFor(p) {
 function openPairRoom(p) {
   const me = ec.user.userId
   if (!me) return refuse('notSignedIn', 'Sign in to send a text')
-  const dest = voice('classify', { phoneNumber: p.toNumber })
-  if (!dest.number) return refuse('badNumber', 'That is not a phone number')
-  if (dest.destinationClass === 'emergency') return refuse('emergency', 'Texts to emergency numbers are not sent from here; call them')
+  // several numbers (comma-separated): a group text, each number checked as a send to it would be
+  const typed = String(p.toNumber || '').split(',').map((value) => value.trim()).filter((value) => value)
+  if (typed.length > GROUP_MAX) return refuse('tooManyNumbers', `A group text has at most ${GROUP_MAX} numbers`)
+  const dests = typed.map((value) => voice('classify', { phoneNumber: value }))
+  if (!dests.length || dests.some((dest) => !dest.number)) return refuse('badNumber', 'That is not a phone number')
+  if (dests.some((dest) => dest.destinationClass === 'emergency')) return refuse('emergency', 'Texts to emergency numbers are not sent from here; call them')
+  if (dests.length > 1) return openGroupRoom(p, me, dests)
+  const dest = dests[0]
   const numbers = textNumbersOf(me).map((n) => n.phoneNumber)
   const fromNumber = blank(p.fromNumber) ? (numbers.length === 1 ? numbers[0] : null) : voice('toE164', { phoneNumber: p.fromNumber }).number
   if (!fromNumber || !numbers.includes(fromNumber)) {
@@ -251,6 +281,41 @@ function openPairRoom(p) {
       chatRoomId: out.chatRoomId, change: { member: true, roleEnumId: mine.roleEnumId ?? null, action: 'joined' } }).disableAuthz().call()
   }
   return { chatRoomId: out.chatRoomId, ourNumber: fromNumber, theirNumber: dest.number }
+}
+
+/** The number the user texts from (fromNumber, else their only one), or a refusal. */
+function fromNumberOf(p, me) {
+  const numbers = textNumbersOf(me).map((n) => n.phoneNumber)
+  const fromNumber = blank(p.fromNumber) ? (numbers.length === 1 ? numbers[0] : null) : voice('toE164', { phoneNumber: p.fromNumber }).number
+  if (!fromNumber || !numbers.includes(fromNumber)) {
+    return { refusal: refuse(numbers.length ? 'numberNotGranted' : 'noMessaging', numbers.length ? 'Choose one of your numbers to text from'
+      : 'You have no number to text from; an administrator can give you one') }
+  }
+  return { fromNumber }
+}
+
+/** A group text (open#PairRoom with several numbers): the room of fromNumber and that set of outside numbers. */
+function openGroupRoom(p, me, dests) {
+  const from = fromNumberOf(p, me)
+  if (from.refusal) return from.refusal
+  for (const dest of dests) {
+    const classRefusal = destinationRefusal(dest, me)
+    if (classRefusal) return refuse(classRefusal.reasonCode, classRefusal.text)
+  }
+  const theirNumberList = numberSet(dests.map((dest) => dest.number)).filter((number) => number !== from.fromNumber)
+  if (theirNumberList.length < 2) return openPairRoom(Object.assign({}, p, { toNumber: theirNumberList[0] || '' }))
+  const out = ec.service.sync().name('org.moqui.call.SmsServices.ensure#PairRoom').parameters({ ourNumber: from.fromNumber,
+    theirNumberList }).requireNewTransaction(true).disableAuthz().call() || {}
+  if (ec.message.hasError()) return {}
+  if (!out.chatRoomId) return refuse(out.reasonCode || 'noMessaging', 'That number has no messaging')
+  const mine = one(MEMBER, { chatRoomId: out.chatRoomId, userId: me })
+  if (mine && mine.leftDate) {
+    mine.set('leftDate', null)
+    mine.update()
+    ec.service.sync().name('org.moqui.chat.ChatServices.record#UserChange').parameters({ userIdList: [me], changeKind: 'membership',
+      chatRoomId: out.chatRoomId, change: { member: true, roleEnumId: mine.roleEnumId ?? null, action: 'joined' } }).disableAuthz().call()
+  }
+  return { chatRoomId: out.chatRoomId, ourNumber: from.fromNumber, theirNumber: theirNumberList.join(','), theirNumberList }
 }
 
 // ---------- the checks before the provider ----------
@@ -427,11 +492,22 @@ function noteKeyword(p) {
  * transaction eventId (a repeated webhook does nothing again): outcome, chatRoomId, eventSeq.
  */
 function receive(p) {
-  const ours = voice('toE164', { phoneNumber: p.ourNumber }).number
+  let ours = voice('toE164', { phoneNumber: p.ourNumber }).number
   const theirs = voice('toE164', { phoneNumber: p.theirNumber }).number || String(p.theirNumber || '').replace(/[^0-9+]/g, '').slice(0, 20)
-  const number = ours ? one(NUMBER, { phoneNumber: ours }) : null
+  let number = ours ? one(NUMBER, { phoneNumber: ours }) : null
+  // a group text (recipientList: every number it went to): our number is the one of them on this bridge
+  const recipients = numberSet(p.recipientList)
+  if ((!number || number.messagingBridgeId !== p.chatBridgeId) && recipients.length) {
+    for (const candidate of recipients) {
+      const row = one(NUMBER, { phoneNumber: candidate })
+      if (row && row.messagingBridgeId === p.chatBridgeId) { ours = candidate; number = row; break }
+    }
+  }
   if (!number || number.messagingBridgeId !== p.chatBridgeId) return { outcome: 'ignored', reasonCode: 'unknownNumber' }
   if (!theirs) return { outcome: 'ignored', reasonCode: 'badNumber' }
+  // the others it went to: a group's room, the sender and them, our number left out
+  const others = recipients.filter((value) => value !== ours && value !== theirs)
+  const groupNumbers = others.length ? numberSet([theirs].concat(others)).slice(0, GROUP_MAX) : null
   const keyword = keywordOf(p.text)
   const sub = (name, parameters) => {
     const out = ec.service.sync().name(name).parameters(parameters).requireNewTransaction(true).disableAuthz().call() || {}
@@ -439,7 +515,8 @@ function receive(p) {
     return out
   }
   if (keyword) sub('org.moqui.call.SmsServices.note#SmsKeyword', { ourNumber: ours, theirNumber: theirs, keyword })
-  const pair = sub('org.moqui.call.SmsServices.ensure#PairRoom', { ourNumber: ours, theirNumber: theirs })
+  const pair = sub('org.moqui.call.SmsServices.ensure#PairRoom', groupNumbers ? { ourNumber: ours, theirNumberList: groupNumbers }
+    : { ourNumber: ours, theirNumber: theirs })
   if (!pair.chatRoomId) return { outcome: 'ignored', reasonCode: pair.reasonCode || 'noMessaging' }
   const item = { itemId: String(p.messageId), type: 'message', externalRoomId: pair.externalRoomId, externalEventId: String(p.messageId),
     externalUserId: theirs, displayName: theirs, text: p.text || null, originDate: p.originMillis != null ? Number(p.originMillis) : null,
@@ -521,9 +598,34 @@ function myTextNumbers() {
   return { numberList: textNumbersOf(me).map((n) => ({ phoneNumber: n.phoneNumber, description: n.description || null })) }
 }
 
+/** At most this many numbers are named in one find#PhoneNames. */
+const NAMES_MAX = 50
+
+/**
+ * The names of outside numbers for the current user (plans/Comms-Messaging.md §9, Phone book): what the call-context
+ * providers of the apps the user may open say of each (ShellServices.call#Providers, as this user, the first contact's
+ * name), for the phone rooms' names. A number no app knows is left out. Out: nameMap (number to name).
+ */
+function phoneNames(p) {
+  const me = ec.user.userId
+  if (!me) return { nameMap: {} }
+  const numbers = numberSet(String(p.numbers || '').split(',').concat(Array.from(p.numberList || []))).slice(0, NAMES_MAX)
+  const nameMap = {}
+  for (const number of numbers) {
+    const answers = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers')
+      .parameters({ hook: 'call-context', parameters: { number } }).call() || {}
+    ec.message.clearErrors()
+    for (const answer of Array.from(answers.results || [])) {
+      const contact = Array.from(answer.contactList || []).find((c) => c && !blank(c.name))
+      if (contact) { nameMap[number] = String(contact.name).slice(0, 200); break }
+    }
+  }
+  return { nameMap }
+}
+
 const operations = {
   ensurePairRoom, pairRoomFor, openPairRoom, checkSend, noteSent, releaseSend, noteKeyword, receive, sendMessage, myTextNumbers,
-  syncNumberRooms,
+  syncNumberRooms, phoneNames,
   keyword: (p) => ({ keyword: keywordOf(p.text) }),
 }
 

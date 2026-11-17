@@ -40,9 +40,9 @@ along with this software (see the LICENSE.md file). If not, see
         <q-input v-if="home && rooms.length > 6" v-model="filter" dense outlined rounded clearable class="q-px-sm q-pb-sm m-chat-home-search" :placeholder="t('Search conversations')">
             <template #prepend><q-icon name="sym_o_search"></q-icon></template></q-input>
         <div v-if="newOpen && !home" class="q-pb-sm">
-            <m-drop-down v-model="newUserIds" name="panelDirectUserIds" multiple server-search :options-url="url('searchUsers')" :options-parameters="pickParameters" :label="toLabel"></m-drop-down>
+            <m-drop-down v-model="newUserIds" name="panelDirectUserIds" multiple server-search :options-url="url('searchUsers')" :options-parameters="pickParameters" :options-extra="contactOptions" :label="toLabel"></m-drop-down>
             <m-text-line v-if="pickKind === 'group'" v-model="newName" name="panelRoomName" :label="t('Name (optional): makes a room')" class="q-mt-xs"></m-text-line>
-            <m-drop-down v-if="pickKind === 'number' && numbers.length > 1" v-model="fromNumber" name="panelFromNumber" :options="numbers" :label="t('From')" class="q-mt-xs"></m-drop-down>
+            <m-drop-down v-if="(pickKind === 'number' || pickKind === 'numbers') && numbers.length > 1" v-model="fromNumber" name="panelFromNumber" :options="numbers" :label="t('From')" class="q-mt-xs"></m-drop-down>
             <div v-if="pickKind === 'mixed'" class="text-caption text-negative q-mt-xs">{{pickHint}}</div>
             <div class="row q-gutter-x-sm q-mt-xs">
                 <q-btn dense unelevated no-caps color="primary" icon="sym_o_chat" :label="t('Start')" :disable="pickKind === 'none' || pickKind === 'mixed'" :loading="busy" @click="startDirect"></q-btn>
@@ -114,9 +114,9 @@ along with this software (see the LICENSE.md file). If not, see
                     <div class="text-h6 q-ml-sm col">{{t('New conversation')}}</div>
                 </div>
                 <div class="q-px-md">
-                    <m-drop-down v-model="newUserIds" name="panelDirectUserIds" multiple server-search :options-url="url('searchUsers')" :options-parameters="pickParameters" :label="toLabel"></m-drop-down>
+                    <m-drop-down v-model="newUserIds" name="panelDirectUserIds" multiple server-search :options-url="url('searchUsers')" :options-parameters="pickParameters" :options-extra="contactOptions" :label="toLabel"></m-drop-down>
                     <m-text-line v-if="pickKind === 'group'" v-model="newName" name="panelRoomName" :label="t('Name (optional): makes a room')" class="q-mt-sm"></m-text-line>
-                    <m-drop-down v-if="pickKind === 'number' && numbers.length > 1" v-model="fromNumber" name="panelFromNumber" :options="numbers" :label="t('From')" class="q-mt-sm"></m-drop-down>
+                    <m-drop-down v-if="(pickKind === 'number' || pickKind === 'numbers') && numbers.length > 1" v-model="fromNumber" name="panelFromNumber" :options="numbers" :label="t('From')" class="q-mt-sm"></m-drop-down>
                     <div class="text-caption q-mt-sm m-chat-new-hint" :class="pickKind === 'mixed' ? 'text-negative' : 'm-muted'">{{pickHint}}</div>
                 </div>
                 <q-space></q-space>
@@ -202,11 +202,14 @@ module.exports = {
         // the new-chat picker: what is picked (moqui.chat.pickKind), and phone numbers offered when the user has one that texts
         pickKind() { return moqui.chat.pickKind(this.newUserIds); },
         pickParameters() { return { numbers: this.numbers.length ? 'true' : '' }; },
+        // the phone's own contacts with a number, as the picker's extra options (the mobile app only)
+        contactOptions() { return this.numbers.length && moqui.chat && moqui.chat.contactOptions ? moqui.chat.contactOptions : null; },
         toLabel() { return this.numbers.length ? t('To: people or a phone number') : t('To: one person or several'); },
         pickHint() {
             const kind = this.pickKind;
             if (kind === 'number') return t('A text from your number: the conversation with this number opens.');
-            if (kind === 'mixed') return t('A text goes to one phone number: start it with the number alone.');
+            if (kind === 'numbers') return t('A group text from your number: one conversation with these numbers.');
+            if (kind === 'mixed') return t('A text goes to phone numbers only: start it without the people.');
             if (kind === 'group') return t('A group chat; with a name it is a room, which can take more people later.');
             return this.numbers.length ? t('Pick one person for a direct chat, several for a group, or type a phone number to text it.')
                 : t('Pick one person for a direct chat, or several for a group.');
@@ -282,6 +285,8 @@ module.exports = {
                 this.me = memo.me = json.me || {};
                 this.prefs = memo.prefs = json.prefs || {};
                 this.rooms = memo.rooms = json.roomList || [];
+                // a phone room's numbers by their names (plans/Comms-Messaging.md §9)
+                if (moqui.chat && moqui.chat.nameRooms) moqui.chat.nameRooms(this.rooms);
                 if (moqui.chat) this.rooms.forEach((room) => {
                     if (room.isMember && room.chatRoomId !== this.roomId) moqui.chat.state.unread[room.chatRoomId] = { unread: room.unreadCount || 0, mentions: room.mentionCount || 0 };
                 });

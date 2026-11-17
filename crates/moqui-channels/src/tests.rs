@@ -1470,7 +1470,121 @@ fn a_bridge_sends_its_key_over_https_and_reaches_no_internal_address_on_producti
     assert!(adapter.start(&bridge(fake.clone())).is_ok());
     assert!(crate::telnyx::Config::of(&fake).allow_internal);
     moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(Some(true)));
-    let on_production = (crate::telnyx::Config::of(&fake).allow_internal, adapter.start(&bridge(fake)).is_err());
+    let on_production = (
+        crate::telnyx::Config::of(&fake).allow_internal,
+        adapter.start(&bridge(fake)).is_err(),
+    );
     moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(None));
     assert_eq!(on_production, (false, true));
+}
+
+/// plans/Comms-Messaging.md §9, group texts: a group MMS that comes in (our number among its `to` and `cc`) is one room
+/// for that set of outside numbers, the same room whoever writes and in whatever order; a reply goes out as one group
+/// MMS to every number; Text a number with several numbers opens that room; a group with a number a text to would be
+/// refused is refused whole, before the provider, and not counted.
+#[test]
+fn a_group_text_is_one_room_for_its_numbers_and_goes_out_as_one_group_mms() {
+    const OTHER: &str = "+15553334444";
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    let group_in = |from: &str, to: &[&str], cc: &[&str], body: &str| {
+        let n = bed.next();
+        let entries = |numbers: &[&str]| -> Json {
+            numbers
+                .iter()
+                .map(|number| json!({"phone_number": number, "status": "webhook_delivered"}))
+                .collect()
+        };
+        let event = json!({"data": {"event_type": "message.received", "id": format!("ev-g{n}"),
+            "occurred_at": "2026-11-01T12:00:00.000+00:00", "record_type": "event", "payload": {"id": format!("in-g{n}"),
+                "direction": "inbound", "type": "MMS", "from": {"phone_number": from, "carrier": "T"}, "to": entries(to),
+                "cc": entries(cc), "text": body, "media": [], "received_at": "2026-11-01T12:00:00.000+00:00"}}, "meta": {"attempt": 1}});
+        bed.hook(&bed.signed(&event, now() / 1000))
+    };
+    // from THEIRS to us and OTHER; then from OTHER, our number not first: the same room
+    let first = group_in(THEIRS, &[OURS], &[OTHER], "Dinner at eight?");
+    assert_eq!(status(&first), 200, "{}", String::from_utf8_lossy(&first.body));
+    assert_eq!(body_json(&first)["outcome"], "accepted");
+    let mut sorted = [THEIRS, OTHER];
+    sorted.sort_unstable();
+    let key = sorted.join(",");
+    let room = bed.room(&key).expect("the group's room");
+    let second = group_in(OTHER, &[THEIRS, OURS], &[], "Yes");
+    assert_eq!(body_json(&second)["outcome"], "accepted");
+    assert_eq!(bed.room(&key).as_deref(), Some(room.as_str()));
+    assert_eq!(bed.messages(&room).len(), 2);
+    assert!(bed.room(THEIRS).is_none(), "no pair room of the sender");
+    let row = bed.one("moqui.chat.ChatRoom", &[("chatRoomId", text(&room))]);
+    assert_eq!(row["roomTypeEnumId"], "CrtExternal");
+    assert!(row["roomName"].contains(THEIRS) && row["roomName"].contains(OTHER));
+    // its two outside people are two actors
+    let senders: std::collections::BTreeSet<String> = bed.messages(&room).into_iter().map(|(actor, _)| actor).collect();
+    assert_eq!(senders.len(), 2);
+
+    // a reply: one group MMS to both
+    let seq = bed.send(&room, "Eight it is", &[]);
+    bed.round(0);
+    let sends = bed.fake.sends();
+    assert_eq!(sends.len(), 1);
+    assert_eq!(sends[0].path, "/v2/messages/group_mms");
+    let sent: Json = serde_json::from_str(&sends[0].body).unwrap();
+    assert_eq!(sent["from"], OURS);
+    assert_eq!(sent["to"], json!(sorted));
+    assert_eq!(sent["text"], "Eight it is");
+    assert_eq!(bed.delivery(&room, seq).0, "CdsAccepted");
+    assert_eq!(
+        bed.count("moqui.call.SmsSendCount", &[("counterKey", text("user:alice"))]),
+        1,
+        "counted once"
+    );
+
+    // Text a number with both numbers: that room
+    login("alice");
+    let out = ok(
+        "org.moqui.call.SmsServices.open#PairRoom",
+        &[
+            ("toNumber", text(&format!("{OTHER}, {THEIRS}"))),
+            ("fromNumber", text(OURS)),
+        ],
+    );
+    assert_eq!(out_text(&out, "chatRoomId"), room);
+    // a group with an international number: refused whole at open, and a send to such a group refused before the
+    // provider and not counted
+    let refused = call(
+        "org.moqui.call.SmsServices.open#PairRoom",
+        &[
+            ("toNumber", text(&format!("{THEIRS},+442071234567"))),
+            ("fromNumber", text(OURS)),
+        ],
+    );
+    assert_eq!(out_text(&refused, "reasonCode"), "internationalNotEnabled");
+    errors();
+    let abroad = ok(
+        "org.moqui.call.SmsServices.ensure#PairRoom",
+        &[
+            ("ourNumber", text(OURS)),
+            (
+                "theirNumberList",
+                Value::List(vec![text(THEIRS), text("+442071234567")]),
+            ),
+        ],
+    );
+    let abroad_room = out_text(&abroad, "chatRoomId");
+    let blocked = bed.send(&abroad_room, "Hello", &[]);
+    bed.round(0);
+    assert_eq!(bed.delivery(&abroad_room, blocked).1, "internationalNotEnabled");
+    assert_eq!(bed.fake.sends().len(), 1, "nothing more reached the provider");
+    assert_eq!(
+        bed.count("moqui.call.SmsSendCount", &[("counterKey", text("user:alice"))]),
+        1,
+        "not counted"
+    );
+    // more than eight others: refused
+    let many: Vec<Value> = (0..9).map(|i| text(&format!("+1555000{:04}", 2000 + i))).collect();
+    let too_many = call(
+        "org.moqui.call.SmsServices.ensure#PairRoom",
+        &[("ourNumber", text(OURS)), ("theirNumberList", Value::List(many))],
+    );
+    assert_eq!(out_text(&too_many, "reasonCode"), "tooManyNumbers");
+    errors();
 }

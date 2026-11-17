@@ -194,6 +194,26 @@ fn work(bridge: &BridgeInfo, config: &Config, event: &Json) -> WebhookResponse {
     }
 }
 
+/// The numbers a text that came in went to: `to` and, for a group text, `cc`, each once (at most a group's and ours).
+pub(crate) fn recipients_of(payload: &Json) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for list in ["to", "cc"] {
+        for entry in payload.get(list).and_then(Json::as_array).into_iter().flatten() {
+            let number = entry
+                .get("phone_number")
+                .and_then(Json::as_str)
+                .or_else(|| entry.as_str());
+            if let Some(number) = number.filter(|number| !number.is_empty() && number.len() <= 20) {
+                if !out.iter().any(|known| known == number) {
+                    out.push(number.to_string());
+                }
+            }
+        }
+    }
+    out.truncate(crate::telnyx::GROUP_MAX + 1);
+    out
+}
+
 fn received(bridge: &BridgeInfo, config: &Config, event: &Json, payload: &Json) -> WebhookResponse {
     let (Some(event_id), Some(message_id), Some(ours), Some(theirs)) = (
         str_at(event, "/data/id"),
@@ -220,6 +240,8 @@ fn received(bridge: &BridgeInfo, config: &Config, event: &Json, payload: &Json) 
                 .collect()
         })
         .unwrap_or_default();
+    // a group text (group MMS) went to several numbers: every one of them, `to` and `cc`, our number among them
+    let recipients = recipients_of(payload);
     let mut parameters = BTreeMap::from([
         ("chatBridgeId".to_string(), Value::string(&bridge.chat_bridge_id)),
         ("eventId".to_string(), Value::string(event_id)),
@@ -228,6 +250,12 @@ fn received(bridge: &BridgeInfo, config: &Config, event: &Json, payload: &Json) 
         ("theirNumber".to_string(), Value::string(theirs)),
         ("mediaList".to_string(), Value::List(media)),
     ]);
+    if recipients.len() > 1 {
+        parameters.insert(
+            "recipientList".to_string(),
+            Value::List(recipients.iter().map(Value::string).collect()),
+        );
+    }
     if let Some(text) = payload.get("text").and_then(Json::as_str) {
         parameters.insert("text".to_string(), Value::string(text));
     }

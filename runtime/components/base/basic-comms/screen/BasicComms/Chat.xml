@@ -449,6 +449,17 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- the names of outside numbers (phone rooms), from the apps' call-context providers as this user
+        (org.moqui.call.SmsServices find#PhoneNames; plans/Comms-Messaging.md §9): {nameMap}, number to name, for
+        numbers, comma-separated, at most 50 -->
+    <transition name="phoneNames" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.call.SmsServices.find#PhoneNames').parameters({numbers: numbers || ''}).call() || {}
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({nameMap: out.nameMap || {}})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- the room of a record, made on first use -->
     <transition name="recordRoom">
         <actions><script><![CDATA[

@@ -56,11 +56,14 @@ module.exports = {
         // the new-chat picker: what is picked (moqui.chat.pickKind), and phone numbers offered when the user has one that texts
         pickKind() { return moqui.chat.pickKind(this.newUserIds); },
         pickParameters() { return { numbers: this.numbers.length ? 'true' : '' }; },
+        // the phone's own contacts with a number, as the picker's extra options (the mobile app only)
+        contactOptions() { return this.numbers.length && moqui.chat && moqui.chat.contactOptions ? moqui.chat.contactOptions : null; },
         toLabel() { return this.numbers.length ? t('To: people or a phone number') : t('To: one person or several'); },
         pickHint() {
             const kind = this.pickKind;
             if (kind === 'number') return t('A text from your number: the conversation with this number opens.');
-            if (kind === 'mixed') return t('A text goes to one phone number: start it with the number alone.');
+            if (kind === 'numbers') return t('A group text from your number: one conversation with these numbers.');
+            if (kind === 'mixed') return t('A text goes to phone numbers only: start it without the people.');
             if (kind === 'group') return t('A group chat; with a name it is a room, which can take more people later.');
             return this.numbers.length ? t('Pick one person for a direct chat, several for a group, or type a phone number to text it.')
                 : t('Pick one person for a direct chat, or several for a group.');
@@ -136,6 +139,8 @@ module.exports = {
                 this.me = memo.me = json.me || {};
                 this.prefs = memo.prefs = json.prefs || {};
                 this.rooms = memo.rooms = json.roomList || [];
+                // a phone room's numbers by their names (plans/Comms-Messaging.md §9)
+                if (moqui.chat && moqui.chat.nameRooms) moqui.chat.nameRooms(this.rooms);
                 if (moqui.chat) this.rooms.forEach((room) => {
                     if (room.isMember && room.chatRoomId !== this.roomId) moqui.chat.state.unread[room.chatRoomId] = { unread: room.unreadCount || 0, mentions: room.mentionCount || 0 };
                 });
@@ -420,8 +425,9 @@ module.exports = {
                                   "server-search": "",
                                   "options-url": _ctx.url('searchUsers'),
                                   "options-parameters": _ctx.pickParameters,
+                                  "options-extra": _ctx.contactOptions,
                                   label: _ctx.toLabel
-                                }, null, 8, ["modelValue", "onUpdate:modelValue", "options-url", "options-parameters", "label"]),
+                                }, null, 8, ["modelValue", "onUpdate:modelValue", "options-url", "options-parameters", "options-extra", "label"]),
                                 (_ctx.pickKind === 'group')
                                   ? (_openBlock(), _createBlock(_component_m_text_line, {
                                       key: 0,
@@ -432,7 +438,7 @@ module.exports = {
                                       class: "q-mt-xs"
                                     }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]))
                                   : _createCommentVNode("", true),
-                                (_ctx.pickKind === 'number' && _ctx.numbers.length > 1)
+                                ((_ctx.pickKind === 'number' || _ctx.pickKind === 'numbers') && _ctx.numbers.length > 1)
                                   ? (_openBlock(), _createBlock(_component_m_drop_down, {
                                       key: 1,
                                       modelValue: _ctx.fromNumber,
@@ -801,8 +807,9 @@ module.exports = {
                                           "server-search": "",
                                           "options-url": _ctx.url('searchUsers'),
                                           "options-parameters": _ctx.pickParameters,
+                                          "options-extra": _ctx.contactOptions,
                                           label: _ctx.toLabel
-                                        }, null, 8, ["modelValue", "onUpdate:modelValue", "options-url", "options-parameters", "label"]),
+                                        }, null, 8, ["modelValue", "onUpdate:modelValue", "options-url", "options-parameters", "options-extra", "label"]),
                                         (_ctx.pickKind === 'group')
                                           ? (_openBlock(), _createBlock(_component_m_text_line, {
                                               key: 0,
@@ -813,7 +820,7 @@ module.exports = {
                                               class: "q-mt-sm"
                                             }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]))
                                           : _createCommentVNode("", true),
-                                        (_ctx.pickKind === 'number' && _ctx.numbers.length > 1)
+                                        ((_ctx.pickKind === 'number' || _ctx.pickKind === 'numbers') && _ctx.numbers.length > 1)
                                           ? (_openBlock(), _createBlock(_component_m_drop_down, {
                                               key: 1,
                                               modelValue: _ctx.fromNumber,
@@ -6244,10 +6251,13 @@ module.exports = {
         // New direct message: what is picked (moqui.chat.pickKind), and phone numbers offered when the user has one that texts
         pickKind() { return moqui.chat.pickKind(this.newDirect.userIds); },
         pickParameters() { return { numbers: (this.newDirect.numbers || []).length ? 'true' : '' }; },
+        // the phone's own contacts with a number, as the picker's extra options (the mobile app only; plans/Comms-Messaging.md §9)
+        contactOptions() { return (this.newDirect.numbers || []).length && moqui.chat && moqui.chat.contactOptions ? moqui.chat.contactOptions : null; },
         pickHint() {
             const kind = this.pickKind;
             if (kind === 'number') return t('A text from your number: the conversation with this number opens.');
-            if (kind === 'mixed') return t('A text goes to one phone number: start it with the number alone.');
+            if (kind === 'numbers') return t('A group text from your number: one conversation with these numbers.');
+            if (kind === 'mixed') return t('A text goes to phone numbers only: start it without the people.');
             if (kind === 'group') return t('A group chat; with a name it is a room, which can take more people later.');
             return t('One person, or several for a group message. A conversation you already have with them opens again.');
         },
@@ -6370,6 +6380,8 @@ module.exports = {
                 this.me = json.me || {};
                 this.prefs = json.prefs || {};
                 this.rooms = json.roomList || [];
+                // a phone room's numbers by their names: the phone's contacts, the apps' call-context (plans/Comms-Messaging.md §9)
+                if (moqui.chat && moqui.chat.nameRooms) moqui.chat.nameRooms(this.rooms);
                 if (moqui.chat) this.rooms.forEach((room) => {
                     if (room.isMember && room.chatRoomId !== this.roomId) moqui.chat.state.unread[room.chatRoomId] = { unread: room.unreadCount || 0, mentions: room.mentionCount || 0 };
                     if (room.otherUserId && room.presence && !moqui.chat.state.presence[room.otherUserId]) moqui.chat.state.presence[room.otherUserId] = { presence: room.presence, at: Date.now() };
@@ -7310,8 +7322,9 @@ module.exports = {
                           "server-search": "",
                           "options-url": _ctx.url('searchUsers'),
                           "options-parameters": _ctx.pickParameters,
+                          "options-extra": _ctx.contactOptions,
                           label: (_ctx.newDirect.numbers || []).length ? _ctx.t('To: people or a phone number') : _ctx.t('To')
-                        }, null, 8, ["modelValue", "onUpdate:modelValue", "options-url", "options-parameters", "label"]),
+                        }, null, 8, ["modelValue", "onUpdate:modelValue", "options-url", "options-parameters", "options-extra", "label"]),
                         (_ctx.pickKind === 'group')
                           ? (_openBlock(), _createBlock(_component_m_text_line, {
                               key: 0,
@@ -7322,7 +7335,7 @@ module.exports = {
                               class: "q-mt-xs"
                             }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]))
                           : _createCommentVNode("", true),
-                        (_ctx.pickKind === 'number' && (_ctx.newDirect.numbers || []).length > 1)
+                        ((_ctx.pickKind === 'number' || _ctx.pickKind === 'numbers') && (_ctx.newDirect.numbers || []).length > 1)
                           ? (_openBlock(), _createBlock(_component_m_drop_down, {
                               key: 1,
                               modelValue: _ctx.newDirect.fromNumber,

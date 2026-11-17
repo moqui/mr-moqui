@@ -773,6 +773,8 @@ test("the new-chat pickers: one person is a direct chat, several a group (with a
     assert.equal(chat.pickKind(["bob", "cy"]), "group");
     assert.equal(chat.pickKind(["tel:+15552224000"]), "number");
     assert.equal(chat.pickKind(["tel:+15552224000", "bob"]), "mixed");
+    // several numbers: a group text (plans/Comms-Messaging.md §9)
+    assert.equal(chat.pickKind(["tel:+15552224000", "tel:+15552225000"]), "numbers");
     const posts = [];
     const post = (name, params) => { posts.push({ name, params }); return Promise.resolve({ chatRoomId: "R" + posts.length }); };
     assert.equal((await chat.startChat(post, { values: ["bob"] })).chatRoomId, "R1");
@@ -790,8 +792,54 @@ test("the new-chat pickers: one person is a direct chat, several a group (with a
     await assert.rejects(chat.startChat(post, { values: ["tel:5552224000", "bob"] }), (err) => err.refused === "mixed");
     await assert.rejects(chat.startChat(post, { values: [] }), (err) => err.refused === "none");
     assert.equal(posts.length, 5);
+    // several numbers: one group text's room
+    await chat.startChat(post, { values: ["tel:5552224000", "tel:+15552225000"], fromNumber: "+15550004000" });
+    assert.deepEqual(posts[5], { name: "textRoom", params: { textTo: "5552224000,+15552225000", textFrom: "+15550004000" } });
     assert.deepEqual(chat.numberOptions([{ phoneNumber: "+15550004000", description: "Office" }, { phoneNumber: "+15550004001" }]),
         [{ value: "+15550004000", label: "+15550004000 · Office" }, { value: "+15550004001", label: "+15550004001" }]);
+});
+
+// plans/Comms-Messaging.md §9, Phone book: a phone room's numbers by their names, the phone's contacts first, then the
+// apps' call-context; the pickers' extra options from the phone's contacts
+test("a phone room is named by its numbers' names, the phone's contacts first; the picker offers the phone's contacts", async () => {
+    const host = window.moquiDesktop;
+    const request = moqui.request;
+    const asked = [];
+    window.moquiDesktop = {
+        contactNames: (numbers) => { asked.push(["phone", numbers]); return Promise.resolve({ "+15552224000": "Ann Phone" }); },
+        contactsSearch: (term) => Promise.resolve(term === "ann" ? [{ name: "Ann Phone", number: "+15552224000" }, { name: "No number" }] : [])
+    };
+    moqui.request = (url, opts) => {
+        asked.push(["server", url, opts.params.numbers]);
+        return Promise.resolve({ json: { nameMap: { "+15552225000": "Bo Server" } } });
+    };
+    try {
+        Object.keys(chat.phoneNames).forEach((number) => delete chat.phoneNames[number]);
+        const rooms = [
+            { chatRoomId: "P1", roomTypeEnumId: "CrtExternal", roomName: "+15552224000", displayName: "+15552224000" },
+            { chatRoomId: "P2", roomTypeEnumId: "CrtExternal", roomName: "+15552224000, +15552225000, +15552226000", displayName: "x" },
+            { chatRoomId: "D1", roomTypeEnumId: "CrtDirect", roomName: "+15559990000", displayName: "Bob" },
+            { chatRoomId: "B1", roomTypeEnumId: "CrtExternal", roomName: "Team on Slack", displayName: "Team on Slack" }
+        ];
+        await chat.nameRooms(rooms);
+        assert.equal(rooms[0].displayName, "Ann Phone");
+        assert.equal(rooms[1].displayName, "Ann Phone, Bo Server, +15552226000", "a group text; a number no one knows stays");
+        assert.equal(rooms[2].displayName, "Bob", "not a phone room");
+        assert.equal(rooms[3].displayName, "Team on Slack", "a bridged room named otherwise");
+        assert.deepEqual(asked[0], ["phone", ["+15552224000", "+15552225000", "+15552226000"]]);
+        assert.deepEqual(asked[1].slice(2), ["+15552225000,+15552226000"], "the server is asked only for what the phone did not know");
+        const count = asked.length;
+        await chat.nameRooms(rooms);
+        assert.equal(asked.length, count, "never asked twice for a number");
+        assert.deepEqual(await chat.contactOptions("ann"), [{ value: "tel:+15552224000", label: "Ann Phone · +15552224000" }]);
+        assert.deepEqual(await chat.contactOptions("a"), [], "two letters at least");
+        delete window.moquiDesktop.contactsSearch;
+        assert.deepEqual(await chat.contactOptions("ann"), [], "no phone: nothing");
+    } finally {
+        window.moquiDesktop = host;
+        moqui.request = request;
+        Object.keys(chat.phoneNames).forEach((number) => delete chat.phoneNames[number]);
+    }
 });
 
 // plans/Comms-Messaging.md §7.5: the app's notification of a socket event follows the rules of the server's pushes
