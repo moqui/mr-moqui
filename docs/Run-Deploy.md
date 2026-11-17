@@ -726,6 +726,8 @@ XMPP clients find the server by DNS: `_xmpp-client._tcp.<domain>` (5222, STARTTL
 `rooms.<domain>` and `upload.<domain>` (a wildcard of the domain does). `_xmpp-server._tcp` waits for federation (C3b).
 
 `/health` answers `{"ready":true}` to loopback and to the addresses in `webapp_status_ips`, and 404 to everyone else.
+Through a reverse proxy whose client-ip header is believed, the client it names must be in `webapp_status_ips` too:
+list a monitor that probes through the proxy, or have it probe the port directly.
 
 The gRPC listener (4317, `grpc-port` of the telemetry `receiver` or `pass_authority_grpc_port`) and the edge tunnel
 ports (`edge_ssh_tunnel_port`, `edge_xmpp_port`, `edge_xmpp_tls_port`) also open only when they are configured.

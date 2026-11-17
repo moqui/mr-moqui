@@ -22,7 +22,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
 
-use super::{header_map, http_port, serve, status_allowed, ListenLimits, TlsConnection, WebApp};
+use super::{
+    header_map, http_port, serve, status_allowed, status_request_allowed, ListenLimits, TlsConnection, WebApp,
+};
 use crate::guard::Guard;
 use crate::tls;
 
@@ -782,6 +784,31 @@ fn status_routes_allow_loopback_only() {
     assert!(!status_allowed("", "127.0.0.1", Edge));
     assert!(!status_allowed("", "::1", Edge));
     assert!(status_allowed("203.0.113.5", "203.0.113.5", Edge));
+}
+
+/// A proxy on this machine forwards every client from loopback: the client its header names must be listed in
+/// `status-ips`, a loopback one too (SEC-WEB-11).
+#[test]
+fn status_routes_check_the_client_a_proxy_names() {
+    use moqui_core::web::RequestVia::Direct;
+    let ip = |text: &str| text.parse::<std::net::IpAddr>().unwrap();
+    let local = ip("127.0.0.1");
+    // a probe on this machine, with no proxy in between
+    assert!(status_request_allowed("", local, local, Direct));
+    // the local proxy forwarding a client from the internet, or one that names loopback
+    assert!(!status_request_allowed("", local, ip("198.51.100.7"), Direct));
+    assert!(!status_request_allowed("", local, ip("::1"), Direct));
+    assert!(!status_request_allowed("", local, ip("127.0.0.2"), Direct));
+    // the monitor named in status-ips, through the proxy
+    assert!(status_request_allowed("10.0.0.9", local, ip("10.0.0.9"), Direct));
+    assert!(status_request_allowed("10.0.0.9", local, ip("::ffff:10.0.0.9"), Direct));
+    // a listed proxy forwarding a client that is not listed
+    assert!(!status_request_allowed(
+        "10.0.0.2",
+        ip("10.0.0.2"),
+        ip("198.51.100.7"),
+        Direct
+    ));
 }
 
 #[tokio::test]
