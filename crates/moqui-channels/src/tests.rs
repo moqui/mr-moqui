@@ -2047,3 +2047,5 @@ fn a_send_names_the_bridges_webhook_url_for_its_receipts() {
         Some("https://hooks.example/sms?b=1")
     );
 }
+
+mod sinch;

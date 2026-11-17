@@ -18,5 +18,7 @@
 //! | Module | Adapter (`adapterName`) | Webhook signature, checked on |
 //! | --- | --- | --- |
 //! | [`telnyx`] | `sms` | Ed25519 under the account's public key: the edge node |
+//! | [`sinch`] | `sms-sinch` | HMAC-SHA256 under the webhook's secret: the local node |
 
+pub mod sinch;
 pub mod telnyx;

@@ -72,7 +72,8 @@ whose answer was lost is uncertain, never sent again), and the webhook's POST, r
 `note#DeliveryReceipt`, `note#SmsKeyword`). A provider module (`crates/moqui-channels/src/providers/`) implements
 `SmsProvider`: its settings, its send request (endpoint, auth, a JSON or form body) and how it reads the answer, its
 group maximum, its webhook signature (and whether an edge node can check it), its event key and its events, and its
-files' fetch auth. Each provider is one adapter, chosen by `ChatBridge.adapterName` (`sms` is Telnyx's), so an edge node,
+files' fetch auth. Each provider is one adapter, chosen by `ChatBridge.adapterName` (`sms` is Telnyx's, `sms-sinch`
+Sinch's Conversation API: [SMS](SMS.md#sinch)), so an edge node,
 which sees no `configJson`, picks it too. A provider that signs the URL it posted to checks it against
 `chat_bridge::webhook_public_url`: the bridge's `webhookUrl`, else `channels_public_url` and the request's path and query
 as received (`WebhookRequest.url`).
