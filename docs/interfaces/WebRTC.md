@@ -22,6 +22,7 @@ port:
 | `rtc_media_host` | `127.0.0.1` | The address it binds |
 | `rtc_public_address` | empty: the bound address | What browsers are told: an IP, or IP:port, for a server behind 1:1 NAT. Required when `rtc_media_host` binds every address |
 | `call_ring_seconds` | `45` | How long a call rings before it is missed |
+| `call_guest_joins_per_minute` | `20` | The most guests who join by one call link in a minute, whatever their client |
 | `rtc_cascade_enabled` | `false` | Cascading media nodes ([Cluster](#cluster)): a leg's media goes to the node of its own socket, which relays to the call's node |
 
 On a single server reachable at its own address, `rtc_media_port=10000` with `rtc_media_host` set to that address is
