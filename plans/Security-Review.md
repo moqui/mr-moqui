@@ -9,7 +9,7 @@ and SEC-OUT-08 finished later the same day), each entry's **Fix** in [Security-R
 saying how. The Low findings that were confirmed in code were then fixed in batches the same day, each entry's **Fix**
 in [Security-Review-Low](Security-Review-Low.md) saying how, and two batches of the owner's decisions on the ones they
 left were carried out after them, and on 2026-11-17 the ones fixed in part were finished: of the 215 Low and Info
-findings 131 are fixed, 1 in part and 5 deferred, none refuted, and 78 (37 Low, 41 Info) are as reported. What is left is under
+findings 132 are fixed and 5 deferred, none refuted, and 78 (37 Low, 41 Info) are as reported. What is left is under
 [What is left](#what-is-left).
 
 This is the findings register of the security review that the pre-0.1.0 notice in the [README](../README.md) names:
@@ -174,20 +174,19 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 2. **What each slice did not reach.** The coverage table names it, each report's "Read" section has the detail, and
    each map file ends with its open questions. The thinnest: the BOSS business apps other than Commerce and order
    approval, parsers of untrusted input, the mobile app's native code, and the helper-read parts of the PASS services.
-3. **Fixes.** The High findings are fixed (2026-11-15, what they left on 2026-11-16), and the Medium ones
-   (2026-11-16). Of the Medium findings none is open, none deferred, none refuted and none fixed only in part. Of the
-   169 Low and 46 Info findings, 131 are fixed (127 Low, 4 Info), 1 Info in part (SEC-TLS-18: the query values) and 5 Low
-   deferred; none is refuted whole (SEC-GIT-19 and SEC-PSS-28 are in part); 37 Low and 41 Info are as reported. The first batch of the
-   owner's decisions (2026-11-16) finished 14 of them: SEC-WEB-05, SEC-WEB-06, SEC-WEB-10, SEC-RTE-17, SEC-ADM-10,
-   SEC-GIT-18, SEC-GIT-19, SEC-COM-20, SEC-DAT-11, SEC-PSS-26, SEC-PSS-27, SEC-PSS-28, SEC-PSS-44 and SEC-OUT-13. The
-   second (2026-11-17) finished 7: SEC-MAIL-06, SEC-MAIL-07, SEC-CLU-02, SEC-CLU-04, SEC-PSF-04, SEC-PSS-05 and
-   SEC-PSS-23. A third (2026-11-17) finished the five fixed in part, SEC-TLS-08, SEC-TLS-17, SEC-COM-21, SEC-DAT-09 and
-   SEC-BAP-06, and the follow-ups of SEC-DAT-11, SEC-MAIL-07 and SEC-CLU-02 below. A fourth (2026-11-17), the open ones of
-   most impact: SEC-PSS-66, SEC-SCR-08 (confirmed: mr-marble's TaskSummary), SEC-ADM-11, SEC-FIL-65, and SEC-TLS-18's
-   session id.
+3. **Fixes.** The High findings are fixed (2026-11-15, what they left on 2026-11-16), and the Medium ones (2026-11-16).
+   Of the Medium findings none is open, none deferred, none refuted and none fixed only in part. Of the 169 Low and 46
+   Info findings, 132 are fixed (127 Low, 5 Info) and 5 Low deferred; none is refuted whole (SEC-GIT-19 and SEC-PSS-28
+   are in part); 37 Low and 41 Info are as reported. The first batch of the owner's decisions (2026-11-16) finished 14
+   of them: SEC-WEB-05, SEC-WEB-06, SEC-WEB-10, SEC-RTE-17, SEC-ADM-10, SEC-GIT-18, SEC-GIT-19, SEC-COM-20, SEC-DAT-11,
+   SEC-PSS-26, SEC-PSS-27, SEC-PSS-28, SEC-PSS-44 and SEC-OUT-13. The second (2026-11-17) finished 7: SEC-MAIL-06,
+   SEC-MAIL-07, SEC-CLU-02, SEC-CLU-04, SEC-PSF-04, SEC-PSS-05 and SEC-PSS-23. A third (2026-11-17) finished the five
+   fixed in part, SEC-TLS-08, SEC-TLS-17, SEC-COM-21, SEC-DAT-09 and SEC-BAP-06, and the follow-ups of SEC-DAT-11,
+   SEC-MAIL-07 and SEC-CLU-02 below. A fourth (2026-11-17), the open ones of most impact: SEC-PSS-66, SEC-SCR-08
+   (confirmed: mr-marble's TaskSummary), SEC-ADM-11, SEC-FIL-65 and SEC-TLS-18 (the session id, then the query values).
 
-   Deferred, each for an owner's decision or a design: SEC-COM-19 and SEC-COM-26 (each a design of its own), and SEC-CLI-03, SEC-CLI-04 and
-   SEC-CLI-05 (the desktop and Tauri clients, waiting for the desktop build machine).
+   Deferred, each for an owner's decision or a design: SEC-COM-19 and SEC-COM-26 (each a design of its own), and
+   SEC-CLI-03, SEC-CLI-04 and SEC-CLI-05 (the desktop and Tauri clients, waiting for the desktop build machine).
 
    Found while fixing and not fixed: each `RCPT` and delivery sums a mail account's message sizes, with no kept counter
    (SEC-MAIL-07; the owner's call, later work if it is slow).
@@ -327,7 +326,7 @@ Map file: [Attack-Surface-Tools.md](../docs/security/Attack-Surface-Tools.md). R
 | SEC-TLS-15 | `crates/moqui-report/src/annotations.rs:19-31`, `crates/moqui-host/src/monitor/receiver.rs:224-243` | (telemetry reader) An ingest key owned by an administrator writes business annotations for any organization | Low | reported (likely) |
 | SEC-TLS-16 | `runtime/components/base/tools/screen/System/Monitor/Settings.xml:17-20` | (telemetry reader) `Settings/revertAll` runs on a GET with no token | Low | fixed |
 | SEC-TLS-17 | `crates/moqui-host/src/monitor/receiver.rs:53-78`, `crates/moqui-host/src/monitor/grpc.rs:95-109` | (telemetry reader) The ingest routes do not count failed keys, and gRPC decodes before it authenticates | Low | fixed |
-| SEC-TLS-18 | `crates/moqui-host/src/http.rs:1398`, `:1456` | (telemetry reader) Request spans keep the raw session id and unredacted query values for every `SYSTEM_APP` reader | Info | partly fixed |
+| SEC-TLS-18 | `crates/moqui-host/src/http.rs:1398`, `:1456` | (telemetry reader) Request spans keep the raw session id and unredacted query values for every `SYSTEM_APP` reader | Info | fixed |
 | SEC-TLS-19 | `crates/moqui-report/src/recovery/execute.rs:598-612` | (telemetry reader) The recovery callback compares token hashes with `!=` and tells an unknown action from a wrong token | Info | reported (confirmed in code) |
 
 ### LLM, A2A, MCP and Assist

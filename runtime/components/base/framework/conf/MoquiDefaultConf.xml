@@ -733,7 +733,7 @@
             queue-records="8192" queue-bytes="33554432" tail-traces="1024" tail-trace-spans="512"
             span-retention-days="7" log-retention-days="7" error-retention-days="90"
             minute-retention-days="7" hour-retention-days="90" day-retention-days="730" annotation-retention-days="730"
-            replay-retention-days="7">
+            replay-retention-days="7" query-values="names">
         <!-- Business operations: each service call that owns its transaction counts as moqui.operation.runs by name and
              outcome (commit, rollback, retry, pending). The framework's own services are left out. -->
         <!-- The filesystem gauges are one series per filesystem, by where it is mounted. -->
