@@ -691,6 +691,27 @@ impl Flow {
         response
     }
 
+    /// Whether any stored `EmailMessage` has `text` in its body or its plain text.
+    fn stored_mail_holds(&self, text: &str) -> bool {
+        let context = self.factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let rows = self
+            .facade
+            .find("moqui.basic.email.EmailMessage")
+            .unwrap()
+            .list()
+            .unwrap();
+        let holds = rows.iter().any(|row| {
+            ["body", "bodyText"].iter().any(|name| {
+                row.get(name)
+                    .map(to_plain_string)
+                    .is_some_and(|body| body.contains(text))
+            })
+        });
+        holds
+    }
+
     fn row_text(&self, entity: &str, key: &str, id: &str, field: &str) -> String {
         let context = self.factory.new_context();
         let _entered = context.enter();
@@ -773,6 +794,8 @@ fn rest_login_with_an_email_code_sends_it_and_verify_otp_takes_it_once() {
     let code = after(&sent[0].body, "Your single use code is: ");
     assert_eq!(code.len(), 6, "{}", sent[0].body);
     drop(sink);
+    // the code is mailed and not kept in an EmailMessage body (SEC-MAIL-65)
+    assert!(!flow.stored_mail_holds(&code));
 
     let response = flow.post("/rest/verifyOtp", &format!("code={code}"), &mut session);
     assert_eq!(response.status, 200, "{}", response.body_text());
@@ -812,6 +835,9 @@ fn password_reset_mails_a_reset_password_that_changes_the_password() {
     let reset = after(&sent[0].body, "Your reset password has been set to: ");
     assert_eq!(reset.len(), 12, "{}", sent[0].body);
     drop(sink);
+    // the reset password is mailed and not kept in an EmailMessage body, where it would sign in for 48 hours
+    // (SEC-MAIL-65)
+    assert!(!flow.stored_mail_holds(&reset));
     let stored = flow.row_text("moqui.security.UserAccount", "userId", "cy", "resetPassword");
     assert!(stored.starts_with("$argon2id$"), "{stored}");
 

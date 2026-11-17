@@ -507,6 +507,8 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- send an email with the new password; template is always PASSWORD_RESET -->
             <service-call name="org.moqui.mail.EmailServices.send#EmailTemplate" async="true">
                 <field-map field-name="emailTemplateId" value="PASSWORD_RESET"/>
+                <!-- no EmailMessage row: its body would keep the reset password in clear after it is used (SEC-MAIL-65) -->
+                <field-map field-name="createEmailMessage" from="false"/>
                 <field-map field-name="toAddresses" from="userAccount.get('emailAddress')"/>
                 <field-map field-name="bodyParameters" from="{userAccount: {userId: userAccount.get('userId'), username: userAccount.get('username'),
                         userFullName: userAccount.get('userFullName'), emailAddress: userAccount.get('emailAddress'),
@@ -972,6 +974,8 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- send an email with the single use code -->
             <service-call name="org.moqui.mail.EmailServices.send#EmailTemplate" async="true">
                 <field-map field-name="emailTemplateId" value="SINGLE_USE_CODE"/>
+                <!-- no EmailMessage row: its body would keep the code in clear (SEC-MAIL-65) -->
+                <field-map field-name="createEmailMessage" from="false"/>
                 <field-map field-name="toAddresses" from="emailAddress"/>
                 <field-map field-name="bodyParameters" from="{code: createSuFactorOut.code,
                         thruDateString: ec.l10n.format(createSuFactorOut.thruDate, null)}"/>
@@ -1012,6 +1016,8 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- send an email with the single use code -->
             <service-call name="org.moqui.mail.EmailServices.send#EmailTemplate" async="true">
                 <field-map field-name="emailTemplateId" value="SINGLE_USE_CODE"/>
+                <!-- no EmailMessage row: its body would keep the code in clear (SEC-MAIL-65) -->
+                <field-map field-name="createEmailMessage" from="false"/>
                 <field-map field-name="toAddresses" from="emailAddress"/>
                 <field-map field-name="bodyParameters" from="{code: createSuFactorOut.code,
                         thruDateString: ec.l10n.format(createSuFactorOut.thruDate, null)}"/>

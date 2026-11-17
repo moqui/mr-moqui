@@ -202,6 +202,8 @@ function beginRegistration(p) {
                 emailTemplateId: template,
                 toAddresses: email,
                 bodyParameters: { verificationToken: token },
+                // no EmailMessage row: its body would keep the token in clear (SEC-MAIL-65)
+                createEmailMessage: false,
             })
             .call()
         // The answer stays the same either way; the challenge remains, so asking again resends.
