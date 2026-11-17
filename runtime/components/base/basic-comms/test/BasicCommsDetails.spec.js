@@ -120,6 +120,10 @@ feature("a message's links are kept for its room's Links list: on send, replaced
         const sent = as(A, "send#Message", {chatRoomId: plain,
             body: '<p>See <a href="https://example.com/guide">the guide</a> and http://Example.org/page, not https://user:pw@example.net/x</p>'})
         const onSend = linkRows(plain, sent.eventSeq)
+        // every link is listed, past the preview's three, on any port and our own (extract#LinkUrls listed)
+        const many = as(A, "send#Message", {chatRoomId: plain, body: "<p>https://one.example/ https://two.example/ https://three.example/ "
+            + "https://four.example/ https://example.com:8443/odd https://erp.example.com/qapps/Mail/Chat?chatRoomId=1</p>"})
+        const listed = linkRows(plain, many.eventSeq)
         const forward = as(B, "send#Message", {chatRoomId: plain, body: "<p>also https://example.edu/more</p>", forwardOfChatRoomId: plain,
             forwardOfEventSeq: sent.eventSeq})
         const forwarded = linkRows(plain, forward.eventSeq)
@@ -139,11 +143,12 @@ feature("a message's links are kept for its room's Links list: on send, replaced
         const beforeRetention = linkRows(kept, old.eventSeq)
         as(null, "clean#RoomRetention", {chatRoomId: kept})
         const afterRetention = linkRows(kept, old.eventSeq)
-        return {sent, onSend, forwarded, onEdit, onRedact, sealedSent, onSealed, beforeRetention, afterRetention}
+        return {sent, onSend, listed, forwarded, onEdit, onRedact, sealedSent, onSealed, beforeRetention, afterRetention}
     },
-    then({sent, onSend, forwarded, onEdit, onRedact, sealedSent, onSealed, beforeRetention, afterRetention}) {
+    then({sent, onSend, listed, forwarded, onEdit, onRedact, sealedSent, onSealed, beforeRetention, afterRetention}) {
         sent.errors == ""
         onSend.join(" ") == "https://example.com/guide http://example.org/page"
+        listed.join(" ") == "https://one.example/ https://two.example/ https://three.example/ https://four.example/ https://example.com:8443/odd https://erp.example.com/qapps/Mail/Chat?chatRoomId=1"
         forwarded.join(" ") == "https://example.edu/more https://example.com/guide http://example.org/page"
         onEdit.join(" ") == "https://example.com/guide"
         onRedact.length == 0
@@ -230,6 +235,30 @@ feature("find#RoomFiles keeps a list of types and leaves out another: Media, Fil
     }
 })
 
+feature("the attachment transition serves a voice note as a sound to play, by its name's type, never sniffed", {
+    when() {
+        const types = {}
+        for (const name of ["Voice note.webm", "Voice note.m4a"]) {
+            const location = "dbresource://chat-details-spec/" + name.slice(-4) + "/" + name
+            sys(() => ec.resource.getLocationReference(location).putText("not really sound"))
+            const id = file(A, plain, name, name.endsWith(".webm") ? "audio/webm" : "audio/mp4")
+            sys(() => { const row = ec.entity.find("moqui.chat.ChatAttachment").condition("chatAttachmentId", id).one(); row.set("location", location); row.update() })
+            as(A, "send#Message", {chatRoomId: plain, chatAttachmentIdList: [id]})
+            ec.user.internalLoginUser(username(B))
+            const out = ec.screen.makeTest().rootScreen(root).render("Chat/attachment", {chatAttachmentId: id, inline: "true"}, null)
+            ec.message.clearErrors()
+            types[name] = {type: out.header("Content-Type"), sniff: out.header("X-Content-Type-Options"), disposition: out.header("Content-Disposition") || ""}
+        }
+        return {types}
+    },
+    then({types}) {
+        types["Voice note.webm"].type.startsWith("video/webm")
+        types["Voice note.m4a"].type.startsWith("audio/mp4")
+        types["Voice note.webm"].sniff == "nosniff"
+        !types["Voice note.m4a"].disposition.startsWith("attachment")
+    }
+})
+
 feature("find#RoomReactions: the newest reaction first, a message whole with all its reactions, by key and to me; the cursor goes past a removed message", {
     when() {
         const room = as(A, "create#Room", {roomTypeEnumId: "private", roomName: "Details spec reactions", memberUserIdList: [B, C]}).chatRoomId
@@ -252,6 +281,8 @@ feature("find#RoomReactions: the newest reaction first, a message whole with all
         const pages = allPages((cursor) => as(B, "find#RoomReactions", {chatRoomId: room, limit: 1, beforeReactionSeq: cursor}),
             (out) => out.nextBeforeReactionSeq ?? null, (out) => out.messages || [])
         const toMe = as(A, "find#RoomReactions", {chatRoomId: room, onlyToMe: true}).messages
+        // a full page with only others' messages after it: no cursor
+        const toMeOne = as(A, "find#RoomReactions", {chatRoomId: room, onlyToMe: true, limit: 1})
         const party = as(B, "find#RoomReactions", {chatRoomId: room, reactionKey: "🎉"}).messages
         const outsider = as(A, "create#Room", {roomTypeEnumId: "private", roomName: "Details spec not C"}).chatRoomId
         const stranger = as(C, "find#RoomReactions", {chatRoomId: outsider})
@@ -260,9 +291,9 @@ feature("find#RoomReactions: the newest reaction first, a message whole with all
         const sealedReaction = as(B, "react#Message", {chatRoomId: secret, eventSeq: sealedSent.eventSeq, encrypted: sealed("r2")})
         const sealedList = as(A, "find#RoomReactions", {chatRoomId: secret}).messages
         const sealedKey = as(A, "find#RoomReactions", {chatRoomId: secret, reactionKey: "👍"}).messages
-        return {mine, theirs, pages, toMe, party, stranger, sealedSent, sealedReaction, sealedList, sealedKey}
+        return {mine, theirs, pages, toMe, toMeOne, party, stranger, sealedSent, sealedReaction, sealedList, sealedKey}
     },
-    then({mine, theirs, pages, toMe, party, stranger, sealedSent, sealedReaction, sealedList, sealedKey}) {
+    then({mine, theirs, pages, toMe, toMeOne, party, stranger, sealedSent, sealedReaction, sealedList, sealedKey}) {
         pages.items.map((one) => one.eventSeq).join(",") == [mine.eventSeq, theirs.eventSeq].join(",")
         pages.items[0].snippet == "Three reactions to this one"
         pages.items[0].reactions.map((one) => one.key + one.count).join(" ") == "👍2 🎉1"
@@ -270,6 +301,8 @@ feature("find#RoomReactions: the newest reaction first, a message whole with all
         pages.items[1].reactions.map((one) => one.key + one.count).join(" ") == "👍1"
         pages.items[0].latestReactionSeq > pages.items[1].latestReactionSeq
         toMe.map((one) => one.eventSeq).join(",") == String(mine.eventSeq)
+        toMeOne.messages.length == 1
+        toMeOne.nextBeforeReactionSeq == null
         party.map((one) => one.eventSeq).join(",") == String(mine.eventSeq)
         stranger.errors.includes("not found")
         sealedReaction.errors == ""
@@ -321,6 +354,31 @@ feature("find#ChatActivity: my mentions, replies and reactions across rooms, row
         pages.items.find((item) => item.chatRoomId === sealedRoom).encryptedContent.ciphertext == "AwgAEna1"
         mentions.length == 2
         reactions.length == 1
+    }
+})
+
+feature("find#ChatActivity's cursor: two rows alike but for their id are both listed a page at a time; a cursor that is not one is refused", {
+    when() {
+        const room = as(A, "create#Room", {roomTypeEnumId: "private", roomName: "Details spec cursor", memberUserIdList: [C]}).chatRoomId
+        const sent = as(A, "send#Message", {chatRoomId: room, body: "<p>twice</p>"})
+        // two rows of one user, date, room, event and kind (made here: record#UserActivity makes one a kind)
+        const at = ec.user.nowTimestamp
+        for (const id of ["CHAT_DETAILS_ACT_1", "CHAT_DETAILS_ACT_2"]) sys(() => {
+            const row = ec.entity.makeValue("moqui.chat.ChatUserActivity")
+            row.setFields({chatUserActivityId: id, userId: C, activityKindEnumId: "CuaMention", chatRoomId: room, eventSeq: sent.eventSeq,
+                messageEventSeq: sent.eventSeq, actorUserId: A, activityDate: at}, true, null, null)
+            row.create()
+        })
+        const pages = allPages((cursor) => as(C, "find#ChatActivity", {limit: 1, cursor}), (out) => out.nextCursor ?? null, (out) => out.items || [])
+        const garbage = as(C, "find#ChatActivity", {cursor: "not a cursor"})
+        const absurd = as(C, "find#ChatActivity", {cursor: "999999999999999~1~CuaMention~X~" + room})
+        return {pages, garbage, absurd}
+    },
+    then({pages, garbage, absurd}) {
+        pages.items.length == 2
+        pages.sizes.slice(0, 2).join(",") == "1,1"
+        garbage.errors.includes("not valid")
+        absurd.errors.includes("not valid")
     }
 })
 

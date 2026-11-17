@@ -3478,7 +3478,7 @@ const chatComposer = {
     props: { room: Object, threadRoot: [Number, String], placeholder: String },
     data() {
         composerCount += 1;
-        return { uid: composerCount, body: '', files: [], picked: null, sending: false, draftTimer: null, voice: null, voiceNow: 0 };
+        return { uid: composerCount, body: '', files: [], picked: null, sending: false, draftTimer: null, voice: null, voiceNow: 0, voiceStarting: false };
     },
     computed: {
         draftKey() { return draftPrefix() + this.room.roomId + (this.threadRoot ? ':' + this.threadRoot : ''); },
@@ -3487,7 +3487,7 @@ const chatComposer = {
         canSend() { return !this.sending && !this.uploading && (!isEmptyHtml(this.body) || this.files.some((file) => file.chatAttachmentId)); },
         // the microphone in place of Send: no text and no file, online, and a browser that records sound
         showVoice() {
-            return !this.sending && !this.files.length && isEmptyHtml(this.body) && !this.room.offline && typeof window.MediaRecorder === 'function'
+            return !this.sending && !this.voiceStarting && !this.files.length && isEmptyHtml(this.body) && !this.room.offline && typeof window.MediaRecorder === 'function'
                 && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
         },
         voiceTime() {
@@ -3535,6 +3535,8 @@ const chatComposer = {
             }
         },
         send() {
+            // Enter while a voice note records sends nothing: the text waits for its own Send
+            if (this.voice || this.voiceStarting) return;
             if (this.uploading) { moqui.notifyMessages([{ type: 'info', message: t('Wait for the files to finish uploading') }]); return; }
             if (!this.canSend) return;
             const text = plainOf(this.body);
@@ -3594,26 +3596,47 @@ const chatComposer = {
         },
         // ---- a voice note: recorded here (MediaRecorder), sent as an audio file through the upload, encrypted in an
         // encrypted room as any file; at most VOICE_MAX_MS, then it is sent ----
+        // one at a time: a second tap while the browser asks for the microphone does nothing, and a microphone that comes
+        // after the composer went (the room left during the prompt) or was cancelled is closed at once, never recorded
         startVoice() {
-            if (this.voice || needsConnection()) return;
+            if (this.voice || this.voiceStarting || this.gone || needsConnection()) return;
+            this.voiceStarting = true;
+            const asked = ++voiceCount;
+            this.voiceAsked = asked;
             navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-                const supported = (type) => !window.MediaRecorder.isTypeSupported || window.MediaRecorder.isTypeSupported(type);
-                const type = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4'].find(supported);
-                const recorder = new window.MediaRecorder(stream, type ? { mimeType: type } : undefined);
-                // compared by its id: this.voice is Vue's proxy of it
-                const voice = { id: ++voiceCount, recorder, stream, chunks: [], start: Date.now(), send: false, stopping: false, timer: null };
-                recorder.ondataavailable = (event) => { if (event.data && event.data.size) voice.chunks.push(event.data); };
-                recorder.onstop = () => this.voiceStopped(voice);
-                this.voice = voice;
-                this.voiceNow = voice.start;
-                voice.timer = setInterval(() => {
-                    this.voiceNow = Date.now();
-                    if (this.voiceNow - voice.start >= VOICE_MAX_MS && this.voice && this.voice.id === voice.id) this.stopVoice(true);
-                }, 250);
-                recorder.start(1000);
-            }, () => moqui.notifyMessages([{ type: 'warning', message: t('The microphone could not be opened: allow it for this site to record a voice note') }]));
+                const close = () => stream.getTracks().forEach((track) => track.stop());
+                if (this.gone || this.voice || this.voiceAsked !== asked) { close(); return; }
+                this.voiceStarting = false;
+                try {
+                    const supported = (type) => !window.MediaRecorder.isTypeSupported || window.MediaRecorder.isTypeSupported(type);
+                    const type = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4'].find(supported);
+                    const recorder = new window.MediaRecorder(stream, type ? { mimeType: type } : undefined);
+                    // compared by its id: this.voice is Vue's proxy of it
+                    const voice = { id: asked, recorder, stream, chunks: [], start: Date.now(), send: false, stopping: false, timer: null };
+                    recorder.ondataavailable = (event) => { if (event.data && event.data.size) voice.chunks.push(event.data); };
+                    recorder.onstop = () => this.voiceStopped(voice);
+                    this.voice = voice;
+                    this.voiceNow = voice.start;
+                    // the cap is the recording's own time, however often the timer runs (a page in the background)
+                    voice.timer = setInterval(() => {
+                        this.voiceNow = Date.now();
+                        if (Date.now() - voice.start >= VOICE_MAX_MS && this.voice && this.voice.id === voice.id) this.stopVoice(true);
+                    }, 250);
+                    recorder.start(1000);
+                } catch (err) {
+                    close();
+                    this.voice = null;
+                    moqui.notifyMessages([{ type: 'warning', message: t('This browser could not record a voice note') }]);
+                }
+            }, () => {
+                if (this.voiceAsked !== asked) return;
+                this.voiceStarting = false;
+                if (!this.gone) moqui.notifyMessages([{ type: 'warning', message: t('The microphone could not be opened: allow it for this site to record a voice note') }]);
+            });
         },
         stopVoice(send) {
+            // a microphone still asked for is dropped when it comes
+            if (this.voiceStarting) { this.voiceStarting = false; this.voiceAsked = null; }
             const voice = this.voice;
             if (!voice || voice.stopping) return;
             voice.send = !!send;
@@ -3626,13 +3649,19 @@ const chatComposer = {
             clearInterval(voice.timer);
             voice.stream.getTracks().forEach((track) => track.stop());
             if (this.voice && this.voice.id === voice.id) this.voice = null;
-            if (!voice.send || !voice.chunks.length) return;
+            // sent only by its Send (or the cap) while the composer is there
+            if (!voice.send || !voice.chunks.length || this.gone) return;
             // the type without its codecs, and a name with its extension, so the file plays where it is opened
             const type = String(voice.recorder.mimeType || voice.chunks[0].type || 'audio/webm').split(';')[0].trim() || 'audio/webm';
             const ext = { 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'm4a', 'audio/mpeg': 'mp3' }[type] || 'webm';
             const stamp = new Date().toISOString().slice(0, 19).replace('T', ' ').replace(/:/g, '.');
             const file = new File([new Blob(voice.chunks, { type })], fill(t('Voice note {when}'), { when: stamp }) + '.' + ext, { type });
-            this.upload([file]).then(() => { if (this.files.some((one) => one.chatAttachmentId)) this.send(); });
+            // the voice note goes alone: text typed meanwhile and other files stay in the composer
+            this.upload([file]).then(([stored]) => {
+                if (!stored || !stored.chatAttachmentId) return;
+                this.files = this.files.filter((one) => one.key !== stored.key);
+                return this.room.sendMessage({ body: '', attachmentIds: [stored.chatAttachmentId], files: [stored], threadRoot: this.threadRoot || null });
+            }).catch(() => moqui.notifyMessages([{ type: 'warning', message: t('The voice note was not sent') }]));
         },
         // each file goes up at once (upload#ChatFiles); the message names them when it is sent. Not offline: a file waits
         // for no one, and the outbox keeps only text. Resolves when all are up (or failed)
@@ -3656,13 +3685,16 @@ const chatComposer = {
                     if (json.messageInfos && json.messageInfos.length) moqui.notifyMessages(json.messageInfos);
                     const index = this.files.indexOf(entry);
                     if (index < 0) return;
-                    if (stored) this.files.splice(index, 1, Object.assign({}, entry, stored, this.room.sealed ? { fileName: entry.fileName, contentType: entry.contentType,
-                        fileSize: entry.fileSize } : {}, { uploading: false }));
-                    else this.files.splice(index, 1);
+                    if (!stored) { this.files.splice(index, 1); return null; }
+                    const done = Object.assign({}, entry, stored, this.room.sealed ? { fileName: entry.fileName, contentType: entry.contentType,
+                        fileSize: entry.fileSize } : {}, { uploading: false });
+                    this.files.splice(index, 1, done);
+                    return done;
                 }, (err) => {
                     const index = this.files.indexOf(entry);
                     if (index >= 0) this.files.splice(index, 1);
                     moqui.handleAjaxError(err);
+                    return null;
                 });
             }));
         },
@@ -3677,6 +3709,7 @@ const chatComposer = {
     },
     beforeUnmount() {
         clearTimeout(this.draftTimer);
+        this.gone = true;
         this.stopVoice(false);
         this.saveDraft();
         this.room.unregisterComposer(this, this.threadRoot);
@@ -5077,7 +5110,7 @@ const chatRoom = {
             if (this.tabs[this.side] && this.tabTouched(this.side, event)) {
                 clearTimeout(this.tabTimer);
                 const name = this.side;
-                this.tabTimer = setTimeout(() => { if (this.side === name) this.loadTab(name, false); }, 400);
+                this.tabTimer = setTimeout(() => { if (this.side === name) this.refreshTab(name); }, 400);
             }
         },
         onReadSignal(payload) {
@@ -5220,7 +5253,7 @@ const chatRoom = {
             this.reloadMeta();
             if (this.side === 'thread' && this.threadView.rootSeq != null) this.openThread(this.threadView.rootSeq, true);
             if (this.side === 'threads') this.loadThreads(false);
-            if (this.tabs[this.side]) this.loadTab(this.side, false);
+            if (this.tabs[this.side]) this.refreshTab(this.side);
             if (this.hasMoreAfter || !this.events.length) return;
             const last = this.events.reduce((max, event) => Math.max(max, Number(event.eventSeq)), 0);
             this.get('timeline', { chatRoomId: this.roomId, afterSeq: last, limit: 200 }).then((page) => {
@@ -5538,7 +5571,9 @@ const chatRoom = {
             return false;
         },
         saveEdit(item, body) {
-            const sent = this.sealed ? moqui.chat.sealMessage(this.roomId, this.memberIds(), body, []).then((sealed) => this.change('chat-edit', 'edit', { chatRoomId: this.roomId,
+            // an encrypted edit keeps the message's files (their names, types and keys) in its ciphertext
+            const kept = this.sealed ? moqui.chat.keptFiles((item.event && item.event.attachments) || item.attachments) : [];
+            const sent = this.sealed ? moqui.chat.sealMessage(this.roomId, this.memberIds(), body, kept).then((sealed) => this.change('chat-edit', 'edit', { chatRoomId: this.roomId,
                 eventSeq: item.eventSeq, encryptedJson: sealed.encryptedJson, mentionUserIds: sealed.mentionUserIds }), (err) => {
                 // the edit stays open; asked, then saved again (§6.1 rule 3)
                 this.sealRefused(err, () => this.saveEdit(item, body));
@@ -5881,40 +5916,78 @@ const chatRoom = {
             this.threadsPane.list = [root].concat(this.threadsPane.list.filter((thread) => thread !== root));
         },
         // ---- the details' tabs (Comms-Messaging §5.1): each a page at a time by the server's cursor, more as it scrolls ----
+        // A tab's latest request wins (a token per tab): a filter changed, or the tab read again, while a page loads drops
+        // that page's answer. A page of more never lists an item twice (a reaction taken back between pages).
         loadTab(name, more) {
             const tab = this.tabs[name];
-            if (!tab || tab.loading || (more && tab.next == null)) return;
+            if (!tab || (more && (tab.loading || tab.next == null))) return;
             const roomId = this.roomId;
+            const token = this.tabToken(name);
             tab.loading = true;
-            const done = (list, next) => {
-                if (roomId !== this.roomId) return;
-                this.tabs[name] = Object.assign({}, this.tabs[name], { list: (more ? this.tabs[name].list : []).concat(list), next: next == null ? null : next,
-                    loading: false, loaded: true });
+            this.fetchTab(name, more ? tab.next : '').then((page) => {
+                if (roomId !== this.roomId || this.tabTokens[name] !== token) return;
+                const current = this.tabs[name];
+                const known = new Set(more ? current.list.map((item) => this.tabKey(name, item)) : []);
+                const list = (more ? current.list : []).concat(page.list.filter((item) => !known.has(this.tabKey(name, item))));
+                this.tabs[name] = Object.assign({}, current, { list, next: page.next, loading: false, loaded: true });
                 this.$nextTick(() => this.fillTab(name));
-            };
-            const failed = () => { if (roomId === this.roomId) this.tabs[name] = Object.assign({}, this.tabs[name], { loading: false }); };
-            const cursor = more ? tab.next : '';
+            }, () => {
+                if (roomId === this.roomId && this.tabTokens[name] === token) this.tabs[name] = Object.assign({}, this.tabs[name], { loading: false });
+            });
+        },
+        // a pushed change: the tab's first page read again and merged at the top, so a tab scrolled far keeps its place;
+        // what the first page no longer has, of the stretch it covers, is gone (a removed message, a reaction taken back)
+        refreshTab(name) {
+            const tab = this.tabs[name];
+            if (!tab) return;
+            if (!tab.loaded) { this.loadTab(name, false); return; }
+            const roomId = this.roomId;
+            const token = this.tabToken(name);
+            this.fetchTab(name, '').then((page) => {
+                if (roomId !== this.roomId || this.tabTokens[name] !== token) return;
+                const current = this.tabs[name];
+                const fresh = new Set(page.list.map((item) => this.tabKey(name, item)));
+                // the first page is all there is, or what is older than its last item stays
+                const last = page.list.length ? this.tabOrder(name, page.list[page.list.length - 1]) : null;
+                const older = page.next == null ? [] : current.list.filter((item) => !fresh.has(this.tabKey(name, item))
+                    && (last == null || this.tabOrder(name, item) < last));
+                this.tabs[name] = Object.assign({}, current, { list: page.list.concat(older), next: page.next == null ? null : current.next, loading: false, loaded: true });
+            }, () => null);
+        },
+        tabToken(name) {
+            this.tabTokens = this.tabTokens || {};
+            this.tabTokens[name] = (this.tabTokens[name] || 0) + 1;
+            return this.tabTokens[name];
+        },
+        // an item of a tab: its key, and where it sorts (newest first)
+        tabKey(name, item) {
+            if (name === 'reactions') return String(item.eventSeq);
+            if (name === 'links') return item.eventSeq + ' ' + item.url;
+            return String(item.chatAttachmentId);
+        },
+        tabOrder(name, item) { return Number(name === 'reactions' ? item.latestReactionSeq || 0 : item.eventSeq || 0); },
+        // one page of a tab, {list, next}
+        fetchTab(name, cursor) {
+            const roomId = this.roomId;
+            const tab = this.tabs[name];
             if (name === 'links') {
                 // an encrypted room's links are found here, in the messages this page has decrypted
-                if (this.sealed) { done(this.sealedLinks(), null); return; }
-                this.get('links', { chatRoomId: roomId, beforeEventSeq: cursor, limit: 40 }).then((json) => done(json.links || [], json.nextBeforeEventSeq), failed);
-                return;
+                if (this.sealed) return Promise.resolve({ list: this.sealedLinks(), next: null });
+                return this.get('links', { chatRoomId: roomId, beforeEventSeq: cursor, limit: 40 }).then((json) => ({ list: json.links || [], next: json.nextBeforeEventSeq ?? null }));
             }
             if (name === 'reactions') {
-                this.get('reactions', { chatRoomId: roomId, onlyToMe: tab.onlyToMe ? 'true' : 'false', beforeReactionSeq: cursor, limit: 40 }).then((json) => {
+                return this.get('reactions', { chatRoomId: roomId, onlyToMe: tab.onlyToMe ? 'true' : 'false', beforeReactionSeq: cursor, limit: 40 }).then((json) => {
                     const list = json.messages || [];
                     // an encrypted room's: their text and reaction keys decrypted here, as the timeline's are
                     const opened = this.sealed && moqui.chat.openEvents ? moqui.chat.openEvents(roomId, list, (file) => this.sealedUrl(file)) : Promise.resolve(list);
-                    return opened.then(() => done(list.map((message) => (message.encrypted && message.bodyText != null
-                        ? Object.assign(message, { snippet: shortText(message.bodyText) }) : message)), json.nextBeforeReactionSeq));
-                }).catch(failed);
-                return;
+                    return opened.then(() => ({ list: list.map((message) => (message.encrypted && message.bodyText != null
+                        ? Object.assign(message, { snippet: shortText(message.bodyText) }) : message)), next: json.nextBeforeReactionSeq ?? null }));
+                });
             }
             const kind = FILE_TABS[name];
             if (!this.sealed) {
-                this.get('files', Object.assign({ chatRoomId: roomId, beforeEventSeq: cursor, limit: 40 }, kind.params))
-                    .then((json) => done(json.fileList || [], json.nextBeforeEventSeq), failed);
-                return;
+                return this.get('files', Object.assign({ chatRoomId: roomId, beforeEventSeq: cursor, limit: 40 }, kind.params))
+                    .then((json) => ({ list: json.fileList || [], next: json.nextBeforeEventSeq ?? null }));
             }
             // an encrypted room: the server knows no type, so its files are read (a few pages at most each time), their
             // details decrypted from their messages, and sorted into the tab here
@@ -5922,13 +5995,12 @@ const chatRoom = {
             const page = (before, left) => this.get('files', { chatRoomId: roomId, beforeEventSeq: before, limit: 40 }).then((json) =>
                 this.openSealedFiles(roomId, json.fileList || []).then((files) => {
                     found.push(...files.filter((file) => kind.keeps(file)));
-                    const next = json.nextBeforeEventSeq == null ? null : json.nextBeforeEventSeq;
+                    const next = json.nextBeforeEventSeq ?? null;
                     if (next != null && left > 1 && found.length < 12) return page(next, left - 1);
-                    done(found, next);
                     if (name === 'media') found.filter(isImage).forEach((file) => this.openMedia(file));
-                    return null;
+                    return { list: found, next };
                 }));
-            page(cursor, 5).catch(failed);
+            return page(cursor, 5);
         },
         // an encrypted room's files with their names, types and keys, from their messages decrypted (C7); a file whose
         // message cannot be read keeps none, and sorts as a file

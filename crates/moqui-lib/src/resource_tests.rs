@@ -53,6 +53,19 @@ fn memory_tree_finds_children_under_a_matching_directory() {
     assert!(children.iter().any(|child| child.file_name() == "sub.xml"));
     assert!(screen_file.is_text());
     assert_eq!(content_type_for_name("page.xml"), Some("application/xml"));
+    // a chat's voice notes and clips play with their type (WebKit sniffs none)
+    for (name, content_type) in [
+        ("Voice note.webm", "video/webm"),
+        ("Voice note.ogg", "audio/ogg"),
+        ("note.opus", "audio/ogg"),
+        ("Voice note.m4a", "audio/mp4"),
+        ("song.MP3", "audio/mpeg"),
+        ("clip.mp4", "video/mp4"),
+        ("memo.wav", "audio/wav"),
+        ("photo.webp", "image/webp"),
+    ] {
+        assert_eq!(content_type_for_name(name), Some(content_type), "{name}");
+    }
 }
 
 /// Off Windows `\` is a character of a file name: the location keeps it, and it does not split the name.

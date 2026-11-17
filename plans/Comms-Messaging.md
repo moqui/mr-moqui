@@ -1429,6 +1429,14 @@ Done 2026-11-17 in `533f3c0f2`.
   at 390×844 and 1280×800 in the bundled shell, offline).
 - Left: a voice note recorded and played on a real phone (§18.4); the Activity view (phase 8 builds it on
   `find#ChatActivity`).
+- Review fixes: the microphone is asked for once and dropped when the composer went or the recording was cancelled
+  meanwhile (no recorder on a closed room); a voice note goes alone (typed text stays; Enter waits while it records);
+  sounds and videos are served with their type (`content_type_for_name`: webm, ogg, opus, m4a, mp3, mp4, wav, webp);
+  an encrypted edit keeps the message's files in its ciphertext (`moqui.chat.keptFiles`); the tabs' latest request wins
+  and a push merges at the top; `find#RoomReactions` says there is more only when another message passes;
+  `find#ChatActivity`'s cursor has the row's id and refuses a bad one; `find#RoomLinks` searches the room's links joined
+  to their previews (`ChatEventLinkPreview`). Tests: `BasicCommsDetails` (the listed links end to end, the attachment's
+  type, the cursors), `WebrootChat` (an edit's files), `moqui-lib` `resource` (the media types).
 
 Planned:
 - `ChatEventLink`; `find#RoomLinks`, `find#RoomReactions`, `find#ChatActivity`; the include and leave-out type lists
