@@ -364,6 +364,13 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="error-retention-days" type="xs:nonNegativeInteger"/>
         <xs:attribute name="annotation-retention-days" type="xs:nonNegativeInteger"/>
         <xs:attribute name="replay-retention-days" type="xs:nonNegativeInteger"/>
+        <xs:attribute name="query-values" default="names"><xs:annotation><xs:documentation>What a request span keeps of
+            its query and its Referer's query: names, every parameter's name with the value only of pageIndex, pageSize,
+            orderByField, renderMode, lastStandalone and _uiType, the others […]; or all, every value, for debugging. A
+            secret's value is [REDACTED] either way. Spans go to every SYSTEM_APP reader and to an outside collector
+            (otlp-endpoint), and a value is often a search term or a record id (SEC-TLS-18).</xs:documentation></xs:annotation>
+            <xs:simpleType><xs:restriction base="xs:token"><xs:enumeration value="names"/><xs:enumeration value="all"/></xs:restriction></xs:simpleType>
+        </xs:attribute>
         <xs:attribute name="minute-retention-days" type="xs:nonNegativeInteger"/>
         <xs:attribute name="hour-retention-days" type="xs:nonNegativeInteger"/>
         <xs:attribute name="day-retention-days" type="xs:nonNegativeInteger"/>
