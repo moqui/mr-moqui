@@ -206,6 +206,12 @@
             if (isDynamic(text)) map[":" + key] = exp(text, n, key, false);
             else map[key] = text;
         };
+        // A widget's style as [the static class, the bound :class]: a style that is an expression (${offered ? 'a' : 'b'}) is bound
+        // over the scope, beside the widget's own classes (Vue merges class and :class), never written as class text.
+        const styleOf = (n) => {
+            const style = at(n, "style") || null;
+            return style && isDynamic(style) ? [null, exp(style, n, "style", false)] : [style, null];
+        };
         // The value of a Moqui expression attribute, or null when it is empty.
         const expAttr = (n, key) => (at(n, key) ? X(at(n, key), n, key) : null);
 
@@ -782,8 +788,9 @@
             const allowEmpty = at(n, "allow-empty") === "true";
             const dyn = first(n, "dynamic-options");
             const check = validate(n.parent);
+            const [style, boundStyle] = styleOf(n);
             const out = Object.assign({
-                name, form: owner(), size: at(n, "size") || null, class: cls(dyn ? "dynamic-options" : null, at(n, "style") || null, check.v.classes || null),
+                name, form: owner(), size: at(n, "size") || null, class: cls(dyn ? "dynamic-options" : null, style, check.v.classes || null), ":class": boundStyle,
                 multiple: multiple || null, "allow-empty": allowEmpty || null, combo: at(n, "combo-box") === "true" ? true : null,
                 "required-manual-select": at(n, "required-manual-select") === "true" ? true : null, "submit-on-select": at(n, "submit-on-select") === "true" ? true : null
             }, idAttrs(n));
@@ -855,9 +862,10 @@
             const align = at(field, "align");
             const labelWrapper = field.parent && field.parent.name === "form-single";
             const dyn = !!at(n, "dynamic-transition");
+            const [style, boundStyle] = styleOf(n);
             const out = Object.assign({
                 name, "label-wrapper": labelWrapper || null,
-                class: cls(at(n, "currency-unit-field") ? "currency" : null, align === "center" ? "text-center" : align === "right" ? "text-right" : null, at(n, "style") || null)
+                class: cls(at(n, "currency-unit-field") ? "currency" : null, align === "center" ? "text-center" : align === "right" ? "text-right" : null, style), ":class": boundStyle
             }, st.inRow ? { ":id": sq((st.fieldForm || at(formOf(n), "name")) + "_" + name) + "+'_'+rowIndex+'_display'" } : { id: (st.fieldForm || at(formOf(n), "name")) + "_" + name + "_display" });
             if (labelWrapper) labelAttr(n, out);
             tipOf(n, out);
@@ -887,9 +895,10 @@
             const name = nameOf(n);
             const align = at(field, "align");
             const formKind = field.parent ? field.parent.name : "";
+            const [style, boundStyle] = styleOf(n);
             const out = Object.assign({
                 name, "label-wrapper": formKind === "form-single" || null,
-                class: cls(align === "center" ? "text-center" : align === "right" ? "text-right" : null, at(n, "style") || null)
+                class: cls(align === "center" ? "text-center" : align === "right" ? "text-right" : null, style), ":class": boundStyle
             }, st.inRow ? { ":id": sq((st.fieldForm || at(formOf(n), "name")) + "_" + name) + "+'_'+rowIndex+'_display'" } : { id: (st.fieldForm || at(formOf(n), "name")) + "_" + name + "_display" });
             if (formKind === "form-single") labelAttr(n, out);
             tipOf(n, out);
@@ -930,7 +939,8 @@
 
         const labelWidget = (n) => {
             const type = at(n, "type") || "span";
-            const out = { class: cls("text-inline", at(n, "style") || null), ":v-text": null };
+            const [style, boundStyle] = styleOf(n);
+            const out = { class: cls("text-inline", style), ":class": boundStyle, ":v-text": null };
             plainAttr(out, "id", at(n, "id"), n);
             if (at(n, "tooltip")) textAttr(out, "title", at(n, "tooltip"), n, true);
             delete out[":v-text"];
