@@ -255,7 +255,11 @@ impl Rolling {
         };
         let path = rolling.path();
         let modified = std::fs::metadata(&path).ok().and_then(|meta| meta.modified().ok());
-        let file = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
+        // the log can hold what a request carried: this user's alone, whatever the umask (SEC-DAT-06)
+        let file = moqui_lib::private_fs::file_options()
+            .create(true)
+            .append(true)
+            .open(&path)?;
         rolling.size = file.metadata().map_or(0, |meta| meta.len());
         // An existing file belongs to the day it was last written, so a restart on a later day rolls it first.
         rolling.day = modified
@@ -339,7 +343,7 @@ impl Rolling {
 
     /// Open the current file for appending; the size is what it already holds.
     fn open_current(&mut self) -> std::io::Result<()> {
-        let file = std::fs::OpenOptions::new()
+        let file = moqui_lib::private_fs::file_options()
             .create(true)
             .append(true)
             .open(self.path())?;
@@ -440,7 +444,7 @@ pub fn attach_files(
         .unwrap_or(100);
     let max_files = setting("max-files").parse::<usize>().unwrap_or(30);
     let opened = dir.as_ref().and_then(|dir| {
-        let sinks = std::fs::create_dir_all(dir).and_then(|()| {
+        let sinks = moqui_lib::private_fs::create_dir_all(dir).and_then(|()| {
             Ok(FileSinks {
                 all: Rolling::open(dir, "moqui", max_mb * 1024 * 1024, max_files)?,
                 errors: Rolling::open(dir, "moqui-error", max_mb * 1024 * 1024, max_files)?,

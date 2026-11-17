@@ -228,3 +228,23 @@ fn xml_counts_dependents_and_a_missing_parent_is_not_made() {
     let zip = dir.join("made/rows.zip");
     assert_eq!(writer.zip_file("rows.json", zip.to_str().unwrap()).unwrap(), 1);
 }
+
+/// SEC-DAT-06: an export holds decrypted fields, so its file is this user's alone (`0600`) and the directories made for
+/// it `0700`, whatever the process umask.
+#[cfg(unix)]
+#[test]
+fn an_export_file_and_its_new_directories_are_this_user_s_alone() {
+    use std::io::Write as _;
+    use std::os::unix::fs::PermissionsExt as _;
+    let (dir, _guard) = temp_dir();
+    let path = dir.join("made/below/rows.zip");
+    super::write_new(&path, true, |out| {
+        out.write_all(b"rows")
+            .map_err(|err| moqui_lib::error::Error::new(err.to_string()))
+    })
+    .unwrap();
+    let mode = |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(&path), 0o600);
+    assert_eq!(mode(&dir.join("made")), 0o700);
+    assert_eq!(mode(&dir.join("made/below")), 0o700);
+}

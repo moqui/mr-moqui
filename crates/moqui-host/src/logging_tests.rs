@@ -93,6 +93,13 @@ fn a_file_rolls_by_size_and_keeps_the_newest() {
     );
     let current = std::fs::read_to_string(dir.join("moqui.log")).unwrap();
     assert!(current.contains("line 19"), "{current}");
+    // the current file and the rolled ones are this user's alone, whatever the umask (SEC-DAT-06)
+    #[cfg(unix)]
+    for name in names.iter().map(String::as_str).chain(["moqui.log"]) {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = std::fs::metadata(dir.join(name)).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "{name}");
+    }
     assert!(!std::fs::read_to_string(dir.join(&names[0]))
         .unwrap()
         .contains("line 00"));
