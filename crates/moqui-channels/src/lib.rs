@@ -56,6 +56,7 @@ moqui_core::extension::submit! {
 pub fn adapters() -> Vec<Arc<dyn ChatBridgeAdapter>> {
     vec![
         Arc::new(sms::SmsAdapter::new(providers::telnyx::Telnyx)),
+        Arc::new(sms::SmsAdapter::new(providers::twilio::Twilio::default())),
         Arc::new(sms::SmsAdapter::new(providers::sinch::Sinch::default())),
     ]
 }

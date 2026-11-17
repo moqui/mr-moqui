@@ -379,5 +379,6 @@ fn receipt(event: &Json, payload: &Json) -> Result<SmsEvent, WebhookResponse> {
             .map(str::to_string),
         other_remote_event_id: group_id.map(|_| own_id.to_string()),
         receipt_millis: millis_of(str_at(event, "/data/occurred_at")),
+        opt_signal: None,
     }))
 }

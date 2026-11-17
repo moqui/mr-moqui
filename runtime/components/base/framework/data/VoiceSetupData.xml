@@ -29,9 +29,10 @@ along with this software (see the LICENSE.md file). If not, see
         authorized live check yet (docs/interfaces/SIP.md); Voice.js VERIFIED_PROFILES lists those that are. -->
     <moqui.basic.EnumerationType description="Voice Provider Profile" enumTypeId="VoiceProviderProfile"/>
     <moqui.basic.Enumeration description="Telnyx (TLS, SRTP; not yet verified live)" enumId="VppTelnyx" enumCode="telnyx" enumTypeId="VoiceProviderProfile" sequenceNum="1" optionValue="N"/>
-    <moqui.basic.Enumeration description="Sinch Elastic SIP Trunking (TLS, SRTP; not yet verified live)" enumId="VppSinch" enumCode="sinch" enumTypeId="VoiceProviderProfile" sequenceNum="1" optionValue="N"/>
-    <moqui.basic.Enumeration description="Other provider (TLS, SRTP)" enumId="VppGeneric" enumCode="generic" enumTypeId="VoiceProviderProfile" sequenceNum="2" optionValue="N"/>
-    <moqui.basic.Enumeration description="PBX on a private network (UDP or TCP, plain RTP allowed)" enumId="VppPlainLan" enumCode="plainLan" enumTypeId="VoiceProviderProfile" sequenceNum="3" optionValue="Y"/>
+    <moqui.basic.Enumeration description="Twilio Elastic SIP (TLS, SRTP; not yet verified live)" enumId="VppTwilio" enumCode="twilio" enumTypeId="VoiceProviderProfile" sequenceNum="2" optionValue="N"/>
+    <moqui.basic.Enumeration description="Sinch Elastic SIP Trunking (TLS, SRTP; not yet verified live)" enumId="VppSinch" enumCode="sinch" enumTypeId="VoiceProviderProfile" sequenceNum="3" optionValue="N"/>
+    <moqui.basic.Enumeration description="Other provider (TLS, SRTP)" enumId="VppGeneric" enumCode="generic" enumTypeId="VoiceProviderProfile" sequenceNum="8" optionValue="N"/>
+    <moqui.basic.Enumeration description="PBX on a private network (UDP or TCP, plain RTP allowed)" enumId="VppPlainLan" enumCode="plainLan" enumTypeId="VoiceProviderProfile" sequenceNum="9" optionValue="Y"/>
 
     <moqui.basic.StatusType description="Voice Trunk" statusTypeId="VoiceTrunk"/>
     <moqui.basic.StatusItem statusId="VtsUnknown" statusTypeId="VoiceTrunk" sequenceNum="1" description="Not checked yet"/>

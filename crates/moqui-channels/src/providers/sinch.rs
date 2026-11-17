@@ -701,6 +701,7 @@ fn receipt(event: &Json, report: &Json) -> Result<SmsEvent, WebhookResponse> {
         recipient_number: None,
         other_remote_event_id: None,
         receipt_millis: millis_of(str_at(event, "/event_time").or_else(|| str_at(event, "/accepted_time"))),
+        opt_signal: None,
     }))
 }
 

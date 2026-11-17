@@ -175,6 +175,32 @@ current documentation; the live check will settle them.
 - SMS is through Telnyx's messaging API, and does not need the SIP trunk ([SMS](SMS.md)). A number with a messaging
   bridge puts its calls and voicemail in the same room as its texts with each outside number (below).
 
+### Twilio Elastic SIP (not yet verified)
+
+**Not yet verified live.** From Twilio's documentation ([Elastic SIP Trunking](https://www.twilio.com/docs/sip-trunking));
+check each value against it, and the live check will settle them.
+
+- In the Twilio console, an Elastic SIP Trunk:
+  - Termination: a termination SIP URI, `{name}.pstn.twilio.com` (a localized one such as
+    `{name}.pstn.ashburn.twilio.com` picks an edge), and a credential list (digest auth: Twilio challenges with 407)
+    and, if wanted, an IP access control list of the server's public address (with both, both are enforced; Twilio
+    recommends the credential list);
+  - Origination: a URI of this server, `sip:<server>:5061;transport=tls` (Twilio suggests `sip:` with
+    `transport=tls`, not `sips:`), which Twilio fills with the dialed number;
+  - Secure Trunking on: TLS 1.2 or later on 5061, SRTP (`AES_CM_128_HMAC_SHA1_80`; no MKI); a call without them is
+    refused;
+  - the numbers assigned to the trunk.
+- In Moqui, the trunk:
+  - host the termination URI, port 5061, transport TLS, media SRTP, profile Twilio Elastic SIP;
+  - the credential list's username and password;
+  - register off (Twilio's trunks take no REGISTER);
+  - Twilio's published signaling addresses (by edge) as its inbound addresses.
+- Numbers in E.164 with the `+` (Twilio refuses another form with 400). Caller ID: a number presented must be one of
+  the account's Twilio numbers or a verified caller ID.
+- Emergency: Twilio's emergency calling is set per number with a validated address (its Emergency Calling page);
+  then mark the trunk emergency-capable.
+- SMS is through Twilio's Messaging API, not the trunk ([SMS](SMS.md#twilio)).
+
 ### Sinch (not yet verified)
 
 Sinch Elastic SIP Trunking, profile Sinch. Not yet verified live: the values are from Sinch's documentation
@@ -202,7 +228,7 @@ and SRTP for Elastic SIP Trunks); check each against the Sinch dashboard, and th
 
 The generic profile, TLS and SRTP, fits providers that take digest-registered or IP-authenticated trunks:
 
-- Twilio Elastic SIP, Bandwidth, VoIP.ms, Flowroute;
+- Bandwidth, VoIP.ms, Flowroute;
 - an Asterisk, FreeSWITCH or 3CX server set up as a trunk (a PBX on a private network with UDP or plain RTP takes
   the profile "PBX on a private network").
 

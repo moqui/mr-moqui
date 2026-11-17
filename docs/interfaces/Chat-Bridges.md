@@ -4,7 +4,7 @@ A chat room can reach outside Moqui: a connector maps it to a room or conversati
 Telegram, Slack and others), and a native endpoint (XMPP, Matrix) serves Moqui rooms to their clients. This is the layer
 under both: chat actors, the input from a network, and the durable delivery of what goes out. The design is
 [plans/archive/Comms-Framework.md](../../plans/archive/Comms-Framework.md) §4.1, §4.3 and §4.4, milestone C1. C1 has no network adapter
-of its own: C4-SMS adds the SMS adapters, one for each provider (`sms` on Telnyx; [SMS](SMS.md)). The user guide is [Comms](../tools/Comms.md#bridged-rooms).
+of its own: C4-SMS adds the SMS adapters, one for each provider (`sms` on Telnyx, `sms-twilio` on Twilio, not yet tested with Twilio; [SMS](SMS.md)). The user guide is [Comms](../tools/Comms.md#bridged-rooms).
 
 - **Entities:** the C1 block at the end of `framework/entity/ChatEntities.xml` (`ChatActor`, `ChatExternalUser`,
   `ChatBridge`, `ChatRoomBridge`, `ChatEventExternal`, `ChatBridgeInbound`, `ChatBridgeDelivery`), with
@@ -42,7 +42,7 @@ A network adapter implements `ChatBridgeAdapter` (moqui-core `service/chat_bridg
 | Part | What it does |
 | --- | --- |
 | `name` | The name a `ChatBridge` row selects it by: its `adapterName`, else its network's enumeration code (`sms`, `whatsapp`, `xmpp` and so on). |
-| `capabilities` | `edit`, `delete`, `reaction`, `idempotent` (the network dedupes a send by its idempotency key), `sends_per_minute` (0: no limit), `encryption` (below), `group_max` (the most outside numbers of a group text: Telnyx 8; 0 for none, and a group room then refuses to send, `groupTextsNotSupported`). Each implementation narrows these to the API version it verified. |
+| `capabilities` | `edit`, `delete`, `reaction`, `idempotent` (the network dedupes a send by its idempotency key), `sends_per_minute` (0: no limit), `encryption` (below), `group_max` (the most outside numbers of a group text: Telnyx 8, Twilio 9; 0 for none, and a group room then refuses to send, `groupTextsNotSupported`). Each implementation narrows these to the API version it verified. |
 | `start`, `stop` | Connect the bridge on this node, or disconnect it. An error marks the bridge not connected, with the error as its last error, and the next round tries again. |
 | `deliver` | Send one event (`DeliveryRequest`: the idempotency key, the external room and the network's own conversation of it when the adapter stored one (`external_thread_id`, `store#MappingThread`), the kind, the text and HTML, the sender's name and local user, the message's files (`attachments`, its `ChatAttachment` rows in order), the network id of the message an edit, reaction or delete is about, the reaction key, the attempt) and answer `Accepted` (the network's id), `Retry` (with `not_connected`), `Failed` (a reason code) or `Uncertain`. A request with no room is a direct send (`send#BridgeDirect`, below). |
 | `webhook` | A request to the bridge's webhook route, `POST /channels/{chatBridgeId}/webhook` (C4-SMS): the raw body, read within its bound, and the headers. The adapter checks the network's signature over those bytes and its replay window before it parses anything, then hands what came to `ingest#Event`. The default answers as an unsigned request (`WebhookResponse::not_signed`). |
@@ -74,8 +74,8 @@ whose answer was lost is uncertain, never sent again), and the webhook's POST, r
 `note#DeliveryReceipt`, `note#SmsKeyword`). A provider module (`crates/moqui-channels/src/providers/`) implements
 `SmsProvider`: its settings, its send request (endpoint, auth, a JSON or form body) and how it reads the answer, its
 group maximum, its webhook signature (and whether an edge node can check it), its event key and its events, and its
-files' fetch auth. Each provider is one adapter, chosen by `ChatBridge.adapterName` (`sms` is Telnyx's, `sms-sinch`
-Sinch's Conversation API: [SMS](SMS.md#sinch)), so an edge node,
+files' fetch auth. Each provider is one adapter, chosen by `ChatBridge.adapterName` (`sms` is Telnyx's,
+`sms-twilio` Twilio's, `sms-sinch` Sinch's Conversation API: [SMS](SMS.md#providers)), so an edge node,
 which sees no `configJson`, picks it too. A provider that signs the URL it posted to checks it against
 `chat_bridge::webhook_public_url`: the bridge's `webhookUrl`, else `channels_public_url` and the request's path and query
 as received (`WebhookRequest.url`).

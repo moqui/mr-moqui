@@ -18,6 +18,7 @@
 //! | Module | Adapter (`adapterName`) | Webhook signature, checked on | Replay | Retries a 5xx |
 //! | --- | --- | --- | --- | --- |
 //! | [`telnyx`] | `sms` | Ed25519 under the account's public key: the edge node, and the local node again | its timestamp's window, then the core's dedupes | yes |
+//! | [`twilio`] | `sms-twilio` | HMAC-SHA1 under the Auth Token over the URL and the form: the local node | the replay cache, then the core's dedupes | no, without a fallback URL or connection overrides |
 //! | [`sinch`] | `sms-sinch` | HMAC-SHA256 under the webhook's secret: the local node | its timestamp's window, then the core's dedupes | yes |
 //!
 //! A provider whose signature has no timestamp (Twilio) relies on the replay cache and then the core's dedupes (texts by
@@ -26,3 +27,4 @@
 
 pub mod sinch;
 pub mod telnyx;
+pub mod twilio;
