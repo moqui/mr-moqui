@@ -188,8 +188,21 @@ fn decrypt_fields(facade: &EntityFacade, entity: &EntityDefinition, mut values: 
             Ok(plain) => {
                 values.insert(Arc::from(name), Value::string(plain));
             }
-            // A value with no colon that is not hex was stored as plaintext.
-            Err(_) if !stored.contains(':') && !is_hex_ciphertext(&stored) => {}
+            // A value with no colon that is not hex was stored as plaintext: read as it is only while a migration
+            // asks for it (crypt-read-plain), and logged, as a writer of the database could have put it there.
+            Err(_) if !stored.contains(':') && !is_hex_ciphertext(&stored) && facade.crypt_read_plain() => {
+                tracing::warn!(
+                    "Field {name} of entity {} holds text that is not ciphertext; read as it is (crypt-read-plain)",
+                    entity.full_name
+                );
+            }
+            Err(_) if !stored.contains(':') && !is_hex_ciphertext(&stored) => {
+                tracing::error!(
+                    "Field {name} of entity {} holds text that is not ciphertext; not read (crypt-read-plain is off)",
+                    entity.full_name
+                );
+                values.insert(Arc::from(name), Value::string(DECRYPT_FAILED));
+            }
             // As Java's `FieldInfo`, the read goes on with a clear placeholder, which a write refuses.
             Err(err) => {
                 tracing::error!(error = %err, "Error decrypting field {name} of entity {}", entity.full_name);
