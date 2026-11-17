@@ -17,7 +17,9 @@ along with this software (see the LICENSE.md file). If not, see
     rules, recent numbers, the caller ID (the user's numbers and their ring groups') with Hide my number, and Call, which
     places the call (VoiceServices place#PhoneCall) and opens it in the page's call (moqui.call, the LiveCall window). The
     number parameter fills the field (a tel: or sip: link the desktop app opens, plans/Mobile-Desktop.md §4); the user
-    still presses Call. The transitions are the screen's own (template/DialerTransitions.xml), under whichever screen and
+    still presses Call, except for a number the phone's dialer handed the mobile app (plans/Comms-Messaging.md §9.1: the
+    dial parameter, and the host's takeDial confirms it once), which the Dialer places by itself as soon as it has loaded,
+    once. The transitions are the screen's own (template/DialerTransitions.xml), under whichever screen and
     app mounts it. The desktop client's shell bundles it (precompiled); while its server is out of reach (moqui.connection,
     never on the web) Call says it needs a connection. -->
 <template><div class="m-dialer column q-gutter-sm" :class="compact ? 'q-pa-sm' : 'q-pa-md'" :style="compact ? '' : 'max-width:420px'">
@@ -65,7 +67,7 @@ module.exports = {
     inject: { mScreen: { default: null } },
     data() {
         return { loaded: false, data: { callerIdList: [], recentList: [], phoneActive: false }, text: '', number: null, results: [],
-            fromNumber: null, hideCallerId: false, busy: false, keys: KEYS, timer: null, seq: 0 };
+            fromNumber: null, hideCallerId: false, busy: false, keys: KEYS, timer: null, seq: 0, loading: null };
     },
     computed: {
         base() { return (this.mScreen && this.mScreen.path) || (this.$root.basePath + '/BasicComms/Calls/Dialer'); },
@@ -73,7 +75,10 @@ module.exports = {
         // the desktop client's server out of reach (never on the web)
         noConnection() { return !!(moqui.connection && moqui.connection.offline); },
         // the number parameter (a tel: or sip: link)
-        numberParam() { return ((this.mScreen && this.mScreen.parameters) || this.$root.currentParameters || {}).number || ''; },
+        numberParam() { return this.params.number || ''; },
+        // a number the phone's dialer handed the mobile app: a new value for each handing
+        dialParam() { return this.params.dial || ''; },
+        params() { return (this.mScreen && this.mScreen.parameters) || this.$root.currentParameters || {}; },
         callerIdOptions() {
             return this.data.callerIdList.map((n) => ({ value: n.phoneNumber, label: n.phoneNumber + (n.description ? ' · ' + n.description : '') }));
         }
@@ -81,18 +86,32 @@ module.exports = {
     watch: {
         // another tel: or sip: link while the Dialer is shown (the desktop client's shell keeps the screen): its number
         numberParam(number) { this.fill(number); },
+        dialParam() { this.dialHanded(); },
         // the connection back: what the Dialer shows comes again
         noConnection(off) { if (!off) this.load(); }
     },
     mounted() {
-        this.load();
+        this.loading = this.load();
         this.fill(this.numberParam);
+        this.dialHanded();
     },
     beforeUnmount() { if (this.timer) clearTimeout(this.timer); },
     methods: {
         t,
         url(name) { return this.base + '/' + name; },
         fill(number) { if (number) { this.text = String(number); this.search(); } },
+        // The number the phone's dialer handed the mobile app: placed once, when the host confirms it is that one (never
+        // for a link a page made), once the Dialer has loaded and has a number to call from.
+        dialHanded() {
+            const desktop = window.moquiDesktop;
+            const number = String(this.numberParam || '');
+            if (!this.dialParam || !number || !desktop || typeof desktop.takeDial !== 'function') return;
+            Promise.all([desktop.takeDial(number), this.loading]).then(([taken]) => {
+                if (!taken || !this.data.phoneActive || !this.data.callerIdList.length) return;
+                this.text = number;
+                this.call();
+            }, () => null);
+        },
         load() {
             return moqui.request(this.url('dialerData'), { params: {} }).then((result) => {
                 const json = result.json || {};

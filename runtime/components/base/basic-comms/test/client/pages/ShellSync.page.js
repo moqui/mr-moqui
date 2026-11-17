@@ -1407,6 +1407,20 @@ test("the notification check shows the device's state, a fix for each item that 
         assert.deepEqual(fixes.slice(-1), ["firebase"]);
         state = Object.assign({}, state, { fcm: false, distributor: null });
         await root.readPushCheck();
+        // the phone's dialer through the app: offered (and turned on in Android's settings only) to an account with a
+        // number to call from; the contacts' names, asked again on a tap (plans/Comms-Messaging.md §9.1, §9.2)
+        assert.equal(row("dialAccount"), null, "no calling account: no row");
+        state = Object.assign({}, state, { dialAccount: "registered", contacts: false });
+        await root.readPushCheck();
+        await until(() => row("dialAccount") && row("contacts"), "the dialer's and the contacts' rows");
+        assert.ok(row("dialAccount").textContent.includes("Calling accounts in the phone settings"));
+        row("dialAccount").querySelector("button").click();
+        row("contacts").querySelector("button").click();
+        assert.deepEqual(fixes.slice(-2), ["callingAccounts", "contacts"]);
+        state = Object.assign({}, state, { dialAccount: "on", contacts: true });
+        await root.readPushCheck();
+        await until(() => !row("contacts").querySelector("button"), "the contacts allowed");
+        assert.ok(!row("dialAccount").textContent.includes("Calling accounts in the phone settings"), "turned on");
         const testButton = () => [...document.querySelectorAll(".m-shell-push-check button")].find((button) => button.textContent.includes("Send a test notification"));
         const result = () => (document.querySelector(".m-shell-push-result") || {}).textContent || "";
         testButton().click();
@@ -1421,6 +1435,41 @@ test("the notification check shows the device's state, a fix for each item that 
         delete desktop.pushCheck;
         delete desktop.pushCheckFix;
         delete desktop.pushTest;
+    }
+});
+
+// plans/Comms-Messaging.md §9.1: the phone's dialer and Contacts call through the mobile app, whose Dialer places the
+// number once (the host hands it over once, call_take_dial); any other link with a number only fills it in
+test("a number the phone's dialer handed the app is placed once by the Dialer; a page's link with one only fills it in", async () => {
+    answers["/apps/BasicComms/Calls/Dialer/dialerData"] = () => ({ phoneActive: true, callerIdList: [{ phoneNumber: "+15550100", description: "Desk" }],
+        recentList: [], hideCallerId: false });
+    answers["/apps/BasicComms/Calls/Dialer/dialSearch"] = () => ({ resultList: [], number: null });
+    // placed; no call view here (the call store is not loaded in this page)
+    answers["/apps/BasicComms/Calls/Dialer/dialNumber"] = () => ({ callSessionId: null, callLegId: null });
+    const desktop = window.moquiDesktop;
+    let handed = null;
+    desktop.takeDial = (number) => { const taken = handed !== null && handed === number; if (taken) handed = null; return Promise.resolve(taken); };
+    const placed = () => asked("/apps/BasicComms/Calls/Dialer/dialNumber", "POST");
+    const field = () => document.querySelector(".m-shell-view .m-dialer input");
+    try {
+        await open("/qapps/BasicComms/Calls/Dialer?number=5550000&dial=9", "dialer");
+        await until(() => field() && field().value === "5550000", "the page's number filled in");
+        await until(() => asked("/apps/BasicComms/Calls/Dialer/dialerData").length, "the Dialer's data");
+        await settle();
+        assert.equal(placed().length, 0, "a link that says dial, with a number the host did not hand over: not placed");
+        handed = "+15557777";
+        await open("/qapps/BasicComms/Calls/Dialer?number=%2B15557777&dial=1", "dialer");
+        await until(() => placed().length === 1, "the number the dialer handed over, placed");
+        assert.equal(placed()[0].params.phoneNumber, "+15557777");
+        assert.equal(placed()[0].params.fromNumber, "+15550100", "from the user's number");
+        // the same handing again (Back to it): the host has nothing to hand, so it is not placed twice
+        await open("/qapps/BasicComms/Calls/Dialer?number=%2B15557777&dial=2", "dialer");
+        await until(() => field() && field().value === "+15557777", "the number filled in again");
+        await settle();
+        assert.equal(placed().length, 1, "placed once");
+    } finally {
+        delete desktop.takeDial;
+        root.goHome();
     }
 });
 

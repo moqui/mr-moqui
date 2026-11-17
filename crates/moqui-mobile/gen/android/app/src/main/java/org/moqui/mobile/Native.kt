@@ -25,6 +25,8 @@ object Native {
     @JvmStatic external fun ringAccount(dataDir: String, pushId: String): String?
     @JvmStatic external fun callLink(callSessionId: String, account: String, video: Boolean, hangUp: Boolean): String?
     @JvmStatic external fun hangUp(callSessionId: String)
+    /** A number the phone's dialer handed the app ([DialAccount]): the nonce of its link, or null for no number. */
+    @JvmStatic external fun dialLink(number: String): String?
     @JvmStatic external fun hasAccount(dataDir: String): Boolean
     @JvmStatic external fun flush(dataDir: String, budgetMs: Long): Long
     @JvmStatic external fun unifiedEndpoint(dataDir: String, account: String, endpoint: String)

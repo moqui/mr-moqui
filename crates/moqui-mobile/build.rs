@@ -65,6 +65,10 @@ const COMMANDS: &[&str] = &[
     "call_take_answer",
     "call_audio",
     "call_audio_route",
+    "call_dial_account",
+    "call_take_dial",
+    "contacts_search",
+    "contact_names",
 ];
 
 fn main() {

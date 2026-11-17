@@ -13,10 +13,9 @@
  */
 
 //! What the app's native code asks of Rust without the WebView (plans/Mobile-Desktop.md MD6, MT2): the FCM token to
-//! register, which account a ring is for, a ring declined, the one-shot links of an Answer or a Hang up, a headset's
-//! hang-up, whether an account is signed in, and a bounded send of the outbox in the background (`FlushWorker.kt`,
-//! WorkManager). A push can start the process with no activity, so no
-//! Tauri app: the client ([`core_in`]) is then made here from the client's directory, and the app's setup takes the
+//! register, which account a ring is for, a ring declined, the one-shot links of an Answer, a Hang up or a number from
+//! the phone's dialer, a headset's hang-up, whether an account is signed in, and a bounded send of the outbox in the
+//! background (`FlushWorker.kt`, WorkManager). A push can start the process with no activity, so no Tauri app: the client ([`core_in`]) is then made here from the client's directory, and the app's setup takes the
 //! same one when the activity starts, so there is one client, with one set of stores, per process.
 //!
 //! The JNI entry points (`Java_org_moqui_mobile_Native_*`, `gen/android/.../Native.kt`) are at the end, for Android;
@@ -108,6 +107,30 @@ pub(crate) fn take_link(nonce: &str, id: &str) -> Option<CallLink> {
         .take(nonce, id, now_ms())
 }
 
+/// The numbers the phone's dialer handed over and not yet taken (plans/Comms-Messaging.md §9.1).
+static DIALS: Mutex<Option<crate::dial::DialLinks>> = Mutex::new(None);
+
+/// A number the phone's dialer handed the app (`Native.dialLink`): the nonce of its link, or none for no number.
+pub(crate) fn make_dial_link(number: &str) -> Option<String> {
+    match moqui_lib::sync::lock(&DIALS)
+        .get_or_insert_with(Default::default)
+        .make(number, now_ms())
+    {
+        Ok(nonce) => Some(nonce),
+        Err(err) => {
+            log::warn!("Calls: a number from the phone's dialer is not taken: {err}");
+            None
+        }
+    }
+}
+
+/// The number of a dial link's `nonce`, taken once.
+pub(crate) fn take_dial_link(nonce: &str) -> Option<String> {
+    moqui_lib::sync::lock(&DIALS)
+        .get_or_insert_with(Default::default)
+        .take(nonce, now_ms())
+}
+
 /// The accounts signing out now (`unregister_push` until they are gone): no push keys are made for them and UnifiedPush
 /// registers no instance of theirs, though their key is still there for a moment.
 static LEAVING: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -122,6 +145,11 @@ fn keyed_ids(core: &Client) -> Vec<String> {
     ids.into_iter()
         .filter(|id| !leaving.contains(id) && core.keys().get(id).is_some())
         .collect()
+}
+
+/// The accounts here with a key, not one signing out (the account a number from the phone's dialer is called from).
+pub(crate) fn signed_in_ids(core: &Client) -> Vec<String> {
+    keyed_ids(core)
 }
 
 /// An account signed in (again): it is no longer leaving.
@@ -826,6 +854,22 @@ mod entries {
             let id = call_session_id.try_to_string(env)?;
             let account = account.try_to_string(env)?;
             match super::make_link(&id, &account, video, hang_up) {
+                Some(nonce) => env.new_string(nonce),
+                None => Ok(JString::default()),
+            }
+        })
+        .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.dialLink(number)`: the nonce of the link of a number the phone's dialer handed over, or null.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_dialLink<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        number: JString<'caller>,
+    ) -> JString<'caller> {
+        env.with_env(|env| -> Result<JString<'caller>, jni::errors::Error> {
+            match super::make_dial_link(&number.try_to_string(env)?) {
                 Some(nonce) => env.new_string(nonce),
                 None => Ok(JString::default()),
             }

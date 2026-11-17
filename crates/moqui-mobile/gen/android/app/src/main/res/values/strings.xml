@@ -44,4 +44,13 @@
     <string name="ask_continue">Continue</string>
     <string name="ask_not_now">Not now</string>
     <string name="ask_open_settings">Open settings</string>
+    <string name="ask_contacts_title">Your contacts</string>
+    <string name="ask_contacts_reason">Allow contacts so the app can find people as you type a number and show their names on texts and calls. They are read on this phone only and never sent to the server.</string>
+
+    <!-- The phone's dialer through the app (DialAccount.kt) -->
+    <string name="dial_account_label">MR Moqui</string>
+    <string name="dial_account_about">Calls through your MR Moqui number</string>
+    <string name="dial_not_called">This number cannot be called through MR Moqui</string>
+    <string name="dial_handoff_title">Call through MR Moqui</string>
+    <string name="dial_handoff_text">Tap to call %1$s</string>
 </resources>

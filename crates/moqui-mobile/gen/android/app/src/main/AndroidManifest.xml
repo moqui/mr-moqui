@@ -23,6 +23,9 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- A network change during a call (Wi-Fi to mobile data, MainActivity's NetworkWatch): the page restarts ICE. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- The phone's contacts (PhoneBook.kt, plans/Comms-Messaging.md §9.2): names of outside numbers and the new-chat
+        picker's search, read on the phone only; asked at the first search, with the reason. -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
@@ -82,7 +85,8 @@
             android:taskAffinity="org.moqui.mobile.ring"
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
-        <!-- The self-managed calls, bound by Telecom only. -->
+        <!-- The self-managed calls, and the calling account the phone's dialer hands numbers to (DialAccount.kt), bound
+            by Telecom only. -->
         <service
             android:name=".CallConnectionService"
             android:exported="true"

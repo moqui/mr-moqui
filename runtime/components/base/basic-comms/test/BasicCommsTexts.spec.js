@@ -1,7 +1,9 @@
 // BasicComms texts (plans/archive/Comms-Framework.md §5.6, C4-SMS; docs/interfaces/SMS.md): Calls History's Text a number, in the
 // browser and the terminal, for a user granted a number with messaging; its transition opens the number pair's external
 // room (one room for the pair, the user in it) and refuses a user with no such number the same post; an international
-// number is refused before any room. The provider itself (Telnyx) is the moqui-channels tests' fake: nothing here sends.
+// number is refused before any room; several numbers open one group text's room, the same in any order (plans/Comms-Messaging.md
+// §9), and the apps' call-context names a phone room's numbers (Chat's phoneNames). The provider itself (Telnyx) is the
+// moqui-channels tests' fake: nothing here sends.
 // Run: ./moq test basic-comms --spec BasicCommsTexts
 const root = "component://basic-comms/screen/BasicComms.xml"
 const TEXTER = "BASIC_COMMS_TEXTER"
@@ -9,6 +11,7 @@ const STRANGER = "BASIC_COMMS_TEXT_STRANGER"
 const BRIDGE = "BASIC_COMMS_SMS"
 const OURS = "+15550004000"
 const THEIRS = "+15552224000"
+const GROUP = "+15552224001,+15552224002"
 
 function sys(run) {
     const wasDisabled = ec.artifactExecution.disableAuthz()
@@ -67,7 +70,7 @@ spec({
     },
     cleanupSpec() {
         sys(() => {
-            for (const mapping of mappings(THEIRS)) {
+            for (const mapping of mappings(THEIRS).concat(mappings(GROUP))) {
                 ec.entity.find("moqui.chat.ChatRoomMember").condition("chatRoomId", mapping.chatRoomId).deleteAll()
                 ec.entity.find("moqui.chat.ChatRoomBridge").condition("chatRoomBridgeId", mapping.chatRoomBridgeId).deleteAll()
                 ec.entity.find("moqui.chat.ChatRoom").condition("chatRoomId", mapping.chatRoomId).deleteAll()
@@ -148,5 +151,47 @@ feature("Chat's pickers: a number the texter types is offered to text, their num
         opened.chatRoomId == made[0].chatRoomId
         strangerNumbers.numberList.length == 0
         !String(refused.output).includes(made[0].chatRoomId)
+    }
+})
+
+feature("A group text: several numbers open one room for the set, the same in any order; more than eight are refused", {
+    when() {
+        ec.user.internalLoginUser("basic.comms.texter")
+        const opened = JSON.parse(render("Chat/textRoom", {textTo: "+15552224002, (555) 222-4001", textFrom: OURS}, "post").output || "{}")
+        const again = JSON.parse(render("Chat/textRoom", {textTo: "+15552224001,+15552224002,+15552224001", textFrom: OURS}, "post").output || "{}")
+        const many = Array.from({length: 9}, (_, n) => "+1555222410" + n).join(",")
+        const tooMany = sys(() => ec.service.sync().name("org.moqui.call.SmsServices.open#PairRoom")
+            .parameters({toNumber: many, fromNumber: OURS}).call()) || {}
+        ec.message.clearErrors()
+        const made = mappings(GROUP)
+        const room = made.length ? sys(() => ec.entity.find("moqui.chat.ChatRoom").condition("chatRoomId", made[0].chatRoomId).one()) : null
+        return {opened, again, tooMany, made, room}
+    },
+    then({opened, again, tooMany, made, room}) {
+        made.length == 1
+        opened.chatRoomId == made[0].chatRoomId
+        again.chatRoomId == made[0].chatRoomId
+        room.roomTypeEnumId == "CrtExternal"
+        room.roomName == "+15552224001, +15552224002"
+        tooMany.reasonCode == "tooManyNumbers"
+    }
+})
+
+// the example gallery's call-context provider names +1555 0100 numbers; a user who cannot open the gallery gets no names
+const exampleInstalled = ec.resource.getLocationReference("component://example/screen/Gallery.xml").getExists()
+feature("A phone room's numbers are named by the apps' call-context, as the user; a number no app knows stays unnamed", {
+    when() {
+        if (!exampleInstalled) return {skip: true}
+        ec.user.internalLoginUser("john.doe")
+        const named = JSON.parse(render("Chat/phoneNames", {numbers: "+15550100777,+15559990000,not a number"}).output || "{}")
+        ec.user.internalLoginUser("basic.comms.text.stranger")
+        const stranger = JSON.parse(render("Chat/phoneNames", {numbers: "+15550100777"}).output || "{}")
+        return {named, stranger}
+    },
+    then({skip, named, stranger}) {
+        skip || named.nameMap["+15550100777"] == "Gallery caller 0777"
+        skip || !("+15559990000" in named.nameMap)
+        skip || Object.keys(named.nameMap).length == 1
+        skip || !(stranger.nameMap && stranger.nameMap["+15550100777"])
     }
 })

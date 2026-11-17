@@ -1177,6 +1177,16 @@ module.exports = {
             if (state.socket) rows.push({ key: 'socket', ok: true, label: t('Messages arrive while the app runs') });
             if (state.lastPushDate !== undefined) rows.push({ key: 'lastPush', ok: !!state.lastPushDate, label: t('Last notification received'),
                 caption: state.lastPushDate ? this.when(state.lastPushDate) : t('None yet') });
+            // the phone's dialer and Contacts calling through the app (§9.1): Android's Calling accounts, where only the
+            // user turns it on; offered only to an account with a number to call from
+            // (registered: whether the user turned it on is not the app's to read until a number came through it)
+            if (state.dialAccount === 'on' || state.dialAccount === 'registered') rows.push({ key: 'dialAccount', ok: state.dialAccount === 'on',
+                label: t("The phone's dialer can call through this app"),
+                caption: state.dialAccount === 'on' ? '' : t('If it is not on yet, turn on MR Moqui under Calling accounts in the phone settings'),
+                fix: 'callingAccounts', fixLabel: t('Calling accounts') });
+            // the phone's contacts name numbers and are found in a new chat (§9.2), read on the phone only
+            if (state.contacts !== undefined) rows.push({ key: 'contacts', ok: state.contacts === true, label: t("Names from the phone's contacts"),
+                caption: state.contacts === true ? '' : t('Allow contacts to see names on texts and find people as you type'), fix: 'contacts' });
             // a force-stopped app gets no push until it is opened again
             if (state.forceStoppedDate) rows.push({ key: 'forceStopped', ok: Date.now() - Number(state.forceStoppedDate) > 86400000,
                 label: t('The app was stopped'), caption: this.when(state.forceStoppedDate) + ': ' + t('notifications may not have come until it was opened again') });
@@ -1439,6 +1449,19 @@ module.exports = {
                 poll();
             }, (err) => { done(''); this.failed(err); });
         },
+        // The phone's dialer through the app (plans/Comms-Messaging.md §9.1; the mobile app's dialAccount): whether this
+        // account has a number to call from (its Dialer's caller IDs), so the app's calling account is offered only then.
+        // Told again at each load (an account switch loads the shell); an answer that did not come changes nothing.
+        tellDialAccount() {
+            const desktop = host();
+            if (!desktop || typeof desktop.dialAccount !== 'function' || this.isOffline) return;
+            if (!this.callsOn || !this.componentOf('dialer')) { desktop.dialAccount(false); return; }
+            moqui.request(this.basePath + '/' + this.commsRel + '/Calls/Dialer/dialerData').then((result) => {
+                const json = result.json || {};
+                if (json.errors) return;
+                desktop.dialAccount(!!json.phoneActive && Array.isArray(json.callerIdList) && json.callerIdList.length > 0);
+            }, () => null);
+        },
         openDevices() {
             this.devicesOpen = true;
             this.devicesLoaded = false;
@@ -1495,6 +1518,7 @@ module.exports = {
         if (moqui.chat) moqui.chat.start(this);
         // calls: the pushes of the user's calls and the calls going on (WebrootCall.js), as m-qapps-root starts them
         if (this.callsOn) moqui.call.start(this);
+        this.tellDialAccount();
         // my presence on the tray, as m-qapps-root hands it
         const desktop = host();
         if (desktop && desktop.setPresence && moqui.chat) this.$watch(() => moqui.chat.myPresence(), (status) => { if (status) desktop.setPresence(status); },
@@ -22286,7 +22310,7 @@ module.exports = {
     inject: { mScreen: { default: null } },
     data() {
         return { loaded: false, data: { callerIdList: [], recentList: [], phoneActive: false }, text: '', number: null, results: [],
-            fromNumber: null, hideCallerId: false, busy: false, keys: KEYS, timer: null, seq: 0 };
+            fromNumber: null, hideCallerId: false, busy: false, keys: KEYS, timer: null, seq: 0, loading: null };
     },
     computed: {
         base() { return (this.mScreen && this.mScreen.path) || (this.$root.basePath + '/BasicComms/Calls/Dialer'); },
@@ -22294,7 +22318,10 @@ module.exports = {
         // the desktop client's server out of reach (never on the web)
         noConnection() { return !!(moqui.connection && moqui.connection.offline); },
         // the number parameter (a tel: or sip: link)
-        numberParam() { return ((this.mScreen && this.mScreen.parameters) || this.$root.currentParameters || {}).number || ''; },
+        numberParam() { return this.params.number || ''; },
+        // a number the phone's dialer handed the mobile app: a new value for each handing
+        dialParam() { return this.params.dial || ''; },
+        params() { return (this.mScreen && this.mScreen.parameters) || this.$root.currentParameters || {}; },
         callerIdOptions() {
             return this.data.callerIdList.map((n) => ({ value: n.phoneNumber, label: n.phoneNumber + (n.description ? ' · ' + n.description : '') }));
         }
@@ -22302,18 +22329,32 @@ module.exports = {
     watch: {
         // another tel: or sip: link while the Dialer is shown (the desktop client's shell keeps the screen): its number
         numberParam(number) { this.fill(number); },
+        dialParam() { this.dialHanded(); },
         // the connection back: what the Dialer shows comes again
         noConnection(off) { if (!off) this.load(); }
     },
     mounted() {
-        this.load();
+        this.loading = this.load();
         this.fill(this.numberParam);
+        this.dialHanded();
     },
     beforeUnmount() { if (this.timer) clearTimeout(this.timer); },
     methods: {
         t,
         url(name) { return this.base + '/' + name; },
         fill(number) { if (number) { this.text = String(number); this.search(); } },
+        // The number the phone's dialer handed the mobile app: placed once, when the host confirms it is that one (never
+        // for a link a page made), once the Dialer has loaded and has a number to call from.
+        dialHanded() {
+            const desktop = window.moquiDesktop;
+            const number = String(this.numberParam || '');
+            if (!this.dialParam || !number || !desktop || typeof desktop.takeDial !== 'function') return;
+            Promise.all([desktop.takeDial(number), this.loading]).then(([taken]) => {
+                if (!taken || !this.data.phoneActive || !this.data.callerIdList.length) return;
+                this.text = number;
+                this.call();
+            }, () => null);
+        },
         load() {
             return moqui.request(this.url('dialerData'), { params: {} }).then((result) => {
                 const json = result.json || {};

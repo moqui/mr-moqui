@@ -517,6 +517,14 @@ adapter (C4 on) brings its own transport, and C1 ships none.
   Files a text names are fetched from public addresses only (3 redirects, each checked) unless `allowInternalAddresses`
   is set, which lifts the address guard for the API calls and the media fetch of that bridge ([the internal-address
   guard](Attack-Surface-Outbound.md#the-internal-address-guard)).
+- **Group texts and phone names** (plans/Comms-Messaging.md §9). Text a number (`open#PairRoom`, Chat's `textRoom`,
+  Calls History's `textNumber`) takes up to 8 numbers, comma-separated; each is checked as a send to it is
+  (`check#SmsSend`) before the group's room is made, and a group's reply checks each number again before the one group
+  MMS goes, the day's count reserved once. A group MMS that comes in is the group's room only when our number is among
+  its recipients on that bridge. `find#PhoneNames` (Chat's `phoneNames`, a GET) answers, for up to 50 E.164 numbers of
+  the caller's choice, the first contact name the apps' `call-context` providers give the caller (`call#Providers` as
+  the user, the apps they may open); it reads nothing else and takes no other user's id, so a user learns of a number
+  only what their own apps would show them for a call from it.
 - **Internal services.** `send#Message`, `edit#Message`, `react#Message` and `redact#Message` take `senderActorId` only
   with authorization disabled. `get#LocalActors`, `get#ActorNames`, `get#RoomBridges`, `check#BridgeSupport`,
   `get#BridgeCapabilities`, `wake#BridgeDelivery`, `run#BridgeDeliveries` and the

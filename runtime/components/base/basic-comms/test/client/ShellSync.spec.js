@@ -6,7 +6,9 @@
 // thread change and a send that conflicted say so, the send's copy opened in Compose; an internal message waits in the
 // outbox where the server takes its send once; a revoked key holds what waits, and one held item stops no other; Back
 // (moqui.back) closes the message sheet, then the pane, then goes back in the shell's history, and a swipe right replies; a
-// message's actions are one list in the sheet, the More menu and a desktop row's right click, and Info reads the message again.
+// message's actions are one list in the sheet, the More menu and a desktop row's right click, and Info reads the message again;
+// the notification check's items (the phone's calling account and contacts among them), and a number the phone's dialer
+// handed the mobile app is placed once by the Dialer.
 spec({ server: false, timeout: 60 })
 
 browser.runInPage({

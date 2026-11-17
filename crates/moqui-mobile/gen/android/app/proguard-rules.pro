@@ -36,6 +36,9 @@
 # ... and the chat notifications' clear and room shown, and UnifiedPush's registration (src/android.rs)
 -keep class org.moqui.mobile.ChatNotifications { *; }
 -keep class org.moqui.mobile.UnifiedPushes { *; }
+# ... and the phone's contacts and the calling account (src/android.rs contacts_search, contact_names, dial_account)
+-keep class org.moqui.mobile.PhoneBook { *; }
+-keep class org.moqui.mobile.DialAccount { *; }
 # Asked for by name (Push.kt) in a build with Firebase.
 -keep class org.moqui.mobile.FcmPush { *; }
 

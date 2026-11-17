@@ -43,6 +43,10 @@
     "allow-call-state",
     "allow-call-take-answer",
     "allow-call-audio",
-    "allow-call-audio-route"
+    "allow-call-audio-route",
+    "allow-call-dial-account",
+    "allow-call-take-dial",
+    "allow-contacts-search",
+    "allow-contact-names"
   ]
 }

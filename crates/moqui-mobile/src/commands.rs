@@ -14,8 +14,9 @@
 
 //! The mobile app's own commands, beside the shared ones of `moqui_client_tauri`: the way back from a server page to
 //! the shell, a comms screen of a server page shown in the shell (an encrypted room, whose crypto device is the
-//! shell's), a native notification, and a link opened outside the app. Any page of the app may call them; none reaches
-//! more than a page could.
+//! shell's), a native notification, a link opened outside the app; and the shell's own: the notification check, the
+//! native call, the phone's contacts and the calling account of the phone's dialer. Any page of the app may call the
+//! first ones, none reaching more than a page could; the shell's check its page and nonce.
 
 use std::sync::Arc;
 
@@ -211,7 +212,14 @@ pub(crate) fn push_check_fix(app: AppHandle, what: String) -> Result<(), String>
     shell_only(&host)?;
     if !matches!(
         what.as_str(),
-        "notifications" | "channels" | "battery" | "fullScreen" | "distributor" | "firebase"
+        "notifications"
+            | "channels"
+            | "battery"
+            | "fullScreen"
+            | "distributor"
+            | "firebase"
+            | "callingAccounts"
+            | "contacts"
     ) {
         return Err(format!("Nothing to fix: {what}"));
     }
@@ -359,6 +367,129 @@ pub(crate) fn call_take_answer(
         return Err("Not the shell's page".to_string());
     }
     Ok(host.take_answer(&call_session_id))
+}
+
+/// The shell's word, as it loads for the current account, of whether it has a number to call from (its Dialer's caller
+/// IDs, plans/Comms-Messaging.md §9.1): the app's calling account for the phone's dialer is registered while an account
+/// here has one, and taken away when none has. The shell's only.
+#[tauri::command(async)]
+pub(crate) fn call_dial_account(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+    can_call: bool,
+) -> Result<(), String> {
+    let host = host(&app)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
+    let account = host.signed_in().ok_or("No account is signed in")?;
+    host.set_dial_account(&account, can_call)
+}
+
+/// Whether the shell's Dialer places `number` by itself: only once, for the number the phone's dialer handed over (the
+/// host shows the Dialer with it), never for a link of a page's.
+#[tauri::command(async)]
+pub(crate) fn call_take_dial(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+    number: String,
+) -> Result<bool, String> {
+    let host = host(&app)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
+    Ok(crate::dial::dial_number(&number).is_some_and(|number| host.take_dial(&number)))
+}
+
+/// The most contacts a search gives.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+const CONTACTS_MAX: i32 = 10;
+/// The most numbers named at once.
+const NAMES_MAX: usize = 50;
+
+/// The phone's contacts whose name or number has `term` (plans/Comms-Messaging.md §9.2), for the new-chat picker:
+/// `[{name, number}]`, at most ten. The first search asks for the contacts permission (with its reason); without it,
+/// none. Read on the phone only, for the shell's page; nothing is sent anywhere.
+#[tauri::command(async)]
+pub(crate) fn contacts_search(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+    term: String,
+) -> Result<serde_json::Value, String> {
+    let host = host(&app)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
+    let Some(term) = contact_term(&term) else {
+        return Ok(serde_json::json!([]));
+    };
+    #[cfg(target_os = "android")]
+    {
+        let text = crate::android::contacts_search(&term, CONTACTS_MAX)?;
+        serde_json::from_str(&text).map_err(|err| err.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        log::info!(
+            "No phone contacts here to search for {} characters",
+            term.chars().count()
+        );
+        Ok(serde_json::json!([]))
+    }
+}
+
+/// The names the phone's contacts have for `numbers` (E.164, at most 50; others are left out): `{number: name}`. Never
+/// asks for the permission (a room list is not a use); without it, none. The shell's page only; nothing is sent.
+#[tauri::command(async)]
+pub(crate) fn contact_names(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+    numbers: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    let host = host(&app)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
+    let numbers = contact_numbers(&numbers);
+    if numbers.is_empty() {
+        return Ok(serde_json::json!({}));
+    }
+    #[cfg(target_os = "android")]
+    {
+        let text = crate::android::contact_names(&numbers)?;
+        serde_json::from_str(&text).map_err(|err| err.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        log::info!("No phone contacts here to name {} numbers", numbers.len());
+        Ok(serde_json::json!({}))
+    }
+}
+
+/// A contacts search's term: trimmed, no control characters, two to 100 characters; none otherwise.
+pub(crate) fn contact_term(term: &str) -> Option<String> {
+    let term = clip(term, 100);
+    (term.chars().count() >= 2).then_some(term)
+}
+
+/// The numbers a page asks names of that are E.164 (`+` and 5 to 15 digits), once each, at most [`NAMES_MAX`].
+pub(crate) fn contact_numbers(numbers: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for number in numbers.iter().map(|number| number.trim()) {
+        let digits = number.strip_prefix('+').unwrap_or("");
+        let e164 = (5..=15).contains(&digits.len()) && digits.chars().all(|c| c.is_ascii_digit());
+        if e164 && !out.iter().any(|kept| kept == number) {
+            out.push(number.to_string());
+        }
+        if out.len() >= NAMES_MAX {
+            break;
+        }
+    }
+    out
 }
 
 /// Open `url` outside the app: http and https on the web, mailto, tel and sip.

@@ -91,4 +91,35 @@ class CallRulesTest {
         assertEquals(listOf("phoneCall", "microphone"), CallRules.serviceTypes(true, true, true, false))
         assertEquals(listOf("phoneCall"), CallRules.serviceTypes(true, true, false, false))
     }
+
+    /** §9.1: the calling account is off until registered, and known to be on once a number came through it. */
+    @Test
+    fun theCallingAccountIsOnOnceANumberCameThroughIt() {
+        assertEquals("off", CallRules.dialAccountState(false, true))
+        assertEquals("registered", CallRules.dialAccountState(true, false))
+        assertEquals("on", CallRules.dialAccountState(true, true))
+        assertEquals("+18015550100", CallRules.dialShown("+1 (801) 555-0100<b>"))
+    }
+
+    /** §9.2: a contact's number is its E.164 form, else the number as stored without its separators; a name is no number. */
+    @Test
+    fun aContactsNumberIsItsE164FormOrItsDigits() {
+        assertEquals("+18015550100", CallRules.contactNumber("+18015550100", "(801) 555-0100"))
+        assertEquals("8015550100", CallRules.contactNumber(null, "(801) 555.0100"))
+        assertEquals("+447700900123", CallRules.contactNumber("not e164", "+44 7700 900123"))
+        assertNull(CallRules.contactNumber(null, "ext. office"))
+        assertNull(CallRules.contactNumber(null, "12"))
+        assertNull(CallRules.contactNumber(null, null))
+    }
+
+    /** §9.2: the contacts are searched for two characters or more, and asked for once, at the first search. */
+    @Test
+    fun theContactsAreAskedForOnceAtTheFirstSearch() {
+        assertFalse(CallRules.contactSearchable("a"))
+        assertTrue(CallRules.contactSearchable(" an "))
+        assertFalse(CallRules.contactSearchable("x".repeat(101)))
+        assertTrue(CallRules.askContacts(granted = false, askedBefore = false))
+        assertFalse(CallRules.askContacts(granted = false, askedBefore = true))
+        assertFalse(CallRules.askContacts(granted = true, askedBefore = false))
+    }
 }

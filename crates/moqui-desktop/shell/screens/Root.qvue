@@ -314,6 +314,16 @@ module.exports = {
             if (state.socket) rows.push({ key: 'socket', ok: true, label: t('Messages arrive while the app runs') });
             if (state.lastPushDate !== undefined) rows.push({ key: 'lastPush', ok: !!state.lastPushDate, label: t('Last notification received'),
                 caption: state.lastPushDate ? this.when(state.lastPushDate) : t('None yet') });
+            // the phone's dialer and Contacts calling through the app (§9.1): Android's Calling accounts, where only the
+            // user turns it on; offered only to an account with a number to call from
+            // (registered: whether the user turned it on is not the app's to read until a number came through it)
+            if (state.dialAccount === 'on' || state.dialAccount === 'registered') rows.push({ key: 'dialAccount', ok: state.dialAccount === 'on',
+                label: t("The phone's dialer can call through this app"),
+                caption: state.dialAccount === 'on' ? '' : t('If it is not on yet, turn on MR Moqui under Calling accounts in the phone settings'),
+                fix: 'callingAccounts', fixLabel: t('Calling accounts') });
+            // the phone's contacts name numbers and are found in a new chat (§9.2), read on the phone only
+            if (state.contacts !== undefined) rows.push({ key: 'contacts', ok: state.contacts === true, label: t("Names from the phone's contacts"),
+                caption: state.contacts === true ? '' : t('Allow contacts to see names on texts and find people as you type'), fix: 'contacts' });
             // a force-stopped app gets no push until it is opened again
             if (state.forceStoppedDate) rows.push({ key: 'forceStopped', ok: Date.now() - Number(state.forceStoppedDate) > 86400000,
                 label: t('The app was stopped'), caption: this.when(state.forceStoppedDate) + ': ' + t('notifications may not have come until it was opened again') });
@@ -576,6 +586,19 @@ module.exports = {
                 poll();
             }, (err) => { done(''); this.failed(err); });
         },
+        // The phone's dialer through the app (plans/Comms-Messaging.md §9.1; the mobile app's dialAccount): whether this
+        // account has a number to call from (its Dialer's caller IDs), so the app's calling account is offered only then.
+        // Told again at each load (an account switch loads the shell); an answer that did not come changes nothing.
+        tellDialAccount() {
+            const desktop = host();
+            if (!desktop || typeof desktop.dialAccount !== 'function' || this.isOffline) return;
+            if (!this.callsOn || !this.componentOf('dialer')) { desktop.dialAccount(false); return; }
+            moqui.request(this.basePath + '/' + this.commsRel + '/Calls/Dialer/dialerData').then((result) => {
+                const json = result.json || {};
+                if (json.errors) return;
+                desktop.dialAccount(!!json.phoneActive && Array.isArray(json.callerIdList) && json.callerIdList.length > 0);
+            }, () => null);
+        },
         openDevices() {
             this.devicesOpen = true;
             this.devicesLoaded = false;
@@ -632,6 +655,7 @@ module.exports = {
         if (moqui.chat) moqui.chat.start(this);
         // calls: the pushes of the user's calls and the calls going on (WebrootCall.js), as m-qapps-root starts them
         if (this.callsOn) moqui.call.start(this);
+        this.tellDialAccount();
         // my presence on the tray, as m-qapps-root hands it
         const desktop = host();
         if (desktop && desktop.setPresence && moqui.chat) this.$watch(() => moqui.chat.myPresence(), (status) => { if (status) desktop.setPresence(status); },

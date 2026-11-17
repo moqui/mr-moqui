@@ -99,4 +99,43 @@ object CallRules {
         if (inCall && video && cameraAllowed) types.add("camera")
         return types
     }
+
+    // ---- the phone's dialer and contacts (plans/Comms-Messaging.md §9.1, §9.2; DialAccount, PhoneBook) ----
+
+    /** How long a number handed over from the phone's dialer may be taken (Rust's `dial::LINK_MS`). */
+    const val DIAL_LINK_MS = 120_000L
+
+    /**
+     * The check's state of the calling account: `off` (not registered), `registered` (the user may not have turned it on
+     * yet: the app cannot read it) or `on` (a number came through it, so the user did).
+     */
+    fun dialAccountState(registered: Boolean, used: Boolean): String = when {
+        !registered -> "off"
+        used -> "on"
+        else -> "registered"
+    }
+
+    /** A dialed number as a notification shows it: its digits, `+`, `*` and `#` only, at most 32. */
+    fun dialShown(number: String): String = number.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }.take(32)
+
+    /**
+     * A contact's number as the app takes it: the phone's E.164 form when it has one, else the number as stored with its
+     * spaces, dashes, dots and brackets dropped (the server reads it by the deployment's rules), when it is 3 to 20 digits
+     * with at most a leading `+`. Null: not a number to call or text.
+     */
+    fun contactNumber(normalized: String?, raw: String?): String? {
+        val e164 = normalized?.trim()
+        if (e164 != null && Regex("^\\+[0-9]{5,15}$").matches(e164)) return e164
+        val plain = raw?.trim()?.filterNot { it == ' ' || it == '-' || it == '.' || it == '(' || it == ')' } ?: return null
+        return plain.takeIf { Regex("^\\+?[0-9]{3,20}$").matches(it) }
+    }
+
+    /** Whether the phone's contacts are searched for [term]: two characters or more, at most 100. */
+    fun contactSearchable(term: String): Boolean = term.trim().length in 2..100
+
+    /**
+     * Whether the contacts permission is asked now: not when it is granted, never twice by the app itself (a search is
+     * its first use; the notification check asks again on the user's tap).
+     */
+    fun askContacts(granted: Boolean, askedBefore: Boolean): Boolean = !granted && !askedBefore
 }

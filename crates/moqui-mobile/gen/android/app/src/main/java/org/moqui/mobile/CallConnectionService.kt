@@ -18,7 +18,8 @@ import android.util.Log
  * so the system gives it the audio focus, routes its audio ([CallAudio]), holds it for another call and gives a
  * headset's or a watch's answer, decline and hang-up, and asks the app to show the ring
  * ([CallConnection.onShowIncomingCallUi]). A call rung here is incoming; one the app joined by itself (started, joined
- * from a chat, moved to this phone) is placed as outgoing. The media is the WebView's, not Telecom's.
+ * from a chat, moved to this phone) is placed as outgoing. The media is the WebView's, not Telecom's. The same service
+ * has the app's managed calling account ([DialAccount]), whose numbers it hands to the app rather than calling them.
  */
 class CallConnectionService : ConnectionService() {
     override fun onCreateIncomingConnection(account: PhoneAccountHandle?, request: ConnectionRequest?): Connection {
@@ -43,8 +44,12 @@ class CallConnectionService : ConnectionService() {
         CallManager.notConnected(this, id)
     }
 
-    /** A call the app joined by itself ([CallManager.placeInTelecom]): active at once, its media is already up. */
+    /**
+     * A call the app joined by itself ([CallManager.placeInTelecom]): active at once, its media is already up. A number
+     * the phone's dialer or Contacts called with the app's calling account goes to the app's Dialer ([DialAccount]).
+     */
     override fun onCreateOutgoingConnection(account: PhoneAccountHandle?, request: ConnectionRequest?): Connection {
+        if (DialAccount.isDial(account ?: request?.accountHandle)) return DialAccount.dialed(this, request)
         val id = request?.extras?.getString(CallManager.EXTRA_CALL)
             ?: request?.address?.schemeSpecificPart
         val call = CallManager.call(id)
@@ -61,6 +66,10 @@ class CallConnectionService : ConnectionService() {
     private fun service(): ConnectionService = this
 
     override fun onCreateOutgoingConnectionFailed(account: PhoneAccountHandle?, request: ConnectionRequest?) {
+        if (DialAccount.isDial(account ?: request?.accountHandle)) {
+            Log.w(CallManager.TAG, "Telecom did not let the app take a number from the phone's dialer")
+            return
+        }
         val id = request?.extras?.getString(CallManager.EXTRA_CALL) ?: request?.address?.schemeSpecificPart
         Log.w(CallManager.TAG, "Telecom did not take the call $id the app joined: its audio is the WebView's own")
     }

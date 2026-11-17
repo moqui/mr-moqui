@@ -128,15 +128,18 @@ class MainActivity : TauriActivity() {
     super.onNewIntent(intent)
   }
 
-  /** A call link the activity is started with again from the recent apps is not taken again (its nonce is gone
+  /** A call or dial link the activity is started with again from the recent apps is not taken again (its nonce is gone
    *  anyway): it goes before tao reads the intent. */
   private fun replayed(intent: Intent?) {
     val data = intent?.data ?: return
     if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0 && data.scheme == "org.moqui.mobile" &&
-      data.path == "/call"
+      (data.path == "/call" || data.path == "/dial")
     ) {
       intent.data = null
+      return
     }
+    // a number from the phone's dialer came: its notification, if one was shown, goes
+    if (data.scheme == "org.moqui.mobile" && data.path == "/dial") DialAccount.handedOver(this)
   }
 
   override fun onResume() {
@@ -155,6 +158,7 @@ class MainActivity : TauriActivity() {
   override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
     super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     if (requestCode == ASK_CALLS) askForFullScreenOnce()
+    if (requestCode == PhoneBook.ASK_CONTACTS) PhoneBook.answered()
   }
 
   private companion object {

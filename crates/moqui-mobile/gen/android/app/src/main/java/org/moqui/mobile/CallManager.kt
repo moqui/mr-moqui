@@ -563,6 +563,9 @@ object CallManager {
         appScreen = activity?.let { WeakReference(it) }
     }
 
+    /** The app's activity, while it is there (a question the phone book asks). */
+    fun appActivity(): MainActivity? = appScreen?.get()
+
     private fun closeRingScreen() {
         ringScreen?.get()?.finish()
         ringScreen = null

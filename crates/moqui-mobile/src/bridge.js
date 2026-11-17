@@ -311,7 +311,19 @@
         // the call's audio through Telecom (plans/Comms-Messaging.md §8.3 item 5): {route, routes}, and the speaker
         // button's choice of a route (earpiece, speaker, wired, bluetooth); changes come by moqui.call.setHostAudio
         callAudio: () => shellAsk("call_audio").catch(() => ({ route: null, routes: [] })),
-        callAudioRoute: (route) => shellAsk("call_audio_route", { route: String(route || "") }).catch(() => false)
+        callAudioRoute: (route) => shellAsk("call_audio_route", { route: String(route || "") }).catch(() => false),
+        // the phone's dialer through the app (plans/Comms-Messaging.md §9.1): whether this account has a number to call
+        // from (the calling account is registered while one here has), and the number the dialer handed over, once
+        dialAccount: (canCall) => shellAsk("call_dial_account", { canCall: canCall === true })
+            .catch((err) => console.info("The calling account was not told", err)),
+        takeDial: (number) => shellAsk("call_take_dial", { number: String(number || "") })
+            .then((taken) => taken === true, () => false),
+        // the phone's own contacts (§9.2), read on the phone only: a search (asks for the permission the first time) and
+        // the names of numbers (never asks)
+        contactsSearch: (term) => shellAsk("contacts_search", { term: String(term || "") })
+            .then((list) => (Array.isArray(list) ? list : []), () => []),
+        contactNames: (numbers) => shellAsk("contact_names", { numbers: (Array.isArray(numbers) ? numbers : []).map(String) })
+            .then((named) => (named && typeof named === "object" && !Array.isArray(named) ? named : {}), () => ({}))
     });
     console.info("moqui-mobile: the shell's bridge is ready");
 })();

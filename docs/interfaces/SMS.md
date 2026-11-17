@@ -94,7 +94,29 @@ call. The outside person is an external actor of the bridge (`ChatExternalUser` 
 - **Text a number.** Calls History has it beside Call a number for a user with a number that texts:
   `open#PairRoom` (the same checks as a send) opens the room in Chat. Chat's new-chat pickers (New direct message, the
   phone's Start chat) do the same with a number typed in their search (`searchUsers` with `numbers=true`, then
-  `textRoom`).
+  `textRoom`); several numbers picked start a group text (below), and a number with people picked says a text goes to
+  numbers only. In the mobile app the pickers also find the phone's own contacts as the user types.
+- **Names.** A phone room is named by its numbers. The page shows a name for each number it can find: the phone's own
+  contacts in the mobile app (read on the phone, never sent to the server), then the server's: `find#PhoneNames`
+  (Chat's `phoneNames`, at most 50 numbers) asks the apps' `call-context` providers, as the user, for each number's
+  first contact's name. With no app that gives one, the numbers stay as they are.
+
+## Group texts
+
+A group MMS is one room for its set of outside numbers: `CrtExternal`, named the numbers (`+1801..., +1385...`), its
+`externalRoomId` `ours/<a>,<b>,...` with the others' numbers in E.164, unique and sorted (`Sms.js` `groupKey`), so the
+same people make the same room whoever writes first. A group has at most 8 other numbers (`GROUP_MAX`; Telnyx's limit
+is the carrier's, about 10 in all); more is refused (`tooManyNumbers`).
+
+- **In.** A `message.received` with more than one recipient (Telnyx's `to` and `cc`, `webhook.rs` `recipients_of`)
+  passes `recipientList` to `receive#Sms`, which finds our number among them (one of this bridge's) and the group's
+  room of the sender and the other recipients. A text to one number is the pair's room, as before.
+- **Out.** A reply in a group room goes as one group MMS (`POST /v2/messages/group_mms` with `to` as the list) from our
+  number. Each number is checked as a single text is (`check#SmsSend`: opt-out, the destination's class, emergency),
+  and the day's count is reserved once, for the first; one refused refuses the whole send before the provider (and
+  takes the reservation back).
+- **Start one.** Text a number with several numbers (`open#PairRoom` with `toNumber` comma-separated, each checked as
+  a send), or several numbers picked in a new-chat picker.
 
 ## Texts that come in
 
@@ -196,7 +218,7 @@ sending profile's number, and Mantle answers the `sms-consent` hook from its con
 | Delivery receipts | yes (`receiptStatus`; a failed one fails the delivery) |
 | Edit, delete, reaction | no (refused before the change: `bridgeUnsupported`) |
 | Idempotent sends | no: a lost answer is uncertain |
-| Group texts | no: one room per pair of numbers |
+| Group texts | yes: group MMS, one room for a set of outside numbers (at most 8) |
 
 ## Tests
 
@@ -214,10 +236,12 @@ sending profile's number, and Mantle answers the `sms-consent` hook from its con
   promotional text with no user asked of a conf's `sms-consent` provider (a yes sent, a no and no answer refused, a
   conf's other hook left out) and counted for its number's day of promotional texts, a sign-in code still sent after it; the pair room shared by a text and a call (`receive#PhoneCall`); a sign-in code through the real
   sender, in no room.
+- `crates/moqui-channels/src/tests.rs` also has a group text: one room for its numbers whoever writes first, and the
+  reply out as one group MMS to them all.
 - `crates/moqui-core/src/service/chat_bridge_web.rs`: a file address signed for its bridge that runs out; a file from a
   network never kept as a page.
 - `basic-comms/test/BasicCommsTexts.spec.js`: Text a number in the browser and the terminal, the room it opens, the same
   post from a stranger, an international number.
 
 **Not checked live:** Telnyx itself (its signature and webhook shapes are from its documentation), carrier delivery,
-and 10DLC registration.
+group MMS between real phones, and 10DLC registration.
