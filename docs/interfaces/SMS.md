@@ -216,7 +216,9 @@ A text whose whole body is STOP (or STOPALL, UNSUBSCRIBE, CANCEL, END, QUIT, OPT
 texts from that number of ours (`SmsOptOut` per pair); START (UNSTOP, YES, OPTIN) opts back in; HELP (INFO) is kept as
 the pair's last keyword. The keyword is still a message in the room. Moqui sends no reply to a keyword: Telnyx's
 messaging profile answers STOP and HELP itself (its opt-out management), and blocks a send to a number that sent STOP
-(its error 40300, kept as `optedOut`). The opt-out also gates the system's texts.
+(its error 40300, kept as `optedOut`; the pair's `SmsOptOut` is then marked too, so the next text is refused before the
+provider). A provider that tells of an opt-out or opt-in itself (an event, not a text) is kept the same way, once per
+event (`note#SmsOptSignal`). The opt-out also gates the system's texts.
 
 ## The system's texts
 
@@ -264,7 +266,8 @@ the limits); this section is what differs.
    both are tried). Twilio does not try a webhook again after a 5xx by default (only a connection that could not be
    made, once): set the number's "Primary handler fails" fallback URL to the same URL, or add a connection override
    to the URL (`#rc=3&rp=5xx,ct`; Twilio does not sign the fragment, and Moqui leaves it out of the check), so a
-   text that came while the server was busy is not lost.
+   text that came while the server was busy is not lost ([Chat bridges](Chat-Bridges.md#the-adapter-contract),
+   retries by provider).
 4. **The bridge.** System, Chat Bridges, network SMS, adapter `sms-twilio`, configuration (kept encrypted):
 
    | Key | What |
@@ -301,8 +304,9 @@ and each parameter's name and value, sorted by name (case-sensitive), with no se
 SHA-256 in the URL's `bodySHA256` and the URL alone. It is compared in constant time. The token is a secret, so behind
 an edge node the signature is checked on the local node ([Behind an edge node](#setup)); the edge node only queues.
 The signature has no time in it: a copy is answered `duplicate` while the replay cache holds it, and after that the ids
-make it a no-op (an inbound `MessageSid` is taken once, a receipt's status once). Each answer of 2xx is empty TwiML
-(`<Response/>`, `text/xml`), so Twilio sends no reply of its own making.
+make it a no-op (an inbound `MessageSid` is taken once, a receipt never moves a delivery back). With no `authToken` on
+the local node a queued request waits rather than being refused. Each answer of 2xx, the edge node's too, is empty
+TwiML (`<Response/>`, `text/xml`), so Twilio sends no reply of its own making.
 
 - An inbound text (`MessageSid`, `From`, `To`, `Body`, `NumMedia` and `MediaUrl{N}`, `MediaContentType{N}`) goes to
   `receive#Sms` as Telnyx's does. Its files are fetched with the API's Basic auth (Twilio's media URLs need it); a
@@ -314,24 +318,26 @@ make it a no-op (an inbound `MessageSid` is taken once, a receipt's status once)
 
 **Opt-out.** With Twilio's Advanced Opt-Out on (the default on a Messaging Service), Twilio answers STOP, START and
 HELP itself, blocks sends to a number that sent STOP (21610, above), and still posts the keyword's text with
-`OptOutType` (`STOP`, `START`, `HELP`). Moqui keeps the opt-out from that text once: its own keywords as for Telnyx,
-and an `OptOutType` of a keyword the account added in Twilio (one Moqui does not know) too; the text is still a message
-in the room. Turn Twilio's own replies off in the console only if the organization answers keywords another way.
+`OptOutType` (`STOP`, `START`, `HELP`). Moqui takes the opt-out from that inbound text only (once, by its
+`MessageSid`), by its own keywords as for Telnyx; the text is still a message in the room. A keyword the account added
+in Twilio that Moqui does not know is a text to Moqui, and Twilio's block of the next send (21610) marks the pair then.
+Turn Twilio's own replies off in the console only if the organization answers keywords another way.
 
 **Group texts** go through Twilio's Conversations API: its Messages API has no group MMS. A group is our number and at
 most 9 others (a Twilio group Conversation has at most 10 participants), all US or Canadian (+1) long codes; another
 is refused (`groupTextsNotSupported`). A group room's first send makes its Conversation: looked up by a unique name of
 the bridge and the room's numbers first (so a send after a lost answer finds the one made before, never a second), else
-made with that name; our number joins as the chat participant (`MessagingBinding.ProjectedAddress`), each other number
-as an SMS participant (`MessagingBinding.Address`; when Twilio answers that another Conversation has these numbers,
-50438, as one it made for a group text that came in, that one is found by its participants and taken); a webhook of the Conversation names the bridge's webhook URL for
-`onMessageAdded` and `onDeliveryUpdated`; and the room's mapping keeps the Conversation's SID
-(`ChatRoomBridge.externalThreadId`, `store#MappingThread`). Nothing reaches a phone until the message is posted
+made with that name, and its SID kept on the room's mapping at once (`ChatRoomBridge.externalThreadId`,
+`store#MappingThread`), so a later try carries it; then our number joins as the chat participant
+(`MessagingBinding.ProjectedAddress`), each other number as an SMS participant (`MessagingBinding.Address`; a later try
+adds only those the Conversation lacks; when Twilio answers that another Conversation has these numbers, 50438, as one
+it made for a group text that came in, that one is found by its participants and kept instead); and a webhook of the
+Conversation names the bridge's webhook URL for `onMessageAdded` and `onDeliveryUpdated`. Nothing reaches a phone until the message is posted
 (`POST /v1/Conversations/{CH}/Messages`, `Author` our number), so a step before it that fails is tried again; an answer
 lost on the post itself is uncertain. A group text carries words only: Twilio takes a Conversation's files only as
 uploads to its Media Content Service, which the adapter does not do yet, so a group text with files is refused
-(`groupMediaNotSupported`). In: `onMessageAdded` is a text of the Conversation (`Author` the sender), its recipients
-the Conversation's numbers; `onDeliveryUpdated` is one recipient's receipt (`ParticipantSid`, `Status`, `ErrorCode`),
+(`groupMediaNotSupported`). In: `onMessageAdded` is a text of the Conversation (`Author` the sender) in the room whose
+mapping keeps it (`Inbound.thread_id`), else the group room of the Conversation's numbers; `onDeliveryUpdated` is one recipient's receipt (`ParticipantSid`, `Status`, `ErrorCode`),
 kept per recipient as Telnyx's are. A Conversation's participants are read from Twilio once a process. A group that
 someone else starts reaches Moqui only when the number's Messaging Service hands inbound messages to Conversations
 (autocreation); set the Conversations service's webhook (post-event, `onMessageAdded`, `onDeliveryUpdated`) to the

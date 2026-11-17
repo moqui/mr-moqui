@@ -25,16 +25,23 @@
 //!   [`verify_webhook`](super::ChatBridgeAdapter::verify_webhook), and queues the raw request with the path and query it
 //!   came to, keyed by the network's event id ([`webhook_event_id`](super::ChatBridgeAdapter::webhook_event_id)) so a
 //!   repeat is dropped, and ordered by their number. It answers 200 once the item is committed; a bad signature, an
-//!   unknown bridge and a disabled one answer as on any node. The local node's `apply#EdgeWebhook` rebuilds the request
-//!   and hands it to the adapter's [`apply_webhook`](super::ChatBridgeAdapter::apply_webhook) with the
-//!   transport-verified mark set, without checking the signature again: its time window has passed by then.
-//! - **Verified on the local node.** A network that signs with a secret (Twilio's auth token, Sinch's webhook secret)
-//!   cannot be checked on the edge node, which never holds one ([`WebhookVerification::Core`]). For its adapter the edge
-//!   node checks only the method, the size (`channels_webhook_max_bytes`), that the signature header is there, and a
-//!   rate cap per bridge (`channels_edge_webhooks_per_minute`, 600, a token bucket on each edge node), then queues the
-//!   request; `apply#EdgeWebhook` verifies it with the bridge's whole configuration, at the time it came, before it
-//!   applies it, and drops one that fails ([`dropped_webhooks`], logged once per bridge every ten minutes): the item is
-//!   done, not applied, and not tried again.
+//!   unknown bridge and a disabled one answer as on any node, and the network's answers are in its shape
+//!   ([`edge_answer`](super::ChatBridgeAdapter::edge_answer)). The local node's `apply#EdgeWebhook` rebuilds the request
+//!   (checked at the time it came: `receivedMillis`) and checks its signature again with the bridge's whole
+//!   configuration, whichever node checked it before (an adapter changed since the edge node queued it is never applied
+//!   unchecked), then hands it to the adapter's [`apply_webhook`](super::ChatBridgeAdapter::apply_webhook) with the
+//!   transport-verified mark set.
+//! - **Verified on the local node only.** A network that signs with a secret (Twilio's auth token, Sinch's webhook
+//!   secret) cannot be checked on the edge node, which never holds one ([`WebhookVerification::Core`]). For its adapter
+//!   the edge node checks only the method, the size (`channels_edge_unverified_max_bytes`, 32 KiB), that the signature
+//!   header is there, a rate a client address (`channels_edge_webhooks_per_client_minute`, 120) and a bridge
+//!   (`channels_edge_webhooks_per_minute`, 600; token buckets on each edge node), and how many of the bridge's items
+//!   wait (`channels_edge_unverified_waiting`, 500, so at most 16 MiB), then reads the event key from the unverified
+//!   body and queues the request, its idempotency key including a hash of the signature so a forged item cannot take a
+//!   real event's key ([`UnverifiedLimits`]). On the local node a request this node cannot check (no secret) waits
+//!   (`retryLater`); one whose signature is not the network's is refused and kept for 30 days in
+//!   [`REFUSED`] (`replay#RefusedWebhooks` after a configuration fix), counted ([`refused_webhooks`], `find#Bridges`)
+//!   and logged once per bridge every ten minutes, the item answered as done so it holds nothing behind it.
 //! - **Files** (kind [`KIND_MEDIA`], local node to edge node). A paired local node whose conf lists `chatMedia` sends
 //!   every file of a message that goes by address (an MMS picture) through its edge node ([`media_urls`]): it queues
 //!   the file as the item's content, with a token it makes (an HMAC under `channels_media_key`, so a later attempt of
@@ -76,6 +83,7 @@ pub(super) fn register(
     map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
 ) -> Result<(), String> {
     rust_service!(map, apply_edge_webhook)?;
+    rust_service!(map, replay_refused_webhooks)?;
     rust_service!(map, store_edge_media)?;
     Ok(())
 }
@@ -107,9 +115,16 @@ const DROPPED_HEADERS: &[&str] = &["cookie", "authorization", "proxy-authorizati
 /// The host's bound of a webhook body (`crates/moqui-host/src/channels.rs`), checked again before a request is queued.
 const WEBHOOK_MAX_BYTES: &str = "channels_webhook_max_bytes";
 const DEFAULT_WEBHOOK_MAX_BYTES: usize = 256 * 1024;
-/// The requests a minute an edge node queues for one bridge whose webhooks it cannot verify.
+/// The requests a minute an edge node queues for one bridge whose webhooks it cannot verify, in all and from one client
+/// address; the largest such body; and the most of the bridge's items that wait unverified ([`UnverifiedLimits`]).
 const WEBHOOKS_PER_MINUTE: &str = "channels_edge_webhooks_per_minute";
 const DEFAULT_WEBHOOKS_PER_MINUTE: u32 = 600;
+const WEBHOOKS_PER_CLIENT_MINUTE: &str = "channels_edge_webhooks_per_client_minute";
+const DEFAULT_WEBHOOKS_PER_CLIENT_MINUTE: u32 = 120;
+const UNVERIFIED_MAX_BYTES: &str = "channels_edge_unverified_max_bytes";
+const DEFAULT_UNVERIFIED_MAX_BYTES: usize = 32 * 1024;
+const UNVERIFIED_WAITING: &str = "channels_edge_unverified_waiting";
+const DEFAULT_UNVERIFIED_WAITING: i64 = 500;
 
 fn sha256_hex(text: &str) -> String {
     moqui_lib::codec::hex_encode(&sha2::Sha256::digest(text.as_bytes()))
@@ -313,8 +328,8 @@ fn edge_config(bridge_id: &str, node: &str, fields: &serde_json::Value) -> serde
 }
 
 /// A webhook of bridge `bridge_id` as paired node `node` replicated it (`fields`): its signature checked here, or (an
-/// adapter that verifies on the local node) the cheap checks of [`deferred_checks`], and the request queued for the
-/// node.
+/// adapter that verifies on the local node) the cheap checks of [`deferred_checks`] and the cap on what waits
+/// unverified, and the request queued for the node. The local node checks the signature again, whichever way.
 pub(super) fn paired_webhook(
     factory: &ExecutionContextFactory,
     facade: &EntityFacade,
@@ -322,6 +337,27 @@ pub(super) fn paired_webhook(
     request: &WebhookRequest,
     node: &str,
     fields: &serde_json::Value,
+) -> WebhookResponse {
+    paired_webhook_within(
+        factory,
+        facade,
+        bridge_id,
+        request,
+        node,
+        fields,
+        &UnverifiedLimits::of_properties(),
+    )
+}
+
+/// [`paired_webhook`] within `limits` (a test's own).
+pub(super) fn paired_webhook_within(
+    factory: &ExecutionContextFactory,
+    facade: &EntityFacade,
+    bridge_id: &str,
+    request: &WebhookRequest,
+    node: &str,
+    fields: &serde_json::Value,
+    limits: &UnverifiedLimits,
 ) -> WebhookResponse {
     let mut info = BridgeInfo {
         chat_bridge_id: bridge_id.to_string(),
@@ -336,37 +372,50 @@ pub(super) fn paired_webhook(
     if !request.method.eq_ignore_ascii_case("POST") {
         return WebhookResponse::text(405, "a webhook is a POST");
     }
-    match adapter.webhook_verification() {
+    let signed_by = match adapter.webhook_verification() {
         WebhookVerification::Edge => {
             info.config = edge_config(bridge_id, node, fields);
             match std::panic::catch_unwind(AssertUnwindSafe(|| adapter.verify_webhook(&info, request))) {
-                Ok(None) => {}
+                Ok(None) => None,
                 Ok(Some(refused)) => return refused,
                 Err(_) => return WebhookResponse::not_signed(),
             }
         }
         WebhookVerification::Core { signature_header } => {
             let rates = factory.extension(|_| EdgeRates::default());
-            let checked = deferred_checks(
-                &rates,
-                &format!("{node}:{bridge_id}"),
-                request,
-                signature_header,
-                webhook_max_bytes(),
-                webhooks_per_minute(),
-            );
-            if let Some(refused) = checked {
-                return refused;
+            let key = format!("{node}:{bridge_id}");
+            if let Some(refused) = deferred_checks(&rates, &key, request, signature_header, limits) {
+                return shaped(adapter.as_ref(), &info, refused);
             }
+            match unverified_waiting(facade, node, bridge_id) {
+                Ok(waiting) if waiting >= limits.waiting => {
+                    tracing::warn!(
+                        "chat bridge {bridge_id} of local node {node}: {waiting} unverified webhooks wait for it, the \
+                         most it holds (channels_edge_unverified_waiting); more are refused (429) until they go"
+                    );
+                    return shaped(
+                        adapter.as_ref(),
+                        &info,
+                        WebhookResponse::text(429, "too many requests wait; try again later"),
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::error!("chat bridge {bridge_id}: the webhooks waiting for it were not counted: {error}");
+                    return WebhookResponse::text(503, "try again later");
+                }
+            }
+            request.header(signature_header)
         }
-    }
+    };
     if field(fields, "statusId") == "CbsDisabled" {
         return WebhookResponse::text(503, "the bridge is disabled");
     }
+    // in Core mode read from a body nobody verified yet: bounded by the size cap above, and only a key
     let Ok(Some(key)) = std::panic::catch_unwind(AssertUnwindSafe(|| adapter.webhook_event_id(&info, request))) else {
         return WebhookResponse::text(400, "the request names no event");
     };
-    let item = webhook_item(bridge_id, &key, request);
+    let item = webhook_item(bridge_id, &key, request, signed_by);
     match queue::enqueue(factory, facade, Some(node), &item) {
         Ok(queued) => {
             let outcome = if queued.created { "queued" } else { "duplicate" };
@@ -375,7 +424,11 @@ pub(super) fn paired_webhook(
                 key.event_id,
                 queued.queue_item_id
             );
-            WebhookResponse::json(200, &serde_json::json!({ "outcome": outcome }))
+            shaped(
+                adapter.as_ref(),
+                &info,
+                WebhookResponse::json(200, &serde_json::json!({ "outcome": outcome })),
+            )
         }
         Err(error) => {
             // not queued: the network tries again
@@ -388,25 +441,50 @@ pub(super) fn paired_webhook(
     }
 }
 
-/// The largest webhook body the edge node queues: the host's own bound, `channels_webhook_max_bytes` (256 KiB).
-fn webhook_max_bytes() -> usize {
-    moqui_lib::env::get_prop_or_env(WEBHOOK_MAX_BYTES)
-        .trim()
-        .parse::<usize>()
-        .ok()
-        .filter(|limit| *limit > 0)
-        .unwrap_or(DEFAULT_WEBHOOK_MAX_BYTES)
+/// The network's answer in its own shape ([`super::ChatBridgeAdapter::edge_answer`]): a queued request's and a rate
+/// refusal's, never an unsigned one's.
+fn shaped(adapter: &dyn super::ChatBridgeAdapter, info: &BridgeInfo, response: WebhookResponse) -> WebhookResponse {
+    if (200..300).contains(&response.status) || response.status == 429 {
+        std::panic::catch_unwind(AssertUnwindSafe(|| adapter.edge_answer(info, response.clone()))).unwrap_or(response)
+    } else {
+        response
+    }
 }
 
-/// The requests a minute the edge node queues for one bridge whose signature it cannot check:
-/// `channels_edge_webhooks_per_minute` (600).
-fn webhooks_per_minute() -> u32 {
-    moqui_lib::env::get_prop_or_env(WEBHOOKS_PER_MINUTE)
+/// A positive number from a property, else `default`.
+fn positive_property<T: std::str::FromStr + PartialOrd + Default>(name: &str, default: T) -> T {
+    moqui_lib::env::get_prop_or_env(name)
         .trim()
-        .parse::<u32>()
+        .parse::<T>()
         .ok()
-        .filter(|limit| *limit > 0)
-        .unwrap_or(DEFAULT_WEBHOOKS_PER_MINUTE)
+        .filter(|limit| *limit > T::default())
+        .unwrap_or(default)
+}
+
+/// What an edge node lets through, for a bridge whose webhooks it cannot verify ([`WebhookVerification::Core`]).
+#[derive(Clone, Debug)]
+pub(super) struct UnverifiedLimits {
+    /// The largest body: `channels_edge_unverified_max_bytes` (32 KiB), at most `channels_webhook_max_bytes`.
+    pub max_bytes: usize,
+    /// Requests a minute for the bridge: `channels_edge_webhooks_per_minute` (600).
+    pub per_minute: u32,
+    /// Requests a minute for the bridge from one client address: `channels_edge_webhooks_per_client_minute` (120).
+    pub per_client_minute: u32,
+    /// Its items waiting in the queue, unverified: `channels_edge_unverified_waiting` (500). The bytes waiting are at
+    /// most this many times `max_bytes` (16 MiB by default).
+    pub waiting: i64,
+}
+
+impl UnverifiedLimits {
+    fn of_properties() -> Self {
+        Self {
+            max_bytes: positive_property(UNVERIFIED_MAX_BYTES, DEFAULT_UNVERIFIED_MAX_BYTES)
+                .min(positive_property(WEBHOOK_MAX_BYTES, DEFAULT_WEBHOOK_MAX_BYTES)),
+            per_minute: positive_property(WEBHOOKS_PER_MINUTE, DEFAULT_WEBHOOKS_PER_MINUTE),
+            per_client_minute: positive_property(WEBHOOKS_PER_CLIENT_MINUTE, DEFAULT_WEBHOOKS_PER_CLIENT_MINUTE),
+            waiting: positive_property(UNVERIFIED_WAITING, DEFAULT_UNVERIFIED_WAITING),
+        }
+    }
 }
 
 /// A token bucket: `per_minute` requests a minute, as a burst or spread out.
@@ -440,28 +518,49 @@ impl Bucket {
     }
 }
 
-/// The edge node's buckets of the bridges whose webhooks it queues unverified, by node and bridge.
+/// The most buckets an edge node keeps; past it the idle ones (a minute) go, and a new client is refused while none is.
+const MAX_BUCKETS: usize = 10_000;
+
+/// The edge node's buckets of the bridges whose webhooks it queues unverified: by node and bridge, and by node, bridge
+/// and client address.
 #[derive(Default)]
 pub(super) struct EdgeRates {
     buckets: std::sync::Mutex<std::collections::HashMap<String, Bucket>>,
 }
 
+impl EdgeRates {
+    /// Take one request of `key` at `now`, at `per_minute`: whether it may go.
+    fn take(&self, key: &str, per_minute: u32, now: i64) -> bool {
+        let mut buckets = moqui_lib::sync::lock(&self.buckets);
+        if !buckets.contains_key(key) && buckets.len() >= MAX_BUCKETS {
+            buckets.retain(|_, bucket| now.saturating_sub(bucket.at) < 60_000);
+            if buckets.len() >= MAX_BUCKETS {
+                return false;
+            }
+        }
+        buckets
+            .entry(key.to_string())
+            .or_insert_with(|| Bucket::full(per_minute, now))
+            .take(per_minute, now)
+    }
+}
+
 /// What an edge node checks of a webhook it cannot verify (the network signs with a secret only the local node holds,
 /// [`WebhookVerification::Core`]), before it queues it: the size bound (413), the signature header there (else the
-/// answer of an unsigned request, counted by web protection), and at most `per_minute` requests a minute for the bridge
-/// (`key`; 429, so the network tries again). None when it may be queued. The local node verifies it before applying.
+/// answer of an unsigned request, counted by web protection), and the rates: the client address's share first, so one
+/// address cannot spend the bridge's, then the bridge's (`key`, its node and id; 429, so the network tries again). None
+/// when it may be queued. The local node verifies it before applying.
 pub(super) fn deferred_checks(
     rates: &EdgeRates,
     key: &str,
     request: &WebhookRequest,
     signature_header: &str,
-    max_bytes: usize,
-    per_minute: u32,
+    limits: &UnverifiedLimits,
 ) -> Option<WebhookResponse> {
-    if request.body.len() > max_bytes {
+    if request.body.len() > limits.max_bytes {
         return Some(WebhookResponse::text(
             413,
-            &format!("the request is over {max_bytes} bytes"),
+            &format!("the request is over {} bytes", limits.max_bytes),
         ));
     }
     if request
@@ -471,21 +570,45 @@ pub(super) fn deferred_checks(
         return Some(WebhookResponse::not_signed());
     }
     let now = request.now_millis;
-    let mut buckets = moqui_lib::sync::lock(&rates.buckets);
-    let bucket = buckets
-        .entry(key.to_string())
-        .or_insert_with(|| Bucket::full(per_minute, now));
-    if !bucket.take(per_minute, now) {
+    let client = format!("{key}|{}", request.client_ip);
+    if !rates.take(&client, limits.per_client_minute, now) || !rates.take(key, limits.per_minute, now) {
         // not logged at warn: a flood would flood the log too
-        tracing::debug!("chat bridge {key}: more webhooks than {per_minute} a minute; refused for now (429)");
+        tracing::debug!(
+            "chat bridge {key}: webhooks over its rate from {}; refused for now (429)",
+            request.client_ip
+        );
         return Some(WebhookResponse::text(429, "too many requests; try again later"));
     }
     None
 }
 
+/// The items of bridge `bridge_id` of `node` waiting in the edge node's queue.
+fn unverified_waiting(facade: &EntityFacade, node: &str, bridge_id: &str) -> Result<i64, LibError> {
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let prefix = format!("chatWebhook:{bridge_id}");
+    facade
+        .find(queue::QUEUE_ITEM)?
+        .eq("pairedNodeId", Value::string(node))
+        .eq("kind", Value::string(KIND_WEBHOOK))
+        .eq("statusEnumId", Value::string(queue::PENDING))
+        .condition(Condition::or(vec![
+            Condition::equals("conversationKey", Value::string(&prefix)),
+            Condition::like("conversationKey", Value::string(format!("{prefix}:%"))),
+        ]))
+        .disable_authz()
+        .count()
+}
+
 /// The queue item of a webhook request: the request as the payload (the body in base64, the path and query it came
-/// to), keyed by the network's event id, ordered by `key.conversation` within the bridge.
-fn webhook_item(bridge_id: &str, key: &super::WebhookEventKey, request: &WebhookRequest) -> NewItem {
+/// to), keyed by the network's event id, ordered by `key.conversation` within the bridge. A request the edge node did
+/// not verify (`signed_by`, its signature) is keyed by its signature too: its event id comes from a body anyone could
+/// have sent, so a forged one must not take the key of the network's own event.
+fn webhook_item(
+    bridge_id: &str,
+    key: &super::WebhookEventKey,
+    request: &WebhookRequest,
+    signed_by: Option<&str>,
+) -> NewItem {
     let headers: Vec<[&str; 2]> = request
         .headers
         .iter()
@@ -501,9 +624,17 @@ fn webhook_item(bridge_id: &str, key: &super::WebhookEventKey, request: &Webhook
         "clientIp": request.client_ip,
         "receivedMillis": request.now_millis,
     });
-    let idempotency = format!("chatWebhook:{bridge_id}:{}", key.event_id.trim());
+    let event = key.event_id.trim();
+    let tail = match signed_by {
+        Some(signature) => format!(
+            "{event}:sig:{}",
+            sha256_hex(signature.trim()).chars().take(16).collect::<String>()
+        ),
+        None => event.to_string(),
+    };
+    let idempotency = format!("chatWebhook:{bridge_id}:{tail}");
     let idempotency = if idempotency.len() > 200 {
-        format!("chatWebhook:{bridge_id}:sha256:{}", sha256_hex(key.event_id.trim()))
+        format!("chatWebhook:{bridge_id}:sha256:{}", sha256_hex(&tail))
     } else {
         idempotency
     };
@@ -566,80 +697,141 @@ fn called_by_queue(facade: &EntityFacade, item: &str, node: &str) -> Result<bool
     Ok(receipt.is_some())
 }
 
-/// How long the local node waits before it logs again that a bridge's queued webhooks were dropped.
-const DROP_LOG_MILLIS: i64 = 10 * 60_000;
+// ---- the local node: webhooks checked here ----
 
-/// The queued webhooks the local node dropped, by bridge: in all, and since the last log line.
+/// The queued webhooks a local node refused, kept for `replay#RefusedWebhooks` (30 days, as a batch).
+pub const REFUSED: &str = "moqui.chat.ChatBridgeWebhookRefused";
+/// The refused webhooks kept for one bridge at most; past it they are counted and logged, not kept.
+const REFUSED_KEPT: i64 = 1_000;
+/// How long the local node waits before it logs again that a bridge's queued webhooks were refused.
+const REFUSED_LOG_MILLIS: i64 = 10 * 60_000;
+
+/// The queued webhooks this node refused, by bridge: in all, since when, and since the last log line.
 #[derive(Default)]
-struct DroppedWebhooks {
-    by_bridge: std::sync::Mutex<std::collections::HashMap<String, DropCount>>,
+struct RefusedWebhooks {
+    by_bridge: std::sync::Mutex<std::collections::HashMap<String, RefusedCount>>,
 }
 
 #[derive(Default)]
-struct DropCount {
+struct RefusedCount {
     total: u64,
     unlogged: u64,
     logged_at: Option<i64>,
+    latest_item: String,
 }
 
-/// The queued webhooks of bridge `bridge_id` this node dropped since it started because their signature did not
-/// verify here ([`WebhookVerification::Core`]).
-pub fn dropped_webhooks(factory: &ExecutionContextFactory, bridge_id: &str) -> u64 {
-    let dropped = factory.extension(|_| DroppedWebhooks::default());
-    let counts = moqui_lib::sync::lock(&dropped.by_bridge);
+/// The queued webhooks of bridge `bridge_id` this node refused since it started, their signature not the network's
+/// (the kept ones, across nodes, are `moqui.chat.ChatBridgeWebhookRefused`: `find#Bridges` `refusedWebhookCount`).
+pub fn refused_webhooks(factory: &ExecutionContextFactory, bridge_id: &str) -> u64 {
+    let refused = factory.extension(|_| RefusedWebhooks::default());
+    let counts = moqui_lib::sync::lock(&refused.by_bridge);
     counts.get(bridge_id).map_or(0, |count| count.total)
 }
 
-/// For an adapter that verifies on the local node ([`WebhookVerification::Core`]): the network's signature over the
-/// queued request, checked here with the bridge's whole configuration (the edge node had only the cheap checks). None
-/// when it verifies, or the adapter verified on the edge node; else the item's answer: done and not applied, so the
-/// queue does not try it again. A drop is counted ([`dropped_webhooks`]) and logged once per bridge every
-/// [`DROP_LOG_MILLIS`], with the count since.
-fn verified_here(
-    factory: &ExecutionContextFactory,
-    adapter: &dyn super::ChatBridgeAdapter,
-    info: &BridgeInfo,
-    item: &str,
-    request: &WebhookRequest,
-) -> Option<BTreeMap<String, Value>> {
-    if adapter.webhook_verification() == WebhookVerification::Edge {
-        return None;
-    }
-    let verified = std::panic::catch_unwind(AssertUnwindSafe(|| adapter.verify_webhook(info, request)));
-    if matches!(verified, Ok(None)) {
-        return None;
-    }
-    let bridge_id = &info.chat_bridge_id;
-    let dropped = factory.extension(|_| DroppedWebhooks::default());
-    let now = now_millis();
-    let mut counts = moqui_lib::sync::lock(&dropped.by_bridge);
-    let count = counts.entry(bridge_id.clone()).or_default();
-    count.total += 1;
-    count.unlogged += 1;
-    if count
-        .logged_at
-        .is_none_or(|at| now.saturating_sub(at) >= DROP_LOG_MILLIS)
-    {
+/// Log the refusals of each bridge since its last line, once every [`REFUSED_LOG_MILLIS`] (from each refusal, and
+/// from the delivery worker's round, so the count is logged once refusals stop too).
+pub(super) fn log_refused(factory: &ExecutionContextFactory, now: i64) {
+    let refused = factory.extension(|_| RefusedWebhooks::default());
+    let mut counts = moqui_lib::sync::lock(&refused.by_bridge);
+    for (bridge_id, count) in counts.iter_mut() {
+        if count.unlogged == 0
+            || count
+                .logged_at
+                .is_some_and(|at| now.saturating_sub(at) < REFUSED_LOG_MILLIS)
+        {
+            continue;
+        }
         tracing::error!(
-            "chat bridge {bridge_id}: {} webhook(s) its edge node queued did not verify here and were dropped (the \
-             latest item {item}; {} since this node started); is the bridge's signing secret or webhookUrl right?",
+            "chat bridge {bridge_id}: {} webhook(s) its edge node queued were refused here, their signature not the \
+             network's (the latest item {}; {} since this node started). They are kept for replay#RefusedWebhooks: is \
+             the bridge's signing secret or webhookUrl right?",
             count.unlogged,
+            count.latest_item,
             count.total
         );
         count.unlogged = 0;
         count.logged_at = Some(now);
     }
-    Some(BTreeMap::from([(
-        "dropped".to_string(),
-        Value::string("the signature did not verify"),
+}
+
+/// What the local node found of a queued request's signature.
+#[derive(Debug, PartialEq, Eq)]
+enum Checked {
+    /// The network's.
+    Valid,
+    /// This node cannot tell: what the check needs is missing (a key or secret, a configuration that did not read).
+    CannotCheck(String),
+    /// Not the network's.
+    Refused,
+}
+
+/// The network's signature over a queued request, checked here with the bridge's whole configuration, at the time the
+/// request came and over its URL, whichever node checked it before: an adapter that verifies on the edge node is
+/// checked again, so a bridge whose adapter changed since the edge node queued its request is not applied unchecked.
+fn check_here(adapter: &dyn super::ChatBridgeAdapter, info: &BridgeInfo, request: &WebhookRequest) -> Checked {
+    match std::panic::catch_unwind(AssertUnwindSafe(|| adapter.webhook_verifiable(info))) {
+        Ok(Ok(())) => {}
+        Ok(Err(missing)) => return Checked::CannotCheck(missing),
+        Err(_) => return Checked::CannotCheck("the adapter failed while it checked".to_string()),
+    }
+    match std::panic::catch_unwind(AssertUnwindSafe(|| adapter.verify_webhook(info, request))) {
+        Ok(None) => Checked::Valid,
+        Ok(Some(_)) => Checked::Refused,
+        Err(_) => Checked::CannotCheck("the adapter failed while it checked".to_string()),
+    }
+}
+
+/// A queued request whose signature is not the network's: counted and logged ([`log_refused`]), and kept (at most
+/// [`REFUSED_KEPT`] a bridge) for `replay#RefusedWebhooks` after a configuration fix. The item is answered as done:
+/// a failed one would hold the conversation's later items behind it for its retries.
+fn refuse_here(
+    factory: &ExecutionContextFactory,
+    facade: &EntityFacade,
+    bridge_id: &str,
+    node: &str,
+    item: &str,
+    payload: &str,
+    request: &WebhookRequest,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let now = now_millis();
+    {
+        let refused = factory.extension(|_| RefusedWebhooks::default());
+        let mut counts = moqui_lib::sync::lock(&refused.by_bridge);
+        let count = counts.entry(bridge_id.to_string()).or_default();
+        count.total += 1;
+        count.unlogged += 1;
+        count.latest_item = item.to_string();
+    }
+    log_refused(factory, now);
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let kept = facade
+        .find(REFUSED)?
+        .eq("chatBridgeId", Value::string(bridge_id))
+        .disable_authz()
+        .count()?;
+    if kept < REFUSED_KEPT {
+        let mut row = facade.make_value(REFUSED)?;
+        row.set("chatBridgeId", Value::string(bridge_id));
+        row.set("pairedNodeId", Value::string(node));
+        row.set("queueItemId", Value::string(item));
+        row.set("receivedDate", stamp_value(request.now_millis));
+        row.set("refusedDate", stamp_value(now));
+        row.set("reason", Value::string("the signature is not the network's"));
+        row.set("requestJson", Value::string(payload));
+        row.create_or_update(facade)?;
+    }
+    Ok(BTreeMap::from([(
+        "refused".to_string(),
+        Value::string("the signature is not the network's; kept for replay#RefusedWebhooks"),
     )]))
 }
 
-/// `apply#EdgeWebhook`, on the local node: a webhook request its edge node queued, handed to the bridge's adapter
-/// ([`super::ChatBridgeAdapter::apply_webhook`]) with the transport-verified mark set. The edge node verified it, or for
-/// an adapter that verifies here this node does first and drops one that fails ([`verified_here`]). A bridge that is
-/// disabled here, or a database that cannot be read, answers `retryLater`, and so does an adapter's 409, 429 or 503;
-/// any other refusal is an error, counted.
+/// `apply#EdgeWebhook`, on the local node: a webhook request its edge node queued, its signature checked here
+/// ([`check_here`]) and handed to the bridge's adapter ([`super::ChatBridgeAdapter::apply_webhook`]) with the
+/// transport-verified mark set. One this node cannot check (the bridge's key or secret missing), a bridge that is
+/// disabled here, or a database that cannot be read answers `retryLater`, and so does an adapter's 409, 429 or 503; one
+/// whose signature is not the network's is refused here and kept ([`refuse_here`]); any other refusal is an error,
+/// counted.
 fn apply_edge_webhook(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -651,15 +843,17 @@ fn apply_edge_webhook(
         ));
     }
     let item = param(parameters, "queueItemId").unwrap_or_default();
+    let node = param(parameters, "pairedNodeId").unwrap_or_default();
     // only the queue's apply may set the transport-verified mark: it runs as the delegate user, with the item's receipt
     // inserted in this transaction
-    if !called_by_queue(facade, &item, &param(parameters, "pairedNodeId").unwrap_or_default())? {
+    if !called_by_queue(facade, &item, &node)? {
         tracing::error!("apply#EdgeWebhook was called for item {item} other than by the edge queue; refused");
         return Err(LibError::new(
             "apply#EdgeWebhook runs only for an item the edge queue applies",
         ));
     }
-    let payload: serde_json::Value = serde_json::from_str(&param(parameters, "payload").unwrap_or_default())
+    let payload_text = param(parameters, "payload").unwrap_or_default();
+    let payload: serde_json::Value = serde_json::from_str(&payload_text)
         .map_err(|error| LibError::new(format!("chat webhook item {item}: its payload is not JSON: {error}")))?;
     let bridge_id = payload["chatBridgeId"].as_str().unwrap_or_default().to_string();
     if bridge_id.is_empty() {
@@ -695,8 +889,14 @@ fn apply_edge_webhook(
             "chat bridge {bridge_id} has no adapter in this build"
         )));
     };
-    if let Some(dropped) = verified_here(&factory, adapter.as_ref(), &info, &item, &request) {
-        return Ok(dropped);
+    match check_here(adapter.as_ref(), &info, &request) {
+        Checked::Valid => {}
+        Checked::CannotCheck(missing) => {
+            return Ok(retry_later(format!(
+                "chat webhook item {item}: bridge {bridge_id} cannot check its webhooks here: {missing}"
+            )))
+        }
+        Checked::Refused => return refuse_here(&factory, facade, &bridge_id, &node, &item, &payload_text, &request),
     }
     let answer = marked(&bridge_id, || {
         std::panic::catch_unwind(AssertUnwindSafe(|| adapter.apply_webhook(&info, &request)))
@@ -727,6 +927,101 @@ fn apply_edge_webhook(
             )))
         }
     }
+}
+
+/// `replay#RefusedWebhooks` (`ChatBridgeAdmin`): the queued webhooks of bridge `chatBridgeId` this cluster refused
+/// ([`refuse_here`]), checked again with the bridge's configuration as it is now (after its secret or `webhookUrl` was
+/// fixed) and applied when they pass; each in a transaction of its own, one that fails logged and the rest go on. Out:
+/// appliedCount, refusedCount (still not the network's, kept), waitingCount (cannot be checked or applied now, kept).
+fn replay_refused_webhooks(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let factory = current_factory().ok_or_else(|| LibError::new("no execution context"))?;
+    let authz_disabled = ExecutionContext::with_current(|ec| ec.authz_disabled()).unwrap_or(false);
+    if !authz_disabled && !crate::user::has_permission("ChatBridgeAdmin")? {
+        return Err(LibError::new("Chat bridges are for administrators"));
+    }
+    let bridge_id = param(parameters, "chatBridgeId").unwrap_or_default();
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let Some(row) = facade
+        .find(BRIDGE)?
+        .eq("chatBridgeId", Value::string(&bridge_id))
+        .disable_authz()
+        .one()?
+    else {
+        return Err(LibError::new(format!("Chat bridge {bridge_id} not found")));
+    };
+    let info = bridge_info(&row);
+    let adapter = adapter_of(&factory, facade, &info)
+        .ok_or_else(|| LibError::new(format!("No adapter for bridge {bridge_id}")))?;
+    let kept = facade
+        .find(REFUSED)?
+        .eq("chatBridgeId", Value::string(&bridge_id))
+        .order_by("receivedDate", false)
+        .disable_authz()
+        .list()?;
+    let (mut applied, mut refused, mut waiting) = (0_i64, 0_i64, 0_i64);
+    for kept in kept.values() {
+        let node = text_of(kept, "pairedNodeId").unwrap_or_default();
+        let item = text_of(kept, "queueItemId").unwrap_or_default();
+        let request = serde_json::from_str::<serde_json::Value>(&text_of(kept, "requestJson").unwrap_or_default())
+            .map_err(|error| error.to_string())
+            .and_then(|payload| request_of(&payload));
+        let request = match request {
+            Ok(request) => request,
+            Err(error) => {
+                tracing::error!("refused chat webhook item {item} of bridge {bridge_id} cannot be read: {error}");
+                refused += 1;
+                continue;
+            }
+        };
+        match check_here(adapter.as_ref(), &info, &request) {
+            Checked::Valid => {}
+            Checked::Refused => {
+                refused += 1;
+                continue;
+            }
+            Checked::CannotCheck(missing) => {
+                tracing::warn!("refused chat webhook item {item} of bridge {bridge_id} cannot be checked: {missing}");
+                waiting += 1;
+                continue;
+            }
+        }
+        let worked = transaction(facade, REFUSED, TransactionAttribute::ForceNew, || {
+            let answer = marked(&bridge_id, || {
+                std::panic::catch_unwind(AssertUnwindSafe(|| adapter.apply_webhook(&info, &request)))
+            })
+            .map_err(|_| LibError::new("the adapter failed"))?;
+            if !(200..300).contains(&answer.status) {
+                return Ok(false);
+            }
+            facade
+                .find(REFUSED)?
+                .eq("chatBridgeId", Value::string(&bridge_id))
+                .eq("pairedNodeId", Value::string(&node))
+                .eq("queueItemId", Value::string(&item))
+                .disable_authz()
+                .delete_all()?;
+            Ok(true)
+        });
+        match worked {
+            Ok(true) => applied += 1,
+            Ok(false) => waiting += 1,
+            Err(error) => {
+                tracing::error!("refused chat webhook item {item} of bridge {bridge_id} was not applied: {error}");
+                waiting += 1;
+            }
+        }
+    }
+    tracing::info!(
+        "chat bridge {bridge_id}: refused webhooks replayed: {applied} applied, {refused} still refused, {waiting} wait"
+    );
+    Ok(BTreeMap::from([
+        ("appliedCount".to_string(), Value::I64(applied)),
+        ("refusedCount".to_string(), Value::I64(refused)),
+        ("waitingCount".to_string(), Value::I64(waiting)),
+    ]))
 }
 
 // ---- the local node: files out ----

@@ -152,6 +152,27 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Sms.js').execute('noteKeyword', context))</script></actions>
     </service>
 
+    <service verb="note" noun="SmsOptSignal" allow-remote="false">
+        <description>Internal (an SMS adapter's webhook, after it checked the provider's signature): the provider tells that
+            theirNumber opted out of ourNumber (keyword STOP) or back in (START), as its event eventId on bridge chatBridgeId.
+            Applied once: the event is kept as a done ChatBridgeInbound (transactionId signal:eventId), so a copy of it (a
+            provider with no timestamp in its signature, Twilio, can be replayed after the replay cache let it go) is
+            outcome duplicate and changes nothing. ourNumber must have messaging through chatBridgeId (else outcome
+            ignored, reasonCode unknownNumber). Out: outcome noted, duplicate or ignored.</description>
+        <in-parameters>
+            <parameter name="chatBridgeId" required="true"/>
+            <parameter name="eventId" required="true"/>
+            <parameter name="ourNumber" required="true"/>
+            <parameter name="theirNumber" required="true"/>
+            <parameter name="keyword" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="outcome"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Sms.js').execute('noteOptSignal', context))</script></actions>
+    </service>
+
     <service verb="receive" noun="Sms" allow-remote="false" transaction="ignore">
         <description>Internal (an SMS adapter's webhook, after it checked the provider's signature): a text from theirNumber to
             ourNumber on bridge chatBridgeId, the provider's webhook eventId (the ingest transaction: a repeated webhook does
@@ -159,7 +180,8 @@ along with this software (see the LICENSE.md file). If not, see
             the pair's opt-out; the pair room is found or made; the text goes through ChatBridgeServices.ingest#Event. outcome
             (accepted, duplicate, rejected, waiting, ignored for a number without messaging on this bridge, failed), reasonCode,
             chatRoomId, eventSeq. recipientList, every number a group text went to (our number among them): its room is the
-            group's, of the sender and the others.</description>
+            group's, of the sender and the others. externalThreadId, the provider's conversation the text came in (a Twilio
+            Conversation): the room of the bridge's mapping that keeps it (store#MappingThread), whoever writes.</description>
         <in-parameters>
             <parameter name="chatBridgeId" required="true"/>
             <parameter name="eventId" required="true"/>
@@ -167,6 +189,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="ourNumber" required="true"/>
             <parameter name="theirNumber" required="true"/>
             <parameter name="recipientList" type="List"/>
+            <parameter name="externalThreadId"/>
             <parameter name="text" allow-html="any"/>
             <parameter name="mediaList" type="List"/>
             <parameter name="originMillis" type="Long"/>

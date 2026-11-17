@@ -33,15 +33,16 @@
 //! - **Out.** One number: `POST /2010-04-01/Accounts/{AccountSid}/Messages.json`, form-encoded, `To`, `From` (our
 //!   number) or `MessagingServiceSid`, `Body`, `MediaUrl` (one a file), `StatusCallback` (the bridge's webhook URL); its
 //!   `sid` is the delivery's remote id. Twilio has no idempotency key for it. Its error codes: 21610 (the person sent
-//!   STOP) `optedOut`, and the pair is marked opted out; 21211, 21614 `badNumber`; 21408 `internationalNotEnabled`
+//!   STOP) `optedOut` (the core marks the pair opted out); 21211, 21614 `badNumber`; 21408 `internationalNotEnabled`
 //!   (the region is not enabled for the account); 30007 `filtered`; 30032, 30034 `notRegistered`; 20429 and 21611 tried
 //!   again; any other `providerRefused`. A group text goes through the Conversations API ([`group`]).
 //! - **In.** Form posts signed in `X-Twilio-Signature` ([`signature_valid`]: HMAC-SHA1 under `authToken` over the URL
 //!   Twilio posted to and the sorted parameters), checked on the local node (the edge node never holds the token).
 //!   Twilio's signature has no time in it: a copy is caught by the replay cache while it holds it, and after that by the
-//!   ids (the message's `MessageSid` once, a receipt's status once). An inbound text (`MessageSid`, `From`, `To`,
-//!   `Body`, `MediaUrl{N}`, its `OptOutType` when Advanced Opt-Out took it as a keyword) and a status callback
-//!   (`MessageStatus`, `ErrorCode`), answered with empty TwiML. Files are fetched with the API's Basic auth.
+//!   ids (the message's `MessageSid` once, a receipt never back). An inbound text (`MessageSid`, `From`, `To`, `Body`,
+//!   `MediaUrl{N}`; a STOP Advanced Opt-Out took, `OptOutType`, is the text's keyword, taken through it only) and a
+//!   status callback (`MessageStatus`, `ErrorCode`), answered with empty TwiML, on an edge node too. Files are fetched
+//!   with the API's Basic auth. With no `authToken` a queued request waits ([`SmsProvider::can_verify`]).
 //!
 //! Its encryption is `None` (plans/Comms-Messaging.md §6.3): the API is reached over TLS, but Twilio, the carriers and
 //! the phone network read every text.
@@ -236,15 +237,7 @@ impl SmsProvider for Twilio {
         if out.group() {
             return group::send(self, client, config, settings, out);
         }
-        let outcome = exchange(self, client, out, &self.request(config, settings, out));
-        if let DeliveryOutcome::Failed { reason_code, .. } = &outcome {
-            if reason_code == "optedOut" {
-                if let Some(theirs) = out.theirs.first() {
-                    opted_out(out.bridge, out.ours, theirs);
-                }
-            }
-        }
-        outcome
+        exchange(self, client, out, &self.request(config, settings, out))
     }
 
     fn signature_header(&self) -> &'static str {
@@ -253,6 +246,13 @@ impl SmsProvider for Twilio {
 
     fn verifies_on_edge(&self) -> bool {
         false
+    }
+
+    fn can_verify(&self, config: &Config) -> Result<(), String> {
+        match config.auth_token {
+            Some(_) => Ok(()),
+            None => Err("the bridge has no authToken in its configuration".to_string()),
+        }
     }
 
     fn verify(&self, bridge: &BridgeInfo, config: &Config, _settings: &Settings, request: &WebhookRequest) -> bool {
@@ -382,22 +382,6 @@ pub fn refusal_of(code: Option<&str>) -> Refusal {
         Some("20429" | "21611") => return Refusal::Retry,
         _ => "providerRefused",
     })
-}
-
-/// A send Twilio refused because the person opted out (21610): the pair is marked as a STOP would mark it, so the next
-/// send is refused before Twilio.
-fn opted_out(bridge: &BridgeInfo, ours: &str, theirs: &str) {
-    let parameters = std::collections::BTreeMap::from([
-        ("ourNumber".to_string(), moqui_lib::object::Value::string(ours)),
-        ("theirNumber".to_string(), moqui_lib::object::Value::string(theirs)),
-        ("keyword".to_string(), moqui_lib::object::Value::string("STOP")),
-    ]);
-    if let Err(error) = crate::call("org.moqui.call.SmsServices.note#SmsKeyword", parameters) {
-        tracing::warn!(
-            "SMS bridge {}: Twilio refused a text to {theirs} as opted out, and the opt-out was not kept: {error}",
-            bridge.chat_bridge_id
-        );
-    }
 }
 
 // ---- the signature ----
@@ -617,8 +601,7 @@ fn received(form: &Form) -> Result<SmsEvent, WebhookResponse> {
             .find(|(key, _)| key == "Body")
             .map(|(_, body)| body.clone()),
         media,
-        recipients: Vec::new(),
-        origin_millis: None,
+        ..Inbound::default()
     }))
 }
 

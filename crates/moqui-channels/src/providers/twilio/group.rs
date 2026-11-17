@@ -16,31 +16,31 @@
 //! MMS, so a group room is one Twilio Conversation, between +1 (US and Canadian) long codes, at most 10 participants
 //! (our number and [`super::GROUP_MAX`] others).
 //!
-//! - **Out.** The room's Conversation is its mapping's thread (`ChatRoomBridge.externalThreadId`, the `CH...` SID).
-//!   A room with none gets one on its first send: looked up by its unique name first ([`unique_name`], of the bridge and
-//!   the room's numbers, so a send after a lost answer finds the one made before and never makes a second), else made
-//!   with it; then our number joins as the chat participant (`Identity` and `MessagingBinding.ProjectedAddress` our
-//!   number), each other number as an SMS participant (`MessagingBinding.Address`; when Twilio answers that another
-//!   Conversation has these numbers, 50438, as one it made for a group text that came in, that one is found by its
-//!   participants and taken instead), and a webhook of the Conversation
-//!   names the bridge's webhook URL for `onMessageAdded` and `onDeliveryUpdated`; then the mapping keeps the SID
-//!   (`store#MappingThread`). Nothing has reached anyone's phone until the message is posted, so a failure or a lost
-//!   answer in these steps is tried again. The message is `POST .../Conversations/{CH}/Messages` (`Author` our number,
-//!   `Body`): its `sid` (`IM...`) is the delivery's remote id, and an answer lost there is uncertain, as for any text.
-//!   Files are not sent in a group text: Twilio takes a Conversation's files only as uploads to its Media Content
-//!   Service, which this adapter does not do yet (`groupMediaNotSupported`).
+//! - **Out.** The room's Conversation is its mapping's thread (`ChatRoomBridge.externalThreadId`, the `CH...` SID,
+//!   which the delivery carries). A room with none gets one on its first send: looked up by its unique name first
+//!   ([`unique_name`], of the bridge and the room's numbers, so a send after a lost answer finds the one made before and
+//!   never makes a second), else made with it, and kept on the mapping at once ([`crate::sms::store_thread`]); then our
+//!   number joins as the chat participant (`Identity` and `MessagingBinding.ProjectedAddress` our number), each other
+//!   number as an SMS participant (`MessagingBinding.Address`; a later try adds only those it lacks; when Twilio
+//!   answers that another Conversation has these numbers, 50438, as one it made for a group text that came in, that
+//!   one is found by its participants and kept instead), and a webhook of the Conversation names the bridge's webhook
+//!   URL for `onMessageAdded` and `onDeliveryUpdated`. Nothing has reached anyone's phone until the message is posted,
+//!   so a failure or a lost answer in these steps is tried again. The message is `POST .../Conversations/{CH}/Messages`
+//!   (`Author` our number, `Body`): its `sid` (`IM...`) is the delivery's remote id, and an answer lost there is
+//!   uncertain, as for any text. Files are not sent in a group text: Twilio takes a Conversation's files only as
+//!   uploads to its Media Content Service, which this adapter does not do yet (`groupMediaNotSupported`).
 //! - **In.** The Conversation's webhooks are form posts signed as the Messages API's are: `onMessageAdded` is a text
-//!   (`Author` the sender's number, `Body`, `Media` the files in the Media Content Service), with every number of the
-//!   Conversation as its recipients; `onDeliveryUpdated` is one recipient's receipt (`ParticipantSid`, `Status`,
-//!   `ErrorCode`) of the message (`MessageSid`). A Conversation's participants (their ids and numbers) are read from
-//!   Twilio once a process and kept ([`Participants`]).
+//!   (`Author` the sender's number, `Body`, `Media` the files in the Media Content Service) of the Conversation
+//!   (`Inbound.thread_id`: the room whose mapping keeps it), with every number of the Conversation as its recipients;
+//!   `onDeliveryUpdated` is one recipient's receipt (`ParticipantSid`, `Status`, `ErrorCode`) of the message
+//!   (`MessageSid`). A Conversation's participants (their ids and numbers) are read from Twilio once a process and kept
+//!   by bridge ([`Participants`]).
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 
 use moqui_core::service::chat_bridge::{BridgeInfo, DeliveryOutcome, WebhookResponse};
 use moqui_lib::http::{Method, RestClient, RestResponse};
-use moqui_lib::object::Value;
 use serde_json::Value as Json;
 
 use super::{auth_headers, is_sid, Config, Form, Twilio};
@@ -49,8 +49,8 @@ use crate::sms::{
     SmsEvent, SmsProvider as _,
 };
 
-/// The participants of each Conversation a process knows: by `CH...` SID, each participant's `MB...` SID and number
-/// (our number's is its projected address).
+/// The participants of each Conversation a process knows, by bridge and `CH...` SID (shared by every bridge of the
+/// adapter): each participant's `MB...` SID and number (our number's is its projected address).
 #[derive(Default)]
 pub struct Participants {
     by_conversation: Mutex<HashMap<String, Roster>>,
@@ -66,17 +66,23 @@ pub struct Roster {
 }
 
 impl Participants {
-    pub fn get(&self, conversation: &str) -> Option<Roster> {
-        moqui_lib::sync::lock(&self.by_conversation).get(conversation).cloned()
+    pub fn get(&self, bridge_id: &str, conversation: &str) -> Option<Roster> {
+        moqui_lib::sync::lock(&self.by_conversation)
+            .get(&format!("{bridge_id}:{conversation}"))
+            .cloned()
     }
 
-    pub fn put(&self, conversation: &str, roster: Roster) {
+    fn forget(&self, bridge_id: &str, conversation: &str) {
+        let _ = moqui_lib::sync::lock(&self.by_conversation).remove(&format!("{bridge_id}:{conversation}"));
+    }
+
+    pub fn put(&self, bridge_id: &str, conversation: &str, roster: Roster) {
         let mut known = moqui_lib::sync::lock(&self.by_conversation);
         // a process keeps at most this many; a Conversation it forgot is read again
         if known.len() >= 10_000 {
             known.clear();
         }
-        known.insert(conversation.to_string(), roster);
+        known.insert(format!("{bridge_id}:{conversation}"), roster);
     }
 }
 
@@ -182,12 +188,9 @@ pub fn send(
             "The Twilio bridge's conversationsBaseUrl is not an https address",
         );
     }
-    let conversation = match thread_of(out).filter(|sid| is_sid(sid, "CH")) {
-        Some(sid) => sid.to_string(),
-        None => match conversation_of(provider, client, config, out) {
-            Ok(sid) => sid,
-            Err(outcome) => return outcome,
-        },
+    let conversation = match conversation_of(provider, client, config, out) {
+        Ok(sid) => sid,
+        Err(outcome) => return outcome,
     };
     let mut form = vec![("Author".to_string(), out.ours.to_string())];
     if let Some(text) = out.text {
@@ -202,8 +205,8 @@ pub fn send(
     exchange(provider, client, out, &request)
 }
 
-/// The room's Conversation, found by its unique name or made, with its participants and its webhook, and kept on the
-/// room's mapping.
+/// The room's Conversation: its mapping's thread, else found by its unique name or made, and kept on the mapping at
+/// once ([`crate::sms::store_thread`]); then the numbers it lacks added, and for one new to the mapping its webhook.
 fn conversation_of(
     provider: &Twilio,
     client: &RestClient,
@@ -212,7 +215,125 @@ fn conversation_of(
 ) -> Result<String, DeliveryOutcome> {
     let base = conversations_base(config);
     let bridge = out.bridge;
-    let unique = unique_name(&bridge.chat_bridge_id, &out.request.external_room_id);
+    let (sid, new) = match out
+        .request
+        .external_thread_id
+        .as_deref()
+        .filter(|sid| is_sid(sid, "CH"))
+    {
+        Some(sid) => (sid.to_string(), false),
+        None => {
+            let sid = found_or_made(provider, client, config, out)?;
+            keep_thread(out, &sid)?;
+            (sid, true)
+        }
+    };
+    // who is in it already: none of a new one; else as kept, or read from Twilio (all added again, each there already
+    // answered as such, when it cannot be read)
+    let mut roster = if new {
+        Roster::default()
+    } else {
+        roster_of(provider, client, config, &bridge.chat_bridge_id, &sid).unwrap_or_default()
+    };
+    roster.ours = Some(out.ours.to_string());
+    let present: Vec<String> = roster.numbers.values().cloned().collect();
+    // our number as the chat participant, its projected address; each other number by its own address
+    let mut joins = Vec::new();
+    if !present.iter().any(|number| number == out.ours) {
+        joins.push((
+            out.ours.to_string(),
+            vec![
+                ("Identity".to_string(), out.ours.to_string()),
+                ("MessagingBinding.ProjectedAddress".to_string(), out.ours.to_string()),
+            ],
+        ));
+    }
+    for number in out.theirs.iter().filter(|number| !present.contains(number)) {
+        joins.push((
+            number.clone(),
+            vec![("MessagingBinding.Address".to_string(), number.clone())],
+        ));
+    }
+    let mut complete = true;
+    for (number, form) in joins {
+        let joined = setup_call(
+            client,
+            &form_request(
+                config,
+                Method::Post,
+                format!("{base}/Conversations/{sid}/Participants"),
+                form,
+            ),
+            "did not add a number to the group's Conversation",
+        )?;
+        match joined.status() {
+            200..=299 => match json_of(&joined).get("sid").and_then(Json::as_str) {
+                Some(participant) => {
+                    roster.numbers.insert(participant.to_string(), number);
+                }
+                None => complete = false,
+            },
+            // there already: a send before this one got this far (409; Twilio's 50416, 50433, 50437)
+            409 => complete = false,
+            status => {
+                let error = provider.error_of(joined.body());
+                match error.code.as_deref() {
+                    Some("50416" | "50433" | "50437") => complete = false,
+                    // another Conversation has these numbers (Twilio made it for a text that came in): that one is the
+                    // room's, and one made here goes
+                    Some("50438") => {
+                        let Some(other) = existing_group(provider, client, config, out) else {
+                            return Err(failed(
+                                "providerRefused",
+                                "Twilio has another Conversation of this group, and it was not found",
+                            ));
+                        };
+                        keep_thread(out, &other)?;
+                        if new {
+                            let _ = call(
+                                client,
+                                &form_request(
+                                    config,
+                                    Method::Delete,
+                                    format!("{base}/Conversations/{sid}"),
+                                    Vec::new(),
+                                ),
+                            );
+                        }
+                        return Ok(other);
+                    }
+                    _ => {
+                        return Err(failed(
+                            "providerRefused",
+                            format!(
+                                "Twilio did not add {number} to the group's Conversation ({status}): {}",
+                                error.text
+                            ),
+                        ))
+                    }
+                }
+            }
+        }
+    }
+    // a roster missing one that was there already is read again when a receipt needs it
+    if complete {
+        provider.participants.put(&bridge.chat_bridge_id, &sid, roster);
+    }
+    if new {
+        hook(client, config, out, &sid);
+    }
+    Ok(sid)
+}
+
+/// The Conversation of the room's unique name: found (one made before an answer was lost), else made.
+fn found_or_made(
+    provider: &Twilio,
+    client: &RestClient,
+    config: &Config,
+    out: &Outgoing<'_>,
+) -> Result<String, DeliveryOutcome> {
+    let base = conversations_base(config);
+    let unique = unique_name(&out.bridge.chat_bridge_id, &out.request.external_room_id);
     let find = || -> Result<Option<String>, DeliveryOutcome> {
         let found = setup_call(
             client,
@@ -233,145 +354,71 @@ fn conversation_of(
             _ => None,
         })
     };
-    let sid = match find()? {
-        Some(sid) => sid,
-        None => {
-            let names = out.theirs.join(", ");
-            let made = setup_call(
-                client,
-                &form_request(
-                    config,
-                    Method::Post,
-                    format!("{base}/Conversations"),
-                    vec![
-                        ("UniqueName".to_string(), unique.clone()),
-                        ("FriendlyName".to_string(), names.chars().take(200).collect()),
-                    ],
-                ),
-                "did not make the group's Conversation",
-            )?;
-            let sid = json_of(&made)
-                .get("sid")
-                .and_then(Json::as_str)
-                .filter(|sid| is_sid(sid, "CH"))
-                .map(str::to_string);
-            match (made.status(), sid) {
-                (200..=299, Some(sid)) => sid,
-                // made at once by another send: found by its name
-                (409, _) => find()?.ok_or_else(|| retry("Twilio's group Conversation is not there yet", false))?,
-                (status, _) => {
-                    let error = provider_error(&made);
-                    return Err(failed(
-                        "providerRefused",
-                        format!("Twilio did not make the group's Conversation ({status}): {error}"),
-                    ));
-                }
-            }
-        }
-    };
-    let mut roster = Roster {
-        ours: Some(out.ours.to_string()),
-        numbers: BTreeMap::new(),
-    };
-    // our number as the chat participant, its projected address; each other number by its own address. One there
-    // already (a send before this one got this far) is 409
-    let mut joins = vec![(
-        out.ours.to_string(),
-        vec![
-            ("Identity".to_string(), out.ours.to_string()),
-            ("MessagingBinding.ProjectedAddress".to_string(), out.ours.to_string()),
-        ],
-    )];
-    for number in out.theirs {
-        joins.push((
-            number.clone(),
-            vec![("MessagingBinding.Address".to_string(), number.clone())],
-        ));
+    if let Some(sid) = find()? {
+        return Ok(sid);
     }
-    for (number, form) in joins {
-        let joined = setup_call(
-            client,
-            &form_request(
-                config,
-                Method::Post,
-                format!("{base}/Conversations/{sid}/Participants"),
-                form,
+    let names = out.theirs.join(", ");
+    let made = setup_call(
+        client,
+        &form_request(
+            config,
+            Method::Post,
+            format!("{base}/Conversations"),
+            vec![
+                ("UniqueName".to_string(), unique.clone()),
+                ("FriendlyName".to_string(), names.chars().take(200).collect()),
+            ],
+        ),
+        "did not make the group's Conversation",
+    )?;
+    let sid = json_of(&made)
+        .get("sid")
+        .and_then(Json::as_str)
+        .filter(|sid| is_sid(sid, "CH"))
+        .map(str::to_string);
+    match (made.status(), sid) {
+        (200..=299, Some(sid)) => Ok(sid),
+        // made at once by another send: found by its name
+        (409, _) => find()?.ok_or_else(|| retry("Twilio's group Conversation is not there yet", false)),
+        (status, _) => Err(failed(
+            "providerRefused",
+            format!(
+                "Twilio did not make the group's Conversation ({status}): {}",
+                provider.error_of(made.body()).text
             ),
-            "did not add a number to the group's Conversation",
-        )?;
-        match joined.status() {
-            200..=299 => {
-                if let Some(participant) = json_of(&joined).get("sid").and_then(Json::as_str) {
-                    roster.numbers.insert(participant.to_string(), number);
-                }
-            }
-            // there already: a send before this one got this far (409; Twilio's 50416, 50433, 50437)
-            409 => {}
-            status => {
-                let error = provider.error_of(joined.body());
-                match error.code.as_deref() {
-                    Some("50416" | "50433" | "50437") => {}
-                    // another Conversation has these numbers (Twilio made it for a text that came in): that one is the
-                    // room's, and the one made here goes
-                    Some("50438") => {
-                        let Some(other) = existing_group(provider, client, config, out) else {
-                            return Err(failed(
-                                "providerRefused",
-                                "Twilio has another Conversation of this group, and it was not found",
-                            ));
-                        };
-                        let _ = call(
-                            client,
-                            &form_request(config, Method::Delete, format!("{base}/Conversations/{sid}"), Vec::new()),
-                        );
-                        keep_thread(bridge, out, &other)?;
-                        return Ok(other);
-                    }
-                    _ => {
-                        return Err(failed(
-                            "providerRefused",
-                            format!(
-                                "Twilio did not add {number} to the group's Conversation ({status}): {}",
-                                error.text
-                            ),
-                        ))
-                    }
-                }
-            }
-        }
+        )),
     }
-    // its receipts and replies to the bridge's webhook, whatever the service's own webhooks are
-    if let Some(callback) = crate::sms::callback_url(bridge) {
-        let hooked = setup_call(
-            client,
-            &form_request(
-                config,
-                Method::Post,
-                format!("{base}/Conversations/{sid}/Webhooks"),
-                vec![
-                    ("Target".to_string(), "webhook".to_string()),
-                    ("Configuration.Url".to_string(), callback),
-                    ("Configuration.Method".to_string(), "POST".to_string()),
-                    ("Configuration.Filters".to_string(), "onMessageAdded".to_string()),
-                    ("Configuration.Filters".to_string(), "onDeliveryUpdated".to_string()),
-                ],
-            ),
-            "did not add the group Conversation's webhook",
+}
+
+/// A webhook of the Conversation to the bridge's webhook URL, whatever the service's own webhooks are: its replies and
+/// receipts. One not added is logged, and they come only through the service's webhook.
+fn hook(client: &RestClient, config: &Config, out: &Outgoing<'_>, sid: &str) {
+    let Some(callback) = crate::sms::callback_url(out.bridge) else {
+        return;
+    };
+    let hooked = setup_call(
+        client,
+        &form_request(
+            config,
+            Method::Post,
+            format!("{}/Conversations/{sid}/Webhooks", conversations_base(config)),
+            vec![
+                ("Target".to_string(), "webhook".to_string()),
+                ("Configuration.Url".to_string(), callback),
+                ("Configuration.Method".to_string(), "POST".to_string()),
+                ("Configuration.Filters".to_string(), "onMessageAdded".to_string()),
+                ("Configuration.Filters".to_string(), "onDeliveryUpdated".to_string()),
+            ],
+        ),
+        "did not add the group Conversation's webhook",
+    );
+    if !matches!(&hooked, Ok(response) if (200..300).contains(&response.status())) {
+        tracing::warn!(
+            "SMS bridge {}: the webhook of Twilio Conversation {sid} was not added; its replies and receipts come \
+             only through the Conversations service's own webhook",
+            out.bridge.chat_bridge_id
         );
-        if !matches!(&hooked, Ok(response) if (200..300).contains(&response.status())) {
-            tracing::warn!(
-                "SMS bridge {}: the webhook of Twilio Conversation {sid} was not added; its replies and receipts come \
-                 only through the Conversations service's own webhook",
-                bridge.chat_bridge_id
-            );
-        }
     }
-    // a roster missing a participant that was there already is read again when a receipt needs it
-    if roster.numbers.len() == out.theirs.len() + 1 {
-        provider.participants.put(&sid, roster);
-    }
-    keep_thread(bridge, out, &sid)?;
-    Ok(sid)
 }
 
 /// The Conversation of exactly the group's numbers that Twilio has already (`ParticipantConversations` of the first
@@ -402,7 +449,7 @@ fn existing_group(provider: &Twilio, client: &RestClient, config: &Config, out: 
         .filter_map(|entry| entry.get("conversation_sid").and_then(Json::as_str))
         .filter(|sid| is_sid(sid, "CH"))
         .find(|sid| {
-            roster_of(provider, client, config, sid).is_ok_and(|roster| {
+            roster_of(provider, client, config, &out.bridge.chat_bridge_id, sid).is_ok_and(|roster| {
                 let mut numbers: Vec<&str> = roster.numbers.values().map(String::as_str).collect();
                 numbers.sort_unstable();
                 numbers.dedup();
@@ -412,29 +459,15 @@ fn existing_group(provider: &Twilio, client: &RestClient, config: &Config, out: 
         .map(str::to_string)
 }
 
-fn provider_error(response: &RestResponse) -> String {
-    Twilio::default().error_of(response.body()).text
-}
-
-/// Keep the Conversation's SID as the room's mapping's thread (`store#MappingThread`, in a transaction of its own).
-fn keep_thread(bridge: &BridgeInfo, out: &Outgoing<'_>, sid: &str) -> Result<(), DeliveryOutcome> {
-    let parameters = BTreeMap::from([
-        ("chatBridgeId".to_string(), Value::string(&bridge.chat_bridge_id)),
-        (
-            "externalRoomId".to_string(),
-            Value::string(&out.request.external_room_id),
-        ),
-        ("externalThreadId".to_string(), Value::string(sid)),
-    ]);
-    crate::call("org.moqui.chat.ChatBridgeServices.store#MappingThread", parameters)
-        .map(|_| ())
-        .map_err(|error| {
-            // not kept: the next try finds the Conversation by its name
-            retry(
-                format!("The group's Twilio Conversation {sid} was not kept on its room: {error}"),
-                false,
-            )
-        })
+/// Keep the Conversation's SID as the room's mapping's thread, at once (`store#MappingThread`, in a transaction of its
+/// own): a later try carries it (`DeliveryRequest.external_thread_id`) and makes no other.
+fn keep_thread(out: &Outgoing<'_>, sid: &str) -> Result<(), DeliveryOutcome> {
+    crate::sms::store_thread(out.bridge, &out.request.external_room_id, sid).map_err(|error| {
+        retry(
+            format!("The group's Twilio Conversation {sid} was not kept on its room: {error}"),
+            false,
+        )
+    })
 }
 
 /// A Conversation's participants, read from Twilio (`GET .../Participants`), kept for the process.
@@ -442,9 +475,10 @@ pub fn roster_of(
     provider: &Twilio,
     client: &RestClient,
     config: &Config,
+    bridge_id: &str,
     conversation: &str,
 ) -> Result<Roster, String> {
-    if let Some(known) = provider.participants.get(conversation) {
+    if let Some(known) = provider.participants.get(bridge_id, conversation) {
         return Ok(known);
     }
     if !is_sid(conversation, "CH") {
@@ -491,7 +525,7 @@ pub fn roster_of(
             roster.numbers.insert(sid.to_string(), address);
         }
     }
-    provider.participants.put(conversation, roster.clone());
+    provider.participants.put(bridge_id, conversation, roster.clone());
     Ok(roster)
 }
 
@@ -500,26 +534,21 @@ pub fn number_of(
     provider: &Twilio,
     client: &RestClient,
     config: &Config,
+    bridge_id: &str,
     conversation: &str,
     participant: &str,
 ) -> Result<Option<String>, String> {
     // a participant the kept roster does not have: it is read again (one added since, or a roster kept short)
-    if let Some(known) = provider.participants.get(conversation) {
+    if let Some(known) = provider.participants.get(bridge_id, conversation) {
         if let Some(number) = known.numbers.get(participant) {
             return Ok(Some(number.clone()));
         }
-        let _ = moqui_lib::sync::lock(&provider.participants.by_conversation).remove(conversation);
+        provider.participants.forget(bridge_id, conversation);
     }
-    Ok(roster_of(provider, client, config, conversation)?
+    Ok(roster_of(provider, client, config, bridge_id, conversation)?
         .numbers
         .get(participant)
         .cloned())
-}
-
-/// The room's Conversation, its mapping's thread.
-fn thread_of(out: &Outgoing<'_>) -> Option<String> {
-    let _ = out;
-    None
 }
 
 /// A Conversations webhook (its `EventType`): a text of the group or one recipient's receipt, with the Conversation's
@@ -552,7 +581,16 @@ pub fn event(
         let Some(participant) = form.get("ParticipantSid") else {
             return Ok(SmsEvent::Ignored("a receipt of no participant".to_string()));
         };
-        let Some(number) = number_of(provider, client, config, conversation, participant).map_err(unread)? else {
+        let Some(number) = number_of(
+            provider,
+            client,
+            config,
+            &bridge.chat_bridge_id,
+            conversation,
+            participant,
+        )
+        .map_err(unread)?
+        else {
             return Ok(SmsEvent::Ignored(
                 "a receipt of a participant not in the Conversation".to_string(),
             ));
@@ -574,7 +612,7 @@ pub fn event(
             receipt_millis: None,
         }));
     }
-    let roster = roster_of(provider, client, config, conversation).map_err(unread)?;
+    let roster = roster_of(provider, client, config, &bridge.chat_bridge_id, conversation).map_err(unread)?;
     let Some(ours) = roster.ours.clone() else {
         return Ok(SmsEvent::Ignored("a Conversation with no number of ours".to_string()));
     };
@@ -607,6 +645,8 @@ pub fn event(
             .map(|(_, body)| body.clone()),
         media: media_of(config, form),
         recipients,
+        // the room of the mapping that keeps it, when one does (receive#Sms); else the group's room by its numbers
+        thread_id: Some(conversation.to_string()),
         origin_millis: form
             .get("DateCreated")
             .and_then(|date| date.parse::<jiff::Timestamp>().ok())

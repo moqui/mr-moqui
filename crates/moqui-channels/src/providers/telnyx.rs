@@ -195,6 +195,13 @@ impl SmsProvider for Telnyx {
         true
     }
 
+    fn can_verify(&self, config: &Config) -> Result<(), String> {
+        match config.public_key {
+            Some(_) => Ok(()),
+            None => Err("the bridge has no publicKey in its configuration".to_string()),
+        }
+    }
+
     /// The signature under the bridge's key, within the window.
     fn verify(&self, bridge: &BridgeInfo, config: &Config, settings: &Settings, request: &WebhookRequest) -> bool {
         let Some(public_key) = config.public_key.as_deref() else {
@@ -343,6 +350,8 @@ fn received(event: &Json, payload: &Json) -> Result<SmsEvent, WebhookResponse> {
         // a group text (group MMS) went to several numbers: every one of them, `to` and `cc`, our number among them
         recipients: recipients_of(payload),
         origin_millis: millis_of(str_at(payload, "/received_at").or_else(|| str_at(event, "/data/occurred_at"))),
+        // a group MMS is its numbers, not a conversation of Telnyx's
+        thread_id: None,
     }))
 }
 

@@ -341,8 +341,10 @@ fn twilio_refusals_mark_an_opt_out_and_a_lost_answer_is_uncertain() {
     assert_eq!(bed.fake.sends().len(), sends, "refused before Twilio");
 }
 
-/// Advanced Opt-Out: Twilio tells of a keyword it took (`OptOutType`), its own words or one the account added; the
-/// opt-out is kept once, and the text is still a message in the room. START opts back in.
+/// Advanced Opt-Out: Twilio answers STOP itself and still posts the text (with `OptOutType`); the opt-out is taken from
+/// the text once, through the inbound message (its MessageSid), and the text is a message in the room. A copy of the
+/// STOP after a START changes nothing. A keyword only the account knows (not one of Moqui's) is a text: Twilio's
+/// block of a later send (21610) marks the pair then.
 #[test]
 fn a_twilio_opt_out_keyword_is_kept_once() {
     let bed = twilio_bed();
@@ -353,17 +355,28 @@ fn a_twilio_opt_out_keyword_is_kept_once() {
             &[("phoneNumber", text(OURS)), ("otherNumber", text(THEIRS))],
         )
     };
-    let (answer, _) = bed.twilio_in(THEIRS, "STOP", &[("OptOutType", "STOP")]);
-    assert!(is_twiml(&answer));
+    let stop = bed.signed_bytes(
+        form(&[
+            ("MessageSid", &sid("SM", 600)),
+            ("From", THEIRS),
+            ("To", OURS),
+            ("Body", "STOP"),
+            ("OptOutType", "STOP"),
+        ]),
+        now() / 1000,
+    );
+    assert!(is_twiml(&bed.hook(&stop)));
     assert_eq!(opted()["optedOut"], "Y");
     let room = bed.room(THEIRS).unwrap();
     assert_eq!(bed.messages(&room).len(), 1);
-    // a keyword of the account's own (not one of ours): Twilio's word for it is taken
-    bed.twilio_in(THEIRS, "Arret", &[("OptOutType", "START")]);
+    bed.twilio_in(THEIRS, "START", &[("OptOutType", "START")]);
     assert_eq!(opted()["optedOut"], "N");
+    // the STOP again (Twilio's signature has no time): answered, and the pair stays opted in
+    assert!(is_twiml(&bed.hook(&stop)));
+    assert_eq!(opted()["optedOut"], "N");
+    assert_eq!(bed.messages(&room).len(), 2);
     bed.twilio_in(THEIRS, "Arret", &[("OptOutType", "STOP")]);
-    assert_eq!(opted()["optedOut"], "Y");
-    assert_eq!(opted()["lastKeyword"], "STOP");
+    assert_eq!(opted()["optedOut"], "N", "not a keyword of Moqui's");
     assert_eq!(bed.messages(&room).len(), 3);
 }
 
@@ -775,9 +788,41 @@ fn a_queued_twilio_webhook_is_verified_on_the_local_node() {
     let out = queued("item-2", &forged);
     // done, not tried again (the item's answer names no retryLater)
     assert!(!out.contains_key("retryLater"), "{out:?}");
-    assert_eq!(bed.messages(&room).len(), 1, "nothing dropped was applied");
+    assert_eq!(bed.messages(&room).len(), 1, "nothing refused was applied");
     assert_eq!(
-        moqui_core::service::chat_bridge::dropped_webhooks(bed.ctx.factory(), BRIDGE),
+        moqui_core::service::chat_bridge::refused_webhooks(bed.ctx.factory(), BRIDGE),
+        1
+    );
+    assert_eq!(
+        bed.count(
+            "moqui.chat.ChatBridgeWebhookRefused",
+            &[("chatBridgeId", text(BRIDGE)), ("queueItemId", text("item-2"))]
+        ),
+        1,
+        "kept for a replay once the configuration is fixed"
+    );
+
+    // a bridge with no authToken here cannot check it: the item waits, not refused as forged
+    {
+        let _authz = bed.ctx.disable_authz();
+        let mut row = bed
+            .facade
+            .find("moqui.chat.ChatBridge")
+            .unwrap()
+            .eq("chatBridgeId", text(BRIDGE))
+            .one()
+            .unwrap()
+            .unwrap();
+        let mut config = bridge_config(&bed);
+        config.as_object_mut().unwrap().remove("authToken");
+        row.set("configJson", text(&config.to_string()));
+        row.update(&bed.facade).unwrap();
+    }
+    let waiting = request_to(&path, pairs(&sid("SM", 92), "Later"), &format!("{WEBHOOK}?edge=1"));
+    let out = queued("item-3", &waiting);
+    assert!(out_text(&out, "retryLater").contains("authToken"), "{out:?}");
+    assert_eq!(
+        moqui_core::service::chat_bridge::refused_webhooks(bed.ctx.factory(), BRIDGE),
         1
     );
 }
@@ -1068,6 +1113,9 @@ fn a_twilio_group_room_takes_the_conversation_twilio_has_of_its_numbers() {
     assert_eq!(bed.delivery(&room, seq).0, "CdsAccepted");
     assert_eq!(bed.thread(&room), theirs);
     let paths: Vec<String> = bed.fake.sends().into_iter().map(|seen| seen.path).collect();
-    assert!(paths.contains(&format!("/v1/Conversations/{made}")), "the one made is deleted: {paths:?}");
+    assert!(
+        paths.contains(&format!("/v1/Conversations/{made}")),
+        "the one made is deleted: {paths:?}"
+    );
     assert_eq!(paths.last(), Some(&format!("/v1/Conversations/{theirs}/Messages")));
 }

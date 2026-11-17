@@ -57,6 +57,7 @@ struct Sent {
     kind: DeliveryKind,
     text: Option<String>,
     target: Option<String>,
+    thread: Option<String>,
 }
 
 #[derive(Default)]
@@ -143,6 +144,7 @@ impl ChatBridgeAdapter for TestAdapter {
                     kind: request.kind,
                     text: request.text.clone(),
                     target: request.target_remote_id.clone(),
+                    thread: request.external_thread_id.clone(),
                 });
                 id
             }
@@ -1113,6 +1115,49 @@ fn a_repeated_transaction_works_nothing_twice_and_a_done_batch_keeps_no_text() {
 }
 
 /// The bridge an event came from is an external actor's only: a local user who names one still sends to every bridge.
+/// A network's own conversation of a mapping (a Twilio Conversation), kept by store#MappingThread right after the adapter
+/// made it, goes with each later send; another mapping of the bridge cannot take it, and a room with no mapping has none.
+#[test]
+fn a_mappings_thread_is_kept_once_and_goes_with_its_sends() {
+    let bed = bed("thread", true);
+    let _entered = bed.ctx.enter();
+    let store = |room: &str, thread: &str| {
+        let _authz = bed.ctx.disable_authz();
+        let out = call(
+            &format!("{BRIDGES}.store#MappingThread"),
+            &[
+                ("chatBridgeId", text("BA")),
+                ("externalRoomId", text(room)),
+                ("externalThreadId", text(thread)),
+            ],
+        );
+        errors();
+        out
+    };
+    assert_eq!(out_text(&store("+1555000A", "CH-1"), "chatRoomBridgeId"), "MA");
+    assert_eq!(out_text(&store("+1555000Z", "CH-2"), "reasonCode"), "noMapping");
+    login("alice");
+    bed.send("<p>in the conversation</p>");
+    bed.round(0);
+    let sent = bed.a.sent();
+    assert_eq!(sent.last().and_then(|sent| sent.thread.as_deref()), Some("CH-1"));
+    assert_eq!(bed.b.sent().last().and_then(|sent| sent.thread.clone()), None);
+    // another room's mapping on the bridge: refused
+    row(
+        &bed.facade,
+        "moqui.chat.ChatRoomBridge",
+        &[
+            ("chatRoomBridgeId", text("MZ")),
+            ("chatRoomId", text("OTHER_ROOM")),
+            ("chatBridgeId", text("BA")),
+            ("externalRoomId", text("+1555000Z")),
+            ("directionEnumId", text("CrbBoth")),
+            ("fromDate", Value::I64(now())),
+        ],
+    );
+    assert_eq!(out_text(&store("+1555000Z", "CH-1"), "reasonCode"), "threadTaken");
+}
+
 #[test]
 fn a_local_message_names_no_source_bridge() {
     let bed = bed("source", true);
