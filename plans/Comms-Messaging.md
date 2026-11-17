@@ -1116,7 +1116,7 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 | 2 | Notifications | §7 | Large |
 | 3 | E2EE labels and the call rule: done 2026-11-17 (`fdd1ab597`) | §6.1–§6.4 | Medium |
 | 4 | Calls: flow and screen | §8.3 items 1–7 | Large |
-| 5 | Calls: network tests, then resilience: built 2026-11-17 (worktree branch; the browser suite and real phones left) | §8.3 items 8–15, §8.4 | Large |
+| 5 | Calls: network tests, then resilience: done 2026-11-17 (`64c002d20`; the browser suite under sudo and real phones left) | §8.3 items 8–15, §8.4 | Large |
 | 6 | Message menu, reactions, Info | §4 | Medium |
 | 7 | Details tabs and services, voice notes | §5 | Medium |
 | 8 | Desktop gaps | §3 | Medium |
