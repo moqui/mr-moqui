@@ -1,6 +1,9 @@
 # MR Moqui — UI review: BasicComms
 
-**Status — 2026-11-16:** planned; every activity pending. Source inspection only; no review or test results claimed.
+**Status — 2026-11-16:** review in progress. COM-B01/B02 cover initial mail entry and a bounded populated chat
+walk. Six open findings: two observed UI issues and four source-grounded proposal revisions. The merged
+[Comms Messaging plan](Comms-Messaging.md) informs the review; implementation remains for a later combined pass.
+All activities remain incomplete; no application fixes or automated tests performed.
 
 Contents: [scope](#1-purpose-scope-and-sources) · [method](#2-review-method-and-refinement-criteria) ·
 [inventory](#3-screen-and-surface-inventory) · [activities](#4-end-to-end-activities) ·
@@ -17,7 +20,8 @@ Sources: [BasicComms README](../runtime/components/base/basic-comms/README.md),
 [Comms guide](../docs/tools/Comms.md), [WebRTC](../docs/interfaces/WebRTC.md), [SIP](../docs/interfaces/SIP.md),
 [Voicemail](../docs/interfaces/Voicemail.md), [Call recording](../docs/interfaces/Call-Recording.md),
 [Chat keys](../docs/interfaces/Chat-Keys.md), [Desktop client](../docs/ui/Desktop-Client.md),
-[Comms build record](archive/Comms-Framework.md), current BasicComms screens/QVue/twins/templates, setup data and
+[Comms build record](archive/Comms-Framework.md), [Comms Messaging proposal](Comms-Messaging.md) (PR #202),
+current BasicComms screens/QVue/twins/templates, setup data and
 `org.moqui.comms` services. Use the [old review](archive/UI-Refinement.md) as a gap/history reference.
 
 ### Ownership and handoffs
@@ -78,6 +82,28 @@ area's fixtures, dependencies and judgment criteria.
 Set up accounts before consuming messages; retain drafts for recovery checks before sending/discarding. Run device
 revocation, account removal and room leave after their dependent content/media activities. Recording is tested on a
 recordable call separate from the encrypted call that must refuse it.
+
+### Incorporating the Comms Messaging proposal
+
+PR #202 (`5a0dee2f9`) added `Comms-Messaging.md`; it did not update the archived Comms framework build record.
+Per the user's direction, record proposed changes alongside review findings, labelled **observed UI** versus
+**proposal revision / design judgment**. “Ready to build” in the proposal is not proof of current absence or approval
+of every implementation decision. Review current behavior first, reconcile the proposal, and work on refinements
+and new features together after more review. Keep the archived build record unchanged.
+
+| Proposal concepts | Current review activity / boundary |
+| --- | --- |
+| Phone list/picker/bubbles, touch actions, desktop room search and threads (§2–4) | COM-07/18; exercise existing behavior at 390, around the current 640/1024 boundaries, desktop and compact tray. Source already contains some proposed features (COM-UI-003). |
+| Media/files/voice/links/reactions detail tabs (§5) | COM-08; inventory actual tabs separately from proposed services. Stable activity/reaction paging requires a design change (COM-UI-005). |
+| Network/privacy labels and device trust (§6) | COM-09/11/18; distinguish room membership/privacy from encryption, plain versus E2EE, bridge-readable content and required-encryption refusal (COM-UI-001/004). |
+| Chat notifications, read synchronization, DND and host recovery (§7) | COM-10/17; existing browser notifications versus proposed durable/native background delivery. Screen-off/reboot/FCM/Keystore outcomes need native devices and separate evidence. |
+| Calls, phone-number rooms, voicemail, device/audio behavior (§8–9) | COM-11–16; current local fixture flows first. Android Telecom, keyboard/back gesture/haptics, audio routing and impaired-network criteria are not established by a narrow browser. |
+| SIM SMS/dialer/contacts, new adapters, RCS and history imports (§10–17) | Companion feature work; explicit prerequisites and design decisions before implementation. Do not count unimplemented proposals as broken current screens. No real number port, provider send, bridge pairing or external commitment authorized by this review. |
+
+The proposal's external protocol, pricing and platform-restriction assertions were not reverified in this batch;
+verify relevant authoritative sources when those implementation decisions are taken. Its suggested automated full
+walks and network suites belong in acceptance and follow this repository's existing run policy, not automatic runs
+whenever application or RTC code changes. COM-UI-006 hands shared shortcut ownership to Shared/Gallery.
 
 ## 3. Screen and surface inventory
 
@@ -501,15 +527,15 @@ execution records it; “exercised” never implies that all modes and recovery 
 
 | Activity | Status | Outcome / remaining branches | Evidence / findings |
 | --- | --- | --- | --- |
-| COM-01 — Start from the right inbox and account | pending | All steps, modes and recovery branches pending. | — |
-| COM-02 — Set up and verify a mail account | pending | All steps, modes and recovery branches pending. | — |
+| COM-01 — Start from the right inbox and account | exercised — partial | Default Inbox, no-account guidance, Mail accounts and Home navigation inspected with demo administrator. Populated counters, ordinary/restricted participants and alternate modes pending. | COM-B01; 01, 05–06 |
+| COM-02 — Set up and verify a mail account | exercised — partial | Empty address refused; hosted-address flow reached Connect, then left before account creation. Successful setup/test/options/finish, external providers, errors and other actors/modes pending. | COM-B01; 03–05 |
 | COM-03 — Triage a thread and inspect its original evidence | pending | All steps, modes and recovery branches pending. | — |
-| COM-04 — Compose, recover and send a message once | pending | All steps, modes and recovery branches pending. | — |
+| COM-04 — Compose, recover and send a message once | inspected — partial | Without an account, Compose explained missing sending identity, disabled Send and offered account setup plus refresh. No draft/body/recipient entered; full compose/delivery/recovery remains pending. | COM-B01; 02 |
 | COM-05 — Make personal mail policy work for its consumer | pending | All steps, modes and recovery branches pending. | — |
 | COM-06 — Manage a shared mailbox without losing ownership | pending | All steps, modes and recovery branches pending. | — |
-| COM-07 — Carry a conversation across rooms and threads | pending | All steps, modes and recovery branches pending. | — |
+| COM-07 — Carry a conversation across rooms and threads | exercised — partial | COM-B02 created a self-only private room, sent a message, opened phone action sheet by right-click, reacted, replied in thread, reloaded and returned through thread/room/list. Bubbles present at 390. Ordinary multi-user roles, actual touch/long-press, other message actions, device/native behavior, widths/dark/tray/TUI remain pending. | COM-B01/B02; COM-UI-002/003/005/006 |
 | COM-08 — Share files and maintain room membership or bridge context | pending | All steps, modes and recovery branches pending. | — |
-| COM-09 — Recover encrypted chat and device trust | pending | All steps, modes and recovery branches pending. | — |
+| COM-09 — Recover encrypted chat and device trust | inspected — partial | Plain private room privacy/encryption presentation inspected; lock ambiguity recorded. No encrypted-room creation, key/device/verification/recovery or multi-user confidentiality outcome exercised. | COM-B02; COM-UI-001/004 |
 | COM-10 — Set chat availability and external app access | pending | All steps, modes and recovery branches pending. | — |
 | COM-11 — Answer and manage a direct media call | pending | All steps, modes and recovery branches pending. | — |
 | COM-12 — Dial and transfer using the selected identity | pending | All steps, modes and recovery branches pending. | — |
@@ -527,7 +553,12 @@ presentation; P3 is a localized refinement. Label evidence as observed behavior,
 
 | ID / severity | Actor, activity step, route, mode / viewport | Reproduction and impact | Evidence / owning layer | State / correction / retest |
 | --- | --- | --- | --- | --- |
-| — | — | No findings recorded. | — | — |
+| COM-UI-001 / P2 | **Observed UI / design judgment**; john.doe; COM-09/18; plain private room `/qapps/BasicComms/Chat?chatRoomId=100000`; Material light, 390×844 | Created with Encrypted off. Header and introductory area show closed padlocks, but no visible explanation that this room is server-readable. The icon represents private membership, yet resembles encryption assurance. Revise the §6.2 label design to distinguish membership privacy from E2EE and explain the plain private/DM state. No encryption failure is alleged. | B02 `02-phone-room.{jpg,txt}`, `06-room-return.jpg`; [Chat.qvue](../runtime/components/base/basic-comms/screen/BasicComms/Chat.qvue) `ROOM_ICONS.CrtPrivate` (234), header's sealed-only Encrypted chip (789), room icon (1283). [Proposal §6](Comms-Messaging.md#6-e2ee-policy). | Open; priority provisional. Plain state observed only; encrypted/bridge/SMS states pending. |
+| COM-UI-002 / P3 | **Observed UI**; john.doe; COM-07; same room and `thread=2`; Material light, 390×844 | Phone Send is a fixed circular 40px button, but full-page stacked Chat keeps both icon and Send text. Text/icon overflow the control; measured client width 40px versus scroll width 48px. Apply the proposal's compact composer consistently to stacked and compact modes while retaining an accessible Send name. | B02 `02-phone-room.jpg`, `05-send-geometry.json`, `06-room-return.jpg`; [Chat.qvue](../runtime/components/base/basic-comms/screen/BasicComms/Chat.qvue) label conditional (580) tests compact only; [WebrootVue.qvt.css](../runtime/components/base/webroot/screen/webroot/css/WebrootVue.qvt.css) phone send sizing (722). | Open; no fix/retest. Sending worked; native keyboard geometry and other widths pending. |
+| COM-UI-003 / P2 | **Proposal revision / source reconciliation**; COM-07/18; Comms-Messaging §1–2, no live native-app claim | Rebase “card home/no bubbles/no long press” and rewrite tasks on a built/partial/missing inventory. Current code has bubble selection, a 450ms long-press handler/context menu, home FAB/maximized picker and direct mobile-home rendering. Review existing flows before component extraction; preserve full Chat, compact tray and host-home distinctions and 640/1024 boundaries. | B02 verifies own bubble and right-click sheet, not physical long press/native home. [Chat.qvue](../runtime/components/base/basic-comms/screen/BasicComms/Chat.qvue) 160, 1300–1302, 1925–1949, 2613; [ChatPanel.qvue](../runtime/components/base/basic-comms/screen/BasicComms/Panel/ChatPanel.qvue) 100–137; [Root.qvue](../crates/moqui-desktop/shell/screens/Root.qvue) 27, 154–156. | Open plan revision; not a newly observed missing-feature defect. |
+| COM-UI-004 / P1 | **Proposal revision / policy conflict**; COM-11; Comms-Messaging §6.1.4 | Consent-to-fallback wording conflicts with current required-encryption refusal and permanently bound call encryption. Preserve refusal for required E2EE; any separately permitted plain call must be an explicit new action, not a downgrade. Resolve wording before implementation, including unsupported devices and existing plain calls. | [CallServices.xml](../runtime/components/base/framework/service/org/moqui/call/CallServices.xml) 48–66; [Calls.js](../runtime/components/base/framework/service/org/moqui/call/Calls.js) 719–722, 749–753. [Proposal §6](Comms-Messaging.md#6-e2ee-policy). | Open design decision; priority applies to the proposed change, not an observed runtime security defect. Current no-downgrade criterion retained; no media walk performed. |
+| COM-UI-005 / P2 | **Proposal revision / data design**; COM-07/08; Comms-Messaging §5.2 | A global activity cursor cannot use a room-local event sequence as its chronological boundary. Reactions ordered by newest reaction likewise need more than the target-message sequence. Specify stable ordering, composite/opaque cursor and tie-breakers, including equal timestamps, multiple rooms, later reactions to old messages and concurrent updates; then define UI load-more/recovery expectations. | [ChatEntities.xml](../runtime/components/base/framework/entity/ChatEntities.xml) 151–167 defines per-room event sequence/composite key. Proposed RoomLinks, RoomReactions and ChatActivity services were not found in current implementation. [Proposal §5](Comms-Messaging.md#5-details-tabs-and-new-services). | Open proposal correction; no existing pagination failure observed. Focused cursor regressions later, full scrolling/access journeys in acceptance. |
+| COM-UI-006 / P3 | **Proposal revision / shared ownership**; COM-07 and SH-12; Comms-Messaging §3 | Integrate room quick-switching with the existing shell palette, or specify an explicitly scoped shortcut. Do not add a competing global Ctrl/Cmd+K listener. Define editor exceptions, search context, keyboard selection and focus return. | [WebrootVue.qvt.js](../runtime/components/base/webroot/screen/webroot/js/WebrootVue.qvt.js) 10007–10010 owns Mod+K; [BasicComms.xml](../runtime/components/base/basic-comms/screen/BasicComms.xml) already registers Chat rooms palette source. [Shared/Gallery](ui-review-shared-gallery.md), [proposal §3](Comms-Messaging.md#3-desktop-gaps). | Open design handoff; no shortcut collision observed because proposed handler is not implemented. |
 
 ### Bounded batch record
 
@@ -539,7 +570,88 @@ For each later batch record:
 - In refinement only: decisions, owning files/components, correction, focused verification commands/results and retest.
 - Temporary settings/grants/files/jobs restored, remaining cleanup and companion handoffs.
 
-No execution batches have been started.
+### COM-B01 — Preliminary empty-state and setup baseline, 2026-11-16
+
+**Intent.** The user requested BasicComms next, combined with newly received suggestions. Repository inspection
+found the existing Remaining-Work/Future-Plans Comms backlog but no clearly identified incoming suggestions.
+Their text/location was requested. The subsequent COM-B02 resolved this to PR #202 / Comms-Messaging.md and
+incorporated proposal revisions into findings, per the user. This preliminary batch establishes only the baseline below.
+
+**Runtime and actor.** Restarted the previous disposable runtime `/tmp/mr-ui-four-apps-zf5098dh`, loopback port
+18872, current source `83cf05b3b6b069812a6ac2802d95f918db6a9802` and already-built debug binary SHA-256
+`f799a82c681a7c3c9a7973cf5e030a5d1ebf41fa8935280f0d527dbf61bb2004`. Reused scratch PostgreSQL includes prior
+review history; this is not another fresh database. Six components framework/webroot/tools/basic-comms/dev-aide/
+example, no addons; scheduled jobs and external listeners disabled, mail hosts restricted to loopback, no captured
+mail/media/provider fixture. Existing browser session resumed as `john.doe` / `EX_JOHN_DOE` (ADMIN + ADMIN_ADV).
+This is administrator orientation only, not the ordinary participant baseline. Material light/default comfortable,
+1920×1080. No build, automated tests, application changes or messages sent.
+
+**Observed sequence.**
+
+- Default `/qapps/BasicComms` opened Inbox with explicit no-mail-account guidance and an empty conversation pane.
+  Compose opened a floating editor explaining that no sending identity was available, disabled Send, and offered
+  Mail accounts in a new tab plus Refresh sending identities. Closed it with no content entered.
+- Add an account → Address: Next with an empty address produced “Field cannot be empty.” Entered local fixture
+  `review-comms@localhost`, selected Hosted here and advanced to Connect. The page explained gateway delivery,
+  no password and that the next step would add a paused account. Left via Mail accounts before that action;
+  the account list remained in its no-account state. No account creation or connection success is claimed.
+- Comms menu → Home showed zero Flagged/Snoozed/Mentions/Missed calls, no unread rooms and account guidance.
+  The example component contributed Gallery notes; this is a loaded framework development extension, not BOSS.
+  Home → Chat showed initial conversation guidance. New room defaulted Private with a membership explanation,
+  encryption off, and Create disabled while Name was empty. Cancel was invoked but the immediate AX snapshot
+  still contained the closing dialog; settled dismissal/focus was not verified and remains pending.
+
+**Evidence and continuation.** Ignored `plans/ui-refinement-evidence/basic-comms/batch-01/` holds runtime metadata,
+`01-inbox-empty.{txt,jpg}`, `02-compose-no-identity.txt`, `03-account-address-required.txt`,
+`04-hosted-before-create.txt`, `05-no-account-created.txt`, `06-home.{txt,jpg}` and `07-new-room-empty.txt`.
+No defect is established by this bounded inspection. Prepare ordinary participant identities and local capture
+fixtures before advancing mail/chat success, access or delivery coverage; combine the next batch with the actual
+suggestions identified in COM-B02. Alternate modes, rich content, multi-user interaction, calls and recovery remain pending.
+
+**Cleanup.** No mail account, room, message, grant or preference was created/changed. Root viewport override reset
+and temporary browser tab closed. Runtime shutdown is recorded in `runtime-cleanup.json`; scratch data/evidence are
+retained. No logout outcome is claimed.
+
+### COM-B02 — Populated phone-width chat and messaging-plan reconciliation, 2026-11-16
+
+**Scope.** Review pass only, informed by merged PR #202 and the user's explicit request to include proposed
+Comms-Messaging changes in the findings. Two observed UI issues and four source-grounded design revisions; neither
+proposal adoption nor static inspection establishes completion of an activity. A supporting agent reconciled the
+proposal/current code; root performed the live browser walk. No application changes, tests or external messages.
+
+**Runtime.** Source `a302c9b07211add6cefbf28e39b088ab17751bf1`; rebuilt after the pulled Rust changes using
+`cargo build --profile dev --no-default-features --features maximal,devtools -p moqui -j 4` (passed in about one
+minute; linker exception-frame size warning). Debug binary SHA-256
+`a83c6f287aa9a12b9feb1b9b23dece06813e254e91bd21f19a209307cfc54e2f`. Reused scratch runtime/database from COM-B01,
+same six components and loopback-only configuration, `localhost:18872`; no addons. Administrator `john.doe`,
+EX_JOHN_DOE with ADMIN + ADMIN_ADV, existing session. Material light/default comfortable at 1920×1080 then
+390×844. Started 2026-11-17 00:22 UTC (Nov 16, 18:22 America/Chicago). No ordinary-user/multi-device proof.
+
+**Observed walk.** Created private room `100000`, `COM-B02 review notes`, with no additional participants,
+Encrypted off and explicit disposable-review topic. Sent event 2, then at 390px observed an own-message bubble.
+Right-click on that message opened the bottom action sheet with reactions, reply/thread, copy, forward, edit,
+pin, unread and delete; this verifies context-menu access, not physical touch or long-press behavior. Reacted 👍,
+opened Reply in thread, sent reply event 4, then reloaded. Original message, reaction and one reply remained.
+Thread Back returned to the room with the reply link; room Back returned to the room list. The private lock
+presentation and phone Send overflow are COM-UI-001/002. One-person persistence does not establish delivery,
+read receipts, cross-user notifications or encrypted content behavior.
+
+**Evidence.** Ignored `plans/ui-refinement-evidence/basic-comms/batch-02/`: `runtime-metadata.json`, `build.log`,
+`01-desktop-message.txt`, `02-phone-room.{jpg,txt}`, `03-message-actions.{jpg,txt}`,
+`04-thread-reloaded.txt`, `05-send-geometry.json`, `06-room-return.{jpg,txt}`, `07-phone-list-return.txt`.
+Source-grounded plan findings name their actual owning files and unresolved design choices. Comms-Messaging.md
+and the archived framework plan remain unchanged; the review register is the consolidation point for now.
+
+**Next bounded batch.** Ordinary owner/member/outsider fixtures; phone picker, true touch/keyboard message actions,
+full/compact/host boundaries and details tabs; contrast encryption and bridge/plain labels; then read markers,
+notification preferences and recovery. Preserve mail waves from COM-B01. Physical Android keyboard/back gesture,
+background push and call media need appropriate devices/fixtures; width emulation is not a substitute. Keep all
+unrecorded branches pending and defer implementation to the later combined pass.
+
+**Cleanup.** Room 100000, original message, reaction and reply retained only in the disposable database as a named
+follow-up fixture. No other participants, mail/providers or grants changed. Viewport reset, temporary tab closed,
+server stopped with SIGINT and verified absent together with its HTTP listener and embedded PostgreSQL processes;
+see `runtime-cleanup.json`. No logout result claimed. Scratch runtime and local evidence retained.
 
 ## 7. Decisions
 
