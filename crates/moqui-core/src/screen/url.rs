@@ -497,12 +497,15 @@ fn last_always_full(screen: &ScreenDef) -> bool {
     screen.subscreens.always_use_full_path
 }
 
+/// A path name with no screen or transition under `under`. Nobody signed in gets a plain answer, with neither the name
+/// nor the location of the last screen found, so the answer does not tell what exists (SEC-RTE-13).
 fn not_found(name: &str, under: &ScreenDef) -> Error {
-    Error::of_kind(
-        ErrorKind::NotFound,
-        format!("screen path not found: {name} under {}", under.location),
-    )
-    .with_missing_path(name)
+    let message = if crate::user::current_username().ok().flatten().is_some() {
+        format!("screen path not found: {name} under {}", under.location)
+    } else {
+        "screen path not found".to_string()
+    };
+    Error::of_kind(ErrorKind::NotFound, message).with_missing_path(name)
 }
 
 /// A screen path after `ScreenPathAlias`, `//` search, and cleanup. `cache` is false when the alias read failed.

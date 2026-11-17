@@ -74,6 +74,12 @@ fn basic_enum_types_returns_fixture_rows_and_a_service_runs() {
         crate::context::ErrorKind::NotFound,
         "{err}"
     );
+    // SEC-RTE-13: nobody signed in is not told the resources of the level; a signed-in caller is
+    assert!(!err.to_string().contains("enumTypes"), "{err}");
+    crate::user::session::set_user("U1", "ada");
+    let err = run(&["moqui", "basic", "nothing"], "get", &BTreeMap::new()).unwrap_err();
+    assert!(err.to_string().contains("enumTypes"), "{err}");
+    crate::user::session::clear_login();
     let err = run(&["nope"], "get", &BTreeMap::new()).unwrap_err();
     assert_eq!(
         crate::context::ErrorKind::of(&err),

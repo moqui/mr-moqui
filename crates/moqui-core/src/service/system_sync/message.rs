@@ -198,6 +198,16 @@ pub(super) fn send_rest(
     Ok(out)
 }
 
+/// The answer of every refused `/rest/sm` receive: an unknown type or remote, a missing or wrong signature, token or
+/// login, a stale or replayed timestamp. One 403 text, so the answer tells a sender nothing of what exists or how a
+/// remote checks; the reason goes to the log (SEC-RTE-13).
+const RECEIVE_REFUSED: &str = "System message not accepted";
+
+fn refuse(reason: &str) {
+    tracing::warn!("System message receive refused: {reason}");
+    web::send_json_error(403, RECEIVE_REFUSED);
+}
+
 /// The `sm` transition of `rest.xml`: `/rest/sm/{systemMessageTypeId}/{systemMessageRemoteId}/{remoteMessageId}` with
 /// the message as the request body. The remote's `messageAuthEnumId` picks the check: a logged-in user authorized for
 /// `receive#IncomingSystemMessage` (SmatLogin or none set), an HMAC header (SmatHmacSha256, SmatHmacSha512, or
@@ -223,12 +233,12 @@ pub(crate) fn receive_rest_message(request: &WebRequest, extra: &[String]) -> Re
         return Ok(true);
     }
     if let Err(err) = receive_checked(request, type_id, remote_id, remote_message_id, &text) {
-        tracing::error!(
-            error = %err,
-            "Error handling system message type {type_id} remote {remote_id} remote msg {}",
+        // the detail in the log under an id, whatever the instance purpose: the sender may be anyone (SEC-RTE-13)
+        let id = web::log_error_id(&format!(
+            "Error handling system message type {type_id} remote {remote_id} remote msg {}: {err}",
             remote_message_id.unwrap_or("")
-        );
-        web::send_json_error(500, &format!("Error receiving message: {err}"));
+        ));
+        web::send_json_error(500, &format!("Error receiving message, id {id}"));
     }
     Ok(true)
 }
@@ -245,11 +255,11 @@ fn receive_checked(
         .ok_or_else(|| Error::new("no entity facade is installed"))?;
     // Make sure the type and the remote are valid before the service call.
     if find_one(&facade, MESSAGE_TYPE, "systemMessageTypeId", type_id)?.is_none() {
-        web::send_json_error(400, &format!("Message type {type_id} not valid"));
+        refuse(&format!("message type {type_id} not valid, remote {remote_id}"));
         return Ok(());
     }
     let Some(remote) = find_one(&facade, REMOTE, "systemMessageRemoteId", remote_id)? else {
-        web::send_json_error(400, &format!("Remote system {remote_id} not valid"));
+        refuse(&format!("remote system {remote_id} not valid"));
         return Ok(());
     };
 
@@ -261,40 +271,30 @@ fn receive_checked(
         "" | "SmatLogin" => {
             // The user is logged in by this point, by the request's credentials, or not at all.
             let Some(user_id) = crate::user::current_user_id()? else {
-                web::send_json_error(
-                    401,
-                    &format!("Receive message for remote system {remote_id} requires login"),
-                );
+                refuse(&format!("receive for remote system {remote_id} requires login"));
                 return Ok(());
             };
             if let Err(err) = crate::user::authorize("AT_SERVICE", RECEIVE, "all") {
-                tracing::warn!("Authz failure for system message receive from remote {remote_id}: {err}");
-                web::send_json_error(
-                    403,
-                    &format!("Receive message for remote system {remote_id} not authorized for user with ID {user_id}"),
-                );
+                refuse(&format!(
+                    "receive for remote system {remote_id} not authorized for user with ID {user_id}: {err}"
+                ));
                 return Ok(());
             }
         }
         "SmatHmacSha256" => {
             let Some((header_name, secret)) = hmac_settings(&remote, remote_id) else {
-                web::send_json_error(403, &format!("Remote system {remote_id} auth configuration not valid"));
+                refuse(&format!("remote system {remote_id} auth configuration not valid"));
                 return Ok(());
             };
             let Some(header) = request.header(&header_name).filter(|value| !value.is_empty()) else {
-                tracing::warn!(
-                    "System message receive HMAC verify no header {header_name} value found, for remote {remote_id}"
-                );
-                web::send_json_error(
-                    403,
-                    &format!("No HMAC header {header_name} found for remote system {remote_id}"),
-                );
+                refuse(&format!(
+                    "no HMAC header {header_name} value found, for remote {remote_id}"
+                ));
                 return Ok(());
             };
             let signature = hmac_base64(&secret, text);
             if !same_text(header, &signature) {
-                tracing::warn!("System message receive HMAC verify did not match for remote {remote_id}");
-                web::send_json_error(403, &format!("HMAC verify failed for remote system {remote_id}"));
+                refuse(&format!("HMAC verify did not match for remote {remote_id}"));
                 return Ok(());
             }
             crate::user::login_anonymous()?;
@@ -303,61 +303,51 @@ fn receive_checked(
         // has no timestamp, so no replay window: the receive service keeps each provider event once.
         "SmatHmacSha512" => {
             let Some((header_name, secret)) = hmac_settings(&remote, remote_id) else {
-                web::send_json_error(403, &format!("Remote system {remote_id} auth configuration not valid"));
+                refuse(&format!("remote system {remote_id} auth configuration not valid"));
                 return Ok(());
             };
             let Some(header) = request.header(&header_name).filter(|value| !value.is_empty()) else {
-                tracing::warn!(
-                    "System message receive HMAC verify no header {header_name} value found, for remote {remote_id}"
-                );
-                web::send_json_error(
-                    403,
-                    &format!("No HMAC header {header_name} found for remote system {remote_id}"),
-                );
+                refuse(&format!(
+                    "no HMAC header {header_name} value found, for remote {remote_id}"
+                ));
                 return Ok(());
             };
             if !sha512_hex_matches(header, &secret, text) {
-                tracing::warn!("System message receive HMAC verify did not match for remote {remote_id}");
-                web::send_json_error(403, &format!("HMAC verify failed for remote system {remote_id}"));
+                refuse(&format!("HMAC verify did not match for remote {remote_id}"));
                 return Ok(());
             }
             crate::user::login_anonymous()?;
         }
         "SmatHmacSha256Timestamp" => {
             let Some((header_name, secret)) = hmac_settings(&remote, remote_id) else {
-                web::send_json_error(403, &format!("Remote system {remote_id} auth configuration not valid"));
+                refuse(&format!("remote system {remote_id} auth configuration not valid"));
                 return Ok(());
             };
             let Some(header) = request.header(&header_name).filter(|value| !value.is_empty()) else {
-                tracing::warn!(
-                    "System message receive HMAC verify no header {header_name} value found, for remote {remote_id}"
-                );
-                web::send_json_error(
-                    403,
-                    &format!("No HMAC header {header_name} found for remote system {remote_id}"),
-                );
+                refuse(&format!(
+                    "no HMAC header {header_name} value found, for remote {remote_id}"
+                ));
                 return Ok(());
             };
             // A header like `t=1492774577,v1=5257a869...`, signed over the timestamp, a period, and the body.
             let (timestamp, incoming) = timestamp_parts(header);
             let signature = hmac_hex(&secret, &format!("{}.{text}", timestamp.as_deref().unwrap_or("null")));
             if !same_text(incoming.as_deref().unwrap_or(""), &signature) {
-                tracing::warn!("System message receive HMAC verify did not match for remote {remote_id}");
-                web::send_json_error(403, &format!("HMAC verify failed for remote system {remote_id}"));
+                refuse(&format!("HMAC verify did not match for remote {remote_id}"));
                 return Ok(());
             }
-            let seconds: i64 = timestamp
-                .as_deref()
-                .unwrap_or("")
-                .parse()
-                .map_err(|_| Error::new(format!("HMAC timestamp {timestamp:?} is not a number")))?;
+            let Ok(seconds) = timestamp.as_deref().unwrap_or("").parse::<i64>() else {
+                refuse(&format!(
+                    "HMAC timestamp {timestamp:?} is not a number, for remote {remote_id}"
+                ));
+                return Ok(());
+            };
             let incoming_millis = seconds.saturating_mul(1000);
             let now = super::now_millis() + SKEW_MILLIS;
             if incoming_millis >= now || incoming_millis <= now - MAX_AGE_MILLIS {
-                tracing::warn!(
-                    "System message receive HMAC invalid incoming timestamp {incoming_millis} for remote {remote_id}"
-                );
-                web::send_json_error(403, "HMAC timestamp verification failed");
+                refuse(&format!(
+                    "HMAC invalid incoming timestamp {incoming_millis} for remote {remote_id}"
+                ));
                 return Ok(());
             }
             let replay_key = format!(
@@ -366,8 +356,7 @@ fn receive_checked(
                 incoming.unwrap_or_default()
             );
             if !first_use(&replay_key)? {
-                tracing::warn!("System message receive HMAC replay for remote {remote_id}");
-                web::send_json_error(403, "HMAC replay rejected");
+                refuse(&format!("HMAC replay for remote {remote_id}"));
                 return Ok(());
             }
             spent_key = Some(replay_key);
@@ -381,15 +370,14 @@ fn receive_checked(
             let secret = field(&remote, "sharedSecret");
             if secret.is_empty() {
                 tracing::error!("System message receive URL token for remote {remote_id} needs a sharedSecret");
-                web::send_json_error(403, &format!("Remote system {remote_id} auth configuration not valid"));
+                refuse(&format!("remote system {remote_id} auth configuration not valid"));
                 return Ok(());
             }
             let name = Some(field(&remote, "authHeaderName"))
                 .filter(|name| !name.is_empty())
                 .unwrap_or_else(|| "token".to_string());
             if !url_token_matches(&request.query, &name, &secret) {
-                tracing::warn!("System message receive URL token did not match for remote {remote_id}");
-                web::send_json_error(403, &format!("URL token verify failed for remote system {remote_id}"));
+                refuse(&format!("URL token verify failed for remote system {remote_id}"));
                 return Ok(());
             }
             crate::user::login_anonymous()?;
@@ -400,7 +388,7 @@ fn receive_checked(
         }
         other => {
             tracing::error!("Got system message for remote {remote_id} with unsupported messageAuthEnumId {other}");
-            web::send_json_error(400, &format!("Remote system {remote_id} auth configuration not valid"));
+            refuse(&format!("remote system {remote_id} auth configuration not valid"));
             return Ok(());
         }
     }
@@ -425,7 +413,10 @@ fn receive_checked(
     }
     if has_error() {
         let errors = ExecutionContext::with_current(|ctx| ctx.message().errors().join("\n")).unwrap_or_default();
-        web::send_json_error(500, &errors);
+        let id = web::log_error_id(&format!(
+            "System message type {type_id} remote {remote_id} not received: {errors}"
+        ));
+        web::send_json_error(500, &format!("Error receiving message, id {id}"));
         return Ok(());
     }
     let ids = match result?.remove("systemMessageIdList") {

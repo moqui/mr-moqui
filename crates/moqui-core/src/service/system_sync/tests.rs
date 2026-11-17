@@ -509,6 +509,75 @@ fn an_hmac_receive_is_refused_when_the_remote_has_no_shared_secret() {
     assert_eq!(receive("SmsgSecret", "s3cret"), 200, "{}", errors(&setup.context));
 }
 
+/// SEC-RTE-13: every refused receive (an unknown type, an unknown remote, no signature header, a wrong signature) is
+/// the same 403 text, which names no type, remote or header; a receive that fails is a 500 with an error id only.
+#[test]
+fn a_refused_receive_tells_nothing_of_what_exists() {
+    let setup = setup("sm-refusals");
+    let _entered = setup.context.enter();
+    install(&setup);
+    let facade = &setup.facade;
+    {
+        let _authz = setup.context.disable_authz();
+        for (type_id, service) in [("SmsgTestIn", ""), ("SmsgTestInFail", "receive#SmsgTestFail")] {
+            seed(
+                facade,
+                "moqui.service.message.SystemMessageType",
+                &[("systemMessageTypeId", type_id), ("receiveServiceName", service)],
+            );
+        }
+        seed(
+            facade,
+            "moqui.service.message.SystemMessageRemote",
+            &[
+                ("systemMessageRemoteId", "SmsgSecret"),
+                ("messageAuthEnumId", "SmatHmacSha256"),
+                ("authHeaderName", "X-Test-Signature"),
+                ("sharedSecret", "s3cret"),
+            ],
+        );
+    }
+    let body = r#"{"note":"from the peer"}"#;
+    let receive = |type_id: &str, remote: &str, signature: Option<&str>| {
+        let mut request = crate::web::WebRequest::new("POST", format!("/rest/sm/{type_id}/{remote}"));
+        if let Some(signature) = signature {
+            request.set_header("X-Test-Signature", signature.to_string());
+        }
+        request.body = body.as_bytes().to_vec();
+        let _web = crate::web::install(BTreeMap::new());
+        super::message::receive_rest_message(&request, &[type_id.to_string(), remote.to_string()]).unwrap();
+        setup.context.message().clear_errors();
+        let (status, _, sent, _) = crate::web::take_output();
+        (status, String::from_utf8_lossy(&sent).into_owned())
+    };
+    let signed = super::message::hmac_base64_for_test("s3cret", body);
+    let refusals = [
+        receive("SmsgNoType", "SmsgSecret", Some(&signed)),
+        receive("SmsgTestIn", "SmsgNoRemote", Some(&signed)),
+        receive("SmsgTestIn", "SmsgSecret", None),
+        receive("SmsgTestIn", "SmsgSecret", Some("d3Jvbmc=")),
+    ];
+    for (status, text) in &refusals {
+        assert_eq!(*status, 403, "{text}");
+        assert_eq!(text, &refusals[0].1);
+        for named in [
+            "SmsgNoType",
+            "SmsgTestIn",
+            "SmsgSecret",
+            "SmsgNoRemote",
+            "X-Test-Signature",
+            "HMAC",
+        ] {
+            assert!(!text.contains(named), "{text}");
+        }
+    }
+    let (status, text) = receive("SmsgTestInFail", "SmsgSecret", Some(&signed));
+    assert_eq!(status, 500, "{text}");
+    assert!(text.contains("id "), "{text}");
+    assert!(!text.contains("Test receive failed"), "{text}");
+    assert_eq!(receive("SmsgTestIn", "SmsgSecret", Some(&signed)).0, 200);
+}
+
 #[test]
 fn an_hmac_sha512_receive_checks_the_hex_signature_in_either_case_with_or_without_its_prefix() {
     let setup = setup("hmac-512");

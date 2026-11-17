@@ -560,6 +560,26 @@ fn a_screen_under_a_parent_that_needs_a_user_needs_one_as_a_fragment() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// SEC-RTE-13: a path with no screen is a plain 404 for nobody, naming neither the path nor the last screen found; a
+/// signed-in user gets the name and the location to fix a link.
+#[test]
+fn a_missing_screen_is_a_plain_not_found_for_nobody() {
+    let world = World::open("");
+    let anonymous = render(&world.factory, "/NoSuchScreen").unwrap_err();
+    assert_eq!(anonymous.kind(), ErrorKind::NotFound);
+    assert_eq!(anonymous.message(), "screen path not found");
+    let response = serve_at(&world.factory, request("GET", "/NoSuchScreen"), &fixture_root());
+    assert_eq!(response.status, 404);
+    assert!(!response.body_text().contains("testdata"), "{}", response.body_text());
+
+    world.user("admin", None);
+    let ec = world.factory.new_context();
+    let _entered = ec.enter();
+    crate::user::login_user("admin", "secret").unwrap();
+    let signed_in = render(&world.factory, "/NoSuchScreen").unwrap_err();
+    assert!(signed_in.message().contains("NoSuchScreen under "), "{signed_in}");
+}
+
 /// The HTTP log reads the bound session after the screen runs: session id, visitor, and username.
 #[test]
 fn a_screen_request_records_the_session_the_visitor_and_the_user() {

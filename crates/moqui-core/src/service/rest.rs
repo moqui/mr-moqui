@@ -477,6 +477,10 @@ impl Node {
             if let Some(id) = &self.id {
                 return id.visit(path, next, method, params);
             }
+            // the resources of the level only for a signed-in caller: nobody gets a plain answer (SEC-RTE-13)
+            if crate::user::current_username().ok().flatten().is_none() {
+                return Err(Error::of_kind(ErrorKind::NotFound, "Resource not found"));
+            }
             let names = self.resources.keys().map(String::as_str).collect::<Vec<_>>().join(", ");
             return Err(Error::of_kind(
                 ErrorKind::NotFound,
