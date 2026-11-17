@@ -82,8 +82,10 @@ screen) with the extra path and query, and gives `callback` a component. It retu
   `template="false"` text, and a `.qvue` file under a screen, with the file compiled by the vendored Vue compiler
   (`vue_check::qvue_make`, as the desktop shell's bundled screens are): `text/javascript`, an `ETag`, `X-Moqui-Qvt: bundled-qvue`,
   and the `Cache-Control` the plain request gets (a public island's stays cacheable), a script that sets
-  `moqui.qvtBundled[<path>]`, the request path without `.qvue` (the route's `basePath`, which varies with the site's mount). The
-  client then makes the component with `moqui.bundledComponent(path)`, and later loads of the path make it from there with no
+  `moqui.qvtBundled[<path>]`. The name is the one its script element gives (`data-moqui-bundle`, the path the client asked for),
+  else the URL path it was loaded from without `.qvue`, its extra path and query: the route's public `basePath`, never the screen
+  path the server resolved (a site route or a remote frontend maps one to the other), so the script and its `ETag` are the
+  file's alone, whatever path served it. The client then makes the component with `moqui.bundledComponent(path)`, and later loads of the path make it from there with no
   request. The screen's render runs as for the plain request (its authorization and actions); its text is compiled once per text
   and kept with the definition (a file's by location), a failure too until the text changes (500, logged). A qvue the screen
   renders as a template has no bundle (404). A runtime page that does not list `bundled-qvue` (the desktop shell) still gets none

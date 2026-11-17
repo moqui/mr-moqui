@@ -1,10 +1,18 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 // A .qvue compiled for the runtime build of Vue (moqui_core::screen::vue_check::qvue_make), its templates as
-// render functions; moqui.bundledComponent(name) makes it when it is first used.
+// render functions; moqui.bundledComponent(name) makes it when it is first used. Its name is the one its loader
+// gave (data-moqui-bundle), else this script's own path without .qvue.
 (function (moqui) {
+    const script = typeof document !== "undefined" ? document.currentScript : null;
+    let name = script && script.getAttribute ? script.getAttribute("data-moqui-bundle") : null;
+    if (!name && script && script.src) {
+        const path = String(script.src).replace(/^[a-z][a-z0-9+.-]*:\/\/[^\/]*/i, "").split(/[?#]/)[0];
+        name = decodeURI(path).replace(/\.qvue(\/.*)?$/, "");
+    }
+    if (!name) { console.error("A bundled .qvue loaded with no name: not registered"); return; }
     moqui.qvtBundled = moqui.qvtBundled || {};
-    moqui.qvtBundled["/Island"] = { make: function (Vue) {
+    moqui.qvtBundled[name] = { make: function (Vue) {
         const module = { exports: {} };
         const define = moqui.define;
         // the file's script as it is (not indented: a template string in it keeps its text)
