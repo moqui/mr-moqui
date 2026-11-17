@@ -63,3 +63,35 @@ feature("the Login screen renders in tui mode without the setup form while accou
         !res.text.includes("Welcome to your new system")
     },
 })
+
+// SEC-RTE-17: the Test Login button (john.doe / moqui) only on a dev or test instance or where demo_test_login is true
+// (the demo component's conf), and its password check kept a minute by a digest of the stored hash.
+feature("the Test Login is offered only on a dev or test instance or a demo, and its password check is cached", {
+    when() {
+        const offered = () => ec.service.sync().name("org.moqui.impl.UserServices.get#TestLoginOffered").call().offered
+        const account = ec.entity.find("moqui.security.UserAccount").condition("userId", "EX_JOHN_DOE").disableAuthz().one()
+        const matches = account != null && ec.user.passwordsMatch("moqui", account.currentPassword,
+            account.passwordHashType, account.passwordSalt, account.passwordBase64 == "Y")
+        const cache = ec.cache.getCache("webroot.login.test")
+        cache.clear()
+        const out = {matches, hasAccount: account != null}
+        withProperty("demo_test_login", null, () => {
+            out.production = withProperty("instance_purpose", "production", offered)
+            out.productionCached = cache.size()
+            out.test = withProperty("instance_purpose", "test", offered)
+            out.dev = withProperty("instance_purpose", "dev", offered)
+        })
+        out.demo = withProperty("demo_test_login", "true", () => withProperty("instance_purpose", "production", offered))
+        out.cached = account != null && cache.containsKey(ec.resource.digestText(String(account.currentPassword)))
+        return out
+    },
+    then({matches, hasAccount, production, productionCached, test, dev, demo, cached}) {
+        production === false
+        productionCached == 0
+        test === matches
+        dev === matches
+        demo === matches
+        hasAccount
+        cached
+    },
+})

@@ -549,6 +549,21 @@ fn redirect_json_list_security_headers_and_cors() {
         header_value(&response, "Access-Control-Allow-Credentials").as_deref(),
         Some("true")
     );
+    // an origin only `*` allows may read, never with credentials (SEC-WEB-10)
+    world._env.set("webapp_allow_origins", "*");
+    let mut any = request("GET", "/");
+    any.set_header("origin", "https://any.example");
+    let response = serve_at(&world.factory, any, &web);
+    assert_eq!(
+        header_value(&response, "Access-Control-Allow-Origin").as_deref(),
+        Some("https://any.example")
+    );
+    assert_eq!(
+        header_value(&response, "Access-Control-Allow-Credentials"),
+        None,
+        "* with credentials"
+    );
+    world._env.set("webapp_allow_origins", "https://app.example");
 
     let mut options = request("OPTIONS", "/rest/s1/moqui/basic/enumTypes");
     options.set_header("origin", "https://app.example");

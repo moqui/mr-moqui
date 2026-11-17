@@ -251,9 +251,16 @@ fn notws_and_cors_compare_the_scheme_host_and_port_of_the_origin() {
     let address = gate.server.address();
     let cookie = crate::common::sign_in(address, "john.doe", "moqui");
     gate.server.factory().flush_sessions().unwrap();
+    // the session cookie a browser holds on https is __Host-moqui.session, and an https request reads only that name
+    // (SEC-WEB-05); the sign-in above was over plain http
+    let secure_cookie = cookie.replace("moqui.session=", "__Host-moqui.session=");
     let upgrade = |headers: &[(&str, &str)]| {
         let uri: tungstenite::http::Uri = format!("ws://{address}/notws").parse().unwrap();
-        let mut request = ClientRequestBuilder::new(uri).with_header("Cookie", cookie.clone());
+        let https = headers
+            .iter()
+            .any(|(name, value)| *name == "X-Forwarded-Proto" && *value == "https");
+        let cookie = if https { secure_cookie.clone() } else { cookie.clone() };
+        let mut request = ClientRequestBuilder::new(uri).with_header("Cookie", cookie);
         for (name, value) in headers {
             request = request.with_header(*name, *value);
         }

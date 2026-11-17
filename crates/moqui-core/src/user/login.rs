@@ -569,9 +569,11 @@ fn internal_login(username: &str, queued: bool, person: bool) -> (Option<String>
 }
 
 /// [`internal_login`] for a key, app password or identity provider login, recorded in the login history when the
-/// account is known.
-fn recorded_login(username: &str) -> Result<(), Error> {
-    let (user_id, result) = internal_login(username, false, true);
+/// account is known. `person`: an interactive sign-in (an identity provider's), which clears the account's
+/// `hasLoggedOut` as a password does; a key or an app password authenticates a request or a client and never does, so
+/// a request made with one after a sign-out elsewhere does not bring back the sessions it ended (SEC-WEB-06).
+fn recorded_login(username: &str, person: bool) -> Result<(), Error> {
+    let (user_id, result) = internal_login(username, false, person);
     if let Some(user_id) = user_id {
         save_history(&user_id, result.is_ok());
     }
@@ -586,7 +588,7 @@ fn recorded_login(username: &str) -> Result<(), Error> {
 ///
 /// Returns an error when the account is unknown, disabled, terminated, or not allowed from this address.
 pub fn login_external_user(username: &str, authenticated_at: Option<i64>) -> Result<(), Error> {
-    recorded_login(username)?;
+    recorded_login(username, true)?;
     if let Some(at) = authenticated_at {
         if let Some(user_id) = session::current_user_id()?.filter(|id| !id.is_empty()) {
             note_recent_auth_at(&user_id, at);
@@ -791,7 +793,7 @@ fn check_login_key(key: &str, session_user: Option<&str>, scope: Option<&str>) -
     let Some(account) = find_user_id(&facade, &user_id)? else {
         return Err(refused_credential());
     };
-    recorded_login(&text_field(&account, "username"))?;
+    recorded_login(&text_field(&account, "username"), false)?;
     session::set_login_key_kind(Some(LoginKeyKind::of(&row)));
     // a device's key shows when it was last used, in the user's device list (plans/Mobile-Desktop.md, MD3)
     if !text_field(&row, "deviceName").is_empty() {
@@ -886,7 +888,7 @@ fn check_app_password(username: &str, password: &str) -> Result<(), Error> {
     if !account_username.eq_ignore_ascii_case(username.trim()) {
         return Err(refused_credential());
     }
-    recorded_login(&account_username)?;
+    recorded_login(&account_username, false)?;
     note_app_password_used(&facade, &row);
     Ok(())
 }
@@ -942,7 +944,7 @@ pub fn login_verified_app_password(username: &str, app_password_id: Option<&str>
         }
         None => None,
     };
-    recorded_login(username)?;
+    recorded_login(username, false)?;
     if let Some(row) = row {
         let _authz = without_authz();
         note_app_password_used(&entity_facade()?, &row);
@@ -1593,9 +1595,10 @@ fn rehash_legacy(facade: &EntityFacade, account: &EntityValue, plain: &str) -> R
     )
 }
 
-/// The login of `account`. `person`: a person signs in (a password, the code of a second factor, a key, an app
-/// password, an identity provider), which clears the account's `hasLoggedOut`; a job's or a worker's internal login
-/// borrows the account and leaves the flag as it is, so it does not bring back the sessions a sign-out ended.
+/// The login of `account`. `person`: a person signs in interactively (a password, the code of a second factor, an SSH
+/// key at a terminal, an identity provider), which clears the account's `hasLoggedOut`; a login key, an app password
+/// (SEC-WEB-06) and a job's or a worker's internal login leave the flag as it is, so they do not bring back the
+/// sessions a sign-out ended.
 fn finish_login(
     facade: &EntityFacade,
     account: &EntityValue,

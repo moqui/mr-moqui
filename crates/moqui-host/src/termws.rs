@@ -111,7 +111,7 @@ pub(crate) async fn upgrade(
     // a browser has its session cookie; the Desktop and Mobile apps' host has the device's login key, and no session
     // (§12): a key socket is rechecked by its key, and a command or host session through it takes a ticket for the
     // recent sign-in
-    let (session_id, key_hash, key) = match session_cookie(&headers) {
+    let (session_id, key_hash, key) = match session_cookie(&headers, site.https()) {
         Some(cookie) => match verify_session_cookie(&cookie) {
             Ok(Some(id)) if !id.is_empty() => (id, None, None),
             Ok(_) | Err(_) => return plain(401, "unauthorized"),

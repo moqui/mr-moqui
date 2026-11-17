@@ -59,7 +59,7 @@ Stop the server when the client exits (its standard input is the terminal). The 
 | Login `Referer` off the site is refused | A01 | `SecurityHeaders` |
 | Login `returnTo` with `Host: evil.example` does not redirect to that host | A01 | `SecurityHeaders` |
 | CSP (`frame-ancestors`, `form-action`), `X-Frame-Options`, nosniff | A02 | `SecurityHeaders` |
-| Session cookie is `moqui.session`, HttpOnly, SameSite=Lax | A02 | `SecurityHeaders` |
+| Session cookie is `moqui.session` (`__Host-moqui.session` over https), HttpOnly, SameSite=Lax | A02 | `SecurityHeaders` |
 | Login HTML is not publicly cacheable | A02 | `SecurityHeaders` |
 | No `Origin` header means no `Access-Control-Allow-Origin` | A02 | `SecurityHeaders` |
 | No H2 console | A02 | `SecurityHeaders` |
@@ -169,7 +169,7 @@ Java's Spock classes check these without an HTTP client. This pass did not look 
 Kept on purpose, and asserted by the specs. The parity notes are [Parity-Diffs](../../plans/Parity-Diffs.md) (P9-06 and the client-test-harness table).
 
 - A preflight is 204 with an empty body.
-- The session cookie is `moqui.session`.
+- The session cookie is `moqui.session`, and `__Host-moqui.session` over https (SEC-WEB-05).
 - A missing or wrong session token is 401 `Session token is missing or is not valid`.
 - An anonymous `/notws` upgrade is 401. The foreign-origin proof uses a logged-in session.
 - CORS and `/notws` compare scheme, host, and port. The same host on another port or scheme is refused.

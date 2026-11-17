@@ -4,7 +4,9 @@
 //
 // Where Java's proofs give john.doe a wrong password, these use an unknown user: MR-Moqui locks an account on its
 // fourth failed login, and the suite must not lock the demo user. The session-token failure is 401 "Session token is
-// missing or is not valid", and the session cookie is moqui.session (Java's is JSESSIONID).
+// missing or is not valid", and the session cookie is moqui.session, __Host-moqui.session over https (SEC-WEB-05; Java's
+// is JSESSIONID).
+const SESSION_COOKIE = server.secure ? "__Host-moqui.session" : "moqui.session"
 
 const USER = params.user ?? "john.doe"
 const PASSWORD = params.password ?? "moqui"
@@ -58,9 +60,9 @@ feature("A07 a POST runs with the session token and stores nothing without it (c
 feature("A07 the login form issues a new session id", {
     when() {
         const s = session()
-        const before = s.get("/Login").cookie("moqui.session")
+        const before = s.get("/Login").cookie(SESSION_COOKIE)
         const res = s.post("/Login/login", { form: { username: USER, password: PASSWORD } })
-        return { before, res, after: res.cookie("moqui.session") }
+        return { before, res, after: res.cookie(SESSION_COOKIE) }
     },
     then({ before, res, after }) {
         res.status == 302

@@ -1128,7 +1128,9 @@ async fn dispatch_screen(
         .and_then(|value| value.parse::<usize>().ok());
     // an upload that may be larger than an anonymous request may send needs a user (SEC-RTE-07)
     if let Some(anonymous) = moqui_core::web::anonymous_upload_limit(Some(&state.factory), &web) {
-        if declared.is_none_or(|length| length > anonymous) && !upload_has_user(&state, &parts.headers, client).await {
+        if declared.is_none_or(|length| length > anonymous)
+            && !upload_has_user(&state, &parts.headers, web.https, client).await
+        {
             limit = anonymous;
         }
     }
@@ -1362,7 +1364,12 @@ impl BodyRefused {
 /// credentials (`api_key`, `login_key`, Basic) that hold, checked without logging in
 /// (`moqui_core::user::credential_user`). Asked of an upload that may be larger than an anonymous one (SEC-RTE-07);
 /// a refused credential counts for web protection as a refused login does.
-async fn upload_has_user(state: &HttpState, headers: &axum::http::HeaderMap, client: std::net::IpAddr) -> bool {
+async fn upload_has_user(
+    state: &HttpState,
+    headers: &axum::http::HeaderMap,
+    https: bool,
+    client: std::net::IpAddr,
+) -> bool {
     let header = |name: &str| {
         headers
             .get(name)
@@ -1370,7 +1377,7 @@ async fn upload_has_user(state: &HttpState, headers: &axum::http::HeaderMap, cli
             .map(str::to_string)
     };
     // the session id of a signed cookie this node made
-    let session = crate::notws::session_cookie(headers)
+    let session = crate::notws::session_cookie(headers, https)
         .and_then(|cookie| moqui_core::user::verify_session_cookie(&cookie).ok().flatten())
         .filter(|id| !id.is_empty());
     let (api_key, login_key, authorization) = (header("api_key"), header("login_key"), header("authorization"));

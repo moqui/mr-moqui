@@ -542,24 +542,7 @@ function revokeAccountAccess(p) {
         const recent = ec.service.sync().name("org.moqui.sso.RecentAuthServices.require#RecentAuth").call()?.recent
         if (!recent) return {revokedCounts: {}, failedKinds: [], reasonCode: "reauthRequired"}
     }
-    const counts = {}
-    const failed = []
-    for (const kind of kinds) {
-        try {
-            if (kind === "sessions") {
-                counts.sessions = Number(UserSecurityChecks.endUserSessions(userId, null))
-                // a session another server holds that no row names yet signs out at its next request (the session refresh)
-                if (!single) {
-                    const value = ec.entity.makeValue(ACCOUNT)
-                    value.setFields({userId, hasLoggedOut: "Y"}, true, null, null)
-                    value.update()
-                }
-            } else counts[kind] = endCredential(userId, kind, single ? text(p.credentialId) || null : null)
-        } catch (error) {
-            ec.logger.error("Access of " + userId + ": " + kind + " not revoked: " + error.message)
-            failed.push(kind)
-        }
-    }
+    const {counts, failed} = endAccess(userId, kinds, single ? text(p.credentialId) || null : null, !single)
     // the evidence of it (impl-admin P17): the kinds and how many of each, never a credential
     accessEvidence(
         userId,
@@ -584,6 +567,57 @@ function revokeAccountAccess(p) {
     return {revokedCounts: counts, failedKinds: failed}
 }
 
+// Each kind of an account's access ended on its own (one that fails is logged and named in failed, the others still end):
+// sessions on every server, and with markLoggedOut the account's hasLoggedOut set, so a session another server holds that
+// no row names yet signs out at its next request (the session refresh); the others by endCredential, all of the kind or
+// the one credentialId. Who may do it is the caller's to check.
+function endAccess(userId, kinds, credentialId, markLoggedOut) {
+    const counts = {}
+    const failed = []
+    for (const kind of kinds) {
+        try {
+            if (kind === "sessions") {
+                counts.sessions = Number(UserSecurityChecks.endUserSessions(userId, null))
+                if (markLoggedOut) {
+                    const value = ec.entity.makeValue(ACCOUNT)
+                    value.setFields({userId, hasLoggedOut: "Y"}, true, null, null)
+                    value.update()
+                }
+            } else counts[kind] = endCredential(userId, kind, credentialId)
+        } catch (error) {
+            ec.logger.error("Access of " + userId + ": " + kind + " not revoked: " + error.message)
+            failed.push(kind)
+        }
+    }
+    return {counts, failed}
+}
+
+// The kinds the account's own "sign out everywhere and end my keys and app passwords" ends.
+const ownAccessKinds = ["sessions", "loginKeys", "appPasswords"]
+
+// revoke#OwnAccess: the caller's own account, signed out everywhere (every session on every server, this one at its next
+// request through hasLoggedOut) with its login keys (access tokens, device and sign-in keys) and app passwords ended
+// (SEC-WEB-06). Self-service, so no permission, but the sign-in in the last five minutes (require#RecentAuth); the
+// revocation path of revoke#AccountAccess, with its evidence.
+function revokeOwnAccess(p) {
+    const userId = signedInUser()
+    const recent = ec.service.sync().name("org.moqui.sso.RecentAuthServices.require#RecentAuth").call()?.recent
+    if (!recent) return {revokedCounts: {}, failedKinds: [], reasonCode: "reauthRequired"}
+    const {counts, failed} = endAccess(userId, ownAccessKinds, null, true)
+    accessEvidence(
+        userId,
+        "access",
+        (
+            Object.entries(counts)
+                .map(([kind, count]) => kind + ": " + count)
+                .join(", ") + (failed.length ? "; not revoked: " + failed.join(", ") : "")
+        ).slice(0, 255) || "Nothing to revoke",
+        "Signed out everywhere by the account itself"
+    )
+    ec.logger.warn("Account access of " + ec.user.username + " ended by its own sign out everywhere (" + JSON.stringify(counts) + ")")
+    return {revokedCounts: counts, failedKinds: failed}
+}
+
 // check#AdministrationPath: for a caller who reads access or identities; the answer is a reason, never an error.
 function checkPath(p) {
     if (!ec.user.userId) throw new Error("Sign in to check the administration path")
@@ -599,7 +633,7 @@ function checkPath(p) {
     })
 }
 
-const operations = {checkPath, findSessions, revokeSessions, accountCredentials, revokeAccountAccess}
+const operations = {checkPath, findSessions, revokeSessions, accountCredentials, revokeAccountAccess, revokeOwnAccess}
 ;({
     administrationPath,
     heldBeyond,

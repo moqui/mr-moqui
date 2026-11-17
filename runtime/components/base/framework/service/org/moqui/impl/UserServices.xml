@@ -525,6 +525,36 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
 
+    <service verb="get" noun="TestLoginOffered" authenticate="anonymous-view" allow-remote="false">
+        <description>Whether the Login screen offers its Test Login button, the john.doe login with the password moqui
+            (SEC-RTE-17): only on a dev or test instance (instance_purpose), or where demo_test_login is true (the demo
+            component's conf sets it for a public demo), and only while EX_JOHN_DOE's password is still moqui. That check
+            is a slow hash an anonymous render would run each time, so its answer is kept a minute in the local cache
+            webroot.login.test, keyed by a digest of the stored hash: a new password is a new key.</description>
+        <out-parameters><parameter name="offered" type="Boolean" required="true"/></out-parameters>
+        <actions><script><![CDATA[
+            const purpose = System.getProperty('instance_purpose')
+            let offered = false
+            if (purpose === 'dev' || purpose === 'test' || System.getProperty('demo_test_login') === 'true') {
+                const account = ec.entity.find('moqui.security.UserAccount').condition('userId', 'EX_JOHN_DOE').disableAuthz().one()
+                const stored = account ? String(account.currentPassword ?? '') : ''
+                if (stored) {
+                    const cache = ec.cache.getCache('webroot.login.test')
+                    const key = ec.resource.digestText(stored)
+                    const cached = cache.get(key)
+                    if (cached != null) {
+                        offered = cached === true
+                    } else {
+                        offered = ec.user.passwordsMatch('moqui', stored, account.passwordHashType, account.passwordSalt,
+                            account.passwordBase64 == 'Y') === true
+                        cache.put(key, offered)
+                    }
+                }
+            }
+            context.offered = offered
+        ]]></script></actions>
+    </service>
+
     <service verb="get" noun="InitialAdminNeeded" authenticate="anonymous-view">
         <description>Whether the system has no user accounts yet, so the first administrator is to be created: the Login
             screen's create form, its initialAdminNeeded transition and the terminal's login dialog ask this, and

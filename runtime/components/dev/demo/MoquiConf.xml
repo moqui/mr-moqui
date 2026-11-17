@@ -7,6 +7,9 @@
     <!-- The users whose password, sign-in factors, username and enabled state cannot be changed (comma-separated
         userIds; refuse#SharedAccountChange): the shared login of the Login screen's Test Login button. -->
     <default-property name="demo_shared_user_ids" value="EX_JOHN_DOE"/>
+    <!-- The Login screen's Test Login button, which a production instance otherwise leaves out (SEC-RTE-17;
+        UserServices.get#TestLoginOffered): a visitor signs in as the shared login with one click. -->
+    <default-property name="demo_test_login" value="true"/>
 
     <!-- The sharp tools, replaced and left out of the menus. VIEW-only authorization does not stop SpeedTest or the
         Data Load check, which run as the screen renders; the others are stubbed as well so no one tries them.

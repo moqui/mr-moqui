@@ -24,7 +24,9 @@ if [ "$(id -u)" = 0 ]; then
     else
         chown moqui:moqui "$data/env"
     fi
-    chown moqui:moqui "$data" "$runtime"
+    # the runtime directory stays as the image made it (root's, group moqui, sticky), so the binary and the conf in it
+    # are not the moqui user's to replace (SEC-OUT-13)
+    chown moqui:moqui "$data"
     link db "$data/db"
     link log "$data/log"
     link cert "$data/cert"

@@ -102,7 +102,7 @@ function ownerAnswers(kind, targets, descriptors) {
         byDescriptor.get(descriptor.descriptorKey).ids.push(target.targetId)
     }
     for (const {descriptor, ids} of byDescriptor.values()) {
-        const asked = lib.callRegistered(text(descriptor.describeService), {targetKind: kind.targetKind, targetIdList: ids})
+        const asked = lib.callOwner(text(descriptor.describeService), {targetKind: kind.targetKind, targetIdList: ids})
         if (asked.failure) {
             ec.logger.error("Recovery descriptor " + descriptor.descriptorKey + ": its owner did not answer: " + asked.failure)
             for (const id of ids) answers.set(id, {unanswered: true})
@@ -292,7 +292,7 @@ function executeOne(kind, action, resolution, reason, key, item, descriptors) {
             done = refused("STALE_REVISION", "It changed since it was read; read it again and repeat")
         else {
             // the owner's own action, keyed so the owner too answers a repeat with its first result
-            const asked = lib.callRegistered(text(descriptor.recoverService), {
+            const asked = lib.callOwner(text(descriptor.recoverService), {
                 targetKind: kind.targetKind,
                 targetId,
                 ownerRef: owner?.answer?.ownerRef || null,
@@ -414,7 +414,7 @@ function keptResult(result) {
     return [80, 30, 0].map(short).find(kept => JSON.stringify(kept).length < 3900) || short(0)
 }
 
-const operations = {previewRecovery, executeRecovery}
+const operations = {previewRecovery, executeRecovery, callOwnerService: lib.callOwnerService}
 ;({
     descriptorsOf,
     descriptorFor,
