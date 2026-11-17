@@ -1755,6 +1755,30 @@ pub(crate) fn forwarded_https(
         })
 }
 
+/// Whether credentials may be taken over a request's transport: the listener's TLS, a believed proxy's
+/// `X-Forwarded-Proto: https`, or a client on this machine. Behind a believed proxy the client is the address the
+/// proxy names in `client-ip-header`, never the socket peer: every request a proxy on this host passes has a loopback
+/// peer, and one it passes without naming its client is not taken as local (SEC-AI-11, SEC-GIT-09).
+pub(crate) fn secure_transport(
+    over_tls: bool,
+    headers: &axum::http::HeaderMap,
+    peer: IpAddr,
+    addressing: &moqui_core::web::address::ClientAddressing,
+) -> bool {
+    if over_tls || forwarded_https(headers, peer, addressing) {
+        return true;
+    }
+    let peer = peer.to_canonical();
+    if addressing.believes(peer) {
+        let named = headers
+            .get(addressing.header())
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| !value.trim().is_empty());
+        return named.is_some_and(|named| addressing.resolve(peer, Some(named)).is_loopback());
+    }
+    peer.is_loopback()
+}
+
 pub(crate) fn header_map(headers: &axum::http::HeaderMap) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
     for name in headers.keys() {

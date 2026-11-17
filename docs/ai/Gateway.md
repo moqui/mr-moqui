@@ -66,7 +66,7 @@ client.chat.completions.create(model='fast', messages=[{'role': 'user', 'content
 
 - **Auth**: `Authorization: Bearer <login key>` or `Bearer <app password>` (what OpenAI clients send), or HTTP Basic
   with an app password (or a login key as the password, never the account password); only over TLS, a believed proxy's
-  https, or loopback. Missing or bad credentials are 401 `invalid_api_key` with `WWW-Authenticate`; a refused login
+  https, or from a client on this machine (behind a believed proxy, the client it names). Missing or bad credentials are 401 `invalid_api_key` with `WWW-Authenticate`; a refused login
   counts for web protection.
 - **What passes**: only the request fields of the API's allowlist (Chat Completions: `messages`, `stream`,
   `stream_options.include_usage`, `temperature`, `top_p`, `n`, `stop`, `max_tokens`, `max_completion_tokens`,

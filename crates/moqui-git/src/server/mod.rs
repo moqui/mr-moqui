@@ -469,7 +469,20 @@ impl Refusal {
             | Self::Gone(text) => text,
         }
     }
+
+    /// The refusal as a request that is not `secure` gets it: no credentials would be taken over its transport, so
+    /// nothing asks for them (a 401 challenge would have git send them in clear); one that would ask is a 403 that
+    /// says to use HTTPS (SEC-GIT-09).
+    fn over(self, secure: bool) -> Self {
+        match self {
+            Self::Unauthenticated(_) if !secure => Self::Forbidden(INSECURE_SIGN_IN.into()),
+            other => other,
+        }
+    }
 }
+
+/// What a request that is not secure is told where a sign-in would be asked for.
+const INSECURE_SIGN_IN: &str = "this needs a sign-in, which is taken only over HTTPS; use HTTPS";
 
 fn factory() -> Result<Arc<ExecutionContextFactory>, Refusal> {
     ExecutionContext::with_current(|ec| Arc::clone(ec.factory()))
@@ -808,7 +821,7 @@ pub fn serve_http(request: &GitHttpRequest, body: &mut dyn Read, out: &mut dyn H
             if !matches!(refusal, Refusal::Unauthenticated(_) | Refusal::NotFound(_)) {
                 tracing::info!(repository = %request.repository, "git request refused: {}", refusal.message());
             }
-            refuse_http(out, &refusal);
+            refuse_http(out, &refusal.over(request.secure));
             return;
         }
     };

@@ -46,7 +46,8 @@ The server is off by default; while it is off `/a2a` and `/.well-known/agent-car
 
 `Authorization: Bearer <login key>` (`security bearer`), the `api_key` or `login_key` header (`security api-key`), or
 HTTP Basic with an app password (or a login key as the password) — never the account password, which is 401. Credentials are taken
-only over TLS, a believed proxy's https or loopback. Without credentials the answer is 401 with
+only over TLS, a believed proxy's https or from a client on this machine (behind a believed proxy, the client it names,
+not the proxy's loopback address). Without credentials the answer is 401 with
 `WWW-Authenticate: Bearer realm="a2a", Basic realm="a2a"`; a user without the permissions is 403. A refused login counts
 for web protection as a refused screen login does. Each run counts once against the AT_LLM tarpit (`agent:<agentId>`);
 a caller over it gets 429 with `Retry-After`. OIDC JWTs come later (plan 11, answered question 10); until then the card

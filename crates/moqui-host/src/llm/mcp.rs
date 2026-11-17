@@ -27,7 +27,7 @@ use moqui_llm::mcp::{self, Answer, HttpRequest, Reply};
 
 use super::a2a::{busy, origin_of, response_of, Open};
 use crate::guard::Event;
-use crate::http::{plain, read_body, ClientAddr, HttpState, TlsConnection};
+use crate::http::{plain, read_body, secure_transport, ClientAddr, HttpState, TlsConnection};
 
 /// The largest request body.
 const MAX_BODY: usize = 4 * 1024 * 1024;
@@ -81,7 +81,7 @@ pub(crate) async fn handle(
         query: Vec::new(),
         headers,
         body: body.to_vec(),
-        secure: moqui_llm::a2a::secure(origin.https, peer.ip()),
+        secure: secure_transport(over_tls, &parts.headers, peer.ip(), state.guard.conf().addressing()),
         client_ip: client.to_string(),
         origin,
     };

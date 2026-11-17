@@ -64,7 +64,8 @@ pub struct HttpRequest {
     /// Header names in lower case.
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
-    /// Credentials may be taken: TLS, a believed proxy's https, or loopback.
+    /// Credentials may be taken: TLS, a believed proxy's https, or a client on this machine (the host's
+    /// `secure_transport`: behind a believed proxy, the client it names).
     pub secure: bool,
     pub client_ip: String,
     pub origin: Origin,
@@ -99,12 +100,6 @@ pub struct Origin {
     pub forwarded_host: Option<String>,
     /// `X-Forwarded-Port`, read only from a believed proxy (the MCP transport's origin check).
     pub forwarded_port: Option<String>,
-}
-
-/// Whether credentials may be taken from a request: over TLS or a believed proxy's https (`https`), or from loopback.
-/// Plain HTTP from anyone else is refused before a password or key is looked at.
-pub fn secure(https: bool, peer: std::net::IpAddr) -> bool {
-    https || peer.is_loopback()
 }
 
 /// A whole response.

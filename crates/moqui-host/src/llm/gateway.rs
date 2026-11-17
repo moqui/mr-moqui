@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 use axum::extract::{ConnectInfo, Request, State};
 use axum::response::Response;
 use bytes::Bytes;
-use moqui_llm::a2a::{self, HttpRequest, Origin, Reply};
+use moqui_llm::a2a::{HttpRequest, Origin, Reply};
 use moqui_llm::gateway::{self, Answer, Respond};
 use moqui_llm::provider::CancelToken;
 use tokio::sync::mpsc::error::TrySendError;
@@ -37,7 +37,7 @@ use tokio::sync::{mpsc, oneshot};
 use super::a2a::{response_of, Full, Open};
 use crate::channel_body::{ChannelBody, Chunk};
 use crate::guard::Event;
-use crate::http::{forwarded_https, read_body, ClientAddr, HttpState, TlsConnection};
+use crate::http::{read_body, secure_transport, ClientAddr, HttpState, TlsConnection};
 
 /// The largest request body (embeddings of many texts).
 const MAX_BODY: usize = 16 * 1024 * 1024;
@@ -169,14 +169,13 @@ pub(crate) async fn handle(
         .iter()
         .filter_map(|(name, value)| Some((name.as_str().to_ascii_lowercase(), value.to_str().ok()?.to_string())))
         .collect();
-    let https = over_tls || forwarded_https(&parts.headers, peer.ip(), state.guard.conf().addressing());
     let gateway_request = HttpRequest {
         method: parts.method.as_str().to_string(),
         path: parts.uri.path().strip_prefix("/llm/v1").unwrap_or_default().to_string(),
         query: Vec::new(),
         headers,
         body: body.to_vec(),
-        secure: a2a::secure(https, peer.ip()),
+        secure: secure_transport(over_tls, &parts.headers, peer.ip(), state.guard.conf().addressing()),
         client_ip: client.to_string(),
         origin: Origin::default(),
     };

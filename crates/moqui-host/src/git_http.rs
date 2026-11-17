@@ -37,7 +37,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::channel_body::ChannelBody;
 use crate::git_bridge::{ChannelReader, ChannelWriter, Chunk, QUEUED};
 use crate::guard::Event;
-use crate::http::{forwarded_https, plain, ClientAddr, HttpState, TlsConnection};
+use crate::http::{plain, secure_transport, ClientAddr, HttpState, TlsConnection};
 
 const DEFAULT_MAX_REQUEST: u64 = 64 * 1024 * 1024;
 const DEFAULT_MAX_PUSH: u64 = 2 * 1024 * 1024 * 1024;
@@ -288,12 +288,11 @@ struct Origin {
     over_tls: bool,
 }
 
-/// Whether credentials may be taken: over TLS (the listener's, or a believed proxy's `X-Forwarded-Proto`), from
-/// loopback, or with the conf's `git-server` `allow-http="true"`.
+/// Whether credentials may be taken: over TLS (the listener's, or a believed proxy's `X-Forwarded-Proto`), from a
+/// client on this machine (behind a believed proxy, the client it names: [`secure_transport`]), or with the conf's
+/// `git-server` `allow-http="true"`.
 fn secure(state: &HttpState, over_tls: bool, headers: &axum::http::HeaderMap, peer: SocketAddr) -> bool {
-    over_tls
-        || forwarded_https(headers, peer.ip(), state.guard.conf().addressing())
-        || peer.ip().is_loopback()
+    secure_transport(over_tls, headers, peer.ip(), state.guard.conf().addressing())
         || state.factory.conf_flag("git-server", "allow-http", false)
 }
 
