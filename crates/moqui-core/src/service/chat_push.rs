@@ -1,0 +1,1498 @@
+/*
+ * This software is in the public domain under CC0 1.0 Universal plus a
+ * Grant of Patent License.
+ *
+ * To the extent possible under law, the author(s) have dedicated all
+ * copyright and related and neighboring rights to this software to the
+ * public domain worldwide. This software is distributed without any
+ * warranty.
+ *
+ * You should have received a copy of the CC0 Public Domain Dedication
+ * along with this software (see the LICENSE.md file). If not, see
+ * <http://creativecommons.org/publicdomain/zero/1.0/>.
+ */
+
+//! The chat push worker (plans/Comms-Messaging.md §7.2, §7.3; phase 2 steps 2b to 2d, the server side of 2h), on the
+//! pattern of the bridge delivery worker ([`super::chat_bridge`]). The services are
+//! `framework/service/org/moqui/chat/ChatPushServices.xml`, whose notes give the rules.
+//!
+//! - `append#Event` writes a `ChatPushJob` (room, event) in the event's transaction and `wake#ChatPush` wakes this
+//!   node's worker once it commits ([`start`]: a thread per node, woken, once a minute while pushes wait, and once at
+//!   start, so the rows a crash left are taken). A [`round`] at a given time (`run#ChatPush`, the tests' clock):
+//!   1. each job, claimed with a lease ([`LEASE_MILLIS`]): the members and the rules 1, 3 and 4 then, a `PushOutbox` row
+//!      for each device of each user who gets it, merged into a pending or held row of the same device and room with a
+//!      count, and the job deleted, in one transaction;
+//!   2. the held rows of users no longer on do not disturb become pending: one summary per room and device;
+//!   3. each pending row due, claimed with a lease: not sent when its user has read up to it since, else encrypted to
+//!      its device ([`push_crypto::encrypt`], RFC 8291) and sent by its provider through the [`PushTransport`];
+//!   4. once an hour, the rows done more than a week ago go.
+//! - Failures: each job, row and device is on its own; one that fails is logged and the rest go on. A send not taken
+//!   waits with backoff and jitter ([`FIRST_WAIT_MILLIS`] doubled, at most [`MAX_WAIT_MILLIS`], or the push service's
+//!   Retry-After), up to [`MAX_ATTEMPTS`] or its time to live; FCM's gone deletes the registration, Web Push's and
+//!   UnifiedPush's (404, 410) disable it.
+//! - `queue#ReadClear` (`mark#Read`): the user's rows of the room not yet sent are dropped, and each other device that
+//!   was sent one gets a `clear` push. `ack#Push` (the app showed a push) keeps the device's acked count.
+
+use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex, Weak};
+use std::time::Duration;
+
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
+use moqui_db::sql::Condition;
+use moqui_lib::error::Error as LibError;
+use moqui_lib::object::{to_plain_string, Value};
+use moqui_lib::sync::lock;
+use serde_json::json;
+use sha2::Digest;
+
+use super::chat_bridge::{current_factory, force_new, millis_of, node_id, now_millis, param, stamp, text_of};
+use crate::context::{ExecutionContext, ExecutionContextFactory};
+use crate::entity::{EntityFacade, EntityValue};
+use crate::notify::push_crypto;
+
+#[path = "chat_push_transport.rs"]
+mod transport;
+use transport::transport;
+pub use transport::{set_transport, web_outcome, Provider, PushTransport, Sent, WebPost};
+
+pub(in crate::service) fn register(
+    map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
+) -> Result<(), String> {
+    rust_service!(map, wake_chat_push)?;
+    rust_service!(map, run_chat_push)?;
+    rust_service!(map, queue_read_clear)?;
+    rust_service!(map, ack_push)?;
+    Ok(())
+}
+
+/// The notification topics this worker pushes: their notifications are stored and on the socket, and
+/// [`crate::notify::NotificationMessage::send`] pushes none of them, so a mention is not pushed twice.
+pub const PUSHED_TOPICS: [&str; 1] = ["ChatMention"];
+
+const JOB: &str = "moqui.chat.ChatPushJob";
+const OUTBOX: &str = "moqui.chat.PushOutbox";
+const DEVICE: &str = "moqui.security.user.WebPushSubscription";
+const EVENT: &str = "moqui.chat.ChatEvent";
+const ROOM: &str = "moqui.chat.ChatRoom";
+const MEMBER: &str = "moqui.chat.ChatRoomMember";
+const ACTIVITY: &str = "moqui.chat.ChatUserActivity";
+const STATUS: &str = "moqui.security.UserStatus";
+const PREFERENCE: &str = "moqui.security.UserPreference";
+
+const PENDING: &str = "PosPending";
+const HELD: &str = "PosHeld";
+const SENT: &str = "PosSent";
+const FAILED: &str = "PosFailed";
+const DROPPED: &str = "PosDropped";
+const KIND_MESSAGE: &str = "PokMessage";
+const KIND_CLEAR: &str = "PokClear";
+
+/// How long a worker holds a job or a push it works.
+pub const LEASE_MILLIS: i64 = 60_000;
+/// A message's time to live: 4 weeks, FCM's most. A phone offline that long still gets one push per room.
+pub const MESSAGE_TTL_SECONDS: i64 = 28 * 86_400;
+/// A clear's time to live: a day.
+pub const CLEAR_TTL_SECONDS: i64 = 86_400;
+/// The wait after the first send not taken; it doubles after each, to [`MAX_WAIT_MILLIS`].
+pub const FIRST_WAIT_MILLIS: i64 = 10_000;
+pub const MAX_WAIT_MILLIS: i64 = 3_600_000;
+/// Sends of a push in all, before it fails.
+pub const MAX_ATTEMPTS: i64 = 12;
+/// Tries of a job before it is given up (logged).
+const JOB_ATTEMPTS: i64 = 5;
+const JOBS_PER_ROUND: i64 = 200;
+const PUSHES_PER_ROUND: i64 = 500;
+/// How often the worker looks without being woken, while pushes wait.
+const SWEEP: Duration = Duration::from_secs(60);
+/// The rows done (sent, failed, dropped) are kept this long.
+const KEEP_MILLIS: i64 = 7 * 86_400_000;
+const MAX_SNIPPET: usize = 140;
+const MAX_NAME: usize = 100;
+
+// ---- helpers ----
+
+/// A whole count of a number field (an integer may come back as a decimal).
+fn count_of(row: &EntityValue, field: &str) -> i64 {
+    row.get(field)
+        .filter(|value| !value.is_null())
+        .map(to_plain_string)
+        .and_then(|text| text.split('.').next().and_then(|whole| whole.trim().parse().ok()))
+        .unwrap_or(0)
+}
+
+fn leased(row: &EntityValue, now: i64) -> bool {
+    text_of(row, "leaseOwner").is_some() && millis_of(row, "leaseExpiresDate").is_some_and(|until| until > now)
+}
+
+fn cut_chars(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(max.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+/// The collapse key (FCM) and Topic (Web Push) of a room's pushes: a hash, so the push service learns no room id; at
+/// most 32 characters of the base64url alphabet (RFC 8030 §5.4).
+pub fn collapse_key(room_id: &str) -> String {
+    let digest = sha2::Sha256::digest(room_id.as_bytes());
+    let hex: String = digest.iter().take(8).map(|byte| format!("{byte:02x}")).collect();
+    format!("chat{hex}")
+}
+
+/// The wait before a push's next send after `attempt` sends: the push service's Retry-After when it gave one, else
+/// [`FIRST_WAIT_MILLIS`] doubled for each send before, with a jitter of up to a fifth either way taken from the push's
+/// id, at most [`MAX_WAIT_MILLIS`].
+pub fn backoff(push_id: &str, attempt: i64, after_millis: Option<i64>) -> i64 {
+    if let Some(after) = after_millis.filter(|after| *after > 0) {
+        return after.min(MAX_WAIT_MILLIS);
+    }
+    let doublings = u32::try_from((attempt - 1).clamp(0, 20)).unwrap_or(20);
+    let base = FIRST_WAIT_MILLIS
+        .saturating_mul(1_i64 << doublings)
+        .min(MAX_WAIT_MILLIS);
+    let digest = sha2::Sha256::digest(format!("{push_id}:{attempt}").as_bytes());
+    let spread = i64::from(u16::from_be_bytes([digest[0], digest[1]])) % 401 - 200; // -200..=200 thousandths
+    (base + base * spread / 1000).clamp(1_000, MAX_WAIT_MILLIS)
+}
+
+fn is_dnd(row: &EntityValue, now: i64) -> bool {
+    text_of(row, "statusEnumId").as_deref() == Some("UpsDnd")
+        && millis_of(row, "clearAtDate").is_none_or(|clear| clear > now)
+}
+
+/// Of `users`, those on do not disturb now (UserStatus UpsDnd, by hand or by the hours job, whose clear-at time has not
+/// come).
+fn on_dnd(facade: &EntityFacade, users: &[String], now: i64) -> Result<HashSet<String>, LibError> {
+    if users.is_empty() {
+        return Ok(HashSet::new());
+    }
+    Ok(facade
+        .find(STATUS)?
+        .condition(Condition::is_in("userId", users.iter().map(Value::string).collect()))
+        .disable_authz()
+        .list()?
+        .values()
+        .iter()
+        .filter(|row| is_dnd(row, now))
+        .filter_map(|row| text_of(row, "userId"))
+        .collect())
+}
+
+/// Of `users`, those whose preference CHAT_NOTIFY_PREVIEW is N: their pushes have no snippet.
+fn preview_off(facade: &EntityFacade, users: &[String]) -> Result<HashSet<String>, LibError> {
+    if users.is_empty() {
+        return Ok(HashSet::new());
+    }
+    Ok(facade
+        .find(PREFERENCE)?
+        .condition(Condition::is_in("userId", users.iter().map(Value::string).collect()))
+        .eq("preferenceKey", Value::string("CHAT_NOTIFY_PREVIEW"))
+        .disable_authz()
+        .list()?
+        .values()
+        .iter()
+        .filter(|row| matches!(text_of(row, "preferenceValue").as_deref(), Some("N" | "false")))
+        .filter_map(|row| text_of(row, "userId"))
+        .collect())
+}
+
+/// Whether `user` has read room `room_id` up to `seq` (a member's read marker at or past it).
+fn read_past(facade: &EntityFacade, user: &str, room_id: &str, seq: i64) -> Result<bool, LibError> {
+    Ok(facade
+        .find(MEMBER)?
+        .eq("chatRoomId", Value::string(room_id))
+        .eq("userId", Value::string(user))
+        .disable_authz()
+        .one()?
+        .is_some_and(|member| count_of(&member, "lastReadEventSeq") >= seq))
+}
+
+// ---- the worker ----
+
+/// This node's worker: whether it runs, what wakes it, and when it last cleaned.
+#[derive(Default)]
+struct Worker {
+    started: AtomicBool,
+    /// Pushes wait (seen in the last round, or a wake): the worker then also looks once a minute.
+    active: AtomicBool,
+    wake: Mutex<bool>,
+    signal: Condvar,
+    cleaned: Mutex<Option<i64>>,
+    /// The worker thread, joined by [`shutdown`].
+    thread: Mutex<Option<std::thread::JoinHandle<()>>>,
+}
+
+fn worker(factory: &ExecutionContextFactory) -> Arc<Worker> {
+    factory.extension(|_| Worker::default())
+}
+
+/// Wake this node's worker (a job or a clear committed).
+pub fn wake(factory: &ExecutionContextFactory) {
+    let worker = worker(factory);
+    worker.active.store(true, Ordering::SeqCst);
+    *lock(&worker.wake) = true;
+    worker.signal.notify_all();
+}
+
+/// Wake the worker once the current transaction commits (at once outside one; nothing on a rollback).
+fn wake_after_commit(facade: &EntityFacade) {
+    let Some(factory) = current_factory() else {
+        return;
+    };
+    let weak = Arc::downgrade(&factory);
+    let send = move || {
+        if let Some(factory) = weak.upgrade() {
+            wake(&factory);
+        }
+    };
+    match facade.default_transactions() {
+        Ok(tx) if tx.in_transaction() => {
+            if let Err(err) = tx.on_commit(send) {
+                tracing::warn!("Could not wait for the commit to wake the chat push worker: {err}");
+                wake(&factory);
+            }
+        }
+        _ => send(),
+    }
+}
+
+/// `wake#ChatPush`: wake the worker once the caller's transaction commits.
+fn wake_chat_push(
+    _parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    wake_after_commit(facade);
+    Ok(BTreeMap::new())
+}
+
+/// Start this node's worker thread, once (the host calls it after the cluster starts, so leases name the instance).
+/// Its first round runs at once: the rows a crash left.
+pub fn start(factory: &Arc<ExecutionContextFactory>) {
+    if factory.entity().is_none() {
+        return;
+    }
+    let state = worker(factory);
+    if state.started.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let weak: Weak<ExecutionContextFactory> = Arc::downgrade(factory);
+    let spawned = std::thread::Builder::new()
+        .name("moqui-chat-push".to_string())
+        .spawn(move || {
+            let mut first = true;
+            loop {
+                // the factory is held only for a round, not while waiting, so a stopped server releases it
+                let worker = {
+                    let Some(factory) = weak.upgrade() else {
+                        return;
+                    };
+                    if factory.is_shutting_down() {
+                        return;
+                    }
+                    worker(&factory)
+                };
+                if !first {
+                    let woken = {
+                        let guard = lock(&worker.wake);
+                        let (mut guard, _) = worker
+                            .signal
+                            .wait_timeout_while(guard, SWEEP, |woken| !*woken)
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        std::mem::take(&mut *guard)
+                    };
+                    if !woken && !worker.active.load(Ordering::SeqCst) {
+                        continue;
+                    }
+                }
+                first = false;
+                let Some(factory) = weak.upgrade() else {
+                    return;
+                };
+                if factory.is_shutting_down() {
+                    return;
+                }
+                let Some(facade) = factory.entity() else {
+                    return;
+                };
+                let context = factory.new_context();
+                let _entered = context.enter();
+                let _authz = context.disable_authz();
+                // a panic is one round's: logged, and the next round goes on
+                let outcome =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| round(&factory, &facade, now_millis())));
+                match outcome {
+                    Ok(Ok(report)) => {
+                        worker.active.store(report.waiting > 0, Ordering::SeqCst);
+                        if report.sent > 0 || report.failed > 0 {
+                            tracing::debug!(
+                                "chat push round: {} jobs, {} sent, {} failed, {} waiting",
+                                report.jobs,
+                                report.sent,
+                                report.failed,
+                                report.waiting
+                            );
+                        }
+                    }
+                    Ok(Err(error)) => tracing::error!("the chat push round failed: {error}"),
+                    Err(_) => tracing::error!("the chat push round panicked"),
+                }
+            }
+        });
+    match spawned {
+        Ok(handle) => *lock(&state.thread) = Some(handle),
+        Err(error) => tracing::error!("the chat push worker did not start: {error}"),
+    }
+}
+
+/// Wake this node's worker to end, and wait for it. The factory calls it as it shuts down.
+pub(crate) fn shutdown(factory: &ExecutionContextFactory) {
+    let worker = worker(factory);
+    let Some(handle) = lock(&worker.thread).take() else {
+        return;
+    };
+    *lock(&worker.wake) = true;
+    worker.signal.notify_all();
+    if handle.thread().id() != std::thread::current().id() && handle.join().is_err() {
+        tracing::error!("the chat push worker panicked");
+    }
+}
+
+/// What a round did.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RoundReport {
+    /// Jobs worked into the outbox.
+    pub jobs: usize,
+    /// Outbox rows written or merged.
+    pub queued: usize,
+    pub sent: usize,
+    /// Pushes not taken that will be sent again.
+    pub retried: usize,
+    /// Pushes that ended without being sent.
+    pub failed: usize,
+    /// Pushes not sent because the user read the room first.
+    pub dropped: usize,
+    /// Jobs and pushes left waiting (pending or held).
+    pub waiting: usize,
+}
+
+/// `run#ChatPush`: one round now (or at `nowMillis`, a test's clock).
+fn run_chat_push(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let factory = current_factory().ok_or_else(|| LibError::new("no execution context"))?;
+    let now = param(parameters, "nowMillis")
+        .and_then(|text| text.parse::<i64>().ok())
+        .unwrap_or_else(now_millis);
+    let report = round(&factory, facade, now)?;
+    let as_value = |count: usize| Value::I64(i64::try_from(count).unwrap_or(i64::MAX));
+    Ok(BTreeMap::from([
+        ("jobCount".to_string(), as_value(report.jobs)),
+        ("queuedCount".to_string(), as_value(report.queued)),
+        ("sentCount".to_string(), as_value(report.sent)),
+        ("retriedCount".to_string(), as_value(report.retried)),
+        ("failedCount".to_string(), as_value(report.failed)),
+        ("droppedCount".to_string(), as_value(report.dropped)),
+    ]))
+}
+
+/// One round at `now`: the jobs into the outbox, the held pushes of users no longer on do not disturb, the pushes due,
+/// and the old rows once an hour. Each job, user and push is on its own: one that fails is logged and the rest go on.
+///
+/// # Errors
+///
+/// Returns an error when the jobs or the pushes due cannot be read.
+pub fn round(factory: &ExecutionContextFactory, facade: &EntityFacade, now: i64) -> Result<RoundReport, LibError> {
+    let transport = transport(factory);
+    let node = node_id(factory);
+    let mut report = RoundReport::default();
+    fan_out(facade, transport.as_ref(), &node, now, &mut report)?;
+    release_held(facade, now);
+    deliver_due(facade, transport.as_ref(), &node, now, &mut report)?;
+    clean(&worker(factory), facade, now);
+    let waiting = facade.find(JOB)?.disable_authz().count()?
+        + facade
+            .find(OUTBOX)?
+            .condition(Condition::is_in(
+                "statusEnumId",
+                vec![Value::string(PENDING), Value::string(HELD)],
+            ))
+            .disable_authz()
+            .count()?;
+    report.waiting = usize::try_from(waiting).unwrap_or(usize::MAX);
+    Ok(report)
+}
+
+/// Take a row of `entity` (a job or a push) for this worker: in one transaction, read FOR UPDATE and checked to be
+/// still at `attempts` (and pending, for a push) with no live lease, then leased with one more attempt.
+fn claim(
+    facade: &EntityFacade,
+    entity: &str,
+    (key, id): (&str, &str),
+    attempts: i64,
+    node: &str,
+    now: i64,
+) -> Result<bool, LibError> {
+    force_new(facade, entity, || {
+        let row = facade
+            .find(entity)?
+            .eq(key, Value::string(id))
+            .use_cache(false)
+            .for_update(true)
+            .disable_authz()
+            .one()?;
+        let Some(mut row) = row else { return Ok(false) };
+        let pending = entity != OUTBOX || text_of(&row, "statusEnumId").as_deref() == Some(PENDING);
+        if !pending || count_of(&row, "attemptCount") != attempts || leased(&row, now) {
+            return Ok(false);
+        }
+        row.set("attemptCount", Value::I64(attempts + 1));
+        row.set("leaseOwner", Value::string(node));
+        row.set("leaseExpiresDate", stamp(now + LEASE_MILLIS));
+        row.update(facade)?;
+        Ok(true)
+    })
+}
+
+// ---- 1. the jobs ----
+
+fn fan_out(
+    facade: &EntityFacade,
+    transport: &dyn PushTransport,
+    node: &str,
+    now: i64,
+    report: &mut RoundReport,
+) -> Result<(), LibError> {
+    let jobs = facade
+        .find(JOB)?
+        .order_by("createdDate", false)
+        .limit(JOBS_PER_ROUND)
+        .disable_authz()
+        .list()?;
+    for job in jobs.values() {
+        let job_id = text_of(job, "chatPushJobId").unwrap_or_default();
+        let attempts = count_of(job, "attemptCount");
+        if leased(job, now) {
+            continue;
+        }
+        match claim(facade, JOB, ("chatPushJobId", &job_id), attempts, node, now) {
+            Ok(true) => {}
+            Ok(false) => continue,
+            Err(error) => {
+                tracing::error!("chat push job {job_id} could not be taken: {error}");
+                continue;
+            }
+        }
+        match force_new(facade, OUTBOX, || fan_out_job(facade, transport, job, now)) {
+            Ok(queued) => {
+                report.jobs += 1;
+                report.queued += queued;
+            }
+            Err(error) => {
+                // taken again once its lease runs out, until it has had its tries
+                tracing::error!("chat push job {job_id} failed: {error}");
+                let kept = force_new(facade, JOB, || {
+                    let find = facade.find(JOB)?.eq("chatPushJobId", Value::string(&job_id));
+                    if attempts + 1 >= JOB_ATTEMPTS {
+                        tracing::error!("chat push job {job_id} given up after {JOB_ATTEMPTS} tries");
+                        find.disable_authz().delete_all()
+                    } else {
+                        find.disable_authz()
+                            .update_all([("lastErrorText".to_string(), Value::string(error.to_string()))])
+                    }
+                });
+                if let Err(error) = kept {
+                    tracing::error!("chat push job {job_id} not updated: {error}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// What a room's push says of an event, the same for each user but for the snippet.
+struct Content {
+    room_id: String,
+    event_seq: i64,
+    room_name: Option<String>,
+    direct: bool,
+    sender_name: String,
+    snippet: Option<String>,
+    encrypted: bool,
+    sent_date: i64,
+    link: String,
+}
+
+impl Content {
+    fn of(facade: &EntityFacade, room: &EntityValue, event: &EntityValue) -> Result<Self, LibError> {
+        let room_id = text_of(room, "chatRoomId").unwrap_or_default();
+        let encrypted =
+            text_of(room, "encrypted").as_deref() == Some("Y") || text_of(event, "encrypted").as_deref() == Some("Y");
+        let snippet = if encrypted {
+            None
+        } else {
+            let text = text_of(event, "bodyText").unwrap_or_default();
+            let shown = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            if shown.is_empty() {
+                // a message of files: their names
+                let content: serde_json::Value = text_of(event, "contentJson")
+                    .and_then(|json| serde_json::from_str(&json).ok())
+                    .unwrap_or_default();
+                let names: Vec<&str> = content["attachments"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|file| file["fileName"].as_str())
+                    .collect();
+                (!names.is_empty()).then(|| cut_chars(&format!("📎 {}", names.join(", ")), MAX_SNIPPET))
+            } else {
+                Some(cut_chars(&shown, MAX_SNIPPET))
+            }
+        };
+        let root = moqui_lib::env::get_prop_or_env("comms_app_root");
+        let root = if root.trim().is_empty() {
+            "/qapps/BasicComms".to_string()
+        } else {
+            root.trim().trim_end_matches('/').to_string()
+        };
+        let encoded: String = room_id
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || "-_.~".contains(c) {
+                    c.to_string()
+                } else {
+                    let mut bytes = [0_u8; 4];
+                    c.encode_utf8(&mut bytes)
+                        .bytes()
+                        .map(|byte| format!("%{byte:02X}"))
+                        .collect()
+                }
+            })
+            .collect();
+        Ok(Self {
+            link: format!("{root}/Chat?chatRoomId={encoded}"),
+            event_seq: count_of(event, "eventSeq"),
+            room_name: text_of(room, "roomName").map(|name| cut_chars(&name, MAX_NAME)),
+            direct: text_of(room, "roomTypeEnumId").as_deref() == Some("CrtDirect"),
+            sender_name: cut_chars(
+                &super::chat_bridge::sender_name(facade, event)?.unwrap_or_default(),
+                MAX_NAME,
+            ),
+            snippet,
+            encrypted,
+            sent_date: millis_of(event, "sentDate").unwrap_or(0),
+            room_id,
+        })
+    }
+
+    /// The payload of a message push (plans/Comms-Messaging.md §7.2 rule 5): the room, the sender's name and, when
+    /// `preview` and the room is plain, a snippet; `count` messages merged, the newest's. `title` and `link` are for a
+    /// browser's service worker, which shows them as they are.
+    fn payload(&self, preview: bool, count: i64, mention: bool) -> serde_json::Value {
+        let place = self.room_name.clone().unwrap_or_else(|| self.sender_name.clone());
+        let title = if count > 1 {
+            format!("{count} new messages in {place}")
+        } else {
+            match (&self.room_name, self.direct) {
+                (Some(room), false) => format!("{} in {room}", self.sender_name),
+                _ => self.sender_name.clone(),
+            }
+        };
+        json!({
+            "v": 1,
+            "kind": "message",
+            "chatRoomId": self.room_id,
+            "eventSeq": self.event_seq,
+            "roomName": self.room_name,
+            "direct": self.direct,
+            "senderName": self.sender_name,
+            "snippet": if preview { self.snippet.clone() } else { None },
+            "count": count,
+            "mention": mention,
+            "encrypted": self.encrypted,
+            "sentDate": self.sent_date,
+            "title": title,
+            "link": self.link,
+            "tag": collapse_key(&self.room_id),
+            "topic": "ChatMessage",
+        })
+    }
+}
+
+/// The level a member's pushes follow (§7.2 rule 1).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Level {
+    All,
+    /// The user's mention, reply and thread reply rows; a muted room is here too.
+    Mentions,
+    None,
+}
+
+fn level_of(member: &EntityValue) -> Level {
+    match text_of(member, "notificationLevelEnumId").as_deref() {
+        Some("CnlNone") => Level::None,
+        _ if text_of(member, "isMuted").as_deref() == Some("Y") => Level::Mentions,
+        Some("CnlMentions") => Level::Mentions,
+        _ => Level::All,
+    }
+}
+
+/// Who gets the push of `event`, each with whether it mentions or replies to them (rules 1 and 3): each member but
+/// the sender and the agents (in a direct room also one who left), by level, not one who read it; and a user it
+/// mentions who is not a member (a public or record room).
+fn recipients(
+    facade: &EntityFacade,
+    room: &EntityValue,
+    event: &EntityValue,
+) -> Result<BTreeMap<String, bool>, LibError> {
+    let room_id = text_of(room, "chatRoomId").unwrap_or_default();
+    let seq = count_of(event, "eventSeq");
+    let sender = text_of(event, "senderUserId");
+    let edit = text_of(event, "eventTypeEnumId").as_deref() == Some("CetEdit");
+    let direct = text_of(room, "roomTypeEnumId").as_deref() == Some("CrtDirect");
+    let mentioned: BTreeSet<String> = facade
+        .find(ACTIVITY)?
+        .eq("chatRoomId", Value::string(&room_id))
+        .eq("eventSeq", Value::I64(seq))
+        .condition(Condition::is_in(
+            "activityKindEnumId",
+            vec![
+                Value::string("CuaMention"),
+                Value::string("CuaReply"),
+                Value::string("CuaThreadReply"),
+            ],
+        ))
+        .disable_authz()
+        .list()?
+        .values()
+        .iter()
+        .filter_map(|row| text_of(row, "userId"))
+        .collect();
+    let mut out = BTreeMap::new();
+    let mut members = HashSet::new();
+    let rows = facade
+        .find(MEMBER)?
+        .eq("chatRoomId", Value::string(&room_id))
+        .disable_authz()
+        .list()?;
+    for member in rows.values() {
+        let Some(user) = text_of(member, "userId") else {
+            continue;
+        };
+        members.insert(user.clone());
+        let gone = !direct && text_of(member, "leftDate").is_some();
+        let agent = text_of(member, "roleEnumId").as_deref() == Some("CmrAgent");
+        if sender.as_deref() == Some(user.as_str()) || gone || agent || count_of(member, "lastReadEventSeq") >= seq {
+            continue;
+        }
+        let mention = mentioned.contains(&user);
+        let pushed = match level_of(member) {
+            Level::None => false,
+            Level::Mentions => mention,
+            Level::All => mention || !edit,
+        };
+        if pushed {
+            out.insert(user, mention);
+        }
+    }
+    for user in mentioned {
+        if !members.contains(&user) && sender.as_deref() != Some(user.as_str()) {
+            out.insert(user, true);
+        }
+    }
+    Ok(out)
+}
+
+/// Work one job, in the caller's transaction: its recipients' devices get a push each (written or merged), and the
+/// job goes. Out: the rows written or merged.
+fn fan_out_job(
+    facade: &EntityFacade,
+    transport: &dyn PushTransport,
+    job: &EntityValue,
+    now: i64,
+) -> Result<usize, LibError> {
+    let job_id = text_of(job, "chatPushJobId").unwrap_or_default();
+    let room_id = text_of(job, "chatRoomId").unwrap_or_default();
+    let seq = count_of(job, "eventSeq");
+    let delete_job = || {
+        facade
+            .find(JOB)?
+            .eq("chatPushJobId", Value::string(&job_id))
+            .disable_authz()
+            .delete_all()
+    };
+    let room = facade
+        .find(ROOM)?
+        .eq("chatRoomId", Value::string(&room_id))
+        .disable_authz()
+        .one()?;
+    let event = facade
+        .find(EVENT)?
+        .eq("chatRoomId", Value::string(&room_id))
+        .eq("eventSeq", Value::I64(seq))
+        .disable_authz()
+        .one()?;
+    // a message deleted (or its room) before its push: nothing to say
+    let (Some(room), Some(event)) = (room, event.filter(|event| text_of(event, "redactedDate").is_none())) else {
+        delete_job()?;
+        return Ok(0);
+    };
+    let recipients = recipients(facade, &room, &event)?;
+    let users: Vec<String> = recipients.keys().cloned().collect();
+    let devices = if users.is_empty() {
+        Vec::new()
+    } else {
+        facade
+            .find(DEVICE)?
+            .condition(Condition::is_in("userId", users.iter().map(Value::string).collect()))
+            .condition(Condition::is_null("disabledDate"))
+            .disable_authz()
+            .list()?
+            .values()
+            .to_vec()
+    };
+    if devices.is_empty() {
+        delete_job()?;
+        return Ok(0);
+    }
+    let hidden = preview_off(facade, &users)?;
+    let dnd = on_dnd(facade, &users, now)?;
+    let content = Content::of(facade, &room, &event)?;
+    let mut queued = 0;
+    for device in &devices {
+        let Some(user) = text_of(device, "userId") else {
+            continue;
+        };
+        let Some(mention) = recipients.get(&user) else {
+            continue;
+        };
+        if !transport.available(Provider::of(device)) {
+            continue;
+        }
+        let push = Push {
+            user: &user,
+            mention: *mention,
+            preview: !hidden.contains(&user),
+            held: dnd.contains(&user),
+        };
+        queue_message(facade, device, &content, &push, now)?;
+        queued += 1;
+    }
+    delete_job()?;
+    Ok(queued)
+}
+
+/// One user's push of an event.
+struct Push<'a> {
+    user: &'a str,
+    mention: bool,
+    preview: bool,
+    /// The user is on do not disturb: held until it ends.
+    held: bool,
+}
+
+/// Write the push of `content` to `device`, or merge it into the device's pending or held push of the room that no
+/// worker holds: one push per room, with the count.
+fn queue_message(
+    facade: &EntityFacade,
+    device: &EntityValue,
+    content: &Content,
+    push: &Push<'_>,
+    now: i64,
+) -> Result<(), LibError> {
+    let subscription = text_of(device, "subscriptionId").unwrap_or_default();
+    let status = if push.held { HELD } else { PENDING };
+    let open = facade
+        .find(OUTBOX)?
+        .eq("subscriptionId", Value::string(&subscription))
+        .eq("chatRoomId", Value::string(&content.room_id))
+        .eq("kindEnumId", Value::string(KIND_MESSAGE))
+        .condition(Condition::is_in(
+            "statusEnumId",
+            vec![Value::string(PENDING), Value::string(HELD)],
+        ))
+        .use_cache(false)
+        .for_update(true)
+        .disable_authz()
+        .list()?
+        .values()
+        .iter()
+        .find(|row| !leased(row, now))
+        .cloned();
+    let expire = stamp(now + MESSAGE_TTL_SECONDS * 1000);
+    if let Some(mut row) = open {
+        let count = count_of(&row, "messageCount").max(1) + 1;
+        let mention = push.mention || text_of(&row, "mention").as_deref() == Some("Y");
+        row.set("eventSeq", Value::I64(content.event_seq));
+        row.set("messageCount", Value::I64(count));
+        row.set("mention", Value::string(if mention { "Y" } else { "N" }));
+        row.set(
+            "payloadJson",
+            Value::string(content.payload(push.preview, count, mention).to_string()),
+        );
+        row.set("statusEnumId", Value::string(status));
+        row.set("expireDate", expire);
+        return row.update(facade);
+    }
+    let mut row = facade.make_value(OUTBOX)?;
+    row.set_sequenced_id_primary(facade)?;
+    row.set("subscriptionId", Value::string(&subscription));
+    row.set("userId", Value::string(push.user));
+    row.set("chatRoomId", Value::string(&content.room_id));
+    row.set("eventSeq", Value::I64(content.event_seq));
+    row.set("kindEnumId", Value::string(KIND_MESSAGE));
+    row.set("statusEnumId", Value::string(status));
+    row.set("messageCount", Value::I64(1));
+    row.set("mention", Value::string(if push.mention { "Y" } else { "N" }));
+    row.set(
+        "payloadJson",
+        Value::string(content.payload(push.preview, 1, push.mention).to_string()),
+    );
+    row.set("attemptCount", Value::I64(0));
+    row.set("nextAttemptDate", stamp(now));
+    row.set("createdDate", stamp(now));
+    row.set("expireDate", expire);
+    row.create(facade)
+}
+
+// ---- 2. do not disturb ends ----
+
+/// The held pushes of each user no longer on do not disturb become pending, at once: one summary per room and device,
+/// as they were merged. Each user on their own.
+fn release_held(facade: &EntityFacade, now: i64) {
+    let held = facade.find(OUTBOX).and_then(|find| {
+        find.eq("statusEnumId", Value::string(HELD))
+            .select_field("userId")
+            .disable_authz()
+            .list()
+    });
+    let users: Vec<String> = match held {
+        Ok(rows) => rows
+            .values()
+            .iter()
+            .filter_map(|row| text_of(row, "userId"))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect(),
+        Err(error) => {
+            tracing::error!("the held chat pushes could not be read: {error}");
+            return;
+        }
+    };
+    let dnd = match on_dnd(facade, &users, now) {
+        Ok(dnd) => dnd,
+        Err(error) => {
+            tracing::error!("the do not disturb statuses could not be read: {error}");
+            return;
+        }
+    };
+    for user in users.iter().filter(|user| !dnd.contains(*user)) {
+        let released = force_new(facade, OUTBOX, || {
+            facade
+                .find(OUTBOX)?
+                .eq("userId", Value::string(user))
+                .eq("statusEnumId", Value::string(HELD))
+                .disable_authz()
+                .update_all([
+                    ("statusEnumId".to_string(), Value::string(PENDING)),
+                    ("nextAttemptDate".to_string(), stamp(now)),
+                ])
+        });
+        if let Err(error) = released {
+            tracing::error!("the held chat pushes of user {user} were not released: {error}");
+        }
+    }
+}
+
+// ---- 3. the sends ----
+
+enum Step {
+    Sent,
+    Retried,
+    Failed,
+    Dropped,
+    /// Held by another worker, or taken meanwhile.
+    Skipped,
+}
+
+fn deliver_due(
+    facade: &EntityFacade,
+    transport: &dyn PushTransport,
+    node: &str,
+    now: i64,
+    report: &mut RoundReport,
+) -> Result<(), LibError> {
+    let rows = facade
+        .find(OUTBOX)?
+        .eq("statusEnumId", Value::string(PENDING))
+        .condition(Condition::or(vec![
+            Condition::is_null("nextAttemptDate"),
+            Condition::less_equal("nextAttemptDate", stamp(now)),
+        ]))
+        .order_by("createdDate", false)
+        .limit(PUSHES_PER_ROUND)
+        .disable_authz()
+        .list()?;
+    for row in rows.values() {
+        match deliver_one(facade, transport, row, node, now) {
+            Ok(Step::Sent) => report.sent += 1,
+            Ok(Step::Retried) => report.retried += 1,
+            Ok(Step::Failed) => report.failed += 1,
+            Ok(Step::Dropped) => report.dropped += 1,
+            Ok(Step::Skipped) => {}
+            Err(error) => tracing::error!(
+                "chat push {} could not be sent: {error}",
+                text_of(row, "pushOutboxId").unwrap_or_default()
+            ),
+        }
+    }
+    Ok(())
+}
+
+/// The FCM `messages:send` body of a chat push: a data message of its kind (`chat` or `clear`) and `pushId`, the
+/// registration's id as on a ring (which account of the app it is for, so which key opens it), the payload sealed to
+/// the device (`enc`, base64url) when it gave its keys, else nothing more; with the room's collapse key.
+pub fn fcm_body(
+    token: &str,
+    device: &str,
+    clear: bool,
+    sealed: Option<&[u8]>,
+    ttl_seconds: i64,
+    room_id: &str,
+) -> serde_json::Value {
+    let mut data = serde_json::Map::new();
+    data.insert("kind".to_string(), (if clear { "clear" } else { "chat" }).into());
+    data.insert("pushId".to_string(), device.into());
+    if let Some(sealed) = sealed {
+        data.insert("enc".to_string(), URL_SAFE_NO_PAD.encode(sealed).into());
+    }
+    json!({"message": {
+        "token": token,
+        "data": data,
+        "android": {
+            // high only for a notification that shows: Android takes high priority from an app whose high pushes show nothing
+            "priority": if clear { "NORMAL" } else { "HIGH" },
+            "ttl": format!("{ttl_seconds}s"),
+            "collapse_key": collapse_key(room_id),
+        },
+    }})
+}
+
+fn deliver_one(
+    facade: &EntityFacade,
+    transport: &dyn PushTransport,
+    row: &EntityValue,
+    node: &str,
+    now: i64,
+) -> Result<Step, LibError> {
+    let id = text_of(row, "pushOutboxId").unwrap_or_default();
+    let attempts = count_of(row, "attemptCount");
+    if leased(row, now) {
+        return Ok(Step::Skipped);
+    }
+    let subscription = text_of(row, "subscriptionId").unwrap_or_default();
+    let user = text_of(row, "userId").unwrap_or_default();
+    let room_id = text_of(row, "chatRoomId").unwrap_or_default();
+    let clear = text_of(row, "kindEnumId").as_deref() == Some(KIND_CLEAR);
+    let fail = |reason: &str, error: Option<&str>| -> Result<Step, LibError> {
+        finish(facade, &id, attempts, FAILED, Some(reason), error, now)?;
+        device_result(facade, &subscription, DeviceResult::Failed, now);
+        Ok(Step::Failed)
+    };
+    let Some(expires) = millis_of(row, "expireDate").filter(|end| *end > now) else {
+        return fail(
+            "expired",
+            Some("Its time to live ended before its push service took it"),
+        );
+    };
+    // read since it was queued (rule 3)
+    if !clear && read_past(facade, &user, &room_id, count_of(row, "eventSeq"))? {
+        finish(facade, &id, attempts, DROPPED, Some("read"), None, now)?;
+        return Ok(Step::Dropped);
+    }
+    let device = facade
+        .find(DEVICE)?
+        .eq("subscriptionId", Value::string(&subscription))
+        .disable_authz()
+        .one()?;
+    let Some(device) = device.filter(|device| text_of(device, "disabledDate").is_none()) else {
+        finish(facade, &id, attempts, FAILED, Some("deviceGone"), None, now)?;
+        return Ok(Step::Failed);
+    };
+    let provider = Provider::of(&device);
+    // a native app's registration ends with its device key
+    if provider != Provider::Web {
+        let key = text_of(&device, "loginKey").unwrap_or_default();
+        if !super::web_push::live_device_keys(facade, vec![Value::string(&key)])?.contains(&key) {
+            tracing::info!(subscription_id = %subscription, "native push registration's device key has ended; deleted");
+            delete_device(facade, &subscription);
+            finish(facade, &id, attempts, FAILED, Some("deviceKeyEnded"), None, now)?;
+            return Ok(Step::Failed);
+        }
+    }
+    if !claim(facade, OUTBOX, ("pushOutboxId", &id), attempts, node, now)? {
+        return Ok(Step::Skipped);
+    }
+    let attempt = attempts + 1;
+    let mut payload: serde_json::Value = text_of(row, "payloadJson")
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_else(|| json!({}));
+    // the registration it is for (as on a ring), and what the device acknowledges it with (ack#Push)
+    payload["pushId"] = subscription.clone().into();
+    payload["ackId"] = id.clone().into();
+    let plain = payload.to_string();
+    let keys = text_of(&device, "p256dhKey").zip(text_of(&device, "authSecret"));
+    let sealed = match &keys {
+        Some((p256dh, auth)) => match push_crypto::encrypt(plain.as_bytes(), p256dh, auth) {
+            Ok(sealed) => Some(sealed),
+            Err(reason) => {
+                finish(facade, &id, attempt, FAILED, Some("encrypt"), Some(&reason), now)?;
+                device_result(facade, &subscription, DeviceResult::Failed, now);
+                return Ok(Step::Failed);
+            }
+        },
+        None => None,
+    };
+    let ttl_seconds = ((expires - now) / 1000).max(1);
+    let endpoint = text_of(&device, "endpoint").unwrap_or_default();
+    let sent = match (provider, sealed) {
+        (Provider::Fcm, sealed) => transport.fcm(
+            &subscription,
+            &fcm_body(
+                &endpoint,
+                &subscription,
+                clear,
+                sealed.as_deref(),
+                ttl_seconds,
+                &room_id,
+            ),
+        ),
+        (_, Some(body)) => transport.web(
+            &subscription,
+            provider,
+            &WebPost {
+                endpoint: &endpoint,
+                body,
+                ttl_seconds,
+                urgency: if clear { "normal" } else { "high" },
+                topic: &collapse_key(&room_id),
+            },
+        ),
+        // a browser or distributor always has its keys; one without cannot be pushed to
+        (_, None) => Sent::Refused("the device has no push keys".to_string()),
+    };
+    match sent {
+        Sent::Delivered => {
+            finish_sent(facade, row, attempt, now)?;
+            device_result(facade, &subscription, DeviceResult::Delivered, now);
+            Ok(Step::Sent)
+        }
+        Sent::Gone => {
+            finish(facade, &id, attempt, FAILED, Some("gone"), None, now)?;
+            if provider == Provider::Fcm {
+                tracing::info!(subscription_id = %subscription, "FCM registration gone (UNREGISTERED); deleted");
+                delete_device(facade, &subscription);
+            } else {
+                device_result(facade, &subscription, DeviceResult::Gone, now);
+            }
+            Ok(Step::Failed)
+        }
+        Sent::Refused(error) => {
+            tracing::warn!(subscription_id = %subscription, "chat push {id} refused: {error}");
+            finish(facade, &id, attempt, FAILED, Some("refused"), Some(&error), now)?;
+            device_result(facade, &subscription, DeviceResult::Failed, now);
+            Ok(Step::Failed)
+        }
+        Sent::Retry { after_millis, error } => {
+            if attempt >= MAX_ATTEMPTS {
+                finish(facade, &id, attempt, FAILED, Some("attempts"), Some(&error), now)?;
+                device_result(facade, &subscription, DeviceResult::Failed, now);
+                return Ok(Step::Failed);
+            }
+            let wait = backoff(&id, attempt, after_millis);
+            force_new(facade, OUTBOX, || {
+                facade
+                    .find(OUTBOX)?
+                    .eq("pushOutboxId", Value::string(&id))
+                    .eq("statusEnumId", Value::string(PENDING))
+                    .eq("attemptCount", Value::I64(attempt))
+                    .disable_authz()
+                    .update_all([
+                        ("lastErrorText".to_string(), Value::string(&error)),
+                        ("nextAttemptDate".to_string(), stamp(now + wait)),
+                        ("leaseOwner".to_string(), Value::Null),
+                        ("leaseExpiresDate".to_string(), Value::Null),
+                    ])
+            })?;
+            Ok(Step::Retried)
+        }
+    }
+}
+
+/// End a push's send: its status, reason and error, and no lease; only while it is still pending at `attempt` (a read
+/// meanwhile dropped it, or another worker took it over).
+fn finish(
+    facade: &EntityFacade,
+    id: &str,
+    attempt: i64,
+    status: &str,
+    reason: Option<&str>,
+    error: Option<&str>,
+    now: i64,
+) -> Result<(), LibError> {
+    let text = |value: Option<&str>| value.map_or(Value::Null, Value::string);
+    force_new(facade, OUTBOX, || {
+        let mut fields = vec![
+            ("statusEnumId".to_string(), Value::string(status)),
+            ("reasonCode".to_string(), text(reason)),
+            ("leaseOwner".to_string(), Value::Null),
+            ("leaseExpiresDate".to_string(), Value::Null),
+            ("nextAttemptDate".to_string(), Value::Null),
+        ];
+        if error.is_some() {
+            fields.push(("lastErrorText".to_string(), text(error)));
+        }
+        if status == DROPPED {
+            fields.push(("clearedDate".to_string(), stamp(now)));
+        }
+        facade
+            .find(OUTBOX)?
+            .eq("pushOutboxId", Value::string(id))
+            .eq("statusEnumId", Value::string(PENDING))
+            .eq("attemptCount", Value::I64(attempt))
+            .disable_authz()
+            .update_all(fields)
+    })?;
+    Ok(())
+}
+
+/// A push its push service took. One a read dropped while it was on its way did reach the device: its room's clear
+/// follows it at once, so the device does not keep a notification of what was read.
+fn finish_sent(facade: &EntityFacade, row: &EntityValue, attempt: i64, now: i64) -> Result<(), LibError> {
+    let id = text_of(row, "pushOutboxId").unwrap_or_default();
+    let clear_after = force_new(facade, OUTBOX, || {
+        let current = facade
+            .find(OUTBOX)?
+            .eq("pushOutboxId", Value::string(&id))
+            .use_cache(false)
+            .for_update(true)
+            .disable_authz()
+            .one()?;
+        let Some(mut current) = current else { return Ok(None) };
+        let status = text_of(&current, "statusEnumId").unwrap_or_default();
+        let dropped = status == DROPPED;
+        if !(status == PENDING && count_of(&current, "attemptCount") == attempt) && !dropped {
+            return Ok(None);
+        }
+        current.set("statusEnumId", Value::string(SENT));
+        current.set("sentDate", stamp(now));
+        current.set("reasonCode", Value::Null);
+        current.set("lastErrorText", Value::Null);
+        current.set("leaseOwner", Value::Null);
+        current.set("leaseExpiresDate", Value::Null);
+        current.set("nextAttemptDate", Value::Null);
+        if dropped {
+            current.set("clearedDate", stamp(now));
+        }
+        current.update(facade)?;
+        Ok(dropped.then(|| count_of(&current, "eventSeq")))
+    })?;
+    if let Some(seq) = clear_after {
+        let user = text_of(row, "userId").unwrap_or_default();
+        let room_id = text_of(row, "chatRoomId").unwrap_or_default();
+        let subscription = text_of(row, "subscriptionId").unwrap_or_default();
+        force_new(facade, OUTBOX, || {
+            queue_clear(facade, &user, &subscription, &room_id, seq, now)
+        })?;
+    }
+    Ok(())
+}
+
+enum DeviceResult {
+    Delivered,
+    Failed,
+    Gone,
+}
+
+/// Keep a push's result on its device (the health counts): a send taken, one that ended without being sent (a browser
+/// or distributor failing [`super::web_push::MAX_FAILURES`] in a row is disabled), or the device gone (disabled).
+fn device_result(facade: &EntityFacade, subscription: &str, result: DeviceResult, now: i64) {
+    let kept = force_new(facade, DEVICE, || {
+        let row = facade
+            .find(DEVICE)?
+            .eq("subscriptionId", Value::string(subscription))
+            .use_cache(false)
+            .for_update(true)
+            .disable_authz()
+            .one()?;
+        let Some(mut row) = row else { return Ok(()) };
+        let plus = |row: &EntityValue, field: &str| Value::I64(count_of(row, field) + 1);
+        match result {
+            DeviceResult::Delivered => {
+                row.set("sentCount", plus(&row, "sentCount"));
+                row.set("lastPushDate", stamp(now));
+                row.set("lastSuccessDate", stamp(now));
+                row.set("failureCount", Value::I64(0));
+            }
+            DeviceResult::Failed => {
+                let failures = count_of(&row, "failureCount") + 1;
+                row.set("failedCount", plus(&row, "failedCount"));
+                row.set("failureCount", Value::I64(failures));
+                row.set("lastFailureDate", stamp(now));
+                if failures >= super::web_push::MAX_FAILURES && Provider::of(&row) != Provider::Fcm {
+                    tracing::info!(subscription_id = %subscription, "push subscription failed {failures} times; disabled");
+                    row.set("disabledDate", stamp(now));
+                }
+            }
+            DeviceResult::Gone => {
+                tracing::info!(subscription_id = %subscription, "push subscription gone at its push service; disabled");
+                row.set("failedCount", plus(&row, "failedCount"));
+                row.set("lastFailureDate", stamp(now));
+                row.set("disabledDate", stamp(now));
+            }
+        }
+        row.update(facade)
+    });
+    if let Err(error) = kept {
+        tracing::warn!(subscription_id = %subscription, "push result not kept: {error}");
+    }
+}
+
+/// Delete an FCM or UnifiedPush registration (gone at its push service, or its device key ended); logged when it
+/// cannot be.
+fn delete_device(facade: &EntityFacade, subscription: &str) {
+    let deleted = force_new(facade, DEVICE, || {
+        facade
+            .find(DEVICE)?
+            .eq("subscriptionId", Value::string(subscription))
+            .disable_authz()
+            .delete_all()
+    });
+    if let Err(error) = deleted {
+        tracing::warn!(subscription_id = %subscription, "push registration not deleted: {error}");
+    }
+}
+
+// ---- 4. cleaning ----
+
+/// Remove the pushes done more than [`KEEP_MILLIS`] ago, once an hour.
+fn clean(worker: &Worker, facade: &EntityFacade, now: i64) {
+    {
+        let mut cleaned = lock(&worker.cleaned);
+        if cleaned.is_some_and(|at| now - at < 3_600_000) {
+            return;
+        }
+        *cleaned = Some(now);
+    }
+    let result = force_new(facade, OUTBOX, || {
+        facade
+            .find(OUTBOX)?
+            .condition(Condition::is_in(
+                "statusEnumId",
+                vec![Value::string(SENT), Value::string(FAILED), Value::string(DROPPED)],
+            ))
+            .condition(Condition::less("createdDate", stamp(now - KEEP_MILLIS)))
+            .disable_authz()
+            .delete_all()
+    });
+    if let Err(error) = result {
+        tracing::error!("Could not remove the old chat pushes: {error}");
+    }
+}
+
+// ---- read on another device, acknowledgements ----
+
+/// Queue a clear of the room for the device, merged into its pending clear of the room that no worker holds.
+fn queue_clear(
+    facade: &EntityFacade,
+    user: &str,
+    subscription: &str,
+    room_id: &str,
+    seq: i64,
+    now: i64,
+) -> Result<(), LibError> {
+    let payload = json!({"v": 1, "kind": "clear", "chatRoomId": room_id, "lastReadEventSeq": seq,
+        "tag": collapse_key(room_id)})
+    .to_string();
+    let open = facade
+        .find(OUTBOX)?
+        .eq("subscriptionId", Value::string(subscription))
+        .eq("chatRoomId", Value::string(room_id))
+        .eq("kindEnumId", Value::string(KIND_CLEAR))
+        .eq("statusEnumId", Value::string(PENDING))
+        .use_cache(false)
+        .for_update(true)
+        .disable_authz()
+        .list()?
+        .values()
+        .iter()
+        .find(|row| !leased(row, now))
+        .cloned();
+    let expire = stamp(now + CLEAR_TTL_SECONDS * 1000);
+    if let Some(mut row) = open {
+        row.set("eventSeq", Value::I64(seq.max(count_of(&row, "eventSeq"))));
+        row.set("payloadJson", Value::string(payload));
+        row.set("expireDate", expire);
+        return row.update(facade);
+    }
+    let mut row = facade.make_value(OUTBOX)?;
+    row.set_sequenced_id_primary(facade)?;
+    row.set("subscriptionId", Value::string(subscription));
+    row.set("userId", Value::string(user));
+    row.set("chatRoomId", Value::string(room_id));
+    row.set("eventSeq", Value::I64(seq));
+    row.set("kindEnumId", Value::string(KIND_CLEAR));
+    row.set("statusEnumId", Value::string(PENDING));
+    row.set("messageCount", Value::I64(0));
+    row.set("payloadJson", Value::string(payload));
+    row.set("attemptCount", Value::I64(0));
+    row.set("nextAttemptDate", stamp(now));
+    row.set("createdDate", stamp(now));
+    row.set("expireDate", expire);
+    row.create(facade)
+}
+
+/// `queue#ReadClear`: the user read rooms up to `readMap`'s eventSeq. Their pushes not yet sent, up to it, are dropped;
+/// each device that was sent one (but the one of this request's device key, which read it) gets a clear. In the
+/// caller's transaction; the worker wakes after the commit. Out: clearCount.
+fn queue_read_clear(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let out = |count: i64| Ok(BTreeMap::from([("clearCount".to_string(), Value::I64(count))]));
+    let (Some(user), Some(Value::Map(reads))) = (param(parameters, "userId"), parameters.get("readMap")) else {
+        return out(0);
+    };
+    if !crate::entity::info::is_entity_defined(facade, OUTBOX) {
+        return out(0);
+    }
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let reader: HashSet<String> = match super::web_push::request_device_key(facade, &user)? {
+        Some(key) => facade
+            .find(DEVICE)?
+            .eq("loginKey", Value::string(key))
+            .disable_authz()
+            .list()?
+            .values()
+            .iter()
+            .filter_map(|row| text_of(row, "subscriptionId"))
+            .collect(),
+        None => HashSet::new(),
+    };
+    let now = now_millis();
+    let mut clears = 0;
+    for (room_id, seq) in reads {
+        let Ok(seq) = to_plain_string(seq).split('.').next().unwrap_or("").parse::<i64>() else {
+            continue;
+        };
+        let read = |find: crate::entity::EntityFind| {
+            find.eq("userId", Value::string(&user))
+                .eq("chatRoomId", Value::string(room_id))
+                .eq("kindEnumId", Value::string(KIND_MESSAGE))
+                .condition(Condition::less_equal("eventSeq", Value::I64(seq)))
+                .disable_authz()
+        };
+        // not sent yet: not sent at all
+        read(facade.find(OUTBOX)?)
+            .condition(Condition::is_in(
+                "statusEnumId",
+                vec![Value::string(PENDING), Value::string(HELD)],
+            ))
+            .update_all([
+                ("statusEnumId".to_string(), Value::string(DROPPED)),
+                ("reasonCode".to_string(), Value::string("read")),
+                ("clearedDate".to_string(), stamp(now)),
+            ])?;
+        // sent: those devices remove the room's notification
+        let shown = read(facade.find(OUTBOX)?)
+            .eq("statusEnumId", Value::string(SENT))
+            .condition(Condition::is_null("clearedDate"))
+            .list()?;
+        let devices: BTreeSet<String> = shown
+            .values()
+            .iter()
+            .filter_map(|row| text_of(row, "subscriptionId"))
+            .collect();
+        if devices.is_empty() {
+            continue;
+        }
+        read(facade.find(OUTBOX)?)
+            .eq("statusEnumId", Value::string(SENT))
+            .condition(Condition::is_null("clearedDate"))
+            .update_all([("clearedDate".to_string(), stamp(now))])?;
+        for device in devices.iter().filter(|device| !reader.contains(*device)) {
+            queue_clear(facade, &user, device, room_id, seq, now)?;
+            clears += 1;
+        }
+    }
+    if clears > 0 {
+        wake_after_commit(facade);
+    }
+    out(clears)
+}
+
+/// `ack#Push`: the current user's device showed the push `ackId` (a chat push's `ackId`, or the `pushId` a push of
+/// send#WebPush carries, its registration's id). The device keeps its acked count and last ack. Out: acked, false for a
+/// push that is not the user's (no error, so the answer tells nothing of other users' pushes).
+fn ack_push(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Result<BTreeMap<String, Value>, LibError> {
+    let out = |acked: bool| Ok(BTreeMap::from([("acked".to_string(), Value::Bool(acked))]));
+    let (Some(user), Some(push_id)) = (
+        crate::user::current_user_id()
+            .ok()
+            .flatten()
+            .filter(|id| !id.is_empty()),
+        param(parameters, "ackId"),
+    ) else {
+        return out(false);
+    };
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let now = now_millis();
+    let push = facade
+        .find(OUTBOX)?
+        .eq("pushOutboxId", Value::string(&push_id))
+        .eq("userId", Value::string(&user))
+        .disable_authz()
+        .one()?;
+    let subscription = match push {
+        Some(mut push) => {
+            if text_of(&push, "ackedDate").is_some() {
+                return out(true);
+            }
+            push.set("ackedDate", stamp(now));
+            push.update(facade)?;
+            text_of(&push, "subscriptionId")
+        }
+        None => facade
+            .find(DEVICE)?
+            .eq("subscriptionId", Value::string(&push_id))
+            .eq("userId", Value::string(&user))
+            .disable_authz()
+            .one()?
+            .and_then(|device| text_of(&device, "subscriptionId")),
+    };
+    let Some(subscription) = subscription else {
+        return out(false);
+    };
+    let device = facade
+        .find(DEVICE)?
+        .eq("subscriptionId", Value::string(&subscription))
+        .use_cache(false)
+        .for_update(true)
+        .disable_authz()
+        .one()?;
+    if let Some(mut device) = device {
+        device.set("ackedCount", Value::I64(count_of(&device, "ackedCount") + 1));
+        device.set("lastAckDate", stamp(now));
+        device.update(facade)?;
+    }
+    out(true)
+}
+
+// the tests read the pushes back with the device's key, which needs the web-push feature's crypto
+#[cfg(all(test, feature = "web-push"))]
+#[path = "chat_push_tests.rs"]
+mod tests;

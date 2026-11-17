@@ -34,7 +34,12 @@ along with this software (see the LICENSE.md file). If not, see
 
     Native push (plans/Mobile-Desktop.md §5): an app signed in with its device key registers its FCM token
     (register#PushDevice, /qapps/registerClientPush); send#WebPush then also sends to it through FCM (fcm_service_account,
-    fcm_project_id), a call's ring as a high-priority data message. The registration ends with the device key. -->
+    fcm_project_id), a call's ring as a high-priority data message. The registration ends with the device key. An app
+    gives its push keys with it, and a notification to it is then encrypted to it (enc), with no title in clear text; a
+    phone without Google Play registers a UnifiedPush distributor's endpoint instead, pushed to as Web Push is
+    (plans/Comms-Messaging.md §7.4). Chat messages reach the devices through the chat push worker
+    (org.moqui.chat.ChatPushServices), not send#WebPush. A device acknowledges a push it showed (ack#Push,
+    /qapps/ackClientPush), and System, Push Health shows each device's counts (find#PushHealth). -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
     <service verb="get" noun="UserNotifications">
         <description>The current user's notifications, newest first, with their topic, inbox, reason, record, actor and app,
@@ -551,24 +556,31 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="register" noun="PushDevice" type="rust" location="moqui_core::service::web_push::register_device">
         <description>Keep the push registration of the native app this request comes from, for the current user: an FCM
-            registration token (provider fcm), stored as a WebPushSubscription with pushProviderEnumId PushFcm and the
-            device key the request signed in with (its login_key header). Refused with an error unless the request was
-            signed in by an unexpired device key of the user's (one with a deviceName), so the registration always ends
-            with its device: revoke#UserDeviceKey or logout with revokeLoginKey deletes it, renew#UserDeviceKey moves it to
-            the new key. A token stored before, for this user or another, becomes this registration and is enabled again;
-            an older token of the same device key is replaced.</description>
+            registration token (provider fcm, pushProviderEnumId PushFcm) or a UnifiedPush distributor's endpoint where the
+            phone has no Google Play (provider unifiedpush, PushUnified; plans/Comms-Messaging.md §7.4), stored as a
+            WebPushSubscription with the device key the request signed in with (its login_key header), and the app's push
+            public key and auth secret (p256dhKey, authSecret: the Web Push keys, RFC 8291), which every push to it is
+            encrypted with, so the push service reads nothing (§7.2 rule 5); a UnifiedPush registration needs them, an FCM
+            one without them gets pushes with no text. Refused with an error unless the request was signed in by an
+            unexpired device key of the user's (one with a deviceName), so the registration always ends with its device:
+            revoke#UserDeviceKey or logout with revokeLoginKey deletes it, renew#UserDeviceKey moves it to the new key. A
+            token stored before, for this user or another, becomes this registration and is enabled again; an older token
+            of the same device key is replaced.</description>
         <in-parameters>
-            <parameter name="provider" required="true"><description>fcm (the only one so far)</description></parameter>
-            <parameter name="token" required="true"><description>The FCM registration token (no spaces, 4096 characters at
-                most)</description></parameter>
+            <parameter name="provider" required="true"><description>fcm or unifiedpush</description></parameter>
+            <parameter name="token" required="true"><description>The FCM registration token, or the UnifiedPush endpoint (an
+                https URL); no spaces, 4096 characters at most</description></parameter>
+            <parameter name="p256dhKey"><description>The app's P-256 push public key, base64url</description></parameter>
+            <parameter name="authSecret"><description>The app's 16-byte push auth secret, base64url</description></parameter>
             <parameter name="appId"><description>The app's id, such as the Android package name</description></parameter>
             <parameter name="platform"><description>android (the default)</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="subscriptionId"/></out-parameters>
     </service>
     <service verb="unregister" noun="PushDevice" type="rust" location="moqui_core::service::web_push::unregister_device">
-        <description>Forget the current user's FCM registration with token, or with no token every registration of the
-            device key this request signed in with. Another user's token is left as it is, with no error.</description>
+        <description>Forget the current user's FCM or UnifiedPush registration with token, or with no token every
+            registration of the device key this request signed in with. Another user's token is left as it is, with no
+            error.</description>
         <in-parameters><parameter name="token"/></in-parameters>
         <out-parameters><parameter name="deletedCount" type="Long"/></out-parameters>
     </service>
@@ -579,5 +591,72 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="fcmConfigured" type="Boolean"/>
             <parameter name="registered" type="Boolean"/>
         </out-parameters>
+    </service>
+    <service verb="ack" noun="Push" type="rust" location="moqui_core::service::chat_push::ack_push">
+        <description>The current user's device showed a push (plans/Comms-Messaging.md §7.3, Acknowledgement): ackId is a
+            chat push's ackId (its PushOutbox id, in the encrypted payload), or the pushId a push of send#WebPush carries
+            (the registration's id). The device's ackedCount and lastAckDate are kept (System, Push Health), and a chat
+            push's ackedDate. acked is false, with no error, for a push that is not the user's. An acknowledgement means the
+            device got the push, not that the person read the message.</description>
+        <in-parameters><parameter name="ackId" required="true"/></in-parameters>
+        <out-parameters><parameter name="acked" type="Boolean"/></out-parameters>
+    </service>
+
+    <!-- ========== Push health (System, Push Health; plans/Comms-Messaging.md §7.3) ========== -->
+
+    <service verb="find" noun="PushHealth">
+        <description>Every user's push devices and how their pushes go (the PushHealthAdmin permission): each device
+            {subscriptionId, userId, userName, providerText, platform, appId, userAgent, keyed (it gave its push keys),
+            createdDate, lastRegisteredDate, lastPushDate (its push service took one), lastAckDate, sentCount, ackedCount,
+            failedCount, failureCount (in a row), disabledDate, waitingCount (pushes pending or held), unackedCount (pushes
+            sent between a day and ten minutes ago with no acknowledgement), missedAcks (unackedCount above 0: the alert)},
+            the devices with missed acknowledgements first, then the latest push; at most 500. With the totals: devices,
+            waiting, failed in the last day, missed. The endpoint and keys are never returned.</description>
+        <out-parameters>
+            <parameter name="deviceList" type="List"/>
+            <parameter name="totals" type="Map"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            deviceList = []; totals = {}
+            if (!ec.user.hasPermission('PushHealthAdmin')) { ec.message.addError(ec.l10n.localize('Push health is for administrators')); return }
+            const toMillis = (value) => value == null || value === '' ? null : Number(value)
+            const now = Number(ec.user.nowTimestamp)
+            const devices = Array.from(ec.entity.find('moqui.security.user.WebPushSubscription').orderBy('-lastPushDate').limit(500)
+                    .selectField('subscriptionId').selectField('userId').selectField('pushProviderEnumId').selectField('platform').selectField('appId')
+                    .selectField('userAgent').selectField('p256dhKey').selectField('createdDate').selectField('lastRegisteredDate').selectField('lastPushDate')
+                    .selectField('lastAckDate').selectField('sentCount').selectField('ackedCount').selectField('failedCount').selectField('failureCount')
+                    .selectField('disabledDate').disableAuthz().list())
+            const ids = devices.map((row) => row.subscriptionId)
+            const users = {}, providers = {}, waiting = {}, unacked = {}
+            const userIds = Array.from(new Set(devices.map((row) => row.userId).filter((id) => id)))
+            if (userIds.length) for (const row of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', userIds)
+                    .selectField('userId').selectField('userFullName').selectField('username').disableAuthz().list()) users[row.userId] = row.userFullName || row.username || row.userId
+            for (const row of ec.entity.find('moqui.basic.Enumeration').condition('enumTypeId', 'PushProvider').disableAuthz().list()) providers[row.enumId] = row.description
+            if (ids.length) {
+                for (const row of ec.entity.find('moqui.chat.PushOutbox').condition('subscriptionId', 'in', ids)
+                        .condition('statusEnumId', 'in', ['PosPending', 'PosHeld']).selectField('subscriptionId').disableAuthz().list())
+                    waiting[row.subscriptionId] = (waiting[row.subscriptionId] || 0) + 1
+                for (const row of ec.entity.find('moqui.chat.PushOutbox').condition('subscriptionId', 'in', ids).condition('statusEnumId', 'PosSent')
+                        .condition('kindEnumId', 'PokMessage').condition('ackedDate', null).condition('sentDate', 'greater-equals', new Date(now - 86400000))
+                        .condition('sentDate', 'less', new Date(now - 600000))
+                        .selectField('subscriptionId').disableAuthz().list())
+                    unacked[row.subscriptionId] = (unacked[row.subscriptionId] || 0) + 1
+            }
+            for (const row of devices) {
+                const id = row.subscriptionId
+                deviceList.push({subscriptionId: id, userId: row.userId ?? null, userName: users[row.userId] || row.userId || null,
+                    providerText: providers[row.pushProviderEnumId || 'PushWeb'] || row.pushProviderEnumId || null, platform: row.platform ?? null,
+                    appId: row.appId ?? null, userAgent: row.userAgent ?? null, keyed: !!row.p256dhKey, createdDate: toMillis(row.createdDate),
+                    lastRegisteredDate: toMillis(row.lastRegisteredDate ?? row.createdDate), lastPushDate: toMillis(row.lastPushDate),
+                    lastAckDate: toMillis(row.lastAckDate), sentCount: Number(row.sentCount || 0), ackedCount: Number(row.ackedCount || 0),
+                    failedCount: Number(row.failedCount || 0), failureCount: Number(row.failureCount || 0), disabledDate: toMillis(row.disabledDate),
+                    waitingCount: waiting[id] || 0, unackedCount: unacked[id] || 0, missedAcks: (unacked[id] || 0) > 0})
+            }
+            deviceList.sort((left, right) => Number(right.missedAcks) - Number(left.missedAcks))
+            const failedDay = ec.entity.find('moqui.chat.PushOutbox').condition('statusEnumId', 'PosFailed')
+                    .condition('createdDate', 'greater-equals', new Date(now - 86400000)).disableAuthz().count()
+            totals = {deviceCount: deviceList.length, waitingCount: Object.values(waiting).reduce((sum, count) => sum + count, 0),
+                failedDayCount: Number(failedDay), missedCount: deviceList.filter((device) => device.missedAcks).length}
+        ]]></script></actions>
     </service>
 </services>

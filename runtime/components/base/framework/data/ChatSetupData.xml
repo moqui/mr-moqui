@@ -12,9 +12,21 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Chat and presence (framework/entity/ChatEntities.xml, org.moqui.chat.ChatServices): the search document of chat
-    messages and the jobs. -->
+<!-- Chat and presence (framework/entity/ChatEntities.xml, org.moqui.chat.ChatServices): the mention topic, the push
+    health permission, the search document of chat messages and the jobs. -->
 <entity-facade-xml type="seed-initial">
+    <!-- A mention in a chat room (org.moqui.chat.ChatServices.notify#Mention), so a server with only the framework stores
+        it in the user's notification list (plans/Comms-Messaging.md §7.3, Topics): roomName, chatRoomId, eventSeq,
+        authorUserId, authorName and summary in the message, reason NrMention, the room as its record. Its push goes
+        through the chat push worker (chat_push.rs), by the room's notification level, not by this topic's push setting,
+        so it is not pushed twice. An app may seed it again with its own values (mr-mantle adds its email). -->
+    <moqui.security.user.NotificationTopic topic="ChatMention" inboxEnumId="NinNotifications" description="Mentioned in a Chat Room" typeString="info"
+            showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y"
+            titleTemplate="${authorName} mentioned you in ${roomName}${summary ? ': ' + summary : ''}" linkTemplate=""/>
+    <!-- System, Push Health: every user's push devices with their counts (org.moqui.ui.NotificationServices.find#PushHealth) -->
+    <moqui.security.UserPermission userPermissionId="PushHealthAdmin" description="See the push devices of every user and how their pushes go"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="PushHealthAdmin" fromDate="0"/>
+
     <!-- A chat message in the search index: its room, its sender and its current text. ChatServices indexes it on
         send#Message and edit#Message and deletes it on redact#Message (no DataFeed); search#ChatEvents searches it with
         a filter of the rooms the user may read: the user's rooms and the public ones (roomVisibilityEnumId CrvUsers). -->

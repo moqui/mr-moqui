@@ -827,12 +827,17 @@ along with this software (see the LICENSE.md file). If not, see
             device key it was registered with (loginKey): revoking the key deletes it, renewing the key moves it to the new
             key, and one whose key has ended is deleted at the next push. Either one the push service answers as gone
             (Web Push 404 or 410, FCM UNREGISTERED or INVALID_ARGUMENT), or one that fails repeatedly, gets a disabledDate
-            and is not sent to again.</description>
+            and is not sent to again; the chat push worker deletes an FCM registration FCM answers as gone. PushUnified: a
+            native app's UnifiedPush distributor endpoint (plans/Comms-Messaging.md §7.4, a phone without Google Play),
+            registered as an FCM token is and pushed to as Web Push is. A native app gives its push public key and auth
+            secret at register#PushDevice, so what is pushed to it is encrypted to it (RFC 8291) on FCM too. The counts
+            and dates after failureCount are the device's push health (the System Push Health screen).</description>
         <field name="subscriptionId" type="id" is-pk="true"/>
         <field name="userId" type="id"/>
-        <field name="pushProviderEnumId" type="id"><description>PushWeb (Web Push, also when empty) or PushFcm</description></field>
-        <field name="endpoint" type="text-long"><description>The push service URL (PushWeb) or the FCM registration token
-            (PushFcm), a capability: whoever has it may push to the device, so it is only read by the framework.</description></field>
+        <field name="pushProviderEnumId" type="id"><description>PushWeb (Web Push, also when empty), PushFcm or PushUnified</description></field>
+        <field name="endpoint" type="text-long"><description>The push service URL (PushWeb, PushUnified) or the FCM
+            registration token (PushFcm), a capability: whoever has it may push to the device, so it is only read by the
+            framework.</description></field>
         <field name="endpointHash" type="text-medium"><description>SHA-256 of the endpoint, hex: the unique key, as the
             endpoint is too long to index.</description></field>
         <field name="loginKey" type="text-medium"><description>PushFcm: the device key (UserLoginKey.loginKey, the stored
@@ -846,8 +851,15 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="createdDate" type="date-time"/>
         <field name="lastSuccessDate" type="date-time"/>
         <field name="lastFailureDate" type="date-time"/>
-        <field name="failureCount" type="number-integer"/>
+        <field name="failureCount" type="number-integer"><description>Failed pushes in a row</description></field>
         <field name="disabledDate" type="date-time"/>
+        <field name="lastRegisteredDate" type="date-time"><description>The device's last registration (an app registers at
+            each start)</description></field>
+        <field name="lastPushDate" type="date-time"><description>The last push its push service took</description></field>
+        <field name="lastAckDate" type="date-time"><description>The last push the device acknowledged (ack#Push)</description></field>
+        <field name="sentCount" type="number-integer"><description>Pushes its push service took, in all</description></field>
+        <field name="ackedCount" type="number-integer"><description>Pushes the device acknowledged, in all</description></field>
+        <field name="failedCount" type="number-integer"><description>Pushes that ended without being sent, in all</description></field>
         <relationship type="one" related="moqui.security.UserAccount" short-alias="user"/>
         <relationship type="one" title="PushProvider" related="moqui.basic.Enumeration" short-alias="provider">
             <key-map field-name="pushProviderEnumId"/></relationship>
@@ -860,6 +872,7 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.EnumerationType enumTypeId="PushProvider" description="Push Provider"/>
             <moqui.basic.Enumeration enumTypeId="PushProvider" enumId="PushWeb" enumCode="web" sequenceNum="1" description="Web Push"/>
             <moqui.basic.Enumeration enumTypeId="PushProvider" enumId="PushFcm" enumCode="fcm" sequenceNum="2" description="Firebase Cloud Messaging"/>
+            <moqui.basic.Enumeration enumTypeId="PushProvider" enumId="PushUnified" enumCode="unifiedpush" sequenceNum="3" description="UnifiedPush"/>
         </seed-data>
     </entity>
     <!-- ========== SSO (the moqui-sso component, in the framework; plans/archive/Sso.md) ========== -->

@@ -52,11 +52,20 @@ along with this software (see the LICENSE.md file). If not, see
 
     A mention (<span data-mention-id="userId"> in a message, the m-rich-text mention) of a member, of any user in a
     public room, or of a user who may see the record of a record room, is counted (ChatEventMention) and notified on the
-    topic ChatMention (an app seeds the NotificationTopic; IronStone's Mantle does), with roomName, chatRoomId,
+    topic ChatMention (framework/data/ChatSetupData.xml seeds it; an app may seed it again), with roomName, chatRoomId,
     eventSeq, authorUserId, authorName and summary in the message, the room as its record, and roomUrl, when the caller
     gives one, as its link (notify#Mention). A member whose notification level is CnlNone is counted but not notified. A
-    user whose preference CHAT_NOTIFY_PREVIEW is N gets no summary (no message text in the notification). Do not disturb
-    changes nothing here: the client silences toasts and sounds. A membership starts at the user's preference
+    user whose preference CHAT_NOTIFY_PREVIEW is N gets no summary (no message text in the notification). A
+    ChatMention notification is stored and on the socket; it is not pushed (the push path below pushes the mention).
+
+    Activity and push (plans/Comms-Messaging.md §5.2, §7). send#Message, edit#Message and react#Message write what each
+    user should hear about (ChatUserActivity: mention, reply, threadReply, reaction; record#UserActivity) in the message's
+    transaction; a redaction and the retention remove it. append#Event writes a ChatPushJob for a message or an edit,
+    and the push worker (ChatPushServices, crates/moqui-core/src/service/chat_push.rs) pushes it to the members' devices
+    after the commit, by level (All, Mentions: the user's mention, reply and thread reply rows, None; a muted room counts
+    as Mentions), not to one who has read it, held while the user is on do not disturb and sent then as one summary per
+    room; a reaction never pushes. mark#Read and mark#AllRead queue a clear push for the user's other devices
+    (queue#ReadClear). A membership starts at the user's preference
     CHAT_NOTIFY_DEFAULT (all, mentions or none) when set, but in a direct room. An @room mention (data-mention-id
     "@room") mentions every current member, from a moderator or owner, or from anyone in a room of 20 members or fewer.
     Read receipts are a user's choice: CHAT_READ_RECEIPTS of N pushes no read marker of theirs to the room and blanks it
@@ -369,7 +378,8 @@ along with this software (see the LICENSE.md file). If not, see
             ciphertext: no bodyText and no snippet are kept, and it goes to no bridge. An edit, reaction, redaction or pin is
             a change of the room's message (record#RoomChange; the push carries its roomChangeSeq), a membership event a
             room change in the members' feeds and a membership change for the user it is about (record#UserChange). With
-            noPush neither is recorded: the caller records its own.</description>
+            noPush neither is recorded: the caller records its own. A message or an edit gets a ChatPushJob, the push to the
+            members' devices, which the push worker works after the commit (ChatPushServices.wake#ChatPush).</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="eventTypeEnumId" required="true"/>
@@ -521,6 +531,50 @@ along with this software (see the LICENSE.md file). If not, see
                     queued++
                 }
                 if (queued) ec.service.sync().name('org.moqui.chat.ChatServices.wake#BridgeDelivery').disableAuthz().call()
+            }
+
+            // the push to the members' devices (plans/Comms-Messaging.md §7.3): one job row in this transaction, however many
+            // members, worked after the commit (crates/moqui-core/src/service/chat_push.rs), so a message that rolls back
+            // pushes nothing. An edit pushes only to the users it newly mentions.
+            if (!noPush && (eventTypeEnumId === 'CetMessage' || eventTypeEnumId === 'CetEdit')) {
+                const job = ec.entity.makeValue('moqui.chat.ChatPushJob')
+                job.setSequencedIdPrimary()
+                job.setFields({chatRoomId: chatRoomId, eventSeq: eventSeq, createdDate: now, attemptCount: 0}, true, null, null)
+                job.create()
+                ec.service.sync().name('org.moqui.chat.ChatPushServices.wake#ChatPush').disableAuthz().call()
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="record" noun="UserActivity" allow-remote="false">
+        <description>Internal: what the users of activityList should hear about an event (ChatUserActivity,
+            plans/Comms-Messaging.md §5.2), in the caller's transaction: each {userId, kind}, kind mention, reply,
+            threadReply or reaction. eventSeq is the event that made it, messageEventSeq the message it is about (eventSeq
+            when empty). The actor is left out, and a user gets one row of a kind for the event. The caller has checked
+            that each user may read the room.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+            <parameter name="messageEventSeq" type="Integer"/>
+            <parameter name="actorUserId"/>
+            <parameter name="chatActorId"/>
+            <parameter name="activityList" type="List"/>
+        </in-parameters>
+        <actions><script><![CDATA[
+            const KINDS = {mention: 'CuaMention', reply: 'CuaReply', threadReply: 'CuaThreadReply', reaction: 'CuaReaction'}
+            const seen = new Set()
+            const now = ec.user.nowTimestamp
+            for (const item of Array.from(activityList || [])) {
+                const userId = item && item.userId ? String(item.userId) : null
+                const kind = item ? KINDS[item.kind] : null
+                if (!userId || !kind || userId === actorUserId || seen.has(userId + ' ' + kind)) continue
+                seen.add(userId + ' ' + kind)
+                const row = ec.entity.makeValue('moqui.chat.ChatUserActivity')
+                row.setSequencedIdPrimary()
+                row.setFields({userId: userId, activityKindEnumId: kind, chatRoomId: chatRoomId, eventSeq: eventSeq,
+                    messageEventSeq: messageEventSeq ?? eventSeq, actorUserId: actorUserId || null, chatActorId: chatActorId || null,
+                    activityDate: now}, true, null, null)
+                row.create()
             }
         ]]></script></actions>
     </service>
@@ -2447,11 +2501,12 @@ along with this software (see the LICENSE.md file). If not, see
             }
             if (emptyBody && !attachmentIds.length && !forwardOf && !ciphertext) { ec.message.addError(ec.l10n.localize('A message needs text or a file')); return }
 
-            let replyTo = null, threadRoot = null
+            let replyTo = null, threadRoot = null, replyToSender = null
             if (replyToEventSeq != null) {
                 const target = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', replyToEventSeq).one()
                 if (!target || target.eventTypeEnumId !== 'CetMessage') { ec.message.addError(`Message ${replyToEventSeq} not found in the room`); return }
                 replyTo = Number(target.eventSeq)
+                replyToSender = target.senderUserId ?? null
             }
             let rootRow = null
             if (threadRootEventSeq != null) {
@@ -2589,6 +2644,18 @@ along with this software (see the LICENSE.md file). If not, see
                     chatRoomId: chatRoomId, eventSeq: eventSeq, roomName: room.roomName || event.senderName || chatRoomId, authorUserId: sender,
                     authorName: event.senderName || sender, bodyText: ciphertext ? null : bodyText, roomUrl: roomUrl || null, encrypted: !!ciphertext}).call()
             }
+            // what the members hear about (ChatUserActivity, plans/Comms-Messaging.md §5.2): its mentions, a reply to their
+            // message, a reply in a thread they started or wrote in; current members only for the replies
+            const activity = mentionIds.map((id) => ({userId: id, kind: 'mention'}))
+            if (replyToSender && current(memberOf[replyToSender])) activity.push({userId: replyToSender, kind: 'reply'})
+            if (rootRow) {
+                const writers = new Set(rootRow.senderUserId ? [rootRow.senderUserId] : [])
+                for (const row of ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('threadRootEventSeq', threadRoot)
+                        .condition('eventTypeEnumId', 'CetMessage').selectField('senderUserId').list()) if (row.senderUserId) writers.add(row.senderUserId)
+                for (const id of writers) if (current(memberOf[id])) activity.push({userId: id, kind: 'threadReply'})
+            }
+            if (activity.length) ec.service.sync().name('org.moqui.chat.ChatServices.record#UserActivity').parameters({chatRoomId: chatRoomId,
+                eventSeq: eventSeq, actorUserId: sender, chatActorId: senderActor || null, activityList: activity}).call()
             // indexed once the transaction commits: the document is read through a view of rows this one may hold to
             // its commit (plans/archive/TX-Cache.md D5), and a message that rolls back is not indexed
             if (!ciphertext) ec.service.special().name('org.moqui.chat.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).registerOnCommit()
@@ -2781,6 +2848,11 @@ along with this software (see the LICENSE.md file). If not, see
             }
             for (const id of dropped) ec.entity.find('moqui.chat.ChatEventMention').condition('chatRoomId', chatRoomId)
                     .condition('eventSeq', eventSeq).condition('userId', id).deleteAll()
+            // the activity: a mention the edit adds (its push goes with the edit's event), and none of a mention it drops
+            if (added.length) ec.service.sync().name('org.moqui.chat.ChatServices.record#UserActivity').parameters({chatRoomId: chatRoomId,
+                eventSeq: editEventSeq, messageEventSeq: eventSeq, actorUserId: me, activityList: added.map((id) => ({userId: id, kind: 'mention'}))}).call()
+            if (dropped.length) ec.entity.find('moqui.chat.ChatUserActivity').condition('chatRoomId', chatRoomId).condition('messageEventSeq', eventSeq)
+                    .condition('activityKindEnumId', 'CuaMention').condition('userId', 'in', dropped).deleteAll()
             const notify = added.filter((id) => !memberOf[id] || (memberOf[id].notificationLevelEnumId || 'CnlAll') !== 'CnlNone')
             if (notify.length) ec.service.sync().name('org.moqui.chat.ChatServices.notify#Mention').parameters({userIdList: notify,
                 chatRoomId: chatRoomId, eventSeq: eventSeq, roomName: room.roomName || event.senderName || chatRoomId, authorUserId: me,
@@ -2912,7 +2984,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="clear" noun="MessageContent" allow-remote="false">
         <description>Internal: what a message keeps beside its own row goes, for redact#Message and the retention
-            (clean#RoomRetention): its mentions (no longer counted), its files (each file on its own: one that cannot be
+            (clean#RoomRetention): its mentions (no longer counted), its activity rows and those of the reactions to it
+            (ChatUserActivity), its files (each file on its own: one that cannot be
             removed is logged), its poll's rows, its link previews and its search document. The caller has checked
             access, and changes or deletes the message row itself. mentionedUserIdList are the users it mentioned, whose
             counts change.</description>
@@ -2927,6 +3000,9 @@ along with this software (see the LICENSE.md file). If not, see
             mentionedUserIdList = Array.from(ec.entity.find('moqui.chat.ChatEventMention').condition('chatRoomId', chatRoomId)
                     .condition('eventSeq', eventSeq).selectField('userId').list()).map((row) => row.userId)
             ec.entity.find('moqui.chat.ChatEventMention').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).deleteAll()
+            // what users were to hear about it (ChatUserActivity): its mentions and replies, and the reactions to it
+            for (const field of ['eventSeq', 'messageEventSeq'])
+                ec.entity.find('moqui.chat.ChatUserActivity').condition('chatRoomId', chatRoomId).condition(field, eventSeq).deleteAll()
             // the files: each one on its own; a file that cannot be removed is logged. A file put over XMPP (attach#Upload) is
             // under the upload root, and goes with the last chat file on it, with the uploads that serve it (SEC-COM-14).
             for (const file of ec.entity.find('moqui.chat.ChatAttachment').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).list()) {
@@ -3022,6 +3098,13 @@ along with this software (see the LICENSE.md file). If not, see
                     ec.message.addError(ec.resource.expand('Reactions do not reach ${bridgeName}, where this message went', '', {bridgeName: support.bridgeName})); return }
             }
             const actorId = externalActor ? externalActor.chatActorId : null
+            // the activity of a reaction (ChatUserActivity, plans/Comms-Messaging.md §5.2): the message's sender hears of it
+            // in Activity, never by push; a reaction taken back takes its row with it
+            const reacted = (seq) => { if (target.senderUserId) ec.service.sync().name('org.moqui.chat.ChatServices.record#UserActivity').parameters({
+                chatRoomId: chatRoomId, eventSeq: seq, messageEventSeq: eventSeq, actorUserId: me, chatActorId: actorId,
+                activityList: [{userId: target.senderUserId, kind: 'reaction'}]}).call() }
+            const unreacted = (seqs) => { if (seqs.length) ec.entity.find('moqui.chat.ChatUserActivity').condition('chatRoomId', chatRoomId)
+                .condition('activityKindEnumId', 'CuaReaction').condition('eventSeq', 'in', seqs).deleteAll() }
             if (roomRow0 && roomRow0.encrypted === 'Y') {
                 if (takeBack != null) {
                     const own = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', takeBack).forUpdate(true).one()
@@ -3033,6 +3116,7 @@ along with this software (see the LICENSE.md file). If not, see
                         eventTypeEnumId: 'CetRedaction', senderUserId: me, relatesToEventSeq: Number(takeBack),
                         content: {target: 'reaction', messageSeq: eventSeq}}).call()
                     if (ec.message.hasError()) return
+                    unreacted([Number(takeBack)])
                     reactionEventSeq = taken.eventSeq
                     return
                 }
@@ -3043,6 +3127,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (ec.message.hasError()) return
                 added = true
                 reactionEventSeq = made.eventSeq
+                reacted(made.eventSeq)
                 return
             }
             const mine = Array.from(ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventTypeEnumId', 'CetReaction')
@@ -3055,6 +3140,7 @@ along with this software (see the LICENSE.md file). If not, see
                     eventTypeEnumId: 'CetRedaction', senderUserId: me, senderActorId: actorId, relatesToEventSeq: Number(mine[0].eventSeq),
                     content: {target: 'reaction', messageSeq: eventSeq, key: reactionKey}, sourceChatBridgeId: sourceChatBridgeId || null}).call()
                 if (ec.message.hasError()) return
+                unreacted(mine.map((row) => Number(row.eventSeq)))
                 reactionEventSeq = appended.eventSeq
                 return
             }
@@ -3065,6 +3151,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (ec.message.hasError()) return
             added = true
             reactionEventSeq = appended.eventSeq
+            reacted(appended.eventSeq)
         ]]></script></actions>
     </service>
 
@@ -3097,7 +3184,9 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Move the current user's read marker in a room: to eventSeq (the room's last event by default; a marker
             only moves forward), or with markUnread to just before eventSeq ("mark unread from here"). The user's other
             tabs hear of it on chatUser:userId and the room's members on chatRoom:id (read receipts, unless the user's
-            preference CHAT_READ_RECEIPTS is N); the user's counts are published.</description>
+            preference CHAT_READ_RECEIPTS is N); the user's counts are published. A marker moved forward drops the room's
+            pushes not yet sent to the user's devices and sends the devices that showed one a clear push
+            (ChatPushServices.queue#ReadClear).</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="eventSeq" type="Integer"/>
@@ -3127,6 +3216,9 @@ along with this software (see the LICENSE.md file). If not, see
             lastReadEventSeq = next
             ec.service.sync().name('org.moqui.chat.ChatServices.record#UserChange').parameters({userIdList: [me], changeKind: 'read', chatRoomId: chatRoomId,
                 change: {lastReadEventSeq: next}, pushMessage: {kind: 'read', chatRoomId: chatRoomId, lastReadEventSeq: next}}).call()
+            // the user's other devices remove the room's notification; a push not yet sent is not sent (§7.2 rule 3)
+            if (!markUnread) ec.service.sync().name('org.moqui.chat.ChatPushServices.queue#ReadClear').parameters({userId: me,
+                readMap: {[chatRoomId]: next}}).disableAuthz().call()
             const isDirect = access.room.roomTypeEnumId === 'CrtDirect'
             const others = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('userId', 'not-equals', me)
                     .selectField('userId').selectField('leftDate').list()).filter((member) => member.userId && (isDirect || !member.leftDate))
@@ -3166,6 +3258,9 @@ along with this software (see the LICENSE.md file). If not, see
             if (!roomCount) return
             ec.service.sync().name('org.moqui.chat.ChatServices.record#UserChange').parameters({changeList: changes,
                 pushMessage: {kind: 'read', all: true}}).call()
+            const readMap = {}
+            for (const change of changes) readMap[change.chatRoomId] = change.change.lastReadEventSeq
+            ec.service.sync().name('org.moqui.chat.ChatPushServices.queue#ReadClear').parameters({userId: me, readMap: readMap}).disableAuthz().call()
             ec.service.sync().name('org.moqui.chat.ChatServices.publish#ChatCounts').parameter('userIdList', [me]).call()
         ]]></script></actions>
     </service>
@@ -3484,9 +3579,13 @@ along with this software (see the LICENSE.md file). If not, see
                             .selectField('eventSeq').list()) doomed.add(Number(row.eventSeq))
             }
             const all = Array.from(doomed).sort((left, right) => left - right)
-            for (let start = 0; start < all.length; start += 500)
+            for (let start = 0; start < all.length; start += 500) {
+                // the activity of the edits and reactions that go (a message's own went with clear#MessageContent)
+                ec.entity.find('moqui.chat.ChatUserActivity').condition('chatRoomId', chatRoomId)
+                        .condition('eventSeq', 'in', all.slice(start, start + 500)).deleteAll()
                 deletedCount += ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId)
                         .condition('eventSeq', 'in', all.slice(start, start + 500)).deleteAll()
+            }
             // the room's last message is the last one that stands
             if (room.lastMessageSeq != null && doomed.has(Number(room.lastMessageSeq))) {
                 const last = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventTypeEnumId', 'CetMessage')

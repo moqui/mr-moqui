@@ -307,10 +307,11 @@ function ringEnded(session, action, extra) {
   else return
   userIds = [...new Set(userIds.filter((id) => id))]
   if (!userIds.length) return
-  ec.service.async().name('org.moqui.ui.NotificationServices.send#WebPush').parameters({
+  // after the commit, as the ring (COM-UI-032)
+  ec.service.special().name('org.moqui.ui.NotificationServices.send#WebPush').parameters({
     userIdList: userIds, kind: 'ringEnded', reason: action, callSessionId: session.callSessionId, topic: 'IncomingCall',
     tag: 'call-' + session.callSessionId, ttlSeconds: 60, urgency: 'high',
-  }).call()
+  }).registerOnCommit()
 }
 
 function bump(session) {
@@ -793,13 +794,17 @@ function ring(session, userIds, fromUserId, fromName) {
       from, video: session.video === 'Y', callKind: KIND_CODES[session.kindEnumId], chatRoomId: session.chatRoomId,
       expiresAt: ms(session.ringExpireDate), call: view(session, userId) })
   }
-  // a native app gets the call too (callSessionId, chatRoomId, fromName, video, expiresAt), to show it as an incoming call
-  ec.service.async().name('org.moqui.ui.NotificationServices.send#WebPush').parameters({
-    userIdList: userIds, title: ec.l10n.localize('Call from') + ' ' + from.name, link: callLink(session.callSessionId),
+  // a native app gets the call too (callSessionId, chatRoomId, fromName, video, expiresAt), to show it as an incoming call:
+  // after the commit, so a call that rolls back rings no phone (COM-UI-032), and on do not disturb only from a person on
+  // the user's allowed list or as the same person's second call within 3 minutes (plans/Comms-Messaging.md §7.2 rule 4)
+  const devices = ec.service.sync().name('org.moqui.chat.ChatPushServices.filter#RingUsers').parameters({ userIdList: userIds,
+    fromUserId: fromUserId || null, callSessionId: session.callSessionId }).disableAuthz().call()?.ringUserIdList ?? userIds
+  if (devices.length) ec.service.special().name('org.moqui.ui.NotificationServices.send#WebPush').parameters({
+    userIdList: devices, title: ec.l10n.localize('Call from') + ' ' + from.name, link: callLink(session.callSessionId),
     topic: 'IncomingCall', tag: 'call-' + session.callSessionId, ttlSeconds: ringSeconds(), urgency: 'high',
     callSessionId: session.callSessionId, chatRoomId: session.chatRoomId || null, fromName: from.name,
     video: session.video === 'Y', expiresAt: ms(session.ringExpireDate),
-  }).call()
+  }).registerOnCommit()
   // and their desk and soft phones (V4, SipDeviceServices); a failure leaves the tabs ringing. A phone cannot take an end-to-end
   // encrypted call (W8): it is not rung.
   if (isE2ee(session)) return
