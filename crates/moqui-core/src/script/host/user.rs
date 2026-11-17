@@ -83,6 +83,13 @@ pub(super) static USER: HostClass = HostClass {
         method!("ec.user", "singleUseCodeHash", [Value], single_use_code_hash),
         method!("ec.user", "randomCode", [OptInt], random_code),
         method!("ec.user", "randomString", [Int], random_string),
+        method!("ec.user", "serverGrant", [Text, Text, OptNumber], server_grant),
+        method!(
+            "ec.user",
+            "checkServerGrant",
+            [Text, Text, OptNullableText],
+            check_server_grant
+        ),
         method!("ec.user", "totpSecret", [], totp_secret),
         method!("ec.user", "totpCodeValid", [Value, Value], totp_code_valid),
         method!("ec.user", "totpCodeStep", [Value, Value, Value], totp_code_step),
@@ -574,6 +581,42 @@ fn random_string(call: &mut Call<'_>) -> Result<Ret, HostError> {
     crate::user::random_string(length)
         .map(Ret::from)
         .map_err(|err| user_error(&err))
+}
+
+/// What a server grant's key is derived under (`user::derived_cookie_key`), the purpose after it: a key of its own for
+/// each purpose, which is no session tag and no other derived key, and which no script reads (SEC-PSS-25).
+const SERVER_GRANT_LABEL: &str = "moqui.script.serverGrant\n";
+
+/// The key of a server grant for `purpose`, as hex: the HMAC key `files::make_grant` and `check_grant` take.
+fn server_grant_key(purpose: &str) -> Result<String, Error> {
+    if purpose.trim().is_empty() {
+        return Err(Error::new("a server grant needs a purpose"));
+    }
+    let key = crate::user::derived_cookie_key(&format!("{SERVER_GRANT_LABEL}{purpose}"))?;
+    Ok(moqui_lib::codec::hex_encode(&key))
+}
+
+/// `ec.user.serverGrant(purpose, subject, ttlSeconds)`: a token that [`check_server_grant`] accepts for the same purpose
+/// and subject until `ttlSeconds` (3600; 1 second to 7 days) have passed, `<expiry millis>.<HMAC-SHA256 hex>`, keyed by
+/// the server's own secret (`session_cookie_key`, through a key derived for the purpose), so a script can sign a value
+/// it hands a client (a page's nonce) with no key of its own. An error with no purpose or no `session_cookie_key`.
+fn server_grant(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let key = server_grant_key(&call.text_or_empty(0)).map_err(|err| user_error(&err))?;
+    let ttl_seconds = call.number(2).filter(|seconds| seconds.is_finite()).unwrap_or(3600.0);
+    #[allow(clippy::cast_possible_truncation)]
+    let ttl = ttl_seconds as i64;
+    super::files::make_grant(&key, &call.text_or_empty(1), ttl)
+        .map(Ret::from)
+        .ok_or_else(|| HostError::message("the server grant key is empty"))
+}
+
+/// `ec.user.checkServerGrant(purpose, subject, token)`: whether `token` is a [`server_grant`] of this purpose and
+/// subject that has not expired, compared in constant time; false for a null token, no purpose or no key.
+fn check_server_grant(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let (Ok(key), Some(token)) = (server_grant_key(&call.text_or_empty(0)), call.opt_text(2)) else {
+        return Ok(false.into());
+    };
+    Ok(super::files::check_grant(&key, &call.text_or_empty(1), &token).into())
 }
 
 fn totp_secret(_: &mut Call<'_>) -> Result<Ret, HostError> {

@@ -657,6 +657,11 @@ fn a_push_runs_a_pipeline_on_the_fake_host_to_its_statuses() {
         assert_eq!(header("Content-Disposition") == "inline", shown, "{headers:?}");
         assert_eq!(header("X-Content-Type-Options"), "nosniff", "{headers:?}");
         assert_eq!(header("Content-Security-Policy") == "sandbox", shown, "{headers:?}");
+        // SEC-PSF-08: not shown, a job's XML is bytes with the sandbox, so no page of the origin loads it as a type
+        if !shown {
+            assert_eq!(header("Content-Type"), "application/octet-stream", "{headers:?}");
+            assert_eq!(header("Content-Security-Policy"), "default-src 'none'; sandbox", "{headers:?}");
+        }
     }
     // the commit's pipelines, as the engine reads them, for the application
     let definitions = ok(

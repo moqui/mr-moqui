@@ -735,7 +735,8 @@ fn get_run_artifact(parameters: &Parameters, facade: &EntityFacade) -> Out {
 /// screen's download transition, so the application copies nothing to a file. Read as `get#RunArtifact` is (the
 /// view right on the repository). `inline` shows a passive file (an image, a PDF, plain text); a job's HTML, SVG, XML
 /// or JavaScript is still an attachment unless `inlineActive` is also set, since a job's output is not the
-/// application's own (shown inline it is sandboxed either way, `moqui_core::web::FileDisposition`). Out: `artifact`.
+/// application's own; its type and policy are `moqui_core::web::user_download_headers` (an inert type or bytes, with
+/// `default-src 'none'; sandbox`; SEC-PSF-08). Out: `artifact`.
 fn send_run_artifact(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let Some((artifact, blobs, info)) = readable_artifact(parameters, facade)? else {
         return none();

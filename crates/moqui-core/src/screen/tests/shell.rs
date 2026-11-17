@@ -794,14 +794,15 @@ fn kept_shell_providers_follow_their_screens_and_the_session() {
 }
 
 /// A token route's token is its credential: the Visit a request starts records `/<name>/:token` for a request path or a
-/// Referer under the route (token_route.rs), and keeps a path under no route.
+/// Referer under the route (token_route.rs), and keeps a path under no route; a `token-path`'s token is left out too.
 #[test]
 fn a_visit_leaves_out_a_token_routes_token() {
     let dir = tree("visit-token");
     let world = world_with(
         &dir,
         "<moqui-conf><webapp-list><webapp name=\"webroot\"><token-route name=\"tk\" \
-         screen-location=\"component://none/Shared.xml\" token-service=\"none.check#Token\"/></webapp></webapp-list>\
+         screen-location=\"component://none/Shared.xml\" token-service=\"none.check#Token\"/>\
+         <token-path pattern=\"/**/held-mail/{token}\"/></webapp></webapp-list>\
          <artifact-execution-facade><artifact-execution type=\"AT_XML_SCREEN\" authz-enabled=\"true\"/>\
          </artifact-execution-facade></moqui-conf>",
     );
@@ -814,7 +815,10 @@ fn a_visit_leaves_out_a_token_routes_token() {
     assert_eq!(response.status, 200, "{}", response.body_text());
     let mut get = request("GET", &format!("/tk/{TOKEN}"));
     get.set_header("authorization", basic("other"));
-    get.set_header("referer", "https://example.com/apps/tk/Something12345");
+    get.set_header(
+        "referer",
+        "https://example.com/apps/tk/Something12345/held-mail/HeldMailToken01?x=1",
+    );
     serve_at(&world.factory, get, &root);
     let ctx = world.factory.new_context();
     let _entered = ctx.enter();
@@ -843,7 +847,8 @@ fn a_visit_leaves_out_a_token_routes_token() {
     );
     assert_eq!(
         visit("other", "initialReferrer"),
-        "https://example.com/apps/tk/Something12345"
+        "https://example.com/apps/tk/Something12345/held-mail/:token?x=1",
+        "a path under no route is kept, a token path's token is not (SEC-PSF-03)"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

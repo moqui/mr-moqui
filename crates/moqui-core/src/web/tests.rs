@@ -557,6 +557,75 @@ fn a_users_file_asked_inline_is_shown_only_when_passive_and_then_sandboxed() {
     assert_eq!(user_file_inline("image/png", false), (false, false));
 }
 
+/// SEC-PSF-08: a user's file a service sends from its own storage (`send#RunArtifact`) is answered by its own type only
+/// when inert, else as bytes, so `x.js` is no script a page of the origin could load; with `default-src 'none';
+/// sandbox` but on an inline PDF, and a page the caller vouches for (`InlineActive`) sandboxed by its own type.
+#[test]
+fn a_users_download_has_an_inert_type_and_the_sandbox() {
+    use super::{user_download_headers, FileDisposition, USER_FILE_SANDBOX};
+    let header = |name: &str, disposition: FileDisposition, wanted: &str| {
+        user_download_headers(name, disposition)
+            .into_iter()
+            .find(|(header, _)| header == wanted)
+            .map(|(_, value)| value)
+            .unwrap_or_default()
+    };
+    for disposition in [
+        FileDisposition::Attachment,
+        FileDisposition::Inline,
+        FileDisposition::InlineActive,
+    ] {
+        assert_eq!(header("x.js", disposition, "Content-Type"), "application/octet-stream");
+        assert_eq!(
+            header("x.js", disposition, "Content-Security-Policy"),
+            USER_FILE_SANDBOX
+        );
+        assert!(header("x.js", disposition, "Content-Disposition").starts_with("attachment"));
+        assert_eq!(header("x.js", disposition, "X-Content-Type-Options"), "nosniff");
+    }
+    assert_eq!(
+        header("site.css", FileDisposition::Inline, "Content-Type"),
+        "application/octet-stream"
+    );
+    assert_eq!(
+        header("TEST-unit.xml", FileDisposition::Attachment, "Content-Type"),
+        "application/octet-stream"
+    );
+    assert_eq!(
+        header("app.tar.gz", FileDisposition::Attachment, "Content-Security-Policy"),
+        USER_FILE_SANDBOX
+    );
+    assert_eq!(header("shot.png", FileDisposition::Inline, "Content-Type"), "image/png");
+    assert_eq!(
+        header("shot.png", FileDisposition::Inline, "Content-Disposition"),
+        "inline"
+    );
+    assert_eq!(
+        header("shot.png", FileDisposition::Inline, "Content-Security-Policy"),
+        USER_FILE_SANDBOX
+    );
+    assert_eq!(
+        header("doc.pdf", FileDisposition::Inline, "Content-Security-Policy"),
+        ""
+    );
+    assert_eq!(
+        header("report.html", FileDisposition::InlineActive, "Content-Type"),
+        "text/html"
+    );
+    assert_eq!(
+        header("report.html", FileDisposition::InlineActive, "Content-Security-Policy"),
+        "sandbox"
+    );
+    assert_eq!(
+        header("report.html", FileDisposition::Inline, "Content-Type"),
+        "application/octet-stream"
+    );
+    assert!(super::is_inert_content_type("video/mp4"));
+    assert!(super::is_inert_content_type("text/plain; charset=utf-8"));
+    assert!(!super::is_inert_content_type("text/css"));
+    assert!(!super::is_inert_content_type("application/json"));
+}
+
 /// SEC-RTE-07: a multipart body that may pass `webapp_max_body` has an anonymous cap of `webapp_max_body`, but on the
 /// paths that take uploads with no user, which a climbing path does not reach.
 #[test]

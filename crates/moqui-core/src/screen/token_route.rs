@@ -40,6 +40,14 @@
 //! `/<name>/<token>` (`web::set_link_prefix`), so a form posts to `/<name>/<token>/<transition>`; a server-static
 //! template, cached for every visitor, is made without it. The token is the route's credential: what the server records
 //! of a path or URL ([`redact_url`], [`redact_json`]) has `/<name>/:token/...` instead.
+//!
+//! A component whose own screens take a token in a path segment (PASS's held mail and preview links, SEC-PSF-03)
+//! declares it with a `token-path` of the same webapp, so that segment is left out of what the server records too:
+//!
+//! ```xml
+//! <token-path pattern="/preview/{token}"/>          <!-- at the root only -->
+//! <token-path pattern="/**/held-mail/{token}"/>     <!-- after any segments, such as a mount's -->
+//! ```
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -83,23 +91,71 @@ pub struct RouteMatch {
     pub target: RouteTarget,
 }
 
-struct Routes(Vec<TokenRoute>);
+/// A `token-path` of the conf: a path whose segment after the literal segments `before` is a token, at the root or
+/// (`anywhere`) after any segments, such as a mount's. It only redacts; the component's own screens serve the path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TokenPath {
+    /// The pattern begins with `/**/`: the literal segments may follow any segments.
+    pub anywhere: bool,
+    /// The literal segments before the token's.
+    pub before: Vec<String>,
+}
 
-/// The `token-route` elements of the webroot webapp, read from the conf once per conf generation. A route without a
-/// name, screen or service is logged and left out; a name that is a webroot screen path (`apps`, `qapps`, `rest`, ...)
-/// is left out too, so a route cannot take over a framework path.
-fn routes(factory: &ExecutionContextFactory) -> Arc<Routes> {
+impl TokenPath {
+    /// A pattern `/a/b/{token}` or `/**/a/b/{token}`: literal segments (at least one), the token's last. `None` for any
+    /// other text.
+    pub fn parse(pattern: &str) -> Option<TokenPath> {
+        let rest = pattern.trim().strip_prefix('/')?.strip_suffix("/{token}")?;
+        let (anywhere, rest) = match rest.strip_prefix("**/") {
+            Some(rest) => (true, rest),
+            None => (false, rest),
+        };
+        let before: Vec<String> = rest.split('/').map(str::to_string).collect();
+        let literal = |segment: &String| !segment.is_empty() && !segment.contains(['*', '{', '}', '?', '#', ';']);
+        before.iter().all(literal).then_some(TokenPath { anywhere, before })
+    }
+}
+
+/// What the server leaves out of a recorded path or URL: the token routes' tokens and the token paths' tokens.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Redaction {
+    pub routes: Vec<TokenRoute>,
+    pub paths: Vec<TokenPath>,
+}
+
+impl Redaction {
+    pub fn is_empty(&self) -> bool {
+        self.routes.is_empty() && self.paths.is_empty()
+    }
+}
+
+/// The `token-route` and `token-path` elements of the webroot webapp, read from the conf once per conf generation. A
+/// route without a name, screen or service is logged and left out; a name that is a webroot screen path (`apps`,
+/// `qapps`, `rest`, ...) is left out too, so a route cannot take over a framework path. A `token-path` whose pattern is
+/// not `/a/{token}` or `/**/a/{token}` is logged and left out.
+fn routes(factory: &ExecutionContextFactory) -> Arc<Redaction> {
     factory.conf_derived(|factory| {
         let mut found = Vec::new();
+        let mut paths = Vec::new();
         let Ok(conf) = MNode::parse_shared("moqui-conf", &factory.conf_text()) else {
-            return Routes(found);
+            return Redaction::default();
         };
         let Some(list) = conf.first_named("webapp-list") else {
-            return Routes(found);
+            return Redaction::default();
         };
         for webapp in list.named_iter("webapp") {
             if !webapp.attribute_is("name", "webroot") {
                 continue;
+            }
+            for node in webapp.named_iter("token-path") {
+                let pattern = node.attribute("pattern").unwrap_or_default();
+                match TokenPath::parse(&pattern) {
+                    Some(path) if !paths.contains(&path) => paths.push(path),
+                    Some(_) => {}
+                    None => {
+                        tracing::error!(pattern = %pattern, "token-path pattern is not /a/{{token}} or /**/a/{{token}}; left out")
+                    }
+                }
             }
             for node in webapp.named_iter("token-route") {
                 let text = |name: &str| node.attribute(name).map(|text| text.trim().to_string()).filter(|text| !text.is_empty());
@@ -135,13 +191,18 @@ fn routes(factory: &ExecutionContextFactory) -> Arc<Routes> {
                 });
             }
         }
-        Routes(found)
+        Redaction { routes: found, paths }
     })
 }
 
 /// The configured token routes.
 pub fn token_routes(factory: &ExecutionContextFactory) -> Vec<TokenRoute> {
-    routes(factory).0.clone()
+    routes(factory).routes.clone()
+}
+
+/// The configured token routes and token paths: what [`redact_url`] leaves out.
+pub fn redaction(factory: &ExecutionContextFactory) -> Arc<Redaction> {
+    routes(factory)
 }
 
 /// The route a request path is under, its token and what it asks for; `None` for any other path. A token is 8 to 128
@@ -180,11 +241,19 @@ pub fn match_path(routes: &[TokenRoute], path: &str) -> Option<RouteMatch> {
 /// What a token route's token reads as where a path is recorded: `/i/{token}/accept` is `/i/:token/accept`.
 pub const REDACTED_TOKEN: &str = ":token";
 
-/// `path` with the token of a token route replaced by [`REDACTED_TOKEN`], for telemetry and logs (a route's token is
-/// its credential, and every trace, log line and request record would otherwise hold it); `None` when the path is under
-/// no route, or the segment after the route's name is no token (8 to 128 of the token characters, ending the segment
-/// or followed by a render-mode suffix). The rest of the path is kept: `/u/{token}/oneClick` names the transition.
-pub fn redact_path(routes: &[TokenRoute], path: &str) -> Option<String> {
+/// `path` with the token of a token route or of a token path replaced by [`REDACTED_TOKEN`], for telemetry and logs (a
+/// route's token is its credential, and every trace, log line and request record would otherwise hold it); `None` when
+/// the path holds no token of either. The rest of the path is kept: `/u/{token}/oneClick` names the transition.
+pub fn redact_path(redaction: &Redaction, path: &str) -> Option<String> {
+    match route_redacted(&redaction.routes, path) {
+        Some(redacted) => Some(paths_redacted(&redaction.paths, &redacted).unwrap_or(redacted)),
+        None => paths_redacted(&redaction.paths, path),
+    }
+}
+
+/// [`redact_path`] for the token routes: `None` when the path is under no route, or the segment after the route's name
+/// is no token (8 to 128 of the token characters, ending the segment or followed by a render-mode suffix).
+fn route_redacted(routes: &[TokenRoute], path: &str) -> Option<String> {
     let rest = path.strip_prefix('/')?;
     let (name, after) = rest.split_once('/')?;
     if !routes.iter().any(|route| route.name == name) {
@@ -204,9 +273,52 @@ pub fn redact_path(routes: &[TokenRoute], path: &str) -> Option<String> {
     Some(format!("/{name}/{REDACTED_TOKEN}{}", &after[token_len..]))
 }
 
+/// [`redact_path`] for the token paths: each segment a token path names as its token, when it is a token (8 to 200 of
+/// `A-Z a-z 0-9 . _ ~ -`, as PASS's links have), is [`REDACTED_TOKEN`]; `None` when none is. A query or fragment is
+/// kept as it is.
+fn paths_redacted(paths: &[TokenPath], path: &str) -> Option<String> {
+    if paths.is_empty() {
+        return None;
+    }
+    let rest = path.strip_prefix('/')?;
+    let (path_part, tail) = rest.split_at(rest.find(['?', '#']).unwrap_or(rest.len()));
+    let mut segments: Vec<&str> = path_part.split('/').collect();
+    let is_token = |segment: &str| {
+        let token = segment.split(';').next().unwrap_or_default();
+        (8..=200).contains(&token.len())
+            && token
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'~' | b'-'))
+    };
+    let mut changed = false;
+    for token_path in paths {
+        let count = token_path.before.len();
+        if segments.len() <= count {
+            continue;
+        }
+        let last_start = if token_path.anywhere {
+            segments.len() - count - 1
+        } else {
+            0
+        };
+        for start in 0..=last_start {
+            let at = start + count;
+            let literals = segments[start..at]
+                .iter()
+                .zip(&token_path.before)
+                .all(|(segment, literal)| segment == literal);
+            if literals && is_token(segments[at]) {
+                segments[at] = REDACTED_TOKEN;
+                changed = true;
+            }
+        }
+    }
+    changed.then(|| format!("/{}{tail}", segments.join("/")))
+}
+
 /// [`redact_path`] for a path (`/i/...`) or an absolute URL (`https://host/i/...`) in recorded text, such as a
 /// `Referer` or a `returnTo` parameter; any other text, and a path under no route, as it is.
-pub fn redact_url<'a>(routes: &[TokenRoute], text: &'a str) -> std::borrow::Cow<'a, str> {
+pub fn redact_url<'a>(routes: &Redaction, text: &'a str) -> std::borrow::Cow<'a, str> {
     use std::borrow::Cow;
     if routes.is_empty() {
         return Cow::Borrowed(text);
@@ -231,14 +343,15 @@ pub fn redact_url<'a>(routes: &[TokenRoute], text: &'a str) -> std::borrow::Cow<
     }
 }
 
-/// [`redact_url`] with this factory's token routes: what the request log and a log line record of a path or URL.
+/// [`redact_url`] with this factory's token routes and token paths: what the request log, a log line and a Visit
+/// record of a path or URL.
 pub fn redact<'a>(factory: &ExecutionContextFactory, text: &'a str) -> std::borrow::Cow<'a, str> {
-    redact_url(&routes(factory).0, text)
+    redact_url(&routes(factory), text)
 }
 
 /// [`redact_url`] for each path or URL within free text (a span name `GET /i/{token}`, a log body, a message), the words
 /// being split at white space, quotes, brackets and parentheses; the separators are kept.
-pub fn redact_text<'a>(routes: &[TokenRoute], text: &'a str) -> std::borrow::Cow<'a, str> {
+pub fn redact_text<'a>(routes: &Redaction, text: &'a str) -> std::borrow::Cow<'a, str> {
     use std::borrow::Cow;
     if routes.is_empty() || !text.contains('/') {
         return Cow::Borrowed(text);
@@ -269,7 +382,7 @@ pub fn redact_text<'a>(routes: &[TokenRoute], text: &'a str) -> std::borrow::Cow
 
 /// Every string in `json` with [`redact_text`] applied: what a browser sends (`/rum/*` OTLP records, a replay's rrweb
 /// events, whose snapshot holds the page's links) before it is stored. Object keys are left as they are.
-pub fn redact_json(routes: &[TokenRoute], json: &mut serde_json::Value) {
+pub fn redact_json(routes: &Redaction, json: &mut serde_json::Value) {
     use serde_json::Value as Json;
     if routes.is_empty() {
         return;
@@ -289,10 +402,10 @@ pub fn redact_json(routes: &[TokenRoute], json: &mut serde_json::Value) {
 /// The route of a request path in this factory's conf.
 pub(super) fn find(factory: &ExecutionContextFactory, path: &str) -> Option<RouteMatch> {
     let routes = routes(factory);
-    if routes.0.is_empty() {
+    if routes.routes.is_empty() {
         return None;
     }
-    match_path(&routes.0, path)
+    match_path(&routes.routes, path)
 }
 
 /// Run the route's token service: the `routeContext` it answers for a token it accepts, else `None`. Errors the check
@@ -415,111 +528,5 @@ pub(super) fn dispatch(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn route(name: &str) -> TokenRoute {
-        TokenRoute {
-            name: name.to_string(),
-            screen_location: format!("component://test/{name}.xml"),
-            token_service: "test.check#Token".to_string(),
-            title: None,
-            post_transition: None,
-        }
-    }
-
-    #[test]
-    fn a_path_under_a_route_is_the_shell_the_screen_in_a_mode_or_a_path_below() {
-        let routes = [route("s"), route("u")];
-        let at = |path: &str| match_path(&routes, path).map(|found| (found.route.name, found.token, found.target));
-        assert_eq!(
-            at("/s/abcDEF12_-"),
-            Some(("s".into(), "abcDEF12_-".into(), RouteTarget::Shell))
-        );
-        assert_eq!(
-            at("/s/abcDEF12/"),
-            Some(("s".into(), "abcDEF12".into(), RouteTarget::Shell))
-        );
-        assert_eq!(
-            at("/s/abcDEF12.qvue"),
-            Some(("s".into(), "abcDEF12".into(), RouteTarget::Screen("qvue".into())))
-        );
-        assert_eq!(
-            at("/u/abcDEF12/list/rows"),
-            Some(("u".into(), "abcDEF12".into(), RouteTarget::Below("/list/rows".into())))
-        );
-        assert_eq!(at("/s/short"), None, "a token is at least 8 characters");
-        assert_eq!(at("/s/bad*token!"), None);
-        assert_eq!(at("/s/abcDEF12.html"), None, "only the qvt render modes");
-        assert_eq!(at("/call/abcDEF12"), None, "not a configured route");
-        assert_eq!(at("/s"), None);
-        assert_eq!(at("/qapps/s/abcDEF12"), None);
-    }
-
-    #[test]
-    fn a_routes_token_is_redacted_from_a_recorded_path_or_url() {
-        let routes = [route("i"), route("u"), route("call")];
-        let path = |text: &str| redact_path(&routes, text);
-        assert_eq!(path("/i/abcDEF12_-xyz").as_deref(), Some("/i/:token"));
-        assert_eq!(path("/i/abcDEF12_-xyz/").as_deref(), Some("/i/:token/"));
-        assert_eq!(path("/u/abcDEF12345/oneClick").as_deref(), Some("/u/:token/oneClick"));
-        assert_eq!(path("/call/abcDEF12345.qvt").as_deref(), Some("/call/:token.qvt"));
-        assert_eq!(path("/i/short"), None, "no token under 8 characters");
-        assert_eq!(path("/i/abcDEF12*x"), None);
-        assert_eq!(path("/s/abcDEF12345"), None, "not a configured route");
-        assert_eq!(path("/apps/i/abcDEF12345"), None, "a route is at the root only");
-        assert_eq!(path("/i"), None);
-        let url = |text: &str| redact_url(&routes, text).into_owned();
-        assert_eq!(url("/i/abcDEF12345/accept?x=1"), "/i/:token/accept?x=1");
-        assert_eq!(
-            url("https://staff.example.com/i/abcDEF12345/accept"),
-            "https://staff.example.com/i/:token/accept"
-        );
-        assert_eq!(
-            url("http://localhost:8080/call/abcDEF12345"),
-            "http://localhost:8080/call/:token"
-        );
-        assert_eq!(
-            url("https://example.com/apps/System"),
-            "https://example.com/apps/System"
-        );
-        assert_eq!(url("https://example.com"), "https://example.com");
-        assert_eq!(url("//staff.example.com/i/abcDEF12345"), "//staff.example.com/i/:token");
-        assert_eq!(url("plain text"), "plain text");
-        assert_eq!(redact_url(&[], "/i/abcDEF12345"), "/i/abcDEF12345");
-    }
-
-    #[test]
-    fn a_routes_token_is_redacted_within_text_and_json() {
-        let routes = [route("i"), route("tk")];
-        let text = |text: &str| redact_text(&routes, text).into_owned();
-        assert_eq!(text("GET /i/abcDEF12345/accept"), "GET /i/:token/accept");
-        assert_eq!(
-            text("from (https://h.example.com/tk/abcDEF12345?x=1) and [/i/abcDEF12345]"),
-            "from (https://h.example.com/tk/:token?x=1) and [/i/:token]"
-        );
-        assert_eq!(
-            text("GET /apps/i/abcDEF12345"),
-            "GET /apps/i/abcDEF12345",
-            "not under a route"
-        );
-        assert_eq!(text("caf\u{e9} /i/abcDEF12345\n"), "caf\u{e9} /i/:token\n");
-        assert!(matches!(
-            redact_text(&routes, "no path here"),
-            std::borrow::Cow::Borrowed(_)
-        ));
-        let mut json = serde_json::json!({
-            "name": "GET /tk/abcDEF12345.qvt",
-            "attributes": [{"key": "url.full", "value": {"stringValue": "https://h/i/abcDEF12345/factor"}}],
-            "events": [{"type": 2, "data": {"attributes": {"href": "/tk/abcDEF12345/files"}}}, 4, null]
-        });
-        redact_json(&routes, &mut json);
-        let shown = json.to_string();
-        assert!(!shown.contains("abcDEF12345"), "{shown}");
-        assert_eq!(
-            json["attributes"][0]["value"]["stringValue"],
-            "https://h/i/:token/factor"
-        );
-        assert_eq!(json["events"][0]["data"]["attributes"]["href"], "/tk/:token/files");
-    }
-}
+#[path = "token_route_tests.rs"]
+mod tests;

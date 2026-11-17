@@ -538,6 +538,19 @@ along with this software (see the LICENSE.md file). If not, see
                                 /name/token is the public shell page.</xs:documentation></xs:annotation></xs:attribute>
                     </xs:complexType>
                 </xs:element>
+                <xs:element minOccurs="0" maxOccurs="unbounded" name="token-path">
+                    <xs:annotation><xs:documentation>A path segment that holds a bearer token, served by a component's own
+                        screens (a mailed link's /held-mail/token): what the server records of a path or URL (the request
+                        log, log lines, a Visit's initialRequest and initialReferrer, browser telemetry) has :token in its
+                        place, as for a token-route. It changes nothing of how the path is served. No Java
+                        counterpart.</xs:documentation></xs:annotation>
+                    <xs:complexType>
+                        <xs:attribute name="pattern" type="xs:string" use="required">
+                            <xs:annotation><xs:documentation>Literal segments, then {token}: /preview/{token} at the root
+                                only, /**/held-mail/{token} after any segments (a mount's). The token is a segment of 8 to
+                                200 letters, digits, '.', '_', '~' and '-'; what follows it is kept.</xs:documentation></xs:annotation></xs:attribute>
+                    </xs:complexType>
+                </xs:element>
                 <xs:element minOccurs="0" name="first-hit-in-visit"><xs:complexType><xs:sequence><xs:element ref="actions"/></xs:sequence></xs:complexType></xs:element>
                 <xs:element minOccurs="0" name="before-request"><xs:complexType><xs:sequence><xs:element ref="actions"/></xs:sequence></xs:complexType></xs:element>
                 <xs:element minOccurs="0" name="after-request"><xs:complexType><xs:sequence><xs:element ref="actions"/></xs:sequence></xs:complexType></xs:element>

@@ -85,7 +85,7 @@ async fn a_screen_request_has_a_root_span_with_identity_and_health_is_independen
         .layer(axum::middleware::from_fn_with_state(
             super::RequestTelemetry {
                 telemetry: Arc::clone(&telemetry),
-                token_routes: Arc::new(Vec::new),
+                token_routes: Arc::new(Arc::default),
             },
             super::log_http,
         ));
@@ -134,7 +134,7 @@ async fn a_screen_request_has_a_root_span_with_identity_and_health_is_independen
 async fn a_token_routes_token_stays_out_of_the_request_root() {
     use moqui_core::{
         entity::document::Document,
-        screen::token_route::TokenRoute,
+        screen::token_route::{Redaction, TokenRoute},
         telemetry::{Exporter, Resource, Telemetry},
     };
     use moqui_lib::{error::Error, object::Value};
@@ -163,12 +163,20 @@ async fn a_token_routes_token_stays_out_of_the_request_root() {
         title: None,
         post_transition: None,
     };
+    // SEC-PSF-03: a component's token paths (PASS's held mail and preview links) too
+    let redaction = Arc::new(Redaction {
+        routes: vec![route],
+        paths: ["/preview/{token}", "/**/held-mail/{token}"]
+            .iter()
+            .filter_map(|pattern| moqui_core::screen::token_route::TokenPath::parse(pattern))
+            .collect(),
+    });
     let app = Router::new()
         .fallback(|| async { "ok" })
         .layer(axum::middleware::from_fn_with_state(
             super::RequestTelemetry {
                 telemetry: Arc::clone(&telemetry),
-                token_routes: Arc::new(move || vec![route.clone()]),
+                token_routes: Arc::new(move || Arc::clone(&redaction)),
             },
             super::log_http,
         ));
@@ -183,6 +191,14 @@ async fn a_token_routes_token_stays_out_of_the_request_root() {
             format!("https://staff.example.com/i/{TOKEN}/factor"),
         ),
         ("/apps/i/Something12345".to_string(), String::new()),
+        (
+            format!("/forum/held-mail/{TOKEN}/claim"),
+            format!("https://pass.example.com/preview/{TOKEN}/asset/a.css"),
+        ),
+        (
+            format!("/Login?returnTo=%2Facme%2F-%2Fforum%2Fheld-mail%2F{TOKEN}"),
+            String::new(),
+        ),
     ] {
         let response = app
             .clone()
@@ -219,13 +235,27 @@ async fn a_token_routes_token_stays_out_of_the_request_root() {
         attribute(accept, "http.request.header.referer").as_deref(),
         Some("https://staff.example.com/i/:token")
     );
-    let login = entries
+    let root_with = |path: &str, query: &str| {
+        entries.iter().any(|entry| {
+            attribute(entry, "url.path").as_deref() == Some(path)
+                && attribute(entry, "url.query").as_deref() == Some(query)
+        })
+    };
+    assert!(
+        root_with("/Login", "returnTo=/i/:token/factor&tab=1"),
+        "the sign-in root: {text}"
+    );
+    assert!(
+        root_with("/Login", "returnTo=/acme/-/forum/held-mail/:token"),
+        "a token path in returnTo: {text}"
+    );
+    let held = entries
         .iter()
-        .find(|entry| attribute(entry, "url.path").as_deref() == Some("/Login"))
-        .unwrap_or_else(|| panic!("the sign-in root: {text}"));
+        .find(|entry| attribute(entry, "url.path").as_deref() == Some("/forum/held-mail/:token/claim"))
+        .unwrap_or_else(|| panic!("the token path's root: {text}"));
     assert_eq!(
-        attribute(login, "url.query").as_deref(),
-        Some("returnTo=/i/:token/factor&tab=1")
+        attribute(held, "http.request.header.referer").as_deref(),
+        Some("https://pass.example.com/preview/:token/asset/a.css")
     );
     assert!(
         entries
@@ -284,7 +314,7 @@ async fn request_roots_keep_real_errors_and_name_the_page_without_joining_its_tr
         .layer(axum::middleware::from_fn_with_state(
             super::RequestTelemetry {
                 telemetry: Arc::clone(&telemetry),
-                token_routes: Arc::new(Vec::new),
+                token_routes: Arc::new(Arc::default),
             },
             super::log_http,
         ));
@@ -406,7 +436,7 @@ async fn streamed_request_roots_finish_on_consumption_failure_or_cancellation() 
         .layer(axum::middleware::from_fn_with_state(
             super::RequestTelemetry {
                 telemetry: telemetry.clone(),
-                token_routes: Arc::new(Vec::new),
+                token_routes: Arc::new(Arc::default),
             },
             super::log_http,
         ));

@@ -171,6 +171,8 @@ the user services call.
 | `singleUseCodeHash(code)` | The stored form of a single-use code |
 | `randomCode(width)` | A random number of `width` digits (6) as text, zero padded |
 | `randomString(length)` | Random URL-safe text of the length |
+| `serverGrant(purpose, subject, ttlSeconds)` | A token for the subject, valid `ttlSeconds` (3600; at most 7 days), keyed by a key the server derives for the purpose from its own secret (`session_cookie_key`), which no script reads: to sign a value handed to a client (a page's nonce) where `ec.resource.makeGrant` would need a key of the script's own. An error with no purpose or no server secret |
+| `checkServerGrant(purpose, subject, token)` | Whether the token is a `serverGrant` of this purpose and subject that has not expired; false for a null token. A new `session_cookie_key` ends every grant |
 | `totpSecret()` | A new TOTP shared secret (base32) |
 | `totpCodeValid(secret, code)` | Whether the code is the authenticator code of the secret now, or one period either side |
 | `totpCodeStep(secret, code, afterStep)` | The step (period number) the code is the authenticator code of the secret for now, one period either side, when it is after `afterStep` (the last step a code of the factor was taken for; null for none); else null. A factor keeps the step it took (`UserAuthcFactor.lastTotpStep`), so a code works once |
@@ -340,7 +342,7 @@ Change sets, version notes and change logs are described in
 | `writeTarGz(target, entries)` | A `.tar.gz` of entries |
 | `extractText(location, cacheKey, maxChars, cacheOnly)` | The text of a PDF, spreadsheet or text file (100000 characters), kept under `runtime://tmp/file-text` by the key; `""` when it has none; null with `cacheOnly` when not extracted yet |
 | `readSheetPreview(location, sheetName, maxRows, maxCols)` | The first rows of a sheet (100 by 26): `{sheetNames, sheetName, rows, truncated}`; null when it is not a spreadsheet |
-| `makeGrant(key, subject, ttlSeconds)` | A signed grant for the subject, valid `ttlSeconds` (3600) |
+| `makeGrant(key, subject, ttlSeconds)` | A signed grant for the subject, valid `ttlSeconds` (3600); with no key of the script's own, `ec.user.serverGrant` |
 | `checkGrant(key, subject, token)` | Whether the token is a valid grant of the same key and subject |
 
 ### Barcodes and rendering
@@ -1102,6 +1104,7 @@ empty, and a send needs a request.
 | `reservedSubPaths` | The sub-paths the host uses of `ci` and `.well-known`, `segment/sub-path` (`ci/runner`, `.well-known/caldav`, `.well-known/carddav`, `.well-known/agent-card.json`, `.well-known/mcp.json`, `.well-known/ai-catalog.json`). A site page's route or redirect stays off these and the wholly reserved segments (`reservedPaths` without `ci` and `.well-known`), and may take the rest: `/.well-known/security.txt`, `/ci` |
 | `rotateSession()` | Gives the browser a new session id after authentication, keeping the session's state |
 | `declineSession()` | Sends this response no session: no session or visitor cookie and no session token ([Attack-Surface](../security/Attack-Surface-Web.md#pages-without-a-session)) |
+| `noteAuthFailure()` | This request tried a credential that was not valid, one the script checks itself (a wrong client secret): the web protection counts it toward the client address's `auth-failure` ban, as a wrong password ([Attack-Surface](../security/Attack-Surface-Web.md)). Nothing outside a request |
 | `getPageMessages()` | The messages, errors and validation errors for the page, the saved ones first: each `{message, typeString}`, a validation error also with `field` and `form` |
 | `savedMessages`, `savedErrors`, `savedValidationErrors` | What the response before this one saved for the page |
 | `errorParameters` | The parameters of the submit that led here with an error, or null |
@@ -1321,14 +1324,14 @@ Members Moqui Java does not have.
 |---|---|
 | `ec` | `search`, `llm` |
 | `ec.context` | Property reads and writes, `in`, `delete`, `Object.keys` |
-| `ec.user` | `machineTimeZone`, `passwordRules`, `loginRules`, `endVisit`, `hashPassword`, `passwordsMatch`, `checkOldPassword`, `initialAdminLocal`, `initialAdminAllowed`, `singleUseCodeHash`, `randomCode`, `randomString`, `totpSecret`, `totpCodeValid`, `totpCodeStep`, `totpUri`, `timestampMillis` |
+| `ec.user` | `machineTimeZone`, `passwordRules`, `loginRules`, `endVisit`, `hashPassword`, `passwordsMatch`, `checkOldPassword`, `initialAdminLocal`, `initialAdminAllowed`, `singleUseCodeHash`, `randomCode`, `randomString`, `serverGrant`, `checkServerGrant`, `totpSecret`, `totpCodeValid`, `totpCodeStep`, `totpUri`, `timestampMillis` |
 | `ec.l10n` | `getAvailableTimeZones`, `getAvailableLocales`, the time zone argument of `format` |
 | `ec.resource` | `makeChangeSet`, `putContent`, `getLastChange`, `getChildChanges`, `getChangeLog`, `getTreeSize`, `restoreVersion`, `getVersionBytes`, `textDiff`, `readLines`, `digest`, `digestText`, `hmac`, `gunzip`, `extractArchive`, `writeZip`, `writeTarGz`, `extractText`, `readSheetPreview`, `makeThumbnail`, `makePdfPreview`, `imageAvailable`, `makeGrant`, `checkGrant`, `markdownHtml`, `code128Svg`, `barcodeSvg`, `parseGs1`, `isValidGs1CheckDigit`, `theme`; version notes on a reference's `putText`, `putBytes` and `putStream`, and `getVersionDiff` |
 | `ec.artifactExecution` | `runAsSystem`, `runAsUser`, `isPermitted`, `isPermittedOwn` |
 | `ec.entity` | `checkTables`, `runSqlStatement`, `testConfConnection`, `runSqlCountConf`, `runSqlUpdateConf`; EntityFind `forNoKeyUpdate`, `purge`; the `forNoKeyUpdate` argument of `findRelated` and `findRelatedOne`; EntityValue `getEntityNamePretty`, and fields and relationships as properties; EntityList as an array with the Array methods |
 | `ec.service` | `throwOnError`, `nextCronExecution`, `restApi.resolveService`, `passAuthority`, `ssoAvailable`; RestClient `addPropertyHeader`, `bodyBytes`, `multipart`, `streamFrom`, `followRedirects`, `denyInternal`, `allowInternal`, `send`; response `bytes` |
 | `ec.screen` | `render(options)`, `renderBytes`, `isRenderModeBinary`, `staticReport`, `getTransitionInfo`; a screen test's `header`, `clientModes`, `withStaticData`, `agent`, and a result's `status`, `headers`, `header` |
-| `ec.web` | `rotateSession`, `declineSession`, `getPageMessages`, `request.bodyText`, `request.bodyBytes`, `request.headerPairs`, `response.write`, `response.forward` |
+| `ec.web` | `rotateSession`, `declineSession`, `noteAuthFailure`, `getPageMessages`, `request.bodyText`, `request.bodyBytes`, `request.headerPairs`, `response.write`, `response.forward` |
 | `ec.factory` | `hasFeature`, `getStartupReport`, `getInstanceId`, `getThreadList` |
 | `ec.makeNotificationMessage()` | `reason`, `reasonEnumId`, `record`, `recordEntityName`, `recordId`, `actorUserId`, `appName` |
 

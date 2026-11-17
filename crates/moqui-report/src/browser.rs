@@ -178,9 +178,9 @@ fn receive_browser(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -
         visit_id: &visit,
     };
     let refused = scrub(signal, &mut json, &identity, MAX_RECORDS);
-    // a token route's token is its credential: a page URL, span name or log body has `/<name>/:token` instead
+    // a token route's or token path's token is its credential: a page URL, span name or log body has `:token` instead
     moqui_core::screen::token_route::redact_json(
-        &moqui_core::screen::token_route::token_routes(ec.factory()),
+        &moqui_core::screen::token_route::redaction(ec.factory()),
         &mut json,
     );
     let telemetry = moqui_core::telemetry::for_factory(ec.factory());
@@ -283,7 +283,7 @@ fn receive_replay(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
         return Err(Error::new("a replay chunk needs its events"));
     }
     // a token route's token is its credential: the page's URL and the links its snapshot holds have `/<name>/:token`
-    let token_routes = moqui_core::screen::token_route::token_routes(ec.factory());
+    let token_routes = moqui_core::screen::token_route::redaction(ec.factory());
     moqui_core::screen::token_route::redact_json(&token_routes, &mut chunk["events"]);
     moqui_core::screen::token_route::redact_json(&token_routes, &mut chunk["url"]);
     let events = serde_json::to_vec(&chunk["events"]).map_err(|error| Error::new(error.to_string()))?;

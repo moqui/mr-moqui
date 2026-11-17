@@ -444,3 +444,15 @@ has no session, so the transition needs `require-session-token="false"` (the tok
     <default-response type="none"/>
 </transition>
 ```
+
+A route's token is its credential, so what the server records of a path or URL (the request log, log lines, a Visit's
+`initialRequest` and `initialReferrer`, a `returnTo`, browser telemetry) has `/<name>/:token/...` instead. A component
+whose own screens take a bearer token in a path segment, under a mount it does not know in advance, declares the
+segment with a `token-path` of the same webapp; it changes nothing of how the path is served:
+
+```xml
+<token-path pattern="/preview/{token}"/>          <!-- at the root only -->
+<token-path pattern="/**/held-mail/{token}"/>     <!-- after any segments, such as a mount's -->
+```
+
+A segment there of 8 to 200 letters, digits, `.`, `_`, `~` and `-` is recorded as `:token`; what follows it is kept.

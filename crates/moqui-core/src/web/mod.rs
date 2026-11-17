@@ -1564,10 +1564,55 @@ pub fn user_file_guard_headers(file_name: &str, content_type: &str) -> Vec<(Stri
     headers
 }
 
+/// The policy a user's file is sent with where the application's or a site's pages could load it (SEC-PSF-08): it loads
+/// nothing, runs no script and has an origin of its own, as Smithy's raw route answers.
+pub const USER_FILE_SANDBOX: &str = "default-src 'none'; sandbox";
+
+/// Whether a file of `content_type` is inert where a page of the same origin could load it: an image, a font, audio or
+/// video, a PDF, plain text or CSV, an archive or bytes. Any other type (a script, a style sheet, HTML, XML, JSON) is
+/// one an injected `<script src>` or `<link>` could load from the origin (SEC-PSF-08). The same list as mr-pass
+/// `Facade.js` and mr-mantle `PassAuthority.js` (`servedType`).
+#[must_use]
+pub fn is_inert_content_type(content_type: &str) -> bool {
+    let base = content_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let Some((kind, sub)) = base.split_once('/') else {
+        return false;
+    };
+    match kind {
+        "image" => matches!(sub, "png" | "jpeg" | "gif" | "webp" | "avif" | "svg+xml"),
+        "font" => matches!(sub, "woff" | "woff2" | "ttf" | "otf"),
+        "audio" | "video" => {
+            !sub.is_empty()
+                && sub.bytes().all(|byte| {
+                    byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'+' | b'-')
+                })
+        }
+        "application" => matches!(sub, "pdf" | "zip" | "gzip" | "x-gzip" | "x-tar" | "octet-stream"),
+        "text" => matches!(sub, "plain" | "csv"),
+        _ => false,
+    }
+}
+
+/// `content_type` when it is inert ([`is_inert_content_type`]), else `application/octet-stream`: the type a user's file
+/// is sent with from the application's origin.
+#[must_use]
+pub fn inert_content_type(content_type: &str) -> &str {
+    if is_inert_content_type(content_type) {
+        content_type
+    } else {
+        "application/octet-stream"
+    }
+}
+
 /// Send `opened` as this request's response, a file named `file_name` as `disposition` says, streamed a window at a
 /// time with `Range`, `ETag` and `If-Range` as `sendResourceResponse` sends a resource: for content a service reads
 /// from its own storage (a CI artifact's content blob, `send#RunArtifact`) with its own access check, so it is not
-/// copied to a file first. Content shown inline is sandboxed and never sniffed (`respond_file`).
+/// copied to a file first. Its headers are [`user_download_headers`].
 ///
 /// # Errors
 ///
@@ -1577,12 +1622,48 @@ pub fn send_file_response(
     file_name: &str,
     disposition: FileDisposition,
 ) -> Result<(), Error> {
+    let headers = user_download_headers(file_name, disposition);
+    let conditional = WEB
+        .with(|slot| slot.borrow().as_ref().map(|web| web.conditional.clone()))
+        .unwrap_or_default();
+    crate::screen::static_files::respond_opened(&conditional, headers, opened)
+}
+
+/// The headers of a user's file that a service sends from its own storage ([`send_file_response`]; SEC-PSF-08). Its
+/// type is its name's when inert, else `application/octet-stream`, so a file named `x.js` is no script the
+/// application's pages could load; it is never sniffed or kept, and has [`USER_FILE_SANDBOX`] (an inline PDF aside,
+/// which browsers will not show in a sandbox). [`FileDisposition::InlineActive`] shows a page the caller vouches for
+/// (HTML, SVG, XML) by its own type with `sandbox`, as before; a script is never shown.
+#[must_use]
+pub fn user_download_headers(file_name: &str, disposition: FileDisposition) -> Vec<(String, String)> {
+    let named = file_content_type(file_name, file_name);
+    let script = named.contains("javascript") || named.contains("ecmascript");
+    let vouched_page = disposition == FileDisposition::InlineActive && is_active_content_type(named) && !script;
+    let content_type = if vouched_page { named } else { inert_content_type(named) };
     let inline = match disposition {
         FileDisposition::Attachment => false,
-        FileDisposition::Inline => !is_active_content_type(file_content_type(file_name, file_name)),
-        FileDisposition::InlineActive => true,
+        FileDisposition::Inline => is_inert_content_type(named) && !is_active_content_type(named),
+        FileDisposition::InlineActive => vouched_page || is_inert_content_type(named),
     };
-    respond_file(opened, file_name, file_name, inline, false)
+    let mut headers = vec![
+        ("Content-Type".to_string(), content_type.to_string()),
+        (
+            "Content-Disposition".to_string(),
+            if inline {
+                "inline".to_string()
+            } else {
+                attachment_disposition(file_name)
+            },
+        ),
+        ("Cache-Control".to_string(), "private, no-store".to_string()),
+        ("X-Content-Type-Options".to_string(), "nosniff".to_string()),
+    ];
+    if vouched_page {
+        headers.push(("Content-Security-Policy".to_string(), "sandbox".to_string()));
+    } else if !(inline && content_type == "application/pdf") {
+        headers.push(("Content-Security-Policy".to_string(), USER_FILE_SANDBOX.to_string()));
+    }
+    headers
 }
 
 /// The type a file is sent with: by its name, else by the location's last segment, else bytes to save.
