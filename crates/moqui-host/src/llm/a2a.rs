@@ -35,7 +35,7 @@ use tokio::sync::mpsc;
 
 use crate::channel_body::{ChannelBody, Chunk};
 use crate::guard::Event;
-use crate::http::{forwarded_https, plain, read_body, ClientAddr, HttpState, TlsConnection};
+use crate::http::{forwarded_https, plain, read_body, secure_request, ClientAddr, HttpState, TlsConnection};
 
 /// The largest request body.
 const MAX_BODY: usize = 4 * 1024 * 1024;
@@ -204,7 +204,7 @@ pub(crate) async fn handle(
         query,
         headers,
         body: body.to_vec(),
-        secure: a2a::secure(origin.https, peer.ip()),
+        secure: secure_request(over_tls, &parts, peer.ip(), state.guard.conf().addressing()),
         client_ip: client.to_string(),
         origin,
     };

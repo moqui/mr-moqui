@@ -1211,3 +1211,59 @@ fn a_ci_token_answer_is_recorded_and_its_marker_removed_at_the_outermost_node() 
     super::serve::ci_token_answer(&guard, "ci.example.com", None, &mut response, true);
     assert!(!response.headers().contains_key(crate::guard::CI_TOKEN_HEADER));
 }
+
+/// Credentials are taken over TLS, a believed proxy's https, or from a client on this machine; behind a believed proxy
+/// on this host the client is the one it names, so plain HTTP the proxy passes for another client is not secure
+/// (SEC-AI-11, SEC-GIT-09).
+#[test]
+fn a_loopback_peer_is_secure_only_when_it_is_the_client() {
+    use moqui_core::web::address::{parse_cidrs, ClientAddressing};
+    let loopback: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+    let public: std::net::IpAddr = "203.0.113.7".parse().unwrap();
+    let headers = |pairs: &[(&'static str, &str)]| {
+        let mut map = axum::http::HeaderMap::new();
+        for (name, value) in pairs {
+            map.insert(*name, value.parse().unwrap());
+        }
+        map
+    };
+    // no proxy believed: the socket peer is the client
+    let direct = ClientAddressing::new("", Vec::new());
+    assert!(super::secure_transport(false, &headers(&[]), loopback, &direct));
+    assert!(super::secure_transport(
+        false,
+        &headers(&[]),
+        "::1".parse().unwrap(),
+        &direct
+    ));
+    assert!(!super::secure_transport(false, &headers(&[]), public, &direct));
+    assert!(super::secure_transport(true, &headers(&[]), public, &direct));
+    // a proxy on this host is believed: the client it names decides, and its X-Forwarded-Proto
+    let proxied = ClientAddressing::new("x-forwarded-for", parse_cidrs("127.0.0.1/32", "test"));
+    let remote = headers(&[("x-forwarded-for", "198.51.100.4")]);
+    assert!(
+        !super::secure_transport(false, &remote, loopback, &proxied),
+        "plain HTTP for a remote client through a proxy on this host"
+    );
+    let remote_https = headers(&[("x-forwarded-for", "198.51.100.4"), ("x-forwarded-proto", "https")]);
+    assert!(super::secure_transport(false, &remote_https, loopback, &proxied));
+    assert!(super::secure_transport(
+        false,
+        &headers(&[("x-forwarded-for", "127.0.0.1")]),
+        loopback,
+        &proxied
+    ));
+    assert!(
+        !super::secure_transport(false, &headers(&[]), loopback, &proxied),
+        "a request the proxy passes without naming its client"
+    );
+    // a request an edge node forwards is never this machine's, whatever address it arrives from (SEC-CLU-01)
+    let request = |via: moqui_core::web::RequestVia| {
+        let (mut parts, ()) = axum::http::Request::new(()).into_parts();
+        parts.extensions.insert(via);
+        parts
+    };
+    assert!(super::secure_request(false, &request(moqui_core::web::RequestVia::default()), loopback, &direct));
+    assert!(!super::secure_request(false, &request(moqui_core::web::RequestVia::Edge), loopback, &direct));
+    assert!(super::secure_request(true, &request(moqui_core::web::RequestVia::Edge), loopback, &direct));
+}

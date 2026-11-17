@@ -724,6 +724,19 @@ fn spaces_are_made_and_cloned_on_a_git_repository_with_or_without_history() {
         ],
         "Only an administrator",
     );
+    {
+        // a mirror's credential goes in username and accessToken, not in its URL (SEC-GIT-16)
+        let _authz = ctx.disable_authz();
+        refused(
+            "create#WikiSpace",
+            &[
+                ("wikiSpaceId", text("MIRC")),
+                ("repositoryKind", text("remote")),
+                ("remoteUrl", text("https://bot:t0ken@example.com/docs.git")),
+            ],
+            "user or password",
+        );
+    }
     refused(
         "create#WikiSpace",
         &[("wikiSpaceId", text("BAD")), ("repositoryKind", text("svn"))],

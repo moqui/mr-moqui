@@ -96,9 +96,11 @@ first branch pushed) its default branch.
 - **HTTPS**: HTTP Basic with the username and the password, or an **access token** or an **app password** (docs/interfaces/Sync.md)
   as the password, which accounts with a second factor need (the password alone cannot complete a login there). `Authorization: Bearer <token>` and
   an `api_key` header work too. Credentials are taken only over HTTPS (the `webapp_https_listen_port` listener, or
-  `X-Forwarded-Proto: https` behind the proxy that `webapp_client_ip_header` names), from loopback, or with
-  `git-server` `allow-http="true"`. A request with no credentials is served what anyone may view
-  ([Access](#access)) and gets 401 for everything else, so git asks for them.
+  `X-Forwarded-Proto: https` behind the proxy that `webapp_client_ip_header` names), from a client on this machine
+  (behind that proxy, the client it names, never the proxy's own loopback address), or with `git-server`
+  `allow-http="true"`. A request with no credentials is served what anyone may view ([Access](#access)) and gets 401 for
+  everything else, so git asks for them; over a transport that takes no credentials it gets 403 "use HTTPS" instead,
+  with no challenge, so git does not send them in clear.
 - **SSH**: a key (`moqui.security.UserSshKey`, matched by its SHA-256 fingerprint) or the password. The user needs the
   `SSH_GIT` permission (granted to ADMIN; grant it to the groups of developers). A user whose only SSH permission is
   `SSH_GIT` logs in by key unless `ssh-server` `git-password-auth="true"`. `git -c protocol.version=2` sends `GIT_PROTOCOL`,
@@ -777,7 +779,8 @@ signature check it unchanged. Each delivery is a SystemMessage of type `GitWebho
 4 ... minutes and gives up after 8 failures. `find#GitWebhookDeliveries` is the delivery log, each attempt's error kept
 (`SystemMessageError`); `test#GitWebhook` sends a `ping` now. A webhook URL that names, or resolves to, a loopback,
 private or link-local address is refused unless `git-server` `webhook-private-network="true"` (a CI server on the same
-network). Pushes and tags are queued by the framework's post-receive rule (`framework/service/Git.gitecas.xml`), merge
+network). A webhook URL is https, plain http only with that setting, and has no user or password in it: `store#GitWebhook`
+(through `check#GitWebhookUrl`) and each delivery refuse one, as a push mirror's URL is refused. Pushes and tags are queued by the framework's post-receive rule (`framework/service/Git.gitecas.xml`), merge
 request events by the review services. An event is signed with the webhook's secret, so who may queue one is who may
 change the repository: `queue#GitWebhookEvent` and `queue#MergeRequestEvent` need the update right on the repository,
 or authorization disabled (as the review services, the framework's rules and an application call them; the review

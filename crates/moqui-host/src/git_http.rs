@@ -37,7 +37,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::channel_body::ChannelBody;
 use crate::git_bridge::{ChannelReader, ChannelWriter, Chunk, QUEUED};
 use crate::guard::Event;
-use crate::http::{forwarded_https, plain, ClientAddr, HttpState, TlsConnection};
+use crate::http::{plain, secure_request, ClientAddr, HttpState, TlsConnection};
 
 const DEFAULT_MAX_REQUEST: u64 = 64 * 1024 * 1024;
 const DEFAULT_MAX_PUSH: u64 = 2 * 1024 * 1024 * 1024;
@@ -288,13 +288,11 @@ struct Origin {
     over_tls: bool,
 }
 
-/// Whether credentials may be taken: over TLS (the listener's, or a believed proxy's `X-Forwarded-Proto`), from
-/// loopback (not a client an edge node names, SEC-CLU-01), or with the conf's `git-server` `allow-http="true"`.
+/// Whether credentials may be taken: over TLS (the listener's, or a believed proxy's `X-Forwarded-Proto`), from a
+/// client on this machine (behind a believed proxy, the client it names; never a client an edge node names, SEC-CLU-01:
+/// [`secure_request`]), or with the conf's `git-server` `allow-http="true"`.
 fn secure(state: &HttpState, over_tls: bool, parts: &axum::http::request::Parts, peer: SocketAddr) -> bool {
-    let via = parts.extensions.get::<moqui_core::web::RequestVia>().copied().unwrap_or_default();
-    over_tls
-        || forwarded_https(&parts.headers, peer.ip(), state.guard.conf().addressing())
-        || crate::http::local_peer(peer.ip(), via)
+    secure_request(over_tls, parts, peer.ip(), state.guard.conf().addressing())
         || state.factory.conf_flag("git-server", "allow-http", false)
 }
 

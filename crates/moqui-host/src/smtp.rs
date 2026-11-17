@@ -86,8 +86,14 @@ mod queue;
 const MAX_COMMAND: usize = 4096;
 /// A data line is read in chunks of at most this many bytes.
 const DATA_CHUNK: usize = 64 * 1024;
-/// Commands answered with a syntax or sequence error before the connection is closed (an unknown recipient is not one).
+/// Commands answered with a syntax or sequence error before the connection is closed (an unknown recipient is one only in
+/// internet mode: a gateway checks its recipients one by one, a peer on the internet that does may be harvesting).
 const MAX_ERRORS: usize = 20;
+/// In internet mode, the messages one connection may bring; the next `MAIL` is answered 421 and the peer connects again
+/// (SEC-MAIL-07).
+const MAX_INTERNET_MESSAGES: usize = 100;
+/// In internet mode, the bytes of the messages one connection may bring, as [`MAX_INTERNET_MESSAGES`] (SEC-MAIL-07).
+const MAX_INTERNET_BYTES: usize = 256 * 1024 * 1024;
 
 /// A connection's bytes: TCP, then TLS after STARTTLS.
 pub(crate) trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
@@ -200,6 +206,10 @@ pub struct Internet {
     pub spam_fields: Vec<String>,
     /// Fixed DNS records instead of the resolver's (a test's).
     pub records: Option<Arc<moqui_mail::dns::Records>>,
+    /// The messages one connection may bring ([`MAX_INTERNET_MESSAGES`]).
+    pub max_messages: usize,
+    /// The bytes of the messages one connection may bring ([`MAX_INTERNET_BYTES`]).
+    pub max_bytes: usize,
 }
 
 impl std::fmt::Debug for Internet {
@@ -209,6 +219,8 @@ impl std::fmt::Debug for Internet {
             .field("per_minute", &self.per_minute)
             .field("rspamd_url", &self.rspamd_url)
             .field("spam_fields", &self.spam_fields)
+            .field("max_messages", &self.max_messages)
+            .field("max_bytes", &self.max_bytes)
             .finish_non_exhaustive()
     }
 }
@@ -341,6 +353,8 @@ impl SmtpConfig {
                 rspamd_url: setting_or_property("rspamd-url", "mail_rspamd_url"),
                 spam_fields: spam_headers.clone(),
                 records: None,
+                max_messages: MAX_INTERNET_MESSAGES,
+                max_bytes: MAX_INTERNET_BYTES,
             }
         });
         Ok(Some(Self {
@@ -910,6 +924,7 @@ async fn connection<B: Backend>(
         transaction: None,
         errors: 0,
         messages: 0,
+        message_bytes: 0,
         accepted: 0,
         refused: 0,
         ip_slot: None,
@@ -963,6 +978,8 @@ enum End {
     Shutdown,
     TooLong,
     TooManyErrors,
+    /// In internet mode, past the messages or bytes one connection may bring.
+    TooManyMessages,
     /// Bytes after STARTTLS, before the handshake.
     Pipelining,
     Tls(String),
@@ -979,6 +996,7 @@ impl End {
             Self::Shutdown => "server stopping".to_string(),
             Self::TooLong => "line too long".to_string(),
             Self::TooManyErrors => "too many errors".to_string(),
+            Self::TooManyMessages => "too many messages on one connection".to_string(),
             Self::Pipelining => "refused: commands pipelined after STARTTLS".to_string(),
             Self::Tls(text) => format!("TLS handshake failed: {text}"),
             Self::Proxy(text) => format!("refused: {text}"),
@@ -1024,6 +1042,8 @@ struct Session<'a, B> {
     transaction: Option<Transaction>,
     errors: usize,
     messages: usize,
+    /// The bytes of the messages stored on this connection.
+    message_bytes: usize,
     accepted: usize,
     refused: usize,
     /// In internet mode behind PROXY, the place of the client the header named among its address's connections.
@@ -1294,6 +1314,14 @@ impl<B: Backend> Session<'_, B> {
         if self.transaction.is_some() {
             return self.error("503 5.5.1 Nested MAIL command").await;
         }
+        // a peer on the internet brings so many messages a connection, then connects again (SEC-MAIL-07)
+        if let Some(internet) = self.config().internet.as_ref() {
+            if self.messages >= internet.max_messages || self.message_bytes >= internet.max_bytes {
+                self.reply("421 4.7.0 Too many messages on this connection, connect again")
+                    .await?;
+                return Err(End::TooManyMessages);
+            }
+        }
         let Some(path) = strip_keyword(rest, "FROM:") else {
             return self.error("501 5.5.4 Syntax: MAIL FROM:<address>").await;
         };
@@ -1426,11 +1454,16 @@ impl<B: Backend> Session<'_, B> {
                     self.id,
                     clip(&address)
                 );
-                self.reply(&format!(
+                let line = format!(
                     "550 5.1.1 <{}>: Recipient address rejected: User unknown",
                     clip(&address)
-                ))
-                .await
+                );
+                // in internet mode each counts as an error, so one connection cannot try local addresses without end
+                // (SEC-MAIL-07)
+                if self.config().internet.is_some() {
+                    return self.error(&line).await;
+                }
+                self.reply(&line).await
             }
             RcptAnswer::TempFail(text) => {
                 self.refused += 1;
@@ -1645,6 +1678,7 @@ impl<B: Backend> Session<'_, B> {
                 }
                 if failed.len() < transaction.recipients.len() {
                     self.messages += 1;
+                    self.message_bytes = self.message_bytes.saturating_add(size);
                     tracing::info!(
                         "SMTP session {} stored a message of {size} bytes from <{}> to {recipients}: {summary}",
                         self.id,

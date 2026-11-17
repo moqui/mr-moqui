@@ -514,6 +514,19 @@ test("the thread's Markdown: remote images as placeholders, links through safePa
     assert.equal(assist.hostOf("/apps/x"), "");
 });
 
+test("an external link that carries data shows its whole address and asks before it opens (SEC-AI-04)", () => {
+    const html = assist.renderMarkdown(marked, "[report](https://evil.example.com/c?d=the%20secret) [docs](https://docs.example.org/page)", {});
+    assert.match(html, /<a href="https:\/\/evil.example.com\/c\?d=the%20secret" title="https:\/\/evil.example.com\/c\?d=the%20secret" class="m-assist-external m-assist-external-data"/);
+    assert.match(html, /title="docs.example.org" class="m-assist-external" /);
+    assert.ok(assist.externalCarries("https://evil.example.com/c?d=1"));
+    assert.ok(assist.externalCarries("https://evil.example.com/#d=1"));
+    assert.ok(assist.externalCarries("https://docs.example.org@evil.example.com/"));
+    assert.ok(!assist.externalCarries("https://docs.example.org/page"));
+    // the host is the one the browser goes to, not a user name before it
+    assert.equal(assist.hostOf("https://docs.example.org@evil.example.com/x"), "evil.example.com");
+    assert.equal(assist.hostOf("https://user:pass@evil.example.com:8443/"), "evil.example.com");
+});
+
 test("a canvas's Markdown is strict: no image of any kind, no external link, only checked app paths", () => {
     const html = assist.renderMarkdown(marked, [
         "![p](https://evil.example.com/p?d=secret) ![local](/apps/static/logo.png) [docs](https://evil.example.com/?d=x) [Orders](/qapps/Orders)",

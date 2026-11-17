@@ -673,8 +673,25 @@ fn send_delivered_notice(
 
 const DELIVERED_SUBJECT: &str = "Delivery Status Notification (delivered)";
 
-/// A "delivered" `multipart/report` (RFC 3464) for `told`, with the header fields of the message (a delivered notice
-/// returns no content, whatever `RET` asked: RFC 3461 section 4.3 is about failures).
+/// The most of the message's header block a delivered notice returns (SEC-MAIL-06): the peer wrote that block, so a
+/// notice to the envelope sender it named would otherwise carry its chosen text, megabytes of it.
+const MAX_RETURNED_HEAD: usize = 4096;
+
+/// The whole fields of `head` that fit in [`MAX_RETURNED_HEAD`] bytes, from the first.
+fn returned_head(head: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for field in header_fields(head) {
+        if out.len() + field.len() > MAX_RETURNED_HEAD {
+            break;
+        }
+        out.extend_from_slice(field);
+    }
+    out
+}
+
+/// A "delivered" `multipart/report` (RFC 3464) for `told`, with the header fields of the message that fit in
+/// [`MAX_RETURNED_HEAD`] bytes (a delivered notice returns no content, whatever `RET` asked: RFC 3461 section 4.3 is
+/// about failures).
 pub(crate) fn delivered_report(head: &[u8], envelope: &Envelope, told: &[&RecipientDsn], date: &str) -> Vec<u8> {
     let hostname = trace_text(&envelope.hostname);
     let boundary = format!("{}.dsn/{hostname}", trace_text(&envelope.session_id));
@@ -716,7 +733,8 @@ pub(crate) fn delivered_report(head: &[u8], envelope: &Envelope, told: &[&Recipi
         "\r\n--{boundary}\r\nContent-Type: text/rfc822-headers\r\n\r\n"
     ));
     let mut raw = out.into_bytes();
-    raw.extend_from_slice(head);
+    let head = returned_head(head);
+    raw.extend_from_slice(&head);
     if !head.ends_with(b"\n") {
         raw.extend_from_slice(b"\r\n");
     }
@@ -766,10 +784,10 @@ fn deliver_one(
                 find.eq("emailAccountId", Value::string(account_id))
                     .eq("messageId", Value::string(&parsed.message_id))
                     .condition(Condition::is_not_null("receivedDate"))
-                    .count()
+                    .list()
             })
             .map_err(failed)?;
-        if had > 0 {
+        if had.iter().any(|row| same_message(row, &parsed, &envelope.mail_from)) {
             tracing::info!(
                 "Email account {account_id} has message {} already; SMTP session {} does not store it again",
                 parsed.message_id,
@@ -854,6 +872,18 @@ fn deliver_one(
         email_message_id: id,
         junk: junk.is_some(),
     })
+}
+
+/// Whether a stored message of the account is this one sent again (a gateway's retry after a temporary failure): the
+/// same envelope sender (the `Return-Path` its trace wrote first) and the same content, not only the same Message-ID,
+/// which any sender may write; another message with a known id is stored beside the first (SEC-MAIL-08).
+fn same_message(row: &EntityValue, parsed: &store::Parsed, mail_from: &str) -> bool {
+    let return_path = format!("Return-Path: <{}>", trace_text(mail_from));
+    field_text(row, "headersString").starts_with(&return_path)
+        && field_text(row, "subject") == parsed.subject
+        && field_text(row, "fromAddress") == parsed.from_address
+        && field_text(row, "body") == parsed.html.as_deref().unwrap_or_default()
+        && field_text(row, "bodyText") == parsed.text.as_deref().unwrap_or_default()
 }
 
 #[cfg(test)]

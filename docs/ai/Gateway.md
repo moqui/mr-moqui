@@ -66,7 +66,7 @@ client.chat.completions.create(model='fast', messages=[{'role': 'user', 'content
 
 - **Auth**: `Authorization: Bearer <login key>` or `Bearer <app password>` (what OpenAI clients send), or HTTP Basic
   with an app password (or a login key as the password, never the account password); only over TLS, a believed proxy's
-  https, or loopback. Missing or bad credentials are 401 `invalid_api_key` with `WWW-Authenticate`; a refused login
+  https, or from a client on this machine (behind a believed proxy, the client it names). Missing or bad credentials are 401 `invalid_api_key` with `WWW-Authenticate`; a refused login
   counts for web protection.
 - **What passes**: only the request fields of the API's allowlist (Chat Completions: `messages`, `stream`,
   `stream_options.include_usage`, `temperature`, `top_p`, `n`, `stop`, `max_tokens`, `max_completion_tokens`,
@@ -134,7 +134,9 @@ the conf).
 
 `LlmEmbedder` (`moqui_llm::embed`) implements the search facade's `Embedder` over a configured model's
 `/v1/embeddings` (LM Studio, Ollama, llama.cpp, vLLM, OpenAI), at most 64 texts a request, each request an `LlmCall` of
-source `embed`. It keeps the vectors of the batches that succeeded by text, so a batch that failed is sent again without
+source `embed`. A call made for a user (a page's semantic find, a search query) is refused for an `EXTERNAL_USER`,
+counts against the user's `api` quota and counts one AT_LLM tarpit hit `embed:<modelId>` (120 a minute); the search
+worker's calls have no user. It keeps the vectors of the batches that succeeded by text, so a batch that failed is sent again without
 them. When the server does not answer (a timeout, a network or server error), its breaker skips it for 60 seconds:
 calls are refused at once, the skill retrieval ranks by words, and the search worker does not try a failed batch again
 a text at a time. A query (`embed_quick`) waits at most 8 seconds. Its name is fixed when it is made: a call whose

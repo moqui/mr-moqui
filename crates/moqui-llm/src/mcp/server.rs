@@ -593,7 +593,9 @@ pub fn setup_prompt(base_url: &str, version: &str) -> String {
     )
 }
 
-/// A public document: `body` with its media type, cacheable for an hour, readable from any origin.
+/// A public document: `body` with its media type, cacheable for an hour, readable from any origin. Its URLs come from
+/// the request's `Host` (or a believed proxy's forwarded host and scheme) when no `public-url` is set, so a shared
+/// cache keeps one copy per host (`Vary`), as the A2A card does (SEC-AI-10).
 pub fn public_reply(body: String, content_type: &str) -> Reply {
     let tag = moqui_lib::json::canonical_sha256(&json!(body));
     Reply {
@@ -601,6 +603,10 @@ pub fn public_reply(body: String, content_type: &str) -> Reply {
         headers: vec![
             ("content-type".to_string(), content_type.to_string()),
             ("cache-control".to_string(), "public, max-age=3600".to_string()),
+            (
+                "vary".to_string(),
+                "Host, X-Forwarded-Host, X-Forwarded-Proto".to_string(),
+            ),
             ("etag".to_string(), format!("\"{}\"", tag.get(..32).unwrap_or(&tag))),
             ("access-control-allow-origin".to_string(), "*".to_string()),
             ("access-control-allow-methods".to_string(), "GET".to_string()),

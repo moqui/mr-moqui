@@ -261,7 +261,7 @@ fn handle(factory: &Arc<ExecutionContextFactory>, stream: TcpStream) {
             api_key: None,
             range: headers.get("range").cloned(),
             content_length,
-            secure: true,
+            secure: !headers.contains_key("x-test-insecure"),
             client_ip: "127.0.0.1".into(),
         };
         let mut body = reader.take(content_length.unwrap_or(0));
@@ -296,7 +296,7 @@ fn handle(factory: &Arc<ExecutionContextFactory>, stream: TcpStream) {
         gzip: headers.get("content-encoding").is_some_and(|value| value == "gzip"),
         authorization: headers.get("authorization").cloned(),
         api_key: headers.get("api_key").cloned(),
-        secure: true,
+        secure: !headers.contains_key("x-test-insecure"),
         client_ip: "127.0.0.1".into(),
     };
     let mut body: Box<dyn Read> = if headers.get("transfer-encoding").is_some_and(|value| value == "chunked") {
@@ -1533,6 +1533,38 @@ fn credentials_and_rights_are_checked() {
     assert!(!ok && out.contains("not found"), "{out}");
     let (ok, out) = git_in(&work, &home, &["push", &url_with(&base, WRITER, "mirror"), "main"]);
     assert!(!ok, "{out}");
+
+    // over a transport that takes no credentials nothing asks for them (SEC-GIT-09): a 403 that says to use HTTPS,
+    // with no challenge, for git and LFS alike; credentials sent anyway are refused unread
+    let insecure = [("X-Test-Insecure", "1")];
+    let refs = |headers: &[(&str, &str)]| {
+        http(
+            &base,
+            "GET",
+            "/git/guarded.git/info/refs?service=git-upload-pack",
+            headers,
+            b"",
+        )
+    };
+    let (status, headers, body) = refs(&insecure);
+    assert_eq!(status, 403, "{}", String::from_utf8_lossy(&body));
+    assert!(!headers.contains_key("www-authenticate"), "{headers:?}");
+    assert!(String::from_utf8_lossy(&body).contains("HTTPS"));
+    let (status, headers, _) = http(&base, "POST", "/git/guarded.git/info/lfs/objects/batch", &insecure, b"{}");
+    assert_eq!(status, 403);
+    let challenged = headers.contains_key("www-authenticate") || headers.contains_key("lfs-authenticate");
+    assert!(!challenged, "{headers:?}");
+    let basic = format!(
+        "Basic {}",
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, format!("{WRITER}:wrong"))
+    );
+    let (status, _, body) = refs(&[("X-Test-Insecure", "1"), ("Authorization", &basic)]);
+    assert_eq!(status, 403);
+    assert!(String::from_utf8_lossy(&body).contains("plain HTTP"));
+    // the same request over a secure transport is asked to log in
+    let (status, headers, _) = refs(&[]);
+    assert_eq!(status, 401);
+    assert!(headers.contains_key("www-authenticate"));
 
     // an access token (a UserLoginKey) as the password
     let token = {

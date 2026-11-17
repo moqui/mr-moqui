@@ -416,6 +416,28 @@ fn a_message_is_stored_once_per_account_with_files_rules_and_ecas() {
         1
     );
     assert_eq!(eca_lines().len(), 3, "the reply's, once");
+    // another sender's message that only takes the same Message-ID is not a retry: it is stored beside the first, which
+    // stays as it was (SEC-MAIL-08)
+    let forged = receive(
+        &facade,
+        &plain("<files@example.org>", "Files, corrected", "sales@example.com", ""),
+        "mallory@example.net",
+        &[to(&sales, &["sales@example.com"])],
+    )
+    .unwrap();
+    assert!(
+        matches!(forged.deliveries[0].result, Ok(Outcome::Stored { .. })),
+        "{forged:?}"
+    );
+    assert_eq!(
+        rows(
+            &facade,
+            MESSAGE,
+            &[("emailAccountId", &sales), ("messageId", "<files@example.org>")]
+        )
+        .len(),
+        2
+    );
     // a message with no header fields is refused
     assert!(receive(
         &facade,
@@ -910,5 +932,21 @@ mod text {
         assert!(text.contains("Reporting-MTA: dns; mx.example.com\r\nOriginal-Envelope-Id: QQ314159\r\nArrival-Date: Mon, 19 Oct 2026 11:00:00 +0000\r\n\r\nOriginal-Recipient: rfc822;Sales@Example.com\r\nFinal-Recipient: rfc822; sales@example.com\r\nAction: delivered\r\nStatus: 2.0.0\r\n"), "{text}");
         assert!(text.ends_with("Content-Type: text/rfc822-headers\r\n\r\nSubject: Hi\r\nMessage-ID: <m@x.org>\r\n\r\n--S1.dsn/mx.example.com--\r\n"), "{text}");
         assert!(parse_message(text.as_bytes()).is_ok());
+        // the sender wrote the header block: a notice returns its whole fields up to 4 KiB, not a megabyte of chosen
+        // text (SEC-MAIL-06)
+        let big = format!(
+            "Subject: Hi\r\nX-Chosen: {}\r\nMessage-ID: <m@x.org>\r\n",
+            "spam ".repeat(200_000)
+        );
+        let cut = String::from_utf8(delivered_report(
+            big.as_bytes(),
+            &envelope,
+            &[&one],
+            "Mon, 19 Oct 2026 11:00:00 +0000",
+        ))
+        .unwrap();
+        assert!(cut.len() < 6000, "{}", cut.len());
+        assert!(cut.contains("text/rfc822-headers\r\n\r\nSubject: Hi\r\n") && !cut.contains("X-Chosen"));
+        assert!(parse_message(cut.as_bytes()).is_ok());
     }
 }

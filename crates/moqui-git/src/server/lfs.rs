@@ -421,7 +421,7 @@ pub fn serve_lfs(request: &LfsHttpRequest, body: &mut dyn Read, out: &mut dyn Ht
     } = match started {
         Ok(started) => started,
         Err(refusal) => {
-            refuse(out, &refusal);
+            refuse(out, &refusal.over(request.secure));
             return;
         }
     };
@@ -453,6 +453,12 @@ pub fn serve_lfs(request: &LfsHttpRequest, body: &mut dyn Read, out: &mut dyn Ht
         _ => Err(message(404, "no such LFS endpoint")),
     };
     if let Err((status, body)) = outcome {
+        // no login is asked for over a transport that takes no credentials (SEC-GIT-09)
+        let (status, body) = if status == 401 && !request.secure {
+            message(403, super::INSECURE_SIGN_IN)
+        } else {
+            (status, body)
+        };
         send(out, status, &body);
     }
 }

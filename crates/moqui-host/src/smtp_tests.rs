@@ -798,6 +798,8 @@ async fn internet_mode_checks_the_mail_and_limits_each_address() {
         rspamd_url: fake_rspamd().await,
         spam_fields: config.spam_headers.clone(),
         records: Some(Arc::new(records)),
+        max_messages: 100,
+        max_bytes: 1 << 20,
     });
     let (address, fake, _stop) = start(config).await;
     let mut client = Client::connect(address).await;
@@ -867,6 +869,56 @@ async fn internet_mode_checks_the_mail_and_limits_each_address() {
     assert_eq!(client.command("QUIT").await, "221 2.0.0 Bye");
 }
 
+/// In internet mode an unknown recipient counts as an error, so a connection cannot try local addresses without end,
+/// and a connection brings so many messages before it is told to connect again (SEC-MAIL-07); behind a gateway an
+/// unknown recipient is not an error.
+#[tokio::test]
+async fn internet_mode_counts_unknown_recipients_and_messages_a_connection() {
+    let records = moqui_mail::dns::Records::offline();
+    records.fix_txt("example.org", "v=spf1 ip4:127.0.0.1 -all").unwrap();
+    let mut config = config("10.9.9.9");
+    config.allowed = Vec::new();
+    config.authserv_id = "mx.test".to_string();
+    config.max_recipients = 100;
+    config.internet = Some(Internet {
+        max_per_ip: 5,
+        per_minute: 30,
+        rspamd_url: String::new(),
+        spam_fields: vec!["X-Spam-Flag".to_string()],
+        records: Some(Arc::new(records)),
+        max_messages: 2,
+        max_bytes: 1 << 20,
+    });
+    let (address, fake, _stop) = start(config).await;
+    let mut client = Client::connect(address).await;
+    assert_eq!(client.reply().await, "220 mx.test ESMTP mr-moqui");
+    assert!(client.command("EHLO gw.example.org").await.starts_with("250-mx.test"));
+    assert_eq!(client.command("MAIL FROM:<ann@example.org>").await, "250 2.1.0 Ok");
+    let mut last = String::new();
+    for n in 0..MAX_ERRORS {
+        last = client.command(&format!("RCPT TO:<guess{n}@example.com>")).await;
+    }
+    assert_eq!(last, "421 4.7.0 Too many errors, closing the connection");
+
+    let mut client = Client::connect(address).await;
+    assert_eq!(client.reply().await, "220 mx.test ESMTP mr-moqui");
+    assert!(client.command("EHLO gw.example.org").await.starts_with("250-mx.test"));
+    for _ in 0..2 {
+        assert_eq!(client.command("MAIL FROM:<ann@example.org>").await, "250 2.1.0 Ok");
+        assert_eq!(client.command("RCPT TO:<sales@example.com>").await, "250 2.1.5 Ok");
+        assert_eq!(client.command("DATA").await, "354 End data with <CR><LF>.<CR><LF>");
+        client
+            .send("From: ann@example.org\r\nSubject: Hi\r\n\r\nHello\r\n.\r\n")
+            .await;
+        assert!(client.reply().await.starts_with("250 2.0.0 Ok"));
+    }
+    assert_eq!(
+        client.command("MAIL FROM:<ann@example.org>").await,
+        "421 4.7.0 Too many messages on this connection, connect again"
+    );
+    assert_eq!(fake.delivered.lock().unwrap().len(), 2);
+}
+
 /// Internet mode with Rspamd not reached: the mail is taken (fail open, logged), as not spam.
 #[tokio::test]
 async fn internet_mode_takes_the_mail_when_rspamd_is_not_reached() {
@@ -885,6 +937,8 @@ async fn internet_mode_takes_the_mail_when_rspamd_is_not_reached() {
         rspamd_url: format!("http://{closed}"),
         spam_fields: vec!["X-Spam-Flag".to_string()],
         records: Some(Arc::new(records)),
+        max_messages: 100,
+        max_bytes: 1 << 20,
     });
     let (address, fake, _stop) = start(config).await;
     let mut client = Client::connect(address).await;

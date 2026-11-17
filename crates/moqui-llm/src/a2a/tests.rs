@@ -284,18 +284,12 @@ fn push_urls_name_a_host_and_no_user() {
     }
 }
 
+/// The host decides whether a request's transport is secure (`secure_transport`, tested in the host); a request it
+/// marks not secure that carries credentials is refused before they are looked at.
 #[test]
 fn credentials_need_tls_a_believed_proxy_or_loopback() {
     use std::net::IpAddr;
     let public: IpAddr = "203.0.113.7".parse().unwrap();
-    assert!(
-        !super::secure(false, public),
-        "plain HTTP from a peer that is not loopback"
-    );
-    assert!(super::secure(true, public));
-    assert!(super::secure(false, "127.0.0.1".parse().unwrap()));
-    assert!(super::secure(false, "::1".parse().unwrap()));
-    // a request with credentials over plain HTTP is refused before they are looked at
     moqui_core::script::clear_context_stack();
     let context = moqui_core::context::ExecutionContextFactory::test_context_with_conf(
         r#"<moqui-conf><llm-facade enabled="true"><a2a enabled="true"/></llm-facade></moqui-conf>"#,
@@ -304,7 +298,7 @@ fn credentials_need_tls_a_believed_proxy_or_loopback() {
     let request = super::HttpRequest {
         method: "POST".to_string(),
         headers: vec![("authorization".to_string(), "Basic YW5uOm1vcXVp".to_string())],
-        secure: super::secure(false, public),
+        secure: false,
         client_ip: public.to_string(),
         ..super::HttpRequest::default()
     };

@@ -122,6 +122,13 @@ fn admin() -> bool {
     }
 }
 
+/// Internal work (authorization disabled: the jobs, a rule, a service that disables it), else the AgentAdmin
+/// permission, else an error message and false: for the services that take no authentication, so no request runs
+/// them as anyone (SEC-AI-09).
+fn internal_or_admin() -> bool {
+    ExecutionContext::with_current(ExecutionContext::authz_disabled).unwrap_or(false) || admin()
+}
+
 fn llm() -> Option<std::sync::Arc<super::LlmFacade>> {
     ExecutionContext::with_current(|ec| super::facade(ec.factory()))
 }
@@ -759,6 +766,9 @@ fn set_model_capability(parameters: &Parameters, facade: &EntityFacade) -> Out {
 /// `rollup#LlmUsage`: recompute `LlmUsageDaily` for `usageDate`, or for today and the `days` before it (default 1),
 /// each day in its own transaction. A day that fails is logged and rolled back, and the others go on. Out: `rowCount`.
 fn rollup_usage(parameters: &Parameters, facade: &EntityFacade) -> Out {
+    if !internal_or_admin() {
+        return Ok(BTreeMap::new());
+    }
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let dates: Vec<jiff::civil::Date> = match text(parameters, "usageDate") {
         Some(date_text) => match date_text.get(..10).unwrap_or(&date_text).parse::<jiff::civil::Date>() {
@@ -800,6 +810,9 @@ fn rollup_usage(parameters: &Parameters, facade: &EntityFacade) -> Out {
 /// `clean#LlmCallContent`: clear the content of calls older than `retentionDays` (default the conf's). Out:
 /// `clearedCount`.
 fn clean_call_content(parameters: &Parameters, facade: &EntityFacade) -> Out {
+    if !internal_or_admin() {
+        return Ok(BTreeMap::new());
+    }
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let days = match text(parameters, "retentionDays").and_then(|days| days.parse::<u32>().ok()) {
         Some(days) => days,
@@ -1282,11 +1295,24 @@ fn cancel_agent_run(parameters: &Parameters, _facade: &EntityFacade) -> Out {
 /// `record#AgentRunUsage`: the provider turns of a run an external harness works (`stepList`), each written as its
 /// `AgentRunStep` and priced at its model's prices; the run's totals rolled up, and its cancel requested when it passed
 /// `maxTokens` or `maxCost`. Server-side callers only (the harness's adapter): it is not allowed remotely.
-fn record_agent_run_usage(parameters: &Parameters, _facade: &EntityFacade) -> Out {
+fn record_agent_run_usage(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let Some(factory) = factory() else {
         return Ok(BTreeMap::new());
     };
     let run_id = text(parameters, "runId").unwrap_or_default();
+    // the harness's adapter runs as the run's user or with authorization disabled; anyone else's call is told the run
+    // is not there, as cancel#AgentRun tells it (SEC-AI-09)
+    if !ExecutionContext::with_current(ExecutionContext::authz_disabled).unwrap_or(false) {
+        let caller = moqui_core::user::current_user_id().ok().flatten();
+        let owner = {
+            let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+            super::run::run_owner(facade, &run_id)?
+        };
+        if caller.is_none() || owner != caller {
+            add_error(format!("agent run {run_id} not found"));
+            return Ok(BTreeMap::new());
+        }
+    }
     let field = |step: &moqui_lib::object::ValueMap, key: &str| {
         step.get(key)
             .filter(|value| !is_empty(value))
