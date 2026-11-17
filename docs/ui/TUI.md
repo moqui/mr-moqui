@@ -281,7 +281,9 @@ shown (a filter on a value, or a toggle that stages a change, as on Access Capab
 no link to another screen, as a list beside its detail selects a row with one. A card of a board, an event of a
 calendar and a row of a tree open the same way: the link the server gives each (`_open`) is its `row-open-field` link,
 else its first link to another screen, else its first back to this one.
-A link that posts or writes never opens the row; it stays on F10 and on numbered links. A row with no link to open says "Nothing to open on this row" (and points to F10 when it
+The `row-open-field` link of a list row may post (BOSS's notification center reads a notification as it opens its
+record): Enter posts it, after its confirmation, and goes where it answers. Any other link that posts or writes never
+opens the row; it stays on F10 and on numbered links. A row with no link to open says "Nothing to open on this row" (and points to F10 when it
 has other links). The show-total row opens nothing. In both schemes `e` edits the row.
 
 **Lists and trees.** In both schemes:
