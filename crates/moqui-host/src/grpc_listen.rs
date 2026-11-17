@@ -259,6 +259,7 @@ async fn accept(
         let _ = stream.set_nodelay(true);
         let connections = connections.clone();
         let acceptor = acceptor.clone();
+        let guard = Arc::clone(&guard);
         tokio::spawn(async move {
             let io: Box<dyn Io> = match acceptor {
                 None => Box::new(stream),
@@ -277,6 +278,7 @@ async fn accept(
                 .send(Ok(Connection {
                     io,
                     remote,
+                    guard,
                     _slot: slot,
                 }))
                 .await;
@@ -287,18 +289,33 @@ async fn accept(
 trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
 
+/// Who a gRPC call came from, in each call's extensions, on this listener and on the HTTPS listener's HTTP/2: the
+/// connection's peer, the client (the peer, or on the HTTPS listener the client a believed proxy names) and the edge
+/// guard, which a service tells of a refused credential as the HTTP routes do (SEC-TLS-17).
+#[derive(Clone)]
+pub(crate) struct Caller {
+    pub peer: SocketAddr,
+    pub client: std::net::IpAddr,
+    pub guard: Arc<crate::guard::Guard>,
+}
+
 /// A plain or TLS connection, holding its edge-guard slot while it is open.
 struct Connection {
     io: Box<dyn Io>,
     remote: SocketAddr,
+    guard: Arc<crate::guard::Guard>,
     _slot: crate::guard::ConnectionSlot,
 }
 
 impl tonic::transport::server::Connected for Connection {
-    type ConnectInfo = SocketAddr;
+    type ConnectInfo = Caller;
 
-    fn connect_info(&self) -> SocketAddr {
-        self.remote
+    fn connect_info(&self) -> Caller {
+        Caller {
+            peer: self.remote,
+            client: self.remote.ip().to_canonical(),
+            guard: Arc::clone(&self.guard),
+        }
     }
 }
 

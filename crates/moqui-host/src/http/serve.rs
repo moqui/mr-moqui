@@ -437,7 +437,14 @@ fn h2_answer(
     #[cfg(feature = "grpc")]
     if let Some(grpc) = grpc_routes(web, &request) {
         let mut request = request;
-        // the PASS authority reads the client's address from this (`crate::pass_authority`)
+        // the PASS authority reads the client's address from these (`crate::pass_authority`), the OTLP receiver tells
+        // the guard of a refused key (`crate::monitor::grpc`)
+        let caller = crate::grpc_listen::Caller {
+            peer: remote,
+            client: web.guard.client_of(remote.ip(), request.headers()),
+            guard: Arc::clone(&web.guard),
+        };
+        request.extensions_mut().insert(caller);
         request.extensions_mut().insert(remote);
         let call = grpc.oneshot(request);
         return Box::pin(async move {

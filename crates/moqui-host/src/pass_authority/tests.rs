@@ -152,6 +152,7 @@ fn a_direct_call_names_a_client_and_its_secret_and_the_link_is_its_own_client() 
         factory: Weak::new(),
         mode: Mode::Direct,
         failures: Mutex::new(HashMap::new()),
+        held_checks: tokio::sync::Semaphore::new(1),
     };
     let mut metadata = tonic::metadata::MetadataMap::new();
     assert_eq!(
@@ -184,16 +185,18 @@ fn a_direct_call_names_a_client_and_its_secret_and_the_link_is_its_own_client() 
         factory: Weak::new(),
         mode: Mode::Link,
         failures: Mutex::new(HashMap::new()),
+        held_checks: tokio::sync::Semaphore::new(1),
     };
     // on the link a client and secret in the call or metadata change nothing
     assert_eq!(link.client(&metadata, "frontend").unwrap(), Client::Link);
 }
 
 #[test]
-fn wrong_secrets_from_one_address_are_refused_until_the_window_ends() {
+fn wrong_secrets_from_one_source_hold_it_until_the_window_ends() {
     let mut failures = HashMap::new();
-    let here: Option<IpAddr> = Some("203.0.113.9".parse().unwrap());
-    let there: Option<IpAddr> = Some("198.51.100.1".parse().unwrap());
+    let ip = |text: &str| Some(text.parse::<IpAddr>().unwrap());
+    let here = source_of(ip("203.0.113.9"));
+    let there = source_of(ip("198.51.100.1"));
     let start = Instant::now();
     for n in 1..FAILURE_LIMIT {
         assert_eq!(record_failure(&mut failures, here, start), n);
@@ -206,4 +209,72 @@ fn wrong_secrets_from_one_address_are_refused_until_the_window_ends() {
     let later = start + FAILURE_WINDOW;
     assert!(!throttled(&failures, here, later));
     assert_eq!(record_failure(&mut failures, here, later), 1);
+    // an IPv6 host counts as its /64, an IPv4-mapped address as its IPv4 one (SEC-CLU-05)
+    assert_eq!(source_of(ip("2001:db8:1:2::5")), source_of(ip("2001:db8:1:2:ffff::9")));
+    assert_eq!(source_of(ip("::ffff:203.0.113.9")), here);
+}
+
+/// SEC-CLU-05: the table of sources is bounded; while it is full a new source is checked as one past its limit, and
+/// not added.
+#[test]
+fn the_wrong_secret_table_is_bounded() {
+    let mut failures = HashMap::new();
+    let start = Instant::now();
+    for n in 0..MAX_FAILURE_SOURCES {
+        let address = IpAddr::from(std::net::Ipv4Addr::from(0x0a00_0000_u32 + n as u32));
+        record_failure(&mut failures, Some(address), start);
+    }
+    let new = Some("198.51.100.1".parse::<IpAddr>().unwrap());
+    assert!(throttled(&failures, new, start));
+    assert_eq!(record_failure(&mut failures, new, start), FAILURE_LIMIT);
+    assert_eq!(failures.len(), MAX_FAILURE_SOURCES);
+    // when their windows end there is room again
+    let later = start + FAILURE_WINDOW;
+    assert_eq!(record_failure(&mut failures, new, later), 1);
+    assert_eq!(failures.len(), 1);
+}
+
+/// SEC-CLU-05, SEC-PSA-04: a source past its wrong secrets (one PASS server's neighbor behind the same NAT or front
+/// node guessing) does not lock out a right secret from that address: it is still checked, one at a time, and let in.
+#[tokio::test]
+async fn a_right_secret_gets_in_from_a_source_past_its_wrong_secrets() {
+    let authority = Authority {
+        factory: Weak::new(),
+        mode: Mode::Direct,
+        failures: Mutex::new(HashMap::new()),
+        held_checks: tokio::sync::Semaphore::new(1),
+    };
+    let shared: Option<IpAddr> = Some("203.0.113.9".parse().unwrap());
+    let answer = |right: bool| {
+        move || async move {
+            Ok(if right {
+                Ok("pass-1".to_string())
+            } else {
+                Err(Refused("wrong secret".to_string()))
+            })
+        }
+    };
+    for _ in 0..FAILURE_LIMIT + 2 {
+        let refused = authority.admit(shared, HELD_WAIT, answer(false)).await.unwrap_err();
+        assert_eq!(refused.code(), tonic::Code::Unauthenticated);
+    }
+    assert!(throttled(&lock(&authority.failures), source_of(shared), Instant::now()));
+    assert_eq!(
+        authority.admit(shared, HELD_WAIT, answer(true)).await.unwrap(),
+        "pass-1"
+    );
+    // while another held call is being checked, the next waits for its turn, and is refused when the wait ends
+    let turn = authority.held_checks.acquire().await.unwrap();
+    let waited = authority
+        .admit(shared, Duration::from_millis(50), answer(true))
+        .await
+        .unwrap_err();
+    assert_eq!(waited.code(), tonic::Code::ResourceExhausted);
+    drop(turn);
+    // a source not past its limit is checked at once, whatever the held ones do
+    let turn = authority.held_checks.acquire().await.unwrap();
+    let other: Option<IpAddr> = Some("198.51.100.1".parse().unwrap());
+    let quick = authority.admit(other, Duration::from_millis(50), answer(true)).await;
+    assert_eq!(quick.unwrap(), "pass-1");
+    drop(turn);
 }

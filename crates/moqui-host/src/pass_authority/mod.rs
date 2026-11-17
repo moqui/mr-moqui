@@ -60,9 +60,15 @@ pub(crate) const MAX_MESSAGE: usize = 16 * 1024 * 1024;
 /// The largest message a client sends the service: a call (its JSON input, at most a post of 100,000 characters and
 /// its fields) or an upload's part (64 KiB chunks).
 pub(crate) const MAX_REQUEST: usize = 2 * 1024 * 1024;
-/// Wrong secrets from one address in [`FAILURE_WINDOW`] before its calls are refused until the window ends.
+/// Wrong secrets from one source in [`FAILURE_WINDOW`] before its calls are checked one at a time ([`Authority::admit`])
+/// until the window ends.
 const FAILURE_LIMIT: u32 = 10;
 const FAILURE_WINDOW: Duration = Duration::from_secs(600);
+/// The sources whose wrong secrets are counted at once; while the table is full a new source is checked as one past
+/// its limit.
+const MAX_FAILURE_SOURCES: usize = 10_000;
+/// How long a call from a source past its limit waits for its turn to be checked before it is refused.
+const HELD_WAIT: Duration = Duration::from_secs(5);
 /// A download's chunk.
 const CHUNK: usize = 64 * 1024;
 
@@ -92,6 +98,7 @@ fn server(factory: Weak<ExecutionContextFactory>, mode: Mode) -> PassAuthoritySe
         factory,
         mode,
         failures: Mutex::new(HashMap::new()),
+        held_checks: tokio::sync::Semaphore::new(1),
     })
     .max_decoding_message_size(MAX_REQUEST)
     .max_encoding_message_size(MAX_MESSAGE)
@@ -127,29 +134,49 @@ enum Mode {
 pub(crate) struct Authority {
     factory: Weak<ExecutionContextFactory>,
     mode: Mode,
-    /// Wrong direct secrets by address: when the window began, and how many since.
+    /// Wrong direct secrets by source ([`source_of`]): when the window began, and how many since.
     failures: Mutex<HashMap<Option<IpAddr>, (Instant, u32)>>,
+    /// The one check at a time of the calls from sources past their wrong secrets.
+    held_checks: tokio::sync::Semaphore,
 }
 
 /// The address of a call's connection: the listener's connections name it as their connect info.
 fn remote_ip<T>(request: &Request<T>) -> Option<IpAddr> {
     request
         .remote_addr()
+        .or_else(|| {
+            request
+                .extensions()
+                .get::<crate::grpc_listen::Caller>()
+                .map(|caller| caller.peer)
+        })
         .or_else(|| request.extensions().get::<SocketAddr>().copied())
         .map(|address| address.ip())
 }
 
-/// Whether `remote` has used up its wrong secrets in the window at `now`.
-fn throttled(failures: &HashMap<Option<IpAddr>, (Instant, u32)>, remote: Option<IpAddr>, now: Instant) -> bool {
-    failures
-        .get(&remote)
-        .is_some_and(|(began, count)| now.duration_since(*began) < FAILURE_WINDOW && *count >= FAILURE_LIMIT)
+/// The source a client's wrong secrets count under: an IPv4 address, or an IPv6 address's /64
+/// (`moqui_lib::source_guard::source_key`), so one host cannot spread over its /64.
+fn source_of(client: Option<IpAddr>) -> Option<IpAddr> {
+    client.map(moqui_lib::source_guard::source_key)
 }
 
-/// Count one wrong secret from `remote` at `now`: the count in its window.
-fn record_failure(failures: &mut HashMap<Option<IpAddr>, (Instant, u32)>, remote: Option<IpAddr>, now: Instant) -> u32 {
+/// Whether `source` has used up its wrong secrets in the window at `now`; a source not counted while the table is full
+/// is taken as one that has.
+fn throttled(failures: &HashMap<Option<IpAddr>, (Instant, u32)>, source: Option<IpAddr>, now: Instant) -> bool {
+    match failures.get(&source) {
+        Some((began, count)) => now.duration_since(*began) < FAILURE_WINDOW && *count >= FAILURE_LIMIT,
+        None => failures.len() >= MAX_FAILURE_SOURCES,
+    }
+}
+
+/// Count one wrong secret from `source` at `now`: the count in its window. A new source is not counted while the table
+/// holds [`MAX_FAILURE_SOURCES`] in their windows.
+fn record_failure(failures: &mut HashMap<Option<IpAddr>, (Instant, u32)>, source: Option<IpAddr>, now: Instant) -> u32 {
     failures.retain(|_, (began, _)| now.duration_since(*began) < FAILURE_WINDOW);
-    let entry = failures.entry(remote).or_insert((now, 0));
+    if failures.len() >= MAX_FAILURE_SOURCES && !failures.contains_key(&source) {
+        return FAILURE_LIMIT;
+    }
+    let entry = failures.entry(source).or_insert((now, 0));
     entry.1 += 1;
     entry.1
 }
@@ -184,26 +211,65 @@ impl Authority {
         }
     }
 
+    /// The client of a call for counting its wrong secrets: the connection's peer, or the client a proxy in front
+    /// names when the webapp's `client-ip-header` is believed for that peer (`moqui_core::web::address`), so the PASS
+    /// servers behind one proxy or front node are not one source.
+    fn client_ip<T>(&self, request: &Request<T>) -> Option<IpAddr> {
+        let peer = remote_ip(request)?;
+        let Some(factory) = self.factory.upgrade() else {
+            return Some(peer);
+        };
+        let addressing = factory.extension(moqui_core::web::address::ClientAddressing::of_factory);
+        let named = Some(addressing.header())
+            .filter(|header| !header.is_empty())
+            .and_then(|header| request.metadata().get(header))
+            .and_then(|value| value.to_str().ok());
+        Some(addressing.resolve(peer, named))
+    }
+
     /// A direct client checked on the request pool before anything else runs, as `Client::Checked`; refused, and
-    /// counted against its address, when the secret is wrong; refused at once while the address has used up its wrong
-    /// secrets. The link's client passes through.
+    /// counted against its source, when the secret is wrong. The link's client passes through.
     async fn checked(&self, client: Client, remote: Option<IpAddr>) -> Result<Client, Status> {
         let Client::Secret { id, secret } = client else {
             return Ok(client);
         };
-        if throttled(&lock(&self.failures), remote, Instant::now()) {
-            return Err(Status::resource_exhausted("too many wrong PASS client secrets; wait"));
-        }
-        let checked = crate::worker::on_pool(&self.factory, move |_| Ok(core::check_client(&id, &secret)))
+        let factory = Weak::clone(&self.factory);
+        let check = move || async move {
+            crate::worker::on_pool(&factory, move |_| Ok(core::check_client(&id, &secret)))
+                .await
+                .map_err(|err| worker_failed(&err))
+        };
+        self.admit(remote, HELD_WAIT, check)
             .await
-            .map_err(|err| worker_failed(&err))?;
-        match checked {
-            Ok(id) => Ok(Client::Checked { id }),
+            .map(|id| Client::Checked { id })
+    }
+
+    /// Run `check` of a call from `client`: the checked client id, or the refusal. A wrong secret counts against the
+    /// client's source. A source past its wrong secrets is not refused unchecked, which would lock out every PASS
+    /// server behind its address with it, but its calls are checked one at a time across all such sources, waiting at
+    /// most `wait` ([`HELD_WAIT`]), so a guesser's cost stays bounded while a right secret still gets in (SEC-CLU-05,
+    /// SEC-PSA-04).
+    async fn admit<F, Checked>(&self, client: Option<IpAddr>, wait: Duration, check: F) -> Result<String, Status>
+    where
+        F: FnOnce() -> Checked,
+        Checked: std::future::Future<Output = Result<Result<String, Refused>, Status>>,
+    {
+        let source = source_of(client);
+        let _turn = if throttled(&lock(&self.failures), source, Instant::now()) {
+            match tokio::time::timeout(wait, self.held_checks.acquire()).await {
+                Ok(Ok(permit)) => Some(permit),
+                _ => return Err(Status::resource_exhausted("too many wrong PASS client secrets; wait")),
+            }
+        } else {
+            None
+        };
+        match check().await? {
+            Ok(id) => Ok(id),
             Err(Refused(reason)) => {
-                let count = record_failure(&mut lock(&self.failures), remote, Instant::now());
+                let count = record_failure(&mut lock(&self.failures), source, Instant::now());
                 // the first of a window and the one that reaches the limit, not each
                 if count == 1 || count == FAILURE_LIMIT {
-                    let from = remote.map_or_else(|| "an unknown address".to_string(), |ip| ip.to_string());
+                    let from = client.map_or_else(|| "an unknown address".to_string(), |ip| ip.to_string());
                     tracing::warn!(
                         "PASS authority: refused a direct call from {from} ({count} in 10 minutes): {reason}"
                     );
@@ -395,7 +461,7 @@ impl PassAuthority for Authority {
     async fn call(&self, request: Request<PassCall>) -> Result<Response<PassResult>, Status> {
         let message = request.get_ref();
         let client = self.client(request.metadata(), &message.client_id)?;
-        let remote = remote_ip(&request);
+        let remote = self.client_ip(&request);
         let call = call_from(request.into_inner())?;
         let client = self.checked(client, remote).await?;
         let reply = crate::worker::on_pool(&self.factory, move |_| Ok(core::serve(&call, &client, None)))
@@ -410,7 +476,7 @@ impl PassAuthority for Authority {
     async fn download(&self, request: Request<PassCall>) -> Result<Response<Self::DownloadStream>, Status> {
         let message = request.get_ref();
         let client = self.client(request.metadata(), &message.client_id)?;
-        let remote = remote_ip(&request);
+        let remote = self.client_ip(&request);
         let call = call_from(request.into_inner())?;
         let client = self.checked(client, remote).await?;
         let served = crate::worker::on_pool(&self.factory, move |factory| {
@@ -470,7 +536,7 @@ impl PassAuthority for Authority {
 
     async fn upload(&self, request: Request<Streaming<UploadPart>>) -> Result<Response<PassResult>, Status> {
         let metadata = request.metadata().clone();
-        let remote = remote_ip(&request);
+        let remote = self.client_ip(&request);
         let mut parts = request.into_inner();
         let Some(upload_part::Part::Call(message)) = parts.message().await?.and_then(|part| part.part) else {
             return Err(Status::invalid_argument("an upload starts with its call"));
