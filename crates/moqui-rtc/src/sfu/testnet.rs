@@ -19,6 +19,13 @@
 //! With [`Net::with_leg_node`] a second node's [`Sfu`] (the leg node, W7) is on the network too: a client may join
 //! there, and the two SFUs' relay messages go between them with the same latency, as the host's cluster send to one
 //! node carries them. [`Net::link_up`] false cuts the leg node off from the origin, datagrams and messages both.
+//!
+//! The network tests of plans/Comms-Messaging.md §8.4 (`network_tests.rs`) shape each client's link with an
+//! [`Impairment`] each way ([`Client::up`], [`Client::down`]): random and burst loss, jitter that reorders, a capacity,
+//! extra delay and a cut (an outage). A client may also move: [`Net::rebind`] gives it a new public address behind a
+//! NAT without its knowing, [`Net::move_to`] a new interface (Wi-Fi to mobile data) with an ICE restart, and
+//! [`Net::rejoin`] joins again with the next generation, as the page does after the media server dropped it.
+//! [`Client::heard`] and [`Client::seen`] measure what arrived.
 
 use std::collections::{HashMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddr};
@@ -40,8 +47,114 @@ pub const ORIGIN: &str = "nodeA";
 pub const LEG_NODE: &str = "nodeB";
 /// The simulated step.
 const STEP: Duration = Duration::from_millis(2);
-/// A downlink queue longer than this drops.
+/// A link queue longer than this drops.
 const MAX_QUEUE: Duration = Duration::from_millis(300);
+/// An audio frame's RTP time step (20 ms at 48 kHz), as [`Net::run`] sends them.
+const AUDIO_STEP: u64 = 960;
+
+/// What one direction of a client's link does to its datagrams.
+#[derive(Debug, Clone, Default)]
+pub struct Impairment {
+    /// The share of datagrams lost at random, 0 to 1.
+    pub loss: f64,
+    /// Burst loss (a Gilbert-Elliott model): the chance a datagram starts a burst, and the chance each datagram of a
+    /// burst ends it. Every datagram in a burst is lost.
+    pub burst: Option<(f64, f64)>,
+    /// Up to this much more delay for each datagram, at random, so a later one may pass an earlier one.
+    pub jitter: Duration,
+    /// The link is cut: nothing passes.
+    pub cut: bool,
+    /// Capacity in bits a second; what exceeds it queues, and a queue longer than [`MAX_QUEUE`] drops. `None` is
+    /// unlimited.
+    pub bps: Option<u64>,
+    /// Extra one-way delay on this direction (a slow or a satellite link).
+    pub delay: Duration,
+}
+
+/// The state of one direction of a link: in a burst, and when its capacity is free again.
+struct LinkState {
+    in_burst: bool,
+    free_at: Instant,
+}
+
+impl LinkState {
+    fn new(now: Instant) -> Self {
+        LinkState {
+            in_burst: false,
+            free_at: now,
+        }
+    }
+
+    /// When a datagram of `len` bytes sent now arrives through `imp`, or `None` when it is lost.
+    fn pass(
+        &mut self,
+        imp: &Impairment,
+        rng: &mut u64,
+        now: Instant,
+        latency: Duration,
+        len: usize,
+    ) -> Option<Instant> {
+        if imp.cut {
+            return None;
+        }
+        if let Some((start, end)) = imp.burst {
+            if self.in_burst {
+                if chance(rng) >= end {
+                    return None;
+                }
+                self.in_burst = false;
+            } else if chance(rng) < start {
+                self.in_burst = true;
+                return None;
+            }
+        }
+        if imp.loss > 0.0 && chance(rng) < imp.loss {
+            return None;
+        }
+        let mut at = now;
+        if let Some(bps) = imp.bps {
+            let start = self.free_at.max(now);
+            if start - now > MAX_QUEUE {
+                return None;
+            }
+            self.free_at = start + Duration::from_nanos(len as u64 * 8 * 1_000_000_000 / bps);
+            at = self.free_at;
+        }
+        let jitter = if imp.jitter.is_zero() {
+            Duration::ZERO
+        } else {
+            imp.jitter.mul_f64(chance(rng))
+        };
+        Some(at + latency + imp.delay + jitter)
+    }
+}
+
+/// A number in [0, 1) from a xorshift64* generator: the same run gives the same losses.
+fn chance(state: &mut u64) -> f64 {
+    let mut x = *state;
+    x ^= x >> 12;
+    x ^= x << 25;
+    x ^= x >> 27;
+    *state = x;
+    (x.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 11) as f64 / (1u64 << 53) as f64
+}
+
+/// Puts a packet in a queue in the order of arrival, so a packet with more jitter waits behind later ones.
+fn enqueue(queue: &mut VecDeque<Packet>, p: Packet) {
+    let at = queue.partition_point(|q| q.at <= p.at);
+    queue.insert(at, p);
+}
+
+/// What a client got of one sender's audio in a window ([`Client::heard`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Heard {
+    /// Frames received, each RTP time once.
+    pub frames: usize,
+    /// Frames the sender sent between the first and the last received that never arrived (by their RTP times).
+    pub missing: usize,
+    /// The longest time with no frame, the window's ends included.
+    pub longest_gap: Duration,
+}
 
 struct Packet {
     at: Instant,
@@ -58,13 +171,22 @@ pub struct Client {
     pub node: usize,
     pub generation: u64,
     pub addr: SocketAddr,
+    /// The address the network sees: [`Client::addr`] unless a NAT rebound it ([`Net::rebind`]).
+    pub public: SocketAddr,
     pub rtc: Rtc,
     pub proto: Protocol,
     pending: Option<SdpPendingOffer>,
     inbox: VecDeque<Packet>,
-    /// Downlink capacity in bits a second; `None` is unlimited.
-    pub downlink_bps: Option<u64>,
-    link_free_at: Instant,
+    /// The client's link to the media server (up) and back (down).
+    pub up: Impairment,
+    pub down: Impairment,
+    up_state: LinkState,
+    down_state: LinkState,
+    rng: u64,
+    /// When it last connected, and the arrival of each audio frame (with its RTP time) and video frame, by sending leg.
+    pub connected_at: Option<Instant>,
+    pub audio_in: HashMap<String, Vec<(Instant, u64)>>,
+    pub video_in: HashMap<String, Vec<(Instant, usize)>>,
     pub audio_mid: Option<Mid>,
     pub video_mid: Option<Mid>,
     pub simulcast: bool,
@@ -125,7 +247,9 @@ pub struct Net {
     /// The leg whose offers from the SFU the test holds back.
     pub hold_offers: Option<String>,
     pub held: Vec<SfuEvent>,
-    start: Instant,
+    /// Whether the clients that join offer RED for their audio, as current browsers do.
+    pub client_red: bool,
+    pub start: Instant,
     /// Time spent in the origin SFU's `handle_receive`, by the wall clock of this thread, and the peers its drives
     /// polled there; and the time spent in its `handle_timeout`.
     pub receive_time: Duration,
@@ -162,6 +286,7 @@ impl Net {
             events: Vec::new(),
             hold_offers: None,
             held: Vec::new(),
+            client_red: false,
             start: now,
             receive_time: Duration::ZERO,
             receive_polls: 0,
@@ -233,55 +358,26 @@ impl Net {
     fn join_in(&mut self, room: &str, leg: &str, simulcast: bool, proto: Protocol, node: usize) -> usize {
         let n = self.clients.len() as u8 + 2;
         let addr: SocketAddr = (Ipv4Addr::new(10, 0, 1 + node as u8, n), 5_000).into();
-        let mut rtc = Rtc::builder()
-            .clear_codecs()
-            .enable_opus(true, false)
-            .enable_vp8(true)
-            .build(self.now);
-        let candidate = match proto {
-            Protocol::Udp => Candidate::host(addr, "udp").expect("a test address"),
-            _ => Candidate::builder()
-                .tcp()
-                .host(addr)
-                .tcptype(str0m::net::TcpType::Active)
-                .build()
-                .expect("a test address"),
-        };
-        rtc.add_local_candidate(candidate);
-        let mut change = rtc.sdp_api();
-        let audio_mid = change.add_media(MediaKind::Audio, Direction::SendOnly, Some(leg.into()), None, None);
-        let sim = simulcast.then(|| {
-            let mut s = Simulcast::new();
-            for l in Layer::ALL {
-                s.add_send_layer(SimulcastLayer::new(l.rid()));
-            }
-            s
-        });
-        let video_mid = change.add_media(MediaKind::Video, Direction::SendOnly, Some(leg.into()), None, sim);
-        let (offer, pending) = change.apply().expect("an offer");
         let key = LegKey::new(room, leg);
-        let now = self.now;
-        let answer = self
-            .node_sfu(node)
-            .join(now, &key, 1, &offer.to_sdp_string())
-            .expect("join");
-        if node == 1 {
-            self.leg_node_sfu().link(now, room, ORIGIN).expect("linked");
-        }
-        rtc.sdp_api()
-            .accept_answer(pending, SdpAnswer::from_sdp_string(&answer).expect("answer"))
-            .expect("accepted");
+        let (rtc, audio_mid, video_mid) = self.offer_and_join(&key, node, 1, addr, simulcast, proto);
         self.clients.push(Client {
             key,
             node,
             generation: 1,
             addr,
+            public: addr,
             rtc,
             proto,
             pending: None,
             inbox: VecDeque::new(),
-            downlink_bps: None,
-            link_free_at: self.now,
+            up: Impairment::default(),
+            down: Impairment::default(),
+            up_state: LinkState::new(self.now),
+            down_state: LinkState::new(self.now),
+            rng: 0x9E37_79B9_7F4A_7C15 ^ u64::from(n),
+            connected_at: None,
+            audio_in: HashMap::new(),
+            video_in: HashMap::new(),
             audio_mid: Some(audio_mid),
             video_mid: Some(video_mid),
             simulcast,
@@ -301,6 +397,119 @@ impl Net {
         });
         self.pump();
         self.clients.len() - 1
+    }
+
+    /// A new client peer at `addr` that publishes audio and video, joined to its node's SFU with `generation`.
+    fn offer_and_join(
+        &mut self,
+        key: &LegKey,
+        node: usize,
+        generation: u64,
+        addr: SocketAddr,
+        simulcast: bool,
+        proto: Protocol,
+    ) -> (Rtc, Mid, Mid) {
+        let mut rtc = Rtc::builder()
+            .clear_codecs()
+            .enable_opus(true, self.client_red)
+            .enable_vp8(true)
+            .build(self.now);
+        let candidate = match proto {
+            Protocol::Udp => Candidate::host(addr, "udp").expect("a test address"),
+            _ => Candidate::builder()
+                .tcp()
+                .host(addr)
+                .tcptype(str0m::net::TcpType::Active)
+                .build()
+                .expect("a test address"),
+        };
+        rtc.add_local_candidate(candidate);
+        let mut change = rtc.sdp_api();
+        let leg = &*key.leg;
+        let audio_mid = change.add_media(MediaKind::Audio, Direction::SendOnly, Some(leg.into()), None, None);
+        let sim = simulcast.then(|| {
+            let mut s = Simulcast::new();
+            for l in Layer::ALL {
+                s.add_send_layer(SimulcastLayer::new(l.rid()));
+            }
+            s
+        });
+        let video_mid = change.add_media(MediaKind::Video, Direction::SendOnly, Some(leg.into()), None, sim);
+        let (offer, pending) = change.apply().expect("an offer");
+        let now = self.now;
+        let answer = self
+            .node_sfu(node)
+            .join(now, key, generation, &offer.to_sdp_string())
+            .expect("join");
+        if node == 1 {
+            self.leg_node_sfu().link(now, &key.room, ORIGIN).expect("linked");
+        }
+        rtc.sdp_api()
+            .accept_answer(pending, SdpAnswer::from_sdp_string(&answer).expect("answer"))
+            .expect("accepted");
+        (rtc, audio_mid, video_mid)
+    }
+
+    /// The client joins again with a new peer and the next generation, as the page does when the media server dropped
+    /// it (`mediaLost`, a failed connection); what it measured so far stays.
+    pub fn rejoin(&mut self, leg: &str) {
+        let i = self.index(leg);
+        let (key, node, addr, simulcast, proto) = {
+            let c = &self.clients[i];
+            (c.key.clone(), c.node, c.addr, c.simulcast, c.proto)
+        };
+        let generation = self.clients[i].generation + 1;
+        let (rtc, audio_mid, video_mid) = self.offer_and_join(&key, node, generation, addr, simulcast, proto);
+        let c = &mut self.clients[i];
+        c.rtc = rtc;
+        c.generation = generation;
+        c.audio_mid = Some(audio_mid);
+        c.video_mid = Some(video_mid);
+        c.connected = false;
+        c.keyframe_asked = true;
+        c.streams.clear();
+        c.inbox.clear();
+        self.pump();
+    }
+
+    /// A NAT gives the client a new public port: its datagrams come from there, and it does not know.
+    pub fn rebind(&mut self, leg: &str) -> SocketAddr {
+        let c = self.client_mut(leg);
+        c.public = (c.public.ip(), c.public.port() + 1).into();
+        c.public
+    }
+
+    /// The client moves to a new interface (Wi-Fi to mobile data): its old address is gone, and it restarts ICE with
+    /// its new one (an offer on its connection), as the page does on a network change.
+    pub fn move_to(&mut self, leg: &str) -> SocketAddr {
+        let i = self.index(leg);
+        let now = self.now;
+        let c = &mut self.clients[i];
+        let addr: SocketAddr = (Ipv4Addr::new(10, 0, 9, i as u8 + 2), 6_000 + c.generation as u16).into();
+        c.addr = addr;
+        c.public = addr;
+        let mut change = c.rtc.sdp_api();
+        change.ice_restart(false);
+        let (offer, pending) = change.apply().expect("an offer");
+        let (key, node, generation) = (c.key.clone(), c.node, c.generation);
+        let answer = self
+            .node_sfu(node)
+            .handle_offer(now, &key, generation, &offer.to_sdp_string())
+            .expect("the restart is answered");
+        let c = &mut self.clients[i];
+        c.rtc
+            .sdp_api()
+            .accept_answer(pending, SdpAnswer::from_sdp_string(&answer).expect("answer"))
+            .expect("accepted");
+        // the restart takes effect with the answer, which clears the old candidates: the new one goes in after it
+        c.rtc
+            .add_local_candidate(Candidate::host(addr, "udp").expect("a test address"));
+        self.pump();
+        addr
+    }
+
+    fn index(&self, leg: &str) -> usize {
+        self.clients.iter().position(|c| &*c.key.leg == leg).expect("a client")
     }
 
     pub fn client(&self, leg: &str) -> &Client {
@@ -501,31 +710,30 @@ impl Net {
                         }
                     }
                     {
-                        let Some(c) = self.clients.iter_mut().find(|c| c.addr == t.destination) else {
+                        let Some(c) = self.clients.iter_mut().find(|c| c.public == t.destination) else {
                             continue;
                         };
-                        let mut at = self.now + self.latency;
-                        if let Some(bps) = c.downlink_bps {
-                            let start = c.link_free_at.max(self.now);
-                            if start - self.now > MAX_QUEUE {
-                                continue;
-                            }
-                            let tx = Duration::from_nanos(t.contents.len() as u64 * 8 * 1_000_000_000 / bps);
-                            c.link_free_at = start + tx;
-                            at = c.link_free_at + self.latency;
-                        }
+                        let latency = self.latency;
+                        let Some(at) = c.down_state.pass(&c.down, &mut c.rng, now, latency, t.contents.len()) else {
+                            continue;
+                        };
                         let proto = if t.proto == Proto::Udp {
                             Protocol::Udp
                         } else {
                             Protocol::Tcp
                         };
-                        c.inbox.push_back(Packet {
-                            at,
-                            proto,
-                            source: t.source,
-                            destination: t.destination,
-                            contents: t.contents,
-                        });
+                        // through the NAT back to the client's own address
+                        let destination = c.addr;
+                        enqueue(
+                            &mut c.inbox,
+                            Packet {
+                                at,
+                                proto,
+                                source: t.source,
+                                destination,
+                                contents: t.contents,
+                            },
+                        );
                     }
                 }
                 SfuOutput::Event(e) => {
@@ -618,29 +826,44 @@ impl Net {
                     if c.proto == Protocol::Udp && t.destination != node_addr {
                         continue;
                     }
+                    // an interface the client left sends nothing
+                    if t.source != c.addr {
+                        continue;
+                    }
+                    let Some(at) = c.up_state.pass(&c.up, &mut c.rng, now, self.latency, t.contents.len()) else {
+                        continue;
+                    };
                     let queue = match (c.node, self.leg_node.as_mut()) {
                         (1, Some(leg_node)) => &mut leg_node.to_sfu,
                         _ => &mut self.to_sfu,
                     };
-                    queue.push_back(Packet {
-                        at: now + self.latency,
-                        proto: t.proto,
-                        source: t.source,
-                        destination: t.destination,
-                        contents: t.contents.into(),
-                    });
+                    enqueue(
+                        queue,
+                        Packet {
+                            at,
+                            proto: t.proto,
+                            source: c.public,
+                            destination: t.destination,
+                            contents: t.contents.into(),
+                        },
+                    );
                 }
                 Ok(Output::Event(e)) => {
                     moved = true;
                     match e {
-                        Event::Connected => c.connected = true,
+                        Event::Connected => {
+                            c.connected = true;
+                            c.connected_at = Some(now);
+                        }
                         Event::MediaData(d) => {
                             let from = c.streams.get(&d.mid.to_string()).cloned().unwrap_or_default();
                             let kind = c.rtc.media(d.mid).map(|m| m.kind()).unwrap_or(MediaKind::Audio);
                             *c.received.entry((from.clone(), kind)).or_default() += 1;
                             if kind == MediaKind::Video {
+                                c.video_in.entry(from.clone()).or_default().push((now, d.data.len()));
                                 c.last_video_len.insert(from, d.data.len());
                             } else {
+                                c.audio_in.entry(from.clone()).or_default().push((now, d.time.numer()));
                                 if c.keep_audio {
                                     c.audio_frames
                                         .entry(from.clone())
@@ -728,6 +951,72 @@ impl Net {
             .accept_answer(pending, SdpAnswer::from_sdp_string(answer).expect("answer"))
             .expect("accepted");
     }
+}
+
+impl Client {
+    /// What this client got of `from`'s audio between `since` and `until`.
+    pub fn heard(&self, from: &str, since: Instant, until: Instant) -> Heard {
+        let frames: Vec<&(Instant, u64)> = self
+            .audio_in
+            .get(from)
+            .map(|v| v.iter().filter(|(at, _)| *at >= since && *at <= until).collect())
+            .unwrap_or_default();
+        let times: std::collections::BTreeSet<u64> = frames.iter().map(|(_, t)| *t).collect();
+        let missing = match (times.first(), times.last()) {
+            (Some(first), Some(last)) => ((last - first) / AUDIO_STEP + 1) as usize - times.len(),
+            _ => 0,
+        };
+        Heard {
+            frames: times.len(),
+            missing,
+            longest_gap: longest_gap(frames.iter().map(|(at, _)| *at), since, until),
+        }
+    }
+
+    /// The video frames this client got of `from` between `since` and `until`, and the longest time with none.
+    pub fn seen(&self, from: &str, since: Instant, until: Instant) -> (usize, Duration) {
+        let frames: Vec<Instant> = self
+            .video_in
+            .get(from)
+            .map(|v| {
+                v.iter()
+                    .map(|(at, _)| *at)
+                    .filter(|at| *at >= since && *at <= until)
+                    .collect()
+            })
+            .unwrap_or_default();
+        (frames.len(), longest_gap(frames.iter().copied(), since, until))
+    }
+
+    /// The first time at or after `since` this client got a video frame of `from` whose size `fits`: a frame's size
+    /// tells its layer ([`LAYER_BYTES`]).
+    pub fn video_after(&self, from: &str, since: Instant, fits: impl Fn(usize) -> bool) -> Option<Instant> {
+        self.video_in
+            .get(from)?
+            .iter()
+            .find(|(at, len)| *at >= since && fits(*len))
+            .map(|(at, _)| *at)
+    }
+
+    /// The first time at or after `since` this client heard `from`.
+    pub fn heard_after(&self, from: &str, since: Instant) -> Option<Instant> {
+        self.audio_in
+            .get(from)?
+            .iter()
+            .map(|(at, _)| *at)
+            .find(|at| *at >= since)
+    }
+}
+
+/// The longest stretch between `since`, the arrivals (in order) and `until`.
+fn longest_gap(arrivals: impl Iterator<Item = Instant>, since: Instant, until: Instant) -> Duration {
+    let mut last = since;
+    let mut longest = Duration::ZERO;
+    for at in arrivals {
+        longest = longest.max(at.saturating_duration_since(last));
+        last = last.max(at);
+    }
+    longest.max(until.saturating_duration_since(last))
 }
 
 /// A 20 ms frame of a tone at `hz` (silence at 0), starting at sample `t` of 48 kHz, at -12 dBFS.

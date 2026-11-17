@@ -1,8 +1,11 @@
 package org.moqui.mobile
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -40,7 +43,58 @@ private const val BACK_WAIT_MS = 400L
 private const val BACK_SCRIPT =
   "(function(){try{return !!(window.moqui&&window.moqui.back&&window.moqui.back.pop());}catch(e){return false;}})()"
 
+/**
+ * A change of the phone's default network during a call (Wi-Fi to mobile data and back) tells the call's page, which
+ * restarts ICE on the same connection, so the call goes on with no new join or ring (plans/Comms-Messaging.md §8.3
+ * item 10; WebrootCall.js `moqui.call.networkChanged`). The first network, the one there at the start, is not a change.
+ */
+class NetworkWatch(private val webView: () -> WebView?) : ConnectivityManager.NetworkCallback() {
+  @Volatile private var current: Network? = null
+
+  override fun onAvailable(network: Network) {
+    val was = current
+    current = network
+    if (was == null || was == network || !CallManager.inCall()) return
+    Log.i(CallManager.TAG, "The network changed during a call: the page restarts ICE")
+    // the views are the main thread's
+    Handler(Looper.getMainLooper()).post {
+      webView()?.evaluateJavascript(
+        "window.moqui && moqui.call && moqui.call.networkChanged && moqui.call.networkChanged()", null
+      )
+    }
+  }
+
+  fun register(context: Context) {
+    val cm = context.getSystemService(ConnectivityManager::class.java) ?: return
+    try {
+      cm.registerDefaultNetworkCallback(this)
+    } catch (e: RuntimeException) {
+      Log.w(CallManager.TAG, "No network callback: a call restarts ICE only when its page sees the change", e)
+    }
+  }
+
+  fun unregister(context: Context) {
+    val cm = context.getSystemService(ConnectivityManager::class.java) ?: return
+    try {
+      cm.unregisterNetworkCallback(this)
+    } catch (e: RuntimeException) {
+      // not registered
+    }
+  }
+}
+
+/** The activity's WebView, found in its views (the page the call is in). */
+fun findWebView(view: View?): WebView? {
+  if (view is WebView) return view
+  if (view is android.view.ViewGroup) {
+    for (i in 0 until view.childCount) findWebView(view.getChildAt(i))?.let { return it }
+  }
+  return null
+}
+
 class MainActivity : TauriActivity() {
+  private val networkWatch = NetworkWatch { findWebView(window?.decorView) }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     ActivityEnd.started()
     replayed(intent)
@@ -50,6 +104,7 @@ class MainActivity : TauriActivity() {
     super.onCreate(savedInstanceState)
     CallManager.know(this)
     CallManager.appScreenShown(this)
+    networkWatch.register(applicationContext)
     // the native code's library and context, then push (FCM, when the build has Firebase)
     Native.work {
       Native.ensure(applicationContext)
@@ -96,6 +151,7 @@ class MainActivity : TauriActivity() {
   }
 
   override fun onDestroy() {
+    networkWatch.unregister(applicationContext)
     CallManager.appScreenShown(null)
     // before Rust hears of the end (super.onDestroy)
     ActivityEnd.note(this)

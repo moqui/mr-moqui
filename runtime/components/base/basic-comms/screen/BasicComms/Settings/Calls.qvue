@@ -36,6 +36,12 @@ along with this software (see the LICENSE.md file). If not, see
         <q-toggle :model-value="settings.ringtone" :label="t('Play a ringtone for a call')" @update:model-value="(v) => save({ringtone: v})"></q-toggle>
         <q-toggle :model-value="settings.joinMuted" :label="t('Start calls muted')" @update:model-value="(v) => save({joinMuted: v})"></q-toggle>
         <q-toggle :model-value="settings.cameraOff" :label="t('Start calls with the camera off')" @update:model-value="(v) => save({cameraOff: v})"></q-toggle>
+        <div v-if="server.directPathEnabled">
+            <q-toggle :model-value="server.alwaysRelay" :disable="server.saving" :label="t('Always relay my calls')"
+                    @update:model-value="saveServer"></q-toggle>
+            <div class="text-caption m-muted q-ml-xl">{{t('A call with one other person here goes straight between your devices when it can. Relayed, it goes through the server, so they never see your network address; it may sound a little later. For all your devices, from your next call.')}}</div>
+            <q-banner v-if="server.error" dense rounded role="alert" class="m-tonal text-negative q-mt-xs">{{server.error}}</q-banner>
+        </div>
     </div>
 </div></template>
 
@@ -43,15 +49,33 @@ along with this software (see the LICENSE.md file). If not, see
 const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
 module.exports = {
     name: 'CallSettings',
-    data() { return { devices: [], pending: false, testing: false, testError: null, testRequest: 0, stopTimer: null, level: 0, stream: null, meter: null }; },
+    data() { return { devices: [], pending: false, testing: false, testError: null, testRequest: 0, stopTimer: null, level: 0, stream: null, meter: null,
+        // kept on the server for the user, all their devices (callPreferences): Always relay my calls
+        server: { alwaysRelay: false, directPathEnabled: false, saving: false, error: null } }; },
     computed: {
         store() { return moqui.call || null; },
         settings() { return moqui.call ? moqui.call.state.settings : {}; }
     },
-    mounted() { this.list(); },
+    mounted() { this.list(); this.loadServer(); },
     beforeUnmount() { this.stop(); },
     methods: {
         t,
+        url(name) { return this.$root.basePath + '/' + (this.$root.currentPathList || ['BasicComms', 'Settings', 'Calls']).join('/') + '/' + name; },
+        loadServer() {
+            return moqui.request(this.url('callPreferences'), { params: {} }).then((result) => {
+                const json = result.json || {};
+                Object.assign(this.server, { alwaysRelay: !!json.alwaysRelay, directPathEnabled: !!json.directPathEnabled });
+            }, () => null);
+        },
+        saveServer(value) {
+            this.server.saving = true;
+            this.server.error = null;
+            return moqui.request(this.url('saveCallPreferences'), { method: 'POST', params: { alwaysRelay: value ? 'true' : 'false' } }).then((result) => {
+                const json = result.json || {};
+                if (json.errors) this.server.error = json.errors;
+                else this.server.alwaysRelay = !!json.alwaysRelay;
+            }, () => { this.server.error = t('The setting could not be saved. Try again.'); }).then(() => { this.server.saving = false; });
+        },
         list() {
             const media = window.navigator && window.navigator.mediaDevices;
             if (media && media.enumerateDevices) media.enumerateDevices().then((list) => { this.devices = list; }, () => null);

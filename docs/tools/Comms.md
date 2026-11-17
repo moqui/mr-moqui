@@ -111,8 +111,11 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   The link's address is shown once, when it is made; Open starts its meeting with you as host, and Revoke takes its
   guests out. Calls also lists your meetings of the next week from an app that has them (IronStone: your calendar),
   with Join. Settings, Calls has the microphone, camera and speaker, the ringtone, and whether calls start muted
-  or with the camera off, for this browser. Calls need a media server (`rtc_media_port`); the Calls screen says when
-  there is none. In the terminal a call is not live: its screen shows who is in it, with Answer, Decline and Leave.
+  or with the camera off, for this browser, and Always relay my calls, for all your devices: a call with one other
+  person here goes straight between your devices when it can, and relayed it goes through the server, so they never
+  see your network address ([WebRTC, The direct path](../interfaces/WebRTC.md#the-direct-path)). The call's header shows
+  the connection's quality, "Reconnecting…" while it comes back, and "Your network is weak" when your side is the cause.
+  Calls need a media server (`rtc_media_port`); the Calls screen says when there is none. In the terminal a call is not live: its screen shows who is in it, with Answer, Decline and Leave.
 - <a id="encrypted-calls"></a>**End-to-end encrypted calls.** New call and a call link have End-to-end encrypted, and a
   room's owner or moderator can make all of the room's calls so (Room settings, Calls in this room are end-to-end
   encrypted). In such a call only the people in it hear and see each other: each browser encrypts what it sends with a

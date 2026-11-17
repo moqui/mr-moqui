@@ -564,6 +564,7 @@ the tasks, and `./moq help <task>` describes one. Task names match by partial pa
 ./moq test-all                 # the whole regression suite: test-framework, then test-apps
 ./moq accept mr-boss           # a component's acceptance suite (test/acceptance/), only when asked
 ./moq accept-all               # every acceptance test, with the Rust opt-in and ignored tests
+sudo scripts/call-network.sh   # calls on shaped networks (tc netem in namespaces; root): docs/interfaces/WebRTC.md
 ./moq save-db before-upgrade   # and later: ./moq reload-save before-upgrade
 ./moq archive                  # mr-moqui-YYYYMMDD.zip (or --tgz): runtime/ without logs, with the binary in it
 ./moq git-status               # or any git command in every repo: ./moq git pull

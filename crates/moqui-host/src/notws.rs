@@ -111,6 +111,9 @@ fn sockets() -> &'static Mutex<Registry> {
 const SOCKET_QUEUE: usize = 256;
 /// A ping goes out this often, so a dead peer is noticed and proxies keep the connection.
 const PING_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+/// While the socket carries a call, this often instead: a mobile network's NAT that drops a quiet TCP mapping sooner
+/// keeps it, and a dead socket is noticed in time for the leg's reconnect (plans/Comms-Messaging.md §8.3 item 13).
+const PING_IN_CALL: std::time::Duration = std::time::Duration::from_secs(10);
 const SESSION_CHECK: std::time::Duration = std::time::Duration::from_secs(60);
 /// A send to a socket whose client takes nothing for this long fails, and the socket closes, so a blocked write does
 /// not hold up the loop's own timeouts (`plans/archive/High-Level-Review.md` HL-027). The connection's write timeout does the
@@ -431,8 +434,9 @@ async fn run_socket(
     }
     let idle = idle_timeout(&factory);
     let mut last_heard = tokio::time::Instant::now();
-    let mut ping = tokio::time::interval(PING_EVERY);
+    let mut ping = tokio::time::interval(PING_IN_CALL);
     ping.tick().await;
+    let mut pinged = tokio::time::Instant::now();
     let mut check = tokio::time::interval(SESSION_CHECK);
     loop {
         tokio::select! {
@@ -484,6 +488,10 @@ async fn run_socket(
                     tracing::debug!(session_id = %slot.session_id, "notification socket idle, closed");
                     break;
                 }
+                if pinged.elapsed() + PING_IN_CALL / 2 < PING_EVERY && !rtc::in_call(id) {
+                    continue;
+                }
+                pinged = tokio::time::Instant::now();
                 if !send_within(&mut socket, Message::Ping(Vec::new().into())).await {
                     break;
                 }

@@ -6,13 +6,14 @@
 (function (moqui) {
     "use strict";
     moqui.qvtRenders = Object.assign(moqui.qvtRenders || {}, {
-        "m-call": { hash: "2cd665ca", make: function (Vue) {
+        "m-call": { hash: "4b18d27a", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, normalizeClass: _normalizeClass, createElementBlock: _createElementBlock, renderList: _renderList, Fragment: _Fragment, normalizeStyle: _normalizeStyle, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_chip = _resolveComponent("q-chip")
               const _component_q_tooltip = _resolveComponent("q-tooltip")
               const _component_q_space = _resolveComponent("q-space")
+              const _component_m_call_network = _resolveComponent("m-call-network")
               const _component_q_banner = _resolveComponent("q-banner")
               const _component_q_icon = _resolveComponent("q-icon")
               const _component_q_btn = _resolveComponent("q-btn")
@@ -89,11 +90,8 @@
                       }, _toDisplayString(_ctx.elapsed), 1))
                     : _createCommentVNode("", true),
                   _createVNode(_component_q_space),
-                  (_ctx.inThis && _ctx.call.quality)
-                    ? (_openBlock(), _createElementBlock("span", {
-                        key: 3,
-                        class: "text-caption m-muted"
-                      }, _toDisplayString(_ctx.call.quality) + " kbps", 1))
+                  (_ctx.inThis)
+                    ? (_openBlock(), _createBlock(_component_m_call_network, { key: 3 }))
                     : _createCommentVNode("", true)
                 ]),
                 (_ctx.call.error && _ctx.inThis)
@@ -2025,6 +2023,43 @@
                       key: 6,
                       class: "text-subtitle1"
                     }, _toDisplayString(_ctx.t('You left the call.')), 1))
+                  : _createCommentVNode("", true)
+              ]))
+            }
+        } },
+        "m-call-network": { hash: "2b2ec306", make: function (Vue) {
+            const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, normalizeClass: _normalizeClass, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_tooltip = _resolveComponent("q-tooltip")
+              const _component_q_icon = _resolveComponent("q-icon")
+
+              return (_openBlock(), _createElementBlock("span", {
+                class: "m-call-network row items-center no-wrap q-gutter-xs",
+                role: "status",
+                "aria-live": "polite"
+              }, [
+                _createVNode(_component_q_icon, {
+                  name: _ctx.icon,
+                  color: _ctx.color,
+                  size: "20px",
+                  "aria-label": _ctx.levelText
+                }, {
+                  default: _withCtx(() => [
+                    _createVNode(_component_q_tooltip, null, {
+                      default: _withCtx(() => [
+                        _createTextVNode(_toDisplayString(_ctx.tip), 1)
+                      ]),
+                      _: 1
+                    })
+                  ]),
+                  _: 1
+                }, 8, ["name", "color", "aria-label"]),
+                (_ctx.label)
+                  ? (_openBlock(), _createElementBlock("span", {
+                      key: 0,
+                      class: _normalizeClass(["text-caption", _ctx.net.weak && !_ctx.reconnecting ? 'text-negative' : 'text-warning'])
+                    }, _toDisplayString(_ctx.label), 3))
                   : _createCommentVNode("", true)
               ]))
             }
