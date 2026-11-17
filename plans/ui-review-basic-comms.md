@@ -1486,8 +1486,7 @@ MailSettings; client CryptoFlow (`--serve`), ShellSync (`--offline`) and webroot
 were run once without their fix and failed. My devices was measured at 390×844 with a probe page, since removed.
 
 `./moq test-framework` passed in full; the basic-comms client suite measured 8.2 s against its budget of 7 s (the
-CryptoFlow verification adds about 2 s), a warning for the user to decide on (a raised budget, or the walk moved to
-acceptance).
+CryptoFlow verification adds about 2 s); the user raised that budget to 9 s.
 
 **Not done.** No walk or acceptance run. The source checks of 016, 023, 025–027 do not drive a browser; their walks
 remain.

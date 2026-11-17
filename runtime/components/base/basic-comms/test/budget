@@ -4,4 +4,6 @@
 # Marketing apps merged, with the user's agreement: 8.5 s measured, rounded up. A review of regression vs acceptance follows.
 server = 9
 # Nov 5, 2026: client raised with the user's agreement to the measured 6.6 s of the UI refinement's chat checks.
-client = 7
+# Nov 16, 2026: client raised with the user's agreement to 9 s: 8.2 s measured with CryptoFlow's emoji verification of
+# two devices (COM-UI-012).
+client = 9

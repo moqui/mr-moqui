@@ -1079,7 +1079,8 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
   of the phase: all of this is framework work (`crates/`, `runtime/components/base`).
 - **Which suite.** A rule or a fixed bug is a regression spec. A phone-width check, a two-user walk and a full
   scenario are acceptance specs (`test/acceptance/client/`), run only when added or changed. A screen is rendered at
-  most once per mode in the regression suite. The budgets stay (basic-comms: server 9 s, client 7 s).
+  most once per mode in the regression suite. The budgets stay (basic-comms: server 9 s, client 9 s, raised from 7 s
+  on 2026-11-16 with the user's agreement for the emoji verification check).
 - **Existing harness.** `basic-comms/test/client/ShellSync.spec.js` with `ShellSync.page.js` already loads the bundled
   screens with a fake `moquiDesktop` host; shell checks build on it. The client test kit sets a viewport
   (`newPage({viewport})`) and runs two users, and has no touch emulation.
