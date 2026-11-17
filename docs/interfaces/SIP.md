@@ -201,6 +201,29 @@ check each value against it, and the live check will settle them.
   then mark the trunk emergency-capable.
 - SMS is through Twilio's Messaging API, not the trunk ([SMS](SMS.md#twilio)).
 
+### Sinch (not yet verified)
+
+Sinch Elastic SIP Trunking, profile Sinch. Not yet verified live: the values are from Sinch's documentation
+([SIP trunking](https://developers.sinch.com/docs/voice/api-reference/sip-trunking), Sinch's support articles on TLS
+and SRTP for Elastic SIP Trunks); check each against the Sinch dashboard, and the live check will settle them.
+
+- In the Sinch dashboard:
+  - a SIP trunk with digest credentials (a username and password), or the server's addresses in its access control
+    list;
+  - the numbers on it, and its origination (calls in) to the server's SIP URI with `;transport=tls`;
+  - TLS: a TLS call is SRTP, and Sinch's trunk port 5061 takes TLS alone.
+- In Moqui, the trunk:
+  - host: the trunk's termination host the dashboard gives (Voice API apps: `{region}.vp.sip.sinch.com`, such as
+    `use1.vp.sip.sinch.com` in North America, `euc1` in Europe, `sae1` in South America), port 5061, transport TLS,
+    media SRTP, profile Sinch;
+  - the trunk's username and password (a Voice API app: its application key and secret), realm the host;
+  - register as the trunk's authentication asks (credentials or the access list);
+  - Sinch's signaling ranges as its inbound addresses (North America `206.146.133.0/28`, Europe `206.146.136.0/28`,
+    South America `206.146.138.0/28`; media from the `.128/26` ranges, UDP 10000 to 60000).
+- Numbers go to Sinch in E.164 (`+12345678900`); a caller ID must be one of the account's numbers.
+- Its certificates are Let's Encrypt's, which the server's roots trust. Codecs: G.711 μ-law and A-law, Opus, G.729.
+- SMS goes through the Conversation API ([SMS](SMS.md#sinch)), not the trunk.
+
 ### Other providers
 
 The generic profile, TLS and SRTP, fits providers that take digest-registered or IP-authenticated trunks:
