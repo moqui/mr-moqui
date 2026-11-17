@@ -95,3 +95,23 @@ fn a_forwarded_pass_download_has_an_inert_type_and_the_sandbox() {
     assert_eq!(headers("text/html", "inline").0, "application/octet-stream");
     assert_eq!(headers("text/html", "inline").1, sandbox);
 }
+
+/// SEC-PSA-03: a web script that checks a credential itself (PASS's client secret over REST) notes a wrong one for the
+/// web protection, which counts it toward the client address's `auth-failure` ban as a wrong password; outside a
+/// request the note is nothing.
+#[test]
+fn a_script_notes_an_auth_failure_for_the_web_protection() {
+    use crate::script::runtime::{clear_context_stack, eval_value};
+    crate::web::take_auth_failure();
+    clear_context_stack();
+    eval_value("ec.web.noteAuthFailure()").unwrap();
+    assert!(!crate::web::take_auth_failure(), "no request, nothing noted");
+    let _web = crate::web::install(std::collections::BTreeMap::new());
+    crate::web::set_request(
+        std::sync::Arc::new(crate::web::WebRequest::new("GET", "/rest/pass/site")),
+        bytes::Bytes::new(),
+    );
+    eval_value("ec.web.noteAuthFailure()").unwrap();
+    assert!(crate::web::take_auth_failure());
+    assert!(!crate::web::take_auth_failure(), "taken once");
+}

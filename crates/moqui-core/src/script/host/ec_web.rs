@@ -112,6 +112,7 @@ pub(super) static WEB: HostClass = HostClass {
         method!("ec.web", "getResourceDistinctValue", [], get_resource_distinct_value),
         method!("ec.web", "rotateSession", [], rotate_session),
         method!("ec.web", "declineSession", [], decline_session),
+        method!("ec.web", "noteAuthFailure", [], note_auth_failure),
     ],
     getters: &[
         method!("ec.web", "parameters", [], parameters),
@@ -448,6 +449,16 @@ fn rotate_session(_call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// [`crate::user::session::decline_session`].
 fn decline_session(_call: &mut Call<'_>) -> Result<Ret, HostError> {
     crate::user::session::decline_session();
+    Ok(Ret::Undefined)
+}
+
+/// `ec.web.noteAuthFailure()`: this request tried a credential that was not valid (a wrong client secret a web script
+/// checks itself, SEC-PSA-03), so the web protection counts it toward the client address's `auth-failure` ban, as a
+/// wrong password at a sign-in ([`crate::web::note_auth_failure`]). Nothing outside a request.
+fn note_auth_failure(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    if crate::web::current_request().is_some() {
+        crate::web::note_auth_failure();
+    }
     Ok(Ret::Undefined)
 }
 

@@ -966,6 +966,9 @@ interface MoquiWebFacade {
      * session and nobody signed in keeps none and starts no Visit; one that has a session keeps it and is sent nothing
      * new (docs/security/Attack-Surface.md, Pages without a session). */
     declineSession(): void;
+    /** This request tried a credential that was not valid (a wrong secret the script checks itself): the web protection
+     * counts it toward the client address's auth-failure ban, as a wrong password. Nothing outside a request. */
+    noteAuthFailure(): void;
     readonly savedMessages: string[];
     readonly savedErrors: string[];
     readonly savedValidationErrors: unknown[];

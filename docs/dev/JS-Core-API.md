@@ -1102,6 +1102,7 @@ empty, and a send needs a request.
 | `reservedSubPaths` | The sub-paths the host uses of `ci` and `.well-known`, `segment/sub-path` (`ci/runner`, `.well-known/caldav`, `.well-known/carddav`, `.well-known/agent-card.json`, `.well-known/mcp.json`, `.well-known/ai-catalog.json`). A site page's route or redirect stays off these and the wholly reserved segments (`reservedPaths` without `ci` and `.well-known`), and may take the rest: `/.well-known/security.txt`, `/ci` |
 | `rotateSession()` | Gives the browser a new session id after authentication, keeping the session's state |
 | `declineSession()` | Sends this response no session: no session or visitor cookie and no session token ([Attack-Surface](../security/Attack-Surface-Web.md#pages-without-a-session)) |
+| `noteAuthFailure()` | This request tried a credential that was not valid, one the script checks itself (a wrong client secret): the web protection counts it toward the client address's `auth-failure` ban, as a wrong password ([Attack-Surface](../security/Attack-Surface-Web.md)). Nothing outside a request |
 | `getPageMessages()` | The messages, errors and validation errors for the page, the saved ones first: each `{message, typeString}`, a validation error also with `field` and `form` |
 | `savedMessages`, `savedErrors`, `savedValidationErrors` | What the response before this one saved for the page |
 | `errorParameters` | The parameters of the submit that led here with an error, or null |
@@ -1328,7 +1329,7 @@ Members Moqui Java does not have.
 | `ec.entity` | `checkTables`, `runSqlStatement`, `testConfConnection`, `runSqlCountConf`, `runSqlUpdateConf`; EntityFind `forNoKeyUpdate`, `purge`; the `forNoKeyUpdate` argument of `findRelated` and `findRelatedOne`; EntityValue `getEntityNamePretty`, and fields and relationships as properties; EntityList as an array with the Array methods |
 | `ec.service` | `throwOnError`, `nextCronExecution`, `restApi.resolveService`, `passAuthority`, `ssoAvailable`; RestClient `addPropertyHeader`, `bodyBytes`, `multipart`, `streamFrom`, `followRedirects`, `denyInternal`, `allowInternal`, `send`; response `bytes` |
 | `ec.screen` | `render(options)`, `renderBytes`, `isRenderModeBinary`, `staticReport`, `getTransitionInfo`; a screen test's `header`, `clientModes`, `withStaticData`, `agent`, and a result's `status`, `headers`, `header` |
-| `ec.web` | `rotateSession`, `declineSession`, `getPageMessages`, `request.bodyText`, `request.bodyBytes`, `request.headerPairs`, `response.write`, `response.forward` |
+| `ec.web` | `rotateSession`, `declineSession`, `noteAuthFailure`, `getPageMessages`, `request.bodyText`, `request.bodyBytes`, `request.headerPairs`, `response.write`, `response.forward` |
 | `ec.factory` | `hasFeature`, `getStartupReport`, `getInstanceId`, `getThreadList` |
 | `ec.makeNotificationMessage()` | `reason`, `reasonEnumId`, `record`, `recordEntityName`, `recordId`, `actorUserId`, `appName` |
 
