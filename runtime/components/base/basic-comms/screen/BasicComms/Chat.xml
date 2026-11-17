@@ -118,8 +118,10 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="threads" method="get" read-only="true">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.chat.ChatServices.find#RoomThreads').parameters({chatRoomId: chatRoomId || '',
-                limit: limit ? Number(limit) : 20, beforeDate: beforeDate ? Number(beforeDate) : null, mine: String(mine) === 'true'}).call()
-            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {threadList: out.threadList, hasMore: out.hasMore})
+                limit: limit ? Number(limit) : 20, beforeDate: beforeDate ? Number(beforeDate) : null,
+                beforeEventSeq: beforeEventSeq ? Number(beforeEventSeq) : null, mine: String(mine) === 'true'}).call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {threadList: out.threadList, hasMore: out.hasMore,
+                nextBeforeDate: out.nextBeforeDate ?? null, nextBeforeEventSeq: out.nextBeforeEventSeq ?? null})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -434,13 +436,15 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- my own settings in a room: notification level, muted, pinned -->
+    <!-- my own settings in a room: notification level, muted, pinned, archived; answers them as they are now -->
     <transition name="setNotification">
         <actions><script><![CDATA[
             const flag = (value) => value === 'true' ? true : (value === 'false' ? false : null)
-            ec.service.sync().name('org.moqui.chat.ChatServices.set#Notification').parameters({chatRoomId: chatRoomId || '',
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.set#Notification').parameters({chatRoomId: chatRoomId || '',
                 notificationLevelEnumId: notificationLevelEnumId || null, isMuted: flag(isMuted), isPinned: flag(isPinned), archived: flag(archived)}).call()
-            ec.web.sendJsonResponse({})
+            // the settings as they are now, so a list shows the archive as the server took it (null: not archived)
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {notificationLevelEnumId: out?.notificationLevelEnumId ?? null, isMuted: out?.isMuted === true,
+                isPinned: out?.isPinned === true, archivedEventSeq: out?.archivedEventSeq ?? null})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>

@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
     ask the user to confirm who they are when they have not signed in in the last five minutes (moqui.reauth); Restore reads
     the backup version the recovery key opens, an older one too; "Send my room keys only to verified devices"; and a store
     this browser cannot open is reported here, kept, with "Start over" (a new device, then the backup). -->
-<template><div class="m-chat-devices q-pa-sm column q-gutter-md" style="max-width:900px">
+<template><div class="m-chat-devices q-pa-sm column no-wrap q-gutter-md" style="max-width:900px;width:100%;min-width:0">
     <div class="row items-center">
         <div class="text-h6">{{t('My devices')}}</div><q-space></q-space>
         <q-btn flat dense no-caps icon="sym_o_refresh" :label="t('Refresh')" @click="load"></q-btn>
@@ -39,9 +39,9 @@ along with this software (see the LICENSE.md file). If not, see
         <div class="text-caption m-muted">{{t("In every encrypted room, your messages are encrypted only for devices that were verified (by emoji or QR code, or by their owner's cross-signing). A device that is not verified cannot read them.")}}</div>
     </q-card>
     <q-card flat bordered class="q-pa-md m-chat-backup">
-        <div class="row items-center no-wrap">
+        <div class="row items-center wrap q-gutter-y-xs">
             <q-icon name="sym_o_key" size="22px" class="q-mr-sm text-primary"></q-icon>
-            <div class="col">
+            <div class="col" style="min-width:12em">
                 <div class="text-subtitle1">{{t('Key backup')}}</div>
                 <div class="text-caption m-muted">{{backupText}}</div>
             </div>
@@ -51,7 +51,7 @@ along with this software (see the LICENSE.md file). If not, see
         </div>
         <div v-if="recoveryKey" class="q-mt-sm q-pa-sm rounded-borders m-tonal">
             <div class="text-body2">{{t('Your recovery key. Keep it somewhere safe, apart from this browser: it is shown once, and without it a new device cannot read older encrypted messages.')}}</div>
-            <div class="text-mono text-weight-medium q-mt-xs m-chat-recovery-key">{{recoveryKey}}</div>
+            <div class="text-mono text-weight-medium q-mt-xs m-chat-recovery-key" style="word-break:break-all">{{recoveryKey}}</div>
             <q-btn flat dense no-caps icon="sym_o_content_copy" :label="t('Copy')" @click="copy(recoveryKey)"></q-btn>
             <q-btn flat dense no-caps :label="t('I have kept it')" @click="recoveryKey = ''"></q-btn>
         </div>
@@ -63,8 +63,18 @@ along with this software (see the LICENSE.md file). If not, see
     <q-card v-for="v in verifications" :key="v.flowId" flat bordered class="q-pa-md m-chat-verification">
         <div class="text-subtitle1">{{v.weStarted ? t('Verifying') : t('Asked to verify')}} {{v.otherDeviceId || v.otherUserId}}</div>
         <div v-if="v.done" class="text-positive">{{t('Verified')}}</div>
-        <div v-else-if="v.cancelled" class="m-muted">{{t('Cancelled')}}</div>
+        <template v-else-if="v.cancelled">
+            <div class="m-muted m-chat-verification-ended">{{v.timedOut ? t('The verification timed out: the other device did not answer in time.') : t('Cancelled')}}
+                <span v-if="v.cancelReason && !v.timedOut">({{v.cancelReason}})</span></div>
+            <div class="row q-gutter-xs q-mt-xs">
+                <q-btn v-if="retryDevice(v)" unelevated no-caps color="primary" :label="t('Try again')" class="m-chat-verification-retry" @click="retry(v)"></q-btn>
+                <q-btn flat no-caps :label="t('Dismiss')" @click="dismiss(v)"></q-btn>
+            </div>
+        </template>
         <template v-else>
+            <div v-if="v.started && !v.emojis && !v.qrImage && !v.scanned" class="m-muted q-my-sm m-chat-verification-waiting" role="status">
+                {{t('Waiting for the other device…')}}<span v-if="v.remainingMs"> {{timeLeft(v.remainingMs)}}</span></div>
+            <div v-else-if="v.confirmed" class="m-muted q-my-sm m-chat-verification-waiting" role="status">{{t('Waiting for the other device to confirm')}}</div>
             <div v-if="v.emojis" class="row q-gutter-md q-my-sm">
                 <div v-for="e in v.emojis" :key="e.description" class="column items-center"><span style="font-size:32px">{{e.symbol}}</span><span class="text-caption">{{t(e.description)}}</span></div>
             </div>
@@ -83,20 +93,20 @@ along with this software (see the LICENSE.md file). If not, see
         </template>
     </q-card>
     <div v-if="loaded && !devices.length" class="m-muted">{{t('No devices yet.')}}</div>
-    <q-list bordered separator class="rounded-borders" v-if="devices.length">
-        <q-item v-for="d in devices" :key="d.deviceId">
-            <q-item-section avatar><q-icon name="sym_o_devices" :color="d.deviceId === thisId ? 'primary' : 'grey'"></q-icon></q-item-section>
-            <q-item-section>
+    <q-list bordered separator class="rounded-borders" style="min-width:0" v-if="devices.length">
+        <q-item v-for="d in devices" :key="d.deviceId" :class="phone ? 'column items-stretch' : ''">
+            <q-item-section v-if="!phone" avatar><q-icon name="sym_o_devices" :color="d.deviceId === thisId ? 'primary' : 'grey'"></q-icon></q-item-section>
+            <q-item-section style="min-width:0">
                 <q-item-label>{{d.displayName || d.deviceId}}
                     <q-badge v-if="d.deviceId === thisId" color="primary" class="q-ml-xs">{{t('This browser')}}</q-badge>
                     <q-badge v-else-if="trust[d.deviceId] === true" color="positive" class="q-ml-xs m-chat-device-verified">{{t('Verified')}}</q-badge>
                     <q-badge v-else-if="trust[d.deviceId] === false" color="grey-6" class="q-ml-xs m-chat-device-unverified">{{t('Not verified')}}</q-badge></q-item-label>
                 <q-item-label caption>{{d.deviceId}} · {{t('added')}} {{whenText(d.createdDate)}}<span v-if="d.lastSeenDate"> · {{t('last seen')}} {{whenText(d.lastSeenDate)}}</span></q-item-label>
-                <q-item-label caption v-if="d.ed25519Key" class="text-mono">{{t('Key')}} {{fingerprint(d.ed25519Key)}}</q-item-label>
-                <q-item-label caption v-if="d.userAgent" class="ellipsis">{{d.userAgent}}</q-item-label>
+                <q-item-label caption v-if="d.ed25519Key" class="text-mono" style="word-break:break-all">{{t('Key')}} {{fingerprint(d.ed25519Key)}}</q-item-label>
+                <q-item-label caption v-if="d.userAgent" class="ellipsis" style="max-width:100%">{{d.userAgent}}</q-item-label>
             </q-item-section>
-            <q-item-section side>
-                <div class="row q-gutter-xs">
+            <q-item-section :side="!phone" :class="phone ? 'q-pl-none q-pt-xs' : ''">
+                <div class="row wrap q-gutter-xs">
                     <q-btn v-if="thisId && d.deviceId !== thisId && trust[d.deviceId] === false" flat dense no-caps icon="sym_o_verified_user" :label="t('Verify')" @click="verify(d)"></q-btn>
                     <q-btn flat dense no-caps icon="sym_o_edit" :label="t('Rename')" @click="rename(d)"></q-btn>
                     <q-btn flat dense no-caps icon="sym_o_delete" color="negative" :label="t('Remove')" @click="remove(d)"></q-btn>
@@ -116,6 +126,8 @@ module.exports = {
     },
     computed: {
         verifications() { return (moqui.crypto && moqui.crypto.state.verifications) || []; },
+        // a phone: the device's actions under it, so nothing runs off the screen
+        phone() { return this.$q.screen.lt.sm; },
         problem() { return (moqui.crypto && moqui.crypto.state.problem) || null; },
         canScan() { return typeof window.BarcodeDetector === 'function' && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia); },
         backupText() {
@@ -211,6 +223,14 @@ module.exports = {
         },
         verify(d) {
             moqui.crypto.verifyDevice(this.$root.userId, d.deviceId).catch((err) => moqui.notifyMessages([], (err && err.errors) || t('The verification did not start')));
+        },
+        // one of this user's own devices can be asked again
+        retryDevice(v) { return v.otherDeviceId && v.otherDeviceId !== this.thisId ? this.devices.find((d) => d.deviceId === v.otherDeviceId) || null : null; },
+        retry(v) { const d = this.retryDevice(v); this.dismiss(v); if (d) this.verify(d); },
+        dismiss(v) { if (moqui.crypto && moqui.crypto.dismissVerification) moqui.crypto.dismissVerification(v.flowId); },
+        timeLeft(ms) {
+            const seconds = Math.max(0, Math.round(Number(ms) / 1000));
+            return '(' + (seconds >= 60 ? Math.ceil(seconds / 60) + ' ' + t('min left') : seconds + ' ' + t('s left')) + ')';
         },
         step(v, action, arg) {
             moqui.crypto.verification(v.flowId, action, arg).then(() => { if (action === 'confirm' || action === 'qrConfirm') setTimeout(() => this.loadCrypto(), 1500); },

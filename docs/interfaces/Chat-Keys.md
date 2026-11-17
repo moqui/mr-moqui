@@ -271,7 +271,11 @@ verified (`moqui.callKeys.state.unverified`; the call's keys still go to the ros
 
 **Verification.** My devices shows each device's verification as this browser's store holds it (trust is the clients'):
 Verify asks another device; the two compare emoji (SAS), or one shows a QR code that the other reads with its camera
-(where the browser has `BarcodeDetector`). The steps travel as to-device events. A verified device of one's own is signed
+(where the browser has `BarcodeDetector`). The steps travel as to-device events. The device that did not start the
+emoji comparison accepts it by itself (the SDK leaves `Sas.accept` to the app): the user took the request, and comparing
+the emoji is the confirmation. While a verification is open the page syncs every 5 seconds, so a lost push does not
+stall it and one that timed out ends; My devices says when it waits for the other device, how long is left, and why
+one ended, with Try again. A verified device of one's own is signed
 with the self-signing key (`keys/signatures/upload`), so the user's other devices trust it too. The server keeps no
 verified flag of its own: it would establish no trust.
 
@@ -368,5 +372,6 @@ policy sets none.
   About 5 seconds.
 
 **Not checked live:** Element or another Matrix client against these endpoints (C6a serves them), and Firefox and
-Safari (the client specs run Chromium), and the dialogs of `moqui.reauth` (a spec page has always just signed in). Emoji and QR verification are built on the SDK's flows but no client spec drives
-them, and reading a QR code needs a camera and `BarcodeDetector` (Chrome on Android, macOS and ChromeOS; not headless).
+Safari (the client specs run Chromium), and the dialogs of `moqui.reauth` (a spec page has always just signed in). The
+client spec `CryptoFlow` verifies two devices of one user by emoji; QR verification has no spec, since reading a code
+needs a camera and `BarcodeDetector` (Chrome on Android, macOS and ChromeOS; not headless).

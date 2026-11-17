@@ -279,9 +279,13 @@ feature("the user's settings and read marker are their own changes, pushed with 
         const owner = since(OWNER).list
         as(OWNER)
         const asked = request("chatChanges", {afterSeq: 0, userId: MEMBER}, null).json
-        return {muted, pushed, read, mine, owner, asked}
+        // the archive answers the settings as the server took them, so a list need not wait for its next refresh (COM-UI-037)
+        const archived = post(MEMBER, "setNotification", {chatRoomId: roomId, archived: "true"})
+        const lastSeq = Number(ec.entity.find("moqui.chat.ChatRoom").condition("chatRoomId", roomId).disableAuthz().one().lastEventSeq)
+        const unarchived = post(MEMBER, "setNotification", {chatRoomId: roomId, archived: "false"})
+        return {muted, pushed, read, mine, owner, asked, archived, lastSeq, unarchived}
     },
-    then({muted, pushed, read, mine, owner, asked}) {
+    then({muted, pushed, read, mine, owner, asked, archived, lastSeq, unarchived}) {
         muted.errors == ""
         about(mine, "settings").length == 1
         about(mine, "settings")[0].data.isMuted == true
@@ -293,6 +297,9 @@ feature("the user's settings and read marker are their own changes, pushed with 
         about(owner, "settings").length == 0
         about(owner, "read").length == 0
         !JSON.stringify(asked).includes('"isMuted"')
+        archived.json.archivedEventSeq == lastSeq && lastSeq > 0
+        archived.json.isMuted == true
+        unarchived.json.archivedEventSeq === null
     }
 })
 

@@ -12,18 +12,9 @@
         // the file's script as it is (not indented: a template string in it keeps its text)
         const returned = (function (exports) {
 const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
-const DAY = 86400000;
-const ROOM_ICONS = { CrtDirect: 'sym_o_group', CrtPrivate: 'sym_o_lock', CrtPublic: 'sym_o_tag', CrtRecord: 'sym_o_description' };
 const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
-const timeText = (millis) => (millis ? new Date(Number(millis)).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '');
-const shortWhen = (millis) => {
-    if (!millis) return '';
-    const d = new Date(Number(millis));
-    const now = new Date();
-    if (d.toDateString() === now.toDateString()) return timeText(millis);
-    if (now.getTime() - d.getTime() < 6 * DAY) return d.toLocaleDateString(undefined, { weekday: 'short' });
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-};
+// the list's time in the user's zone, by calendar day, as in Chat (moqui.chat, WebrootChat.js; COM-UI-007)
+const shortWhen = (millis) => moqui.chat.shortWhen(millis);
 // kept for the page: the tray mounts this component again when it reloads the tab, and a reopened tab shows what it had
 const memo = { roomId: null, rooms: null, me: null, prefs: null, roomComponent: null, loading: null };
 const MAX_SHOWN = 30;
@@ -81,7 +72,7 @@ module.exports = {
         },
         needsConnection() { moqui.notifyMessages([{ type: 'info', message: t('This needs a connection to the server: try again when it is back') }]); },
         // archived by me, until a message after the archive (ChatRoomMember.archivedEventSeq)
-        isArchived(room) { return room.archivedEventSeq != null && Number(room.lastMessage ? room.lastMessage.eventSeq : 0) <= Number(room.archivedEventSeq); },
+        isArchived(room) { return moqui.chat.isArchived(room); },
         holdStart(room, event) {
             this.holdCancel();
             if (!this.home || (event.touches && event.touches.length > 1)) return;
@@ -119,20 +110,10 @@ module.exports = {
                 }, () => {});
             }
         },
-        roomIcon(room) { return (room.record && room.record.icon) || ROOM_ICONS[room.roomTypeEnumId] || 'sym_o_chat'; },
-        countsOf(room) {
-            if (!room.isMember) return { unread: 0, mentions: 0 };
-            if (moqui.chat && moqui.chat.state.unread[room.chatRoomId]) return moqui.chat.unreadOf(moqui.chat.state, room.chatRoomId);
-            return { unread: room.unreadCount || 0, mentions: room.mentionCount || 0 };
-        },
-        snippetOf(room) {
-            const last = room.lastMessage;
-            if (!last) return room.topic || t('No messages yet');
-            const text = last.encrypted ? t('Encrypted message') : last.redacted || !last.snippet ? t('Message removed') : last.snippet;
-            if (last.senderUserId === this.me.userId) return t('You') + ': ' + text;
-            if (room.roomTypeEnumId === 'CrtDirect' && room.otherUserId) return text;
-            return String(last.senderName || '').split(' ')[0] + ': ' + text;
-        },
+        // the type icon (a phone number's room too), counts and snippet as Chat shows them (moqui.chat)
+        roomIcon(room) { return moqui.chat.roomIcon(room); },
+        countsOf(room) { return moqui.chat.countsOf(room); },
+        snippetOf(room) { return moqui.chat.roomSnippet(room, this.me.userId); },
         // the rooms, few and light: the panel is a glance (Open in Comms has them all)
         refresh() {
             return moqui.request(this.url('chatData'), { params: { limit: this.home ? 200 : 40 } }).then((result) => {
@@ -1246,7 +1227,8 @@ module.exports = {
                 .onOk(() => moqui.request('/qapps/revokeClientDevice', { method: 'POST', params: { loginKey: device.loginKey } })
                     .then(() => { this.devices = this.devices.filter((other) => other.loginKey !== device.loginKey); }, (err) => this.failed(err && err.status ? t('Not signed out') : err)));
         },
-        when(millis) { return millis ? new Date(Number(millis)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : ''; },
+        // in the user's zone, as the chat screens show times (moqui.chat.dateTime; COM-UI-007)
+        when(millis) { return moqui.chat ? moqui.chat.dateTime(millis) : (millis ? new Date(Number(millis)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : ''); },
         // as m-qapps-root, for the client's helpers (moqui.notifyMessages, handleAjaxError): the shell keeps no notify
         // history, and a 401 has the host check the key (it shows the sign-in when the key is no longer taken)
         addNotify() {},
@@ -2514,7 +2496,6 @@ const QUICK_REACTIONS = ['👍', '❤️', '😂', '🎉', '👀', '✅'];
 const EMOJI = ['😀', '😃', '😄', '😁', '😅', '😂', '🙂', '😉', '😊', '😍', '🤔', '😐', '😴', '😎', '🥳', '😢', '😮', '😬', '🙃', '🤝',
     '👍', '👎', '👏', '🙌', '🙏', '💪', '👀', '🎉', '🔥', '✅', '❌', '⚠️', '❤️', '💡', '📌', '📎', '🚀', '☕', '🍕', '💬'];
 const CLEAR_LABELS = { '0': "Don't clear", '30': 'Clears in 30 minutes', '60': 'Clears in an hour', '240': 'Clears in 4 hours', today: 'Clears today', week: 'Clears this week' };
-const ROOM_ICONS = { CrtDirect: 'sym_o_group', CrtPrivate: 'sym_o_lock', CrtPublic: 'sym_o_tag', CrtRecord: 'sym_o_description', CrtExternal: 'sym_o_sms' };
 const LEVELS = [{ value: 'CnlAll', label: 'All messages', icon: 'sym_o_notifications_active' }, { value: 'CnlMentions', label: 'Mentions only', icon: 'sym_o_alternate_email' },
     { value: 'CnlNone', label: 'Nothing', icon: 'sym_o_notifications_off' }];
 // the drafts' keys (moqui.drafts puts them under the storage scope, or in the desktop client's store)
@@ -2530,26 +2511,12 @@ const needsConnection = () => {
 // the drafts of encrypted rooms: in this page only (C7)
 const sealedDrafts = {};
 const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
-// Dates in the user's zone and language (moqui.l10n), comparing calendar days so boundaries hold through daylight saving changes.
-const l10n = moqui.l10n;
-const timeText = (millis) => (millis ? l10n.formatZoned(Number(millis), { hour: 'numeric', minute: '2-digit' }) : '');
-const fullTime = (millis) => (millis ? l10n.formatZoned(Number(millis), { dateStyle: 'full', timeStyle: 'short' }) : '');
-const dayLabel = (millis) => {
-    const now = Date.now(), day = l10n.dayNumber(Number(millis)), today = l10n.dayNumber(now);
-    if (day === today) return t('Today');
-    if (day === today - 1) return t('Yesterday');
-    const opts = { weekday: 'long', month: 'long', day: 'numeric' };
-    if (l10n.dayKey(Number(millis)).slice(0, 4) !== l10n.dayKey(now).slice(0, 4)) opts.year = 'numeric';
-    return l10n.formatZoned(Number(millis), opts);
-};
-const shortWhen = (millis) => {
-    if (!millis) return '';
-    const at = Number(millis), now = Date.now(), days = l10n.dayNumber(now) - l10n.dayNumber(at);
-    if (days === 0) return timeText(at);
-    if (days < 6) return l10n.formatZoned(at, { weekday: 'short' });
-    if (l10n.dayKey(at).slice(0, 4) === l10n.dayKey(now).slice(0, 4)) return l10n.formatZoned(at, { month: 'short', day: 'numeric' });
-    return l10n.formatZoned(at, { year: 'numeric', month: 'short', day: 'numeric' });
-};
+// The dates (in the user's zone, by calendar day), room icons, counts and snippets the room list here, the phone home and the
+// tray share: moqui.chat's (WebrootChat.js), called when used (the bundle test loads this module without moqui.chat)
+const timeText = (millis) => moqui.chat.timeText(millis);
+const fullTime = (millis) => moqui.chat.fullTime(millis);
+const dayLabel = (millis) => moqui.chat.dayLabel(millis);
+const shortWhen = (millis) => moqui.chat.shortWhen(millis);
 const sizeText = (bytes) => {
     const n = Number(bytes || 0);
     if (n < 1024) return n + ' B';
@@ -2585,6 +2552,8 @@ const systemText = (event, nameOf) => {
         if (content.action === 'add') return [fill(t('{by} added {user}'), { by, user: who }), 'sym_o_person_add'];
         if (content.action === 'leave') return [fill(t('{user} left'), { user: who }), 'sym_o_logout'];
         if (content.action === 'remove') return [fill(t('{by} took {user} out'), { by, user: who }), 'sym_o_person_remove'];
+        // an owner's succession when the last owner left: the sender is the one who left
+        if (content.action === 'role' && content.automatic) return [fill(t('{user} became an owner when {by} left'), { by, user: who }), 'sym_o_shield_person'];
         if (content.action === 'role') return [fill(t('{by} made {user} {role}'), { by, user: who, role: roles[content.roleEnumId] || content.roleEnumId }), 'sym_o_shield_person'];
         return [fill(t('{by} changed the members'), { by }), 'sym_o_group'];
     }
@@ -2860,7 +2829,7 @@ const composerTemplate = `
             <q-tooltip>{{room.t('Make a poll')}}</q-tooltip></q-btn>
         <span class="text-caption m-muted q-ml-sm ellipsis gt-xs" v-if="!room.compact && !threadRoot">{{hint}}</span>
         <q-space></q-space>
-        <q-btn dense unelevated no-caps color="primary" icon="sym_o_send" class="m-chat-send" :label="room.compact ? undefined : room.t('Send')" :aria-label="room.t('Send')"
+        <q-btn dense unelevated no-caps color="primary" icon="sym_o_send" class="m-chat-send" :label="room.useBubbles ? undefined : room.t('Send')" :aria-label="room.t('Send')"
                 :disable="!canSend" :loading="sending" @click="send"></q-btn>
     </div>
     <div class="hidden"><m-file ref="picker" v-model="picked" :name="'chatFile' + uid" multiple @update:model-value="onPicked"></m-file></div>
@@ -3289,7 +3258,7 @@ const roomTemplate = `
                             </div></q-item-section>
                         </q-item>
                     </q-list>
-                    <div v-if="!filesPane.loading && !filesPane.list.length" class="q-pa-md m-muted text-caption">
+                    <div v-if="!filesPane.loading && !filesPane.list.length && !filesPane.next" class="q-pa-md m-muted text-caption">
                         {{filesPane.kind === 'images' ? t('No pictures yet.') : t('No files yet. The files sent in the room are listed here.')}}</div>
                     <div v-if="filesPane.next" class="text-center q-py-sm">
                         <q-btn flat dense no-caps size="sm" color="primary" :label="t('More files')" :loading="filesPane.loading" @click="loadFiles(true)"></q-btn></div>
@@ -3342,9 +3311,12 @@ const roomTemplate = `
             </div>
 
             <div v-else-if="side === 'search'" class="col column no-wrap" style="min-height:0">
+                <!-- an encrypted room is not searched on the server, and this app has no search on the device yet (COM-UI-011) -->
+                <div v-if="sealed" class="q-pa-sm m-muted text-caption m-chat-search-sealed" role="note">
+                    <q-icon name="sym_o_lock" class="q-mr-xs"></q-icon>{{t('An encrypted room is not searched: the server keeps only ciphertext, and this app has no search on your device yet.')}}</div>
                 <div class="q-pa-sm row no-wrap items-center" @keydown.enter.prevent="runSearch">
-                    <div class="col"><m-text-line v-model="searchPane.text" :name="'roomSearch' + uid" :label="t('Search this room')"></m-text-line></div>
-                    <q-btn flat round dense icon="sym_o_search" :aria-label="t('Search')" @click="runSearch"></q-btn>
+                    <div class="col"><m-text-line v-model="searchPane.text" :name="'roomSearch' + uid" :label="t('Search this room')" :disable="sealed"></m-text-line></div>
+                    <q-btn flat round dense icon="sym_o_search" :aria-label="t('Search')" :disable="sealed" @click="runSearch"></q-btn>
                 </div>
                 <div class="col scroll" style="min-height:0">
                     <q-linear-progress v-if="searchPane.loading" indeterminate color="primary"></q-linear-progress>
@@ -3511,7 +3483,7 @@ const chatRoom = {
     name: 'ChatRoom',
     props: { base: String, roomId: String, me: Object, prefs: { type: Object, default: () => ({}) }, seq: [Number, String], thread: [Number, String],
         compact: Boolean, canGoBack: Boolean, bubbles: Boolean, linkBase: { type: String, default: '/qapps/BasicComms/Chat' } },
-    emits: ['back', 'thread', 'changed', 'left', 'open-room', 'read'],
+    emits: ['back', 'thread', 'changed', 'left', 'read'],
     components: { 'chat-message': chatMessage, 'chat-composer': chatComposer, 'chat-pending': chatPending },
     data() {
         roomCount += 1;
@@ -3521,7 +3493,7 @@ const chatRoom = {
             myLastRead: 0, dividerSeq: null, highlightSeq: null, atBottom: true, newBelow: 0, holdRead: false,
             hoverKey: null, tapKey: null, sheet: { open: false, item: null, inThread: false, allEmoji: false }, editing: null, replyTo: null, side: null,
             threadView: { rootSeq: null, events: [], loading: false }, pinned: { list: [], loading: false },
-            threadsPane: { list: [], loading: false, hasMore: false, mine: false }, filesPane: { list: [], loading: false, next: null, kind: 'all' },
+            threadsPane: { list: [], loading: false, hasMore: false, mine: false, next: null }, filesPane: { list: [], loading: false, next: null, kind: 'all' },
             forward: { open: false, item: null, roomId: null, comment: '', busy: false },
             pollBox: { open: false, threadRoot: null, question: '', options: ['', ''], multiple: 'N', anonymous: 'N', closes: '', busy: false },
             searchPane: { text: '', results: [], loading: false, searched: false }, addPeople: { userIds: [], busy: false },
@@ -3563,7 +3535,7 @@ const chatRoom = {
         },
         bridgeTooltip() { return fill(t('Messages here also go to {names}'), { names: this.bridgeNames }); },
         displayName() { return this.room ? (this.room.displayName || this.room.roomName || this.room.chatRoomId) : ''; },
-        roomIcon() { return this.room ? ((this.room.record && this.room.record.icon) || ROOM_ICONS[this.room.roomTypeEnumId] || 'sym_o_chat') : 'sym_o_chat'; },
+        roomIcon() { return moqui.chat.roomIcon(this.room); },
         recordLabel() { const record = this.room && this.room.record; return record ? [record.typeLabel, record.title].filter((part) => part).join(' · ') : ''; },
         roomKindText() {
             if (!this.room) return '';
@@ -3580,10 +3552,10 @@ const chatRoom = {
             if (this.room.record) return fill(t('This room is about {record}. Everyone who can see the record can read it.'), { record: this.recordLabel });
             return fill(t('This is the start of {name}.'), { name: this.displayName }) + (this.room.topic ? ' ' + this.room.topic : '');
         },
-        narrow() { return this.compact || (this.width > 0 && this.width < 640); },
+        narrow() { return this.compact || (this.width > 0 && this.width < moqui.chat.NARROW_PX); },
         // a phone messaging layout: mine on the right, the others on the left, each in a bubble (the phone home, the stacked Chat, a narrow room)
         useBubbles() { return this.bubbles || this.narrow; },
-        sideOverlay() { return this.compact || (this.width > 0 && this.width < 900); },
+        sideOverlay() { return this.compact || (this.width > 0 && this.width < moqui.chat.SIDE_OVERLAY_PX); },
         sideTitle() {
             return { thread: t('Thread'), members: fill(t('Members ({count})'), { count: this.members.length }), pinned: t('Pinned messages'),
                 search: t('Search in the room'), record: t('The record'), threads: t('Threads'), files: t('Files') }[this.side] || '';
@@ -3730,7 +3702,7 @@ const chatRoom = {
             let dividerPlaced = false;
             for (const event of events) {
                 const sent = Number(event.sentDate || 0);
-                const day = l10n.dayKey(sent);
+                const day = moqui.l10n.dayKey(sent);
                 if (day !== lastDay) { out.push({ kind: 'day', key: 'd' + event.eventSeq, label: dayLabel(sent) }); lastDay = day; prev = null; }
                 if (opts.divider && !dividerPlaced && this.dividerSeq != null && Number(event.eventSeq) > this.dividerSeq && event.type === 'message' && event.senderUserId !== me) {
                     out.push({ kind: 'unread', key: 'unread' });
@@ -4519,7 +4491,7 @@ const chatRoom = {
             if (name === 'pinned') this.loadPinned();
             if (name === 'threads') this.loadThreads(false);
             if (name === 'files') this.loadFiles(false);
-            if (name === 'search') this.$nextTick(() => { const input = this.$el.querySelector('input[name="roomSearch' + this.uid + '"]'); if (input) input.focus(); });
+            if (name === 'search' && !this.sealed) this.$nextTick(() => { const input = this.$el.querySelector('input[name="roomSearch' + this.uid + '"]'); if (input) input.focus(); });
         },
         closeSide() {
             if (this.side === 'thread') { this.threadView = { rootSeq: null, events: [], loading: false }; this.$emit('thread', null); }
@@ -4552,20 +4524,25 @@ const chatRoom = {
         },
         runSearch() {
             const text = String(this.searchPane.text || '').trim();
-            if (!text || needsConnection()) return;
+            if (this.sealed || !text || needsConnection()) return;
             this.searchPane.loading = true;
             this.get('search', { searchText: text, chatRoomId: this.roomId }).then((json) => {
                 this.searchPane = { text, results: json.eventList || [], loading: false, searched: true };
             }, () => { this.searchPane.loading = false; });
         },
         // ---- the room's threads and files ----
+        // the server's cursor is kept (date and root), since a pushed reply moves a thread to the top of the list here
         loadThreads(more) {
             const list = more ? this.threadsPane.list : [];
-            const last = list.length ? list[list.length - 1] : null;
+            const next = more ? this.threadsPane.next : null;
             this.threadsPane.loading = true;
-            this.get('threads', { chatRoomId: this.roomId, mine: this.threadsPane.mine ? 'true' : 'false', beforeDate: more && last ? last.threadLastDate : '', limit: 20 }).then((json) => {
+            this.get('threads', { chatRoomId: this.roomId, mine: this.threadsPane.mine ? 'true' : 'false', beforeDate: next ? next.date : '',
+                beforeEventSeq: next ? next.eventSeq : '', limit: 20 }).then((json) => {
                 this.mergeNames(json.userNames);
-                this.threadsPane = Object.assign({}, this.threadsPane, { list: list.concat(json.threadList || []), hasMore: !!json.hasMore, loading: false });
+                const seen = new Set(list.map((thread) => thread.eventSeq));
+                const added = (json.threadList || []).filter((thread) => !seen.has(thread.eventSeq));
+                this.threadsPane = Object.assign({}, this.threadsPane, { list: list.concat(added), hasMore: !!json.hasMore, loading: false,
+                    next: json.hasMore && json.nextBeforeDate != null ? { date: json.nextBeforeDate, eventSeq: json.nextBeforeEventSeq } : null });
             }, () => { this.threadsPane.loading = false; });
         },
         lastReplyText(thread) {
@@ -4735,11 +4712,23 @@ const chatRoom = {
             }, () => {});
         },
         join() { this.post('join', { chatRoomId: this.roomId }).then(() => { this.$emit('changed'); this.load(); }, () => {}); },
+        // who becomes an owner when the last owner leaves, by the rule of remove#Member (ChatServices.xml): the
+        // longest-standing moderator, else member; agents and outside actors never. The service decides in the end.
+        ownerHeir() {
+            if (this.isDirect || !this.isOwner) return null;
+            const others = this.members.filter((person) => person.userId && !person.isAgent && person.userId !== this.me.userId)
+                .slice().sort((a, b) => (a.joinedDate || 0) - (b.joinedDate || 0));
+            if (!others.length || others.some((person) => person.roleEnumId === 'CmrOwner')) return null;
+            return others.find((person) => person.roleEnumId === 'CmrModerator') || others[0];
+        },
         leave() {
             if (needsConnection()) return;
             const direct = this.isDirect;
+            const heir = this.ownerHeir();
+            const consequence = t('You no longer hear of its messages; a public room you can join again.');
             this.confirm(direct ? t('Hide this conversation?') : t('Leave the room?'),
-                direct ? t('It comes back with the next message.') : t('You no longer hear of its messages; a public room you can join again.'),
+                direct ? t('It comes back with the next message.')
+                    : (heir ? consequence + ' ' + fill(t('You are its last owner: {name} becomes an owner.'), { name: heir.name || heir.userId }) : consequence),
                 direct ? t('Hide') : t('Leave'), !direct).then(() => {
                 this.post('leave', { chatRoomId: this.roomId }).then(() => this.$emit('left', this.roomId), () => {});
             });
@@ -4976,25 +4965,14 @@ module.exports = {
                 throw err;
             });
         },
-        roomIcon(room) { return (room.record && room.record.icon) || ROOM_ICONS[room.roomTypeEnumId] || 'sym_o_chat'; },
+        roomIcon(room) { return moqui.chat.roomIcon(room); },
         bridgeText(room) {
             const names = (room.bridgeNetworkNames || []).join(', ');
             return room.notConnected ? fill(t('Not connected to {names}: messages wait here'), { names }) : fill(t('Also on {names}'), { names });
         },
-        archivedByMe(room) { return room.isMember && room.archivedEventSeq != null && Number(room.lastMessage ? room.lastMessage.eventSeq : 0) <= Number(room.archivedEventSeq); },
-        countsOf(room) {
-            if (!room.isMember) return { unread: 0, mentions: 0 };
-            if (moqui.chat && moqui.chat.state.unread[room.chatRoomId]) return moqui.chat.unreadOf(moqui.chat.state, room.chatRoomId);
-            return { unread: room.unreadCount || 0, mentions: room.mentionCount || 0 };
-        },
-        snippetOf(room) {
-            const last = room.lastMessage;
-            if (!room.isMember) return t('Public room: not joined');
-            if (!last) return room.topic || t('No messages yet');
-            const who = last.senderUserId === this.me.userId ? t('You') : String(last.senderName || '').split(' ')[0];
-            const text = last.encrypted ? t('Encrypted message') : last.redacted || !last.snippet ? t('Message removed') : last.snippet;
-            return room.roomTypeEnumId === 'CrtDirect' && last.senderUserId !== this.me.userId && room.otherUserId ? text : (who ? who + ': ' : '') + text;
-        },
+        archivedByMe(room) { return moqui.chat.isArchived(room); },
+        countsOf(room) { return moqui.chat.countsOf(room); },
+        snippetOf(room) { return moqui.chat.roomSnippet(room, this.me.userId); },
         clearLabel(value) { return t(CLEAR_LABELS[String(value)] || CLEAR_LABELS['0']); },
         clearFilters() { this.filter = 'all'; this.search = ''; },
 
@@ -5884,10 +5862,8 @@ module.exports = {
                               onThread: _ctx.setThread,
                               onChanged: _ctx.scheduleRooms,
                               onLeft: _ctx.onLeft,
-                              onOpenRoom: _ctx.openRoom,
-                              onCreateFrom: _ctx.openQuickCreate,
                               onRead: _ctx.onRoomRead
-                            }, null, 8, ["bubbles", "base", "room-id", "me", "prefs", "seq", "thread", "can-go-back", "link-base", "onBack", "onThread", "onChanged", "onLeft", "onOpenRoom", "onCreateFrom", "onRead"]))
+                            }, null, 8, ["bubbles", "base", "room-id", "me", "prefs", "seq", "thread", "can-go-back", "link-base", "onBack", "onThread", "onChanged", "onLeft", "onRead"]))
                           : (_openBlock(), _createElementBlock("div", {
                               key: 1,
                               class: "col column items-center justify-center q-pa-lg text-center m-muted"
@@ -7712,7 +7688,7 @@ module.exports = {
                                               ]),
                                               _: 1
                                             })),
-                                        (!_ctx.filesPane.loading && !_ctx.filesPane.list.length)
+                                        (!_ctx.filesPane.loading && !_ctx.filesPane.list.length && !_ctx.filesPane.next)
                                           ? (_openBlock(), _createElementBlock("div", {
                                               key: 3,
                                               class: "q-pa-md m-muted text-caption"
@@ -8091,6 +8067,19 @@ module.exports = {
                                             class: "col column no-wrap",
                                             style: {"min-height":"0"}
                                           }, [
+                                            (_ctx.sealed)
+                                              ? (_openBlock(), _createElementBlock("div", {
+                                                  key: 0,
+                                                  class: "q-pa-sm m-muted text-caption m-chat-search-sealed",
+                                                  role: "note"
+                                                }, [
+                                                  _createVNode(_component_q_icon, {
+                                                    name: "sym_o_lock",
+                                                    class: "q-mr-xs"
+                                                  }),
+                                                  _createTextVNode(_toDisplayString(_ctx.t('An encrypted room is not searched: the server keeps only ciphertext, and this app has no search on your device yet.')), 1)
+                                                ]))
+                                              : _createCommentVNode("", true),
                                             _createElementVNode("div", {
                                               class: "q-pa-sm row no-wrap items-center",
                                               onKeydown: _withKeys(_withModifiers(_ctx.runSearch, ["prevent"]), ["enter"])
@@ -8100,8 +8089,9 @@ module.exports = {
                                                   modelValue: _ctx.searchPane.text,
                                                   "onUpdate:modelValue": $event => ((_ctx.searchPane.text) = $event),
                                                   name: 'roomSearch' + _ctx.uid,
-                                                  label: _ctx.t('Search this room')
-                                                }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "label"])
+                                                  label: _ctx.t('Search this room'),
+                                                  disable: _ctx.sealed
+                                                }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "label", "disable"])
                                               ]),
                                               _createVNode(_component_q_btn, {
                                                 flat: "",
@@ -8109,8 +8099,9 @@ module.exports = {
                                                 dense: "",
                                                 icon: "sym_o_search",
                                                 "aria-label": _ctx.t('Search'),
+                                                disable: _ctx.sealed,
                                                 onClick: _ctx.runSearch
-                                              }, null, 8, ["aria-label", "onClick"])
+                                              }, null, 8, ["aria-label", "disable", "onClick"])
                                             ], 40, ["onKeydown"]),
                                             _createElementVNode("div", {
                                               class: "col scroll",
@@ -9258,7 +9249,7 @@ module.exports = {
                         color: "primary",
                         icon: "sym_o_send",
                         class: "m-chat-send",
-                        label: _ctx.room.compact ? undefined : _ctx.room.t('Send'),
+                        label: _ctx.room.useBubbles ? undefined : _ctx.room.t('Send'),
                         "aria-label": _ctx.room.t('Send'),
                         disable: !_ctx.canSend,
                         loading: _ctx.sending,

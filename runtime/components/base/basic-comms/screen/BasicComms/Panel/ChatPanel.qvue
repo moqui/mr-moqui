@@ -149,18 +149,9 @@ along with this software (see the LICENSE.md file). If not, see
 
 <script>
 const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
-const DAY = 86400000;
-const ROOM_ICONS = { CrtDirect: 'sym_o_group', CrtPrivate: 'sym_o_lock', CrtPublic: 'sym_o_tag', CrtRecord: 'sym_o_description' };
 const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
-const timeText = (millis) => (millis ? new Date(Number(millis)).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '');
-const shortWhen = (millis) => {
-    if (!millis) return '';
-    const d = new Date(Number(millis));
-    const now = new Date();
-    if (d.toDateString() === now.toDateString()) return timeText(millis);
-    if (now.getTime() - d.getTime() < 6 * DAY) return d.toLocaleDateString(undefined, { weekday: 'short' });
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-};
+// the list's time in the user's zone, by calendar day, as in Chat (moqui.chat, WebrootChat.js; COM-UI-007)
+const shortWhen = (millis) => moqui.chat.shortWhen(millis);
 // kept for the page: the tray mounts this component again when it reloads the tab, and a reopened tab shows what it had
 const memo = { roomId: null, rooms: null, me: null, prefs: null, roomComponent: null, loading: null };
 const MAX_SHOWN = 30;
@@ -218,7 +209,7 @@ module.exports = {
         },
         needsConnection() { moqui.notifyMessages([{ type: 'info', message: t('This needs a connection to the server: try again when it is back') }]); },
         // archived by me, until a message after the archive (ChatRoomMember.archivedEventSeq)
-        isArchived(room) { return room.archivedEventSeq != null && Number(room.lastMessage ? room.lastMessage.eventSeq : 0) <= Number(room.archivedEventSeq); },
+        isArchived(room) { return moqui.chat.isArchived(room); },
         holdStart(room, event) {
             this.holdCancel();
             if (!this.home || (event.touches && event.touches.length > 1)) return;
@@ -256,20 +247,10 @@ module.exports = {
                 }, () => {});
             }
         },
-        roomIcon(room) { return (room.record && room.record.icon) || ROOM_ICONS[room.roomTypeEnumId] || 'sym_o_chat'; },
-        countsOf(room) {
-            if (!room.isMember) return { unread: 0, mentions: 0 };
-            if (moqui.chat && moqui.chat.state.unread[room.chatRoomId]) return moqui.chat.unreadOf(moqui.chat.state, room.chatRoomId);
-            return { unread: room.unreadCount || 0, mentions: room.mentionCount || 0 };
-        },
-        snippetOf(room) {
-            const last = room.lastMessage;
-            if (!last) return room.topic || t('No messages yet');
-            const text = last.encrypted ? t('Encrypted message') : last.redacted || !last.snippet ? t('Message removed') : last.snippet;
-            if (last.senderUserId === this.me.userId) return t('You') + ': ' + text;
-            if (room.roomTypeEnumId === 'CrtDirect' && room.otherUserId) return text;
-            return String(last.senderName || '').split(' ')[0] + ': ' + text;
-        },
+        // the type icon (a phone number's room too), counts and snippet as Chat shows them (moqui.chat)
+        roomIcon(room) { return moqui.chat.roomIcon(room); },
+        countsOf(room) { return moqui.chat.countsOf(room); },
+        snippetOf(room) { return moqui.chat.roomSnippet(room, this.me.userId); },
         // the rooms, few and light: the panel is a glance (Open in Comms has them all)
         refresh() {
             return moqui.request(this.url('chatData'), { params: { limit: this.home ? 200 : 40 } }).then((result) => {

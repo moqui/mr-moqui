@@ -4,18 +4,70 @@
 // Olm-encrypts a to-device event for it and sends it; the other page is woken by the push, syncs and decrypts it, and
 // knows who sent it from which device. What john.doe's page sent to the server never holds the plaintext. Then the other
 // user revokes their device in Settings, My devices (its transition), and a new send from john.doe reaches no device.
+// Before that, two devices of calls.client.b verify each other by emoji: the device that did not start the comparison
+// accepts it, so both show the same seven emoji, and once both confirm each is verified (COM-UI-012).
 // Run: ./moq test-client basic-comms --serve --spec CryptoFlow
 const OTHER = "calls.client.b"
 const PASSWORD = "CallsClient1!!"
 const SECRET = "the-call-key-0123456789"
 let sender = null
 let receiver = null
+let second = null
 
 spec({
     setupSpec() {
         sender = browser.newPage({user: "john.doe", timeout: 30})
         receiver = browser.newPage({user: OTHER, password: PASSWORD, timeout: 30})
-        for (const page of [sender, receiver]) page.allowProblems(/userPhoto\?userId=/)
+        // another browser of the same user: a device of its own
+        second = browser.newPage({user: OTHER, password: PASSWORD, timeout: 30})
+        for (const page of [sender, receiver, second]) page.allowProblems(/userPhoto\?userId=/)
+    }
+})
+
+feature("two devices of one user verify each other by emoji: the same seven emoji on both, then both verified", {
+    when() {
+        receiver.goto("/qapps/BasicComms/Home")
+        second.goto("/qapps/BasicComms/Home")
+        const first = receiver.evaluate(() => window.moqui.crypto.ensureDevice())
+        const other = second.evaluate(() => window.moqui.crypto.ensureDevice())
+        // the first device asks once it knows the second (its own user's device list, by a sync)
+        const flowId = receiver.waitFor(async (d) => {
+            await window.moqui.crypto.sync()
+            try { return await window.moqui.crypto.verifyDevice(d.userId, d.deviceId) } catch (err) { return null }
+        }, {arg: other, timeout: 15})
+        const shown = (page, check) => page.waitFor(([id, test]) => {
+            const v = (window.moqui.crypto.state.verifications || []).find((item) => item.flowId === id)
+            const checks = {requested: (x) => x.phase === "requested", ready: (x) => x.ready, emoji: (x) => x.emojis && x.emojis.length === 7, done: (x) => x.done}
+            // a copy: the list is reactive, and a proxy comes back from the page as an empty object
+            return v && checks[test](v) ? JSON.parse(JSON.stringify(v)) : null
+        }, {arg: [flowId, check], timeout: 15})
+        shown(second, "requested")
+        second.evaluate((id) => window.moqui.crypto.verification(id, "accept").then(() => true), flowId)
+        shown(receiver, "ready")
+        receiver.evaluate((id) => window.moqui.crypto.verification(id, "sas").then(() => true), flowId)
+        // the regression: the second device accepts the comparison it did not start, so the emoji come on both
+        const askerEmoji = shown(receiver, "emoji").emojis.map((e) => e.symbol)
+        const askedEmoji = shown(second, "emoji").emojis.map((e) => e.symbol)
+        for (const page of [receiver, second]) page.evaluate((id) => window.moqui.crypto.verification(id, "confirm").then(() => true), flowId)
+        const askerDone = shown(receiver, "done")
+        const askedDone = shown(second, "done")
+        const trusted = receiver.waitFor(async (d) => {
+            const list = await window.moqui.crypto.devicesOf(d.userId)
+            return (list.find((device) => device.deviceId === d.deviceId) || {}).verified === true
+        }, {arg: other, timeout: 15})
+        // the second device goes, so the exchange below sends to one device of this user
+        const revoked = second.evaluate((deviceId) => window.moqui.request("/apps/BasicComms/Settings/Devices/revoke",
+            {method: "POST", params: {deviceId}}).then((result) => result.json || {}), other.deviceId)
+        return {first, other, flowId, askerEmoji, askedEmoji, askerDone, askedDone, trusted, revoked}
+    },
+    then({first, other, flowId, askerEmoji, askedEmoji, askerDone, askedDone, trusted, revoked}) {
+        first.deviceId != other.deviceId
+        flowId.length > 0
+        askerEmoji.length == 7
+        askerEmoji.join(" ") == askedEmoji.join(" ")
+        askerDone.done == true && askedDone.done == true
+        trusted == true
+        !revoked.errors
     }
 })
 

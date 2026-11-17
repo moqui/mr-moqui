@@ -673,6 +673,43 @@ fn direct_rooms_are_reused_and_come_back_with_a_new_message() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// When the last owner leaves, the longest-standing moderator, else member, becomes an owner, by an event that reads as
+/// automatic: automatic true and no byUserId; its sender is the owner who left (COM-UI-009).
+#[test]
+fn the_last_owner_leaving_passes_the_room_on_automatically() {
+    let (ctx, facade, dir) = setup("heir", crate::service::ServicePools::idle());
+    let _entered = ctx.enter();
+    install(&dir);
+    users(&facade, &["hra", "hrb", "hrc"]);
+    login("hra");
+    let chat = room("private", "Heir", &["hrb", "hrc"]);
+    ok(
+        "set#MemberRole",
+        &[
+            ("chatRoomId", text(&chat)),
+            ("userId", text("hrc")),
+            ("roleEnumId", text("moderator")),
+        ],
+    );
+    ok("remove#Member", &[("chatRoomId", text(&chat))]);
+    login("hrc");
+    let members = maps(ok("get#Room", &[("chatRoomId", text(&chat))]).get("memberList"));
+    let role = |user: &str| {
+        let member = members.iter().find(|member| field(member, "userId") == user).unwrap();
+        field(member, "roleEnumId")
+    };
+    assert_eq!(role("hrc"), "CmrOwner", "the moderator, though the member joined first");
+    assert_eq!(role("hrb"), "CmrMember");
+    let last = events(&timeline(&chat, &[])).pop().unwrap();
+    let content = sub(&last, "content");
+    assert_eq!(field(&last, "senderUserId"), "hra");
+    assert_eq!(field(&content, "action"), "role");
+    assert_eq!(field(&content, "userId"), "hrc");
+    assert_eq!(field(&content, "automatic"), "true");
+    assert_eq!(field(&content, "byUserId"), "");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The timeline: pages by eventSeq both ways and around one, edits applied, a redaction as "message removed",
 /// reactions aggregated and toggled, threads apart from the main timeline with their counts, replies with a preview,
 /// pins.
@@ -2023,8 +2060,9 @@ fn a_retried_send_is_answered_with_its_message_and_one_event_is_read_by_its_seq(
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The files of a room, newest first, by type and name, paged at whole messages; the threads of a room, the latest reply
-/// first, mine, paged, and a thread's last reply after a redaction.
+/// The files of a room, newest first, by type and name, paged at whole messages (one with more files than the limit
+/// comes whole); the threads of a room, the latest reply first, mine, paged by date and root so equal dates are not
+/// skipped, and a thread's last reply after a redaction.
 #[test]
 fn the_files_and_the_threads_of_a_room_are_listed() {
     let (ctx, facade, dir) = setup("lists", crate::service::ServicePools::idle());
@@ -2095,6 +2133,30 @@ fn the_files_and_the_threads_of_a_room_are_listed() {
     );
     assert_eq!(names(&next), ["a.png", "b.txt"]);
     assert_eq!(number(&maps(next.get("fileList"))[0], "eventSeq"), first);
+    // a page of 1: a message with more files than the limit comes whole, and none of its files is lost (COM-UI-010)
+    let one_page = ok("find#RoomFiles", &[("chatRoomId", text(&chat)), ("limit", int(1))]);
+    assert_eq!(names(&one_page), ["c.png"]);
+    assert_eq!(out_number(&one_page, "nextBeforeEventSeq"), second);
+    let whole = ok(
+        "find#RoomFiles",
+        &[
+            ("chatRoomId", text(&chat)),
+            ("limit", int(1)),
+            ("beforeEventSeq", int(second)),
+        ],
+    );
+    assert_eq!(names(&whole), ["a.png", "b.txt"]);
+    assert_eq!(out_number(&whole, "nextBeforeEventSeq"), first);
+    let end = ok(
+        "find#RoomFiles",
+        &[
+            ("chatRoomId", text(&chat)),
+            ("limit", int(1)),
+            ("beforeEventSeq", int(first)),
+        ],
+    );
+    assert!(names(&end).is_empty());
+    assert_eq!(out_text(&end, "nextBeforeEventSeq"), "");
     login("lsc");
     refused("find#RoomFiles", &[("chatRoomId", text(&chat))], "not found");
     refused("find#RoomThreads", &[("chatRoomId", text(&chat))], "not found");
@@ -2158,6 +2220,33 @@ fn the_files_and_the_threads_of_a_room_are_listed() {
     );
     assert_eq!(roots(&rest), [one]);
     assert!(!bool_text(&rest, "hasMore"));
+    // two threads with the same last reply date at a page end: the cursor of date and root skips neither (COM-UI-010)
+    login("lsa");
+    let three = send(&chat, "<p>third topic</p>");
+    reply("lsb", three, "<p>b on three</p>", 3);
+    login("lsa");
+    let page = |cursor: Option<(i64, i64)>| {
+        let mut parameters = vec![("chatRoomId", text(&chat)), ("limit", int(1))];
+        if let Some((date, seq)) = cursor {
+            parameters.push(("beforeDate", int(date)));
+            parameters.push(("beforeEventSeq", int(seq)));
+        }
+        ok("find#RoomThreads", &parameters)
+    };
+    let cursor =
+        |out: &BTreeMap<String, Value>| (out_number(out, "nextBeforeDate"), out_number(out, "nextBeforeEventSeq"));
+    let tied = page(None);
+    assert_eq!(roots(&tied), [three]);
+    assert_eq!(
+        cursor(&tied),
+        (number(&maps(tied.get("threadList"))[0], "threadLastDate"), three)
+    );
+    let same_date = page(Some(cursor(&tied)));
+    assert_eq!(roots(&same_date), [two]);
+    let last_page = page(Some(cursor(&same_date)));
+    assert_eq!(roots(&last_page), [one]);
+    assert!(!bool_text(&last_page, "hasMore"));
+    assert_eq!(out_text(&last_page, "nextBeforeDate"), "");
     // the last reply redacted: the one before it is the last
     ok(
         "redact#Message",

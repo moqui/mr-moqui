@@ -91,6 +91,7 @@ along with this software (see the LICENSE.md file). If not, see
                     if (content.action === 'add') return fill('{by} added {user}', {by, user})
                     if (content.action === 'leave') return fill('{user} left', {user})
                     if (content.action === 'remove') return fill('{by} took {user} out', {by, user})
+                    if (content.action === 'role' && content.automatic) return fill('{user} became an owner when {by} left', {by, user})
                     if (content.action === 'role') return fill('{by} made {user} {role}', {by, user, role: roles[content.roleEnumId] ? ec.l10n.localize(roles[content.roleEnumId]) : content.roleEnumId})
                     return fill('{by} changed the members', {by})
                 }

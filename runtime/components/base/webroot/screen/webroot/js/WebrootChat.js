@@ -1101,6 +1101,59 @@
             chat.request("/userStatusHeartbeat", { idleSeconds: idle }, "POST").then((json) => { if (json && json.myStatus) chat.setMe(json.myStatus); });
         }
     };
+    // ---- what the chat screens show the same way: Chat.qvue, Panel/ChatPanel.qvue and the shell's Root.qvue ----
+    // Dates are in the user's zone and language (moqui.l10n, read when called: a test runs this file without it), and
+    // compare calendar days, so the boundaries hold through daylight saving changes (COM-UI-007; Comms-Messaging §2.2).
+    const l10n = () => moqui.l10n;
+    const tr = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+    Object.assign(chat, {
+        // a room's type icon; a record room shows its record's own
+        ROOM_ICONS: { CrtDirect: "sym_o_group", CrtPrivate: "sym_o_lock", CrtPublic: "sym_o_tag", CrtRecord: "sym_o_description", CrtExternal: "sym_o_sms" },
+        // the layout thresholds (Comms-Messaging §1): a room under NARROW_PX wide shows bubbles, under SIDE_OVERLAY_PX a
+        // details pane over the timeline; a screen under Quasar's md (1024 px) is the stacked layout
+        NARROW_PX: 640,
+        SIDE_OVERLAY_PX: 900,
+        timeText(millis) { return millis ? l10n().formatZoned(Number(millis), { hour: "numeric", minute: "2-digit" }) : ""; },
+        fullTime(millis) { return millis ? l10n().formatZoned(Number(millis), { dateStyle: "full", timeStyle: "short" }) : ""; },
+        dateTime(millis) { return millis ? l10n().formatZoned(Number(millis), { dateStyle: "medium", timeStyle: "short" }) : ""; },
+        // a day's label in the timeline: Today, Yesterday, else its date, with the year when it is not this one
+        dayLabel(millis) {
+            const z = l10n(), now = Date.now(), day = z.dayNumber(Number(millis)), today = z.dayNumber(now);
+            if (day === today) return tr("Today");
+            if (day === today - 1) return tr("Yesterday");
+            const opts = { weekday: "long", month: "long", day: "numeric" };
+            if (z.dayKey(Number(millis)).slice(0, 4) !== z.dayKey(now).slice(0, 4)) opts.year = "numeric";
+            return z.formatZoned(Number(millis), opts);
+        },
+        // a list's time: the time today, the weekday in the last six days, the date, with the year when it is not this one
+        shortWhen(millis) {
+            if (!millis) return "";
+            const z = l10n(), at = Number(millis), now = Date.now(), days = z.dayNumber(now) - z.dayNumber(at);
+            if (days === 0) return chat.timeText(at);
+            if (days < 6) return z.formatZoned(at, { weekday: "short" });
+            if (z.dayKey(at).slice(0, 4) === z.dayKey(now).slice(0, 4)) return z.formatZoned(at, { month: "short", day: "numeric" });
+            return z.formatZoned(at, { year: "numeric", month: "short", day: "numeric" });
+        },
+        roomIcon(room) { return (room && room.record && room.record.icon) || (room && chat.ROOM_ICONS[room.roomTypeEnumId]) || "sym_o_chat"; },
+        // archived by me, until a message after the archive (ChatRoomMember.archivedEventSeq)
+        isArchived(room) {
+            return !!room.isMember && room.archivedEventSeq != null && Number(room.lastMessage ? room.lastMessage.eventSeq : 0) <= Number(room.archivedEventSeq);
+        },
+        countsOf(room) {
+            if (!room.isMember) return { unread: 0, mentions: 0 };
+            if (chat.state && chat.state.unread[room.chatRoomId]) return chat.unreadOf(chat.state, room.chatRoomId);
+            return { unread: room.unreadCount || 0, mentions: room.mentionCount || 0 };
+        },
+        // a room's last message in a list, with who sent it, but not in a direct room the other person wrote in
+        roomSnippet(room, meUserId) {
+            const last = room.lastMessage;
+            if (!room.isMember) return tr("Public room: not joined");
+            if (!last) return room.topic || tr("No messages yet");
+            const who = last.senderUserId === meUserId ? tr("You") : String(last.senderName || "").split(" ")[0];
+            const text = last.encrypted ? tr("Encrypted message") : last.redacted || !last.snippet ? tr("Message removed") : last.snippet;
+            return room.roomTypeEnumId === "CrtDirect" && last.senderUserId !== meUserId && room.otherUserId ? text : (who ? who + ": " : "") + text;
+        }
+    });
     moqui.chat = chat;
 
     // ---- the components the shell writes (registered by WebrootVue.qvt.js) ----

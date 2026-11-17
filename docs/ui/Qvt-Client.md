@@ -1025,6 +1025,8 @@ header's Chat badge (`counts.chat`, the app's counts service adding `get#UnreadC
 | `applyUpdate(list, payload, me)` | merge an `update` push into a timeline list: its fields replace the message's, but what is the user's own (`mine`, which the push has not: it is the same for everyone) stays as the list has it, in objects and in lists of objects matched by `id` (a poll's options) |
 | `send(item)`, `flush(force)`, `retry(clientRef)`, `discard(clientRef)`, `pendingIn(roomId, threadRoot)` | the outbox, below |
 | `reduce(state, jsonObj, me, now)` | the socket message on a state (pure; the store's listener) |
+| `timeText`, `fullTime`, `dateTime`, `dayLabel`, `shortWhen` (millis) | a chat time as Chat, the chat panel and phone home and the desktop and mobile shell all show it: in the user's zone and language (`moqui.l10n`, read when called), by calendar day, with the year when it is not this one |
+| `ROOM_ICONS`, `roomIcon(room)`, `countsOf(room)`, `isArchived(room)`, `roomSnippet(room, meUserId)`, `NARROW_PX`, `SIDE_OVERLAY_PX` | a room list's type icon (a record room's own icon first), unread and mention counts, the user's own archive, the last message's line, and the layout thresholds (640 and 900 px) |
 
 **The outbox.** A screen sends a message with `moqui.chat.send({chatRoomId, url, params, text, threadRootEventSeq, hasFiles})`: `url` is
 its send transition, `params` its other parameters, `text` what its pending row shows. The item is kept first in `localStorage`

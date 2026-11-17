@@ -425,7 +425,8 @@ module.exports = {
                 .onOk(() => moqui.request('/qapps/revokeClientDevice', { method: 'POST', params: { loginKey: device.loginKey } })
                     .then(() => { this.devices = this.devices.filter((other) => other.loginKey !== device.loginKey); }, (err) => this.failed(err && err.status ? t('Not signed out') : err)));
         },
-        when(millis) { return millis ? new Date(Number(millis)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : ''; },
+        // in the user's zone, as the chat screens show times (moqui.chat.dateTime; COM-UI-007)
+        when(millis) { return moqui.chat ? moqui.chat.dateTime(millis) : (millis ? new Date(Number(millis)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : ''); },
         // as m-qapps-root, for the client's helpers (moqui.notifyMessages, handleAjaxError): the shell keeps no notify
         // history, and a 401 has the host check the key (it shows the sign-in when the key is no longer taken)
         addNotify() {},

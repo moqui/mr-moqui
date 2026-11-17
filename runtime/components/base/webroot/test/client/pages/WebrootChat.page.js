@@ -704,3 +704,41 @@ test("an operation of the host's outbox as an item of the page's", () => {
     assert.deepEqual(["queued", "sending", "held", "failed", "acked"].map((state) => chat.itemOfOp({ id: "x", state, payload: {} }).status),
         ["waiting", "sending", "held", "failed", "waiting"]);
 });
+
+test("the shared list helpers: times in the user's zone by calendar day, the room's icon, counts, archive and snippet", () => {
+    const l10n = moqui.l10n, priorZone = l10n.timeZone, priorLocale = l10n.locale, priorNow = Date.now;
+    const plain = (text) => String(text).replace(/[  ]/g, " ");
+    try {
+        l10n.setLocale("en_US");
+        l10n.setTimeZone("America/Los_Angeles");
+        Date.now = () => Date.parse("2026-11-09T08:05:00Z");
+        const late = Date.parse("2026-11-09T07:55:00Z"), early = Date.parse("2026-11-09T08:01:00Z");
+        // the user's day, not the browser's: 11:55 PM is yesterday in Los Angeles
+        assert.equal(chat.dayLabel(late), "Yesterday");
+        assert.equal(chat.dayLabel(early), "Today");
+        assert.equal(chat.shortWhen(late), "Sun");
+        assert.equal(plain(chat.shortWhen(early)), "12:01 AM");
+        assert.equal(chat.shortWhen(Date.parse("2026-10-01T18:00:00Z")), "Oct 1");
+        assert.equal(chat.shortWhen(Date.parse("2025-10-01T18:00:00Z")), "Oct 1, 2025", "another year says so");
+        assert.ok(plain(chat.dateTime(early)).includes("Nov 9, 2026") && plain(chat.dateTime(early)).includes("12:01 AM"), chat.dateTime(early));
+        assert.equal(chat.shortWhen(null), "");
+        l10n.setTimeZone("Europe/Berlin");
+        assert.equal(plain(chat.shortWhen(early)), "9:01 AM", "the same instant in the zone set");
+    } finally {
+        Date.now = priorNow;
+        l10n.setLocale(priorLocale);
+        l10n.setTimeZone(priorZone);
+    }
+    assert.equal(chat.roomIcon({ roomTypeEnumId: "CrtExternal" }), "sym_o_sms", "a phone number's room has its icon");
+    assert.equal(chat.roomIcon({ roomTypeEnumId: "CrtRecord", record: { icon: "sym_o_work" } }), "sym_o_work");
+    assert.equal(chat.roomIcon(null), "sym_o_chat");
+    const last = { eventSeq: 7, senderUserId: "bob", senderName: "Bob Smith", snippet: "hello" };
+    assert.ok(chat.isArchived({ isMember: true, archivedEventSeq: 7, lastMessage: last }));
+    assert.ok(!chat.isArchived({ isMember: true, archivedEventSeq: 6, lastMessage: last }), "a newer message brings it back");
+    assert.equal(chat.roomSnippet({ isMember: true, roomTypeEnumId: "CrtPrivate", lastMessage: last }, "ann"), "Bob: hello");
+    assert.equal(chat.roomSnippet({ isMember: true, roomTypeEnumId: "CrtDirect", otherUserId: "bob", lastMessage: last }, "ann"), "hello");
+    assert.equal(chat.roomSnippet({ isMember: true, roomTypeEnumId: "CrtDirect", otherUserId: "bob", lastMessage: Object.assign({}, last, { senderUserId: "ann" }) }, "ann"), "You: hello");
+    assert.equal(chat.roomSnippet({ isMember: false }, "ann"), "Public room: not joined");
+    assert.deepEqual(chat.countsOf({ isMember: false, unreadCount: 3 }), { unread: 0, mentions: 0 });
+    assert.deepEqual(chat.countsOf({ isMember: true, chatRoomId: "NONE", unreadCount: 3, mentionCount: 1 }), { unread: 3, mentions: 1 });
+});

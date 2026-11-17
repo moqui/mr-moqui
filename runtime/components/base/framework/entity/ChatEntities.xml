@@ -158,7 +158,7 @@ along with this software (see the LICENSE.md file). If not, see
             message, contentJson the new body and mentions), a reaction (CetReaction, relatesToEventSeq the message,
             contentJson {key}), a redaction (CetRedaction, relatesToEventSeq the message or reaction it removes), a pin
             (CetPin, contentJson {pinned}), a membership change (CetMembership, contentJson {action: join, leave, add,
-            remove, role; userId; roleEnumId}) and a system row (CetSystem: created, renamed, topic, archived) are events
+            remove, role; userId; roleEnumId; byUserId; automatic, true for an owner's succession when the last owner left}) and a system row (CetSystem: created, renamed, topic, archived) are events
             too, so the timeline is what the WebSocket pushes. The fields after sentDate are kept on a message for the
             reads: its current text (bodyText, for search and snippets), the last edit, the redaction (whose content is
             then cleared), the pin, its thread's reply count and last reply, and its link previews. clientRef is the

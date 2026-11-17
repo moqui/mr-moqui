@@ -1784,8 +1784,9 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Leave a room (userId empty or the current user), or take another member out (a moderator or owner;
             an owner only by an owner; an external actor of a bridge by its chatActorId). Leaving a direct room hides it until
             its next message, with no event. When the last
-            owner leaves a room that still has members, the longest-standing moderator, else member, becomes its owner. A
-            membership event; the user's room list hears of it on chatUser:userId.</description>
+            owner leaves a room that still has members, the longest-standing moderator, else member, becomes its owner, in a
+            role event with automatic true and no byUserId (its sender is the owner who left). A membership event; the user's
+            room list hears of it on chatUser:userId.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="userId"/>
@@ -1828,7 +1829,8 @@ along with this software (see the LICENSE.md file). If not, see
                         heir.set('roleEnumId', 'CmrOwner')
                         heir.update()
                         ec.service.sync().name('org.moqui.chat.ChatServices.append#Event').parameters({chatRoomId: chatRoomId,
-                            eventTypeEnumId: 'CetMembership', senderUserId: me, content: {action: 'role', userId: heir.userId, roleEnumId: 'CmrOwner', byUserId: me}}).call()
+                            // automatic: no one made the heir an owner; the leaving owner is only the sender (COM-UI-009)
+                            eventTypeEnumId: 'CetMembership', senderUserId: me, content: {action: 'role', userId: heir.userId, roleEnumId: 'CmrOwner', byUserId: null, automatic: true}}).call()
                     }
                 }
             }
@@ -1895,7 +1897,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="set" noun="Notification">
         <description>The current user's own settings in a room: notificationLevelEnumId (or its code: all, mentions,
             none), isMuted, isPinned and archived (the user's own archive: the room leaves the user's main list until a
-            message newer than the room's last event now). A setting not given stays. The user's other tabs hear of it on chatUser:userId.</description>
+            message newer than the room's last event now). A setting not given stays. The user's other tabs hear of it on chatUser:userId.
+            Out: the settings as they are now, archivedEventSeq null when the room is not archived.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="notificationLevelEnumId"/>
@@ -1903,6 +1906,12 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="isPinned" type="Boolean"/>
             <parameter name="archived" type="Boolean"/>
         </in-parameters>
+        <out-parameters>
+            <parameter name="notificationLevelEnumId"/>
+            <parameter name="isMuted" type="Boolean"/>
+            <parameter name="isPinned" type="Boolean"/>
+            <parameter name="archivedEventSeq" type="Integer"/>
+        </out-parameters>
         <actions><script><![CDATA[
             const LEVELS = {all: 'CnlAll', mentions: 'CnlMentions', none: 'CnlNone'}
             const me = ec.user.userId
@@ -1924,6 +1933,8 @@ along with this software (see the LICENSE.md file). If not, see
             row.update()
             const settings = {notificationLevelEnumId: row.notificationLevelEnumId ?? null, isMuted: row.isMuted === 'Y', isPinned: row.isPinned === 'Y',
                 archivedEventSeq: row.archivedEventSeq != null ? Number(row.archivedEventSeq) : null}
+            notificationLevelEnumId = settings.notificationLevelEnumId; isMuted = settings.isMuted; isPinned = settings.isPinned
+            archivedEventSeq = settings.archivedEventSeq
             ec.service.sync().name('org.moqui.chat.ChatServices.record#UserChange').parameters({userIdList: [me], changeKind: 'settings',
                 chatRoomId: chatRoomId, change: settings, pushMessage: Object.assign({kind: 'room', action: 'settings', chatRoomId: chatRoomId}, settings)}).call()
             ec.service.sync().name('org.moqui.chat.ChatServices.publish#ChatCounts').parameter('userIdList', [me]).call()
@@ -2165,16 +2176,21 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The threads of a room, the one with the latest reply first, for a user who may read the room: each root
             message {eventSeq, senderUserId, senderName, snippet, sentDate, redacted, threadReplyCount, threadLastDate,
             threadLastEventSeq, threadLastUserId, threadLastUserName, lastSnippet}. mine keeps the threads the user started or
-            replied in. Paged by beforeDate (the threadLastDate of the last one listed); hasMore says whether there are more.</description>
+            replied in. Paged by nextBeforeDate and nextBeforeEventSeq (the threadLastDate and root eventSeq of the last one
+            listed) passed back as beforeDate and beforeEventSeq, so threads with the same date at a page end are not skipped
+            (Comms-Messaging §5.2); beforeDate alone takes the threads before that date. hasMore says whether there are more.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="limit" type="Integer" default="20"/>
             <parameter name="beforeDate" type="Long"/>
+            <parameter name="beforeEventSeq" type="Integer"/>
             <parameter name="mine" type="Boolean" default="false"/>
         </in-parameters>
         <out-parameters>
             <parameter name="threadList" type="List"><parameter name="thread" type="Map"/></parameter>
             <parameter name="hasMore" type="Boolean"/>
+            <parameter name="nextBeforeDate" type="Long"/>
+            <parameter name="nextBeforeEventSeq" type="Integer"/>
         </out-parameters>
         <actions><script><![CDATA[
             const toMillis = (value) => {
@@ -2183,7 +2199,7 @@ along with this software (see the LICENSE.md file). If not, see
                 return Number.isNaN(number) ? new Date(String(value)).getTime() : number
             }
             const snippet = (text) => { const shown = String(text || '').replace(/\s+/g, ' ').trim(); return shown.length > 100 ? shown.slice(0, 99) + '…' : shown }
-            threadList = []; hasMore = false
+            threadList = []; hasMore = false; nextBeforeDate = null; nextBeforeEventSeq = null
             const me = ec.user.userId
             const access = ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
             if (ec.message.hasError()) return
@@ -2192,7 +2208,11 @@ along with this software (see the LICENSE.md file). If not, see
             const cf = ec.entity.conditionFactory
             let find = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventTypeEnumId', 'CetMessage')
                     .condition('threadLastDate', 'not-equals', null).condition('threadReplyCount', 'greater', 0)
-            if (beforeDate != null) find = find.condition('threadLastDate', 'less', String(beforeDate))
+            // the cursor follows the order: an earlier date, or the same date and a lower root eventSeq
+            if (beforeDate != null) find = find.condition(beforeEventSeq == null ? cf.makeCondition('threadLastDate', 'less', String(beforeDate))
+                : cf.makeCondition([cf.makeCondition('threadLastDate', 'less', String(beforeDate)),
+                    cf.makeCondition([cf.makeCondition('threadLastDate', 'equals', String(beforeDate)),
+                        cf.makeCondition('eventSeq', 'less', Number(beforeEventSeq))], 'and')], 'or'))
             if (mine) {
                 const replied = Array.from(new Set(Array.from(ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId)
                         .condition('senderUserId', me).condition('threadRootEventSeq', 'not-equals', null).selectField('threadRootEventSeq').list())
@@ -2205,6 +2225,10 @@ along with this software (see the LICENSE.md file). If not, see
             hasMore = rows.length > size
             rows = rows.slice(0, size)
             if (!rows.length) return
+            if (hasMore) {
+                nextBeforeDate = toMillis(rows[rows.length - 1].threadLastDate)
+                nextBeforeEventSeq = Number(rows[rows.length - 1].eventSeq)
+            }
             const lastSeqs = rows.map((row) => row.threadLastEventSeq).filter((seq) => seq != null).map(Number)
             const lasts = {}
             if (lastSeqs.length) for (const row of ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId)
@@ -3493,8 +3517,10 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The files of a room's messages, newest first, for a user who may read the room: each {chatAttachmentId,
             eventSeq, attachmentSeq, fileName, contentType, fileSize, senderUserId, senderName, sentDate, threadRootEventSeq}.
             contentTypePrefix keeps those whose type starts with it (image/ for the pictures), searchText those whose name
-            has it. Paged by beforeEventSeq; a page ends at a whole message, and nextBeforeEventSeq is where the next one
-            starts (null at the end). A redacted message's files are gone.</description>
+            has it. Paged by beforeEventSeq; a page is cut only between messages, so a message with more files than limit
+            comes whole and the page is that much longer, and nextBeforeEventSeq (the page's last message) is where the next
+            one starts, null at the end. A redacted message's files are gone, and a page can come back short of them; the
+            cursor, not the count, says there is more (Comms-Messaging §5.2).</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="contentTypePrefix"/>
@@ -3521,18 +3547,26 @@ along with this software (see the LICENSE.md file). If not, see
             if (sealed && (contentTypePrefix || String(searchText || '').trim())) return
             const size = Math.max(1, Math.min(100, Number(limit) || 30))
             const cf = ec.entity.conditionFactory
-            let find = ec.entity.find('moqui.chat.ChatAttachment').condition('chatRoomId', chatRoomId).condition('eventSeq', 'not-equals', null)
-            if (beforeEventSeq != null) find = find.condition('eventSeq', 'less', beforeEventSeq)
-            if (contentTypePrefix) find = find.condition(cf.makeCondition('contentType', 'like', String(contentTypePrefix).replace(/[%_]/g, '') + '%').ignoreCase())
             const text = String(searchText || '').trim().replace(/[%_]/g, '')
-            if (text) find = find.condition(cf.makeCondition('fileName', 'like', '%' + text + '%').ignoreCase())
-            let rows = Array.from(find.orderBy('-eventSeq').orderBy('attachmentSeq').limit(size + 1).list())
+            // the find of the room's files with the filters; made again for each query
+            const filesFind = () => {
+                let find = ec.entity.find('moqui.chat.ChatAttachment').condition('chatRoomId', chatRoomId).condition('eventSeq', 'not-equals', null)
+                if (contentTypePrefix) find = find.condition(cf.makeCondition('contentType', 'like', String(contentTypePrefix).replace(/[%_]/g, '') + '%').ignoreCase())
+                if (text) find = find.condition(cf.makeCondition('fileName', 'like', '%' + text + '%').ignoreCase())
+                return find
+            }
+            let first = filesFind()
+            if (beforeEventSeq != null) first = first.condition('eventSeq', 'less', beforeEventSeq)
+            let rows = Array.from(first.orderBy('-eventSeq').orderBy('attachmentSeq').limit(size + 1).list())
             if (rows.length > size) {
-                rows = rows.slice(0, size)
-                // the page ends at a whole message: the files of its last message come on the next page, unless that is all of it
-                const lastSeq = Number(rows[rows.length - 1].eventSeq)
-                const whole = rows.filter((row) => Number(row.eventSeq) !== lastSeq)
-                if (whole.length) rows = whole
+                // a page is cut only between messages (Comms-Messaging §5.2): the limit falls in the message of row size-1
+                const cutSeq = Number(rows[size - 1].eventSeq)
+                if (Number(rows[size].eventSeq) !== cutSeq) rows = rows.slice(0, size)
+                else {
+                    const whole = rows.filter((row) => Number(row.eventSeq) !== cutSeq)
+                    // the page is one message with more files than limit: all of its files
+                    rows = whole.length ? whole : Array.from(filesFind().condition('eventSeq', cutSeq).orderBy('attachmentSeq').list())
+                }
                 nextBeforeEventSeq = Number(rows[rows.length - 1].eventSeq)
             }
             if (!rows.length) return

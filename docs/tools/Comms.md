@@ -20,11 +20,14 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
 ## For users
 
 - **Inbox.** Every mail account's Inbox together, or one account, folder or label; search with Gmail's operators;
-  flag, snooze, archive, move, label and spam; rules, identities and signatures, out of office and text blocks in
-  Settings. Add an account in Settings, Mail accounts (Gmail and Microsoft sign in with the provider where the server
+  flag, snooze (and Unsnooze), archive, move, label and spam; in Trash, Delete forever asks first; rules, identities
+  and signatures, out of office and text blocks in Settings. A member who may only read a shared account sees only Mark
+  read and unread on its mail. An automatic reply for "my contacts and people inside" reaches people inside only when
+  no address book (contact hook) is installed, and the screen says so. Add an account in Settings, Mail accounts (Gmail and Microsoft sign in with the provider where the server
   is set up for it: [Mail-OAuth](../interfaces/Mail-OAuth.md)).
 - **Compose.** A new message, a reply or a forward from an account the user may send from, with undo send and
-  scheduled sending. Compose's `saveDraft`, `upload` and `send` take a `clientRef`, the client's own reference of the
+  scheduled sending. A message may go to Bcc only (its To is `undisclosed-recipients:;`). A send refused because the
+  right to send from the account was taken away says so, and the message stays open. Compose's `saveDraft`, `upload` and `send` take a `clientRef`, the client's own reference of the
   draft, so a client that queued the mail offline retries them after a lost answer safely: one draft is saved, a file is
   attached once, and a send that went through answers `duplicate` true (`EmailMessage.clientRef`, found only among the
   user's own messages; `clientApi` 3). A send that failed is not sent again by its ref (it may have gone out); the user
@@ -43,7 +46,9 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   the drives let the user open (`org.moqui.comms.FilePickerServices` over `FileServices`), and a user with no drive
   sees neither button.
 - **Chat.** Rooms (private, public, direct), threads, mentions, reactions, polls, pinned messages and files; presence
-  and status in the account menu. The tray's Chat tab is the same view, smaller.
+  and status in the account menu. The tray's Chat tab is the same view, smaller. When the last owner leaves, the
+  longest-standing moderator (else member) becomes an owner: Leave names them, and the room says they became an owner
+  when the owner left.
 - <a id="encrypted-rooms"></a>**Encrypted rooms** (C7). New room has Encrypted for a private room (and an encrypted direct
   room beside the plain one). Its messages, reactions and files are encrypted in your browser and read only on the
   devices of its members; the room shows a lock, and the room list says "Encrypted message". It cannot be turned off,
@@ -51,7 +56,7 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   records and Create from; the terminal lists it but cannot read or write it. Set up the key backup in Settings, My
   devices, and keep the recovery key it shows once: a new browser reads older messages only after Restore with it (or
   when another of your devices shares the keys). My devices also verifies your devices (compare emoji, or scan a QR
-  code). Open the room in any tab: the tab that holds this browser's keys does the work for the others. See [Chat
+  code), and says when it waits for the other device. Search says an encrypted room is not searched. Open the room in any tab: the tab that holds this browser's keys does the work for the others. See [Chat
   keys](../interfaces/Chat-Keys.md#encrypted-rooms).
 - <a id="bridged-rooms"></a>**Bridged rooms** (C1). A room an administrator connected to another network (SMS, WhatsApp,
   XMPP, Matrix and others, as their adapters come) has the network's mark in the room list and its name in the room's

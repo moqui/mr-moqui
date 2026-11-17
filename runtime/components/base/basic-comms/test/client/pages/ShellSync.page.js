@@ -215,6 +215,11 @@ test("a message's edit, reaction and deletion wait in the app's outbox where the
         moqui.l10n.setLocale('de_DE');
         assert.equal(chat.shortWhen(afterMidnight),'9:01');
         assert.equal(chat.shortWhen(beforeMidnight - 2*86400000),'Sa','Saturday in Berlin');
+        // COM-UI-007: the phone home and tray list and the shell's own times follow the same zone and language
+        const panelWhen=moqui.bundledComponent('BasicComms/Panel/Chat').methods.shortWhen, shellWhen=moqui.bundledComponent('Shell/Root').methods.when;
+        assert.equal(panelWhen(afterMidnight),'9:01','the home list as the room shows it');
+        assert.equal(panelWhen(Date.parse('2025-06-01T10:00:00Z')),moqui.chat.shortWhen(Date.parse('2025-06-01T10:00:00Z')),'with the year, by calendar day');
+        assert.ok(plain(shellWhen(afterMidnight)).includes('09:01'),shellWhen(afterMidnight));
         moqui.l10n.setLocale('en_US');
         moqui.l10n.setTimeZone('America/Los_Angeles');
         Date.now=()=>Date.parse('2026-11-02T07:30:00Z');
@@ -1094,6 +1099,47 @@ test("an encrypted room: a reaction taken back while it waits is dropped, and a 
         assert.equal(opened - before, reads, "once each");
     } finally {
         Object.assign(chat, kept);
+    }
+});
+
+test("Send is an icon with bubbles; an encrypted room's search says it is not searched; an owner's succession reads as automatic and Leave names the heir", async () => {
+    const vm = await openRoom();
+    const kept = { width: vm.width, encrypted: vm.room.encrypted, access: vm.access, members: vm.members };
+    try {
+        // COM-UI-002: a room with bubbles (under 640 px, or the stacked Chat) shows Send as its icon, still named Send
+        vm.width = 500;
+        await Vue.nextTick();
+        const send = vm.$el.querySelector(".m-chat-send");
+        assert.equal(vm.useBubbles, true, "the room has bubbles");
+        assert.equal(send.getAttribute("aria-label"), "Send");
+        assert.equal(send.querySelector(".block"), null, "no Send text beside the icon");
+        // COM-UI-011: the search pane of an encrypted room says so before a query, and asks the server nothing
+        vm.room.encrypted = true;
+        vm.side = "search";
+        await Vue.nextTick();
+        assert.equal(vm.sealed, true, "an encrypted room");
+        assert.notEqual(vm.$el.querySelector(".m-chat-search-sealed"), null, "the note in the search pane");
+        const searches = asked("/apps/BasicComms/Chat/search").length;
+        vm.searchPane.text = "anything";
+        vm.runSearch();
+        assert.equal(asked("/apps/BasicComms/Chat/search").length, searches, "no search asked");
+        vm.closeSide();
+        vm.room.encrypted = kept.encrypted;
+        // COM-UI-009: the succession event names who left, not someone who made the heir an owner
+        const item = vm.buildItems([{ eventSeq: 9, type: "membership", senderUserId: "ann", senderName: "Ann", sentDate: Date.now(),
+            content: { action: "role", userId: "bob", roleEnumId: "CmrOwner", byUserId: null, automatic: true } }], { divider: false })
+            .find((one) => one.kind === "system");
+        assert.equal(item.text, "Bob became an owner when Ann left");
+        // and the last owner's Leave names the heir by the server's rule: the longest-standing moderator, else member
+        vm.access = Object.assign({}, vm.access, { isOwner: true });
+        vm.members = [{ userId: "ann", name: "Ann", roleEnumId: "CmrOwner", joinedDate: 1 }, { userId: "bob", name: "Bob", roleEnumId: "CmrMember", joinedDate: 2 },
+            { userId: "cy", name: "Cy", roleEnumId: "CmrModerator", joinedDate: 3 }, { userId: "bot", name: "Bot", roleEnumId: "CmrAgent", isAgent: true, joinedDate: 0 }];
+        assert.equal(vm.ownerHeir().userId, "cy");
+        vm.members = vm.members.filter((person) => person.userId !== "cy");
+        assert.equal(vm.ownerHeir().userId, "bob");
+    } finally {
+        Object.assign(vm, { width: kept.width, access: kept.access, members: kept.members });
+        vm.room.encrypted = kept.encrypted;
     }
 });
 

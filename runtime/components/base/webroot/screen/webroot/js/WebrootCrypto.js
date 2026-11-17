@@ -330,6 +330,8 @@
             }
             cursor = Number(res.next_batch) || cursor;
             if (res.device_lists_next) listCursor = res.device_lists_next;
+            // an emoji verification the other device started is accepted here, so the keys and then the emoji follow
+            await acceptIncomingSas();
             await flushNow();
             // the next round acknowledges what this one handled; it ends when nothing more waits
             if (!events.length && !res.has_more) return;
@@ -1151,9 +1153,43 @@
 
     function track(request) {
         if (!request || flows.has(request.flowId)) return;
-        flows.set(request.flowId, { request, sas: null, qr: null, qrImage: null });
+        flows.set(request.flowId, { request, sas: null, qr: null, qrImage: null, sasStartedHere: false, sasAccepted: false, sasWatched: false });
         try { request.registerChangesCallback(async () => refreshVerifications()); } catch (err) { /* polled on refresh */ }
         refreshVerifications();
+        watchOpenFlows();
+    }
+    const openFlow = (flow) => {
+        const sas = flow.sas;
+        return !(flow.request.isDone() || flow.request.isCancelled() || (sas && (sas.isDone() || sas.isCancelled())));
+    };
+    /**
+     * The emoji verification (SAS) the other device started: this device sends its m.key.verification.accept, which the
+     * SDK leaves to the app (Sas.accept). Without it neither side gets the keys, so no emoji ever show (COM-UI-012). Every
+     * SAS that was not started here is accepted, whichever device asked for the verification: the user already took the
+     * request, and comparing the emoji is the confirmation. In the serial section.
+     */
+    async function acceptIncomingSas() {
+        for (const flow of flows.values()) {
+            if (flow.sasStartedHere || flow.sasAccepted) continue;
+            let verification = null;
+            try { verification = flow.request.getVerification(); } catch (err) { verification = null; }
+            if (!(verification instanceof sdk.Sas) || verification.isCancelled() || verification.isDone()) continue;
+            flow.sas = verification;
+            flow.sasAccepted = true;
+            let out = null;
+            try { out = verification.accept(); } catch (err) { out = null; }
+            if (out) await sendOutgoing(out);
+        }
+    }
+    // while a verification is open, a sync every few seconds: a push that was lost does not stall it, and the SDK
+    // sends the cancel of one that timed out
+    let flowTimer = null;
+    function watchOpenFlows() {
+        if (flowTimer || !root.setInterval) return;
+        flowTimer = root.setInterval(() => {
+            if (!machine || ![...flows.values()].some(openFlow)) { root.clearInterval(flowTimer); flowTimer = null; return; }
+            sync().then(() => refreshVerifications(), () => { /* the next round tries again */ });
+        }, 5000);
     }
     /** A verification another device asked of this one (m.key.verification.request), seen in the sync. */
     function noteVerification(raw) {
@@ -1168,18 +1204,32 @@
             const request = flow.request;
             let verification = null;
             try { verification = request.getVerification(); } catch (err) { verification = null; }
-            if (verification && verification instanceof sdk.Sas && flow.sas !== verification) {
+            // getVerification answers a new wrapper each time, so a flag (not the object) says the SAS is watched
+            if (verification && verification instanceof sdk.Sas) {
                 flow.sas = verification;
-                try { verification.registerChangesCallback(async () => refreshVerifications()); } catch (err) { /* polled */ }
+                if (!flow.sasWatched) {
+                    flow.sasWatched = true;
+                    try { verification.registerChangesCallback(async () => refreshVerifications()); } catch (err) { /* polled */ }
+                }
+                // one that came outside a sync (a change callback) is accepted too
+                if (!flow.sasStartedHere && !flow.sasAccepted && machine) serial(() => acceptIncomingSas().then(flushNow)).then(refreshVerifications, () => null);
             }
             const sas = flow.sas;
             let emojis = null;
             try { if (sas && sas.canBePresented()) emojis = Array.from(sas.emoji() || []).map((e) => ({ symbol: e.symbol, description: e.description })); } catch (err) { emojis = null; }
             const done = request.isDone() || (!!sas && sas.isDone()) || (!!flow.qr && flow.qr.isDone());
             const cancelled = request.isCancelled() || (!!sas && sas.isCancelled()) || (!!flow.qr && flow.qr.isCancelled());
+            const ask = (run) => { try { return run(); } catch (err) { return null; } };
+            const cancelInfo = (sas && ask(() => sas.cancelInfo())) || (flow.qr && ask(() => flow.qr.cancelInfo())) || null;
+            const phase = PHASES[request.phase()] || String(request.phase());
             list.push({ flowId, otherUserId: userIdOf(request.otherUserId.toString()), otherDeviceId: request.otherDeviceId ? request.otherDeviceId.toString() : null,
-                weStarted: !!request.weStarted(), phase: PHASES[request.phase()] || String(request.phase()), ready: !!request.isReady(), done, cancelled,
-                emojis, confirmed: !!sas && !!sas.haveWeConfirmed(), qrImage: flow.qrImage, scanned: !!flow.qr && !!flow.qr.hasBeenScanned() });
+                weStarted: !!request.weStarted(), phase, ready: !!request.isReady(), done, cancelled,
+                emojis, confirmed: !!sas && !!sas.haveWeConfirmed(), qrImage: flow.qrImage, scanned: !!flow.qr && !!flow.qr.hasBeenScanned(),
+                // the states between: started and waiting for the other device, its time left, why it ended
+                started: phase === "transitioned" || !!sas, accepted: !!sas && !!ask(() => sas.hasBeenAccepted()),
+                timedOut: !!ask(() => request.timedOut()) || (!!sas && !!ask(() => sas.timedOut())),
+                remainingMs: done || cancelled ? null : ask(() => Number(request.timeRemainingMillis())),
+                cancelReason: cancelInfo ? ask(() => cancelInfo.reason()) || ask(() => cancelInfo.cancelCode()) : null });
         }
         state.verifications = list;
         if (role === "leader") post({ op: "verifications", list });
@@ -1231,9 +1281,10 @@
             const request = flow.request;
             if (action === "accept") await sendOutgoing(request.accept());
             else if (action === "sas") {
+                // started here: the other device accepts it (acceptIncomingSas there)
+                flow.sasStartedHere = true;
                 const started = await request.startSas();
                 if (started) { flow.sas = started[0]; await sendOutgoing(started[1]); }
-                try { if (flow.sas) flow.sas.registerChangesCallback(async () => refreshVerifications()); } catch (err) { /* polled */ }
             } else if (action === "confirm" && flow.sas) await sendOutgoing(await flow.sas.confirm());
             else if (action === "mismatch" && flow.sas) await sendOutgoing(flow.sas.cancelWithCode("m.mismatched_sas"));
             else if (action === "cancel") await sendOutgoing((flow.sas && flow.sas.cancel()) || (flow.qr && flow.qr.cancel()) || request.cancel());
