@@ -14,6 +14,12 @@
  * layers (rids l, m, h); the SFU sends each subscriber the one that fits. After the socket comes back, or the SFU says the
  * media was lost, the page joins again, which takes the leg's next generation and fences the old connection.
  *
+ * On a bad network (plans/Comms-Messaging.md §8.3 items 8-15, "The network" below): a lost path or a network change
+ * restarts ICE on the same connection before any new join; getStats gives the quality icon (m-call-network) and "Your
+ * network is weak"; an encrypted call leaves RED out, and every call asks DTX of its Opus. A one-to-one call of two
+ * users of this server goes peer to peer when its view says direct, signaled with rtc peer frames, and moves to the
+ * media server when it cannot connect or a third person comes.
+ *
  * An end-to-end encrypted call (W8, view.e2ee): before its media this page takes its crypto device (moqui.callKeys,
  * WebrootCallKeys.js), names it on its leg (register#CallDevice, or with the answer or join), and SFrame-encrypts what it
  * sends and decrypts what it receives in an RTCRtpScriptTransform worker; a browser that cannot is refused, with a notice,
@@ -35,6 +41,8 @@
     const reactive = (obj) => (root.Vue && root.Vue.reactive ? root.Vue.reactive(obj) : obj);
     const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
     const SETTINGS_KEY = "moqui.call.settings";
+    // the direct path: how long two pages that know each other try to connect peer to peer before the media server
+    const DIRECT_WAIT_MS = 8000;
     const LAYERS = [
         { rid: "l", scaleResolutionDownBy: 4, maxBitrate: 150000 },
         { rid: "m", scaleResolutionDownBy: 2, maxBitrate: 500000 },
@@ -93,7 +101,12 @@
         // V5: the call-context providers' answer for a phone call, by callSessionId (a screen pop: who it is, open records)
         contextOf: {},
         // W8: why this browser cannot take part in an end-to-end encrypted call: {callSessionId, reasonCode, message}
-        e2eeNotice: null
+        e2eeNotice: null,
+        // the network (plans/Comms-Messaging.md §8.3 items 10-15): the media path of the current call, direct (peer to
+        // peer) or relay (the media server), and its quality from getStats: {level: good, fair or poor, loss, rtt,
+        // jitter (seconds), weak: the uplink is the cause}
+        path: null,
+        network: null
     });
 
     const call = {
@@ -111,6 +124,10 @@
         offScreen: false,
         ringtone: null,
         nextId: 1,
+        // the direct path's connection and its signaling state (connectDirect), and the calls this page keeps on the
+        // media server once one moved there (toRelay)
+        direct: null,
+        relayOnly: {},
 
         // ---- the Comms app's call transitions ----
         appRoot() {
@@ -206,6 +223,8 @@
             if (view.kind === "phone" && view.status !== "ended" && !(view.callSessionId in state.contextOf)) call.loadContext(view.callSessionId);
             if (!ringingForMe && at >= 0) state.ringing.splice(at, 1);
             call.ring(state.ringing.length > 0);
+            // the direct path: the other page answered (say hello), or the call is no longer one of two (to the media server)
+            if (state.current === view.callSessionId) call.directViewChanged(view);
         },
 
         // ---- the store: started once the shell is mounted ----
@@ -219,6 +238,7 @@
                 client.registerListener("chatUser:" + call.me, call.receive);
                 if (client.onState) client.onState((open) => { if (open && state.current) call.rejoin(); });
             }
+            call.listenForNetworkChanges();
             call.loadActive();
             // the desktop client's connection back: the calls ringing and going on now
             if (moqui.onConnection) moqui.onConnection((offline) => { if (!offline) call.loadActive(); });
@@ -558,7 +578,8 @@
             return Promise.resolve(asked).then((json) => (json && Array.isArray(json.iceServers) ? json.iceServers : []), () => []);
         },
         connect(stream) {
-            return call.fetchIceServers(state.current).then((iceServers) => call.connectWith(stream, iceServers));
+            return call.fetchIceServers(state.current).then((iceServers) =>
+                call.useDirect(state.current) ? call.connectDirect(stream, iceServers) : call.connectWith(stream, iceServers));
         },
         connectWith(stream, iceServers) {
             const id = state.current;
@@ -589,10 +610,13 @@
             call.screenTx = null;
             state.sharing = false;
             call.pendingOffer = true;
+            call.endDirect();
+            state.path = "relay";
             const audio = stream && stream.getAudioTracks()[0];
             const camera = stream && stream.getVideoTracks()[0];
             const audioTx = audio ? pc.addTransceiver(audio, { direction: "sendonly", streams: [stream] }) : null;
             const videoTx = camera ? pc.addTransceiver(camera, { direction: "sendonly", streams: [stream], sendEncodings: LAYERS }) : null;
+            call.audioCodecs(audioTx, id);
             // W8: what an encrypted call's page sends goes through its SFrame worker
             if (call.keysOn(id)) {
                 if (audioTx) moqui.callKeys.attachSender(audioTx.sender, "audio");
@@ -607,11 +631,9 @@
                 if (call.early) call.early.push(frame);
                 else call.send(frame);
             };
-            pc.onconnectionstatechange = () => {
-                if (pc !== call.pc) return;
-                if (pc.connectionState === "connected") state.phase = "connected";
-                if (pc.connectionState === "failed") call.rejoin();
-            };
+            // a lost path is first restarted (ICE restart), and joined again only when that does not bring it back
+            pc.onconnectionstatechange = () => call.onConnectionState(pc);
+            call.watch(pc);
             return pc.createOffer().then((offer) => pc.setLocalDescription(offer)).then(() => {
                 call.publish = [audioTx, videoTx].filter((tx) => tx && tx.mid).map((tx) => ({ mid: tx.mid, source: tx === videoTx ? "camera" : "microphone" }));
                 call.send({ rtc: "join", callSessionId: id, callLegId: legId, sdp: pc.localDescription.sdp, id: call.nextId++ });
@@ -622,9 +644,12 @@
             return !!(moqui.callKeys && moqui.callKeys.state.active && moqui.callKeys.state.callSessionId === callSessionId);
         },
         rejoin() {
-            if (!state.current || state.phase === "reconnecting") return;
+            // one join at a time; "reconnecting" also shows an ICE restart, which may end in a join
+            if (!state.current || call.rejoining) return;
+            call.rejoining = true;
             state.phase = "reconnecting";
             setTimeout(() => {
+                call.rejoining = false;
                 if (!state.current) return;
                 call.connect(state.localStream).catch((err) => (state.error = String((err && err.message) || err)));
             }, 500);
@@ -643,9 +668,12 @@
             const pc = call.pc;
             if (!pc || frame.callSessionId !== state.current) return null;
             switch (frame.rtc) {
+                case "peer":
+                    return call.onPeer(frame);
                 case "joined":
                     call.generation = frame.generation;
-                    return pc.setRemoteDescription({ type: "answer", sdp: frame.sdp }).then(() => {
+                    if (frame.direct) return call.onDirectJoined(frame);
+                    return pc.setRemoteDescription({ type: "answer", sdp: call.withDtx(frame.sdp) }).then(() => {
                         call.pendingOffer = false;
                         (call.early || []).forEach((early) => call.send(early));
                         call.early = null;
@@ -653,11 +681,12 @@
                             call.send({ rtc: "publish", callSessionId: state.current, callLegId: state.legId, mid: p.mid, source: p.source }));
                     }, (err) => (state.error = String(err)));
                 case "answer":
-                    return pc.setRemoteDescription({ type: "answer", sdp: frame.sdp }).then(() => (call.pendingOffer = false), () => null);
+                    return pc.setRemoteDescription({ type: "answer", sdp: call.withDtx(frame.sdp) }).then(() => (call.pendingOffer = false), () => null);
                 case "offer":
                     // impolite: while this page's own offer is out, the SFU's waits; the SFU gives way and offers again
                     if (call.pendingOffer || pc.signalingState !== "stable") return null;
                     return pc.setRemoteDescription({ type: "offer", sdp: frame.sdp })
+                        .then(() => pc.getTransceivers().forEach((tx) => call.audioCodecs(tx, state.current)))
                         .then(() => pc.createAnswer())
                         .then((answer) => pc.setLocalDescription(answer))
                         .then(() => call.send({ rtc: "answer", callSessionId: state.current, callLegId: state.legId, offerId: frame.offerId, sdp: pc.localDescription.sdp }));
@@ -700,15 +729,20 @@
                 case "caption":
                 case "captions":
                     call.onCaption(frame);
+                    // the media server makes captions and recordings: a direct call moves there for them
+                    if (frame.rtc === "captions" && frame.state === "on") call.toRelay("captions");
                     break;
                 case "recording":
                     call.recordingFrame(frame);
+                    if (frame.state === "recording" || frame.state === "paused") call.toRelay("recording");
                     break;
                 case "ended":
                     call.hangUp(frame.reason || "ended");
                     break;
                 case "error":
                     if (frame.code === "staleGeneration") return null;
+                    // the server keeps this call on the media server (a third person, Always relay): there it goes
+                    if (frame.code === "notDirect" && call.direct) return call.toRelay("refused");
                     state.error = frame.message || frame.code;
                     if (frame.code === "notFound" || frame.code === "callEnded" || frame.code === "legClosed") call.hangUp("ended");
                     break;
@@ -772,7 +806,8 @@
         // their number; off the call's screen (the LiveCall window) only the speaker is shown.
         chooseLayers() {
             const legs = Object.keys(state.remotes);
-            if (!state.current || !legs.length) return;
+            // the direct path has no layers to choose: the other page sends one
+            if (!state.current || !legs.length || call.direct) return;
             const sharing = legs.find((leg) => state.remotes[leg].screen);
             const main = sharing || state.speaker || legs[0];
             const layers = {};
@@ -801,6 +836,8 @@
         shareScreen() {
             const media = root.navigator && root.navigator.mediaDevices;
             if (!call.pc || !media || !media.getDisplayMedia || state.sharing) return Promise.resolve(false);
+            // a screen share is a track the media server names to the others: a direct call moves there first
+            if (call.direct) return call.toRelay("share").then(() => call.shareScreen());
             return media.getDisplayMedia({ video: { frameRate: 15 }, audio: false }).then((stream) => {
                 const track = stream.getVideoTracks()[0];
                 if (!track || !call.pc) return false;
@@ -833,6 +870,7 @@
         renegotiate(source) {
             const pc = call.pc;
             if (!pc) return Promise.resolve(false);
+            if (call.direct) return call.directOffer().then(() => true);
             call.chain = (call.chain || Promise.resolve()).then(() => {
                 call.pendingOffer = true;
                 return pc.createOffer().then((offer) => pc.setLocalDescription(offer)).then(() => {
@@ -889,10 +927,12 @@
                 try { call.pc.close(); } catch (e) { /* closed */ }
                 call.pc = null;
             }
+            call.endDirect();
+            call.unwatch();
             if (state.localStream) state.localStream.getTracks().forEach((track) => track.stop());
             if (call.screenStream) call.screenStream.getTracks().forEach((track) => track.stop());
             Object.assign(state, { current: null, legId: null, phase: "idle", localStream: null, remotes: {}, muted: false, cameraOff: false,
-                quality: null, startedAt: 0, speaker: null, sharing: false, hand: false, myReaction: null });
+                quality: null, startedAt: 0, speaker: null, sharing: false, hand: false, myReaction: null, path: null, network: null });
             state.captions = { allowed: false, on: false, provider: "", local: false, unavailable: null, lines: [] };
             call.trackSources = {};
             call.tracks = {};
@@ -942,11 +982,12 @@
                 };
                 socket.onclose = () => {
                     guest.open = false;
-                    // a dropped socket comes back while the page is in the call, a few times
-                    if (!guest.closed && state.current && guest.tries < 5) {
+                    // a dropped socket comes back while the page is in the call: tried for a little over the minute the
+                    // leg is kept (Calls.js RECONNECT_GRACE_MS), at most 5 s apart
+                    if (!guest.closed && state.current && guest.tries < 15) {
                         guest.tries++;
                         state.phase = "reconnecting";
-                        setTimeout(connect, 1000 * guest.tries);
+                        setTimeout(connect, Math.min(5000, 1000 * guest.tries));
                     }
                 };
             };
@@ -1002,6 +1043,362 @@
             if (c.lines.length > 4) c.lines.splice(0, c.lines.length - 4);
         },
 
+        // ==== The network (plans/Comms-Messaging.md §8.3 items 8-15, phase 5; docs/interfaces/WebRTC.md "On a bad
+        // network" and "The direct path"). Kept to these functions so the call screen's own work stays apart. ====
+
+        // ---- audio: RED and DTX (item 8) ----
+        // An end-to-end encrypted call leaves RED out of its offers and answers: the SFrame transform sees the RED payload
+        // whole, which neither the media server nor the other page could take apart (in-band FEC, inside each Opus frame,
+        // stays). A plain call offers it as the browser does, and the media server takes it.
+        audioCodecs(tx, callSessionId) {
+            if (!tx || !tx.setCodecPreferences || !call.keysOn(callSessionId)) return;
+            const kind = (tx.receiver && tx.receiver.track && tx.receiver.track.kind) || (tx.sender && tx.sender.track && tx.sender.track.kind);
+            const caps = root.RTCRtpReceiver && root.RTCRtpReceiver.getCapabilities ? root.RTCRtpReceiver.getCapabilities("audio") : null;
+            if (kind !== "audio" || !caps) return;
+            try {
+                tx.setCodecPreferences(caps.codecs.filter((c) => String(c.mimeType).toLowerCase() !== "audio/red"));
+            } catch (err) {
+                console.warn("call: RED left in", err);
+            }
+        },
+        // The other side's description with DTX asked of this page's Opus (usedtx=1): silence goes as a packet every
+        // 400 ms instead of fifty a second, on a phone's mobile data too. The browser reads it from the description it is
+        // given; nothing else of the description changes.
+        withDtx(sdp) {
+            if (!sdp) return sdp;
+            const rtpmap = /a=rtpmap:(\d+) opus\/48000/i.exec(sdp);
+            if (!rtpmap) return sdp;
+            const fmtp = new RegExp("(a=fmtp:" + rtpmap[1] + " )([^\\r\\n]*)");
+            return sdp.replace(fmtp, (line, head, params) => (/usedtx=/.test(params) ? line : head + params + ";usedtx=1"));
+        },
+
+        // ---- a lost path: an ICE restart before a new join (items 10, 11) ----
+        // disconnected: restart ICE after a moment unless it comes back; failed: restart, or join again when a restart
+        // just now did not bring it back. The media server takes the page's offer with new ICE credentials.
+        onConnectionState(pc) {
+            if (pc !== call.pc) return;
+            const s = pc.connectionState;
+            if (s === "connected") {
+                state.phase = "connected";
+                call.restartedAt = 0;
+            } else if (s === "disconnected") {
+                state.phase = "reconnecting";
+                setTimeout(() => { if (pc === call.pc && pc.connectionState === "disconnected") call.restartIce("disconnected"); }, 1500);
+            } else if (s === "failed") {
+                state.phase = "reconnecting";
+                if (call.restartedAt && Date.now() - call.restartedAt < 10000) call.rejoin();
+                else call.restartIce("failed");
+            }
+        },
+        // A network change (the Android app's ConnectivityManager callback, the browser's online and connection change
+        // events) or a path that stopped bringing media: new candidates on the same connection, no new ring, no new join.
+        networkChanged() {
+            if (state.current && call.pc) call.restartIce("network");
+        },
+        listenForNetworkChanges() {
+            if (call.listening || !root.addEventListener) return;
+            call.listening = true;
+            root.addEventListener("online", () => call.networkChanged());
+            const conn = root.navigator && root.navigator.connection;
+            if (conn && conn.addEventListener) conn.addEventListener("change", () => call.networkChanged());
+        },
+        restartIce(reason) {
+            const pc = call.pc;
+            if (!pc || !state.current || pc.signalingState === "closed") return Promise.resolve(false);
+            // one at a time, and not more than every 3 s
+            if (call.restartedAt && Date.now() - call.restartedAt < 3000) return Promise.resolve(false);
+            call.restartedAt = Date.now();
+            if (pc.connectionState !== "connected") state.phase = "reconnecting";
+            const started = pc;
+            // a restart that does not reconnect within 8 s joins again (the media server took the old peer down, or the
+            // socket was lost too)
+            setTimeout(() => {
+                if (started !== call.pc || !state.current || started.connectionState === "connected") return;
+                if (call.direct) call.toRelay("restart");
+                else call.rejoin();
+            }, 8000);
+            if (pc.restartIce) pc.restartIce();
+            if (call.direct) return call.directOffer().then(() => true);
+            call.chain = (call.chain || Promise.resolve()).then(() => {
+                if (pc !== call.pc || pc.signalingState !== "stable") return null;
+                call.pendingOffer = true;
+                return pc.createOffer({ iceRestart: true }).then((offer) => pc.setLocalDescription(offer)).then(() =>
+                    call.send({ rtc: "offer", callSessionId: state.current, callLegId: state.legId, sdp: pc.localDescription.sdp, id: call.nextId++ }));
+            }).catch((err) => { call.pendingOffer = false; console.warn("call: ICE restart (" + reason + ") failed", err); });
+            return call.chain.then(() => true);
+        },
+
+        // ---- the quality icon and the media watchdog (item 14) ----
+        // Every 2 s from getStats: the loss of what comes in, the round trip and the audio jitter give the level; the
+        // uplink is the cause ("Your network is weak") when the other side reports losing what this page sends, or the
+        // browser holds its video down for bandwidth. Nothing coming in for 4 s on a connected path (a NAT that gave the
+        // page a new port the other side does not know) restarts ICE.
+        watch(pc) {
+            call.unwatch();
+            call.sampled = null;
+            state.network = null;
+            call.watchTimer = setInterval(() => call.sample(pc), 2000);
+        },
+        unwatch() {
+            if (call.watchTimer) clearInterval(call.watchTimer);
+            call.watchTimer = null;
+        },
+        sample(pc) {
+            if (pc !== call.pc || !state.current) return call.unwatch();
+            if (!pc.getStats) return null;
+            return pc.getStats().then((stats) => {
+                const now = { received: 0, lost: 0, jitter: 0, rtt: null, upLoss: 0, limited: false, outgoing: null };
+                stats.forEach((s) => {
+                    if (s.type === "inbound-rtp") {
+                        now.received += s.packetsReceived || 0;
+                        now.lost += Math.max(0, s.packetsLost || 0);
+                        if (s.kind === "audio") now.jitter = Math.max(now.jitter, s.jitter || 0);
+                    } else if (s.type === "remote-inbound-rtp") {
+                        now.upLoss = Math.max(now.upLoss, s.fractionLost || 0);
+                        if (s.roundTripTime != null) now.rtt = Math.max(now.rtt || 0, s.roundTripTime);
+                    } else if (s.type === "outbound-rtp" && s.kind === "video" && s.qualityLimitationReason === "bandwidth") {
+                        now.limited = true;
+                    } else if (s.type === "candidate-pair" && s.nominated && s.state === "succeeded") {
+                        if (s.currentRoundTripTime != null) now.rtt = Math.max(now.rtt || 0, s.currentRoundTripTime);
+                        if (s.availableOutgoingBitrate != null) now.outgoing = s.availableOutgoingBitrate;
+                    }
+                });
+                const was = call.sampled;
+                call.sampled = Object.assign(now, { at: Date.now(), stalled: was ? was.stalled : 0 });
+                if (!was) return;
+                const got = now.received - was.received;
+                const lost = Math.max(0, now.lost - was.lost);
+                const loss = got + lost > 0 ? lost / (got + lost) : 0;
+                const rtt = now.rtt || 0;
+                const weak = now.upLoss > 0.05 || (now.limited && now.outgoing != null && now.outgoing < 200000);
+                const level = loss > 0.1 || rtt > 0.6 || now.jitter > 0.1 || weak ? "poor" : loss > 0.03 || rtt > 0.3 || now.jitter > 0.05 ? "fair" : "good";
+                state.network = { level, loss, rtt, jitter: now.jitter, weak };
+                const expecting = Object.keys(state.remotes).some((leg) => (call.tracks[leg] || []).length);
+                now.stalled = pc.connectionState === "connected" && expecting && got === 0 ? (was.stalled || 0) + 1 : 0;
+                // at most every 20 s: the other side's own outage stalls this page too, and its restart cannot help
+                if (now.stalled >= 2 && !(call.stallRestartAt && Date.now() - call.stallRestartAt < 20000)) {
+                    now.stalled = 0;
+                    call.stallRestartAt = Date.now();
+                    call.restartIce("stalled");
+                }
+            }, () => null);
+        },
+
+        // ---- the direct path (item 15) ----
+        // A one-to-one call of two users of this server whose view says direct (neither keeps their calls on the media
+        // server, no guest or phone in it): the page's media goes to the other page peer to peer, and its socket carries
+        // only their signaling ({rtc: 'peer', to, kind}) through the call's media node. Each page says hello as it
+        // joins; the page with the lower leg id offers. The STUN of the call's TURN servers gives each page its public
+        // address (the TURN servers relay only to media servers). When the two do not connect within DIRECT_WAIT_MS,
+        // or a third person, a recording, captions or a screen share comes, the call moves to the media server (toRelay)
+        // and the other page follows. An encrypted call stays encrypted on either path: the same SFrame transforms and
+        // keys (moqui.callKeys), each track decrypted with the keys of the other leg.
+        useDirect(callSessionId) {
+            const view = state.calls[callSessionId];
+            return !!(view && view.direct && !call.guest && root.RTCPeerConnection && !(call.relayOnly || {})[callSessionId]);
+        },
+        otherLeg(view) {
+            const legs = ((view && view.participants) || []).filter((p) => p.userId !== call.me).flatMap((p) => p.legs || []);
+            const leg = legs.find((l) => l.status === "answered" && l.type === "web");
+            return leg ? leg.callLegId : null;
+        },
+        // the STUN of the call's TURN servers: UDP only, no credential
+        stunOnly(iceServers) {
+            const urls = [];
+            for (const server of iceServers || []) {
+                for (const url of [].concat(server.urls || server.url || [])) {
+                    const m = /^turn:([^?]+)(\?.*)?$/i.exec(String(url));
+                    if (m && !/transport=tcp/i.test(m[2] || "")) urls.push("stun:" + m[1]);
+                    else if (/^stun:/i.test(String(url))) urls.push(String(url));
+                }
+            }
+            return urls.length ? [{ urls: Array.from(new Set(urls)) }] : [];
+        },
+        connectDirect(stream, iceServers) {
+            const id = state.current;
+            const legId = state.legId;
+            if (!id) return Promise.resolve();
+            // W8: as connectWith, no media of an encrypted call without its keys
+            const known = state.calls[id];
+            if (known && known.e2ee && !call.keysOn(id)) return call.connectWith(stream, iceServers);
+            if (call.unsubscribe) call.unsubscribe();
+            const client = call.vm && call.vm.notificationClient;
+            call.unsubscribe = client ? client.registerListener("rtc:" + id, call.onFrame) : null;
+            if (call.pc) {
+                try { call.pc.close(); } catch (e) { /* closed */ }
+            }
+            call.endDirect();
+            const pc = new root.RTCPeerConnection({ bundlePolicy: "max-bundle", iceServers: call.stunOnly(iceServers) });
+            call.pc = pc;
+            call.chain = Promise.resolve();
+            call.sentLayers = {};
+            call.screenTx = null;
+            call.pendingOffer = false;
+            state.sharing = false;
+            state.path = "direct";
+            call.direct = { pc, peer: null, polite: false, making: false, ignoreOffer: false, started: false, timer: null, candidates: [], iceServers };
+            const audio = stream && stream.getAudioTracks()[0];
+            const camera = stream && stream.getVideoTracks()[0];
+            const audioTx = pc.addTransceiver(audio || "audio", { direction: audio ? "sendrecv" : "recvonly", streams: stream ? [stream] : [] });
+            const videoTx = pc.addTransceiver(camera || "video", { direction: camera ? "sendrecv" : "recvonly", streams: stream ? [stream] : [] });
+            call.audioCodecs(audioTx, id);
+            if (call.keysOn(id)) {
+                if (audio) moqui.callKeys.attachSender(audioTx.sender, "audio");
+                if (camera) moqui.callKeys.attachSender(videoTx.sender, "video");
+            }
+            pc.ontrack = (event) => call.onDirectTrack(event);
+            pc.onicecandidate = (event) => {
+                if (!event.candidate || !event.candidate.candidate) return;
+                const frame = { kind: "candidate", candidate: event.candidate.candidate, sdpMid: event.candidate.sdpMid, sdpMLineIndex: event.candidate.sdpMLineIndex };
+                if (call.direct && call.direct.pc === pc && call.direct.peer) call.sendPeer(frame);
+                else if (call.direct && call.direct.pc === pc) call.direct.candidates.push(frame);
+            };
+            pc.onnegotiationneeded = () => {
+                const d = call.direct;
+                if (d && d.pc === pc && d.peer && d.started && pc.signalingState === "stable" && !d.making) call.directOffer();
+            };
+            pc.onconnectionstatechange = () => {
+                const d = call.direct;
+                if (!d || d.pc !== pc) return;
+                if (pc.connectionState === "connected") {
+                    state.phase = "connected";
+                    call.restartedAt = 0;
+                    if (d.timer) { clearTimeout(d.timer); d.timer = null; }
+                    if (!d.told) { d.told = true; call.sendPeer({ kind: "connected" }); }
+                } else if (pc.connectionState === "disconnected") {
+                    state.phase = "reconnecting";
+                    setTimeout(() => { if (call.direct === d && pc.connectionState === "disconnected") call.restartIce("disconnected"); }, 1500);
+                } else if (pc.connectionState === "failed") {
+                    // once restarted, a direct path that fails again goes to the media server
+                    if (call.restartedAt && Date.now() - call.restartedAt < 10000) call.toRelay("failed");
+                    else call.restartIce("failed");
+                }
+            };
+            call.watch(pc);
+            call.send({ rtc: "join", direct: true, callSessionId: id, callLegId: legId, id: call.nextId++ });
+            return Promise.resolve();
+        },
+        sendPeer(frame) {
+            const d = call.direct;
+            if (!d || !d.peer || !state.current) return;
+            call.send(Object.assign({ rtc: "peer", callSessionId: state.current, callLegId: state.legId, to: d.peer }, frame));
+        },
+        hello(to) {
+            if (!to || !state.current) return;
+            call.send({ rtc: "peer", kind: "hello", callSessionId: state.current, callLegId: state.legId, to });
+        },
+        onDirectJoined(frame) {
+            const d = call.direct;
+            if (!d) return null;
+            d.joined = true;
+            call.hello(call.otherLeg(state.calls[state.current]));
+            return null;
+        },
+        // the call's new view: the other page answered (hello to it), or the call left the direct path (to the media server)
+        directViewChanged(view) {
+            const d = call.direct;
+            if (!d) return;
+            if (!view.direct || view.status === "ended") {
+                if (view.status !== "ended") call.toRelay("view");
+                return;
+            }
+            const other = call.otherLeg(view);
+            if (d.joined && !d.peer && other && other !== d.helloTo) {
+                d.helloTo = other;
+                call.hello(other);
+            }
+        },
+        // the first page to hear from the other takes it as its peer; a different leg (the other's other tab) is ignored
+        knowPeer(from) {
+            const d = call.direct;
+            if (d.peer) return d.peer === from;
+            d.peer = from;
+            d.polite = String(state.legId) > String(from);
+            d.candidates.splice(0).forEach((c) => call.sendPeer(c));
+            d.timer = setTimeout(() => { if (call.direct === d && d.pc.connectionState !== "connected") call.toRelay("timeout"); }, DIRECT_WAIT_MS);
+            return true;
+        },
+        onPeer(frame) {
+            const d = call.direct;
+            if (!d || !frame.from || frame.callLegId !== state.legId) return null;
+            const pc = d.pc;
+            switch (frame.kind) {
+                case "hello":
+                    if (!call.knowPeer(frame.from)) return null;
+                    call.sendPeer({ kind: "ready" });
+                    return d.polite ? null : call.directOffer();
+                case "ready":
+                    if (!call.knowPeer(frame.from)) return null;
+                    return d.polite ? null : call.directOffer();
+                case "offer": {
+                    if (!call.knowPeer(frame.from)) return null;
+                    const collision = d.making || pc.signalingState !== "stable";
+                    d.ignoreOffer = !d.polite && collision;
+                    if (d.ignoreOffer) return null;
+                    d.started = true;
+                    return pc.setRemoteDescription({ type: "offer", sdp: call.withDtx(frame.sdp) })
+                        .then(() => pc.getTransceivers().forEach((tx) => call.audioCodecs(tx, state.current)))
+                        .then(() => pc.setLocalDescription())
+                        .then(() => call.sendPeer({ kind: "answer", sdp: pc.localDescription.sdp }));
+                }
+                case "answer":
+                    if (frame.from !== d.peer || pc.signalingState !== "have-local-offer") return null;
+                    return pc.setRemoteDescription({ type: "answer", sdp: call.withDtx(frame.sdp) }).catch((err) => console.warn("call: direct answer", err));
+                case "candidate":
+                    if (frame.from !== d.peer) return null;
+                    return pc.addIceCandidate({ candidate: frame.candidate, sdpMid: frame.sdpMid, sdpMLineIndex: frame.sdpMLineIndex })
+                        .catch((err) => { if (!d.ignoreOffer) console.warn("call: direct candidate", err); });
+                case "relay":
+                    if (frame.from === d.peer) call.toRelay("peer");
+                    return null;
+                default:
+                    return null;
+            }
+        },
+        // this page's offer to the other page (the first, a track added or stopped, an ICE restart)
+        directOffer() {
+            const d = call.direct;
+            if (!d || !d.peer) return Promise.resolve();
+            const pc = d.pc;
+            d.started = true;
+            d.making = true;
+            return pc.setLocalDescription()
+                .then(() => call.sendPeer({ kind: "offer", sdp: pc.localDescription.sdp }))
+                .catch((err) => console.warn("call: direct offer", err))
+                .then(() => { d.making = false; });
+        },
+        onDirectTrack(event) {
+            const d = call.direct;
+            if (!d || !d.peer || !event.track) return;
+            const legId = d.peer;
+            if (call.keysOn(state.current) && event.receiver) moqui.callKeys.attachReceiver(event.receiver, event.track.kind, legId);
+            call.remote(legId);
+            const list = call.tracks[legId];
+            if (!list.includes(event.track)) list.push(event.track);
+            event.track.onended = () => call.dropTrack(legId, null, event.track);
+            call.sortTracks(legId);
+        },
+        // The call goes to the media server, for good on this page: the other page is told, unless it told this one.
+        toRelay(reason) {
+            const d = call.direct;
+            if (!d || !state.current) return Promise.resolve();
+            call.relayOnly = call.relayOnly || {};
+            call.relayOnly[state.current] = true;
+            if (reason !== "peer") call.sendPeer({ kind: "relay" });
+            call.endDirect();
+            state.remotes = {};
+            call.tracks = {};
+            call.trackSources = {};
+            state.phase = "joining";
+            return call.connectWith(state.localStream, d.iceServers).catch((err) => (state.error = String((err && err.message) || err)));
+        },
+        endDirect() {
+            const d = call.direct;
+            if (!d) return;
+            if (d.timer) clearTimeout(d.timer);
+            call.direct = null;
+        },
+
         saveSettings(changes) {
             Object.assign(state.settings, changes || {});
             writeSettings(state.settings);
@@ -1042,6 +1439,43 @@
             }
         },
         template: '<audio ref="audio" autoplay></audio>'
+    };
+
+    // The network of the call this page is in (plans/Comms-Messaging.md §8.3 item 14): a quality icon from getStats
+    // (moqui.call.sample), "Reconnecting" while the path is restarted or joined again, and "Your network is weak" when
+    // this side's uplink is the cause; the tooltip has the numbers, the media server's estimate and the path.
+    components["m-call-network"] = {
+        name: "mCallNetwork",
+        data() { return { call: state }; },
+        computed: {
+            net() { return this.call.network || {}; },
+            reconnecting() { return this.call.phase === "reconnecting"; },
+            icon() {
+                if (this.reconnecting) return "sym_o_sync";
+                return this.net.level === "poor" ? "sym_o_signal_cellular_alt_1_bar" : this.net.level === "fair" ? "sym_o_signal_cellular_alt_2_bar" : "sym_o_signal_cellular_alt";
+            },
+            color() { return this.reconnecting ? "warning" : this.net.level === "poor" ? "negative" : this.net.level === "fair" ? "warning" : "positive"; },
+            label() {
+                if (this.reconnecting) return t("Reconnecting…");
+                return this.net.weak ? t("Your network is weak") : "";
+            },
+            levelText() {
+                return this.net.level === "poor" ? t("Poor connection") : this.net.level === "fair" ? t("Fair connection") : this.net.level === "good" ? t("Good connection") : t("Connecting");
+            },
+            tip() {
+                const n = this.net;
+                const parts = [this.levelText];
+                if (n.loss != null) parts.push(t("Loss") + " " + Math.round(n.loss * 100) + "%");
+                if (n.rtt) parts.push(t("Round trip") + " " + Math.round(n.rtt * 1000) + " ms");
+                if (n.jitter) parts.push(t("Jitter") + " " + Math.round(n.jitter * 1000) + " ms");
+                if (this.call.quality) parts.push(this.call.quality + " kbps");
+                if (this.call.path) parts.push(this.call.path === "direct" ? t("Straight to the other person") : t("Through the server"));
+                return parts.join(" · ");
+            }
+        },
+        template: '<span class="m-call-network row items-center no-wrap q-gutter-xs" role="status" aria-live="polite">' +
+            '<q-icon :name="icon" :color="color" size="20px" :aria-label="levelText"><q-tooltip>{{tip}}</q-tooltip></q-icon>' +
+            '<span v-if="label" class="text-caption" :class="net.weak && !reconnecting ? \'text-negative\' : \'text-warning\'">{{label}}</span></span>'
     };
 
     // The recording indicator's text (W5): recording, or why it is paused.
@@ -1406,7 +1840,7 @@
             '<q-chip v-if="recording" dense square :color="recording.state === \'recording\' ? \'negative\' : \'warning\'" text-color="white" icon="sym_o_fiber_manual_record" class="m-call-recording">{{recordingText}}</q-chip>' +
             '<q-chip v-if="known && known.encryptionMode" dense square :class="e2ee ? \'m-call-encryption m-call-e2ee m-tonal text-positive\' : \'m-call-encryption m-tonal\'" :icon="e2ee ? \'sym_o_lock\' : \'sym_o_shield\'">{{encryptionText}}<q-tooltip max-width="320px">{{encryptionTip}}</q-tooltip></q-chip>' +
             '<span v-if="inThis" class="text-caption q-ml-sm">{{elapsed}}</span><q-space></q-space>' +
-            '<span v-if="inThis && call.quality" class="text-caption m-muted">{{call.quality}} kbps</span></div>' +
+            '<m-call-network v-if="inThis"></m-call-network></div>' +
             '<q-banner v-if="call.error && inThis" dense rounded class="m-tonal text-warning">{{call.error}}</q-banner>' +
             '<q-banner v-if="offline && !inThis" dense rounded class="m-tonal text-warning m-call-offline"><template v-slot:avatar><q-icon name="sym_o_cloud_off"></q-icon></template>' +
             '{{offlineText}}</q-banner>' +

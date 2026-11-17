@@ -18,7 +18,9 @@ along with this software (see the LICENSE.md file). If not, see
     it. Its media encryption (W8): an end-to-end encrypted call shows so, and each person's encryption device (the roster
     the browsers send their keys to); the terminal does not answer one, as it cannot encrypt media. Live captions (W6): whether
     they are on, who turned them on and who transcribes them (CallCaptionServices get#CaptionState), with Turn on and Turn
-    off for a person in the call; the lines themselves are the browser's, as they come with the call's media. -->
+    off for a person in the call; the lines themselves are the browser's, as they come with the call's media. The
+    network (plans/Comms-Messaging.md phase 5): the quality icon, Reconnecting and the media path (direct or through the
+    server) are the browser's, from its media, so the terminal shows none of them. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Call" default-menu-include="false">
 
