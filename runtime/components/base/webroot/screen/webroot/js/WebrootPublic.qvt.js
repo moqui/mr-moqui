@@ -22,14 +22,31 @@
     const moqui = root.moqui;
     const qvt = moqui && moqui.qvt;
 
-    const SCREEN_TEMPLATE = '<component v-if="activeComponent" :is="activeComponent"></component>' +
-        '<div v-else-if="failed" class="text-body1 q-pa-lg text-center">{{labels.notFound}}</div>' +
-        '<div v-else class="row justify-center q-pa-xl"><q-spinner size="2em"></q-spinner></div>';
-    const ROOT_TEMPLATE = '<q-layout view="hHh lpR fFf" class="m-public-shell"><q-page-container><q-page class="q-pa-md">' +
-        '<div class="m-public-page" style="max-width:1100px;margin:0 auto;">' + SCREEN_TEMPLATE +
-        '</div></q-page></q-page-container></q-layout>';
+    // The roots are render functions, so a page on the runtime build of Vue (no template compiler, and no 'unsafe-eval' in
+    // its policy) mounts them as the compiler build does. The screen: its component once loaded, the not-found text when
+    // it failed, else a spinner.
+    const renderScreen = (vm, Vue) => {
+        if (vm.activeComponent) return Vue.h(Vue.resolveDynamicComponent(vm.activeComponent));
+        if (vm.failed) return Vue.h("div", { class: "text-body1 q-pa-lg text-center" }, Vue.toDisplayString(vm.labels.notFound));
+        return Vue.h("div", { class: "row justify-center q-pa-xl" }, [Vue.h(Vue.resolveComponent("q-spinner"), { size: "2em" })]);
+    };
+    // The page: the screen in a Quasar layout.
+    function renderRoot() {
+        const Vue = root.Vue;
+        const h = Vue.h;
+        const screen = renderScreen(this, Vue);
+        const page = Vue.resolveComponent("q-page");
+        const container = Vue.resolveComponent("q-page-container");
+        return h(Vue.resolveComponent("q-layout"), { view: "hHh lpR fFf", class: "m-public-shell" }, {
+            default: () => [h(container, null, { default: () => [h(page, { class: "q-pa-md" }, {
+                default: () => [h("div", { class: "m-public-page", style: "max-width:1100px;margin:0 auto;" }, [screen])]
+            })] })]
+        });
+    }
     // An island: the screen alone, in the page around it.
-    const ISLAND_TEMPLATE = '<div class="m-public-island">' + SCREEN_TEMPLATE + '</div>';
+    function renderIsland() {
+        return root.Vue.h("div", { class: "m-public-island" }, [renderScreen(this, root.Vue)]);
+    }
     const isIsland = (config) => config && config.shell === "island";
     // The page's config: only a <script type="application/json">, so markup of the page (a theme's
     // <div id="moqui-public-config">) cannot stand in for it.
@@ -137,10 +154,10 @@
     };
 
     // One Vue app of a config, mounted at `selector`; its $route is its own root's.
-    const mountApp = (config, template, selector) => {
+    const mountApp = (config, render, selector) => {
         setGlobals(config);
         const options = publicRootOptions(config);
-        options.template = template;
+        options.render = render;
         const app = root.Vue.createApp(options);
         const quasarOptions = { config: Object.assign({ notify: { progress: true, closeBtn: "X", position: "top-right" } }, config.quasar),
             plugins: qvt && qvt.quasarPlugins ? qvt.quasarPlugins(root.Quasar) : { Notify: root.Quasar.Notify, LoadingBar: root.Quasar.LoadingBar, Dialog: root.Quasar.Dialog } };
@@ -165,7 +182,7 @@
     const start = () => {
         const config = JSON.parse(pageConfigElement(root.document).textContent);
         if (isIsland(config) && config.mount) return startIslands();
-        moqui.webrootVue = mountApp(config, ROOT_TEMPLATE, "#public-root");
+        moqui.webrootVue = mountApp(config, renderRoot, "#public-root");
         return moqui.webrootVue;
     };
 
@@ -196,7 +213,7 @@
         const islands = {};
         for (const config of islandConfigs(root.document)) {
             try {
-                islands[config.mount] = mountApp(config, ISLAND_TEMPLATE, "#" + config.mount);
+                islands[config.mount] = mountApp(config, renderIsland, "#" + config.mount);
                 if (!moqui.webrootVue) moqui.webrootVue = islands[config.mount];
             } catch (err) { console.error("The public island " + config.mount + " did not mount", err); }
         }
@@ -206,7 +223,7 @@
     if (moqui) {
         moqui.publicIslandConfigs = islandConfigs;
         moqui.startPublicIslands = startIslands;
-        moqui.publicIslandTemplate = ISLAND_TEMPLATE;
+        moqui.publicRenders = { root: renderRoot, island: renderIsland };
     }
     if (moqui) moqui.startPublic = start;
 
