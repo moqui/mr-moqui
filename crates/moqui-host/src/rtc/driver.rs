@@ -52,6 +52,12 @@ const MAX_WAIT: Duration = Duration::from_millis(5);
 const DATAGRAM: usize = 2_048;
 /// SDP larger than this is refused.
 const MAX_SDP: usize = 64 * 1024;
+/// The `mute`, `hand`, `reaction` and `unpublish` frames a leg may send at once, and how many a second it gets back
+/// (SEC-COM-08): each goes to every other leg of the call.
+const RELAY_BURST: f64 = 20.0;
+const RELAY_PER_SECOND: f64 = 5.0;
+/// The longest reaction (an emoji, with its joiners and modifiers) relayed, in bytes.
+const MAX_REACTION: usize = 64;
 
 /// Where a leg's signaling socket is: its node and its socket id there.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,6 +69,35 @@ pub(crate) struct Route {
 struct LegRoute {
     generation: u64,
     route: Route,
+    /// The leg's frames relayed to the others ([`relayed_frame`]).
+    relayed: RelayBucket,
+}
+
+/// A leg's relayed frames: [`RELAY_BURST`] at once, refilled at [`RELAY_PER_SECOND`].
+pub(super) struct RelayBucket {
+    tokens: f64,
+    at: Instant,
+}
+
+impl RelayBucket {
+    pub(super) fn new(now: Instant) -> Self {
+        Self {
+            tokens: RELAY_BURST,
+            at: now,
+        }
+    }
+
+    /// Whether one more frame may be relayed now.
+    pub(super) fn take(&mut self, now: Instant) -> bool {
+        let refill = now.saturating_duration_since(self.at).as_secs_f64() * RELAY_PER_SECOND;
+        self.tokens = (self.tokens + refill).min(RELAY_BURST);
+        self.at = now;
+        if self.tokens < 1.0 {
+            return false;
+        }
+        self.tokens -= 1.0;
+        true
+    }
 }
 
 struct Driver<'a> {
@@ -389,6 +424,7 @@ impl Driver<'_> {
                         LegRoute {
                             generation,
                             route: route.clone(),
+                            relayed: RelayBucket::new(now),
                         },
                     );
                     Some(json!({"rtc": "joined", "callLegId": leg, "generation": generation, "sdp": answer}))
@@ -434,12 +470,14 @@ impl Driver<'_> {
             }
             "mute" | "hand" | "reaction" | "unpublish" => match self.sfu.generation(&key) {
                 Some(g) if g == generation => {
-                    let mut relay = frame.clone();
-                    if let Some(o) = relay.as_object_mut() {
-                        o.remove("id");
-                        o.insert("from".to_string(), Json::String(leg.to_string()));
+                    if self.routes.get_mut(&key).is_some_and(|r| !r.relayed.take(now)) {
+                        let refused = json!({"rtc": "error", "id": id, "callLegId": leg, "code": "rateLimited",
+                            "message": "too many frames for the others in the call: wait a moment"});
+                        return self.reply(&route, room, refused);
                     }
-                    self.spread(room, Some(leg), relay, None, None);
+                    if let Some(relay) = relayed_frame(op, leg, frame) {
+                        self.spread(room, Some(leg), relay, None, None);
+                    }
                     Ok(None)
                 }
                 Some(_) => Err(SfuError::StaleGeneration),
@@ -778,6 +816,32 @@ pub(super) fn room_frame_body(
     json!({"target": node, "kind": "roomFrame", "from": own, "callSessionId": room,
         "except": except, "frame": frame, "notice": notice.map(|(k, _)| k.as_str()),
         "keep": notice.is_some_and(|(_, keep)| keep)})
+}
+
+/// What of a leg's `mute`, `hand`, `reaction` or `unpublish` frame goes to the call's other legs (SEC-COM-08): only the
+/// fields that frame has, short, with `from` and `callLegId` the sender. None for any other frame.
+pub(super) fn relayed_frame(op: &str, leg: &str, frame: &Json) -> Option<Json> {
+    let flag = |name: &str| frame.get(name).and_then(Json::as_bool).unwrap_or(false);
+    let short = |name: &str, max: usize| {
+        frame
+            .get(name)
+            .and_then(Json::as_str)
+            .filter(|text| text.len() <= max)
+            .unwrap_or_default()
+            .to_string()
+    };
+    let mut relay = match op {
+        "mute" => json!({"audioMuted": flag("audioMuted"), "cameraOff": flag("cameraOff")}),
+        "hand" => json!({"raised": flag("raised")}),
+        "reaction" => json!({"emoji": short("emoji", MAX_REACTION)}),
+        "unpublish" => json!({"mid": short("mid", 64), "source": short("source", 32)}),
+        _ => return None,
+    };
+    let o = relay.as_object_mut()?;
+    o.insert("rtc".to_string(), Json::String(op.to_string()));
+    o.insert("from".to_string(), Json::String(leg.to_string()));
+    o.insert("callLegId".to_string(), Json::String(leg.to_string()));
+    Some(relay)
 }
 
 /// The call id of a room: a paired node's room is keyed by node and call (E12).
