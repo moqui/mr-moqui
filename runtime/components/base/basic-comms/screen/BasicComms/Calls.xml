@@ -81,6 +81,27 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- Move to this device (plans/Comms-Messaging.md §8.3 item 6): a new leg here, the other device's leaving once it connects -->
+    <transition name="moveCall">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.call.CallServices.move#Call').parameters({callSessionId: callSessionId || '', cryptoDeviceId: (typeof cryptoDeviceId !== 'undefined' && cryptoDeviceId) || null, scriptTransform: typeof scriptTransform !== 'undefined' && scriptTransform != null && scriptTransform !== '' ? String(scriptTransform) === 'true' : null}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {callLegId: out.callLegId || null, movedFromLegId: out.movedFromLegId || null, call: out.call || null}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- call waiting (§8.3 item 7): the user's own leg on hold while they answer another call, or off it -->
+    <transition name="holdOwnLeg">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.call.CallServices.hold#OwnLeg').parameters({callSessionId: callSessionId || '', callLegId: (typeof callLegId !== 'undefined' && callLegId) || null,
+                held: typeof held === 'undefined' || String(held) !== 'false'}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {callLegId: out.callLegId || null, call: out.call || null}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <transition name="callState" method="get" read-only="true">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.call.CallServices.get#Call').parameters({callSessionId: callSessionId || ''}).requireNewTransaction(true).disableAuthz().call() || {}

@@ -103,8 +103,9 @@ pub(crate) fn notify(
 
 /// What the shell says of a call to the native code (MT2): `joined` (its media is up), `left` (left, ended, or never
 /// joined), `screen` and `offScreen` (its call screen shown or left: over the lock screen the app shows the call's
-/// screen only).
-pub(crate) const CALL_STATES: [&str; 4] = ["joined", "left", "screen", "offScreen"];
+/// screen only), and `held` (call waiting put it on hold: its leg stays in the call; the native code keeps its call,
+/// and will map it to Telecom's hold, plans/Comms-Messaging.md phase 4's Android part).
+pub(crate) const CALL_STATES: [&str; 5] = ["joined", "left", "screen", "offScreen", "held"];
 
 /// The shell's call `callSessionId` is in `state` ([`CALL_STATES`]): the native call (the Telecom call, the foreground
 /// service, the showing over the lock screen) is kept while the page has the call and ended after. The shell's only

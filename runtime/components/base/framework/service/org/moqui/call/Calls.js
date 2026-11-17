@@ -28,7 +28,7 @@ const ADMISSION_CODES = {
 const END_CODES = {
   CerHangup: 'hangup', CerDeclined: 'declined', CerNoAnswer: 'noAnswer', CerCanceled: 'canceled',
   CerConnectionLost: 'connectionLost', CerMediaNodeLost: 'mediaNodeLost', CerEmpty: 'empty', CerFailed: 'failed',
-  CerRemoved: 'removed', CerMerged: 'merged', CerTransferred: 'transferred', CerRefused: 'refused',
+  CerRemoved: 'removed', CerMerged: 'merged', CerTransferred: 'transferred', CerRefused: 'refused', CerMoved: 'moved',
 }
 const OPEN_LEG = ['ClsOffered', 'ClsAnswered']
 // V5: transfers, queues (CallTransfers.js, CallQueues.js)
@@ -46,6 +46,9 @@ const ringSeconds = () => Math.max(10, Number(System.getProperty('call_ring_seco
  * comes back to the call by itself without a new ring (plans/Comms-Messaging.md §8.3 item 11).
  */
 const RECONNECT_GRACE_MS = 60000
+// a browser leg the user put on hold (call waiting, hold#OwnLeg) is kept this long with no socket: the page's socket may
+// reconnect or the page reload while it is held (the page rebinds it as it resumes)
+const HELD_KEEP_MS = 30 * 60000
 /** A connection with no heartbeat in this long is gone (the host refreshes every 20 seconds). */
 const HEARTBEAT_STALE_MS = 75000
 /** An answered leg that never connected its media in this long has left. */
@@ -257,14 +260,20 @@ function view(session, forUserId) {
   }
   const keyInfo = (leg) => e2ee ? { deviceId: leg.cryptoDeviceId || null, keyIndex: leg.keyIndex != null ? Number(leg.keyIndex) : null,
     keyGeneration: generations[leg.callLegId] || 0 } : {}
+  // the answered legs a socket holds now (live): a page that is in the call elsewhere is moved (move#Call), one whose socket
+  // is gone (a reload) joins its leg again
+  const answeredIds = legs.filter((leg) => leg.statusId === 'ClsAnswered').map((leg) => leg.callLegId)
+  const live = new Set(answeredIds.length ? Array.from(find(CONNECTION).condition('callLegId', 'in', answeredIds)
+    .condition('statusId', 'CcsActive').selectField('callLegId').list()).map((conn) => conn.callLegId) : [])
   const names = userNames(participants.map((p) => p.userId).concat([session.startedByUserId]))
   let myLeg = null
   const list = participants.map((p) => {
     const own = legs.filter((leg) => leg.callParticipantId === p.callParticipantId)
     if (forUserId && p.userId === forUserId) {
-      // the user's leg in a browser: a phone's leg is the SIP engine's, never one a tab answers or joins
+      // the user's leg in a browser: a phone's leg is the SIP engine's, never one a tab answers or joins; the newest
+      // answered one while a move to another device goes on
       const tabs = own.filter(isTabLeg)
-      myLeg = tabs.find((leg) => leg.statusId === 'ClsAnswered') || tabs.find((leg) => leg.statusId === 'ClsOffered') ||
+      myLeg = newestFirst(tabs.filter((leg) => leg.statusId === 'ClsAnswered'))[0] || tabs.find((leg) => leg.statusId === 'ClsOffered') ||
         tabs[tabs.length - 1] || null
     }
     return {
@@ -277,7 +286,8 @@ function view(session, forUserId) {
       inCall: own.some((leg) => leg.statusId === 'ClsAnswered'),
       ringing: own.some((leg) => leg.statusId === 'ClsOffered'),
       legs: own.map((leg) => Object.assign({ callLegId: leg.callLegId, status: LEG_CODES[leg.statusId] || null,
-        type: LEG_TYPE_CODES[leg.legTypeEnumId] || 'web', held: !!leg.heldDate && leg.statusId === 'ClsAnswered' }, keyInfo(leg))),
+        type: LEG_TYPE_CODES[leg.legTypeEnumId] || 'web', held: !!leg.heldDate && leg.statusId === 'ClsAnswered',
+        live: live.has(leg.callLegId), movedFromLegId: leg.movedFromLegId || null }, keyInfo(leg))),
       onHold: own.some((leg) => leg.heldDate && leg.statusId === 'ClsAnswered'),
     }
   })
@@ -597,13 +607,25 @@ function endSession(session, reason, keepRoom) {
   }
 }
 
+/** Legs, the newest first (offered later; of the same moment, the later id). */
+function newestFirst(legs) {
+  return legs.slice().sort((a, b) => ((ms(b.offeredDate) || 0) - (ms(a.offeredDate) || 0)) ||
+    (String(b.callLegId).length - String(a.callLegId).length) || (String(b.callLegId) > String(a.callLegId) ? 1 : -1))
+}
+
 function legOfMine(session, userId, statuses) {
   const participant = participantOf(session.callSessionId, userId)
   if (!participant) return { participant: null, leg: null }
-  const legs = rows(LEG, { callParticipantId: participant.callParticipantId })
-    .filter((leg) => statuses.includes(leg.statusId) && isTabLeg(leg))
-  legs.sort((a, b) => (ms(b.offeredDate) || 0) - (ms(a.offeredDate) || 0))
+  const legs = newestFirst(rows(LEG, { callParticipantId: participant.callParticipantId })
+    .filter((leg) => statuses.includes(leg.statusId) && isTabLeg(leg)))
   return { participant, leg: legs[0] || null }
+}
+
+/** The user's own answered browser leg: callLegId when given (one of theirs), else their newest. */
+function answeredLegOfMine(session, userId, callLegId) {
+  const mine = legOfMine(session, userId, ['ClsAnswered'])
+  if (!callLegId || !mine.participant) return mine.leg
+  return rows(LEG, { callParticipantId: mine.participant.callParticipantId, callLegId, statusId: 'ClsAnswered' }).find(isTabLeg) || null
 }
 
 function answeredLegCount(callSessionId) {
@@ -1068,8 +1090,8 @@ function leave(p) {
   const session = me && p.callSessionId ? lockSession(p.callSessionId) : null
   if (!session || !canSee(session, me)) return refuse('notFound', 'Call not found')
   if (session.statusId === 'CssEnded') return { call: view(session, me), repeated: true }
-  const mine = legOfMine(session, me, ['ClsAnswered'])
-  const leg = p.callLegId ? (mine.leg?.callLegId === p.callLegId ? mine.leg : null) : mine.leg
+  // the leg named (one of the user's, as two are while a move to another device goes on), else their newest
+  const leg = answeredLegOfMine(session, me, p.callLegId || null)
   if (!leg) {
     if (p.callLegId) return refuse('notFound', 'Call not found')
     return { call: view(session, me), repeated: true }
@@ -1077,14 +1099,21 @@ function leave(p) {
   return leaveLeg(session, leg, 'CerHangup', me)
 }
 
-/** A leg leaves; the call ends with its last leg, or a ringing direct call when its caller hangs up. */
+/**
+ * A leg leaves; the call ends with its last leg, or a ringing direct call when its caller hangs up. A direct call goes on
+ * while the one who left has another leg in it (a move to another device that did not connect, move#Call).
+ */
 function leaveLeg(session, leg, reason, userId) {
   closeLeg(leg, 'ClsLeft', reason)
   mediaControl(session, { action: 'closeLeg', callLegId: leg.callLegId })
   const remaining = answeredLegCount(session.callSessionId)
+  // a leg of the same person that is in the call: one whose media connected or that a socket holds, not a move to
+  // another device that never bound (move#Call)
+  const stillIn = rows(LEG, { callParticipantId: leg.callParticipantId, statusId: 'ClsAnswered' })
+    .some((other) => !!other.joinedDate || !!other.heldDate || rows(CONNECTION, { callLegId: other.callLegId, statusId: 'CcsActive' }).length > 0)
   if (session.statusId === 'CssRinging') {
     endSession(session, 'CerCanceled')
-  } else if (session.kindEnumId === 'CskDirect' || (remaining === 0 && !farEndWaits(session.callSessionId)) ||
+  } else if ((session.kindEnumId === 'CskDirect' && !stillIn) || (remaining === 0 && !farEndWaits(session.callSessionId)) ||
     (session.kindEnumId === 'CskPhone' && phoneCallOver(session))) {
     endSession(session, remaining === 0 && !['CskDirect', 'CskPhone'].includes(session.kindEnumId) ? 'CerEmpty' : reason)
   } else {
@@ -1109,6 +1138,87 @@ function end(p) {
   return { call: view(session, me) }
 }
 
+/**
+ * move#Call, "Move to this device" (plans/Comms-Messaging.md §8.3 item 6): the user, in the call on another device or
+ * tab, takes it to this one. A new browser leg of the same participant joins the call, answered, and names the leg it
+ * moves from; that leg (and any other of the user's) leaves only once the new one's media is connected (note#MediaEvent
+ * connected, finishMove), so the others hear no gap. An encrypted call is taken only by a browser that can take part, as
+ * for join#Call; the new leg gets its own key index, and the roster's change rotates the keys.
+ */
+function move(p) {
+  const me = currentUser()
+  const session = me && p.callSessionId ? lockSession(p.callSessionId) : null
+  if (!session || !canSee(session, me)) return refuse('notFound', 'Call not found')
+  if (session.statusId === 'CssEnded') return refuse('callEnded', 'The call has ended')
+  const participant = participantOf(session.callSessionId, me)
+  const answered = participant ? newestFirst(rows(LEG, { callParticipantId: participant.callParticipantId, statusId: 'ClsAnswered' })
+    .filter(isTabLeg)) : []
+  // one move at a time: a move that has not connected yet is replaced by this one, and moves from the user's real leg
+  const pending = answered.filter((other) => other.movedFromLegId && !other.joinedDate)
+  const from = answered.find((other) => !pending.includes(other))
+  if (!from) return refuse('notInCall', 'You are not in this call: join it instead')
+  if (isE2ee(session)) {
+    const refusal = e2eeClientRefusal(p, me)
+    if (refusal) return refusal
+  }
+  for (const other of pending) {
+    closeLeg(other, 'ClsLeft', 'CerCanceled')
+    mediaControl(session, { action: 'closeLeg', callLegId: other.callLegId })
+  }
+  const leg = makeLeg(session, participant, 'ClsAnswered')
+  leg.set('movedFromLegId', from.callLegId)
+  leg.update()
+  if (isE2ee(session)) setLegDevice(session, leg, p.cryptoDeviceId)
+  bump(session)
+  session.update()
+  pushState(session, 'moving', { callLegId: leg.callLegId, fromLegId: from.callLegId })
+  return { callLegId: leg.callLegId, movedFromLegId: from.callLegId, call: view(session, me) }
+}
+
+/**
+ * The media of a leg that moves the call (move#Call) connected: the user's other browser legs in the call leave, their
+ * pages hear legMoved (and the media node's ended), and the call goes on with the new one.
+ */
+function finishMove(callLegId) {
+  const first = one(LEG, { callLegId })
+  const session = first ? lockSession(first.callSessionId) : null
+  if (!session || session.statusId === 'CssEnded') return
+  const leg = one(LEG, { callLegId })
+  if (leg.statusId !== 'ClsAnswered') return
+  const others = rows(LEG, { callParticipantId: leg.callParticipantId, statusId: 'ClsAnswered' })
+    .filter((other) => other.callLegId !== leg.callLegId && isTabLeg(other))
+  if (!others.length) return
+  for (const other of others) {
+    closeLeg(other, 'ClsLeft', 'CerMoved')
+    mediaControl(session, { action: 'closeLeg', callLegId: other.callLegId })
+  }
+  bump(session)
+  session.update()
+  pushState(session, 'legMoved', { callLegId: leg.callLegId, fromLegIds: others.map((other) => other.callLegId) })
+}
+
+/**
+ * hold#OwnLeg, call waiting (plans/Comms-Messaging.md §8.3 item 7): the user puts their own leg in a call on hold to
+ * answer another, or takes it off (binding the leg again does that too). The leg stays in the call while its page's
+ * socket is open, and for half an hour (HELD_KEEP_MS) without one; everyone in the call is told (held, resumed).
+ */
+function holdOwn(p) {
+  const me = currentUser()
+  const session = me && p.callSessionId ? lockSession(p.callSessionId) : null
+  if (!session || !canSee(session, me)) return refuse('notFound', 'Call not found')
+  if (session.statusId === 'CssEnded') return refuse('callEnded', 'The call has ended')
+  const leg = answeredLegOfMine(session, me, p.callLegId || null)
+  if (!leg) return refuse('notFound', 'Call not found')
+  const held = truthy(p.held)
+  if (!!leg.heldDate === held) return { callLegId: leg.callLegId, call: view(session, me), repeated: true }
+  leg.set('heldDate', held ? ec.user.nowTimestamp : null)
+  leg.update()
+  bump(session)
+  session.update()
+  pushState(session, held ? 'held' : 'resumed', { callLegId: leg.callLegId })
+  return { callLegId: leg.callLegId, call: view(session, me) }
+}
+
 function bind(p) {
   const me = currentUser()
   const session = me && p.callSessionId ? lockSession(p.callSessionId) : null
@@ -1131,6 +1241,15 @@ function bind(p) {
   const bound = bindLeg(session, leg, participant, p.signalingNodeId, me, direct)
   if (bound.reasonCode) return bound
   if (direct) bound.direct = true
+  // a leg on hold (call waiting, hold#OwnLeg) whose page joins its media again is back in the call
+  if (leg.heldDate && leg.legTypeEnumId === 'CltWeb') {
+    leg.set('heldDate', null)
+    leg.update()
+    bump(session)
+    session.update()
+    pushState(session, 'resumed', { callLegId: leg.callLegId })
+    bound.call = view(session, me)
+  }
   if (moving) {
     session.set('relayedDate', ec.user.nowTimestamp)
     bump(session)
@@ -1269,6 +1388,8 @@ function mediaEvent(p) {
   if (p.event === 'connected' && !leg.joinedDate) {
     leg.set('joinedDate', ec.user.nowTimestamp)
     leg.update()
+    // a leg that moves the call to another device (move#Call): the user's leg it moves from leaves now
+    if (leg.movedFromLegId && leg.statusId === 'ClsAnswered') finishMove(leg.callLegId)
   } else if (p.event === 'relayRefused') {
     // the call's node refused its leg node's relay link, or the link never connected (W7): the leg's media goes to the
     // call's node when it reconnects
@@ -1316,13 +1437,15 @@ function expire() {
   const staleSince = new Date(now - HEARTBEAT_STALE_MS)
   const closedSince = new Date(now - RECONNECT_GRACE_MS)
   const answered = Array.from(find(LEG).condition('statusId', 'ClsAnswered').selectField('callLegId')
-    .selectField('answeredDate').selectField('legTypeEnumId').limit(2000).list())
+    .selectField('answeredDate').selectField('legTypeEnumId').selectField('heldDate').limit(2000).list())
     // a phone's leg has no socket here: the SIP engine reports its end
     .filter((leg) => leg.legTypeEnumId !== 'CltPstn' && leg.legTypeEnumId !== 'CltSipDevice')
   const lost = []
   for (const leg of answered) {
     const conns = rows(CONNECTION, { callLegId: leg.callLegId })
     const active = conns.find((c) => c.statusId === 'CcsActive')
+    // a leg on hold is kept without its socket for a while (call waiting)
+    if (leg.heldDate && ms(leg.heldDate) > now - HELD_KEEP_MS) continue
     if (active) {
       if (ms(active.lastHeartbeatDate) < staleSince.getTime()) lost.push({ callLegId: leg.callLegId })
     } else if (conns.length) {
@@ -1405,6 +1528,7 @@ function expireItem(p) {
     return { done: true }
   }
   if (p.itemKind === 'connectionLost' && current.statusId === 'ClsAnswered') {
+    if (current.heldDate && ms(current.heldDate) > nowMs() - HELD_KEEP_MS) return { done: false }
     leaveLeg(session, current, 'CerConnectionLost', participant?.userId || null)
     return { done: true }
   }
@@ -2651,7 +2775,7 @@ const operations = {
   addPhoneLeg, offerUsers, closeUserLegs, closePhoneLeg, transferLeave, setHeld, setKind, mergeInto, context,
   startFromDevice, deviceCaller, ringStep, closeOffers, closeForward,
   refusedTargets: (p) => ({ refusedUserIdList: refusedTargets(Array.from(p.userIdList || [])) }),
-  start, startPhone, phoneEvent, phoneToVoicemail, answer, decline, join, leave, end, bind, heartbeat, release, mediaEvent, expire, expireItem, get, active,
+  start, startPhone, phoneEvent, phoneToVoicemail, answer, decline, join, leave, end, move, holdOwn, bind, heartbeat, release, mediaEvent, expire, expireItem, get, active,
   registerNode, capabilities, history, countMissed, markMissedSeen, createLink, findLinks, revokeLink, checkToken, openLink,
   guestJoin, guestState, guestBind, guestLeave, admit: (p) => admitOrDeny(p, true), deny: (p) => admitOrDeny(p, false),
   removeParticipant, iceServers, guestIceServers, registerDevice, setRoomEncryption, deviceRevoked, edgeAllowed,

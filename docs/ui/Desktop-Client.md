@@ -363,6 +363,12 @@ The shell owns the account's calls, so each call has one owner of its media.
   opens the room in the shell (`moqui.callKeys.prepare` refuses with `elsewhere`).
 - Offline, a call's screen and the Dialer say they need a connection, and read again when it is back. Switching account
   or signing out in a call asks first and leaves it.
+- A call started or answered in the shell shows in the side panel at the right of the screen it is on (a window 1024 px
+  wide or more; narrower, the call's screen takes the window), with Open full size for Calls/Call. Picture in picture is
+  a Document Picture-in-Picture window where the shell's Chromium gives one (not checked in the shell yet), else the
+  small LiveCall window, and Move to this device takes a
+  call from the phone or a browser into the shell, and back from there (plans/Comms-Messaging.md §8.3 items 2, 4 and 6;
+  [WebRTC, The call's flow](../interfaces/WebRTC.md#the-calls-flow)).
 
 ## Offline in the screens
 

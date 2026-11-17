@@ -893,7 +893,11 @@ const roomTemplate = `
                 <span class="text-caption m-muted q-ml-xs">{{members.length}}</span><q-tooltip>{{t('Members')}}</q-tooltip>
             </div>
             <q-btn v-if="access.canJoin" dense unelevated no-caps color="primary" :label="t('Join')" class="q-mx-xs" @click="join"></q-btn>
-            <q-btn v-if="canCall" flat round dense icon="sym_o_call" :aria-label="t('Call')" @click="startCall"><q-tooltip>{{t('Call: everyone in the room rings')}}</q-tooltip></q-btn>
+            <!-- a voice call and a video call (Comms-Messaging §8.3 item 1); in the tray's narrow Chat tab they are in the room's menu -->
+            <template v-if="canCall && !compact">
+                <q-btn flat round dense icon="sym_o_call" class="m-chat-voice-call" :aria-label="t('Voice call')" @click="startCall(false)"><q-tooltip>{{callTip(false)}}</q-tooltip></q-btn>
+                <q-btn flat round dense icon="sym_o_videocam" class="m-chat-video-call" :aria-label="t('Video call')" @click="startCall(true)"><q-tooltip>{{callTip(true)}}</q-tooltip></q-btn>
+            </template>
             <q-btn v-if="!narrow" flat round dense icon="sym_o_search" :aria-label="t('Search in the room')" @click="openSide('search')"><q-tooltip>{{t('Search in the room')}}</q-tooltip></q-btn>
             <q-btn v-if="!narrow" flat round dense icon="sym_o_keep" :aria-label="t('Pinned messages')" @click="openSide('pinned')"><q-tooltip>{{t('Pinned messages')}}</q-tooltip></q-btn>
             <q-btn v-if="!narrow" flat round dense icon="sym_o_forum" :aria-label="t('Threads')" @click="openSide('threads')"><q-tooltip>{{t('Threads')}}</q-tooltip></q-btn>
@@ -917,6 +921,12 @@ const roomTemplate = `
                         <q-item clickable v-close-popup @click="markRead(true)">
                             <q-item-section avatar><q-icon name="sym_o_done_all"></q-icon></q-item-section><q-item-section>{{t('Mark as read')}}</q-item-section></q-item>
                         <q-separator></q-separator>
+                    </template>
+                    <template v-if="canCall && compact">
+                        <q-item clickable v-close-popup @click="startCall(false)">
+                            <q-item-section avatar><q-icon name="sym_o_call"></q-icon></q-item-section><q-item-section>{{t('Voice call')}}</q-item-section></q-item>
+                        <q-item clickable v-close-popup @click="startCall(true)">
+                            <q-item-section avatar><q-icon name="sym_o_videocam"></q-icon></q-item-section><q-item-section>{{t('Video call')}}</q-item-section></q-item>
                     </template>
                     <q-item v-if="!isDirect" clickable v-close-popup @click="openSide('members')">
                         <q-item-section avatar><q-icon name="sym_o_group"></q-icon></q-item-section><q-item-section>{{t('Members')}}</q-item-section></q-item>
@@ -1433,7 +1443,10 @@ const chatRoom = {
         // an end-to-end encrypted room (C7): its messages are encrypted and decrypted in this browser
         sealed() { return !!this.room && !!this.room.encrypted; },
         // a call from the room, where the server holds calls (config.calls) and the user may post in it
-        canCall() { return !!(moqui.call && moqui.config && moqui.config.calls && this.access && this.access.canPost && this.room && !this.room.archivedDate); },
+        // a call from the room, where the server holds calls and the user may post, with someone on this server to ring (a
+        // bridged or texting room's other side is on another network: no empty call)
+        canCall() { return !!(moqui.call && moqui.config && moqui.config.calls && this.access && this.access.canPost && this.room && !this.room.archivedDate) && this.callees.length > 0; },
+        callees() { return this.members.filter((person) => person.userId && !person.isAgent && person.userId !== (this.me && this.me.userId)); },
         isMember() { return !!this.access.isMember; },
         canPost() { return !!this.access.canPost; },
         canModerate() { return !!this.access.canModerate; },
@@ -1730,11 +1743,17 @@ const chatRoom = {
             const lists = [this.events, this.threadView.events].filter((list) => list.some((item) => item.undecryptable || (item.encryptedReactions || []).length));
             lists.forEach((list) => moqui.chat.openEvents(this.roomId, list.filter((item) => item.undecryptable), (file) => this.sealedUrl(file)));
         },
-        // the room's call: a new one rings its members; one going on is joined (the page's call store, WebrootCall.js)
-        startCall() {
+        // the room's call, voice or video: a direct room calls the person, a group room starts a group call its members join
+        // from the chat (one going on is opened to join); an encrypted room's call is end-to-end encrypted (§6.1 rule 4)
+        startCall(video) {
             if (needsConnection()) return;
-            // an encrypted room's call is end to end (§6.1 rule 4): asked so, a browser that cannot is refused before anyone rings
-            if (moqui.call) moqui.call.startCall(Object.assign({ chatRoomId: this.roomId, video: true }, this.sealed ? { requireE2ee: true } : {}));
+            // asked so, a browser that cannot is refused before anyone rings
+            if (moqui.call) moqui.call.startCall(Object.assign({ chatRoomId: this.roomId, video: video !== false }, this.sealed ? { requireE2ee: true } : {}));
+        },
+        callTip(video) {
+            if (this.isDirect) return fill(video ? t('Video call {name}') : t('Voice call {name}'), { name: this.displayName });
+            if (this.room && this.room.bridged) return video ? t('Video call: the people on this server in the room ring, not those on the bridged network') : t('Voice call: the people on this server in the room ring, not those on the bridged network');
+            return video ? t('Video call: everyone in the room rings, and members can join') : t('Voice call: everyone in the room rings, and members can join');
         },
         go(target) { if (target) this.$root.setUrl(target); },
         domId(seq, inThread) { return 'chat-' + this.uid + (inThread ? '-t-' : '-m-') + seq; },

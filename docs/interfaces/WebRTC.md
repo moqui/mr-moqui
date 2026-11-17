@@ -59,6 +59,62 @@ The Calls screen says when calls are unavailable (`get#Capabilities`): supported
    the call with no new ring. A reconnect joins again with the next generation, and the media node refuses the old
    connection's frames.
 
+## The call's flow
+
+How a call starts and goes on in the page (plans/Comms-Messaging.md §8.3 items 1 to 7, phase 4; the Android parts,
+items 4's picture-in-picture, 5 and the native call screen, are later). The user guide is
+[Comms, Calls](../tools/Comms.md#calls).
+
+- **Start.** A room's header has Voice call and Video call (`Chat.qvue`; in the tray's Chat tab, its menu):
+  `start#Call` with `video` false or true, and `requireE2ee` in an encrypted room. A direct room's call rings the
+  person; a group room's starts a group call its members join (one going on is opened to join, `callActive`).
+- **Where it shows.** On a phone's width `m-call` is full screen in its compact layout (`m-call-compact`): the other
+  person's big avatar for voice, their video with the self view in a corner for video, and mute, speaker (the output,
+  where the browser has `setSinkId`), video, flip (the next camera, else `facingMode`), add people and hang up. On a
+  desktop (1024 px and wider) a call started or answered shows in the side panel at the right (`moqui.call.show`,
+  `state.panel`, `m-call-dock`), the same layout; Calls/Call is its full size, with the grid. The header carries the
+  call's E2EE label, `moqui.chat.e2eeLabel`'s call states (`call-encrypted`, `call-phone`, `call`).
+- **Voice to video and back.** Video on adds the camera's track to the same connection (`addVideo`: a send-only
+  transceiver, in simulcast layers through the media server, with the SFrame sender of an encrypted call) and
+  renegotiates with `publish` source `camera`; video off stops the track and makes the transceiver inactive
+  (`dropVideo`), with a `mute` frame saying the camera is off. In a call of two the other page sees the track come or
+  go and asks, "Bob turned on video" with Turn on my video, or "turned off video" with Turn off my video: a prompt, not a
+  new call. It asks only for a change the other person made: not in a leg's first seconds (a late joiner, the other's
+  new leg after a move), not for their hold (the prompt waits a moment and looks again), and never in a group call.
+- **Picture in picture.** `openPip`: a Document Picture-in-Picture window where the browser has one (the speaker's
+  video, mute, video and leave, kept current from the store; Chrome's automatic one when the tab is left, through the
+  Media Session action), else the call's screen is left for the floating LiveCall window in the page.
+- **Move to this device.** A page of the user's where they are in a call elsewhere (their answered leg is `live`: its
+  socket is open there) offers Move to this device. `move#Call` makes a new answered leg of the same participant
+  (`movedFromLegId`), named in the push `moving`; the page joins it through the media server. When the media node notes
+  its media connected (`note#MediaEvent` `connected`), the user's other browser legs close (`CerMoved`), the push
+  `legMoved` (with `fromLegIds`) stops the first page's media, and the media node's `ended` reaches it too. The other
+  side's connection is untouched: it gets the new leg's tracks before the old ones go. A move that never connects is
+  left (`leave#Call` with its `callLegId`), and the call goes on with the first leg. One move at a time: a new
+  `move#Call` closes a move that has not connected (`CerCanceled`). A direct call ends when its person has no leg in it
+  that connected or a socket holds: a move that never bound keeps nothing going. A call on the direct path first moves to the media server (the new leg binds there),
+  so there the other side has the short gap of that move.
+- **Call waiting.** A call that rings while the page is in one offers Hold and answer, End and answer, Decline and
+  Decline with a message. Hold (`hold#OwnLeg`, the push `held`) puts the page's own leg on hold; only once the server
+  has it on hold does the page send a `mute` frame and stop its media (a refused hold keeps the call, says so, and
+  answers nothing). The leg stays in the call: the server keeps a held browser leg with no socket for 30 minutes
+  (`HELD_KEEP_MS`), so a socket that reconnects or a page that reloads does not lose it, and the call's view marks it
+  `held`, so a reloaded page shows it on hold again. The others see who put the call on hold. The held call's banner
+  (in the dock, and inside the call on a phone, whose call covers the dock) has Swap (or Resume): the page first reads
+  the held leg (one that ended or moved to another device is dropped, and the call here kept), then holds the call it
+  is in, then joins the held leg again, which takes it off hold (`bind#Connection` clears `heldDate`, the push
+  `resumed`). In the mobile app the page tells the host `held` (`call_state`), not `left`, so the native call stays.
+  Decline with a message declines, then sends the text to the caller's direct room with the user (the call's own room
+  for a direct call, else `createDirect`); an encrypted room's message is encrypted in the page, as every message
+  there. A phone call has no such room: it is declined and the page says nothing was sent, and the ring bar offers no
+  message for one.
+- **A socket's bindings.** A page done with a call (it ended, its leg moved, the page joined another) sends `release`:
+  its binding goes and its connection is released, with no leave. Joining another call while in one leaves the first.
+  A socket keeps at most four bindings: past four the oldest goes for the new one (`notws/rtc.rs` `keep`), never a leg
+  the join names in `keep` (the page's call on hold), rather than the page's next call being refused.
+- **Terminal.** `CallTui` shows a person on hold; the rest needs the call's media or (a message to an encrypted room)
+  its encryption, so it is the browser's.
+
 ## On a bad network
 
 What keeps a call going on a mobile network (plans/Comms-Messaging.md §8.3 items 8 to 14). The in-memory tests that
@@ -437,7 +493,16 @@ between the edge node and a local media node is later work.
   endpoint. `./moq test framework --spec CallCaptions`: the policy switch, someone not in the call, an encrypted call,
   and turning captions on and off.
 - `./moq test basic-comms --spec BasicCommsCalls`: the screens' transitions through both mounts, an encrypted call's
-  answer and its terminal twin.
+  answer and its terminal twin (a person on hold too); Move to this device and hold refused to someone not in the call.
+- `./moq test framework --spec Calls`: Move to this device (a second leg, the first leaving once it connects; a move
+  left before it connects keeps the call) and a user's own leg on hold, back when it binds again.
+  `./moq test-client webroot --offline --spec WebrootCall`: the side panel or the call screen, the voice-to-video
+  prompt, the move's offer and push, and a declined call's quick text (sealed in an encrypted room).
+  `cargo test -p moqui-host --lib notws::rtc`: a socket keeps its newest bindings, and the page's held call's.
+- `./moq accept basic-comms --spec CallFlow,EncryptedCallFlow` (acceptance): a voice call started with audio only, video
+  turned on in it as a prompt on the other side and off again (encrypted too, under the same keys); Move to this device
+  to a second page of the caller, the other side's connection and phase unchanged; call waiting's hold and answer, swap,
+  and a decline whose quick text lands in the caller's room.
 - `./moq test framework --spec CallEncryption`: encrypted calls' policy: a start, an answer and a join only from a
   browser that can take part (the same parameters with `scriptTransform` false, another user's or a revoked device), a
   leg that binds only with its device and a reconnect's new key generation, a room's and a link's policy, a plain call

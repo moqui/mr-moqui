@@ -14,7 +14,8 @@
 
 //! Call signaling on the notification socket (plans/archive/Comms-Framework.md §6.3). A client sends JSON frames with `rtc`:
 //! `join` (with its offer), `offer`, `answer`, `candidate`, `publish`, `unpublish`, `subscribe`, `mute`, `hand`,
-//! `reaction` and `leave`, each with `callSessionId` and `callLegId` and an optional `id` that the reply carries. Replies
+//! `reaction`, `leave` and `release` (the page is done with a call; its leg is left as it is), each with
+//! `callSessionId` and `callLegId` and an optional `id` that the reply carries. Replies
 //! and the media node's offers and events come back on the topic `rtc:<callSessionId>`: `joined`, `answer`, `offer`,
 //! `ack`, `error` (`code`), `connected`, `mediaLost`, `participant`, `track`, `layer`, `quality`, the relayed `mute`,
 //! `hand` and `reaction`, `ended`, the notices `recording` (W5, `rtc/recorder.rs`) and `captions` (W6), which a leg
@@ -63,7 +64,7 @@ const RELEASE_SERVICE: &str = "org.moqui.call.CallServices.release#Connection";
 const HEARTBEAT_EVERY: Duration = Duration::from_secs(20);
 /// A frame larger than this is refused.
 const MAX_FRAME: usize = 128 * 1024;
-/// The bindings one socket may hold (one per call it is in).
+/// The bindings one socket keeps (one per call it is in or was in): past this the oldest is released for a new one.
 const MAX_BINDINGS: usize = 4;
 
 static SIGNAL: OnceLock<moqui_core::notify::Subscription> = OnceLock::new();
@@ -153,6 +154,7 @@ pub(super) fn handle(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, t
     match op.as_str() {
         "join" => join(factory, slot, Who::User(slot.user_id.clone()), call, leg, id, frame),
         "leave" => leave(factory, slot, Who::User(slot.user_id.clone()), call, leg, id, frame),
+        "release" => release_binding(factory, slot, &call, &leg),
         _ => {
             let Some(binding) = bound(slot.id, &call, &leg) else {
                 error(
@@ -331,25 +333,50 @@ fn join(
                 o.remove("direct");
             }
         }
-        {
-            let mut all = lock(bindings());
-            let list = all.entry(slot.id).or_default();
-            list.retain(|b| !(b.call == call && b.leg == leg));
-            if list.len() >= MAX_BINDINGS {
-                drop(all);
-                return error(
-                    &slot,
-                    &call,
-                    &leg,
-                    &id,
-                    "tooManyCalls",
-                    "this connection is in too many calls",
-                );
-            }
-            list.push(binding.clone());
+        // the legs the page still has (a call on hold): never the one released for this binding
+        let kept: Vec<String> = frame
+            .get("keep")
+            .and_then(Json::as_array)
+            .map(|list| list.iter().filter_map(Json::as_str).map(str::to_string).collect())
+            .unwrap_or_default();
+        if let Some(o) = frame.as_object_mut() {
+            o.remove("keep");
+        }
+        let evicted = keep(lock(bindings()).entry(slot.id).or_default(), binding.clone(), &kept);
+        if let Some(old) = evicted {
+            release(&factory, vec![old]);
         }
         forward(&factory, &slot, &binding, &id, frame);
     });
+}
+
+/// A socket's new binding, in place of one of the same leg. A page releases the binding of a call it is done with
+/// (`release`), but an older page, or one whose release was lost, leaves it: past [`MAX_BINDINGS`] the oldest goes for
+/// the new one (returned, to release), never one of the legs the page names as still its own (`kept`: a call on hold),
+/// rather than the page's next call being refused.
+fn keep(list: &mut Vec<Binding>, binding: Binding, kept: &[String]) -> Option<Binding> {
+    list.retain(|b| !(b.call == binding.call && b.leg == binding.leg));
+    let evicted = if list.len() >= MAX_BINDINGS {
+        let at = list.iter().position(|b| !kept.contains(&b.leg)).unwrap_or(0);
+        Some(list.remove(at))
+    } else {
+        None
+    };
+    list.push(binding);
+    evicted
+}
+
+/// A page is done with a call (it ended, its leg moved, the page joined another): its binding goes and its
+/// connection is released, with no leave (the leg stays as the call services have it).
+fn release_binding(factory: &Arc<ExecutionContextFactory>, slot: &Slot, call: &str, leg: &str) {
+    let gone: Vec<Binding> = {
+        let mut all = lock(bindings());
+        let Some(list) = all.get_mut(&slot.id) else { return };
+        let (gone, rest): (Vec<Binding>, Vec<Binding>) = list.drain(..).partition(|b| b.call == call && b.leg == leg);
+        *list = rest;
+        gone
+    };
+    release(factory, gone);
 }
 
 fn leave(
@@ -457,6 +484,12 @@ pub(super) fn socket_closed(factory: &Arc<ExecutionContextFactory>, slot_id: u64
     let Some(list) = lock(bindings()).remove(&slot_id) else {
         return;
     };
+    release(factory, list);
+}
+
+/// Releases bindings this socket no longer holds (`release#Connection`): their legs leave after the reconnect grace
+/// unless a socket binds them again; a leg already closed stays as it is.
+fn release(factory: &Arc<ExecutionContextFactory>, list: Vec<Binding>) {
     if list.is_empty() {
         return;
     }
@@ -901,5 +934,45 @@ fn guest_frame(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, scope: 
                 "join the call on this connection first",
             ),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{keep, Binding, MAX_BINDINGS};
+
+    fn binding(call: &str, leg: &str, generation: u64) -> Binding {
+        Binding {
+            call: call.to_string(),
+            leg: leg.to_string(),
+            generation,
+            media_node: "n1".to_string(),
+            origin_node: "n1".to_string(),
+            direct: false,
+        }
+    }
+
+    /// A page that took call after call (each ended with no leave from it) is never refused its next: the oldest
+    /// binding goes; binding a leg again replaces its own.
+    #[test]
+    fn a_socket_keeps_its_newest_bindings() {
+        let mut list = Vec::new();
+        for n in 0..MAX_BINDINGS {
+            assert!(keep(&mut list, binding(&format!("c{n}"), &format!("l{n}"), 1), &[]).is_none());
+        }
+        assert!(
+            keep(&mut list, binding("c1", "l1", 2), &[]).is_none(),
+            "the same leg again"
+        );
+        assert_eq!(list.len(), MAX_BINDINGS);
+        // the page's call on hold (c0, the oldest) stays: the oldest other goes
+        let evicted = keep(&mut list, binding("c9", "l9", 1), &["l0".to_string()]).expect("the oldest other goes");
+        assert_eq!((evicted.call.as_str(), evicted.leg.as_str()), ("c2", "l2"));
+        assert_eq!(list.len(), MAX_BINDINGS);
+        assert!(list.iter().any(|b| b.call == "c0"), "the held call's binding is kept");
+        assert!(list.iter().any(|b| b.call == "c1" && b.generation == 2));
+        assert_eq!(list.last().map(|b| b.call.as_str()), Some("c9"));
+        let next = keep(&mut list, binding("c8", "l8", 1), &[]).expect("with nothing kept, the oldest");
+        assert_eq!(next.call, "c0");
     }
 }
