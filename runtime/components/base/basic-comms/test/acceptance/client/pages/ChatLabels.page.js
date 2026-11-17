@@ -112,6 +112,27 @@ const seen = async (id) => {
         listLock: !!document.querySelector(".m-chat-e2ee-lock[data-e2ee='" + id + "']") };
 };
 const ids = () => Object.keys(rooms);
+const buttonNamed = (scope, label) => Array.from(scope.querySelectorAll("button")).find((el) => (el.getAttribute("aria-label") || el.textContent.trim()) === label);
+// the room's members pane (from its Room menu): the label for every room, and the check of a verified person
+const members = async () => {
+    buttonNamed(document, "Room").click();
+    const item = await until(() => Array.from(document.querySelectorAll(".q-menu .q-item")).find((el) => el.textContent.trim().endsWith("Members")), "Members in the menu");
+    item.click();
+    const line = await until(() => document.querySelector(".m-chat-room-label"), "the members pane's label");
+    await until(() => document.querySelector(".m-chat-room-label ~ * .m-chat-person-verified, .q-list .m-chat-person-verified"), "the verified person's check");
+    return { label: line.getAttribute("data-e2ee"), checks: document.querySelectorAll(".q-list .m-chat-person-verified").length };
+};
+// Verify in the banner of a room whose other person has a device not verified: their devices, each with Verify (COM-UI-013)
+const verifyFromBanner = async () => {
+    document.querySelector(".m-chat-e2ee-banner .m-chat-verify").click();
+    const list = await until(() => document.querySelector(".m-chat-verify-devices"), "the verify dialog");
+    const dialog = list.closest(".q-dialog");
+    const out = { title: textOf(dialog.querySelector(".text-h6, .q-toolbar__title, .m-dialog-title")) || textOf(dialog).slice(0, 40),
+        device: textOf(list.querySelector("[data-device='BOB2']")), verifyButton: !!list.querySelector(".m-chat-verify-device") };
+    moqui.back.pop();
+    await until(() => !document.querySelector(".m-chat-verify-devices"), "the verify dialog to close");
+    return out;
+};
 
 window.labels = {
     async start() {
@@ -133,6 +154,8 @@ window.labels = {
             await until(() => document.querySelector(".m-chat-composer")
                 && document.querySelector((phone() ? ".m-chat-phone " : "") + ".text-subtitle1[title='" + rooms[id].displayName + "']"), "room " + id);
             out.rooms[id] = Object.assign(await seen(id), { listLock: list });
+            if (id === "V1") out.members = await members();
+            if (id === "E1") out.verify = await verifyFromBanner();
             if (phone()) {
                 while (moqui.back.pop()) await new Promise((resolve) => setTimeout(resolve, 150));
                 await until(() => rowOf("V1"), "the home again");

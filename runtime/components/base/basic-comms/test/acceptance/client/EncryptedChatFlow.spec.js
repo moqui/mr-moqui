@@ -8,7 +8,9 @@
 // when that one closes it. A new device of john.doe (a page of its own, so a new store) reads nothing older until it
 // restores the key backup with the recovery key, and after "New recovery key" the old key still restores its older version.
 // With only verified devices on (the sender's setting, or the room's), an unverified device cannot read the next message: the
-// sender's page knows whose device it left out, and the reader's says the sender has not verified it (COM-UI-013). A
+// sender's page knows whose device it left out, and the reader's says the sender has not verified it (COM-UI-013). john.doe
+// verifies calls.client.b by emoji, so the room's lock gets its check, and b's new device then stops john.doe's next send
+// until it is let through (§6.1 rule 3). A
 // store re-made under another key is reported and kept, never deleted unasked, until "Start over". A store from before the
 // derived store key (its random key stored, set here through Tools) moves to a new device with its room keys.
 // Run: ./moq test-client basic-comms --serve --spec EncryptedChatFlow
@@ -230,6 +232,67 @@ feature("only verified devices: with the sender's setting, or the room's, a devi
         roomOn.verifiedDevicesOnly == true
         notMember.reasonCode == "notFound"
         bReadsRoom == null
+    }
+})
+
+// COM-UI-013, §6.1 rule 3: another person verified by emoji (Chat's Verify), so the room's lock gets its check; then a new
+// device of that verified person is said before the next send, and Send anyway lets it through
+feature("john.doe verifies calls.client.b by emoji: b's devices and identity are verified and the room's label has its check; b's new device stops the next send until it is let through", {
+    when() {
+        const members = [room.a, room.b]
+        // cross-signing on both: the emoji comparison then verifies b's identity, so b's signed devices too
+        for (const page of [a, b]) page.evaluate(() => window.moqui.crypto.setupCrossSigning(false).then(() => true))
+        const bDevice = b.evaluate(() => window.moqui.crypto.thisDeviceId())
+        const flowId = a.waitFor(async (d) => {
+            await window.moqui.crypto.sync()
+            try { return await window.moqui.crypto.verifyDevice(d.userId, d.deviceId) } catch (err) { return null }
+        }, {arg: {userId: room.b, deviceId: bDevice}, timeout: 15})
+        const shown = (page, check) => page.waitFor(([id, test]) => {
+            const v = (window.moqui.crypto.state.verifications || []).find((item) => item.flowId === id)
+            const checks = {requested: (x) => x.phase === "requested", ready: (x) => x.ready, emoji: (x) => x.emojis && x.emojis.length === 7, done: (x) => x.done}
+            return v && checks[test](v) ? JSON.parse(JSON.stringify(v)) : null
+        }, {arg: [flowId, check], timeout: 15})
+        const asked = shown(b, "requested")
+        b.evaluate((id) => window.moqui.crypto.verification(id, "accept").then(() => true), flowId)
+        shown(a, "ready")
+        a.evaluate((id) => window.moqui.crypto.verification(id, "sas").then(() => true), flowId)
+        const aEmoji = shown(a, "emoji").emojis.map((e) => e.symbol)
+        const bEmoji = shown(b, "emoji").emojis.map((e) => e.symbol)
+        for (const page of [a, b]) page.evaluate((id) => window.moqui.crypto.verification(id, "confirm").then(() => true), flowId)
+        shown(a, "done")
+        shown(b, "done")
+        // the room as john.doe's Chat shows it (moqui.chat.trustOf, e2eeLabel)
+        const seen = a.waitFor(async ([roomId, members, me, other]) => {
+            const trust = window.moqui.chat.trustOf(await window.moqui.crypto.roomTrust(roomId, members), me)
+            const label = window.moqui.chat.e2eeLabel({ encrypted: true, roomTypeEnumId: "CrtPrivate" }, trust)
+            return trust.people[other] && trust.people[other].verified ? { label: label.state, person: trust.people[other].verified } : null
+        }, {arg: [room.id, members, room.a, room.b], timeout: 15})
+        // b on a new browser: a device b did not sign, of a person john.doe verified
+        const b2 = browser.newPage({user: "calls.client.b", password: PASSWORD, timeout: 30})
+        b2.allowProblems(/userPhoto\?userId=/)
+        b2.goto("/qapps/BasicComms/Home")
+        b2.evaluate(HELPERS)
+        const newDevice = b2.evaluate(() => window.moqui.crypto.ensureDevice().then((d) => d.deviceId))
+        const refused = a.waitFor(async ([roomId, members]) => {
+            await window.moqui.crypto.sync()
+            try { await window.__e2ee.send(roomId, members, "<p>To verified b</p>"); return null } catch (err) {
+                return err && err.reasonCode === "verifiedUserProblem" ? { reasonCode: err.reasonCode, problems: err.problems } : null }
+        }, {arg: [room.id, members], timeout: 20})
+        const sent = a.evaluate(([roomId, members, problems]) => window.moqui.crypto.acceptProblems(problems)
+            .then(() => window.__e2ee.send(roomId, members, "<p>Sent anyway</p>")), [room.id, members, refused.problems])
+        return {asked, aEmoji, bEmoji, seen, newDevice, refused, sent, problemText: a.evaluate((problems) =>
+            window.moqui.chat.problemsText(problems, () => "B")[0], refused.problems)}
+    },
+    then({asked, aEmoji, bEmoji, seen, newDevice, refused, sent, problemText}) {
+        asked.otherUserId == room.a
+        aEmoji.length == 7
+        aEmoji.join(" ") == bEmoji.join(" ")
+        seen.person == true
+        seen.label == "verified"
+        refused.reasonCode == "verifiedUserProblem"
+        refused.problems.some((problem) => problem.userId == room.b && problem.deviceId == newDevice && problem.kind == "newDevice")
+        problemText.startsWith("B has a new device that is not verified")
+        sent.eventSeq > 0
     }
 })
 

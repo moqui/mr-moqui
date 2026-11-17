@@ -71,7 +71,14 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   messages: the server, for a plain private room or a direct chat; the phone network and the SMS provider, for a
   phone number's texts (its composer says Text message); the bridge, for a room bridged to another network (its composer
   names the network). A public room has the open lock and no note. A private room's own icon is people, not a lock. The
-  terminal shows the same as one line. Mail never has a lock.
+  members pane and Room settings say the same for every room, and the terminal shows it as one line. Mail never has a
+  lock: a private mailbox or list shows people, a closed thread a crossed-out comment.
+- <a id="verify-people"></a>**Verifying people.** In an encrypted room, Members has Verify by each person who is not
+  verified (the room's note and a message that someone cannot read have it too): pick their device and compare emoji
+  with them; when the emoji match on both sides their device is verified, and with cross-signing every device they sign.
+  A verified person has a check by their name, in Members and on their messages. When someone you verified adds a device
+  you have not verified, or gets a new identity, your next message waits: Verify them, or Send anyway, which lets that
+  device or identity read it. A request from another person to verify shows in the room you have open and on My devices.
 - <a id="bridged-rooms"></a>**Bridged rooms** (C1). A room an administrator connected to another network (SMS, WhatsApp,
   XMPP, Matrix and others, as their adapters come) has the network's mark in the room list and its name in the room's
   header ("Messages here also go to ..."). People from that network are members with the network's badge, and their

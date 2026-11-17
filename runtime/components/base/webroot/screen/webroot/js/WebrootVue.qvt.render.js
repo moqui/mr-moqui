@@ -3202,6 +3202,192 @@
               ], 4))
             }
         } },
+        "m-chat-verification": { hash: "2f682fbe", make: function (Vue) {
+            const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, createBlock: _createBlock, createVNode: _createVNode, Fragment: _Fragment, renderList: _renderList, withCtx: _withCtx } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_btn = _resolveComponent("q-btn")
+              const _component_q_card = _resolveComponent("q-card")
+
+              return (_openBlock(), _createBlock(_component_q_card, {
+                flat: "",
+                bordered: "",
+                class: "q-pa-md m-chat-verification",
+                "data-flow": _ctx.v.flowId,
+                "data-user": _ctx.v.otherUserId
+              }, {
+                default: _withCtx(() => [
+                  _createElementVNode("div", { class: "text-subtitle1" }, _toDisplayString(_ctx.title), 1),
+                  (_ctx.v.done)
+                    ? (_openBlock(), _createElementBlock("div", {
+                        key: 0,
+                        class: "text-positive m-chat-verification-done"
+                      }, _toDisplayString(_ctx.t('Verified')), 1))
+                    : (_ctx.v.cancelled)
+                      ? (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
+                          _createElementVNode("div", { class: "m-muted m-chat-verification-ended" }, [
+                            _createTextVNode(_toDisplayString(_ctx.endedText) + " ", 1),
+                            (_ctx.v.cancelReason && !_ctx.v.timedOut)
+                              ? (_openBlock(), _createElementBlock("span", { key: 0 }, "(" + _toDisplayString(_ctx.v.cancelReason) + ")", 1))
+                              : _createCommentVNode("", true)
+                          ]),
+                          _createElementVNode("div", { class: "row q-gutter-xs q-mt-xs" }, [
+                            (_ctx.canRetry)
+                              ? (_openBlock(), _createBlock(_component_q_btn, {
+                                  key: 0,
+                                  unelevated: "",
+                                  "no-caps": "",
+                                  color: "primary",
+                                  label: _ctx.t('Try again'),
+                                  class: "m-chat-verification-retry",
+                                  onClick: _ctx.retry
+                                }, null, 8, ["label", "onClick"]))
+                              : _createCommentVNode("", true),
+                            _createVNode(_component_q_btn, {
+                              flat: "",
+                              "no-caps": "",
+                              label: _ctx.t('Dismiss'),
+                              onClick: _ctx.dismiss
+                            }, null, 8, ["label", "onClick"])
+                          ])
+                        ], 64))
+                      : (_openBlock(), _createElementBlock(_Fragment, { key: 2 }, [
+                          (_ctx.v.started && !_ctx.v.emojis && !_ctx.v.qrImage && !_ctx.v.scanned)
+                            ? (_openBlock(), _createElementBlock("div", {
+                                key: 0,
+                                class: "m-muted q-my-sm m-chat-verification-waiting",
+                                role: "status"
+                              }, [
+                                _createTextVNode(_toDisplayString(_ctx.t('Waiting for the other device…')), 1),
+                                (_ctx.v.remainingMs)
+                                  ? (_openBlock(), _createElementBlock("span", { key: 0 }, _toDisplayString(_ctx.timeLeft(_ctx.v.remainingMs)), 1))
+                                  : _createCommentVNode("", true)
+                              ]))
+                            : (_ctx.v.confirmed)
+                              ? (_openBlock(), _createElementBlock("div", {
+                                  key: 1,
+                                  class: "m-muted q-my-sm m-chat-verification-waiting",
+                                  role: "status"
+                                }, _toDisplayString(_ctx.t('Waiting for the other device to confirm')), 1))
+                              : _createCommentVNode("", true),
+                          (_ctx.v.emojis)
+                            ? (_openBlock(), _createElementBlock("div", {
+                                key: 2,
+                                class: "row q-gutter-md q-my-sm m-chat-verification-emoji"
+                              }, [
+                                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.v.emojis, (e) => {
+                                  return (_openBlock(), _createElementBlock("div", {
+                                    key: e.description,
+                                    class: "column items-center"
+                                  }, [
+                                    _createElementVNode("span", { style: {"font-size":"32px"} }, _toDisplayString(e.symbol), 1),
+                                    _createElementVNode("span", { class: "text-caption" }, _toDisplayString(_ctx.t(e.description)), 1)
+                                  ]))
+                                }), 128))
+                              ]))
+                            : _createCommentVNode("", true),
+                          (_ctx.v.emojis)
+                            ? (_openBlock(), _createElementBlock("div", {
+                                key: 3,
+                                class: "text-caption m-muted"
+                              }, _toDisplayString(_ctx.t('Do the same emoji show on the other device, in the same order?')), 1))
+                            : _createCommentVNode("", true),
+                          (_ctx.v.qrImage && !_ctx.v.emojis)
+                            ? (_openBlock(), _createElementBlock("img", {
+                                key: 4,
+                                src: _ctx.v.qrImage,
+                                alt: "QR",
+                                style: {"width":"220px","height":"220px"},
+                                class: "q-my-sm"
+                              }, null, 8, ["src"]))
+                            : _createCommentVNode("", true),
+                          _createElementVNode("div", { class: "row q-gutter-xs q-mt-xs" }, [
+                            (!_ctx.v.weStarted && _ctx.v.phase === 'requested')
+                              ? (_openBlock(), _createBlock(_component_q_btn, {
+                                  key: 0,
+                                  unelevated: "",
+                                  "no-caps": "",
+                                  color: "primary",
+                                  label: _ctx.t('Accept'),
+                                  class: "m-chat-verification-accept",
+                                  onClick: $event => (_ctx.step('accept'))
+                                }, null, 8, ["label", "onClick"]))
+                              : _createCommentVNode("", true),
+                            (_ctx.v.ready && !_ctx.v.emojis)
+                              ? (_openBlock(), _createBlock(_component_q_btn, {
+                                  key: 1,
+                                  flat: "",
+                                  "no-caps": "",
+                                  icon: "sym_o_mood",
+                                  label: _ctx.t('Compare emoji'),
+                                  class: "m-chat-verification-sas",
+                                  onClick: $event => (_ctx.step('sas'))
+                                }, null, 8, ["label", "onClick"]))
+                              : _createCommentVNode("", true),
+                            (_ctx.v.ready && !_ctx.v.emojis && !_ctx.v.qrImage)
+                              ? (_openBlock(), _createBlock(_component_q_btn, {
+                                  key: 2,
+                                  flat: "",
+                                  "no-caps": "",
+                                  icon: "sym_o_qr_code_2",
+                                  label: _ctx.t('Show a QR code'),
+                                  onClick: $event => (_ctx.step('showQr'))
+                                }, null, 8, ["label", "onClick"]))
+                              : _createCommentVNode("", true),
+                            (_ctx.v.ready && !_ctx.v.emojis && _ctx.canScan)
+                              ? (_openBlock(), _createBlock(_component_q_btn, {
+                                  key: 3,
+                                  flat: "",
+                                  "no-caps": "",
+                                  icon: "sym_o_qr_code_scanner",
+                                  label: _ctx.t('Scan their code'),
+                                  onClick: _ctx.scan
+                                }, null, 8, ["label", "onClick"]))
+                              : _createCommentVNode("", true),
+                            (_ctx.v.scanned)
+                              ? (_openBlock(), _createBlock(_component_q_btn, {
+                                  key: 4,
+                                  unelevated: "",
+                                  "no-caps": "",
+                                  color: "primary",
+                                  label: _ctx.t('They scanned it'),
+                                  onClick: $event => (_ctx.step('qrConfirm'))
+                                }, null, 8, ["label", "onClick"]))
+                              : _createCommentVNode("", true),
+                            (_ctx.v.emojis && !_ctx.v.confirmed)
+                              ? (_openBlock(), _createBlock(_component_q_btn, {
+                                  key: 5,
+                                  unelevated: "",
+                                  "no-caps": "",
+                                  color: "primary",
+                                  label: _ctx.t('They match'),
+                                  class: "m-chat-verification-match",
+                                  onClick: $event => (_ctx.step('confirm'))
+                                }, null, 8, ["label", "onClick"]))
+                              : _createCommentVNode("", true),
+                            (_ctx.v.emojis && !_ctx.v.confirmed)
+                              ? (_openBlock(), _createBlock(_component_q_btn, {
+                                  key: 6,
+                                  flat: "",
+                                  "no-caps": "",
+                                  color: "negative",
+                                  label: _ctx.t('They differ'),
+                                  onClick: $event => (_ctx.step('mismatch'))
+                                }, null, 8, ["label", "onClick"]))
+                              : _createCommentVNode("", true),
+                            _createVNode(_component_q_btn, {
+                              flat: "",
+                              "no-caps": "",
+                              label: _ctx.t('Cancel'),
+                              onClick: $event => (_ctx.step('cancel'))
+                            }, null, 8, ["label", "onClick"])
+                          ])
+                        ], 64))
+                ]),
+                _: 1
+              }, 8, ["data-flow", "data-user"]))
+            }
+        } },
         "m-chatter": { hash: "8482661e", make: function (Vue) {
             const { resolveComponent: _resolveComponent, createVNode: _createVNode, normalizeClass: _normalizeClass, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode } = Vue
 

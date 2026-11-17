@@ -830,3 +830,57 @@ test("an encrypted room's trust: every other member's devices verified, else Ver
     chat.applyOpened(item, { error: "unreadable", withheld: "m.unverified" });
     assert.deepEqual([item.undecryptable, item.withheld], [true, "m.unverified"]);
 });
+
+test("the E2EE label's edges: a members-only record room is plain, a text with another bridge says both, an inbound-only bridge names nothing in the composer", () => {
+    const label = (room) => chat.e2eeLabel(room);
+    assert.equal(label({ roomTypeEnumId: "CrtRecord", visibilityEnumId: "CrvMembers" }).state, "plain", "a record room kept to its members");
+    assert.equal(label({ roomTypeEnumId: "CrtRecord" }).state, "public", "a record's room for those who see the record");
+    const both = label({ roomTypeEnumId: "CrtPrivate", bridges: [{ network: "sms", networkName: "SMS", outbound: true }, { network: "whatsapp", networkName: "WhatsApp", outbound: true }] });
+    assert.equal(both.state, "sms");
+    assert.ok(both.banner.includes("SMS provider") && both.banner.includes("the bridge reads messages"), both.banner);
+    assert.equal(both.hint, "Text message · WhatsApp message");
+    const inbound = label({ roomTypeEnumId: "CrtPrivate", bridges: [{ network: "xmpp", networkName: "XMPP", outbound: false }] });
+    assert.deepEqual([inbound.state, inbound.hint], ["bridged", ""], "nothing goes out through it");
+    assert.equal(label({ roomTypeEnumId: "CrtPrivate", bridges: [{ network: "sms", networkName: "SMS", outbound: false }] }).hint, "", "a text room that sends nothing out");
+});
+
+test("people's checks (§6.1 rule 3): a verified identity or every device verified; a new identity is not verified; Verify asks another person first", () => {
+    const trust = chat.trustOf({ users: [{ userId: "ann", devices: [{ deviceId: "A2", verified: false }] },
+        { userId: "bob", identity: { verified: true }, devices: [{ deviceId: "B1", verified: true }] },
+        { userId: "cy", identity: { verified: false }, devices: [{ deviceId: "C1", verified: true }] },
+        { userId: "dee", identity: { verified: true, changed: true }, devices: [{ deviceId: "D1", verified: false }] },
+        { userId: "eve", devices: [] }] }, "ann");
+    assert.deepEqual(["bob", "cy", "dee", "eve"].map((id) => trust.people[id].verified), [true, true, false, false]);
+    assert.equal(trust.people.dee.changed, true);
+    assert.equal(chat.verifyTarget(trust, "ann"), "dee", "the first other person with a device not verified");
+    assert.equal(chat.verifyTarget(chat.trustOf({ users: [{ userId: "ann", devices: [{ deviceId: "A2", verified: false }] }] }, "ann"), "ann"), null, "only my own: My devices");
+    assert.deepEqual(chat.problemsText([{ userId: "bob", deviceId: "B9", displayName: "Bob's tablet", kind: "newDevice" }, { userId: "dee", kind: "changedIdentity" }],
+        (id) => ({ bob: "Bob", dee: "Dee" })[id]), ["Bob has a new device that is not verified: Bob's tablet", "Dee has a new identity: verify them again"]);
+    assert.ok(chat.undecryptableText("m.unverified", "Bob").includes("Members, Verify"), "the route there is");
+});
+
+test("who could not read my message is kept per account in this browser: from its clientRef to its eventSeq, for a reload or another tab", () => {
+    const priorMe = chat.me, priorScope = moqui.storageScope;
+    try {
+        chat.me = "ann";
+        moqui.storageScope = "acct-1";
+        localStorage.removeItem(chat.leftOutKey());
+        chat.noteLeftOut("c-77", "R9", "Not readable by Bob: their devices are not verified");
+        assert.deepEqual(chat.leftOutOf("R9"), {}, "not before it is sent");
+        chat.emit("sent", { clientRef: "c-77", chatRoomId: "R9", json: { event: { eventSeq: 41 } } });
+        assert.equal(chat.leftOutOf("R9")[41], "Not readable by Bob: their devices are not verified");
+        assert.equal(chat.readLeftOut().refs["c-77"], undefined);
+        // another account in the same browser keeps its own, and so do the banners
+        moqui.storageScope = "acct-2";
+        assert.deepEqual(chat.leftOutOf("R9"), {});
+        chat.closeBanner("R9", "plain");
+        assert.equal(chat.bannerClosed("R9", "plain"), true);
+        moqui.storageScope = "acct-1";
+        assert.equal(chat.bannerClosed("R9", "plain"), false, "a room id of another account is not this one's");
+        assert.equal(chat.leftOutOf("R9")[41], "Not readable by Bob: their devices are not verified");
+    } finally {
+        localStorage.removeItem(chat.leftOutKey());
+        chat.me = priorMe;
+        moqui.storageScope = priorScope;
+    }
+});

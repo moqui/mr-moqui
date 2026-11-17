@@ -2636,8 +2636,6 @@ const needsConnection = () => {
     moqui.notifyMessages([{ type: 'info', message: t('This needs a connection to the server: try again when it is back') }]);
     return true;
 };
-// who could not read a sealed message, by its clientRef until it is sent (COM-UI-013): in this page only
-const leftOutByRef = {};
 // the drafts of encrypted rooms: in this page only (C7)
 const sealedDrafts = {};
 const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
@@ -2748,6 +2746,7 @@ const messageTemplate = `
     <div class="col m-chat-body" style="min-width:0">
         <div v-if="!item.grouped" class="row items-baseline no-wrap m-chat-head">
             <span class="text-weight-medium ellipsis m-chat-name">{{item.senderName}}</span>
+            <q-icon v-if="room.personVerified(item.senderUserId)" name="sym_o_verified" size="14px" class="text-positive q-ml-xs m-chat-person-verified" :aria-label="room.t('Verified')"></q-icon>
             <q-chip v-if="item.event.senderExternal" dense square size="sm" icon="sym_o_hub" class="m-tonal text-info q-my-none q-ml-xs m-chat-external">
                 {{item.event.senderExternal.networkName || room.t('Outside')}}</q-chip>
             <span class="text-caption m-muted text-no-wrap q-ml-sm">{{item.timeText}}<q-tooltip>{{item.fullTime}}</q-tooltip></span>
@@ -2827,8 +2826,8 @@ const messageTemplate = `
             </div>
             <!-- my message in an encrypted room with only verified devices on: who cannot read it, and Verify (COM-UI-013) -->
             <div v-if="item.mine && room.leftOutBySeq[item.eventSeq]" class="row items-center no-wrap q-mt-xs text-caption text-warning m-chat-left-out">
-                <q-icon name="sym_o_no_encryption" size="14px" class="q-mr-xs"></q-icon><span class="ellipsis">{{room.leftOutBySeq[item.eventSeq]}}</span>
-                <q-btn flat dense no-caps size="sm" color="primary" class="q-ml-xs" :label="room.t('Verify')" @click.stop="room.openDevices()"></q-btn>
+                <q-icon name="sym_o_visibility_off" size="14px" class="q-mr-xs"></q-icon><span class="ellipsis">{{room.leftOutBySeq[item.eventSeq]}}</span>
+                <q-btn flat dense no-caps size="sm" color="primary" class="q-ml-xs m-chat-left-out-verify" :label="room.t('Verify')" @click.stop="room.verifySomeone()"></q-btn>
             </div>
             <!-- its delivery to the room's bridges: sending, delivered, not delivered (with Send again) or uncertain -->
             <div v-if="item.event.delivery" class="row items-center no-wrap q-mt-xs text-caption m-chat-delivery" :class="room.deliveryClass(item)"
@@ -3269,7 +3268,7 @@ const roomTemplate = `
         <q-icon :name="label.icon" size="16px" :class="label.lock ? 'text-positive' : 'm-muted'"></q-icon>
         <q-icon v-if="label.verified" name="sym_o_check" size="12px" class="text-positive"></q-icon>
         <span class="col q-ml-xs m-chat-e2ee-banner-text">{{label.banner}}</span>
-        <q-btn v-if="label.verify" flat dense no-caps size="sm" color="primary" class="q-ml-xs m-chat-verify" :label="t('Verify')" @click="openDevices"></q-btn>
+        <q-btn v-if="label.verify" flat dense no-caps size="sm" color="primary" class="q-ml-xs m-chat-verify" :label="t('Verify')" @click="verifySomeone()"></q-btn>
         <q-btn flat round dense size="xs" icon="sym_o_close" class="q-ml-xs" :aria-label="t('Close the note')" @click="closeBanner"></q-btn>
     </div>
 
@@ -3288,7 +3287,7 @@ const roomTemplate = `
                 <div class="text-caption">{{t('It opens when the server can be reached.')}}</div>
             </div>
             <div v-else-if="state === 'missing'" class="col column items-center justify-center q-pa-lg text-center m-muted">
-                <q-icon name="sym_o_lock" size="48px"></q-icon>
+                <q-icon name="sym_o_block" size="48px"></q-icon>
                 <div class="text-subtitle2 q-mt-sm">{{t('This conversation is not available')}}</div>
                 <div class="text-caption">{{t('It does not exist, or you are not in it.')}}</div>
             </div>
@@ -3433,6 +3432,9 @@ const roomTemplate = `
             </div>
 
             <div v-else-if="side === 'members'" class="col scroll" style="min-height:0">
+                <!-- the room's E2EE label, for every room (§6.1 rule 1) -->
+                <div class="q-pa-sm text-caption row no-wrap items-start m-chat-room-label" :data-e2ee="label.state">
+                    <q-icon :name="label.icon" size="16px" class="q-mr-xs" :class="label.lock ? 'text-positive' : 'm-muted'"></q-icon><span class="col">{{label.banner || label.text}}</span></div>
                 <div v-if="isMember && !isDirect && !access.isArchived" class="q-pa-sm row no-wrap items-end q-gutter-x-xs">
                     <div class="col"><m-drop-down v-model="addPeople.userIds" name="addUserIds" multiple server-search :options-url="url('searchUsers')" :label="t('Add people')"></m-drop-down></div>
                     <q-btn dense unelevated no-caps color="primary" :label="t('Add')" :loading="addPeople.busy" :disable="!(addPeople.userIds || []).length" @click="addMembers"></q-btn>
@@ -3440,9 +3442,13 @@ const roomTemplate = `
                 <q-list dense>
                     <q-item v-for="person in members" :key="person.userId || person.chatActorId">
                         <q-item-section avatar><m-avatar :name="person.name" :user-id="person.userId || undefined" size="32px"></m-avatar></q-item-section>
-                        <q-item-section><q-item-label>{{person.name}}<span v-if="person.userId && person.userId === me.userId" class="m-muted"> ({{t('you')}})</span></q-item-label>
-                            <q-item-label caption>{{person.external ? externalText(person) : presenceText(person.userId)}}</q-item-label></q-item-section>
+                        <q-item-section><q-item-label>{{person.name}}<span v-if="person.userId && person.userId === me.userId" class="m-muted"> ({{t('you')}})</span>
+                                <q-icon v-if="personVerified(person.userId)" name="sym_o_verified" size="14px" class="text-positive q-ml-xs m-chat-person-verified" :aria-label="t('Verified')"></q-icon></q-item-label>
+                            <q-item-label caption>{{person.external ? externalText(person) : presenceText(person.userId)}}<span v-if="personChanged(person.userId)" class="text-warning"> · {{t('new identity: verify them again')}}</span></q-item-label></q-item-section>
                         <q-item-section side class="row no-wrap items-center">
+                            <!-- an encrypted room: verify another person by emoji (§6.1 rule 3, COM-UI-013) -->
+                            <q-btn v-if="canVerify(person)" flat dense no-caps size="sm" color="primary" icon="sym_o_verified_user" :label="t('Verify')" class="m-chat-member-verify"
+                                    :data-user="person.userId" @click="openVerify(person.userId)"></q-btn>
                             <q-chip v-if="person.external" dense square icon="sym_o_hub" class="m-tonal text-info m-chat-external">{{person.networkName || t('Outside')}}</q-chip>
                             <q-chip v-if="person.roleEnumId === 'CmrOwner' && !isDirect" dense square class="m-tonal">{{t('Owner')}}</q-chip>
                             <q-chip v-else-if="person.roleEnumId === 'CmrModerator'" dense square class="m-tonal text-info">{{t('Moderator')}}</q-chip>
@@ -3507,6 +3513,8 @@ const roomTemplate = `
 
     <!-- RoomSettings: name and topic (moderators), who may join and the archive (owners) -->
     <m-dialog v-model="settings.open" :title="t('Room settings')" width="560">
+        <div class="q-mb-sm text-caption row no-wrap items-start m-chat-room-label" :data-e2ee="label.state">
+            <q-icon :name="label.icon" size="16px" class="q-mr-xs" :class="label.lock ? 'text-positive' : 'm-muted'"></q-icon><span class="col">{{label.banner || label.text}}</span></div>
         <m-text-line v-model="settings.roomName" :name="'settingsName' + uid" :label="t('Name')"></m-text-line>
         <m-text-area v-model="settings.topic" :name="'settingsTopic' + uid" rows="2" :label="t('Topic')" class="q-mt-xs"></m-text-area>
         <template v-if="isOwner">
@@ -3563,6 +3571,38 @@ const roomTemplate = `
             <q-space></q-space>
             <q-btn v-if="isOwner" unelevated no-caps class="m-btn-tonal text-negative" :icon="room && room.archivedDate ? 'sym_o_unarchive' : 'sym_o_archive'"
                     :label="room && room.archivedDate ? t('Take out of the archive') : t('Archive the room')" @click="setArchived(!(room && room.archivedDate))"></q-btn>
+        </div>
+    </m-dialog>
+
+    <!-- Verify a person (COM-UI-013): their devices as this browser knows them, each with Verify, and the verifications with them -->
+    <m-dialog v-model="verifyBox.open" :title="verifyTitle" width="520">
+        <div class="text-caption m-muted q-mb-sm">{{t('Compare emoji with them, on a call or side by side: when they match, their device is verified, and with cross-signing every device they signed.')}}</div>
+        <q-list dense bordered separator class="rounded-borders q-mb-sm m-chat-verify-devices">
+            <q-item v-for="device in verifyDevices" :key="device.deviceId" :data-device="device.deviceId">
+                <q-item-section><q-item-label>{{device.displayName || device.deviceId}}</q-item-label><q-item-label caption>{{device.deviceId}}</q-item-label></q-item-section>
+                <q-item-section side>
+                    <q-badge v-if="device.verified" color="positive">{{t('Verified')}}</q-badge>
+                    <q-btn v-else flat dense no-caps color="primary" icon="sym_o_verified_user" :label="t('Verify')" class="m-chat-verify-device" @click="verifyDevice(device)"></q-btn>
+                </q-item-section>
+            </q-item>
+            <q-item v-if="!verifyDevices.length"><q-item-section class="text-caption m-muted">{{t('This browser knows no device of theirs yet.')}}</q-item-section></q-item>
+        </q-list>
+        <m-chat-verification v-for="flow in verifyFlows" :key="flow.flowId" :flow="flow" :who="nameOf(flow.otherUserId)" can-retry class="q-mb-sm"
+                @retry="retryVerify" @step="verifyStepped"></m-chat-verification>
+    </m-dialog>
+    <!-- another person asks to verify with this device: shown in the room, as on My devices -->
+    <m-dialog :model-value="incomingFlows.length > 0 && !verifyBox.open" :title="t('Verify')" width="520" @update:model-value="(open) => { if (!open) dismissIncoming(); }">
+        <m-chat-verification v-for="flow in incomingFlows" :key="flow.flowId" :flow="flow" :who="nameOf(flow.otherUserId)" class="q-mb-sm"
+                @step="verifyStepped"></m-chat-verification>
+    </m-dialog>
+    <!-- before a send (§6.1 rule 3): a verified person's new device or new identity; Verify, or Send anyway -->
+    <m-dialog v-model="problemBox.open" :title="t('Check before you send')" width="520">
+        <div class="text-body2 q-mb-sm">{{t('Someone you verified has changed. Verify them before you send, or send anyway: the new device or identity then reads this message.')}}</div>
+        <ul class="q-my-sm m-chat-problems"><li v-for="line in problemLines" :key="line">{{line}}</li></ul>
+        <div class="row q-gutter-sm q-mt-md">
+            <q-btn unelevated no-caps color="primary" icon="sym_o_verified_user" :label="t('Verify')" class="m-chat-problem-verify" @click="verifyProblem"></q-btn>
+            <q-btn flat no-caps :label="t('Send anyway')" :loading="problemBox.busy" class="m-chat-problem-send" @click="sendAnyway"></q-btn>
+            <q-btn flat no-caps :label="t('Cancel')" v-close-popup></q-btn>
         </div>
     </m-dialog>
 
@@ -3672,7 +3712,8 @@ const chatRoom = {
             settings: { open: false, roomName: '', topic: '', visibility: '', busy: false },
             bridgeForm: { open: false, chatRoomBridgeId: null, chatBridgeId: null, externalRoomId: '', externalRoomName: '', externalRoomUrl: '', directionEnumId: 'CrbBoth', busy: false },
             bridgeChoices: [], previewBox: { open: false, src: '', name: '', download: '', file: null },
-            tick: Date.now(), width: 0, dragOver: false, anchor: null, trust: null, bannerTick: 0, leftOutBySeq: {},
+            tick: Date.now(), width: 0, dragOver: false, anchor: null, trust: null, bannerTick: 0, leftOutTick: 0,
+            verifyBox: { open: false, userId: null }, problemBox: { open: false, problems: [], retry: null, busy: false }, dismissedFlows: {},
             fileOn: { open: false, item: null, value: null, busy: false },
             quickReactions: QUICK_REACTIONS, emoji: EMOJI, levels: LEVELS
         };
@@ -3712,6 +3753,22 @@ const chatRoom = {
         // and, in an encrypted room, its devices' trust
         label() { return moqui.chat.e2eeLabel(this.room, this.trust); },
         bannerHidden() { void this.bannerTick; return !!this.room && moqui.chat.bannerClosed(this.roomId, this.label.state); },
+        // who could not read my messages (COM-UI-013), as this browser keeps it for the account: {eventSeq: text}
+        leftOutBySeq() { void this.leftOutTick; return this.sealed ? moqui.chat.leftOutOf(this.roomId) : {}; },
+        verifications() { return (moqui.crypto && moqui.crypto.state && moqui.crypto.state.verifications) || []; },
+        verifyTitle() { return fill(t('Verify {name}'), { name: this.verifyBox.userId ? this.nameOf(this.verifyBox.userId) : '' }); },
+        verifyDevices() {
+            const person = this.trust && this.trust.people && this.verifyBox.userId ? this.trust.people[this.verifyBox.userId] : null;
+            return (person && person.devices) || [];
+        },
+        verifyFlows() { return this.verifications.filter((flow) => flow.otherUserId === this.verifyBox.userId && !this.dismissedFlows[flow.flowId]); },
+        // another person's request to verify, not yet answered here
+        incomingFlows() {
+            const me = this.me && this.me.userId;
+            return this.sealed ? this.verifications.filter((flow) => !flow.weStarted && flow.otherUserId && flow.otherUserId !== me && !flow.done && !flow.cancelled
+                && !this.dismissedFlows[flow.flowId]) : [];
+        },
+        problemLines() { return moqui.chat.problemsText(this.problemBox.problems, (id) => this.nameOf(id)); },
         recordLabel() { const record = this.room && this.room.record; return record ? [record.typeLabel, record.title].filter((part) => part).join(' · ') : ''; },
         roomKindText() {
             if (!this.room) return '';
@@ -3797,6 +3854,8 @@ const chatRoom = {
     watch: {
         seq(value) { if (value && this.state === 'ready') this.jumpTo(Number(value)); },
         cryptoReady(value) { if (value) this.loadTrust(); },
+        // a verification with someone of this room done: their check, and the room's
+        verifications(list) { if (this.sealed && list.some((flow) => flow.done && !this.dismissedFlows['done:' + flow.flowId])) this.verificationsDone(list); },
         thread(value) {
             if (this.state !== 'ready') return;
             if (value && Number(value) !== this.threadView.rootSeq) this.openThread(Number(value), true);
@@ -3856,9 +3915,63 @@ const chatRoom = {
                 if (roomId === this.roomId) this.trust = moqui.chat.trustOf(answer, this.me.userId);
             }, () => { if (roomId === this.roomId) this.trust = null; });
         },
+        verificationsDone(list) {
+            const dismissed = Object.assign({}, this.dismissedFlows);
+            list.filter((flow) => flow.done).forEach((flow) => { dismissed['done:' + flow.flowId] = true; });
+            this.dismissedFlows = dismissed;
+            setTimeout(() => this.loadTrust(), 500);
+        },
         closeBanner() { moqui.chat.closeBanner(this.roomId, this.label.state); this.bannerTick += 1; },
-        // Verify: My devices, where a device is verified by emoji or QR code
+        // Verify: My devices, where this user's own devices are verified by emoji or QR code
         openDevices() { this.go(this.linkBase.replace(/\/Chat$/, '/Settings/Devices')); },
+        // ---- verifying people (COM-UI-013, §6.1 rule 3) ----
+        personVerified(userId) { return !!(this.sealed && userId && this.trust && this.trust.people && this.trust.people[userId] && this.trust.people[userId].verified); },
+        personChanged(userId) { return !!(this.sealed && userId && this.trust && this.trust.people && this.trust.people[userId] && this.trust.people[userId].changed); },
+        canVerify(person) {
+            return this.sealed && this.cryptoReady && !this.cryptoElsewhere && !!person.userId && person.userId !== this.me.userId && !person.external
+                && !this.personVerified(person.userId);
+        },
+        openVerify(userId) {
+            this.verifyBox = { open: true, userId };
+            this.loadTrust();
+        },
+        // Verify from the banner or a message: the first other person with a device not verified, else My devices (my own)
+        verifySomeone(userId) {
+            const target = userId || moqui.chat.verifyTarget(this.trust, this.me.userId);
+            if (target) this.openVerify(target); else this.openDevices();
+        },
+        verifyDevice(device) {
+            const userId = this.verifyBox.userId;
+            moqui.crypto.verifyDevice(userId, device.deviceId).catch((err) => moqui.notifyMessages([], (err && err.errors) || t('The verification did not start')));
+        },
+        retryVerify(flow) {
+            const device = this.verifyDevices.find((one) => one.deviceId === flow.otherDeviceId) || this.verifyDevices.find((one) => !one.verified);
+            if (device) this.verifyDevice(device);
+        },
+        // a match confirmed: the room's trust read again once the other side is done
+        verifyStepped(action) { if (action === 'confirm' || action === 'qrConfirm') setTimeout(() => this.loadTrust(), 1500); },
+        dismissIncoming() {
+            const dismissed = Object.assign({}, this.dismissedFlows);
+            this.incomingFlows.forEach((flow) => { dismissed[flow.flowId] = true; });
+            this.dismissedFlows = dismissed;
+        },
+        // a send refused for a verified person's change: say it, with Verify and Send anyway (retry sends it again)
+        askProblems(problems, retry) { this.problemBox = { open: true, problems: problems || [], retry, busy: false }; },
+        verifyProblem() {
+            const first = (this.problemBox.problems || [])[0];
+            this.problemBox = Object.assign({}, this.problemBox, { open: false });
+            if (first && first.userId !== this.me.userId) this.openVerify(first.userId); else this.openDevices();
+        },
+        sendAnyway() {
+            const box = this.problemBox;
+            box.busy = true;
+            moqui.crypto.acceptProblems(box.problems).then(() => {
+                this.problemBox = { open: false, problems: [], retry: null, busy: false };
+                this.loadTrust();
+                if (box.retry) return box.retry();
+                return null;
+            }).catch((err) => { box.busy = false; moqui.notifyMessages([], (err && err.errors) || t('This message could not be encrypted')); });
+        },
         undecryptableText(item) { return moqui.chat.undecryptableText(item.withheld, item.senderName); },
         bridgeEncryptionText(encryption) {
             if (encryption === 'EndToEnd') return t('End-to-end encrypted through the bridge');
@@ -3875,7 +3988,8 @@ const chatRoom = {
         // the room's call: a new one rings its members; one going on is joined (the page's call store, WebrootCall.js)
         startCall() {
             if (needsConnection()) return;
-            if (moqui.call) moqui.call.startCall({ chatRoomId: this.roomId, video: true });
+            // an encrypted room's call is end to end (§6.1 rule 4): asked so, a browser that cannot is refused before anyone rings
+            if (moqui.call) moqui.call.startCall(Object.assign({ chatRoomId: this.roomId, video: true }, this.sealed ? { requireE2ee: true } : {}));
         },
         go(target) { if (target) this.$root.setUrl(target); },
         domId(seq, inThread) { return 'chat-' + this.uid + (inThread ? '-t-' : '-m-') + seq; },
@@ -4229,7 +4343,7 @@ const chatRoom = {
                     // who cannot read it: the devices only verified devices left out (COM-UI-013), shown under it once it is sent
                     const leftOut = moqui.crypto && moqui.crypto.leftOut ? moqui.crypto.leftOut(this.roomId).catch(() => []) : Promise.resolve([]);
                     return leftOut.then((devices) => {
-                        if (devices && devices.length) leftOutByRef[clientRef] = moqui.chat.leftOutText(devices, this.me.userId, (id) => this.nameOf(id));
+                        if (devices && devices.length) moqui.chat.noteLeftOut(clientRef, this.roomId, moqui.chat.leftOutText(devices, this.me.userId, (id) => this.nameOf(id)));
                         return moqui.chat.send({ clientRef, chatRoomId: this.roomId, url: this.url('send'), params: sealedParams, text: '', sealed: true,
                             threadRootEventSeq: threadRoot, hasFiles: !!(message.attachmentIds || []).length });
                     });
@@ -4237,7 +4351,13 @@ const chatRoom = {
                     if (outcome && outcome.failed && outcome.error) moqui.notifyMessages([{ type: 'warning', message: outcome.error }]);
                     return outcome;
                 }, (err) => {
-                    moqui.notifyMessages([{ type: 'warning', message: (err && (err.errors || err.message)) || t('This message could not be encrypted') }]);
+                    // a verified person's new device or identity (§6.1 rule 3): asked first, then sent again
+                    if (err && err.reasonCode === 'verifiedUserProblem') this.askProblems(err.problems, () => this.sendMessage(message).then(() => {
+                        // sent after all: the composer that kept its text is cleared
+                        const vm = this.composers && this.composers[threadRoot ? 'thread' : 'main'];
+                        if (vm) vm.clear();
+                    }));
+                    else moqui.notifyMessages([{ type: 'warning', message: (err && (err.errors || err.message)) || t('This message could not be encrypted') }]);
                     return restore(err);
                 });
             }
@@ -4270,10 +4390,6 @@ const chatRoom = {
             const me = this.me.userId;
             const threadRoot = payload.threadRootEventSeq != null ? Number(payload.threadRootEventSeq) : null;
             const seq = Number(event.eventSeq);
-            if (payload.clientRef && leftOutByRef[payload.clientRef]) {
-                this.leftOutBySeq = Object.assign({}, this.leftOutBySeq, { [seq]: leftOutByRef[payload.clientRef] });
-                delete leftOutByRef[payload.clientRef];
-            }
             this.myLastRead = Math.max(this.myLastRead, seq);
             if (this.room) this.room.lastEventSeq = Math.max(Number(this.room.lastEventSeq || 0), seq);
             this.dividerSeq = null;
@@ -5106,6 +5222,11 @@ const chatRoom = {
             this.unsubscribe.push(moqui.chat.on('changed', (payload) => this.onChangeAnswered(payload)));
             this.unsubscribe.push(moqui.chat.on('rooms', (payload) => this.onRoomsChanged(payload)));
             this.unsubscribe.push(moqui.chat.on('connection', (payload) => this.onConnection(payload)));
+            this.unsubscribe.push(moqui.chat.on('leftOut', () => { this.leftOutTick += 1; }));
+            // a member's devices or identity changed (a new device, a verification): the room's trust again (§6.1 rule 3)
+            if (moqui.crypto && moqui.crypto.onTrust) this.unsubscribe.push(moqui.crypto.onTrust((userIds) => {
+                if ((userIds || []).some((id) => id === this.me.userId || this.members.some((person) => person.userId === id))) this.loadTrust();
+            }));
         }
         this.onVisibleBound = () => this.onVisible();
         document.addEventListener('visibilitychange', this.onVisibleBound);
@@ -6291,7 +6412,7 @@ module.exports = {
                           unelevated: "",
                           "toggle-color": "primary",
                           class: "q-mb-xs",
-                          options: [{label: _ctx.t('Private'), value: 'private', icon: 'sym_o_lock'}, {label: _ctx.t('Public'), value: 'public', icon: 'sym_o_tag'}]
+                          options: [{label: _ctx.t('Private'), value: 'private', icon: 'sym_o_groups'}, {label: _ctx.t('Public'), value: 'public', icon: 'sym_o_tag'}]
                         }, null, 8, ["modelValue", "onUpdate:modelValue", "options"]),
                         _createElementVNode("div", { class: "text-caption m-muted q-mb-sm" }, _toDisplayString(_ctx.newRoom.type === 'public' ? _ctx.t('Anyone can find this room, read it and join.') : _ctx.t('Only the people in it see it; members add others.')), 1),
                         (_ctx.newRoom.type !== 'public')
@@ -6517,6 +6638,7 @@ module.exports = {
                   const _component_q_toggle = _resolveComponent("q-toggle")
                   const _component_q_space = _resolveComponent("q-space")
                   const _component_m_dialog = _resolveComponent("m-dialog")
+                  const _component_m_chat_verification = _resolveComponent("m-chat-verification")
                   const _component_m_check = _resolveComponent("m-check")
                   const _component_m_date_time = _resolveComponent("m-date-time")
                   const _component_q_dialog = _resolveComponent("q-dialog")
@@ -7314,7 +7436,7 @@ module.exports = {
                                 color: "primary",
                                 class: "q-ml-xs m-chat-verify",
                                 label: _ctx.t('Verify'),
-                                onClick: _ctx.openDevices
+                                onClick: $event => (_ctx.verifySomeone())
                               }, null, 8, ["label", "onClick"]))
                             : _createCommentVNode("", true),
                           _createVNode(_component_q_btn, {
@@ -7379,7 +7501,7 @@ module.exports = {
                                   class: "col column items-center justify-center q-pa-lg text-center m-muted"
                                 }, [
                                   _createVNode(_component_q_icon, {
-                                    name: "sym_o_lock",
+                                    name: "sym_o_block",
                                     size: "48px"
                                   }),
                                   _createElementVNode("div", { class: "text-subtitle2 q-mt-sm" }, _toDisplayString(_ctx.t('This conversation is not available')), 1),
@@ -8153,6 +8275,17 @@ module.exports = {
                                         class: "col scroll",
                                         style: {"min-height":"0"}
                                       }, [
+                                        _createElementVNode("div", {
+                                          class: "q-pa-sm text-caption row no-wrap items-start m-chat-room-label",
+                                          "data-e2ee": _ctx.label.state
+                                        }, [
+                                          _createVNode(_component_q_icon, {
+                                            name: _ctx.label.icon,
+                                            size: "16px",
+                                            class: _normalizeClass(["q-mr-xs", _ctx.label.lock ? 'text-positive' : 'm-muted'])
+                                          }, null, 8, ["name", "class"]),
+                                          _createElementVNode("span", { class: "col" }, _toDisplayString(_ctx.label.banner || _ctx.label.text), 1)
+                                        ], 8, ["data-e2ee"]),
                                         (_ctx.isMember && !_ctx.isDirect && !_ctx.access.isArchived)
                                           ? (_openBlock(), _createElementBlock("div", {
                                               key: 0,
@@ -8208,13 +8341,28 @@ module.exports = {
                                                                 key: 0,
                                                                 class: "m-muted"
                                                               }, " (" + _toDisplayString(_ctx.t('you')) + ")", 1))
+                                                            : _createCommentVNode("", true),
+                                                          (_ctx.personVerified(person.userId))
+                                                            ? (_openBlock(), _createBlock(_component_q_icon, {
+                                                                key: 1,
+                                                                name: "sym_o_verified",
+                                                                size: "14px",
+                                                                class: "text-positive q-ml-xs m-chat-person-verified",
+                                                                "aria-label": _ctx.t('Verified')
+                                                              }, null, 8, ["aria-label"]))
                                                             : _createCommentVNode("", true)
                                                         ]),
                                                         _: 2
                                                       }, 1024),
                                                       _createVNode(_component_q_item_label, { caption: "" }, {
                                                         default: _withCtx(() => [
-                                                          _createTextVNode(_toDisplayString(person.external ? _ctx.externalText(person) : _ctx.presenceText(person.userId)), 1)
+                                                          _createTextVNode(_toDisplayString(person.external ? _ctx.externalText(person) : _ctx.presenceText(person.userId)), 1),
+                                                          (_ctx.personChanged(person.userId))
+                                                            ? (_openBlock(), _createElementBlock("span", {
+                                                                key: 0,
+                                                                class: "text-warning"
+                                                              }, " · " + _toDisplayString(_ctx.t('new identity: verify them again')), 1))
+                                                            : _createCommentVNode("", true)
                                                         ]),
                                                         _: 2
                                                       }, 1024)
@@ -8226,9 +8374,24 @@ module.exports = {
                                                     class: "row no-wrap items-center"
                                                   }, {
                                                     default: _withCtx(() => [
+                                                      (_ctx.canVerify(person))
+                                                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                            key: 0,
+                                                            flat: "",
+                                                            dense: "",
+                                                            "no-caps": "",
+                                                            size: "sm",
+                                                            color: "primary",
+                                                            icon: "sym_o_verified_user",
+                                                            label: _ctx.t('Verify'),
+                                                            class: "m-chat-member-verify",
+                                                            "data-user": person.userId,
+                                                            onClick: $event => (_ctx.openVerify(person.userId))
+                                                          }, null, 8, ["label", "data-user", "onClick"]))
+                                                        : _createCommentVNode("", true),
                                                       (person.external)
                                                         ? (_openBlock(), _createBlock(_component_q_chip, {
-                                                            key: 0,
+                                                            key: 1,
                                                             dense: "",
                                                             square: "",
                                                             icon: "sym_o_hub",
@@ -8242,7 +8405,7 @@ module.exports = {
                                                         : _createCommentVNode("", true),
                                                       (person.roleEnumId === 'CmrOwner' && !_ctx.isDirect)
                                                         ? (_openBlock(), _createBlock(_component_q_chip, {
-                                                            key: 1,
+                                                            key: 2,
                                                             dense: "",
                                                             square: "",
                                                             class: "m-tonal"
@@ -8254,7 +8417,7 @@ module.exports = {
                                                           }))
                                                         : (person.roleEnumId === 'CmrModerator')
                                                           ? (_openBlock(), _createBlock(_component_q_chip, {
-                                                              key: 2,
+                                                              key: 3,
                                                               dense: "",
                                                               square: "",
                                                               class: "m-tonal text-info"
@@ -8267,7 +8430,7 @@ module.exports = {
                                                           : _createCommentVNode("", true),
                                                       (_ctx.canModerate && person.userId !== _ctx.me.userId && (_ctx.isOwner || person.roleEnumId !== 'CmrOwner'))
                                                         ? (_openBlock(), _createBlock(_component_q_btn, {
-                                                            key: 3,
+                                                            key: 4,
                                                             flat: "",
                                                             round: "",
                                                             dense: "",
@@ -8639,6 +8802,17 @@ module.exports = {
                       width: "560"
                     }, {
                       default: _withCtx(() => [
+                        _createElementVNode("div", {
+                          class: "q-mb-sm text-caption row no-wrap items-start m-chat-room-label",
+                          "data-e2ee": _ctx.label.state
+                        }, [
+                          _createVNode(_component_q_icon, {
+                            name: _ctx.label.icon,
+                            size: "16px",
+                            class: _normalizeClass(["q-mr-xs", _ctx.label.lock ? 'text-positive' : 'm-muted'])
+                          }, null, 8, ["name", "class"]),
+                          _createElementVNode("span", { class: "col" }, _toDisplayString(_ctx.label.banner || _ctx.label.text), 1)
+                        ], 8, ["data-e2ee"]),
                         _createVNode(_component_m_text_line, {
                           modelValue: _ctx.settings.roomName,
                           "onUpdate:modelValue": $event => ((_ctx.settings.roomName) = $event),
@@ -8941,6 +9115,165 @@ module.exports = {
                                 onClick: $event => (_ctx.setArchived(!(_ctx.room && _ctx.room.archivedDate)))
                               }, null, 8, ["icon", "label", "onClick"]))
                             : _createCommentVNode("", true)
+                        ])
+                      ]),
+                      _: 1
+                    }, 8, ["modelValue", "onUpdate:modelValue", "title"]),
+                    _createVNode(_component_m_dialog, {
+                      modelValue: _ctx.verifyBox.open,
+                      "onUpdate:modelValue": $event => ((_ctx.verifyBox.open) = $event),
+                      title: _ctx.verifyTitle,
+                      width: "520"
+                    }, {
+                      default: _withCtx(() => [
+                        _createElementVNode("div", { class: "text-caption m-muted q-mb-sm" }, _toDisplayString(_ctx.t('Compare emoji with them, on a call or side by side: when they match, their device is verified, and with cross-signing every device they signed.')), 1),
+                        _createVNode(_component_q_list, {
+                          dense: "",
+                          bordered: "",
+                          separator: "",
+                          class: "rounded-borders q-mb-sm m-chat-verify-devices"
+                        }, {
+                          default: _withCtx(() => [
+                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.verifyDevices, (device) => {
+                              return (_openBlock(), _createBlock(_component_q_item, {
+                                key: device.deviceId,
+                                "data-device": device.deviceId
+                              }, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_item_section, null, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_item_label, null, {
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(device.displayName || device.deviceId), 1)
+                                        ]),
+                                        _: 2
+                                      }, 1024),
+                                      _createVNode(_component_q_item_label, { caption: "" }, {
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(device.deviceId), 1)
+                                        ]),
+                                        _: 2
+                                      }, 1024)
+                                    ]),
+                                    _: 2
+                                  }, 1024),
+                                  _createVNode(_component_q_item_section, { side: "" }, {
+                                    default: _withCtx(() => [
+                                      (device.verified)
+                                        ? (_openBlock(), _createBlock(_component_q_badge, {
+                                            key: 0,
+                                            color: "positive"
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(_ctx.t('Verified')), 1)
+                                            ]),
+                                            _: 1
+                                          }))
+                                        : (_openBlock(), _createBlock(_component_q_btn, {
+                                            key: 1,
+                                            flat: "",
+                                            dense: "",
+                                            "no-caps": "",
+                                            color: "primary",
+                                            icon: "sym_o_verified_user",
+                                            label: _ctx.t('Verify'),
+                                            class: "m-chat-verify-device",
+                                            onClick: $event => (_ctx.verifyDevice(device))
+                                          }, null, 8, ["label", "onClick"]))
+                                    ]),
+                                    _: 2
+                                  }, 1024)
+                                ]),
+                                _: 2
+                              }, 1032, ["data-device"]))
+                            }), 128)),
+                            (!_ctx.verifyDevices.length)
+                              ? (_openBlock(), _createBlock(_component_q_item, { key: 0 }, {
+                                  default: _withCtx(() => [
+                                    _createVNode(_component_q_item_section, { class: "text-caption m-muted" }, {
+                                      default: _withCtx(() => [
+                                        _createTextVNode(_toDisplayString(_ctx.t('This browser knows no device of theirs yet.')), 1)
+                                      ]),
+                                      _: 1
+                                    })
+                                  ]),
+                                  _: 1
+                                }))
+                              : _createCommentVNode("", true)
+                          ]),
+                          _: 1
+                        }),
+                        (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.verifyFlows, (flow) => {
+                          return (_openBlock(), _createBlock(_component_m_chat_verification, {
+                            key: flow.flowId,
+                            flow: flow,
+                            who: _ctx.nameOf(flow.otherUserId),
+                            "can-retry": "",
+                            class: "q-mb-sm",
+                            onRetry: _ctx.retryVerify,
+                            onStep: _ctx.verifyStepped
+                          }, null, 8, ["flow", "who", "onRetry", "onStep"]))
+                        }), 128))
+                      ]),
+                      _: 1
+                    }, 8, ["modelValue", "onUpdate:modelValue", "title"]),
+                    _createVNode(_component_m_dialog, {
+                      "model-value": _ctx.incomingFlows.length > 0 && !_ctx.verifyBox.open,
+                      title: _ctx.t('Verify'),
+                      width: "520",
+                      "onUpdate:modelValue": (open) => { if (!open) _ctx.dismissIncoming(); }
+                    }, {
+                      default: _withCtx(() => [
+                        (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.incomingFlows, (flow) => {
+                          return (_openBlock(), _createBlock(_component_m_chat_verification, {
+                            key: flow.flowId,
+                            flow: flow,
+                            who: _ctx.nameOf(flow.otherUserId),
+                            class: "q-mb-sm",
+                            onStep: _ctx.verifyStepped
+                          }, null, 8, ["flow", "who", "onStep"]))
+                        }), 128))
+                      ]),
+                      _: 1
+                    }, 8, ["model-value", "title", "onUpdate:modelValue"]),
+                    _createVNode(_component_m_dialog, {
+                      modelValue: _ctx.problemBox.open,
+                      "onUpdate:modelValue": $event => ((_ctx.problemBox.open) = $event),
+                      title: _ctx.t('Check before you send'),
+                      width: "520"
+                    }, {
+                      default: _withCtx(() => [
+                        _createElementVNode("div", { class: "text-body2 q-mb-sm" }, _toDisplayString(_ctx.t('Someone you verified has changed. Verify them before you send, or send anyway: the new device or identity then reads this message.')), 1),
+                        _createElementVNode("ul", { class: "q-my-sm m-chat-problems" }, [
+                          (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.problemLines, (line) => {
+                            return (_openBlock(), _createElementBlock("li", { key: line }, _toDisplayString(line), 1))
+                          }), 128))
+                        ]),
+                        _createElementVNode("div", { class: "row q-gutter-sm q-mt-md" }, [
+                          _createVNode(_component_q_btn, {
+                            unelevated: "",
+                            "no-caps": "",
+                            color: "primary",
+                            icon: "sym_o_verified_user",
+                            label: _ctx.t('Verify'),
+                            class: "m-chat-problem-verify",
+                            onClick: _ctx.verifyProblem
+                          }, null, 8, ["label", "onClick"]),
+                          _createVNode(_component_q_btn, {
+                            flat: "",
+                            "no-caps": "",
+                            label: _ctx.t('Send anyway'),
+                            loading: _ctx.problemBox.busy,
+                            class: "m-chat-problem-send",
+                            onClick: _ctx.sendAnyway
+                          }, null, 8, ["label", "loading", "onClick"]),
+                          _withDirectives(_createVNode(_component_q_btn, {
+                            flat: "",
+                            "no-caps": "",
+                            label: _ctx.t('Cancel')
+                          }, null, 8, ["label"]), [
+                            [_directive_close_popup]
+                          ])
                         ])
                       ]),
                       _: 1
@@ -9838,9 +10171,9 @@ module.exports = {
 
                 return function render(_ctx, _cache) {
                   const _component_m_avatar = _resolveComponent("m-avatar")
+                  const _component_q_icon = _resolveComponent("q-icon")
                   const _component_q_chip = _resolveComponent("q-chip")
                   const _component_q_tooltip = _resolveComponent("q-tooltip")
-                  const _component_q_icon = _resolveComponent("q-icon")
                   const _component_chat_edit = _resolveComponent("chat-edit")
                   const _component_q_item_section = _resolveComponent("q-item-section")
                   const _component_q_item_label = _resolveComponent("q-item-label")
@@ -9911,9 +10244,18 @@ module.exports = {
                             class: "row items-baseline no-wrap m-chat-head"
                           }, [
                             _createElementVNode("span", { class: "text-weight-medium ellipsis m-chat-name" }, _toDisplayString(_ctx.item.senderName), 1),
+                            (_ctx.room.personVerified(_ctx.item.senderUserId))
+                              ? (_openBlock(), _createBlock(_component_q_icon, {
+                                  key: 0,
+                                  name: "sym_o_verified",
+                                  size: "14px",
+                                  class: "text-positive q-ml-xs m-chat-person-verified",
+                                  "aria-label": _ctx.room.t('Verified')
+                                }, null, 8, ["aria-label"]))
+                              : _createCommentVNode("", true),
                             (_ctx.item.event.senderExternal)
                               ? (_openBlock(), _createBlock(_component_q_chip, {
-                                  key: 0,
+                                  key: 1,
                                   dense: "",
                                   square: "",
                                   size: "sm",
@@ -9937,7 +10279,7 @@ module.exports = {
                             ]),
                             (_ctx.item.pinned)
                               ? (_openBlock(), _createBlock(_component_q_icon, {
-                                  key: 1,
+                                  key: 2,
                                   name: "sym_o_keep",
                                   size: "14px",
                                   color: "primary",
@@ -10343,7 +10685,7 @@ module.exports = {
                                     class: "row items-center no-wrap q-mt-xs text-caption text-warning m-chat-left-out"
                                   }, [
                                     _createVNode(_component_q_icon, {
-                                      name: "sym_o_no_encryption",
+                                      name: "sym_o_visibility_off",
                                       size: "14px",
                                       class: "q-mr-xs"
                                     }),
@@ -10354,9 +10696,9 @@ module.exports = {
                                       "no-caps": "",
                                       size: "sm",
                                       color: "primary",
-                                      class: "q-ml-xs",
+                                      class: "q-ml-xs m-chat-left-out-verify",
                                       label: _ctx.room.t('Verify'),
-                                      onClick: _withModifiers($event => (_ctx.room.openDevices()), ["stop"])
+                                      onClick: _withModifiers($event => (_ctx.room.verifySomeone()), ["stop"])
                                     }, null, 8, ["label", "onClick"])
                                   ]))
                                 : _createCommentVNode("", true),
@@ -11697,7 +12039,7 @@ module.exports = {
             if (row.snoozedThruDate && Number(row.snoozedThruDate) > Date.now()) chips.push({ key: 'snooze', icon: 'sym_o_snooze', label: t('Until') + ' ' + this.shortWhen(row.snoozedThruDate), color: 'info' });
             if (row.statusId === 'ES_SCHEDULED' && row.scheduledSendDate) chips.push({ key: 'sched', icon: 'sym_o_schedule_send', label: t('Sends') + ' ' + this.shortWhen(row.scheduledSendDate), color: 'info' });
             if (row.sendError) chips.push({ key: 'error', icon: 'sym_o_error', label: t('Not sent'), color: 'negative' });
-            if (row.isClosed) chips.push({ key: 'closed', icon: 'sym_o_lock', label: t('Closed'), color: 'positive' });
+            if (row.isClosed) chips.push({ key: 'closed', icon: 'sym_o_comments_disabled', label: t('Closed'), color: 'positive' });
             if (row.contactListId && row.contactListId !== this.params.mailbox) chips.push({ key: 'box', icon: 'sym_o_forum', label: row.contactListName || t('Mailbox') });
             if (row.contactListId && row.replyCount) chips.push({ key: 'replies', icon: 'sym_o_forum', label: row.replyCount === 1 ? t('1 reply') : row.replyCount + ' ' + t('replies') });
             (row.labelList || []).slice(0, 3).forEach((label) => chips.push({ key: 'l' + label.emailLabelId, icon: 'sym_o_label', label: label.labelName }));
@@ -13226,7 +13568,7 @@ module.exports = {
                               }, [
                                 _createElementVNode("div", { class: "row items-center no-wrap q-gutter-x-sm" }, [
                                   _createVNode(_component_q_icon, {
-                                    name: _ctx.mailbox.isPublic ? 'sym_o_forum' : 'sym_o_lock',
+                                    name: _ctx.mailbox.isPublic ? 'sym_o_forum' : 'sym_o_group',
                                     size: "sm",
                                     class: "m-muted"
                                   }, null, 8, ["name"]),
@@ -14835,7 +15177,7 @@ module.exports = {
                                                     dense: "",
                                                     square: "",
                                                     class: "m-tonal text-positive q-ml-none",
-                                                    icon: "sym_o_lock"
+                                                    icon: "sym_o_comments_disabled"
                                                   }, {
                                                     default: _withCtx(() => [
                                                       _createTextVNode(_toDisplayString(_ctx.t('Closed')), 1)
@@ -14849,7 +15191,7 @@ module.exports = {
                                                     dense: "",
                                                     square: "",
                                                     class: "m-tonal q-ml-none",
-                                                    icon: "sym_o_lock_person"
+                                                    icon: "sym_o_visibility_off"
                                                   }, {
                                                     default: _withCtx(() => [
                                                       _createTextVNode(_toDisplayString(_ctx.t('Private conversation')), 1)
@@ -15281,7 +15623,7 @@ module.exports = {
                                                             default: _withCtx(() => [
                                                               _createVNode(_component_q_item_section, { avatar: "" }, {
                                                                 default: _withCtx(() => [
-                                                                  _createVNode(_component_q_icon, { name: "sym_o_lock" })
+                                                                  _createVNode(_component_q_icon, { name: "sym_o_comments_disabled" })
                                                                 ]),
                                                                 _: 1
                                                               }),
@@ -15306,7 +15648,7 @@ module.exports = {
                                                             default: _withCtx(() => [
                                                               _createVNode(_component_q_item_section, { avatar: "" }, {
                                                                 default: _withCtx(() => [
-                                                                  _createVNode(_component_q_icon, { name: "sym_o_lock_open" })
+                                                                  _createVNode(_component_q_icon, { name: "sym_o_add_comment" })
                                                                 ]),
                                                                 _: 1
                                                               }),
@@ -16286,7 +16628,7 @@ module.exports = {
                                             class: "q-mt-sm text-caption m-muted row items-center q-gutter-x-xs"
                                           }, [
                                             _createVNode(_component_q_icon, {
-                                              name: "sym_o_lock",
+                                              name: "sym_o_comments_disabled",
                                               size: "16px"
                                             }),
                                             _createElementVNode("span", null, _toDisplayString(_ctx.t('This thread is closed: no more replies in the mailbox.')), 1),
@@ -17120,7 +17462,7 @@ module.exports = {
                                   _createVNode(_component_q_item_section, { avatar: "" }, {
                                     default: _withCtx(() => [
                                       _createVNode(_component_q_icon, {
-                                        name: list.isPublic === 'Y' ? 'sym_o_forum' : 'sym_o_lock'
+                                        name: list.isPublic === 'Y' ? 'sym_o_forum' : 'sym_o_group'
                                       }, null, 8, ["name"])
                                     ]),
                                     _: 2
