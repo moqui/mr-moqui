@@ -703,10 +703,12 @@
             });
             return changed ? box.innerHTML : text;
         },
-        // the type a decrypted file's blob is made with: an image the room shows inline keeps its type, anything else is
-        // bytes to save (a blob URL is of this origin, so a decrypted page or SVG must never open as one)
+        // the type a decrypted file's blob is made with: an image the room shows inline, or a sound or video its player plays
+        // (a voice note), keeps its type, anything else is bytes to save (a blob URL is of this origin, so a decrypted page or
+        // SVG must never open as one; media types run no script)
         blobType(contentType) {
-            return /^image\/(png|jpe?g|gif|webp)$/i.test(String(contentType || "")) ? String(contentType).toLowerCase() : "application/octet-stream";
+            const type = String(contentType || "").split(";")[0].trim().toLowerCase();
+            return /^(image\/(png|jpe?g|gif|webp)|audio\/(webm|ogg|mpeg|mp4|aac|wav|x-m4a)|video\/(mp4|webm|ogg|quicktime))$/.test(type) ? type : "application/octet-stream";
         },
         escapeHtml(text) {
             return String(text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/\n/g, "<br>");

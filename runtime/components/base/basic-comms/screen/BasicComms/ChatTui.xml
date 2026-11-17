@@ -28,13 +28,20 @@ along with this software (see the LICENSE.md file). If not, see
     says so, never "not read"); delivery to a person's devices is not known, and it says that too. The emoji picker is
     the browser's. An encrypted room (C7) is read and written only in a
     browser, which holds its keys: the terminal lists its messages as "Encrypted message" and says to open it in a browser,
-    and its send refuses (reasonCode encryptedRoom from send#Message). -->
+    and its send refuses (reasonCode encryptedRoom from send#Message). Of the details tabs (Comms-Messaging §5) the terminal
+    has Links, a room's links as a list (chatView links: find#RoomLinks, with the cached title, and More by its cursor;
+    none in an encrypted room), and of the feed across rooms Activity (chatView activity with no room: find#ChatActivity,
+    the user's mentions, replies and reactions, each opening its room); the media grid, the files by type, voice and
+    reactions are the browser's. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Chat" default-menu-include="false">
 
     <parameter name="chatRoomId"/>
     <parameter name="limit"/>
     <parameter name="infoSeq"/>
+    <parameter name="chatView"/>
+    <parameter name="linksBefore"/>
+    <parameter name="activityCursor"/>
 
     <!-- a message of plain text, as paragraphs of light HTML -->
     <transition name="send">
@@ -234,6 +241,35 @@ along with this software (see the LICENSE.md file). If not, see
                     infoNote = (infoNote ? infoNote + ' ' : '') + ec.l10n.localize("Delivery to each person's devices is not known to the server.")
                 }
             }
+            // the room's Links (chatView links), newest first, and More by the cursor
+            linkList = []
+            linksNext = null
+            showLinks = !!(room && chatView === 'links')
+            if (showLinks && !encryptedRoom) {
+                const out = ec.service.sync().name('org.moqui.chat.ChatServices.find#RoomLinks').parameters({chatRoomId: chatRoomId, limit: 40,
+                    beforeEventSeq: linksBefore ? Number(linksBefore) : null}).call()
+                if (!ec.message.hasError()) {
+                    linksNext = out.nextBeforeEventSeq ?? null
+                    linkList = Array.from(out.links || []).map((link) => ({url: link.url, titleText: [link.title, link.siteName].filter((part) => part).join(' · '),
+                        senderName: link.senderName || '', timeText: when(link.sentDate)}))
+                }
+            }
+            // my Activity across rooms (chatView activity, no room): mentions, replies and reactions, newest first
+            activityList = []
+            activityNext = null
+            showActivity = !chatRoomId && chatView === 'activity'
+            if (showActivity) {
+                const out = ec.service.sync().name('org.moqui.chat.ChatServices.find#ChatActivity').parameters({limit: 40,
+                    cursor: activityCursor || null}).call()
+                if (!ec.message.hasError()) {
+                    activityNext = out.nextCursor ?? null
+                    const KINDS = {mention: 'Mentioned you', reply: 'Replied to you', threadReply: 'Replied in a thread', reaction: 'Reacted to your message'}
+                    activityList = Array.from(out.items || []).map((item) => ({chatRoomId: item.chatRoomId,
+                        kindText: ec.l10n.localize(KINDS[item.kind] || item.kind) + (item.reactionKey ? ' ' + item.reactionKey : ''),
+                        roomText: item.roomName || item.chatRoomId, actorName: item.actorName || '',
+                        snippet: item.encrypted ? ec.l10n.localize('Encrypted message') : item.snippet || '', timeText: when(item.date)}))
+                }
+            }
             roomTitle = room ? (room.displayName || room.roomName || chatRoomId) : ''
             roomTopic = room && room.topic ? room.topic : ''
             chatDraft = {chatRoomId: chatRoomId || '', bodyText: ''}
@@ -244,17 +280,36 @@ along with this software (see the LICENSE.md file). If not, see
             <container style="row items-center q-mb-sm">
                 <label type="h5" text="Chat" style="q-my-none"/>
                 <container style="col"/>
+                <link url="../Chat" text="Rooms" condition="showActivity"/>
+                <link url="../Chat" text="Activity" condition="!showActivity" parameter-map="{chatView:'activity'}"/>
                 <link url="markAllRead" link-type="hidden-form-link" text="Mark all read" condition="unreadTotal > 0"/>
             </container>
-            <form-list name="ChatTuiRoomList" list="roomList" skip-form="true" paginate="false">
-                <field name="nameText"><default-field title="Room">
-                    <link url="../Chat" link-type="anchor" text="${nameText}" parameter-map="{chatRoomId:chatRoomId}"/></default-field></field>
-                <field name="countText"><default-field title="Unread"><display/></default-field></field>
-                <field name="lastText"><default-field title="Last message"><display style="text-caption m-muted"/></default-field></field>
-                <field name="timeText"><default-field title="When"><display/></default-field></field>
-            </form-list>
-            <section name="ChatTuiNoRooms" condition="!roomList.length"><widgets>
-                <label type="p" text="No rooms yet: start one in a browser" style="m-muted"/>
+            <section name="ChatTuiActivity" condition="showActivity"><widgets>
+                <label type="h6" text="Activity" style="q-my-none"/>
+                <form-list name="ChatTuiActivityList" list="activityList" skip-form="true" paginate="false">
+                    <field name="kindText"><default-field title="What"><display style="text-weight-medium"/></default-field></field>
+                    <field name="roomText"><default-field title="Room">
+                        <link url="../Chat" link-type="anchor" text="${roomText}" parameter-map="{chatRoomId:chatRoomId}"/></default-field></field>
+                    <field name="actorName"><default-field title="Who"><display/></default-field></field>
+                    <field name="snippet"><default-field title="Message"><display style="text-caption m-muted"/></default-field></field>
+                    <field name="timeText"><default-field title="When"><display/></default-field></field>
+                </form-list>
+                <section name="ChatTuiNoActivity" condition="!activityList.length"><widgets>
+                    <label type="p" text="Nothing yet: mentions of you, replies to you and reactions to your messages are listed here" style="m-muted"/>
+                </widgets></section>
+                <link url="../Chat" text="More" condition="activityNext" parameter-map="{chatView:'activity', activityCursor:activityNext}"/>
+            </widgets></section>
+            <section name="ChatTuiRoomsList" condition="!showActivity"><widgets>
+                <form-list name="ChatTuiRoomList" list="roomList" skip-form="true" paginate="false">
+                    <field name="nameText"><default-field title="Room">
+                        <link url="../Chat" link-type="anchor" text="${nameText}" parameter-map="{chatRoomId:chatRoomId}"/></default-field></field>
+                    <field name="countText"><default-field title="Unread"><display/></default-field></field>
+                    <field name="lastText"><default-field title="Last message"><display style="text-caption m-muted"/></default-field></field>
+                    <field name="timeText"><default-field title="When"><display/></default-field></field>
+                </form-list>
+                <section name="ChatTuiNoRooms" condition="!roomList.length"><widgets>
+                    <label type="p" text="No rooms yet: start one in a browser" style="m-muted"/>
+                </widgets></section>
             </widgets></section>
         </widgets></section>
 
@@ -263,6 +318,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <label type="h5" text="${roomTitle}" style="q-my-none"/>
                 <container style="col"/>
                 <link url="../Chat" text="All rooms"/>
+                <link url="../Chat" text="Messages" condition="showLinks" parameter-map="{chatRoomId:chatRoomId}"/>
+                <link url="../Chat" text="Links" condition="!showLinks" parameter-map="{chatRoomId:chatRoomId, chatView:'links'}"/>
                 <link url="markRead" link-type="hidden-form-link" text="Mark read" condition="canPost" parameter-map="{chatRoomId:chatRoomId}"/>
                 <link url="join" link-type="hidden-form-link" text="Join" condition="canJoin" parameter-map="{chatRoomId:chatRoomId}"/>
             </container>
@@ -273,38 +330,54 @@ along with this software (see the LICENSE.md file). If not, see
             <section name="ChatTuiBridged" condition="bridgeText"><widgets><label type="p" text="${bridgeText}" style="text-caption text-info"/></widgets></section>
             <section name="ChatTuiNotConnected" condition="notConnected"><widgets>
                 <label type="p" text="Not connected: messages stay here and go out once it is back" style="text-caption text-warning"/></widgets></section>
-            <form-list name="ChatTuiEvents" list="eventList" skip-form="true" paginate="false">
-                <field name="senderName"><default-field title="From"><display style="text-weight-medium"/></default-field></field>
-                <field name="timeText"><default-field title="When"><display style="text-caption"/></default-field></field>
-                <field name="text"><default-field title="Message"><display/></default-field></field>
-                <field name="deliveryText"><default-field title="Delivery"><display style="text-caption"/></default-field></field>
-                <field name="retryIds"><default-field title="">
-                    <link url="retryDelivery" link-type="hidden-form-link" text="Send again" condition="retryIds.length &gt; 0"
-                            parameter-map="{chatRoomId:chatRoomId, deliveryIds:retryIds}"/></default-field></field>
-                <field name="infoLink"><default-field title="">
-                    <link url="../Chat" link-type="anchor" text="Info" condition="isMessage" parameter-map="{chatRoomId:chatRoomId, infoSeq:eventSeq}"/></default-field></field>
-            </form-list>
-            <section name="ChatTuiInfo" condition="infoList.length"><widgets>
-                <container style="row items-center q-mt-sm">
-                    <label type="h6" text="Message info" style="q-my-none"/>
-                    <container style="col"/>
-                    <link url="../Chat" text="Close" parameter-map="{chatRoomId:chatRoomId}"/>
-                </container>
-                <form-list name="ChatTuiInfoLines" list="infoList" skip-form="true" paginate="false">
-                    <field name="label"><default-field title=""><display style="text-weight-medium"/></default-field></field>
-                    <field name="text"><default-field title=""><display/></default-field></field>
+            <section name="ChatTuiLinks" condition="showLinks"><widgets>
+                <label type="h6" text="Links" style="q-my-none"/>
+                <section name="ChatTuiLinksEncrypted" condition="encryptedRoom"><widgets>
+                    <label type="p" text="The server cannot read the links of an encrypted room: see them in a browser" style="text-caption m-muted"/></widgets></section>
+                <form-list name="ChatTuiLinkList" list="linkList" skip-form="true" paginate="false">
+                    <field name="url"><default-field title="Link"><link url="${url}" url-type="plain" link-type="anchor" text="${url}" target-window="_blank"/></default-field></field>
+                    <field name="titleText"><default-field title="Title"><display/></default-field></field>
+                    <field name="senderName"><default-field title="From"><display/></default-field></field>
+                    <field name="timeText"><default-field title="When"><display style="text-caption"/></default-field></field>
                 </form-list>
-                <label type="p" text="${infoNote}" style="text-caption m-muted"/>
+                <section name="ChatTuiNoLinks" condition="!encryptedRoom &amp;&amp; !linkList.length"><widgets>
+                    <label type="p" text="No links yet" style="m-muted"/></widgets></section>
+                <link url="../Chat" text="More" condition="linksNext" parameter-map="{chatRoomId:chatRoomId, chatView:'links', linksBefore:linksNext}"/>
             </widgets></section>
-            <section name="ChatTuiNoEvents" condition="!eventList.length"><widgets>
-                <label type="p" text="No messages yet" style="m-muted"/>
-            </widgets></section>
-            <section name="ChatTuiSend" condition="canPost"><widgets>
-                <form-single name="ChatTuiMessage" transition="send" map="chatDraft" focus-field="bodyText">
-                    <field name="chatRoomId"><default-field><hidden/></default-field></field>
-                    <field name="bodyText"><default-field title="Message"><text-area rows="3" cols="72"/></default-field></field>
-                    <field name="sendButton"><default-field title="Send"><submit/></default-field></field>
-                </form-single>
+            <section name="ChatTuiMessages" condition="!showLinks"><widgets>
+                <form-list name="ChatTuiEvents" list="eventList" skip-form="true" paginate="false">
+                    <field name="senderName"><default-field title="From"><display style="text-weight-medium"/></default-field></field>
+                    <field name="timeText"><default-field title="When"><display style="text-caption"/></default-field></field>
+                    <field name="text"><default-field title="Message"><display/></default-field></field>
+                    <field name="deliveryText"><default-field title="Delivery"><display style="text-caption"/></default-field></field>
+                    <field name="retryIds"><default-field title="">
+                        <link url="retryDelivery" link-type="hidden-form-link" text="Send again" condition="retryIds.length &gt; 0"
+                                parameter-map="{chatRoomId:chatRoomId, deliveryIds:retryIds}"/></default-field></field>
+                    <field name="infoLink"><default-field title="">
+                        <link url="../Chat" link-type="anchor" text="Info" condition="isMessage" parameter-map="{chatRoomId:chatRoomId, infoSeq:eventSeq}"/></default-field></field>
+                </form-list>
+                <section name="ChatTuiInfo" condition="infoList.length"><widgets>
+                    <container style="row items-center q-mt-sm">
+                        <label type="h6" text="Message info" style="q-my-none"/>
+                        <container style="col"/>
+                        <link url="../Chat" text="Close" parameter-map="{chatRoomId:chatRoomId}"/>
+                    </container>
+                    <form-list name="ChatTuiInfoLines" list="infoList" skip-form="true" paginate="false">
+                        <field name="label"><default-field title=""><display style="text-weight-medium"/></default-field></field>
+                        <field name="text"><default-field title=""><display/></default-field></field>
+                    </form-list>
+                    <label type="p" text="${infoNote}" style="text-caption m-muted"/>
+                </widgets></section>
+                <section name="ChatTuiNoEvents" condition="!eventList.length"><widgets>
+                    <label type="p" text="No messages yet" style="m-muted"/>
+                </widgets></section>
+                <section name="ChatTuiSend" condition="canPost"><widgets>
+                    <form-single name="ChatTuiMessage" transition="send" map="chatDraft" focus-field="bodyText">
+                        <field name="chatRoomId"><default-field><hidden/></default-field></field>
+                        <field name="bodyText"><default-field title="Message"><text-area rows="3" cols="72"/></default-field></field>
+                        <field name="sendButton"><default-field title="Send"><submit/></default-field></field>
+                    </form-single>
+                </widgets></section>
             </widgets></section>
         </widgets></section>
         <section name="ChatTuiNotFound" condition="chatRoomId &amp;&amp; !room"><widgets>

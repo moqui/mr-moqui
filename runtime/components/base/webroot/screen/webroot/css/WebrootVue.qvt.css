@@ -729,6 +729,9 @@ form.q-form.m-status-form, .m-status-form { display: inline-flex; width: auto; }
 .m-chat-phone .m-chat-composer-actions > .q-btn { order:1; margin-bottom:6px; }
 .m-chat-phone .m-chat-composer > .m-rich-text { order:2; flex:1 1 0; min-width:0; }
 .m-chat-phone .m-chat-composer-actions > .m-chat-send { order:3; border-radius:50%; width:40px; height:40px; margin:0 0 2px 4px; }
+/* the voice note's microphone takes Send's place; while it records, its time, Cancel and Send do */
+.m-chat-phone .m-chat-composer-actions > .m-chat-voice { order:3; width:40px; height:40px; margin:0 0 2px 4px; }
+.m-chat-phone .m-chat-composer-actions > .m-chat-recording { order:3; margin:0 0 2px 4px; }
 .m-chat-phone .m-chat-composer-actions > .q-space, .m-chat-phone .m-chat-mention-btn { display:none; }
 .m-chat-phone .m-chat-composer .m-rich-text-toolbar, .m-chat-phone .m-chat-composer .m-rich-text-label { display:none; }
 .m-chat-phone .m-chat-composer .m-rich-text-box { border-radius:20px; }

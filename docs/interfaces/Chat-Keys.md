@@ -219,7 +219,12 @@ encrypted direct room is a room of its own beside the plain direct room of the s
 Bodies, reaction keys, file names and types are in the ciphertext. No `bodyText`, snippet or notification summary is
 written; the room list and the terminal show "Encrypted message". A file is uploaded encrypted and kept as an opaque blob
 named `encrypted`, `application/octet-stream`; its name, type, key and hash travel in the message (`io.moqui.files`, each
-with Matrix's `EncryptedFile` info). The Files pane lists them without names.
+with Matrix's `EncryptedFile` info). `find#RoomFiles` lists them without names or types, each with its message's ciphertext
+(`encryptedContent`), and refuses a filter: the browser decrypts each file's details from its message and sorts the files
+into the details' Media, Files and Voice tabs itself. A voice note is such a file (`audio/...`), played from its
+decrypted blob. The server keeps no links of the room (`ChatEventLink`): the Links tab lists the links of the messages
+the browser has decrypted. `find#RoomReactions` and `find#ChatActivity` give the ciphertext of each message and reaction,
+with no snippet, and `find#RoomReactions` takes no reaction key.
 
 **Refused in an encrypted room** (`reasonCode` `encryptedRoom`, each spec'd with the parameters that pass in a plain room):
 - a plaintext body, edit or reaction key (and ciphertext in a plain room: `notEncrypted`);
