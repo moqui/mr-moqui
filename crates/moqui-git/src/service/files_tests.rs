@@ -220,6 +220,16 @@ fn a_drive_is_reached_by_its_owner_and_members_by_permission_and_not_by_a_strang
         ],
     );
     login("alice");
+    // a git drive's place on disk is an administrator's to name, as a drive location is (SEC-FIL-07)
+    refused(
+        "create#Drive",
+        &[
+            ("driveName", text("Elsewhere")),
+            ("storage", text("gitLocal")),
+            ("localPath", text("/srv/other.git")),
+        ],
+        "Only an administrator",
+    );
     let team = drive(
         "folder",
         "Team",
