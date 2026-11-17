@@ -1031,6 +1031,15 @@ fn an_uncertain_send_is_not_sent_again() {
     bed.round(20_000);
     let (state, reason, ..) = bed.delivery(&room, blocked);
     assert_eq!((state.as_str(), reason.as_str()), ("CdsFailed", "optedOut"));
+    // and the pair's STOP says so too, so the next text is refused before the provider; their START opts back in
+    assert_eq!(
+        bed.one(
+            "moqui.call.SmsOptOut",
+            &[("phoneNumber", text(OURS)), ("otherNumber", text(THEIRS))]
+        )["optedOut"],
+        "Y"
+    );
+    bed.text_in(THEIRS, "START", json!([]));
 
     // the provider unreachable: not connected, tried again
     let closed = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1855,19 +1864,34 @@ fn a_group_texts_people_keep_the_sender_leave_out_ours_and_new_groups_are_limite
     assert_eq!(bed.messages(&pair_room).len(), 1);
 }
 
-/// Telnyx's API and webhooks with no group texts: a provider such as Sinch's Conversation API, whose adapter says
-/// `group_max` 0.
-struct NoGroups;
+/// Telnyx's API and webhooks under another adapter, with its own group maximum and events of its own: an opt-out
+/// signal and a text in a conversation of the provider's, as Twilio and Sinch send.
+#[derive(Clone, Copy)]
+struct TestTelnyx {
+    adapter: &'static str,
+    group_max: usize,
+}
 
-impl crate::sms::SmsProvider for NoGroups {
+/// No group texts: a provider such as Sinch's Conversation API.
+const NO_GROUPS: TestTelnyx = TestTelnyx {
+    adapter: "sms-nogroups",
+    group_max: 0,
+};
+/// Group texts as conversations of the provider's (Twilio Conversations).
+const THREADS: TestTelnyx = TestTelnyx {
+    adapter: "sms-threads",
+    group_max: 10,
+};
+
+impl crate::sms::SmsProvider for TestTelnyx {
     type Config = crate::providers::telnyx::Config;
 
     fn name(&self) -> &'static str {
-        "No-groups"
+        "Test provider"
     }
 
     fn adapter_name(&self) -> &'static str {
-        "sms-nogroups"
+        self.adapter
     }
 
     fn defaults(&self) -> crate::sms::Defaults {
@@ -1883,7 +1907,7 @@ impl crate::sms::SmsProvider for NoGroups {
     }
 
     fn group_max(&self) -> usize {
-        0
+        self.group_max
     }
 
     fn request(
@@ -1929,9 +1953,114 @@ impl crate::sms::SmsProvider for NoGroups {
         crate::providers::telnyx::Telnyx.event_key(request)
     }
 
+    /// Telnyx's events, and an opt-out signal of its own shape (`test.opt_signal`), as a provider that tells of a STOP
+    /// it took itself sends one.
     fn parse(&self, request: &WebhookRequest) -> Result<crate::sms::SmsEvent, WebhookResponse> {
-        crate::providers::telnyx::Telnyx.parse(request)
+        let event: Json = serde_json::from_slice(&request.body).unwrap_or(Json::Null);
+        let field = |pointer: &str| {
+            event
+                .pointer(pointer)
+                .and_then(Json::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
+        match event.pointer("/data/event_type").and_then(Json::as_str) {
+            Some("test.opt_signal") => {}
+            Some("test.thread_text") => {
+                return Ok(crate::sms::SmsEvent::Inbound(crate::sms::Inbound {
+                    event_id: field("/data/id"),
+                    message_id: field("/data/id"),
+                    our_number: field("/data/to"),
+                    their_number: field("/data/from"),
+                    text: Some(field("/data/text")),
+                    thread_id: Some(field("/data/thread")),
+                    ..crate::sms::Inbound::default()
+                }))
+            }
+            _ => return crate::providers::telnyx::Telnyx.parse(request),
+        }
+        Ok(crate::sms::SmsEvent::OptSignal(crate::sms::OptSignal {
+            event_id: field("/data/id"),
+            our_number: field("/data/to"),
+            their_number: field("/data/from"),
+            keyword: if field("/data/keyword") == "STOP" {
+                crate::sms::Keyword::Stop
+            } else {
+                crate::sms::Keyword::Start
+            },
+        }))
     }
+}
+
+/// The bed's bridge moved to `provider`'s adapter.
+fn use_provider(bed: &Bed, provider: TestTelnyx) {
+    use crate::sms::SmsProvider as _;
+    moqui_core::service::chat_bridge::register_adapter(
+        bed.ctx.factory(),
+        Arc::new(crate::sms::SmsAdapter::new(provider)),
+    );
+    let _authz = bed.ctx.disable_authz();
+    let mut row = bed
+        .facade
+        .find("moqui.chat.ChatBridge")
+        .unwrap()
+        .eq("chatBridgeId", text(BRIDGE))
+        .one()
+        .unwrap()
+        .unwrap();
+    row.set("adapterName", text(provider.adapter_name()));
+    row.update(&bed.facade).unwrap();
+}
+
+/// A provider's opt-out and opt-in signals (not a text: a STOP it took itself) keep the pair's opt-out, each event once:
+/// a copy the replay cache no longer catches (a new signature, as from a provider with no timestamp in it) changes
+/// nothing; one for a number not on the bridge is left.
+#[test]
+fn a_providers_opt_out_signal_is_kept_once() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    use_provider(&bed, NO_GROUPS);
+    let signal = |id: &str, to: &str, keyword: &str, at: i64| {
+        let event =
+            json!({"data": {"event_type": "test.opt_signal", "id": id, "to": to, "from": THEIRS, "keyword": keyword}});
+        bed.hook(&bed.signed(&event, at))
+    };
+    let opted_out = || {
+        bed.one(
+            "moqui.call.SmsOptOut",
+            &[("phoneNumber", text(OURS)), ("otherNumber", text(THEIRS))],
+        )["optedOut"]
+            .clone()
+    };
+    let stop = signal("sig-1", OURS, "STOP", now() / 1000);
+    assert_eq!(status(&stop), 200, "{}", String::from_utf8_lossy(&stop.body));
+    assert_eq!(body_json(&stop)["outcome"], "noted");
+    assert_eq!(opted_out(), "Y");
+    assert_eq!(
+        bed.count(
+            "moqui.chat.ChatBridgeInbound",
+            &[("chatBridgeId", text(BRIDGE)), ("transactionId", text("signal:sig-1"))]
+        ),
+        1
+    );
+    assert_eq!(
+        body_json(&signal("sig-2", OURS, "START", now() / 1000))["outcome"],
+        "noted"
+    );
+    assert_eq!(opted_out(), "N");
+    // the STOP again, signed anew: applied before, so the START stands
+    let again = signal("sig-1", OURS, "STOP", now() / 1000 + 1);
+    assert_eq!(body_json(&again)["outcome"], "duplicate");
+    assert_eq!(opted_out(), "N");
+    // a number that is not this bridge's
+    let stray = signal("sig-3", "+15550009999", "STOP", now() / 1000);
+    assert_eq!(
+        (
+            body_json(&stray)["outcome"].clone(),
+            body_json(&stray)["reasonCode"].clone()
+        ),
+        (json!("ignored"), json!("unknownNumber"))
+    );
 }
 
 /// A bridge whose provider carries no group texts (its capabilities say `groupTexts` false): Text a number with several
@@ -1939,7 +2068,6 @@ impl crate::sms::SmsProvider for NoGroups {
 /// counted), and a group text that comes in is the sender's pair room; a text to one number still goes.
 #[test]
 fn a_group_room_on_a_bridge_without_group_texts_refuses_to_send() {
-    use crate::sms::SmsProvider as _;
     const OTHER: &str = "+15553334444";
     let bed = bed();
     let _entered = bed.ctx.enter();
@@ -1953,23 +2081,7 @@ fn a_group_room_on_a_bridge_without_group_texts_refuses_to_send() {
     let group_room = bed.room(&sorted.join(",")).expect("the group's room");
 
     // the bridge moves to a provider without group texts
-    moqui_core::service::chat_bridge::register_adapter(
-        bed.ctx.factory(),
-        Arc::new(crate::sms::SmsAdapter::new(NoGroups)),
-    );
-    {
-        let _authz = bed.ctx.disable_authz();
-        let mut row = bed
-            .facade
-            .find("moqui.chat.ChatBridge")
-            .unwrap()
-            .eq("chatBridgeId", text(BRIDGE))
-            .one()
-            .unwrap()
-            .unwrap();
-        row.set("adapterName", text(NoGroups.adapter_name()));
-        row.update(&bed.facade).unwrap();
-    }
+    use_provider(&bed, NO_GROUPS);
     login("alice");
     let caps = ok(
         "org.moqui.chat.ChatServices.get#BridgeCapabilities",
@@ -2046,4 +2158,38 @@ fn a_send_names_the_bridges_webhook_url_for_its_receipts() {
         crate::sms::callback_url(&bridge(json!({"webhookUrl": "https://hooks.example/sms?b=1"}))).as_deref(),
         Some("https://hooks.example/sms?b=1")
     );
+}
+
+/// A text in a provider's own conversation (`thread_id`, a Twilio Conversation) comes to the room of the mapping that
+/// keeps it (store#MappingThread, `crate::sms::store_thread`), whoever in it writes, not to the sender's pair room.
+#[test]
+fn a_text_in_a_providers_conversation_comes_to_its_room() {
+    const OTHER: &str = "+15553334444";
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    assert_eq!(
+        body_json(&bed.group_in(THEIRS, &[OURS], &[OTHER], "Hi all"))["outcome"],
+        "accepted"
+    );
+    let mut sorted = [THEIRS, OTHER];
+    sorted.sort_unstable();
+    let external = format!("{OURS}/{}", sorted.join(","));
+    let group_room = bed.room(&sorted.join(",")).expect("the group's room");
+    use_provider(&bed, THREADS);
+    crate::sms::store_thread(&bridge_info(&bed), &external, "CH-77").unwrap();
+    errors();
+    let event = json!({"data": {"event_type": "test.thread_text", "id": "th-1", "to": OURS, "from": OTHER,
+        "text": "In the conversation", "thread": "CH-77"}});
+    let response = bed.hook(&bed.signed(&event, now() / 1000));
+    assert_eq!(
+        body_json(&response)["outcome"],
+        "accepted",
+        "{}",
+        String::from_utf8_lossy(&response.body)
+    );
+    assert_eq!(
+        bed.messages(&group_room).last().map(|(_, text)| text.as_str()),
+        Some("In the conversation")
+    );
+    assert!(bed.room(OTHER).is_none(), "not the sender's pair room");
 }

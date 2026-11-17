@@ -216,7 +216,9 @@ A text whose whole body is STOP (or STOPALL, UNSUBSCRIBE, CANCEL, END, QUIT, OPT
 texts from that number of ours (`SmsOptOut` per pair); START (UNSTOP, YES, OPTIN) opts back in; HELP (INFO) is kept as
 the pair's last keyword. The keyword is still a message in the room. Moqui sends no reply to a keyword: Telnyx's
 messaging profile answers STOP and HELP itself (its opt-out management), and blocks a send to a number that sent STOP
-(its error 40300, kept as `optedOut`). The opt-out also gates the system's texts.
+(its error 40300, kept as `optedOut`; the pair's `SmsOptOut` is then marked too, so the next text is refused before the
+provider). A provider that tells of an opt-out or opt-in itself (an event, not a text) is kept the same way, once per
+event (`note#SmsOptSignal`). The opt-out also gates the system's texts.
 
 ## The system's texts
 
