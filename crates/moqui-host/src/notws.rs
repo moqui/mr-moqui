@@ -35,7 +35,7 @@ use moqui_core::context::{ErrorKind, ExecutionContext, ExecutionContextFactory};
 use moqui_core::notify::{TopicMessage, NOTIFICATION_MESSAGE};
 use moqui_core::user::{session_cookie_name, verify_session_cookie};
 use moqui_core::web::cookie_value;
-use moqui_core::web::origin::{origin_allowed_by, own_origins, request_site, SiteOrigin};
+use moqui_core::web::origin::{origin_credentialed_by, own_origins, request_site, SiteOrigin};
 use moqui_lib::object::Value;
 use moqui_lib::sync::lock;
 
@@ -315,7 +315,8 @@ impl FromRequestParts<Arc<HttpState>> for RequestSite {
 
 /// A page of another site cannot open a socket that carries this site's cookie, as Java's modifyHandshake, but with
 /// the whole origin compared (scheme, host and port; Java compares the host): the request's own origin, the conf
-/// webapp's URLs or the webroot's `allow-origins`. `what` names the socket in the warning.
+/// webapp's URLs or the webroot's `allow-origins`. An `allow-origins` of `*` does not count: a browser opens the socket
+/// with the session cookie, and `*` never comes with credentials (SEC-WEB-10). `what` names the socket in the warning.
 pub(crate) fn origin_allowed(
     factory: &ExecutionContextFactory,
     headers: &HeaderMap,
@@ -324,7 +325,7 @@ pub(crate) fn origin_allowed(
 ) -> bool {
     let header = |name: axum::http::header::HeaderName| headers.get(name).and_then(|value| value.to_str().ok());
     let own = own_origins(factory, site.0.clone());
-    let allowed = origin_allowed_by(Some(factory), header(axum::http::header::ORIGIN), &own);
+    let allowed = origin_credentialed_by(Some(factory), header(axum::http::header::ORIGIN), &own);
     if !allowed {
         tracing::warn!(origin = ?header(axum::http::header::ORIGIN), "{what} socket refused for its origin");
     }

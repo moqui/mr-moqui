@@ -67,7 +67,7 @@ The table gives the purpose, listener, address, role and switch properties each 
 
 | Conf | For | Opens beyond the default |
 |---|---|---|
-| `MoquiDevConf.xml` | Development | `instance_purpose=dev`. `webapp_allow_origins=*`. `entity_empty_db_load=all`. `ssh_port=2222` turns the SSH server on. `llm_openai_url=http://127.0.0.1:1234`. `<receiver grpc-enabled="true"/>` under telemetry. The tarpit is off for screens and transitions. Example datasource passwords (`moquiroot`, `moqui`) are in comments |
+| `MoquiDevConf.xml` | Development | `instance_purpose=dev`. `webapp_allow_origins=localhost,127.0.0.1` (this machine on any port). `entity_empty_db_load=all`. `ssh_port=2222` turns the SSH server on. `llm_openai_url=http://127.0.0.1:1234`. `<receiver grpc-enabled="true"/>` under telemetry. The tarpit is off for screens and transitions. Example datasource passwords (`moquiroot`, `moqui`) are in comments |
 | `MoquiDemoConf.xml` | A demo | `entity_empty_db_load=all`. Adds the component `components/dev/demo` |
 | `MoquiLoadTestConf.xml` | Load tests | The tarpit is off for screens, transitions and services. `<login history-store="false"/>`. `ssh_port=2222`. SSH and terminal session limits are 1000 |
 | `MoquiProductionConf.xml` | Production | Sets the entity facade's `crypt-pass` from `entity_ds_crypt_pass`. No listener property |

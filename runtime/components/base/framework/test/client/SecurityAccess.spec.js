@@ -413,7 +413,7 @@ feature("A01 Forwarded does not hide /status from loopback", {
 // (framework/test/test_a01_ws.py; the catalog in README.md). An anonymous upgrade is 401 here, where Java accepts it
 // and ignores the null user, so the foreign-origin proof uses a logged-in session: the origin, not the missing user,
 // must be what refuses it. That proof needs a server that allows no foreign origin (the production conf) and skips on
-// the dev conf, which allows every origin; SecurityCors fails there. The origin is compared whole, scheme, host and
+// a conf that allows every origin; SecurityCors fails there. The origin is compared whole, scheme, host and
 // port, where Java compares the host only.
 
 const EVIL_ORIGIN = "https://evil.example"
@@ -425,7 +425,7 @@ const OTHER_SCHEME_ORIGIN = `${server.secure ? "http" : "https"}://${HOST}:${ser
 feature("A01 a /notws upgrade from a foreign Origin is refused, with a logged-in session", {
     given() {
         const probe = session().get("/Login", { headers: { Origin: EVIL_ORIGIN } })
-        if (probe.status != 401) skip("this server allows every origin (the dev conf): run against MoquiProductionConf.xml or " +
+        if (probe.status != 401) skip("this server allows every origin: run against MoquiProductionConf.xml or " +
             "MoquiLoadTestConf.xml, as --serve does")
     },
     when() {
@@ -455,7 +455,7 @@ feature("A01 a /notws upgrade from the server's host on #which is refused, with 
     ],
     given() {
         const probe = session().get("/Login", { headers: { Origin: EVIL_ORIGIN } })
-        if (probe.status != 401) skip("this server allows every origin (the dev conf): run against MoquiProductionConf.xml or " +
+        if (probe.status != 401) skip("this server allows every origin: run against MoquiProductionConf.xml or " +
             "MoquiLoadTestConf.xml, as --serve does")
     },
     when({ origin }) {

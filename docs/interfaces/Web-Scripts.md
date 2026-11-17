@@ -133,7 +133,9 @@ over TLS or from a believed proxy's `X-Forwarded-Proto`, with the host and port 
 and `http-port`, and `https-host` and `https-port` with `https-enabled`) count as its own too. An `allow-origins` entry
 with a scheme (`https://app.example:8443`) is matched the same way, its port defaulted; a bare domain (`moqui.org`)
 allows that host and the hosts under it on any scheme and port, as in Java (`moqui.org:8443` on that port only); `*`
-allows every origin. `/notws`, `/termws` and the Assist event stream take the same origins, refusing others with 403.
+allows every origin, but never with credentials: such an origin gets no `Access-Control-Allow-Credentials`. `/notws`,
+`/termws` and the Assist event stream take the same origins but `*`, which they do not count since a browser opens them
+with the session cookie, refusing others with 403.
 
 **Running listeners.** Session and context events run with an execution context of their own and no request. Request
 events run around the request's servlet.

@@ -216,7 +216,8 @@ what is not built ([Edge-Node2 §3](../plans/Edge-Node2.md#3-topologies)).
 - **Disk and memory**: the thresholds at which the System home warns are `resource-watch`'s; copy the disk, memory
   and CPU alert rules so someone is told ([resource watch](#resource-watch)).
 - **Listeners**: SSH, inbound SMTP, A2A, MCP and the LLM gateway are off by default. Turn on only the ones that are used.
-- **CORS**: leave `webapp_allow_origins` empty. The dev conf sets `*`.
+- **CORS**: leave `webapp_allow_origins` empty. The dev conf names `localhost,127.0.0.1` (this machine on any port);
+  `*` is never sent with credentials.
 - **Lock-down**: the full list is in [Attack-Surface.md, Heavy lock-down](security/Attack-Surface.md#heavy-lock-down).
 
 ---
@@ -357,7 +358,7 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `webapp_https_listen_port` | empty: 8443 | The HTTPS listen port (`--https-port`), or `off` |
 | `webapp_https_port` | empty: 443 | The HTTPS port in generated URLs and redirects |
 | `webapp_https_enabled` | `false` | `true` makes generated URLs https |
-| `webapp_allow_origins` | empty (`*` in the dev conf) | Other origins allowed for CORS |
+| `webapp_allow_origins` | empty (`localhost,127.0.0.1` in the dev conf) | Other origins allowed for CORS; `*` allows any origin without credentials |
 | `webapp_trusted_proxies` | empty | Address ranges of the proxies in front ([proxies](#behind-a-proxy-or-load-balancer)) |
 | `webapp_client_ip_header` | empty | The header those proxies put the client address in |
 | `webapp_status_ips` | `127.0.0.1` | Addresses, besides loopback, that `/health` answers |

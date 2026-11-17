@@ -1,7 +1,8 @@
 // A02 CORS over HTTP, ported from Moqui Java's pytest proofs (framework/test/test_a02_headers.py; the catalog in
 // README.md): an unknown origin is refused, and the server's own origin is allowed with credentials. These need a
 // server that allows no foreign origin, the production conf (the default conf's empty webapp_allow_origins); the dev
-// conf allows every origin, so the spec fails there, as the Python suite's require_production_conf fails it.
+// conf allows localhost and 127.0.0.1 on any port (SEC-WEB-10), so the other-port proofs fail there, as the Python
+// suite's require_production_conf fails it.
 // A preflight answers 204 (Java 200). The origin is compared whole, scheme, host and port, where Java compares the host
 // only: the server's host on another port or scheme is another site.
 
@@ -15,7 +16,7 @@ spec({
     setupSpec() {
         const res = session().get("/Login", { headers: { Origin: EVIL_ORIGIN } })
         if (res.status != 401 || res.header("Access-Control-Allow-Origin") != null) {
-            throw new Error("this server allows every origin (the dev conf): run against MoquiProductionConf.xml or " +
+            throw new Error("this server allows every origin: run against MoquiProductionConf.xml or " +
                 "MoquiLoadTestConf.xml, as --serve does " +
                 `(GET /Login with Origin ${EVIL_ORIGIN} answered ${res.status}, Access-Control-Allow-Origin ` +
                 `${res.header("Access-Control-Allow-Origin") ?? "none"})`)
