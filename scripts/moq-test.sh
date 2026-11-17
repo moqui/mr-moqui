@@ -666,6 +666,7 @@ if have git; then
     <repository name="local">
         <location type="git" url="file://$FIX/repos/\${name}.git"/>
         <location type="current" url="file://$FIX/zips/\${name}-\${branch}.zip"/>
+        <location type="release" url="file://$FIX/zips/\${name}-\${version}.zip"/>
     </repository>
     <!-- The detected default repositories; the -ssh one has its own directory so the two are told apart. -->
     <repository name="github">
@@ -676,7 +677,7 @@ if have git; then
     </repository>
     <component name="comp-a" group="g" branch="master"/>
     <component name="comp-b" group="g" branch="master" repository="local"/>
-    <component name="comp-c" group="g" branch="master"/>
+    <component name="comp-c" group="g" branch="master" version="1.5"/>
     <component name="comp-skip" group="g" branch="master" skip-get="true"/>
     <component name="mr-comp-d" component-name="comp-d" group="g" branch="master"/>
     <component name="comp-e" group="g" branch="master"/>
@@ -879,6 +880,21 @@ if have git && have zip && have unzip && have curl; then
     rm -rf "$R/runtime/components/addon/comp-c"
     check "component-get current (zip)" 0 'Downloaded comp-c' -- "$M" component-get -t current comp-c
     check "zip unpacked one level up" 0 '' -- test -f "$R/runtime/components/addon/comp-c/component.xml"
+    # SEC-OUT-14: a version's archive is recorded the first time and checked after; a changed one stops the get
+    (cd "$FIX/src" && cp -R comp-c comp-c-1.5 && rm -rf comp-c-1.5/.git && zip -qr "$FIX/zips/comp-c-1.5.zip" comp-c-1.5)
+    rm -rf "$R/runtime/components/addon/comp-c"
+    check "component-get release records its SHA-256" 0 'Recorded the SHA-256 of addon:' -- \
+        env MOQUI_EMBED_CACHE="$FIX/sums-cache/embed" "$M" component-get -t release comp-c
+    rm -rf "$R/runtime/components/addon/comp-c"
+    check "component-get release checks it again" 0 'Checked addon:.* against the SHA-256' -- \
+        env MOQUI_EMBED_CACHE="$FIX/sums-cache/embed" "$M" component-get -t release comp-c
+    rm -rf "$R/runtime/components/addon/comp-c"
+    (cd "$FIX/src" && printf 'changed\n' >comp-c-1.5/changed.txt && zip -qr "$FIX/zips/comp-c-1.5.zip" comp-c-1.5)
+    check "component-get release refuses a changed archive" 1 'does not match the SHA-256 recorded' -- \
+        env MOQUI_EMBED_CACHE="$FIX/sums-cache/embed" "$M" component-get -t release comp-c
+    check "the refused archive is not unpacked" 1 '' -- test -d "$R/runtime/components/addon/comp-c"
+    rm -rf "$R/runtime/components/addon/comp-c"
+    "$M" component-get -t current comp-c >/dev/null 2>&1
     mkdir -p "$R/runtime/components/addon/comp-a/test"
     : >"$R/runtime/components/addon/comp-a/test/Rule.spec.js"
     check "component-zip" 0 'Created runtime/components/addon/comp-a-1.0.zip' -- "$M" component-zip comp-a

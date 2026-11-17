@@ -2699,7 +2699,9 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="open" noun="PublicShare" authenticate="anonymous-all">
         <description>Open a link: the token is checked first (a bad, revoked or expired one is "not found" and nothing more
-            is read), then the password when the link has one. Gives a short-lived grant (an hour) that list#PublicShare,
+            is read), then the password when the link has one: at most 10 tries of a link's password in ten minutes, and 30
+            from one requester, each counted before it is checked, past which the answer is "too many tries" with no check
+            (SEC-FIL-05). Gives a short-lived grant (an hour) that list#PublicShare,
             download#PublicShare and upload#PublicShare take with the token, and counts the opening (openedCount,
             lastOpenedDate). share is what check#PublicShareToken shows.</description>
         <in-parameters>
@@ -2720,6 +2722,16 @@ along with this software (see the LICENSE.md file). If not, see
             share = check.routeContext
             const row = ec.entity.find('moqui.resource.ResourceShare').condition('linkTokenHash', ec.user.singleUseCodeHash(String(token))).disableAuthz().one()
             if (row.passwordHash != null) {
+                // each try counted first, by the link and by the requester, so guessing stops before the hash is computed
+                if (password) {
+                    const attempt = (key, limit) => ec.service.sync().throwOnError(true).name('org.moqui.public.AccountServices.record#Attempt')
+                            .parameters({input: {key, limit, windowMillis: 600000}}).requireNewTransaction(true).disableAuthz().call().result.allowed
+                    const requester = ec.resource.script('component://framework/service/org/moqui/public/Account.js').requesterKey()
+                    if (!attempt('share-password:share:' + row.shareId, 10) || !attempt('share-password:ip:' + requester, 30)) {
+                        ec.message.addError(ec.l10n.localize('Too many tries of the password; wait a few minutes and try again'))
+                        return
+                    }
+                }
                 if (!password || !ec.user.passwordsMatch(String(password), row.passwordHash, 'argon2')) {
                     if (password) ec.message.addError(ec.l10n.localize('The password is not right'))
                     return

@@ -200,8 +200,11 @@ what is not built ([Edge-Node2 §3](../plans/Edge-Node2.md#3-topologies)).
 
 ## Production checklist
 
-- **Package**: Maximal for embedded Postgres, or Enterprise for an external database. Dev and Debug carry the dev tools
-  and are not for deployment ([Packaging](Build-Test.md#packages)).
+- **Package**: Maximal for embedded Postgres, or Enterprise for an external database. Debug, and the default `--release`
+  build of Maximal, carry the dev tools (the file watcher, Dev AIDE): they open only on a dev instance, and the server
+  warns at start when it finds them on a production one. A production image leaves them out: `./moq build --enterprise`,
+  or Maximal without them (`cargo build --profile release --no-default-features -F maximal -p moqui`)
+  ([Packaging](Build-Test.md#packages), SEC-OUT-14).
 - **Purpose**: `instance_purpose` is `production` everywhere except in the dev conf. An archive's `MoquiConf.xml` is
   the production conf.
 - **Secrets**: the first start writes generated secrets to `runtime/.env` with mode 0600. Keep the file private and back

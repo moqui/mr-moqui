@@ -806,6 +806,8 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     work.ok(&["checkout", "-b", "topic"]);
     work.commit(&[("t.txt", "topic\n")], "Topic work");
     work.ok(&["push", "origin", "topic"]);
+    // another branch, with no rule, to move the merge request to
+    work.ok(&["push", "origin", "main:refs/heads/other"]);
     ok(
         &fixture,
         WRITER,
@@ -949,6 +951,31 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     );
     let approvers: Vec<String> = list(&approvals, "approverUserIdList").iter().map(text_of).collect();
     assert_eq!(approvers, vec![APPROVER.to_string()]);
+    // SEC-GIT-13: an approval was for the merge into main; moved to another branch and back, it is asked again
+    for target in ["other", "main"] {
+        ok(
+            &fixture,
+            WRITER,
+            "org.moqui.git.GitReviewServices.update#MergeRequest",
+            &[("mergeRequestId", s(&mr_id)), ("targetRef", s(target))],
+        );
+    }
+    let approvals = ok(
+        &fixture,
+        READER,
+        "org.moqui.git.GitReviewServices.get#MergeRequestApprovals",
+        &[("mergeRequestId", s(&mr_id))],
+    );
+    assert!(
+        list(&approvals, "approverUserIdList").is_empty(),
+        "the approval is asked again for a new target"
+    );
+    ok(
+        &fixture,
+        APPROVER,
+        "org.moqui.git.GitReviewServices.submit#MergeRequestReview",
+        &[("mergeRequestId", s(&mr_id)), ("decision", s("approve"))],
+    );
     let (_, errors) = call(
         &fixture,
         WRITER,

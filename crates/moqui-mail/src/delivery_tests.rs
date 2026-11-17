@@ -595,6 +595,27 @@ fn a_forward_whose_storing_frame_fails_after_the_rules_is_sent_once() {
     assert_eq!(field(&forwards[0], "statusId"), "ES_SENT");
     ctx.factory().run_pending();
     assert_eq!(sink.sent().len(), 1, "sent once");
+    // SEC-MAIL-05: a forward is marked automatic, so another account's rule does not send it back, and automatic mail
+    // is not forwarded
+    assert!(
+        sent[0].mime.contains("Auto-Submitted: auto-generated"),
+        "{}",
+        sent[0].mime
+    );
+    receive(
+        &facade,
+        &plain(
+            "<plan-reply@example.org>",
+            "Plan (out of office)",
+            "sales@example.com",
+            "Auto-Submitted: auto-replied\r\n",
+        ),
+        "dan@example.org",
+        &[to(&sales, &["sales@example.com"])],
+    )
+    .unwrap();
+    ctx.factory().run_pending();
+    assert_eq!(sink.sent().len(), 1, "automatic mail is not forwarded");
 }
 
 #[test]

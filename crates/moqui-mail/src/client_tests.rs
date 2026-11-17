@@ -2438,6 +2438,16 @@ fn the_automatic_reply_goes_once_to_each_sender_it_is_for() {
         &[("receivedDate", stamp(now() - 10 * DAY))],
     );
     received("O11", "spam@x.example.org", "EfkJunk", &[]);
+    // SEC-MAIL-05: a sender the kept verdict says failed DMARC is forged, and gets no reply
+    received(
+        "O14",
+        "forged@x.example.org",
+        "EfkInbox",
+        &[(
+            "headersString",
+            text("Authentication-Results: mx.example.com;\n dmarc=fail (p=reject) header.from=x.example.org"),
+        )],
+    );
     let sink = crate::SinkGuard::install();
     // the replies go once their transactions commit
     let reply = |ids: &[&str]| {
@@ -2451,7 +2461,9 @@ fn the_automatic_reply_goes_once_to_each_sender_it_is_for() {
         ctx.factory().run_pending();
         out
     };
-    let out = reply(&["O1", "O2", "O3", "O4", "O5", "O6", "O7", "O8", "O9", "O10", "O11"]);
+    let out = reply(&[
+        "O1", "O2", "O3", "O4", "O5", "O6", "O7", "O8", "O9", "O10", "O11", "O14",
+    ]);
     assert_eq!(out_number(&out, "sentCount"), 3, "{out:?}");
     let sent = sink.sent();
     let to: Vec<String> = sent.iter().map(|mail| mail.to.join(",")).collect();
@@ -2479,6 +2491,15 @@ fn the_automatic_reply_goes_once_to_each_sender_it_is_for() {
     store();
     assert_eq!(out_number(&reply(&["O12"]), "sentCount"), 1);
     assert_eq!(sink.sent().len(), 4);
+
+    // SEC-MAIL-05: at most 30 replies an hour from the account, however many senders write: 4 sent above, 26 more now
+    let many: Vec<String> = (1..=30).map(|n| format!("H{n}")).collect();
+    for (n, id) in many.iter().enumerate() {
+        received(id, &format!("writer{n}@many.example.org"), "EfkInbox", &[]);
+    }
+    let ids: Vec<&str> = many.iter().map(String::as_str).collect();
+    assert_eq!(out_number(&reply(&ids), "sentCount"), 26);
+    assert_eq!(sink.sent().len(), 30);
 
     // off: nothing
     ok(

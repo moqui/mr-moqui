@@ -1494,6 +1494,17 @@ fn serve_thread(
     if matches!(bind, ListenBind::Property) {
         moqui_devkit::watch::start(&factory);
     }
+    // A build with the dev tools (the default release package) on a production instance: they stay off there, since
+    // they open only on a dev instance, but a production image is built without them (SEC-OUT-14, docs/Run-Deploy.md)
+    #[cfg(feature = "devtools")]
+    if matches!(bind, ListenBind::Property) && moqui_core::web::is_production() {
+        tracing::warn!(
+            "this binary is the {} package with the development tools (the file watcher, Dev AIDE): they stay off on \
+             a production instance, but a production image leaves them out (./moq build --enterprise, or Maximal \
+             without the devtools feature; docs/Run-Deploy.md, Production checklist)",
+            build_package()
+        );
+    }
     // The artifact index (plans/design-dev-aide.md 7.1) of the same server, built in the background; a test's server
     // builds it at first use.
     if matches!(bind, ListenBind::Property) {

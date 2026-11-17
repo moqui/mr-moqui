@@ -305,15 +305,13 @@ fn check_apparmor_profile(binary: &Path) {
     }
 }
 
-/// The browser's arguments, apart from the profile and the window: headless, DevTools on an ephemeral loopback port,
-/// and nothing that phones home. The sandbox stays on. The PDF engine adds its proxy arguments, which keep a document
-/// off the network.
+/// The browser's arguments, apart from the profile, the window and how DevTools is reached: headless, and nothing that
+/// phones home. The sandbox stays on. The PDF engine adds its proxy arguments, which keep a document off the network,
+/// and DevTools over a pipe ([`PIPE_ARGS`]); the test client DevTools on a loopback port ([`PORT_ARGS`]).
 #[must_use]
-pub fn launch_args() -> [&'static str; 13] {
+pub fn launch_args() -> [&'static str; 11] {
     [
         "--headless=new",
-        "--remote-debugging-address=127.0.0.1",
-        "--remote-debugging-port=0",
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-gpu",
@@ -326,6 +324,15 @@ pub fn launch_args() -> [&'static str; 13] {
         "--use-mock-keychain",
     ]
 }
+
+/// DevTools on the browser's file descriptors 3 (commands in) and 4 (answers out), each message JSON ending in a NUL:
+/// no socket, so no other process of the machine reaches the pages, which hold the documents being printed
+/// (SEC-SCR-10).
+pub const PIPE_ARGS: [&str; 1] = ["--remote-debugging-pipe"];
+
+/// DevTools on an ephemeral loopback port, for the test client's browser, whose address it reads from
+/// `DevToolsActivePort` ([`devtools_url`]): any local process may connect to it, so it is a development tool's.
+pub const PORT_ARGS: [&str; 2] = ["--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0"];
 
 /// The browser socket from `DevToolsActivePort` in the profile, which Chromium writes once it listens.
 ///
@@ -355,6 +362,15 @@ pub fn devtools_url(profile: &Path, child: &mut Child, wait: Duration) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// SEC-SCR-10: the shared arguments open no DevTools port; the PDF engine adds the pipe and only the test client a
+    /// port.
+    #[test]
+    fn devtools_is_a_pipe_unless_a_port_is_asked_for() {
+        assert!(!launch_args().iter().any(|arg| arg.starts_with("--remote-debugging")));
+        assert_eq!(PIPE_ARGS, ["--remote-debugging-pipe"]);
+        assert!(PORT_ARGS.iter().any(|arg| arg.starts_with("--remote-debugging-port")));
+    }
 
     #[test]
     fn a_configured_browser_that_is_no_file_is_an_error_and_one_that_is_comes_first() {

@@ -89,7 +89,7 @@ feature("trash and restore on the database tree and on git", {
     },
 })
 
-feature("a link with a password: the token check, the grant, the listing", {
+feature("a link with a password: the token check, the grant, the listing, and a limit on its tries", {
     when() {
         ec.user.internalLoginUser("filesOwner")
         const link = files("share#Resource", { driveId: folderDriveId, path: "docs", isLink: "Y", password: "spec secret" })
@@ -98,11 +98,23 @@ feature("a link with a password: the token check, the grant, the listing", {
         const bad = files("check#PublicShareToken", { token: "NoSuchTokenAtAll0000" })
         const opened = files("open#PublicShare", { token: link.linkToken, password: "spec secret" })
         const listed = files("list#PublicShare", { token: link.linkToken, grant: opened.grant })
+        // SEC-FIL-05: ten tries of a link's password in ten minutes, the good one above among them; the next, even the right
+        // one, is refused before the password is checked
+        const tries = []
+        for (const password of ["guess 1", "guess 2", "guess 3", "guess 4", "guess 5", "guess 6", "guess 7", "guess 8", "guess 9", "spec secret"]) {
+            try {
+                tries.push(files("open#PublicShare", { token: link.linkToken, password }).passwordOk === true ? "ok" : "no")
+            } catch (error) {
+                tries.push(String(error.message || error).includes("Too many tries") ? "limited" : "wrong")
+            }
+            ec.message.clearErrors()
+        }
         ec.user.internalLoginUser("filesOwner")
         const links = files("get#Shares").linkList
-        return { check, bad, opened, listed, links }
+        return { check, bad, opened, listed, links, tries }
     },
-    then({ check, bad, opened, listed, links }) {
+    then({ check, bad, opened, listed, links, tries }) {
+        tries.join(",") == "wrong,wrong,wrong,wrong,wrong,wrong,wrong,wrong,wrong,limited"
         check.valid == true
         check.routeContext.needsPassword == true
         check.routeContext.sharerName == "filesOwner Example"

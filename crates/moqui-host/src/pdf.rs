@@ -51,7 +51,9 @@ use serde_json::{json, Value};
 use tokio::sync::{Mutex, Semaphore};
 
 use self::cdp::Connection;
-use crate::chromium::{devtools_url, find_chromium, launch_args, userns_restricted};
+#[cfg(not(unix))]
+use crate::chromium::{devtools_url, PORT_ARGS};
+use crate::chromium::{find_chromium, launch_args, userns_restricted};
 
 /// The variables of the server's environment Chromium gets beside `moqui_lib::env::CHILD_ENV_NAMES`: the user's runtime,
 /// config and cache directories, fonts, and a display when there is one.
@@ -422,10 +424,25 @@ impl Inner {
         }
         let binary = self.binary.clone();
         let temp_dir = self.temp_dir.clone();
-        let (process, url) = tokio::task::spawn_blocking(move || ChromiumProcess::spawn(&binary, &temp_dir))
+        let (process, endpoint) = tokio::task::spawn_blocking(move || ChromiumProcess::spawn(&binary, &temp_dir))
             .await
             .map_err(|err| Error::new(format!("the PDF browser start panicked: {err}")))??;
-        let connection = Connection::connect(&url).await?;
+        #[cfg(unix)]
+        let connection = {
+            let Endpoint::Pipe(commands, answers) = endpoint;
+            let connection = Connection::over_pipe(commands, answers)?;
+            // a pipe has no address to wait for: the browser is up once it answers
+            connection
+                .call(None, "Browser.getVersion", json!({}), START_WAIT)
+                .await
+                .map_err(|err| start_error(err, &self.binary))?;
+            connection
+        };
+        #[cfg(not(unix))]
+        let connection = {
+            let Endpoint::Url(url) = endpoint;
+            Connection::connect(&url).await?
+        };
         tracing::info!(binary = %self.binary.display(), "started the PDF browser");
         *live = Some(Live {
             connection: connection.clone(),
@@ -679,6 +696,29 @@ fn text_of(value: &Value, name: &str) -> Result<String, Error> {
         .ok_or_else(|| Error::new(format!("the browser answered without {name}")))
 }
 
+/// How the PDF engine reaches the browser's DevTools.
+enum Endpoint {
+    /// On Unix, the pipe on the browser's descriptors 3 and 4: no socket another local process could open (SEC-SCR-10).
+    #[cfg(unix)]
+    Pipe(std::process::ChildStdin, std::process::ChildStdout),
+    /// Elsewhere, the loopback port from `DevToolsActivePort`.
+    #[cfg(not(unix))]
+    Url(String),
+}
+
+/// A browser start that failed, with the AppArmor hint where unprivileged user namespaces are limited.
+fn start_error(err: Error, binary: &Path) -> Error {
+    if userns_restricted() {
+        Error::new(format!(
+            "{err}; AppArmor limits unprivileged user namespaces here, so {} may need an AppArmor profile to start its \
+             sandbox (./moq help chromium-download)",
+            binary.display()
+        ))
+    } else {
+        err
+    }
+}
+
 /// The browser process and its profile directory. Drop kills the process group and removes the profile.
 struct ChromiumProcess {
     child: Child,
@@ -686,8 +726,10 @@ struct ChromiumProcess {
 }
 
 impl ChromiumProcess {
-    /// Start the browser with a fresh profile and wait for its DevTools address.
-    fn spawn(binary: &Path, temp_dir: &Path) -> Result<(Self, String), Error> {
+    /// Start the browser with a fresh profile: on Unix with DevTools on its pipe, through `/bin/sh`, which gives it
+    /// the pipes as its descriptors 3 and 4 and then becomes it (`exec`), so the process is the browser's; elsewhere
+    /// with a loopback port, whose address it waits for.
+    fn spawn(binary: &Path, temp_dir: &Path) -> Result<(Self, Endpoint), Error> {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let profile = temp_dir.join(format!(
             "chromium-{}-{}",
@@ -697,35 +739,51 @@ impl ChromiumProcess {
         let _ = std::fs::remove_dir_all(&profile);
         std::fs::create_dir_all(&profile)
             .map_err(|err| Error::new(format!("could not create {}", profile.display())).with_source(err))?;
+        #[cfg(unix)]
+        let mut command = {
+            // $0 is the browser and $@ its arguments; fd 3 reads our commands, fd 4 writes its answers
+            let mut command = Command::new("/bin/sh");
+            command
+                .arg("-c")
+                .arg("exec \"$0\" \"$@\" 3<&0 4>&1 </dev/null >/dev/null")
+                .arg(binary);
+            command
+        };
+        #[cfg(not(unix))]
         let mut command = Command::new(binary);
         // only the named environment, never the server's secrets (plans/Security-Review-Low.md SEC-OUT-09)
         moqui_lib::env::limit_child_env(&mut command, CHROMIUM_ENV);
+        command.args(ISOLATION_ARGS).args(launch_args());
+        #[cfg(unix)]
         command
-            .args(ISOLATION_ARGS)
-            .args(launch_args())
+            .args(crate::chromium::PIPE_ARGS)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped());
+        #[cfg(not(unix))]
+        command.args(PORT_ARGS).stdin(Stdio::null()).stdout(Stdio::null());
+        command
             .arg(format!("--user-data-dir={}", profile.display()))
             .arg("about:blank")
             .env_remove("NOTIFY_SOCKET")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
             .stderr(Stdio::null());
         isolate_process_group(&mut command);
         let child = command
             .spawn()
             .map_err(|err| Error::new(format!("could not start {}", binary.display())).with_source(err))?;
         let mut process = Self { child, profile };
-        let url = devtools_url(&process.profile, &mut process.child, START_WAIT).map_err(|err| {
-            if userns_restricted() {
-                Error::new(format!(
-                    "{err}; AppArmor limits unprivileged user namespaces here, so {} may need an AppArmor profile to \
-                     start its sandbox (./moq help chromium-download)",
-                    binary.display()
-                ))
-            } else {
-                err
-            }
-        })?;
-        Ok((process, url))
+        #[cfg(unix)]
+        {
+            let (Some(commands), Some(answers)) = (process.child.stdin.take(), process.child.stdout.take()) else {
+                return Err(Error::new("the PDF browser started with no DevTools pipe"));
+            };
+            Ok((process, Endpoint::Pipe(commands, answers)))
+        }
+        #[cfg(not(unix))]
+        {
+            let url = devtools_url(&process.profile, &mut process.child, START_WAIT)
+                .map_err(|err| start_error(err, binary))?;
+            Ok((process, Endpoint::Url(url)))
+        }
     }
 
     fn running(&mut self) -> bool {

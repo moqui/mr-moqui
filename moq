@@ -3115,6 +3115,29 @@ verify_published_sha512() {
     info "Checked against $url"
 }
 
+# The archive $1 for download $2 (a key that names one fixed archive, such as a Chromium snapshot's revision or an
+# add-on's version) against the SHA-256 recorded for it in downloads.sha256 of the user's moqui cache: recorded the first
+# time, and a later download of it must match, else it is removed and the task stops (SEC-OUT-14). A moving archive (a
+# branch's) is not checked.
+check_download_sum() {
+    local file=$1 key=$2 sums actual known
+    dry_run && return 0
+    sums=$(dirname "$(embed_cache_dir)")/downloads.sha256
+    actual=$(sha256_line "$file" | awk '{print $1}')
+    [ -n "$actual" ] || die "could not compute the SHA-256 of $(rel "$file")"
+    known=$(awk -v key="$key" '$2 == key {print $1; exit}' "$sums" 2>/dev/null)
+    if [ -z "$known" ]; then
+        mkdir -p "$(dirname "$sums")" && printf '%s %s\n' "$actual" "$key" >>"$sums" ||
+            die "could not record the SHA-256 of $key in $sums"
+        info "Recorded the SHA-256 of $key in $sums"
+    elif [ "$known" != "$actual" ]; then
+        rm -f -- "$file"
+        die "$key does not match the SHA-256 recorded for it in $sums when it was first downloaded; the archive was changed, or $sums names it wrongly"
+    else
+        info "Checked $key against the SHA-256 recorded for it"
+    fi
+}
+
 # ========== Chromium ==========
 
 # The newest snapshot of $1 with the file $3 at or before the main-branch position the current Stable release of
@@ -3217,6 +3240,7 @@ task_chromium_download() {
         run_cmd curl -fL --progress-bar -o "$archive.part" "$url" || die "download failed"
         run_cmd mv "$archive.part" "$archive"
     fi
+    check_download_sum "$archive" "chromium:$plat/$revision/$zip"
     [ -n "$cache_only" ] || rm_path "$CHROMIUM_DIR"
     if dry_run; then
         show_cmd unzip -q "$archive" -d "<temp>"
@@ -4456,6 +4480,8 @@ download_component() {
         rm -f "$target.zip"
         die "download of $name failed"
     }
+    # a version's archive is fixed, so it is checked against its first download; a branch's moves
+    case $type in release | binary) check_download_sum "$target.zip" "addon:$url" ;; esac
     work=$(mktemp -d "$(dirname "$target")/.moq-get.XXXXXX") || die "could not make a temp directory"
     if ! unzip -q "$target.zip" -d "$work"; then
         rm -rf "$work" "$target.zip"

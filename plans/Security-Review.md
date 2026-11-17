@@ -9,7 +9,7 @@ and SEC-OUT-08 finished later the same day), each entry's **Fix** in [Security-R
 saying how. The Low findings that were confirmed in code were then fixed in batches the same day, each entry's **Fix**
 in [Security-Review-Low](Security-Review-Low.md) saying how, and two batches of the owner's decisions on the ones they
 left were carried out after them, and on 2026-11-17 the ones fixed in part were finished: of the 215 Low and Info
-findings 132 are fixed and 5 deferred, none refuted, and 78 (37 Low, 41 Info) are as reported. What is left is under
+findings 138 are fixed and 5 deferred, none refuted, and 72 (32 Low, 40 Info) are as reported. What is left is under
 [What is left](#what-is-left).
 
 This is the findings register of the security review that the pre-0.1.0 notice in the [README](../README.md) names:
@@ -176,14 +176,15 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
    approval, parsers of untrusted input, the mobile app's native code, and the helper-read parts of the PASS services.
 3. **Fixes.** The High findings are fixed (2026-11-15, what they left on 2026-11-16), and the Medium ones (2026-11-16).
    Of the Medium findings none is open, none deferred, none refuted and none fixed only in part. Of the 169 Low and 46
-   Info findings, 132 are fixed (127 Low, 5 Info) and 5 Low deferred; none is refuted whole (SEC-GIT-19 and SEC-PSS-28
-   are in part); 37 Low and 41 Info are as reported. The first batch of the owner's decisions (2026-11-16) finished 14
+   Info findings, 138 are fixed (132 Low, 6 Info) and 5 Low deferred; none is refuted whole (SEC-GIT-19 and SEC-PSS-28
+   are in part); 32 Low and 40 Info are as reported. The first batch of the owner's decisions (2026-11-16) finished 14
    of them: SEC-WEB-05, SEC-WEB-06, SEC-WEB-10, SEC-RTE-17, SEC-ADM-10, SEC-GIT-18, SEC-GIT-19, SEC-COM-20, SEC-DAT-11,
    SEC-PSS-26, SEC-PSS-27, SEC-PSS-28, SEC-PSS-44 and SEC-OUT-13. The second (2026-11-17) finished 7: SEC-MAIL-06,
    SEC-MAIL-07, SEC-CLU-02, SEC-CLU-04, SEC-PSF-04, SEC-PSS-05 and SEC-PSS-23. A third (2026-11-17) finished the five
    fixed in part, SEC-TLS-08, SEC-TLS-17, SEC-COM-21, SEC-DAT-09 and SEC-BAP-06, and the follow-ups of SEC-DAT-11,
    SEC-MAIL-07 and SEC-CLU-02 below. A fourth (2026-11-17), the open ones of most impact: SEC-PSS-66, SEC-SCR-08
    (confirmed: mr-marble's TaskSummary), SEC-ADM-11, SEC-FIL-65 and SEC-TLS-18 (the session id, then the query values).
+   A fifth (2026-11-17): SEC-BOS-08, SEC-GIT-13, SEC-FIL-05, SEC-SCR-10, SEC-MAIL-05 and SEC-OUT-14.
 
    Deferred, each for an owner's decision or a design: SEC-COM-19 and SEC-COM-26 (each a design of its own), and
    SEC-CLI-03, SEC-CLI-04 and SEC-CLI-05 (the desktop and Tauri clients, waiting for the desktop build machine).
@@ -367,7 +368,7 @@ Map file: [Attack-Surface-Git.md](../docs/security/Attack-Surface-Git.md). Revie
 | SEC-GIT-10 | `crates/moqui-git/src/service/review.rs:81-97` | `fork#GitRepository` uses the new `repositoryId` as a directory name without checking it | Low | fixed |
 | SEC-GIT-11 | `crates/moqui-git/src/service/hosting.rs:631-665` | `delete#GitRef` deletes any ref, a merge request's head included | Low | fixed |
 | SEC-GIT-12 | `crates/moqui-git/src/browse.rs:140-150`, `:102-106` | A revision that is a full ref name reads any ref of the store but a hidden merge request's head | Low | reported (likely) |
-| SEC-GIT-13 | `GitReviewServices.xml:508`, `:520-535` | Approvals stay when a merge request's target changes | Low | reported (likely) |
+| SEC-GIT-13 | `GitReviewServices.xml:508`, `:520-535` | Approvals stay when a merge request's target changes | Low | fixed |
 | SEC-GIT-14 | `crates/moqui-core/src/user/authz.rs:502-504` | The services' repository checks pass when `AT_GIT_REPOSITORY` authorization is off | Low | fixed |
 | SEC-GIT-15 | `crates/moqui-git/src/storage.rs:160-171` | `delete#GitRepository` leaves the repository's push mirror rows | Low | fixed |
 | SEC-GIT-16 | `GitServices.xml:1123` | A webhook URL may be plain http and carry a user and password; `remoteUrl` is shown to every viewer | Low | fixed |
@@ -391,7 +392,7 @@ Map file: [Attack-Surface-Mail.md](../docs/security/Attack-Surface-Mail.md). Rev
 | SEC-MAIL-04 | `runtime/components/base/tools/service/moqui.rest.xml:122-131` | The tools REST resource returns mailbox passwords and OAuth refresh tokens | Medium | fixed |
 | SEC-MAIL-62 | runtime/components/base/webroot/template/screen/BasicTransitions.xml:20-28 (and 29-37) | A GET mails a screen's full export to an address the request names | Medium | fixed |
 | SEC-MAIL-64 | runtime/components/addon/mr-marble/screen/SimpleScreens/Party/PartyEmails.xml:20 | mr-marble sendEmailMessage transitions send any stored message again | Medium | fixed |
-| SEC-MAIL-05 | `EmailClientServices.xml` `send#OutOfOfficeReplies` (5197-5412), `run#EmailRules` `forward` (4532-4571) | Out-of-office replies and rule forwards have no total limit and trust the From header | Low | reported (likely) |
+| SEC-MAIL-05 | `EmailClientServices.xml` `send#OutOfOfficeReplies` (5197-5412), `run#EmailRules` `forward` (4532-4571) | Out-of-office replies and rule forwards have no total limit and trust the From header | Low | fixed |
 | SEC-MAIL-06 | `crates/moqui-mail/src/delivery.rs:601-725` | The "delivered" notice is backscatter with the sender's headers | Low | fixed |
 | SEC-MAIL-07 | `crates/moqui-host/src/smtp.rs` session loop (1169-1206), `rcpt` (1354-1450) | Internet mode has no cap on messages a session, refused recipients, or stored bytes | Low | fixed |
 | SEC-MAIL-08 | `crates/moqui-mail/src/delivery.rs` `deliver_one` (753-772) | A message is dropped when its Message-ID is already in the account | Low | fixed |
@@ -414,7 +415,7 @@ Map file: [Attack-Surface-Files.md](../docs/security/Attack-Surface-Files.md). R
 | SEC-FIL-04 | `crates/moqui-host/src/dav_http.rs:47-59,79` | DAV buffers up to 256 MiB per request before it checks credentials | Medium | fixed |
 | SEC-FIL-08 | `webroot.xml:257-272` | `/resources` lets `ADMIN` read any file the server's user can read, in production too | Medium | fixed |
 | SEC-FIL-61 | crates/moqui-host/src/ssh/server.rs:1010 | SFTP holds up to `sftp-max-file` in memory per channel, and the handler does not count channels | Medium | fixed |
-| SEC-FIL-05 | `runtime/components/base/framework/service/org/moqui/resource/FileServices.xml:2669-2702` | No attempt limit on a public link's password | Low | reported (to check) |
+| SEC-FIL-05 | `runtime/components/base/framework/service/org/moqui/resource/FileServices.xml:2669-2702` | No attempt limit on a public link's password | Low | fixed |
 | SEC-FIL-06 | `FileServices.xml:2834-2870`, `:1250` | Anonymous file drop has no size, count or type limit of its own | Low | reported (likely) |
 | SEC-FIL-07 | `FileServices.xml:307,341` | Three `FileServices` parameters name a server path and are not checked in the service | Low | fixed |
 | SEC-FIL-62 | crates/moqui-host/src/command/shell.rs:87 | The admin shell's `service`, `entity`, `cache` and `js` commands leave no audit record | Low | fixed |
@@ -598,7 +599,7 @@ Map file: [Attack-Surface-Apps-BOSS.md](../docs/security/Attack-Surface-Apps-BOS
 | SEC-BOS-05 | runtime/components/addon/mr-boss/screen/PublishedCalendar.xml:27 and PublishedCalendar.qvue:120 | A published calendar's password travels in the query string | Low | fixed |
 | SEC-BOS-06 | runtime/components/addon/mr-mantle/service/mantle/account/PaymentRuns.js:354 and InvoiceWorkflow.js:142 | Accounting separation of duties is a preference, and two bundles hold both sides | Low | reported (to check) |
 | SEC-BOS-07 | runtime/components/addon/mr-boss/skill/reset-factor.md:8 | The reset-factor skill is declared reversible | Low | fixed |
-| SEC-BOS-08 | runtime/components/addon/mr-boss/data/BossSetupData.xml:5274 and runtime/components/addon/mr-boss/service/ironstone/admin/Provisioning.js:85 | request#Provisioning is authorized for ALL_USERS and checks no permission itself | Low | reported (to check) |
+| SEC-BOS-08 | runtime/components/addon/mr-boss/data/BossSetupData.xml:5274 and runtime/components/addon/mr-boss/service/ironstone/admin/Provisioning.js:85 | request#Provisioning is authorized for ALL_USERS and checks no permission itself | Low | fixed |
 | SEC-BOS-09 | runtime/components/addon/mr-boss/data/BossUsersDemoData.xml:47 | Demo accounts share one password hash and 47 demo loaders are anonymous-all | Info | reported (to check) |
 
 ### BOSS business apps and the Mantle REST root
@@ -648,7 +649,7 @@ Map file: [Attack-Surface-Scripts.md](../docs/security/Attack-Surface-Scripts.md
 | SEC-SCR-07 | crates/moqui-core/src/script/host/tools.rs:2720-2726 and the `RestClient` shim near :903 | `ec.service.rest()` reaches internal addresses unless the script opts out | Low | fixed |
 | SEC-SCR-08 | runtime/components/base/framework/template/screen/ScreenHtml.js:849 | The `editable` widget writes its text unescaped by default | Low | fixed |
 | SEC-SCR-09 | crates/moqui-core/src/script/host/files.rs:455 | A thumbnail decodes an image with no limits of its own | Low | reported (to check) |
-| SEC-SCR-10 | crates/moqui-host/src/chromium.rs:312-327 | Chromium's DevTools port has no authentication on loopback | Low | reported (to check) |
+| SEC-SCR-10 | crates/moqui-host/src/chromium.rs:312-327 | Chromium's DevTools port has no authentication on loopback | Low | fixed |
 | SEC-SCR-12 | `crates/moqui-core/src/screen/definition.rs:1694` | A subscreen row's menu title is expanded as script, in menus and in the breadcrumb | Low | fixed |
 | SEC-SCR-11 | crates/moqui-core/src/screen/definition.rs:910 | A screen definition loads from any resource scheme, `http` and `dbresource` included | Info | reported (to check) |
 
@@ -671,7 +672,7 @@ Map file: [Attack-Surface-Outbound.md](../docs/security/Attack-Surface-Outbound.
 | SEC-OUT-11 | crates/moqui-llm/src/provider/mod.rs:1669 | The LLM endpoint check reads only an address written in the URL | Low | fixed |
 | SEC-OUT-12 | crates/moqui-lib/src/net.rs:42 | `internal_address` leaves out some non-public ranges; proxy variables may take names past the guard | Low | fixed |
 | SEC-OUT-13 | systemd/moqui.service:23 | The systemd unit and the image leave the binary and confs writable by the service user | Low | fixed |
-| SEC-OUT-14 | moq:1476 | The default release build carries `devtools`; `moq` downloads Chromium and add-on zips with no checksum | Info | reported (to check) |
+| SEC-OUT-14 | moq:1476 | The default release build carries `devtools`; `moq` downloads Chromium and add-on zips with no checksum | Info | fixed |
 
 ### Development tools
 

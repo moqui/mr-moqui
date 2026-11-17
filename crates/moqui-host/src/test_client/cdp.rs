@@ -177,6 +177,7 @@ impl Browser {
             .filter(|arg| !launch.headed || !arg.starts_with("--headless"))
             .map(|arg| (*arg).to_string())
             .collect();
+        args.extend(crate::chromium::PORT_ARGS.iter().map(|arg| (*arg).to_string()));
         args.extend(launch.extra_args.iter().cloned());
         args.push(format!("--window-size={},{}", launch.window.0, launch.window.1));
         args.push(format!("--user-data-dir={}", profile.display()));

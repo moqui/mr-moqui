@@ -4135,7 +4135,8 @@ along with this software (see the LICENSE.md file). If not, see
         name itself); operator contains, is, matches (a regular expression), startsWith, all ignoring case, and for the
         size greater or less (bytes, or with K or M). matchAllEnumId ErmAll (the default) or ErmAny. Each action is
         {action, value}: moveToFolder (a folder id, name or path), addLabel (a label id or name, made when missing),
-        markRead, flag, forwardTo (addresses, sent through the account), delete (to Trash), markSpam (to Junk, keyword
+        markRead, flag, forwardTo (addresses, sent through the account, marked Auto-Submitted: auto-generated; never automatic
+        mail, mail past 25 Received fields or more than 50 forwards an account an hour, SEC-MAIL-05), delete (to Trash), markSpam (to Junk, keyword
         $Junk), stopProcessing; and the actions apps add: an EmailRuleAction enumeration whose enumCode (else enumId) is the
         action and whose optionValue is the service that does it (Mantle's createRequest and createWorkItem), so the
         framework runs them without knowing the app. The service gets emailMessageId, emailAccountId, emailRuleId,
@@ -4584,9 +4585,42 @@ along with this software (see the LICENSE.md file). If not, see
                 row.create()
                 pushes.labels.add(message.emailMessageId)
             }
+            // the header fields of a stored message of that name, folded lines joined
+            const headerLines = (headers, name) => {
+                const found = []
+                let current = null
+                for (const line of String(headers || '').split(/\r?\n/)) {
+                    if (current != null && /^[ \t]/.test(line)) { found[found.length - 1] += ' ' + line.trim(); continue }
+                    current = null
+                    const colon = line.indexOf(':')
+                    if (colon > 0 && line.substring(0, colon).trim().toLowerCase() === name.toLowerCase()) {
+                        found.push(line.substring(colon + 1).trim())
+                        current = found.length - 1
+                    }
+                }
+                return found
+            }
+            // automatic and looping mail is not forwarded, and an account forwards at most so many an hour (SEC-MAIL-05)
+            const FORWARDS_PER_HOUR = 50, MAX_RECEIVED = 25
             const forward = (message, to) => {
                 // not mail this account sent, so a rule forwarding to the account itself does not loop
                 if (own.has(String(message.fromAddress || '').toLowerCase())) return
+                const submitted = String(headerLines(message.headersString, 'Auto-Submitted')[0] || '').trim().toLowerCase()
+                if (submitted && submitted !== 'no') {
+                    ec.logger.info(`Email rule forward of message ${message.emailMessageId} skipped: it is automatic mail (Auto-Submitted: ${submitted})`)
+                    return
+                }
+                if (headerLines(message.headersString, 'Received').length > MAX_RECEIVED) {
+                    ec.logger.warn(`Email rule forward of message ${message.emailMessageId} skipped: it has passed more than ${MAX_RECEIVED} servers (a forwarding loop)`)
+                    return
+                }
+                const allowed = ec.service.sync().throwOnError(true).name('org.moqui.public.AccountServices.record#Attempt')
+                        .parameters({input: {key: 'mail-rule-forward:' + accountId, limit: FORWARDS_PER_HOUR, windowMillis: 3600000}})
+                        .requireNewTransaction(true).disableAuthz().call().result.allowed
+                if (!allowed) {
+                    ec.logger.warn(`Email rule forward of message ${message.emailMessageId} skipped: email account ${accountId} forwarded ${FORWARDS_PER_HOUR} messages in the last hour`)
+                    return
+                }
                 const identities = Array.from(ec.entity.find('moqui.basic.email.EmailIdentity').condition('emailAccountId', accountId).orderBy('emailIdentityId').list())
                 const identity = identities.find((candidate) => candidate.isDefault === 'Y') || identities[0] || null
                 const drafts = folderOfKind('EfkDrafts')
@@ -4604,7 +4638,9 @@ along with this software (see the LICENSE.md file). If not, see
                     body: `<p>${intro.map(escape).join('<br>')}</p>` + (message.body || `<pre>${escape(text)}</pre>`),
                     bodyText: intro.join('\n') + '\n\n' + text, snippet: String(text).substring(0, 137),
                     parentEmailMessageId: message.emailMessageId, rootEmailMessageId: message.rootEmailMessageId || message.emailMessageId,
-                    referencesHeader: references.length ? references.join(' ') : null, hasAttachment: message.hasAttachment || 'N'}, true, null, null)
+                    referencesHeader: references.length ? references.join(' ') : null, hasAttachment: message.hasAttachment || 'N',
+                    // marked automatic, so another account's rule does not forward it back (RFC 3834)
+                    headersString: 'Auto-Submitted: auto-generated'}, true, null, null)
                 draft.create()
                 // the files go too, each a copy of its own, so deleting either message leaves the other's
                 for (const file of ec.entity.find('moqui.basic.email.EmailMessageAttachment').condition('emailMessageId', message.emailMessageId).list()) {
@@ -5263,8 +5299,10 @@ along with this software (see the LICENSE.md file). If not, see
             - never to a list or bulk mail (List-Id, List-Unsubscribe, List-Post, Precedence bulk, list or junk), to
               another automatic message (Auto-Submitted other than no, X-Auto-Response-Suppress, X-Autoreply,
               X-Autorespond), to a bounce (an empty Return-Path), to a no-reply or system address (mailer-daemon,
-              postmaster, noreply, no-reply, donotreply, bounce), to the account itself, or to spam (mail the rules moved
-              to Junk or Trash);
+              postmaster, noreply, no-reply, donotreply, bounce), to the account itself, to spam (mail the rules moved
+              to Junk or Trash), or to a sender the kept Authentication-Results say failed DMARC (SEC-MAIL-05);
+            - at most 30 replies an hour from an account, whoever the senders are (SEC-MAIL-05: a run of forged senders
+              does not make it send to each);
             - with Auto-Submitted: auto-replied and X-Auto-Response-Suppress: All, and In-Reply-To and References to the
               mail it answers (not threaded with it, and the mail is not marked answered);
             - with internalBodyHtml, when set, to an internal sender: a user of this system (by email address) or an
@@ -5292,6 +5330,7 @@ along with this software (see the LICENSE.md file). If not, see
             const cf = ec.entity.conditionFactory
             const MESSAGE = 'moqui.basic.email.EmailMessage'
             const DAY = 86400000
+            const REPLIES_PER_HOUR = 30
             sentCount = 0
             skippedCount = 0
             if (!ec.artifactExecution.authzDisabled()) { ec.message.addError(ec.l10n.localize('send#OutOfOfficeReplies is internal')); return }
@@ -5356,6 +5395,9 @@ along with this software (see the LICENSE.md file). If not, see
                 if (headerValue(headers, 'X-Auto-Response-Suppress') != null) return 'the mail has X-Auto-Response-Suppress'
                 const returnPath = headerValue(headers, 'Return-Path')
                 if (returnPath != null && /^<\s*>$/.test(returnPath.trim())) return 'a bounce (empty Return-Path)'
+                // a sender the trusted verdict says is forged (SEC-MAIL-05): a reply would go to whoever it names
+                const verdicts = String(headers || '').match(/^authentication-results:[^\n]*(?:\r?\n[ \t][^\n]*)*/gim) || []
+                if (verdicts.some((verdict) => /\bdmarc\s*=\s*fail\b/i.test(verdict))) return 'the sender failed DMARC (Authentication-Results)'
                 const recipients = addressesIn(message.toAddresses).concat(addressesIn(message.ccAddresses))
                 if (!recipients.some((address) => own.has(address))) return 'not sent to the account (Bcc or a list)'
                 const received = toMillis(message.receivedDate) ?? toMillis(message.messageDate)
@@ -5431,6 +5473,15 @@ along with this software (see the LICENSE.md file). If not, see
                 const last = ec.entity.find('moqui.basic.email.EmailOutOfOfficeSent').condition('emailAccountId', emailAccountId)
                         .condition('toAddress', sender).one()
                 if (last != null && toMillis(last.lastSentDate) > nowMillis - onceDays * DAY) { skippedCount++; continue }
+                // at most so many replies an hour from an account, whoever the senders are (SEC-MAIL-05: backscatter)
+                const allowed = ec.service.sync().throwOnError(true).name('org.moqui.public.AccountServices.record#Attempt')
+                        .parameters({input: {key: 'mail-auto-reply:' + emailAccountId, limit: REPLIES_PER_HOUR, windowMillis: 3600000}})
+                        .requireNewTransaction(true).call().result.allowed
+                if (!allowed) {
+                    ec.logger.warn(`No automatic reply of email account ${emailAccountId} to message ${message.emailMessageId}: it sent ${REPLIES_PER_HOUR} in the last hour`)
+                    skippedCount++
+                    continue
+                }
                 ec.message.pushErrors()
                 try {
                     const html = isInternal(sender) && reply.internalBodyHtml ? reply.internalBodyHtml : reply.bodyHtml

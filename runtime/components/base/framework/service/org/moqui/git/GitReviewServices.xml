@@ -485,7 +485,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Change an open or draft merge request: the title, description, target branch, draft (a draft marked
             ready opens), merge method and whether the source branch goes after the merge. By its author or a user with
             update. A new target must be a branch of the repository (GitNoSuchRef) and is checked for mergeability
-            again. A hidden one (set#MergeRequestHidden) is changed by its author, or with authorization disabled; to
+            again; its approvals are requested again, since each was given for the branch it named and its rules
+            (SEC-GIT-13). A hidden one (set#MergeRequestHidden) is changed by its author, or with authorization disabled; to
             anyone else there is no such merge request, here and in set#MergeRequestReviewers,
             submit#MergeRequestReview, close#MergeRequest, reopen#MergeRequest and get#MergeRequestApprovals.</description>
         <in-parameters>
@@ -531,6 +532,14 @@ along with this software (see the LICENSE.md file). If not, see
                 mr.setFields(fields, true, null, null)
                 mr.update()
                 if (fields.targetRef) {
+                    // an approval was given for the merge into the branch it named, under that branch's rules: into another
+                    // branch it is asked again (SEC-GIT-13)
+                    for (const reviewer of Array.from(ec.entity.find('moqui.resource.GitMergeRequestReviewer')
+                            .condition({mergeRequestId, statusId: 'GmrrApproved'}).disableAuthz().list())) {
+                        reviewer.setFields({statusId: 'GmrrRequested', requestedDate: ec.user.nowTimestamp, reviewedCommitId: null,
+                            reviewedDate: null}, true, null, null)
+                        reviewer.update()
+                    }
                     ec.service.sync().name('org.moqui.git.GitReviewServices.check#MergeRequest').parameters({mergeRequestId}).disableAuthz().call()
                 }
                 ec.service.sync().name('org.moqui.git.GitReviewServices.queue#MergeRequestEvent').parameters({mergeRequestId,

@@ -263,7 +263,10 @@ own ([Built-in runtime files](Run-Deploy.md#built-in-runtime-files)). How much i
   `./moq chromium-download` keep in the embed cache (`$XDG_CACHE_HOME` or `~/.cache`, then `moqui/embed`;
   `%LOCALAPPDATA%\moqui\embed` on Windows; `MOQUI_EMBED_CACHE` moves it): `opensearch-<version>-<target>.tar.gz`, checked
   against the SHA-512 OpenSearch publishes, and `chromium-<target>.tar.gz`, the snapshot repacked as a gzipped tar with
-  its revision in `chromium-<target>.tar.gz.revision`. `--cache-only` fills the cache without touching `runtime/`, and
+  its revision in `chromium-<target>.tar.gz.revision`. A Chromium snapshot of a revision, and an add-on's version
+  archive (`./moq component-get -t release` or `binary`), has its SHA-256 recorded in `downloads.sha256` beside the
+  embed cache (`moqui/downloads.sha256`) the first time it is fetched, and a later fetch of the same one must match it
+  or the task stops (SEC-OUT-14); a branch's archive moves, so it is not checked. `--cache-only` fills the cache without touching `runtime/`, and
   `./moq build` gets a missing one; `MOQUI_OPENSEARCH_ARCHIVE` and `MOQUI_CHROMIUM_ARCHIVE` name others for a plain
   cargo build. The OpenSearch version is `.cargo/config.toml`'s `MOQUI_OPENSEARCH_VERSION`. They are large (OpenSearch
   3.4.0 with its JDK about 270 MB, a Linux Chromium about 225 MB), each separate from the other and from the runtime

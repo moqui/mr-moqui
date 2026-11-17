@@ -12,21 +12,19 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The DevTools Protocol over one browser WebSocket: commands with an id and a reply, and events routed by the flat
-//! session they belong to. Messages stay `serde_json::Value`, so the workspace's `arbitrary_precision` numbers parse.
+//! The DevTools Protocol over the browser's pipe (on Unix: its descriptors 3 and 4, each message JSON ending in a NUL;
+//! SEC-SCR-10), or over its WebSocket elsewhere: commands with an id and a reply, and events routed by the flat session
+//! they belong to. Messages stay `serde_json::Value`, so the workspace's `arbitrary_precision` numbers parse.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
 use moqui_lib::error::Error;
 use moqui_lib::sync::lock;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot};
-use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
-use tokio_tungstenite::tungstenite::Message;
 
 /// Largest message the browser may send: a PDF comes back as one base64 string.
 const MAX_MESSAGE: usize = 512 * 1024 * 1024;
@@ -86,16 +84,9 @@ pub(super) struct Connection {
 }
 
 impl Connection {
-    /// Connect to the browser socket. Runs the reader and the writer as tasks on the current runtime.
-    pub(super) async fn connect(url: &str) -> Result<Self, Error> {
-        let config = WebSocketConfig::default()
-            .max_message_size(Some(MAX_MESSAGE))
-            .max_frame_size(Some(MAX_MESSAGE));
-        let (socket, _) = tokio_tungstenite::connect_async_with_config(url, Some(config), true)
-            .await
-            .map_err(|err| Error::new(format!("could not connect to the browser at {url}: {err}")))?;
-        let (mut sink, mut stream) = socket.split();
-        let (outgoing, mut queue) = mpsc::unbounded_channel::<String>();
+    /// A connection with no transport yet, and the queue of the messages it sends.
+    fn parts() -> (Self, mpsc::UnboundedReceiver<String>) {
+        let (outgoing, queue) = mpsc::unbounded_channel::<String>();
         let connection = Self {
             outgoing,
             pending: Arc::default(),
@@ -103,6 +94,80 @@ impl Connection {
             next_id: Arc::new(AtomicU64::new(1)),
             closed: Arc::new(AtomicBool::new(false)),
         };
+        (connection, queue)
+    }
+
+    /// Talk to the browser over its DevTools pipe: `commands` is its descriptor 3, `answers` its descriptor 4. A thread
+    /// writes each message with its NUL and one reads them; the connection closes when the browser closes its end.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a thread cannot be started.
+    #[cfg(unix)]
+    pub(super) fn over_pipe(
+        mut commands: std::process::ChildStdin,
+        answers: std::process::ChildStdout,
+    ) -> Result<Self, Error> {
+        use std::io::{BufRead as _, Write as _};
+        let (connection, mut queue) = Self::parts();
+        std::thread::Builder::new()
+            .name("pdf-devtools-out".into())
+            .spawn(move || {
+                while let Some(text) = queue.blocking_recv() {
+                    let sent = commands
+                        .write_all(text.as_bytes())
+                        .and_then(|()| commands.write_all(b"\0"))
+                        .and_then(|()| commands.flush());
+                    if sent.is_err() {
+                        break;
+                    }
+                }
+            })
+            .map_err(|err| Error::new(format!("could not start the browser's writer: {err}")))?;
+        let reader = connection.clone();
+        std::thread::Builder::new()
+            .name("pdf-devtools-in".into())
+            .spawn(move || {
+                let mut input = std::io::BufReader::new(answers);
+                let mut message = Vec::new();
+                loop {
+                    message.clear();
+                    match input.read_until(0, &mut message) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {}
+                    }
+                    if message.last() == Some(&0) {
+                        message.pop();
+                    }
+                    if message.len() > MAX_MESSAGE {
+                        tracing::warn!("a DevTools message of {} bytes is over the limit", message.len());
+                        break;
+                    }
+                    match serde_json::from_slice::<Value>(&message) {
+                        Ok(value) => reader.dispatch(value),
+                        Err(err) => tracing::debug!("unreadable DevTools message: {err}"),
+                    }
+                }
+                reader.close();
+            })
+            .map_err(|err| Error::new(format!("could not start the browser's reader: {err}")))?;
+        Ok(connection)
+    }
+
+    /// Connect to the browser socket. Runs the reader and the writer as tasks on the current runtime.
+    #[cfg(not(unix))]
+    pub(super) async fn connect(url: &str) -> Result<Self, Error> {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+        use tokio_tungstenite::tungstenite::Message;
+        let config = WebSocketConfig::default()
+            .max_message_size(Some(MAX_MESSAGE))
+            .max_frame_size(Some(MAX_MESSAGE));
+        let (socket, _) = tokio_tungstenite::connect_async_with_config(url, Some(config), true)
+            .await
+            .map_err(|err| Error::new(format!("could not connect to the browser at {url}: {err}")))?;
+        let (mut sink, mut stream) = socket.split();
+        let (connection, mut queue) = Self::parts();
         tokio::spawn(async move {
             while let Some(text) = queue.recv().await {
                 if sink.send(Message::text(text)).await.is_err() {
