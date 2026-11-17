@@ -174,6 +174,26 @@ pub fn request_body(target: &Target, input: Json) -> Json {
     Json::Object(body)
 }
 
+/// Count a user's embedding call against their AT_LLM tarpit (`embed:<modelId>`), as a run (`agent:`) and a gateway
+/// request (`gateway:`) are: a page's semantic find sends up to 5000 texts a call (SEC-AI-07).
+fn count_hit(model_id: &str) -> Result<(), Error> {
+    let name = format!("embed:{model_id}");
+    moqui_core::context::ExecutionContext::with_current(|ec| -> Result<(), moqui_core::context::Error> {
+        ec.push_checked(
+            "AT_LLM",
+            &name,
+            "view",
+            moqui_core::context::Authz::NotRequired,
+            moqui_core::context::Tarpit::Count,
+            None,
+        )?;
+        let _ = ec.pop();
+        Ok(())
+    })
+    .unwrap_or(Ok(()))
+    .map_err(Error::from)
+}
+
 /// What [`LlmFacade::embed_batches`] made: the vectors of the batches that succeeded, in order from the first text,
 /// and the error of the batch that did not (the later texts were not sent).
 #[derive(Debug, Default)]
@@ -213,6 +233,9 @@ impl LlmFacade {
         if !self.enabled() {
             return Err(Error::new("the llm-facade is disabled"));
         }
+        if texts.is_empty() {
+            return Ok(Batches::default());
+        }
         if !has_embeddings(&target.endpoint) {
             return Err(Error::new(format!(
                 "endpoint {} ({}) has no embeddings API; bind the embed feature to a model on a chat-completions or responses endpoint",
@@ -230,6 +253,26 @@ impl LlmFacade {
             .ok()
             .flatten()
             .filter(|id| !id.is_empty());
+        // a user's texts go to the model as any model call of theirs does: an external user's not at all, and within
+        // the user's api quota; work with no user (the embedding worker, a job) as before (SEC-AI-07)
+        if let Some(user_id) = &user_id {
+            if moqui_core::user::is_external_user(user_id) {
+                return Err(Error::new(
+                    "the embedding call is refused: the models are not available to this user",
+                ));
+            }
+            let status = crate::usage::check_quota(
+                facade,
+                &self.conf().limits,
+                user_id,
+                "api",
+                jiff::Timestamp::now().as_millisecond(),
+            )?;
+            if let Some(reason) = status.exceeded {
+                return Err(Error::new(format!("the embedding call is refused: {reason}")));
+            }
+            count_hit(&target.model.id)?;
+        }
         let url = embeddings_url(&target.endpoint);
         let mut out = Batches::default();
         for batch in texts.chunks(BATCH) {

@@ -1641,3 +1641,139 @@ fn a_model_call_for_an_external_user_is_refused() {
     login("xtpeer");
     llm.complete(&bed.facade, &ask).unwrap();
 }
+
+/// The usage services that take no authentication run only as internal work or for an AgentAdmin, and an external
+/// harness's usage is recorded only by the run's user or internal work (SEC-AI-09).
+#[test]
+fn the_usage_services_take_internal_work_their_admin_or_the_runs_user() {
+    let bed = bed("usage-services", "");
+    let _entered = bed.ctx.enter();
+    users(&bed.facade, &["usowner", "usother"]);
+    row(
+        &bed.facade,
+        "moqui.security.UserAccount",
+        &[("userId", "usplain"), ("username", "usplain")],
+    );
+    row(
+        &bed.facade,
+        crate::run::RUN,
+        &[
+            ("runId", "US_RUN"),
+            ("userId", "usowner"),
+            ("statusId", "AgrWorking"),
+            ("externalHarnessId", "steward-us"),
+        ],
+    );
+    let admin = "org.moqui.agent.AgentAdminServices";
+    login("usplain");
+    refused(&format!("{admin}.rollup#LlmUsage"), &[], "AgentAdmin");
+    refused(
+        &format!("{admin}.clean#LlmCallContent"),
+        &[("retentionDays", Value::I64(0))],
+        "AgentAdmin",
+    );
+    login("usowner");
+    call(&format!("{admin}.rollup#LlmUsage"), &[]);
+    {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        call(
+            &format!("{admin}.clean#LlmCallContent"),
+            &[("retentionDays", Value::I64(0))],
+        );
+    }
+
+    let step = || {
+        let mut step = moqui_lib::object::ValueMap::default();
+        step.insert("stepSeq".to_string(), Value::I64(1));
+        step.insert("modelId".to_string(), Value::string("fake-1"));
+        step.insert("inputTokens".to_string(), Value::I64(10));
+        Value::List(vec![Value::Map(step)])
+    };
+    let usage = "org.moqui.agent.AgentServices.record#AgentRunUsage";
+    login("usother");
+    refused(
+        usage,
+        &[("runId", Value::string("US_RUN")), ("stepList", step())],
+        "not found",
+    );
+    login("usowner");
+    let out = call(usage, &[("runId", Value::string("US_RUN")), ("stepList", step())]);
+    assert_eq!(out.get("stepCount"), Some(&Value::I64(1)), "{out:?}");
+}
+
+/// A user's texts go to an embedding model as any model call of theirs: an external user's not at all, an internal
+/// user's within their api quota and counted against their AT_LLM tarpit; work with no user goes as before
+/// (SEC-AI-07).
+#[test]
+fn an_embedding_call_for_an_external_or_over_quota_user_is_refused() {
+    let bed = bed("embed-users", "");
+    let _entered = bed.ctx.enter();
+    users(&bed.facade, &["empeer", "emspent"]);
+    row(
+        &bed.facade,
+        "moqui.security.UserAccount",
+        &[("userId", "emout"), ("username", "emout")],
+    );
+    row(
+        &bed.facade,
+        "moqui.security.UserPermission",
+        &[("userPermissionId", "EXTERNAL_USER")],
+    );
+    row(&bed.facade, "moqui.security.UserGroup", &[("userGroupId", "EMOUTSIDE")]);
+    row(
+        &bed.facade,
+        "moqui.security.UserGroupMember",
+        &[("userGroupId", "EMOUTSIDE"), ("userId", "emout"), ("fromDate", "0")],
+    );
+    row(
+        &bed.facade,
+        "moqui.security.UserGroupPermission",
+        &[
+            ("userGroupId", "EMOUTSIDE"),
+            ("userPermissionId", "EXTERNAL_USER"),
+            ("fromDate", "0"),
+        ],
+    );
+    row(
+        &bed.facade,
+        "moqui.llm.LlmQuota",
+        &[("quotaId", "EM_SPENT"), ("userId", "emspent"), ("maxTokens", "10")],
+    );
+    // nothing listens at the endpoint: a call that is let through fails there, after the checks
+    let llm = crate::LlmFacade::new(
+        crate::conf::LlmConf::from_conf_text(
+            r#"<llm-facade><endpoint id="embed-users" protocol="chat-completions" url="http://127.0.0.1:9/"
+                    local="true" allow-private-network="true"/>
+                <model id="embed-users-model" endpoint="embed-users" name="embed-1"/></llm-facade>"#,
+        )
+        .unwrap(),
+    );
+    let target = llm
+        .resolve(
+            &bed.facade,
+            &crate::registry::Want {
+                model: Some("embed-users-model"),
+                ..crate::registry::Want::default()
+            },
+        )
+        .unwrap();
+    // emspent has used 100 tokens of the 10 the quota gives
+    let mut spent = crate::usage::CallRecord::new(crate::usage::CallSource::Api, &target);
+    spent.user_id = Some("emspent".to_string());
+    spent.usage.input = 100;
+    {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        crate::usage::record_call(&bed.facade, &llm.conf().content_log, &target.model.prices, &spent).unwrap();
+    }
+    let texts = vec!["a page's sentence".to_string()];
+    let embed = || llm.embed_batches(&bed.facade, &target, &texts, Duration::from_secs(2));
+    login("emout");
+    let refused = embed().unwrap_err();
+    assert!(refused.to_string().contains("not available to this user"), "{refused}");
+    login("emspent");
+    let refused = embed().unwrap_err();
+    assert!(refused.to_string().contains("quota"), "{refused}");
+    login("empeer");
+    let let_through = embed().unwrap();
+    assert!(let_through.vectors.is_empty() && let_through.error.is_some());
+}

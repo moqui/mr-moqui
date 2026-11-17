@@ -255,6 +255,13 @@ along with this software (see the LICENSE.md file). If not, see
             artifactTypeEnumId="AT_LLM" inheritAuthz="N"/>
     <moqui.security.ArtifactTarpit userGroupId="ALL_USERS" artifactGroupId="McpToolCalls" maxHitsCount="120"
             maxHitsDuration="60" tarpitDuration="120"/>
+    <!-- AT_LLM also counts a user's embedding call (embed:<modelId>): a page's semantic find, a search's query
+        (SEC-AI-07); the embedding worker's calls have no user and count nothing -->
+    <moqui.security.ArtifactGroup artifactGroupId="LlmEmbedCalls" description="Embedding calls of a user"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="LlmEmbedCalls" artifactName="embed:.*" nameIsPattern="Y"
+            artifactTypeEnumId="AT_LLM" inheritAuthz="N"/>
+    <moqui.security.ArtifactTarpit userGroupId="ALL_USERS" artifactGroupId="LlmEmbedCalls" maxHitsCount="120"
+            maxHitsDuration="60" tarpitDuration="60"/>
 
     <!-- ========== Jobs ========== -->
     <!-- Recomputes today's and yesterday's LlmUsageDaily rows from LlmCall -->
