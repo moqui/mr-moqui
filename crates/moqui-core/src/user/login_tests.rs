@@ -200,6 +200,48 @@ fn an_ssh_key_sign_in_is_a_persons_and_clears_has_logged_out() {
     session::reset_session();
 }
 
+/// SEC-WEB-06: a request by a login key or an app password after a sign-out elsewhere signs the request in but leaves
+/// `hasLoggedOut` set, so a session that made no request since the sign-out still ends at its next one; only an
+/// interactive sign-in (a password, an identity provider) clears it.
+#[test]
+fn a_key_or_app_password_login_leaves_has_logged_out_set() {
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    create_user(&facade, "race.user", "Secret1!", |_| {});
+    let user_id = text(&load_user(&facade, "race.user"), "userId");
+    let flag = || text(&load_user(&facade, "race.user"), "hasLoggedOut");
+    internal_login_user("race.user").unwrap();
+    let key = get_login_key(None).unwrap();
+    logout_local().unwrap();
+    let password = new_app_password().unwrap();
+    let mut row = facade.make_value(USER_APP_PASSWORD).unwrap();
+    row.set("appPasswordId", Value::string("AP_race"));
+    row.set("userId", Value::string(&user_id));
+    row.set(
+        "passwordHash",
+        Value::string(password::hash_login_key(&app_password_key(&password)).unwrap()),
+    );
+    row.create(&facade).unwrap();
+
+    login_user("race.user", "Secret1!").unwrap();
+    logout().unwrap();
+    assert_eq!(flag(), "Y");
+    login_user_key(&key).unwrap();
+    assert_eq!(session::current_username().unwrap().as_deref(), Some("race.user"));
+    logout_local().unwrap();
+    assert_eq!(flag(), "Y", "a login key does not undo the sign-out");
+    login_app_password("race.user", &password).unwrap();
+    logout_local().unwrap();
+    assert_eq!(flag(), "Y", "an app password does not undo the sign-out");
+    login_external_user("race.user", None).unwrap();
+    assert_eq!(flag(), "N", "an identity provider's sign-in is a person's");
+    logout().unwrap();
+    login_user("race.user", "Secret1!").unwrap();
+    assert_eq!(flag(), "N", "a password sign-in clears it");
+    logout_local().unwrap();
+    session::reset_session();
+}
+
 #[test]
 fn a_legacy_hash_verifies_and_the_stored_value_becomes_an_argon2_string() {
     let (ctx, facade) = open_ctx();
