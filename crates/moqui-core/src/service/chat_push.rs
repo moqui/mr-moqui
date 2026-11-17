@@ -70,6 +70,7 @@ pub(in crate::service) fn register(
     rust_service!(map, run_chat_push)?;
     rust_service!(map, queue_read_clear)?;
     rust_service!(map, ack_push)?;
+    rust_service!(map, send_test_push)?;
     Ok(())
 }
 
@@ -569,6 +570,8 @@ struct Content {
     edit: bool,
     /// A call's event that pushes as a message (§7.2 rule 6): `missed` or `voicemail`.
     call: Option<&'static str>,
+    /// From an outside actor of a bridge (a text from an outside number): the app's Texts channel.
+    external: bool,
 }
 
 /// What a call's event (CetCall) pushes as (§7.2 rule 6): a missed call to the users it names, a voicemail to the
@@ -674,6 +677,7 @@ impl Content {
             sent_date: millis_of(event, "sentDate").unwrap_or(0),
             edit: text_of(event, "eventTypeEnumId").as_deref() == Some("CetEdit"),
             call,
+            external: text_of(event, "senderUserId").is_none() && text_of(event, "senderActorId").is_some(),
             room_id,
         })
     }
@@ -696,6 +700,7 @@ impl Content {
             "mention": mention,
             "encrypted": self.encrypted,
             "call": self.call,
+            "external": self.external,
             "sentDate": self.sent_date,
             "link": self.link,
             "tag": room_tag(&self.room_id),
@@ -1726,6 +1731,129 @@ fn ack_push(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Resu
 }
 
 // the tests read the pushes back with the device's key, which needs the web-push feature's crypto
+/// The room a test push is of (none: no read marker, no clear).
+const TEST_ROOM: &str = "_test";
+/// The least time between two test pushes to a device (`send#TestPush`), in milliseconds.
+const TEST_EVERY_MS: i64 = 10_000;
+
+/// Queue a test notification to each of `subscriptions` of `user` (plans/Comms-Messaging.md §7.6, the check screen):
+/// the same outbox, encryption and send as a message, with the payload `{kind: test, title, sentDate}`. Out: each
+/// push's id, which the device acknowledges it with.
+pub(crate) fn queue_test(
+    facade: &EntityFacade,
+    user: &str,
+    subscriptions: &[String],
+    now: i64,
+) -> Result<Vec<String>, LibError> {
+    let mut ids = Vec::new();
+    for subscription in subscriptions {
+        let mut row = facade.make_value(OUTBOX)?;
+        row.set_sequenced_id_primary(facade)?;
+        let id = text_of(&row, "pushOutboxId").unwrap_or_default();
+        let payload = json!({"v": 1, "kind": "test", "title": "Test notification", "sentDate": now,
+            "tag": "moqui-test", "topic": "PushTest"});
+        row.set("subscriptionId", Value::string(subscription));
+        row.set("userId", Value::string(user));
+        row.set("chatRoomId", Value::string(TEST_ROOM));
+        row.set("eventSeq", Value::I64(0));
+        row.set("kindEnumId", Value::string(KIND_MESSAGE));
+        row.set("statusEnumId", Value::string(PENDING));
+        row.set("messageCount", Value::I64(1));
+        row.set("payloadJson", Value::string(payload.to_string()));
+        row.set("attemptCount", Value::I64(0));
+        row.set("nextAttemptDate", stamp(now));
+        row.set("createdDate", stamp(now));
+        row.set("expireDate", stamp(now + CLEAR_TTL_SECONDS * 1000));
+        row.create(facade)?;
+        ids.push(id);
+    }
+    Ok(ids)
+}
+
+/// Whether one of `subscriptions` had a test push queued in the last [`TEST_EVERY_MS`]: one a device in that time (the
+/// check screen's button, not a way to flood a phone).
+pub(crate) fn test_too_soon(facade: &EntityFacade, subscriptions: &[String], now: i64) -> Result<bool, LibError> {
+    if subscriptions.is_empty() {
+        return Ok(false);
+    }
+    Ok(facade
+        .find(OUTBOX)?
+        .condition(Condition::is_in(
+            "subscriptionId",
+            subscriptions.iter().map(Value::string).collect(),
+        ))
+        .eq("chatRoomId", Value::string(TEST_ROOM))
+        .condition(Condition::greater("createdDate", stamp(now - TEST_EVERY_MS)))
+        .disable_authz()
+        .count()?
+        > 0)
+}
+
+/// `send#TestPush`: a test notification to the calling device, through the full path (the outbox, encrypted, the push
+/// service): the registrations of this request's device key (the app), else the current user's browser with
+/// `endpoint`. Out: `ackIdList` (empty when the request is no device of the user's: `reasonCode` noDevice, or one had
+/// a test in the last [`TEST_EVERY_MS`]: `reasonCode` tooSoon), `queuedDate` (Unix milliseconds); the worker is woken
+/// after the commit.
+fn send_test_push(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let now = now_millis();
+    let out = |ids: Vec<String>| {
+        let mut out = BTreeMap::from([
+            (
+                "ackIdList".to_string(),
+                Value::List(ids.iter().map(Value::string).collect()),
+            ),
+            ("queuedDate".to_string(), Value::I64(now)),
+        ]);
+        if ids.is_empty() {
+            out.insert("reasonCode".to_string(), Value::string("noDevice"));
+        }
+        Ok(out)
+    };
+    let Some(user) = crate::user::current_user_id()
+        .ok()
+        .flatten()
+        .filter(|id| !id.is_empty())
+    else {
+        return out(Vec::new());
+    };
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let mut find = facade
+        .find(DEVICE)?
+        .eq("userId", Value::string(&user))
+        .condition(Condition::is_null("disabledDate"))
+        .disable_authz();
+    if let Some(key) = super::web_push::request_device_key(facade, &user)? {
+        find = find.eq("loginKey", Value::string(key));
+    } else if let Some(endpoint) = param(parameters, "endpoint") {
+        find = find.eq("endpointHash", Value::string(super::web_push::endpoint_hash(&endpoint)));
+    } else {
+        return out(Vec::new());
+    }
+    let subscriptions: Vec<String> = find
+        .list()?
+        .values()
+        .iter()
+        .filter_map(|row| text_of(row, "subscriptionId"))
+        .collect();
+    if test_too_soon(facade, &subscriptions, now)? {
+        let mut out = BTreeMap::from([
+            ("ackIdList".to_string(), Value::List(Vec::new())),
+            ("queuedDate".to_string(), Value::I64(now)),
+            ("reasonCode".to_string(), Value::string("tooSoon")),
+        ]);
+        out.insert("retryAfterSeconds".to_string(), Value::I64(TEST_EVERY_MS / 1000));
+        return Ok(out);
+    }
+    let ids = queue_test(facade, &user, &subscriptions, now)?;
+    if !ids.is_empty() {
+        wake_after_commit(facade);
+    }
+    out(ids)
+}
+
 #[cfg(all(test, feature = "web-push"))]
 #[path = "chat_push_tests.rs"]
 mod tests;

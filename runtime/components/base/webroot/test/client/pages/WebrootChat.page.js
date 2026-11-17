@@ -770,6 +770,79 @@ test("the new-chat pickers: one person is a direct chat, several a group (with a
         [{ value: "+15550004000", label: "+15550004000 · Office" }, { value: "+15550004001", label: "+15550004001" }]);
 });
 
+// plans/Comms-Messaging.md §7.5: the app's notification of a socket event follows the rules of the server's pushes
+test("the app notifies a message by the room's level, not its own, not on do not disturb or while shown, and no text sealed", () => {
+    const message = event({ eventSeq: 9, senderName: "Bob", bodyText: "Lunch\n at noon?", mentions: [] });
+    const base = { me: "ann", levels: { R1: "all" }, appRoot: "/qapps/Comms" };
+    assert.deepEqual(chat.notification(message, "R1", base),
+        { title: "Bob", body: "Lunch at noon?", tag: "chat-R1", link: "/qapps/Comms/Chat?chatRoomId=R1&eventSeq=9" });
+    assert.equal(chat.notification(event({ senderUserId: "ann" }), "R1", base), null, "my own message");
+    assert.equal(chat.notification(message, "R1", Object.assign({}, base, { quiet: true })), null, "do not disturb");
+    assert.equal(chat.notification(message, "R1", Object.assign({}, base, { seen: true })), null, "the room shows");
+    assert.equal(chat.notification(message, "R1", Object.assign({}, base, { levels: { R1: "none" } })), null, "nothing");
+    const mentionsOnly = Object.assign({}, base, { levels: { R1: "mentions" } });
+    assert.equal(chat.notification(message, "R1", mentionsOnly), null, "mentions only, not mentioned");
+    assert.ok(chat.notification(event({ mentions: ["ann"] }), "R1", mentionsOnly));
+    // review gaps: a reply to me and a reply in my thread count as mentions, as the server's activity does
+    assert.ok(chat.notification(event({ replyTo: { eventSeq: 3, senderUserId: "ann" } }), "R1", mentionsOnly), "a reply to me");
+    assert.ok(chat.notification(event({ threadRootEventSeq: 3, threadRootSenderUserId: "ann" }), "R1", mentionsOnly), "in my thread");
+    assert.equal(chat.notification(message, "R1", Object.assign({}, base, { preview: false })).body, null, "previews off");
+    assert.equal(chat.notification(event({ encrypted: true, bodyText: "x" }), "R1", base).body, "New message", "encrypted: no text");
+    assert.equal(chat.notification(event({ type: "reaction" }), "R1", base), null, "only messages");
+    // a room joined since the levels were read: the user's default level
+    assert.equal(chat.notification(message, "R9", Object.assign({}, base, { defaultLevel: "none" })), null);
+    assert.ok(chat.notification(message, "R9", base), "no default: all");
+    // a group room's name is the title, the sender before the text
+    assert.deepEqual(chat.notification(message, "R1", Object.assign({}, base, { roomNames: { R1: "Team" } })),
+        { title: "Team", body: "Bob: Lunch at noon?", tag: "chat-R1", link: "/qapps/Comms/Chat?chatRoomId=R1&eventSeq=9" });
+    // a missed call to me and a voicemail notify unless the level is none (rule 6); a call I made, or missed by others, not
+    const call = (content, fields) => event(Object.assign({ type: "call", content }, fields || {}));
+    assert.equal(chat.notification(call({ action: "ended", missedUserIdList: ["ann"] }), "R1", mentionsOnly).body, "Missed call");
+    assert.equal(chat.notification(call({ action: "voicemail" }), "R1", base).body, "Voicemail");
+    assert.equal(chat.notification(call({ action: "ended", missedUserIdList: ["cy"] }), "R1", base), null);
+    assert.equal(chat.notification(call({ action: "ended", missedUserIdList: ["ann"] }), "R1", Object.assign({}, base, { levels: { R1: "none" } })), null);
+    // the room's settings: a muted room is mentions, none stays none
+    assert.equal(chat.levelOf("CnlAll", true), "mentions");
+    assert.equal(chat.levelOf("CnlNone", true), "none");
+    assert.equal(chat.levelOf("mentions", false), "mentions");
+    assert.equal(chat.levelOf(null, false), "all");
+    // what was missed while closed: each room whose count went up since it was shown, the most first
+    assert.deepEqual(chat.missed({ R1: { counted: 2 }, R2: { counted: 0 }, R3: { counted: 1 }, R4: { counted: 5 } }, { R3: 1, R4: 7 }),
+        [{ chatRoomId: "R1", count: 2 }]);
+    assert.deepEqual(chat.missed({ R1: { counted: 2 }, R3: { counted: 4 } }, { R3: 1 }),
+        [{ chatRoomId: "R3", count: 4 }, { chatRoomId: "R1", count: 2 }]);
+    // the user's settings change on another device: the room's level follows
+    const state = Object.assign(freshState(), { levels: { R1: "all" } });
+    chat.reduce(state, push("chatUser:ann", { kind: "room", action: "settings", chatRoomId: "R1", notificationLevelEnumId: "CnlAll", isMuted: true }), "ann", 1);
+    assert.equal(state.levels.R1, "mentions");
+    // the app's host: a socket message notifies with the room's tag, a read of the room clears it; a phone's host
+    // (pushDelivers) leaves its notifications to its pushes; the catch-up then counts what was shown
+    const calls = [];
+    const before = { me: chat.me, host: window.moquiDesktop };
+    chat.me = "ann";
+    window.moquiDesktop = { storageScope: "acct1", notify: (shown) => { calls.push(["notify", shown.tag]); return Promise.resolve(); },
+        notifyClear: (tag) => { calls.push(["clear", tag]); return Promise.resolve(); } };
+    try {
+        try { localStorage.removeItem(chat.shownKey(window.moquiDesktop)); } catch (err) { /* no storage */ }
+        chat.notifyApp({ kind: "event", chatRoomId: "R7", event: event({ chatRoomId: "R7", senderName: "Bob", bodyText: "hi" }) });
+        assert.equal(chat.readShown(window.moquiDesktop).R7, 1, "a live notification counts as shown");
+        chat.notifyMissed({ R7: { counted: 1 } });
+        assert.equal(calls.length, 1, "not shown again by the catch-up");
+        chat.notifyApp({ kind: "read", chatRoomId: null, userId: "ann", all: true });
+        assert.deepEqual(chat.readShown(window.moquiDesktop), {});
+        // more than five rooms missed: one summary
+        chat.notifyMissed({ A: { counted: 1 }, B: { counted: 2 }, C: { counted: 1 }, D: { counted: 1 }, E: { counted: 1 }, F: { counted: 3 } });
+        window.moquiDesktop.pushDelivers = true;
+        chat.notifyApp({ kind: "event", chatRoomId: "R8", event: event({ chatRoomId: "R8", bodyText: "hi" }) });
+        // Mark all read: every room's notification of the account (chat-*), then the rooms this page showed
+        assert.deepEqual(calls, [["notify", "chat-R7"], ["clear", "chat-*"], ["clear", "chat-R7"], ["notify", "chat-missed"]]);
+    } finally {
+        try { localStorage.removeItem(chat.shownKey(window.moquiDesktop)); } catch (err) { /* no storage */ }
+        chat.me = before.me;
+        window.moquiDesktop = before.host;
+    }
+});
+
 test("the E2EE label (Comms-Messaging §6.2): a lock only for end to end, the open lock and its banner for the rest, the composer's hint for a text and a bridge", () => {
     const label = (room, trust) => chat.e2eeLabel(room, trust);
     // a private room's type icon is people, not a lock (COM-UI-001)
@@ -903,6 +976,9 @@ test("Info (Comms-Messaging §4, COM-UI-008): Sent, a bridged message's delivery
     assert.equal(lines[0].text, "at 1000");
     assert.equal(lines[1].text, "Bob, Cy");
     assert.ok(lines[2].text.includes("read receipts off are not listed") && lines[2].text.includes("devices is not known"));
+    // one who joined after the message has a marker past it (a join reads to the latest) but did not read it
+    const joined = members.concat([{ userId: "fay", name: "Fay", lastReadEventSeq: 9, joinedDate: 1500 }, { userId: "gus", name: "Gus", lastReadEventSeq: 9, joinedDate: 1000 }]);
+    assert.deepEqual(chat.messageInfo(message, joined, { me: "ann" }).readBy.people.map((person) => person.userId), ["bob", "cy", "gus"]);
     // and N more
     const many = Array.from({ length: 11 }, (unused, n) => ({ userId: "u" + n, name: "User " + n, lastReadEventSeq: 6 }));
     const more = chat.messageInfo(message, many, { me: "ann", limit: 8 });
@@ -925,6 +1001,11 @@ test("Info (Comms-Messaging §4, COM-UI-008): Sent, a bridged message's delivery
     lines = chat.messageInfoLines(chat.messageInfo(bridged, members, { me: "ann" }), when).filter((line) => line.key === "delivered");
     assert.deepEqual(lines.map((line) => line.label + ": " + line.text), ["SMS: Delivered: the network's receipt says so", "Ops Slack: Not delivered: Channel archived",
         "Telegram: May not have arrived", "Matrix: Taken by the network", "XMPP: Sending"]);
+    // two bridges of one network: each with its own name
+    const twice = event({ eventSeq: 5, sentDate: 1000, senderUserId: "ann", delivery: { state: "accepted", destinations: [
+        { networkName: "SMS", bridgeName: "Office line", state: "accepted" }, { networkName: "SMS", bridgeName: "Shop line", state: "pending" },
+        { networkName: "Matrix", bridgeName: "Matrix bridge", state: "accepted" }] } });
+    assert.deepEqual(chat.messageInfo(twice, members, { me: "ann" }).delivered.map((one) => one.name), ["SMS · Office line", "SMS · Shop line", "Matrix"]);
     // a thread: Sent and Delivered only, it has no read markers
     const reply = event({ eventSeq: 7, sentDate: 2000, senderUserId: "ann", threadRootEventSeq: 5, delivery: bridged.delivery });
     const thread = chat.messageInfo(reply, members, { me: "ann" });
@@ -937,4 +1018,27 @@ test("Info (Comms-Messaging §4, COM-UI-008): Sent, a bridged message's delivery
     // a message that came in from a network says where from
     const inbound = chat.messageInfo(event({ eventSeq: 5, senderUserId: null, senderExternal: { network: "sms", networkName: "SMS" } }), members, { me: "ann" });
     assert.equal(chat.messageInfoLines(inbound, when).find((line) => line.key === "from").text, "SMS");
+});
+
+test("before a send (§6.1 rule 3): a verified person's device not verified is a problem unless let through for the room by its key; one verified by emoji passes; a changed identity until let through by its master key", async () => {
+    const problemsOf = moqui.crypto.problemsOf;
+    const device = (deviceId, more) => Object.assign({ deviceId, displayName: deviceId + " phone", key: "key-" + deviceId, verified: false, locallyTrusted: false }, more || {});
+    // bob's identity is verified: his new device B2 (signed by nobody I trust) is a problem; B1, signed by him, is not
+    const bob = { userId: "bob", identity: { verified: true }, devices: [device("B1", { verified: true }), device("B2")] };
+    assert.deepEqual(problemsOf([bob], []).map((p) => p.kind + ":" + p.deviceId), ["newDevice:B2"]);
+    // verified here by emoji (local trust, not signed by bob): it passes, the same rule the send then shares by
+    assert.deepEqual(problemsOf([{ userId: "bob", identity: { verified: true }, devices: [device("B1", { verified: true }), device("B2", { locallyTrusted: true })] }], []), []);
+    // let through for this room with its key; the same device id with another key is asked again
+    assert.deepEqual(problemsOf([bob], [{ userId: "bob", deviceId: "B2", key: "key-B2" }]), []);
+    assert.equal(problemsOf([bob], [{ userId: "bob", deviceId: "B2", key: "another" }]).length, 1);
+    // a person verified by emoji only (no verified identity) is a verified person too: their new device is asked
+    const cy = { userId: "cy", identity: { verified: false }, devices: [device("C1", { verified: true, locallyTrusted: true }), device("C2")] };
+    assert.deepEqual(problemsOf([cy], []).map((p) => p.deviceId), ["C2"]);
+    // nobody verified dee: no question
+    assert.deepEqual(problemsOf([{ userId: "dee", identity: null, devices: [device("D1")] }], []), []);
+    // a changed identity, until let through by this master key
+    const eve = { userId: "eve", identity: { verified: false, changed: true, masterKey: "mk-2" }, devices: [device("E1")] };
+    assert.deepEqual(problemsOf([eve], []).map((p) => p.kind + ":" + p.masterKey), ["changedIdentity:mk-2"]);
+    assert.deepEqual(problemsOf([eve], [{ userId: "eve", masterKey: "mk-2" }]), []);
+    assert.equal(problemsOf([eve], [{ userId: "eve", masterKey: "mk-1" }]).length, 1, "an identity let through before is not this one");
 });

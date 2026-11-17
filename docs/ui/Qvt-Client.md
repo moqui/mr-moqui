@@ -1078,7 +1078,8 @@ time). Input after an idle beat past the auto-away minutes beats at once, so the
 **The webroot transitions** of the store, each as the current user (401 without one): `GET /userStatus` `{myStatus}`, `POST /setUserStatus`
 (`status`, `statusText`, `emoji`, `clearAtDate` in epoch millis, `clearAfterMinutes`, `clearStatus`), `POST /userStatusHeartbeat`
 (`idleSeconds`), `GET /userStatuses?userIds=a,b` `{statusMap}`, `POST /chatTyping` (`chatRoomId`, `typing`) and `GET /chatUnread`
-`{total, unread, mentions, roomCounts}`.
+`{total, unread, mentions, roomCounts, levelMap, roomNameMap}` (`levelMap`: each room's notification level, all,
+mentions or none; `roomNameMap`: each group room's name; the desktop app's notifications follow them).
 
 **The account menu's status**: `m-user-status-menu` (the current status and its message, the four statuses, "Set a status message", "Clear status
 message") and `m-user-status-dialog` (emoji, text up to 100 characters, clear after: don't clear, 30 minutes, 1 hour, 4 hours, today, this
@@ -1098,7 +1099,8 @@ Info may say, from the event as `get#Timeline` gives it and the room's members: 
 bridged message came from), `delivered` (per network, from the event's `delivery` destinations: only a message that
 went out on a bridge has it), `readBy` (`null` in a thread, which has no read markers; `{off: true}` when the viewer's
 read receipts are off; else `{people, more, count}`: the members other than the viewer, the sender and agents whose
-`lastReadEventSeq` is at or after the message, which the server blanks for a member with receipts off). Delivery to a
+`lastReadEventSeq` is at or after the message, which the server blanks for a member with receipts off, and who had joined
+by then: a join sets the marker to the latest event). Two bridges of one network are named with their own names too. Delivery to a
 member's device is never in it. `chat.messageInfoLines(info, when)` words it as `[{key, label, text}]`; a missing read
 is never said to be "not read". Chat reads the message again for it (`timeline?eventSeq=`), and the terminal twin
 (`ChatTui.xml`, `infoSeq`) says the same in text.
@@ -1107,13 +1109,15 @@ is never said to be "not read". Chat reads the message again for it (`timeline?e
 
 `WebrootEmoji.js` is `moqui.emoji` and `<m-emoji-picker :user-id @pick>`, loaded before `WebrootVue.qvt.js` (qapps.xml, the
 desktop shell's `index.html`; its template is precompiled in `WebrootVue.qvt.render.js`). Its data is
-`libs/emoji/emoji.json`, vendored by `libs/refresh.mjs` from `unicode-emoji-json` (MIT, the Unicode data's license in
-`libs/NOTICES.md`): `{version, groups: [{slug, name, emoji: [[emoji, name]]}]}`, Emoji 15.1 and earlier, fetched once when
+`libs/emoji/emoji.json`, vendored by `libs/refresh.mjs` from `unicode-emoji-json` (MIT, its notice in `libs/NOTICES.md`;
+the data's Unicode License v3 in `libs/licenses/Unicode-3.0.txt`): `{version, groups: [{slug, name, emoji: [[emoji, name]]}]}`, Emoji 15.1 and earlier, fetched once when
 a picker first opens (`moqui.emoji.load()`; the desktop shell stages `libs/emoji`). The picker has a search line (every
 word typed starts a word of the name; `:` and `_` count as spaces; Enter picks the first), the groups as tabs and, first
 once there is one, Recent: the user's last 24 picks, kept in `localStorage` under `moqui.scopedKey('moqui.emoji.recent.' +
 userId)` (`recent`, `remember`; storage that is missing or throws keeps nothing and the pick still goes on). A pick is
-remembered and emitted as `pick`. Chat uses it for a reaction (the hover toolbar's "+", the sheet's and the right-click
+remembered and emitted as `pick`. From the keyboard the tabs are one Tab stop (the arrows, Home and End choose a
+group; the grid is their tabpanel) and so is the grid (a roving tabindex: the arrows by cell and by row, Home, End).
+`:autofocus="false"` leaves the search unfocused, as Chat does on a phone. Chat uses it for a reaction (the hover toolbar's "+", the sheet's and the right-click
 menu's "+") and in the composer. The terminal has no picker. Tests: `test/client/WebrootEmoji.spec.js` (webroot, offline).
 
 ## Notification listeners
@@ -1244,7 +1248,10 @@ which the server posts to as it does a Web Push (with its VAPID token when it ha
 a device key is refused, so the registration ends with its device: the key's revoke (`revoke#UserDeviceKey`, or logout
 with `revokeLoginKey`) deletes it, its renewal moves it to the new key, and one whose key ended otherwise is deleted at
 the next push. `POST /qapps/unregisterClientPush` forgets it, and `POST /qapps/ackClientPush` with a chat push's
-`ackId` (or a notification's `pushId`) says the app showed it (`ack#Push`). `/qapps/clientConfig` says what the server offers in `server.features.nativePush`
+`ackId` (or a notification's `pushId`) says the app showed it (`ack#Push`). `POST /qapps/testClientPush` (with
+`endpoint` from a browser) queues a test push to the calling device through the same path and answers its `ackIdList`
+and `queuedDate`, so the app's notification check shows how long it took to arrive (`send#TestPush`; once a device in 10
+seconds, else `reasonCode` `tooSoon`). `/qapps/clientConfig` says what the server offers in `server.features.nativePush`
 (`providers` `fcm` and `unifiedpush`, `fcmConfigured`, `registered`, `encrypted`, `ack`).
 
 `send#WebPush` sends to these through FCM's HTTP v1 API (`service/fcm.rs`) as a data message, which the app's own code

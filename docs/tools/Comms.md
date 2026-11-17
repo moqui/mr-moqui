@@ -55,10 +55,13 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   browser's menu) opens them at the pointer, and the hover toolbar's More has them too. The sheet and the right-click
   menu start with the quick reactions and "+", which opens the emoji picker (a search by name, the groups, and your
   recent emoji, kept in this browser); then Reply, Reply in thread, Copy text, Copy link, Forward, Edit, Pin, Mark
-  unread from here, the apps' actions, File on a record, Info and Delete. A tap on a reaction adds or takes back yours;
-  a long press on it (or a hover) lists who reacted, and the same on a poll option lists who voted. **Info** says only
+  unread from here, the apps' actions, File on a record, Info, Who reacted (with reactions) and Delete. A tap on a
+  reaction adds or takes back yours; a long press on it (or a hover, or Shift+Enter or the menu key on it) lists who
+  reacted, and the same on a poll option lists who voted. On a phone the picker's search waits for a tap, so the
+  keyboard does not cover the sheet. **Info** says only
   what the server knows: when the message was sent, for a message that went to another network (SMS, a bridge) its
-  delivery there per network, and who has read up to it (the members' read markers, "and N more"). A member with read
+  delivery there per network (with the bridge's name when two share a network), and who has read up to it (the
+  members' read markers, "and N more"; not one who joined after it). A member with read
   receipts off is not listed, and with your own off you see no names: Info says so, and never "not read". A thread has
   no read markers, so its Info shows sent and delivery only; delivery to someone's devices is not known and is never
   shown. The terminal's room has Info for each message, as text. When the last owner leaves, the
@@ -88,8 +91,11 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   verified (the room's note and a message that someone cannot read have it too): pick their device and compare emoji
   with them; when the emoji match on both sides their device is verified, and with cross-signing every device they sign.
   A verified person has a check by their name, in Members and on their messages. When someone you verified adds a device
-  you have not verified, or gets a new identity, your next message waits: Verify them, or Send anyway, which lets that
-  device or identity read it. A request from another person to verify shows in the room you have open and on My devices.
+  you have not verified, or gets a new identity, your next message, edit or reaction waits: Verify them (by each name),
+  or Send anyway, which lets that device read this room's messages from then on, or uses that identity here, without
+  verifying them: "Send my room keys only to verified devices" still leaves such a device out. A request from another
+  person to verify shows in the room you have open (closing it says no) and on My devices. A message from a verified
+  person's device that is not verified has a warning mark instead of the check.
 - <a id="bridged-rooms"></a>**Bridged rooms** (C1). A room an administrator connected to another network (SMS, WhatsApp,
   XMPP, Matrix and others, as their adapters come) has the network's mark in the room list and its name in the room's
   header ("Messages here also go to ..."). People from that network are members with the network's badge, and their
@@ -115,12 +121,25 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   XMPP app. Messages two XMPP apps encrypt with OMEMO stay between them: the web shows "Encrypted message (OMEMO)". See
   [XMPP](../interfaces/XMPP.md).
 - <a id="calls"></a>**Calls.** Video and audio calls with one person or several, and a chat room's call that its
-  members join. New call in Calls, or Call from a room. A call rings in every tab of the callee, with Answer, Answer with
-  audio only and Decline in the ring bar, and by Web Push on a device whose page is closed. In a call: mute, the camera,
+  members join. New call in Calls, or Voice call and Video call in a room's header (in the tray's Chat tab, its menu): a
+  direct room calls the person, a group room starts a call its members join from the room, and an encrypted room's call
+  is end-to-end encrypted. A call rings in every tab of the callee, with Answer, Answer with
+  audio only, Decline and Decline with a message (a few ready texts, or your own, sent to the caller in your direct room)
+  in the ring bar, and by Web Push on a device whose page is closed. On a phone the call takes the whole screen: the
+  other person's picture for a voice call, their video with yours in a corner for a video call, and mute, speaker (where
+  the browser can choose), video, switch camera, add people and hang up; on a desktop the call shows in a panel at the
+  right of the screen you are on, with Open full size for the grid. Turn on video in a voice call, or turn it off in a
+  video call: it is the same call, and the others are asked whether to do the same. Picture in picture puts the call in
+  a small window over your other windows (Chrome and Edge), else in the small window at the bottom right of the page.
+  In a call: mute, video,
   share the screen, raise a hand, reactions, the participants, the grid or the speaker view (the one speaking, or a
   screen share, large), and Leave; the host of a group call can end it for everyone. A person whose bandwidth is too low
   gets audio only, and their tile says so. Going to another screen keeps the call in the small window at the bottom
-  right. Calls lists the calls ringing now and the history (All, Missed, Placed, Answered) with Call back (an end-to-end
+  right. **Move to this device:** while you are in a call on another device (or tab), every other page of yours shows it
+  with Move to this device; the call moves without a gap for the others, and the first device leaves once this one is
+  connected (a call going straight between two devices first moves to the server, a short gap). **Call waiting:** a
+  call that rings while you are in one offers Hold and answer (the first call waits on hold, and the others in it see
+  that) and End and answer; the call on hold shows at the top with Swap (or Resume) and Leave. Calls lists the calls ringing now and the history (All, Missed, Placed, Answered) with Call back (an end-to-end
   encrypted call is called back encrypted); Home counts the missed calls until the Missed tab is opened, and so does the
   header's Missed calls badge (the theme's `STRT_CALLS_SCREEN`, Calls, Missed, and the shell counts' `calls`: basic-comms
   seeds both, with the tray's Chat and Dialer tabs and the Mail button, and IronStone's theme rows replace them).
@@ -133,7 +152,7 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   person here goes straight between your devices when it can, and relayed it goes through the server, so they never
   see your network address ([WebRTC, The direct path](../interfaces/WebRTC.md#the-direct-path)). The call's header shows
   the connection's quality, "Reconnecting…" while it comes back, and "Your network is weak" when your side is the cause.
-  Calls need a media server (`rtc_media_port`); the Calls screen says when there is none. In the terminal a call is not live: its screen shows who is in it, with Answer, Decline and Leave.
+  Calls need a media server (`rtc_media_port`); the Calls screen says when there is none. In the terminal a call is not live: its screen shows who is in it (and who is on hold), with Answer, Decline and Leave.
 - <a id="encrypted-calls"></a>**End-to-end encrypted calls.** New call and a call link have End-to-end encrypted, and a
   room's owner or moderator can make all of the room's calls so (Room settings, Calls in this room are end-to-end
   encrypted). In such a call only the people in it hear and see each other: each browser encrypts what it sends with a

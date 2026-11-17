@@ -313,6 +313,103 @@ feature("a leg whose socket did not come back in a minute leaves, and the call e
     }
 })
 
+// Move to this device (plans/Comms-Messaging.md §8.3 item 6): a second leg of the same person, the first leaving only once
+// the second's media connected; a move that never connects is left and the call goes on. Call waiting (item 7): a user's
+// own leg on hold, and back when it binds again.
+let movedCall = null
+feature("moving a call to another device adds a leg, and the first leaves once it connects; a move left before it connects keeps the call", {
+    when() {
+        endAll()
+        const started = as(A, "start#Call", {calleeUserIdList: [B]})
+        const id = (movedCall = started.callSessionId)
+        const answered = as(B, "answer#Call", {callSessionId: id})
+        as(B, "bind#Connection", {callSessionId: id, callLegId: answered.callLegId})
+        const live = as(A, "get#Call", {callSessionId: id}).call
+        const stranger = as(C, "move#Call", {callSessionId: id})
+        const first = as(B, "move#Call", {callSessionId: id})
+        // one move at a time: a new one replaces a move that has not connected
+        const replaced = as(B, "move#Call", {callSessionId: id})
+        const firstAfter = legs(id).find(l => l.callLegId == first.callLegId)
+        const left = as(B, "leave#Call", {callSessionId: id, callLegId: replaced.callLegId})
+        const afterLeft = session(id).statusId
+        const second = as(B, "move#Call", {callSessionId: id})
+        const bound = as(B, "bind#Connection", {callSessionId: id, callLegId: second.callLegId})
+        const before = legs(id).find(l => l.callLegId == answered.callLegId).statusId
+        sys(() => call("org.moqui.call.CallServices.note#MediaEvent", {callLegId: second.callLegId, generation: bound.generation, event: "connected"}))
+        return {answered, live, stranger, first, replaced, firstAfter, left, afterLeft, second, before, legs: legs(id), view: as(B, "get#Call", {callSessionId: id}).call, row: session(id)}
+    },
+    then({answered, live, stranger, first, replaced, firstAfter, left, afterLeft, second, before, legs, view, row}) {
+        replaced.movedFromLegId == answered.callLegId
+        firstAfter.statusId == "ClsLeft" && firstAfter.endReasonEnumId == "CerCanceled"
+        live.participants.find(p => p.userId == B).legs.find(l => l.callLegId == answered.callLegId).live == true
+        stranger.reasonCode == "notFound"
+        first.movedFromLegId == answered.callLegId && first.callLegId != answered.callLegId
+        left.call.status == "active" && afterLeft == "CssActive"
+        second.movedFromLegId == answered.callLegId
+        before == "ClsAnswered"
+        legs.find(l => l.callLegId == answered.callLegId).statusId == "ClsLeft"
+        legs.find(l => l.callLegId == answered.callLegId).endReasonEnumId == "CerMoved"
+        legs.find(l => l.callLegId == second.callLegId).statusId == "ClsAnswered"
+        row.statusId == "CssActive"
+        view.myLegId == second.callLegId && view.participants.find(p => p.userId == B).inCall == true
+    }
+})
+
+feature("a user puts their own leg on hold for another call, everyone sees it, and binding it again takes it off", {
+    when() {
+        const id = movedCall
+        const held = as(B, "hold#OwnLeg", {callSessionId: id})
+        const again = as(B, "hold#OwnLeg", {callSessionId: id})
+        const stranger = as(C, "hold#OwnLeg", {callSessionId: id})
+        const seen = as(A, "get#Call", {callSessionId: id}).call.participants.find(p => p.userId == B).onHold
+        as(B, "bind#Connection", {callSessionId: id, callLegId: held.callLegId})
+        const back = as(A, "get#Call", {callSessionId: id}).call.participants.find(p => p.userId == B).onHold
+        as(B, "hold#OwnLeg", {callSessionId: id})
+        const off = as(B, "hold#OwnLeg", {callSessionId: id, held: false})
+        // on hold, the leg outlives its socket (a reconnect, a reload) for half an hour, then leaves
+        const bound = as(B, "bind#Connection", {callSessionId: id, callLegId: held.callLegId})
+        as(B, "hold#OwnLeg", {callSessionId: id})
+        sys(() => call("org.moqui.call.CallServices.release#Connection", {callLegId: held.callLegId, generation: bound.generation}))
+        age("moqui.call.CallConnection", {callLegId: held.callLegId}, "closedDate", 61000)
+        expire()
+        const kept = legs(id).find(l => l.callLegId == held.callLegId).statusId
+        age(LEG, {callLegId: held.callLegId}, "heldDate", 31 * 60000)
+        expire()
+        const gone = legs(id).find(l => l.callLegId == held.callLegId).statusId
+        endAll()
+        return {held, again, stranger, seen, back, off, kept, gone}
+    },
+    then({held, again, stranger, seen, back, off, kept, gone}) {
+        kept == "ClsAnswered"
+        gone == "ClsLeft"
+        held.errors == "" && held.callLegId != null
+        again.repeated == true
+        stranger.reasonCode == "notFound"
+        seen == true
+        back == false
+        off.call.participants.find(p => p.userId == B).onHold == false
+    }
+})
+
+feature("a move that never bound does not keep a direct call going once the person's real leg leaves", {
+    when() {
+        endAll()
+        const started = as(A, "start#Call", {calleeUserIdList: [B]})
+        const id = started.callSessionId
+        const answered = as(B, "answer#Call", {callSessionId: id})
+        as(B, "bind#Connection", {callSessionId: id, callLegId: answered.callLegId})
+        const moved = as(B, "move#Call", {callSessionId: id})
+        const left = as(B, "leave#Call", {callSessionId: id, callLegId: answered.callLegId})
+        return {moved, left, row: session(id), pending: legs(id).find(l => l.callLegId == moved.callLegId)}
+    },
+    then({moved, left, row, pending}) {
+        moved.callLegId != null
+        left.call.status == "ended"
+        row.statusId == "CssEnded"
+        pending.statusId == "ClsLeft"
+    }
+})
+
 feature("a call whose media server stopped ends with that reason", {
     when() {
         const started = as(A, "start#Call", {calleeUserIdList: [B]})

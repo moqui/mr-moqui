@@ -759,6 +759,7 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Merged into another call" enumId="CerMerged" enumCode="merged" enumTypeId="CallEndReason" sequenceNum="10"/>
             <moqui.basic.Enumeration description="Transferred" enumId="CerTransferred" enumCode="transferred" enumTypeId="CallEndReason" sequenceNum="11"/>
             <moqui.basic.Enumeration description="Refused by the call limits or policy" enumId="CerRefused" enumCode="refused" enumTypeId="CallEndReason" sequenceNum="12"/>
+            <moqui.basic.Enumeration description="Moved to another device" enumId="CerMoved" enumCode="moved" enumTypeId="CallEndReason" sequenceNum="13"/>
         </seed-data>
     </entity>
 

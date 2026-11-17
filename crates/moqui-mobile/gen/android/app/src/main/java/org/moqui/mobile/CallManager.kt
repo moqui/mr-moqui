@@ -84,14 +84,39 @@ object CallManager {
         if (Looper.myLooper() == Looper.getMainLooper()) task() else main.post(task)
     }
 
-    /** A push's data (FCM's, or the debug injection's). */
-    fun onPush(context: Context, data: Map<String, String>) {
+    /**
+     * A push's data (FCM's, UnifiedPush's, or the debug injection's). `account` is the one whose push keys opened it
+     * (never a field of the push itself); `received` is when it arrived, before it was opened, so the ring's time is
+     * counted from then.
+     */
+    fun onPush(context: Context, data: Map<String, String>, account: String? = null, received: Long = System.currentTimeMillis()) {
         val app = context.applicationContext
         know(app)
         when (data["kind"]) {
-            "ring" -> ring(app, data)
-            "ringEnded" -> onMain { ringEnded(app, data["callSessionId"] ?: "", data["reason"] ?: "ended") }
+            "ring" -> ring(app, data, account, received)
+            "ringEnded" -> pushEnded(app, data, account)
             else -> Log.i(TAG, "A push of kind ${data["kind"]} is not shown by the native code yet")
+        }
+    }
+
+    /**
+     * A ring's end from a push: of the account whose keys opened it, or for an unsealed one the one account its push id
+     * can be (none with push keys); it ends only that account's call ([ringEnded]).
+     */
+    private fun pushEnded(context: Context, data: Map<String, String>, opened: String?) {
+        val id = data["callSessionId"] ?: ""
+        val reason = data["reason"] ?: "ended"
+        if (opened != null) {
+            onMain { ringEnded(context, id, reason, opened) }
+            return
+        }
+        val pushId = data["pushId"] ?: ""
+        Native.open {
+            val account = if (Native.ensure(context)) Native.ringAccount(Native.dataDir(context), pushId) else null
+            onMain {
+                if (account == null) Log.w(TAG, "A ring's end of $id that is no one account's here (push $pushId): dropped")
+                else ringEnded(context, id, reason, account)
+            }
         }
     }
 
@@ -102,18 +127,24 @@ object CallManager {
 
     fun ringing(): Call? = calls.values.firstOrNull { it.state == State.RINGING }
 
-    /** A ring: its account found by Rust (off the main thread), then shown. */
-    private fun ring(context: Context, data: Map<String, String>) {
-        val received = System.currentTimeMillis()
+    /**
+     * A ring: its account, the one whose keys opened it, or for an unsealed ring the one account its push id can be
+     * (found by Rust on the opener's thread, which does no network work), then shown.
+     */
+    private fun ring(context: Context, data: Map<String, String>, opened: String?, received: Long) {
         val id = data["callSessionId"]?.takeIf { ID.matches(it) } ?: run {
             Log.w(TAG, "A ring with no call id")
             return
         }
+        if (opened != null) {
+            onMain { rang(context, data, id, opened, received) }
+            return
+        }
         val pushId = data["pushId"] ?: ""
-        Native.work {
+        Native.open {
             val account = if (Native.ensure(context)) Native.ringAccount(Native.dataDir(context), pushId) else null
             onMain {
-                if (account == null) Log.w(TAG, "A ring of $id that is no account's here (push $pushId): dropped")
+                if (account == null) Log.w(TAG, "A ring of $id that is no one account's here (push $pushId): dropped")
                 else rang(context, data, id, account, received)
             }
         }
@@ -122,7 +153,7 @@ object CallManager {
     private fun rang(context: Context, data: Map<String, String>, id: String, account: String, received: Long) {
         val now = System.currentTimeMillis()
         ended.entries.removeAll { now - it.value > CallRules.ENDED_MEMORY_MS }
-        if (ended.containsKey(id)) {
+        if (ended.containsKey("$account/$id")) {
             Log.i(TAG, "The ring of $id had ended before it came")
             return
         }
@@ -269,12 +300,17 @@ object CallManager {
     }
 
     /** The server's `ringEnded`, or the ring's end ([CallRules.ringEndedEnds]); one for a call not here yet is
-     *  remembered, so its ring does not start after it. */
-    fun ringEnded(context: Context, id: String, reason: String) {
+     *  remembered, so its ring does not start after it. `account` is the end's (null: the ring's own timeout): another
+     *  account's call of the same id is not ended. */
+    fun ringEnded(context: Context, id: String, reason: String, account: String? = null) {
         if (!ID.matches(id)) return
         val call = calls[id]
         if (call == null) {
-            ended[id] = System.currentTimeMillis()
+            if (account != null) ended["$account/$id"] = System.currentTimeMillis()
+            return
+        }
+        if (account != null && call.account != account) {
+            Log.w(TAG, "A ring's end of $id for another account than the call's: not ended")
             return
         }
         if (!CallRules.ringEndedEnds(call.state == State.ANSWERED, call.joined, reason)) return

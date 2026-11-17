@@ -1107,7 +1107,10 @@ fn unread_and_mention_counts_follow_the_read_marker_and_the_notification_level()
             ("notificationLevelEnumId", text("mentions")),
         ],
     );
-    assert_eq!(out_number(&counts("unc"), "total"), 1);
+    let mentions_only = counts("unc");
+    assert_eq!(out_number(&mentions_only, "total"), 1);
+    // the level each room notifies at, which the apps' socket notifications follow (plans/Comms-Messaging.md §7.5)
+    assert_eq!(field(&out_map(&mentions_only, "levelMap"), &chat), "mentions");
     assert_eq!(out_number(&counts("unc"), "unread"), 0);
     ok(
         "set#Notification",
@@ -1117,6 +1120,7 @@ fn unread_and_mention_counts_follow_the_read_marker_and_the_notification_level()
     assert_eq!(out_number(&none, "total"), 0);
     assert_eq!(out_number(&none, "mentions"), 0);
     assert_eq!(number(&sub(&out_map(&none, "roomCounts"), &chat), "unread"), 3);
+    assert_eq!(field(&out_map(&none, "levelMap"), &chat), "none");
     ok(
         "set#Notification",
         &[
@@ -1125,7 +1129,13 @@ fn unread_and_mention_counts_follow_the_read_marker_and_the_notification_level()
             ("isMuted", Value::Bool(true)),
         ],
     );
-    assert_eq!(out_number(&counts("unc"), "total"), 1);
+    let muted = counts("unc");
+    assert_eq!(out_number(&muted, "total"), 1);
+    assert_eq!(
+        field(&out_map(&muted, "levelMap"), &chat),
+        "mentions",
+        "muted: mentions only"
+    );
     ok(
         "set#Notification",
         &[

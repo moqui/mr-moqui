@@ -78,11 +78,13 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_OPERATION_MANAGE" fromDate="0" thruDate="1265184000000"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_CONSTITUTION_GLOBAL" fromDate="0" thruDate="1265184000000"/>
     <!-- the agents' models, endpoints and keys, and saving skills; chat bridges and phone trunks (outside services); CI runner pools
-        and their tokens; eval runs, which cost money; other visitors' browser session replays; and mail accounts hosted here -->
+        and their tokens; eval runs, which cost money; other visitors' browser session replays and push devices; and mail accounts
+        hosted here -->
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="AgentAdmin" fromDate="0" thruDate="1265184000000"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="AgentSkillAuthor" fromDate="0" thruDate="1265184000000"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ChatBridgeAdmin" fromDate="0" thruDate="1265184000000"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="VoiceAdmin" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="PushHealthAdmin" fromDate="0" thruDate="1265184000000"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="GIT_CI_ADMIN" fromDate="0" thruDate="1265184000000"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_EVAL_RUN" fromDate="0" thruDate="1265184000000"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_REPLAY" fromDate="0" thruDate="1265184000000"/>

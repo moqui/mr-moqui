@@ -403,7 +403,8 @@ promised, and what happens when a push cannot be sent.
 ### 7.1 Today
 
 The server side of phase 2 (steps 2a to 2d, 2h) is built (2026-11-17): the rows below marked "since phase 2". The
-Android app (2e), the desktop and mobile `notify` (2f) and the check screen (2g) are not yet.
+Android app (2e), the desktop and mobile `notify` (2f), the check screen (2g) and the app's UnifiedPush (2h) are built
+too (2026-11-17).
 
 | Path | What it does |
 |---|---|
@@ -412,8 +413,8 @@ Android app (2e), the desktop and mobile `notify` (2f) and the check screen (2g)
 | Activity | Since phase 2: `ChatUserActivity` (mention, reply, thread reply, reaction), written by `send#Message`, `edit#Message` and `react#Message` in the message's transaction, removed by a redaction, a reaction taken back and the retention. The feed service (`find#ChatActivity`) is phase 7 |
 | Direct and room messages | Since phase 2: pushed by the chat push worker (`service/chat_push.rs`, `ChatPushServices.xml`): `append#Event` writes a `ChatPushJob` in the transaction; after the commit the worker applies rules 1, 3 and 4 and writes a `PushOutbox` row per device, merged per device and room with a count; a missed call and a voicemail push as messages in their room (rule 6) ([Qvt-Client, Chat push](../docs/ui/Qvt-Client.md#install-and-web-push)) |
 | Web Push | Title, link, topic and tag, encrypted to the browser (RFC 8291). Never the body, but Mantle's `ChatMention` title holds up to 120 characters of the message for a user with previews on (since phase 2 that topic is not pushed by `send#WebPush`). Disabled after 404, 410 or 5 failures in a row. A chat push to a browser is the encrypted chat payload, with TTL, `Urgency` and a `Topic` per room, and retries |
-| FCM | Data messages of kind `ring`, `ringEnded` and `notification`, and since phase 2 `chat` and `clear`. Since phase 2 a device gives its push keys at `register#PushDevice` and a `notification` or chat push carries only `{kind, pushId, enc}` (encrypted, COM-UI-031); a device with no keys gets no text. `send#WebPush` tries three times in the request; the chat outbox retries 429 and 5xx with backoff, jitter and `Retry-After`, at most an hour a wait, 12 tries or the 4-week TTL, and deletes a registration FCM says is gone. A ring still carries its caller in clear text until the app decrypts (2e). The app shows `ring` and `ringEnded` and drops the others (`CallManager.kt:94`). The registration is tied to the device key |
-| UnifiedPush | Since phase 2: `register#PushDevice` with `provider=unifiedpush` keeps a distributor's endpoint (`PushUnified`, keys required); the worker and `send#WebPush` post the same encrypted payload to it as Web Push |
+| FCM | Data messages of kind `ring`, `ringEnded` and `notification`, and since phase 2 `chat` and `clear`. Since phase 2 a device gives its push keys at `register#PushDevice` and a `notification` or chat push carries only `{kind, pushId, enc}` (encrypted, COM-UI-031); a device with no keys gets no text. `send#WebPush` tries three times in the request; the chat outbox retries 429 and 5xx with backoff, jitter and `Retry-After`, at most an hour a wait, 12 tries or the 4-week TTL, and deletes a registration FCM says is gone. Since 2e a ring to a keyed device is sealed too, and the app opens `enc` in Rust (`Native.openPush`) and shows a chat push, a `clear` and a test in Kotlin with no WebView (`ChatNotifications.kt`), then acknowledges it. The registration is tied to the device key |
+| UnifiedPush | Since phase 2: `register#PushDevice` with `provider=unifiedpush` keeps a distributor's endpoint (`PushUnified`, keys required); the worker and `send#WebPush` post the same encrypted payload to it as Web Push. The Android app registers an endpoint per account with its distributor (`org.unifiedpush.android:connector`) and opens its messages with that account's own keys |
 | Order | Since phase 2 the push of a message and the call's ring and its end go after the commit (`registerOnCommit`, COM-UI-032); the mention notification is still stored in the transaction (force-cache), but not pushed |
 | Settings | Room level `CnlAll`, `CnlMentions`, `CnlNone`; `CHAT_NOTIFY_DEFAULT`; `CHAT_NOTIFY_PREVIEW`. A muted room counts and notifies as Mentions (`ChatEntities.xml:107`) |
 | Do not disturb | A server job sets and clears the `dnd` status by the user's hours every 5 minutes (`apply#DndHours`). Since phase 2 the push worker holds a user's chat pushes while the status is `dnd` and sends one summary per room and device when it ends, and a call rings the devices only from a person on the user's allowed list (`CHAT_DND_ALLOWED`, Settings, Chat) or as the same person's or number's second call within 3 minutes, on the apps and the desk and soft phones alike (`filter#RingUsers`). The client still silences toasts and sounds itself (COM-UI-015) |
@@ -533,7 +534,7 @@ and they keep going when the network gets bad or changes.
 | Media server | `crates/moqui-rtc` on str0m: ICE-lite, DTLS-SRTP, three simulcast layers, TWCC bandwidth estimate, audio before video, audio only below a floor ([WebRTC](../docs/interfaces/WebRTC.md)) |
 | Codecs | Opus with in-band FEC; RED is off (`enable_opus(true, false)`, `sfu/mod.rs:542`) and DTX is not set. VP8 with RTX by str0m's default. Phase 5: RED on, DTX asked by the page (§8.3 item 8) |
 | E2EE | SFrame, per room or per call link, set at the start and never lowered |
-| Start from a chat | One call button in the room header; it rings everyone in the room and always starts with video (`Chat.qvue:807`, `1418`) |
+| Start from a chat | One call button in the room header; it rings everyone in the room and always starts with video (`Chat.qvue:807`, `1418`). Phase 4: Voice call and Video call (§8.3 item 1) |
 | Ring on Android | FCM high-priority `ring` to `CallManager`; self-managed Android Telecom call (`CallConnectionService`), incoming only; CallStyle notification; full-screen ring over the lock screen; Decline with no WebView ([Mobile-Client](../docs/ui/Mobile-Client.md)). This is MT2 of [Mobile-Desktop](Mobile-Desktop.md), built |
 | Media on Android | The WebView's WebRTC (`WebrootCall.js`). A native audio client is a later item (Mobile-Desktop, MT3's record) |
 | Reconnect | A closed socket keeps its leg for 30 s (`RECONNECT_GRACE_MS`, `Calls.js:45`). When the connection fails the page joins again (`WebrootCall.js:613`); it does not restart ICE. The media server takes a leg's new offer. Phase 5: 60 s, and an ICE restart before a join (§8.3 items 10, 11) |
@@ -571,6 +572,18 @@ and they keep going when the network gets bad or changes.
 6. "Move to this device": a second device of the same user joins the call as a new leg, then the first leg leaves.
    The other side hears no gap.
 7. Call waiting and decline with a quick text.
+
+Status of items 1 to 7 (phase 4, web part; [WebRTC, The call's flow](../docs/interfaces/WebRTC.md#the-calls-flow)):
+
+| # | Status |
+|---|---|
+| 1 | Built: Voice call and Video call in the room header on both layouts (the tray's narrow Chat tab has them in its menu); a direct room calls the person, a group room starts a group call its members join; an encrypted room passes `requireE2ee` |
+| 2 | Built on the web: `m-call-compact`, full screen at a phone's width (big avatar for voice, the video and self view for video, mute, speaker where the browser chooses its output, video, flip, add people, hang up), and the same in the desktop's side panel (`state.panel`); the header shows the call's label from `e2eeLabel`. The Android app's native call screen is later |
+| 3 | Built: `addVideo` and `dropVideo` on the same connection (renegotiation, SFrame on the new sender); the other side gets a prompt |
+| 4 | Built on the desktop web: a Document Picture-in-Picture window (Chrome and Edge, and their automatic one), else the floating LiveCall window. Android's picture-in-picture is later |
+| 5 | Later (Android: Telecom `CallEndpoint`, the proximity wake lock) |
+| 6 | Built: `move#Call`, a new leg that closes the user's others once its media connected (`note#MediaEvent`); the other side's connection goes on (acceptance `CallFlow`). On the direct path the move first goes to the media server, a short gap. From and to the Android app is later |
+| 7 | Built: Hold and answer (`hold#OwnLeg`), End and answer, Swap or Resume, Decline with a message (ready texts or one's own, to the caller's direct room; sealed in an encrypted room) |
 
 **Network resilience** (the test results from §8.4 decide the order)
 
@@ -1216,8 +1229,19 @@ Server first, then the Android app, then the desktop and the check screen.
 The server side is done (2026-11-17, `ce99f253c`, `9fe2bde2e`): steps 2a to 2d and the server of 2h. `service/chat_push.rs` and
 `ChatPushServices.xml` are the worker; `ChatUserActivity`, `ChatPushJob` and `PushOutbox` are in `ChatEntities.xml`;
 the Settings, Chat list "Calls that ring through" keeps `CHAT_DND_ALLOWED`; System, Push Health is basic-comms'
-`screen/System/PushHealth.xml`. The rules are regression tests of `chat_push_tests.rs` on the worker's clock. Left for
-2e: the app's push key pair and its decryption of `enc` (and then the ring's own fields, which still go in clear text).
+`screen/System/PushHealth.xml`. The rules are regression tests of `chat_push_tests.rs` on the worker's clock.
+
+The apps are done (2026-11-17): steps 2e to 2h ([Mobile-Client, Chat
+notifications](../docs/ui/Mobile-Client.md#chat-notifications), [Desktop-Client,
+Notifications](../docs/ui/Desktop-Client.md#notifications)). Each account on the phone has a push key pair and auth
+secret of its own, sealed by the Keystore (`src/push.rs`), and a push is the account's whose keys open it, so a server
+cannot make one that shows as another account's; Rust opens `enc` and Kotlin shows the chat (`ChatNotifications.kt`);
+a ring to a keyed device is sealed too. UnifiedPush is in the app (`org.unifiedpush.android:connector`, an instance per
+account, its messages opened in Rust with the account's same keys, `UnifiedPushService.kt`; Firebase stays unless
+the user switches in the check screen). Left: the battery check finds Android's own optimization
+only, not a maker's task killer; a chat push has no sender avatar; the desktop counts a thread reply at the mentions
+level only when the event names the thread's starter, which the server's events do not yet; UnifiedPush with a real
+distributor on a phone is not tried yet.
 
 | Step | Work | Files |
 |---|---|---|
@@ -1225,10 +1249,10 @@ the Settings, Chat list "Calls that ring through" keeps `CHAT_DND_ALLOWED`; Syst
 | 2b (done) | `ChatPushJob` written by `append#Event`; the worker; `PushOutbox` with merge, retries, TTL, collapse and priority; the ring sent after the commit | new `crates/moqui-core/src/service/chat_push.rs`, `fcm.rs`, `web_push.rs`, `Calls.js` |
 | 2c (done) | Rules 1 to 4 in the worker: level, mute as Mentions, read marker, `clear` on a read, DND hold and summary | `chat_push.rs`, `ChatServices.xml` (`mark#Read`) |
 | 2d (done) | The device's push key at `register#PushDevice`; the encrypted payload; `ack#Push`; the System health screen | `NotificationServices.xml`, `web_push.rs`, `notify/push_crypto.rs`, a System screen |
-| 2e | Android: decrypt and show in Kotlin, channels, `MessagingStyle`, Reply and Mark read through the Rust outbox, `clear`, the permission and battery prompts, token retry | `PushService.kt`, `CallManager.kt`, a new notifications class, `Native.kt`, `crates/moqui-mobile/src` |
-| 2f | Desktop and mobile `notify` with tag and link; missed messages on start; the browser payload | `crates/moqui-desktop/src/bridge.rs`, `crates/moqui-mobile/src/bridge.js`, `MoquiLib.js` |
-| 2g | The check screen in the shell with its host command; "Send a test notification" | `Root.qvue`, `bridge.js`, `commands.rs` |
-| 2h (server done) | UnifiedPush: the app registers a distributor's endpoint where the phone has no Google Play; the worker sends the same encrypted payload to it (§7.4) | `web_push.rs` or a new `unified_push.rs`, `PushService.kt`, `NotificationServices.xml` |
+| 2e (done) | Android: decrypt and show in Kotlin, channels, `MessagingStyle`, Reply and Mark read through the Rust outbox, `clear`, the permission and battery prompts, token retry | `PushService.kt`, `CallManager.kt`, a new notifications class, `Native.kt`, `crates/moqui-mobile/src` |
+| 2f (done) | Desktop and mobile `notify` with tag and link; missed messages on start; the browser payload | `crates/moqui-desktop/src/bridge.rs`, `crates/moqui-mobile/src/bridge.js`, `MoquiLib.js` |
+| 2g (done) | The check screen in the shell with its host command; "Send a test notification" | `Root.qvue`, `bridge.js`, `commands.rs` |
+| 2h (done) | UnifiedPush: the app registers a distributor's endpoint where the phone has no Google Play; the worker sends the same encrypted payload to it (§7.4) | `web_push.rs` or a new `unified_push.rs`, `PushService.kt`, `NotificationServices.xml` |
 
 - Reuse: the bridge delivery worker's pattern (`chat_bridge.rs`: lease, backoff, sweep, a round at a given time);
   `push_crypto::encrypt`; `WebPushSubscription`'s key fields; the Rust outbox kinds `chat-send` and `chat-read` with
@@ -1266,6 +1290,11 @@ Done 2026-11-17 in `fdd1ab597` ([review](ui-review-basic-comms.md) COM-UI-001, 0
   bridge; the withheld code when the sync fails; `requireE2ee` on an encrypted room's call. Tests: `WebrootChat`;
   acceptance `EncryptedChatFlow` (john.doe verifies b by emoji and the label has its check; b's new device stops the next
   send until Send anyway) and `ChatLabels` (the members pane, Verify from the banner).
+- Second review (`b33d3213a`): Send anyway is kept in the browser per account and room (by device key or master key),
+  never as the SDK's trust, so "only verified devices" stays strict; the check before a send is the one gate and then
+  shares with all devices, so Verify then send works; a person verified by emoji only is covered; the sender's check
+  needs a verified device (`verifiedSender`); edits and reactions ask too; incoming requests named, cancelled on close.
+  Acceptance `EncryptedChatFlow` covers Verify then send and Send anyway under only verified devices.
 - Left: the call screen's label (phase 4, from `e2eeLabel`'s call states); the label in a notification (phase 2's
   payload); Mail's line beside a person's chats (phase 8, the `mail` state); a request from another person when no
   encrypted room is open shows only on My devices.
@@ -1291,6 +1320,28 @@ Planned:
 - Done when: the rows of §8.2 from Start to Leave the app, Move the call, Missed call and Second call, on real
   phones. The existing acceptance specs `CallFlow` and `EncryptedCallFlow` are extended for voice-only start and the
   upgrade.
+- Status (2026-11-17): the web part is built; the Android part (items 4's picture-in-picture, 5, the native call screen,
+  Move to and from the app) is pending.
+  - Built: §8.3 items 1, 2, 3, 4 (desktop), 6 and 7 (the status table there). `Chat.qvue`'s two buttons;
+    `WebrootCall.js`'s side panel, `m-call-compact`, `addVideo`/`dropVideo` and the prompt, `openPip`, `moveHere`,
+    `hold`/`resume` and `declineWithText`; `Calls.js` `move#Call` (finished on the new leg's `connected`) and
+    `hold#OwnLeg`, a leg's `live` and `movedFromLegId` in the call's view, a direct call going on while its person has
+    another leg; a socket keeps its four newest bindings, the oldest released (`notws/rtc.rs`: a page whose calls ended
+    was refused its fifth).
+  - Review fixes: a held leg is kept without its socket for 30 minutes and shown held again after a reload; Swap
+    checks the held leg first and a refused hold keeps the call (and answers nothing); the voice-to-video prompt only
+    in a call of two, for the other person's own change; the held banner inside the phone's call; one pending move per
+    user; a move that never bound keeps no direct call going; the page releases a call's binding when done (`release`)
+    and never loses its held one to eviction; joining another call leaves the first; the mobile host hears `held`, not
+    `left`; no call button in a room with nobody here to ring; a phone caller gets no quick text, and the page says so.
+  - Terminal: `CallTui` shows a person on hold; its comment says the rest is the browser's.
+  - Tests. Regression: `Calls` (the move, a move left, the hold), `BasicCommsCalls` (both refused to a stranger through
+    either mount, the terminal's On hold), `WebrootCall` (webroot, offline: the panel or the screen, the prompt, the
+    move's offer and push, the quick text sealed in an encrypted room), `notws::rtc` (the bindings). Acceptance:
+    `CallFlow` (a voice-only start and the upgrade and downgrade, Move to this device, call waiting with swap and a
+    quick text), `EncryptedCallFlow` (an encrypted voice-only start and the upgrade).
+  - Left: the Android parts; on the direct path a move goes through the media server first (a short gap); the
+    picture-in-picture window in the desktop client's CEF is not checked; §8.2 on real phones.
 
 #### Phase 5: calls, network
 

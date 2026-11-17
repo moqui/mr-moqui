@@ -10,7 +10,8 @@ import com.google.firebase.messaging.RemoteMessage
 
 /**
  * Firebase Cloud Messaging, compiled in only when the build has `google-services.json` (app/build.gradle.kts): the
- * server's data messages (a ring, its end) reach [CallManager] with no WebView, and the token goes to Rust ([Push]).
+ * server's data messages (a ring, its end, a chat push) reach [Push.onMessage] with no WebView, and the token goes to
+ * Rust ([Push]).
  */
 class PushService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
@@ -20,7 +21,7 @@ class PushService : FirebaseMessagingService() {
     override fun onMessageReceived(message: RemoteMessage) {
         // a high-priority message lets the app start its call service from the background (an FCM exemption)
         Log.i("moqui-push", "A push of kind ${message.data["kind"]} (priority ${message.priority})")
-        CallManager.onPush(this, message.data)
+        Push.onMessage(this, message.data)
     }
 }
 

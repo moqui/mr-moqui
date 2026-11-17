@@ -10,7 +10,8 @@
 // With only verified devices on (the sender's setting, or the room's), an unverified device cannot read the next message: the
 // sender's page knows whose device it left out, and the reader's says the sender has not verified it (COM-UI-013). john.doe
 // verifies calls.client.b by emoji, so the room's lock gets its check, and b's new device then stops john.doe's next send
-// until it is let through (§6.1 rule 3). A
+// until it is verified (the send then goes) or let through for the room, which "only verified devices" still leaves out
+// (§6.1 rule 3). A
 // store re-made under another key is reported and kept, never deleted unasked, until "Start over". A store from before the
 // derived store key (its random key stored, set here through Tools) moves to a new device with its room keys.
 // Run: ./moq test-client basic-comms --serve --spec EncryptedChatFlow
@@ -237,7 +238,7 @@ feature("only verified devices: with the sender's setting, or the room's, a devi
 
 // COM-UI-013, §6.1 rule 3: another person verified by emoji (Chat's Verify), so the room's lock gets its check; then a new
 // device of that verified person is said before the next send, and Send anyway lets it through
-feature("john.doe verifies calls.client.b by emoji: b's devices and identity are verified and the room's label has its check; b's new device stops the next send until it is let through", {
+feature("john.doe verifies calls.client.b by emoji: the room's label has its check; b's new device stops the next send until verified (then it goes) or let through for the room, which only verified devices still leaves out", {
     when() {
         const members = [room.a, room.b]
         // cross-signing on both: the emoji comparison then verifies b's identity, so b's signed devices too
@@ -278,12 +279,54 @@ feature("john.doe verifies calls.client.b by emoji: b's devices and identity are
             try { await window.__e2ee.send(roomId, members, "<p>To verified b</p>"); return null } catch (err) {
                 return err && err.reasonCode === "verifiedUserProblem" ? { reasonCode: err.reasonCode, problems: err.problems } : null }
         }, {arg: [room.id, members], timeout: 20})
-        const sent = a.evaluate(([roomId, members, problems]) => window.moqui.crypto.acceptProblems(problems)
-            .then(() => window.__e2ee.send(roomId, members, "<p>Sent anyway</p>")), [room.id, members, refused.problems])
-        return {asked, aEmoji, bEmoji, seen, newDevice, refused, sent, problemText: a.evaluate((problems) =>
-            window.moqui.chat.problemsText(problems, () => "B")[0], refused.problems)}
+        // Verify, then send: john.doe verifies b's new device by emoji (b did not sign it), and the send goes with no question
+        // b's new browser opens the room (Chat reads its trust), so it knows john.doe's devices
+        b2.evaluate(([roomId, members]) => window.moqui.crypto.roomTrust(roomId, members).then(() => true), [room.id, members])
+        const flow2 = a.waitFor(async (d) => {
+            await window.moqui.crypto.sync()
+            try { return await window.moqui.crypto.verifyDevice(d.userId, d.deviceId) } catch (err) { return null }
+        }, {arg: {userId: room.b, deviceId: newDevice}, timeout: 15})
+        // a page opened late may not hear its pushes yet: each look syncs first
+        const shown2 = (page, check) => page.waitFor(async ([id, test]) => {
+            await window.moqui.crypto.sync().catch(() => null)
+            const v = (window.moqui.crypto.state.verifications || []).find((item) => item.flowId === id)
+            const checks = {requested: (x) => x.phase === "requested", ready: (x) => x.ready, emoji: (x) => x.emojis && x.emojis.length === 7, done: (x) => x.done}
+            return v && checks[test](v) ? JSON.parse(JSON.stringify(v)) : null
+        }, {arg: [flow2, check], timeout: 15})
+        shown2(b2, "requested")
+        b2.evaluate((id) => window.moqui.crypto.verification(id, "accept").then(() => true), flow2)
+        shown2(a, "ready")
+        a.evaluate((id) => window.moqui.crypto.verification(id, "sas").then(() => true), flow2)
+        shown2(a, "emoji")
+        shown2(b2, "emoji")
+        for (const page of [a, b2]) page.evaluate((id) => window.moqui.crypto.verification(id, "confirm").then(() => true), flow2)
+        shown2(a, "done")
+        const verifiedThenSent = a.evaluate(([roomId, members]) => window.__e2ee.send(roomId, members, "<p>After Verify</p>")
+            .then((out) => ({eventSeq: out.eventSeq}), (err) => ({reasonCode: err && err.reasonCode, errors: err && err.errors})), [room.id, members])
+        // Send anyway: a third device of b, let through for this room by its key, not as the SDK's trust
+        const b3 = browser.newPage({user: "calls.client.b", password: PASSWORD, timeout: 30})
+        b3.allowProblems(/userPhoto\?userId=/)
+        b3.goto("/qapps/BasicComms/Home")
+        const thirdDevice = b3.evaluate(() => window.moqui.crypto.ensureDevice().then((d) => d.deviceId))
+        const refusedAgain = a.waitFor(async ([roomId, members]) => {
+            await window.moqui.crypto.sync()
+            try { await window.__e2ee.send(roomId, members, "<p>To b again</p>"); return null } catch (err) {
+                return err && err.reasonCode === "verifiedUserProblem" ? { problems: err.problems } : null }
+        }, {arg: [room.id, members], timeout: 20})
+        const sent = a.evaluate(([roomId, members, problems]) => window.moqui.crypto.acceptProblems(roomId, problems)
+            .then(() => window.__e2ee.send(roomId, members, "<p>Sent anyway</p>")), [room.id, members, refusedAgain.problems])
+        // only verified devices stays strict: the device let through is not verified, so it is left out there
+        const setMine = (on) => a.evaluate((on) => window.moqui.request("/apps/BasicComms/Settings/Devices/storeKeySettings",
+            {method: "POST", params: {verifiedDevicesOnly: on ? "true" : "false"}}).then(() => window.moqui.crypto.settingsChanged()), on)
+        setMine(true)
+        a.evaluate(([roomId, members]) => window.__e2ee.send(roomId, members, "<p>Only verified a</p>"), [room.id, members])
+        const strictLeftOut = a.evaluate((roomId) => window.moqui.crypto.leftOut(roomId), room.id)
+        setMine(false)
+        const trustAfter = a.evaluate(([roomId, members]) => window.moqui.crypto.roomTrust(roomId, members), [room.id, members])
+        return {asked, aEmoji, bEmoji, seen, newDevice, refused, verifiedThenSent, thirdDevice, refusedAgain, sent, strictLeftOut, trustAfter,
+            problemText: a.evaluate((problems) => window.moqui.chat.problemsText(problems, () => "B")[0], refused.problems)}
     },
-    then({asked, aEmoji, bEmoji, seen, newDevice, refused, sent, problemText}) {
+    then({asked, aEmoji, bEmoji, seen, newDevice, refused, verifiedThenSent, thirdDevice, refusedAgain, sent, strictLeftOut, trustAfter, problemText}) {
         asked.otherUserId == room.a
         aEmoji.length == 7
         aEmoji.join(" ") == bEmoji.join(" ")
@@ -292,7 +335,12 @@ feature("john.doe verifies calls.client.b by emoji: b's devices and identity are
         refused.reasonCode == "verifiedUserProblem"
         refused.problems.some((problem) => problem.userId == room.b && problem.deviceId == newDevice && problem.kind == "newDevice")
         problemText.startsWith("B has a new device that is not verified")
+        verifiedThenSent.eventSeq > 0
+        refusedAgain.problems.length == 1 && refusedAgain.problems[0].deviceId == thirdDevice
         sent.eventSeq > 0
+        strictLeftOut.some((device) => device.deviceId == thirdDevice)
+        !strictLeftOut.some((device) => device.deviceId == newDevice)
+        trustAfter.users.find((user) => user.userId == room.b).devices.find((device) => device.deviceId == thirdDevice).verified == false
     }
 })
 

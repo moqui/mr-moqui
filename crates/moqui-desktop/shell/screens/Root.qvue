@@ -13,7 +13,8 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- The desktop client's shell for a signed-in account (js/shell.js, plans/Mobile-Desktop.md §4 configuration 3): the
     server's apps from its shellData, each opening in a window of its own (the server's page through the host); the account
-    menu (switch, add, the account's apps and devices to sign out, sign out, with what waits unsent listed first); the counts
+    menu (switch, add, the account's apps and devices to sign out, the notification check of this device with its fixes and
+    a test notification through the server, plans/Comms-Messaging.md §7.6, sign out, with what waits unsent listed first); the counts
     and notifications of the account's /notws, which the host holds; the bundled BasicComms ChatPanel (its room opens in
     place); and the bundled BasicComms Chat, Inbox (Mail), Compose, Calls/Call and Calls/Dialer, shown here as the comms app's
     screens under its root (calls.appRoot), so their transitions go to the server, and to the account's store offline; and
@@ -60,6 +61,10 @@ along with this software (see the LICENSE.md file). If not, see
                         <q-item clickable v-close-popup @click="openDevices">
                             <q-item-section avatar><q-icon name="sym_o_devices"></q-icon></q-item-section>
                             <q-item-section>{{t('Apps and devices')}}</q-item-section>
+                        </q-item>
+                        <q-item v-if="pushCheckable" clickable v-close-popup @click="openPushCheck">
+                            <q-item-section avatar><q-icon name="sym_o_notifications"></q-icon></q-item-section>
+                            <q-item-section>{{t('Notifications on this device')}}</q-item-section>
                         </q-item>
                         <q-item clickable v-close-popup @click="signOut">
                             <q-item-section avatar><q-icon name="sym_o_logout"></q-icon></q-item-section>
@@ -115,6 +120,41 @@ along with this software (see the LICENSE.md file). If not, see
                 <q-item v-if="devicesLoaded && !devices.length"><q-item-section class="m-muted">{{t('No apps or devices')}}</q-item-section></q-item>
             </q-list>
             <q-card-actions align="right"><q-btn flat no-caps :label="t('Close')" v-close-popup></q-btn></q-card-actions>
+        </q-card>
+    </q-dialog>
+    <!-- The notification check (plans/Comms-Messaging.md §7.6): what the device says of its notifications (the host's
+        pushCheck), each item with its fix, and a test notification through the server's full push path (pushTest) with
+        the time it took to arrive. -->
+    <q-dialog v-model="pushBox.open">
+        <q-card class="m-shell-push-check">
+            <q-card-section class="text-h6">{{t('Notifications on this device')}}</q-card-section>
+            <q-list separator>
+                <q-item v-for="row in pushRows" :key="row.key" class="m-shell-push-row" :data-check="row.key">
+                    <q-item-section avatar><q-icon :name="row.ok ? 'sym_o_check_circle' : 'sym_o_error'" :color="row.ok ? 'positive' : 'warning'"></q-icon></q-item-section>
+                    <q-item-section><q-item-label>{{row.label}}</q-item-label>
+                        <q-item-label v-if="row.caption" caption>{{row.caption}}</q-item-label></q-item-section>
+                    <q-item-section v-if="row.fix && (!row.ok || row.fixLabel) && pushFixable" side>
+                        <q-btn flat dense no-caps color="primary" :label="row.fixLabel || t('Fix')" @click="askFix(row)"></q-btn>
+                    </q-item-section>
+                </q-item>
+                <q-item v-if="pushBox.loaded && !pushRows.length"><q-item-section class="m-muted">{{t('This device says nothing of its notifications')}}</q-item-section></q-item>
+            </q-list>
+            <q-card-section v-if="pushBox.result" class="text-body2 m-shell-push-result">{{pushBox.result}}</q-card-section>
+            <q-card-actions align="right">
+                <q-btn flat no-caps :loading="pushBox.testing" :label="t('Send a test notification')" @click="sendTestPush"></q-btn>
+                <q-btn flat no-caps :label="t('Close')" v-close-popup></q-btn>
+            </q-card-actions>
+        </q-card>
+    </q-dialog>
+    <!-- a fix that changes how notifications come (Firebase to UnifiedPush) asks first -->
+    <q-dialog v-model="pushBox.confirmOpen">
+        <q-card class="m-shell-push-confirm">
+            <q-card-section class="text-body2">{{pushBox.confirmRow && pushBox.confirmRow.confirm}}</q-card-section>
+            <q-card-actions align="right">
+                <q-btn flat no-caps :label="t('Cancel')" v-close-popup></q-btn>
+                <q-btn flat no-caps color="primary" :label="pushBox.confirmRow && pushBox.confirmRow.fixLabel" v-close-popup
+                    @click="fixPush(pushBox.confirmRow.fix)"></q-btn>
+            </q-card-actions>
         </q-card>
     </q-dialog>
     <q-dialog v-model="signOutBox.open">
@@ -227,11 +267,58 @@ module.exports = {
             view: null, currentPathList: [], extraPathList: [], currentParameters: {}, bodyParameters: null, backStack: [], activeContainers: {},
             // what the client's screens ask of m-qapps-root's: the quick-create dialog (here its screen opens in an app window)
             quickCreateShow: false, quickCreateUrl: '', quickCreateTitle: '', trayOpen: false,
-            signOutBox: { open: false, shared: false, items: [], checked: true, inCall: false }
+            signOutBox: { open: false, shared: false, items: [], checked: true, inCall: false },
+            pushBox: { open: false, loaded: false, state: {}, testing: false, result: '', confirmOpen: false, confirmRow: null }
         };
     },
     computed: {
         accounts() { return (this.state && this.state.accounts) || []; },
+        // the host answers the notification check (the desktop and mobile apps: pushCheck)
+        pushCheckable() { return !!(host() && host().pushCheck); },
+        pushFixable() { return !!(host() && host().pushCheckFix); },
+        // the check's items, as the host's state has them: each {key, ok, label, caption, fix}
+        pushRows() {
+            const state = this.pushBox.state || {};
+            const rows = [];
+            if (state.permission !== undefined) rows.push({ key: 'permission', ok: state.permission === true, label: t('Notifications are allowed'),
+                caption: state.permission === true ? '' : t('Turn notifications on for this app'), fix: 'notifications' });
+            if (moqui.isPlainObject(state.channels) && Object.keys(state.channels).length) {
+                const off = Object.keys(state.channels).filter((id) => state.channels[id] !== true);
+                rows.push({ key: 'channels', ok: !off.length, label: t('Every kind of notification is on'),
+                    caption: off.length ? t('Off') + ': ' + off.join(', ') : '', fix: 'channels' });
+            }
+            if (state.batteryOptimized !== undefined) rows.push({ key: 'battery', ok: state.batteryOptimized === false,
+                label: t('The app may run in the background'), caption: state.batteryOptimized ? t('Battery optimization can hold notifications back') : '', fix: 'battery' });
+            if (state.fullScreen !== undefined) rows.push({ key: 'fullScreen', ok: state.fullScreen === true, label: t('Calls show on the lock screen'), fix: 'fullScreen' });
+            // a push service: Firebase in the build, or a UnifiedPush distributor (a phone without Google Play), which the
+            // user may pick when the phone has one
+            // where Firebase works it stays unless the user switches (asked first), and a switch can be undone here
+            if (state.fcm !== undefined) {
+                const distributors = Number(state.distributors) || 0;
+                const label = t('A push service reaches this app');
+                if (state.distributor) {
+                    rows.push({ key: 'service', ok: true, label, caption: t('UnifiedPush') + ': ' + state.distributor
+                        + (state.fcm === true ? ' (' + t('in place of Firebase') + ')' : ''),
+                        fix: state.fcm === true ? 'firebase' : null, fixLabel: state.fcm === true ? t('Use Firebase') : null });
+                } else if (state.fcm === true) {
+                    rows.push({ key: 'service', ok: true, label, caption: t('Firebase'),
+                        fix: distributors ? 'distributor' : null, fixLabel: distributors ? t('Use UnifiedPush') : null,
+                        confirm: t('Notifications come by Firebase now. Use UnifiedPush through a distributor app on this phone instead? You can come back to Firebase here.') });
+                } else {
+                    rows.push({ key: 'service', ok: false, label,
+                        caption: distributors ? t('Pick a UnifiedPush distributor') : t('No push service: notifications come only while the app is open'),
+                        fix: distributors ? 'distributor' : null });
+                }
+            }
+            if (state.registered !== undefined) rows.push({ key: 'registered', ok: state.registered === true, label: t('This device is registered for push with the server') });
+            if (state.socket) rows.push({ key: 'socket', ok: true, label: t('Messages arrive while the app runs') });
+            if (state.lastPushDate !== undefined) rows.push({ key: 'lastPush', ok: !!state.lastPushDate, label: t('Last notification received'),
+                caption: state.lastPushDate ? this.when(state.lastPushDate) : t('None yet') });
+            // a force-stopped app gets no push until it is opened again
+            if (state.forceStoppedDate) rows.push({ key: 'forceStopped', ok: Date.now() - Number(state.forceStoppedDate) > 86400000,
+                label: t('The app was stopped'), caption: this.when(state.forceStoppedDate) + ': ' + t('notifications may not have come until it was opened again') });
+            return rows;
+        },
         // the sign-out leaves something unsent, or could not tell
         signOutRisky() { return this.signOutBox.items.length > 0 || (!this.signOutBox.checked && this.signOutBox.shared) || this.signOutBox.inCall; },
         // the account is a shared device's (client-conf device-mode): its data goes with the sign-out
@@ -432,6 +519,63 @@ module.exports = {
             left.then(() => host().signOut()).catch((err) => this.failed(err));
         },
         // the user's apps and devices (/qapps/clientDevices), each to sign out; this app's own signs out here too
+        // the notification check (plans/Comms-Messaging.md §7.6): the host's state, read again after a fix
+        openPushCheck() {
+            this.pushBox.open = true;
+            this.pushBox.result = '';
+            this.readPushCheck();
+        },
+        readPushCheck() {
+            return Promise.resolve(host().pushCheck()).then((state) => {
+                this.pushBox.state = moqui.isPlainObject(state) ? state : {};
+                this.pushBox.loaded = true;
+                return this.pushBox.state;
+            }, (err) => { this.pushBox.loaded = true; this.failed(err); return {}; });
+        },
+        // a row's fix, after its question where it has one
+        askFix(row) {
+            if (!row.confirm) { this.fixPush(row.fix); return; }
+            this.pushBox.confirmRow = row;
+            this.pushBox.confirmOpen = true;
+        },
+        fixPush(what) {
+            if (!host().pushCheckFix) return;
+            Promise.resolve(host().pushCheckFix(what)).catch((err) => this.failed(err));
+            // the system's screen is open: the state is read again when the window comes back
+            const again = () => { if (!document.hidden) { document.removeEventListener('visibilitychange', again); this.readPushCheck(); } };
+            document.addEventListener('visibilitychange', again);
+        },
+        // a test through the full path: the phone's pushes come from the server (pushTest queues one; the check's last push
+        // shows when it came), the desktop's from the app itself, as its socket's notifications do
+        sendTestPush() {
+            this.pushBox.testing = true;
+            this.pushBox.result = '';
+            const started = Date.now();
+            const done = (text) => { this.pushBox.testing = false; this.pushBox.result = text; };
+            const seconds = (ms) => (Math.max(0, ms) / 1000).toFixed(1);
+            Promise.resolve(host().pushTest(t('Test notification'), t('Notifications reach this device.'))).then((answer) => {
+                const queued = (answer && Array.isArray(answer.ackIdList)) ? answer.ackIdList : null;
+                if (!queued) {
+                    done(t('Shown in') + ' ' + seconds(Date.now() - started) + ' s');
+                    return;
+                }
+                if (answer.reasonCode === 'tooSoon') { done(t('A test was sent a moment ago: try again in a few seconds')); return; }
+                if (!queued.length) { done(t('The server has no push registration of this device')); return; }
+                // the test's own push (its ack id among the recent ones the phone kept), not whichever came last
+                const arrived = (state) => {
+                    const recent = state && moqui.isPlainObject(state.recentAcks) ? state.recentAcks : {};
+                    const id = queued.find((ackId) => recent[ackId]);
+                    return id ? Number(recent[id]) : null;
+                };
+                const poll = () => this.readPushCheck().then((state) => {
+                    const at = arrived(state);
+                    if (at) done(t('Arrived in') + ' ' + seconds(at - started) + ' s');
+                    else if (Date.now() - started > 30000) done(t('Not arrived after 30 s'));
+                    else setTimeout(poll, 500);
+                });
+                poll();
+            }, (err) => { done(''); this.failed(err); });
+        },
         openDevices() {
             this.devicesOpen = true;
             this.devicesLoaded = false;

@@ -20,7 +20,10 @@ along with this software (see the LICENSE.md file). If not, see
     they are on, who turned them on and who transcribes them (CallCaptionServices get#CaptionState), with Turn on and Turn
     off for a person in the call; the lines themselves are the browser's, as they come with the call's media. The
     network (plans/Comms-Messaging.md phase 5): the quality icon, Reconnecting and the media path (direct or through the
-    server) are the browser's, from its media, so the terminal shows none of them. -->
+    server) are the browser's, from its media, so the terminal shows none of them. The call's flow (plans/Comms-Messaging.md
+    phase 4): a person on hold (call waiting) shows as On hold; voice to video, picture-in-picture, Move to this device,
+    hold and answer and decline with a message are the browser's, as each needs the call's media or (for a message to an
+    encrypted room) its encryption, so the terminal has none of them: its Answer, Decline and Leave stay. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Call" default-menu-include="false">
 
@@ -69,7 +72,7 @@ along with this software (see the LICENSE.md file). If not, see
             : L('Encrypted to the server, which forwards it')
         const deviceOf = (p) => { const leg = Array.from(p.legs || []).find((l) => l.status === 'answered' && l.type === 'web'); return leg ? leg.deviceId : null }
         peopleList = call ? Array.from(call.participants || []).map((p) => ({name: p.displayName,
-            stateText: (p.inCall ? L('In the call') : p.ringing ? L('Ringing') : L('Not in the call')) +
+            stateText: (p.inCall ? (p.onHold ? L('On hold') : L('In the call')) : p.ringing ? L('Ringing') : L('Not in the call')) +
                 (encrypted && p.inCall ? ' · ' + (deviceOf(p) ? L('device') + ' ' + deviceOf(p) : L('no encryption device')) : '')})) : []
         canAnswer = !!call && call.status !== 'ended' && call.myLegStatus === 'offered' && !encrypted
         mustUseBrowser = !!call && call.status !== 'ended' && call.myLegStatus === 'offered' && encrypted

@@ -16,9 +16,13 @@ const until = async (check, what) => {
     }
 };
 const GROUPS = [{ slug: "smileys_emotion", name: "Smileys & Emotion", emoji: [["😀", "grinning face"], ["😂", "face with tears of joy"], ["😃", "grinning face with big eyes"]] },
-    { slug: "people_body", name: "People & Body", emoji: [["👍", "thumbs up"], ["👎", "thumbs down"], ["👋", "waving hand"]] }];
+    { slug: "people_body", name: "People & Body", emoji: [["👍", "thumbs up"], ["👎", "thumbs down"], ["👋", "waving hand"]] },
+    { slug: "symbols", name: "Symbols", emoji: [["🅰️", "A button (blood type)"], ["👞", "man’s shoe"]] }];
 
-test("search: every word typed starts a word of the name, ':' and '_' are spaces, the emoji itself matches first", () => {
+test("search: every word typed starts a word of the name (letters and digits; the rest separate words), the emoji itself matches first", () => {
+    assert.deepEqual(emoji.search(GROUPS, "blood").map((one) => one[0]), ["🅰️"], "a word in parentheses");
+    assert.deepEqual(emoji.search(GROUPS, "man's").map((one) => one[0]), ["👞"]);
+    assert.deepEqual(emoji.search(GROUPS, "🅰️").map((one) => one[0]), ["🅰️"], "an emoji with no letters");
     assert.deepEqual(emoji.search(GROUPS, "thumbs").map((one) => one[0]), ["👍", "👎"]);
     assert.deepEqual(emoji.search(GROUPS, ":thumbs_up").map((one) => one[0]), ["👍"]);
     assert.deepEqual(emoji.search(GROUPS, "gri big").map((one) => one[0]), ["😃"]);
@@ -70,8 +74,8 @@ test("m-emoji-picker: the vendored data's groups as tabs, Recent first once ther
     const picks = [];
     const host = document.createElement("div");
     document.body.appendChild(host);
-    const app = Vue.createApp({ data: () => ({ open: true }), methods: { pick(one) { picks.push(one); } },
-        template: '<m-emoji-picker v-if="open" user-id="ann" @pick="pick"></m-emoji-picker>' });
+    const app = Vue.createApp({ data: () => ({ open: true, focus: true }), methods: { pick(one) { picks.push(one); } },
+        template: '<m-emoji-picker v-if="open" user-id="ann" :autofocus="focus" @pick="pick"></m-emoji-picker>' });
     app.use(Quasar);
     app.component("m-emoji-picker", moqui.qvtComponents["m-emoji-picker"]);
     const vm = app.mount(host);
@@ -86,6 +90,29 @@ test("m-emoji-picker: the vendored data's groups as tabs, Recent first once ther
         await settle();
         assert.deepEqual(cells(), groups.find((group) => group.slug === "food_drink").emoji.map((one) => one[0]));
         assert.equal(host.querySelector('[data-group="food_drink"]').getAttribute("aria-selected"), "true");
+        // the keyboard: the tabs are one stop, the arrows choose a group; the grid is one stop, the arrows move in it
+        const tab = (slug) => host.querySelector('[data-group="' + slug + '"]');
+        assert.deepEqual(Array.from(host.querySelectorAll(".m-emoji-tabs [data-group]")).filter((el) => el.tabIndex === 0).map((el) => el.getAttribute("data-group")), ["food_drink"]);
+        tab("food_drink").focus();
+        tab("food_drink").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+        await settle();
+        const after = groups[groups.findIndex((group) => group.slug === "food_drink") + 1].slug;
+        assert.equal(document.activeElement, tab(after));
+        assert.equal(tab(after).getAttribute("aria-selected"), "true");
+        const panel = host.querySelector(".m-emoji-grid");
+        assert.equal(panel.getAttribute("role"), "tabpanel");
+        assert.equal(panel.getAttribute("aria-labelledby"), tab(after).id);
+        const stops = () => Array.from(host.querySelectorAll(".m-emoji-cell")).filter((el) => el.tabIndex === 0);
+        assert.equal(stops().length, 1);
+        stops()[0].focus();
+        stops()[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+        await settle();
+        assert.equal(document.activeElement, host.querySelectorAll(".m-emoji-cell")[1]);
+        assert.equal(stops()[0], document.activeElement);
+        document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+        await settle();
+        const all = host.querySelectorAll(".m-emoji-cell");
+        assert.equal(document.activeElement, all[all.length - 1]);
         // a search across the groups hides the tabs; Enter picks its first emoji
         const input = host.querySelector("input");
         input.value = "thumbs up";
@@ -113,11 +140,14 @@ test("m-emoji-picker: the vendored data's groups as tabs, Recent first once ther
         assert.deepEqual(picks, ["👍", catEmoji]);
         assert.deepEqual(emoji.recent("ann"), [catEmoji, "👍"]);
         vm.open = false;
+        vm.focus = false;
+        document.body.focus();
         await settle();
         vm.open = true;
         await until(() => cells().length, "the picker again");
         assert.equal(tabs()[0], "recent");
         assert.deepEqual(cells(), [catEmoji, "👍"], "Recent is shown first");
+        assert.notEqual(document.activeElement, host.querySelector("input"), "autofocus false (a phone) leaves the search for a tap");
         assert.equal(host.querySelector(".m-emoji-cell").getAttribute("aria-label"), groups.find((group) => group.slug === "animals_nature").emoji[0][1], "with its name");
     } finally {
         app.unmount();

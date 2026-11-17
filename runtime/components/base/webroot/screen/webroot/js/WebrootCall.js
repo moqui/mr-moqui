@@ -106,7 +106,20 @@
         // peer) or relay (the media server), and its quality from getStats: {level: good, fair or poor, loss, rtt,
         // jitter (seconds), weak: the uplink is the cause}
         path: null,
-        network: null
+        network: null,
+        // the call's flow and screen (plans/Comms-Messaging.md §8.3 items 1-7, phase 4): the call shown in the side panel
+        // on a desktop (its callSessionId); the picture-in-picture window ("window": Document Picture-in-Picture);
+        // the prompt when another person turns their video on or off ({legId, name, on}); the call this page put on hold to
+        // answer another ({callSessionId, legId, video, name}); the call that moved to the user's other device
+        // ({callSessionId}); the devices to send to and from (speaker and flip), and the camera's facing
+        panel: null,
+        pip: null,
+        videoPrompt: null,
+        held: null,
+        movedAway: null,
+        outputs: [],
+        cameras: [],
+        facing: "user"
     });
 
     const call = {
@@ -176,7 +189,7 @@
         // a call this page has a leg in (a dial, a call started): its media here, or in the main window from an app window
         take(callSessionId, legId, options) {
             if (call.inAppWindow()) return call.toShell(callSessionId, options && options.video);
-            call.open(callSessionId);
+            call.show(callSessionId);
             return call.join(callSessionId, legId, options || {});
         },
         openInShell(path) {
@@ -200,9 +213,17 @@
         },
         // the mobile app's native call (a ring answered on the phone's call screen) lasts while the shell has the call:
         // joined, left, and its call screen shown or left (over the lock screen the app shows only that)
+        // joined, left, held (call waiting: the native call stays; an older app that does not know it keeps "joined"), and
+        // its call screen shown or left (over the lock screen the app shows only that)
         hostCallState(callSessionId, what) {
             const host = root.moquiDesktop;
-            if (host && typeof host.callState === "function") host.callState(callSessionId, what);
+            if (!host || typeof host.callState !== "function") return;
+            try {
+                const asked = host.callState(callSessionId, what);
+                if (asked && typeof asked.catch === "function") asked.catch(() => null);
+            } catch (e) {
+                /* an app that does not know this state */
+            }
         },
         // whether this call screen answers the call by itself: only the mobile app's host says so, once, for the call
         // the user answered on the phone; never on the web or for a link
@@ -225,6 +246,24 @@
             call.ring(state.ringing.length > 0);
             // the direct path: the other page answered (say hello), or the call is no longer one of two (to the media server)
             if (state.current === view.callSessionId) call.directViewChanged(view);
+            call.heldView(view);
+        },
+        // Call waiting across a reload or a socket that came back: the server keeps a held leg (hold#OwnLeg) with no
+        // socket, and marks it held in the call's view; a page with no call on hold takes it as its own (Resume), and a
+        // held call that ended, or whose leg moved or left, is held no more.
+        heldView(view) {
+            const held = state.held;
+            if (held && held.callSessionId === view.callSessionId) {
+                const leg = (view.participants || []).flatMap((p) => p.legs || []).find((l) => l.callLegId === held.legId);
+                if (view.status === "ended" || !leg || leg.status !== "answered") state.held = null;
+                return;
+            }
+            if (held || view.status === "ended" || view.callSessionId === state.current || view.myLegStatus !== "answered") return;
+            const mine = (view.participants || []).filter((p) => p.userId === call.me);
+            const leg = mine.flatMap((p) => p.legs || []).find((l) => l.callLegId === view.myLegId);
+            if (!leg || !leg.held || leg.live) return;
+            const name = (view.participants || []).filter((p) => p.userId !== call.me).map((p) => p.displayName).join(", ");
+            state.held = { callSessionId: view.callSessionId, legId: leg.callLegId, video: false, name };
         },
 
         // ---- the store: started once the shell is mounted ----
@@ -258,6 +297,10 @@
             // V5: a merge moved this page's leg into another call: its media joins that call's room with the same leg
             if (data.action === "moved" && data.toCallSessionId && state.current === data.callSessionId) call.moveTo(data.toCallSessionId);
             if (data.action === "ended" && state.current === data.callSessionId) call.hangUp("ended");
+            // the call on hold ended: nothing to resume
+            if (data.action === "ended" && state.held && state.held.callSessionId === data.callSessionId) state.held = null;
+            // Move to this device: this page's leg was moved to the user's other device, which is connected now
+            if (data.action === "legMoved") call.movedElsewhere(data.callSessionId, data.fromLegIds || []);
             if (data.action === "captions" && data.callSessionId === state.current) call.loadCaptions(data.callSessionId);
             if (data.action === "guestWaiting") state.lobbyNotice = { callSessionId: data.callSessionId, guestName: data.guestName || "" };
             if (data.action === "admitted" || data.action === "denied" || data.action === "ended") {
@@ -350,7 +393,7 @@
                 encrypted ? { requireE2ee: "true" } : {}), encrypted, null).then((json) => {
                 // its media here, or from an app window of the desktop client in the main window, which joins it with this leg
                 if (json.callSessionId && json.callLegId) return call.take(json.callSessionId, json.callLegId, { video: params.video !== false }).then(() => json);
-                if (json.reasonCode === "callActive" && json.callSessionId) call.open(json.callSessionId);
+                if (json.reasonCode === "callActive" && json.callSessionId) call.show(json.callSessionId);
                 // a room whose calls are end-to-end encrypted, from an app window of the desktop client: the room in its main
                 // window, which holds the crypto device and makes the call
                 if (json.reasonCode === "elsewhere" && params && params.chatRoomId) {
@@ -366,7 +409,7 @@
             if (call.inAppWindow()) return call.toShell(callSessionId, video);
             return call.requestWithDevice("answerCall", { callSessionId }, !!(view && view.e2ee), callSessionId).then((json) => {
                 if (!json.callLegId) return json;
-                call.open(callSessionId);
+                call.show(callSessionId);
                 return call.join(callSessionId, json.callLegId, { video: video !== false }).then(() => json);
             });
         },
@@ -399,7 +442,421 @@
         },
         open(callSessionId) {
             if (call.inAppWindow()) { call.toShell(callSessionId); return; }
+            if (state.panel === callSessionId) state.panel = null;
             if (call.vm && call.vm.setUrl) call.vm.setUrl(call.callUrl(callSessionId));
+        },
+
+        // ==== The call's flow and screen (plans/Comms-Messaging.md §8.3 items 1-7, phase 4) ====
+
+        // ---- where a call shows: the side panel beside the screen on a desktop, the call screen (full screen) on a phone ----
+        wide() {
+            return (root.innerWidth || 0) >= 1024;
+        },
+        show(callSessionId) {
+            if (call.inAppWindow()) { call.toShell(callSessionId); return; }
+            const vm = call.vm || {};
+            const list = vm.currentPathList || [];
+            const onScreen = list[list.length - 1] === "Call" && String((vm.currentParameters || {}).callSessionId || "") === callSessionId;
+            if (call.wide() && !onScreen) state.panel = callSessionId;
+            else call.open(callSessionId);
+        },
+        closePanel() {
+            state.panel = null;
+        },
+        // the call's screen left for the one before it (the call goes on in the floating window)
+        minimize() {
+            state.panel = null;
+            const vm = call.vm || {};
+            const list = vm.currentPathList || [];
+            if (list[list.length - 1] !== "Call") return;
+            if (root.history && root.history.length > 1) root.history.back();
+            else if (vm.setUrl) vm.setUrl(call.appRoot() + "/Home");
+        },
+
+        // ---- voice to video and back (item 3): the camera's track added to the call, or taken out; no new call ----
+        hasVideo() {
+            const stream = state.localStream;
+            return !!(stream && stream.getVideoTracks().some((track) => track.readyState !== "ended"));
+        },
+        // the page's stream with its tracks now (a new object, so the self view shows the change)
+        setTracks(tracks) {
+            state.localStream = tracks.length && root.MediaStream ? new root.MediaStream(tracks) : null;
+        },
+        addVideo() {
+            const media = root.navigator && root.navigator.mediaDevices;
+            const pc = call.pc;
+            if (!pc || !state.current || !media || !media.getUserMedia) return Promise.resolve(false);
+            if (call.hasVideo()) {
+                if (state.cameraOff) call.toggleCamera();
+                return Promise.resolve(true);
+            }
+            const id = state.current;
+            return media.getUserMedia({ video: call.constraints(true).video }).then((stream) => {
+                const track = stream.getVideoTracks()[0];
+                if (!track || pc !== call.pc || state.current !== id) { stream.getTracks().forEach((tr) => tr.stop()); return false; }
+                const audio = state.localStream ? state.localStream.getAudioTracks() : [];
+                call.setTracks(audio.concat([track]));
+                const reuse = call.cameraTx && call.cameraTx.currentDirection !== "stopped" ? call.cameraTx : null;
+                if (reuse) {
+                    reuse.direction = "sendonly";
+                    reuse.sender.replaceTrack(track);
+                } else {
+                    call.cameraTx = pc.addTransceiver(track, call.direct ? { direction: "sendonly", streams: [state.localStream] }
+                        : { direction: "sendonly", streams: [state.localStream], sendEncodings: LAYERS });
+                    if (call.keysOn(id)) moqui.callKeys.attachSender(call.cameraTx.sender, "video");
+                }
+                Object.assign(state, { audioOnly: false, cameraOff: false, videoPrompt: null });
+                call.listDevices();
+                call.sendMute();
+                return call.renegotiate("camera", call.cameraTx);
+            }, () => {
+                state.error = t("The camera could not be opened: check that this site may use it.");
+                return false;
+            });
+        },
+        dropVideo() {
+            const stream = state.localStream;
+            if (!stream || !call.hasVideo()) return Promise.resolve(false);
+            stream.getVideoTracks().forEach((track) => track.stop());
+            call.setTracks(stream.getAudioTracks());
+            if (call.cameraTx) {
+                call.cameraTx.sender.replaceTrack(null);
+                call.cameraTx.direction = "inactive";
+            }
+            Object.assign(state, { audioOnly: true, cameraOff: false, videoPrompt: null });
+            call.send({ rtc: "mute", callSessionId: state.current, callLegId: state.legId, audioMuted: state.muted, cameraOff: true });
+            return call.renegotiate(null);
+        },
+        toggleVideo() {
+            return call.hasVideo() && !state.cameraOff ? call.dropVideo() : call.addVideo();
+        },
+        // The other side's video came or went: a prompt, not a new call. "on": they turned theirs on and this page sends
+        // none; "off": they turned theirs off and this page still sends.
+        // Only in a call of two, only for a change the other person made: not the first moments of a leg (a late joiner,
+        // the other's new leg after a move), and not their hold (its mute comes before the call's held push, so the
+        // prompt waits a moment and looks again). A group call asks nothing.
+        timing: { settle: 3000, promptWait: 1500 },
+        noteVideo(legId) {
+            const remote = state.remotes[legId];
+            if (!remote || !remote.stream) return;
+            const shown = !!remote.stream.getVideoTracks().some((track) => track.readyState !== "ended") && !remote.cameraOff;
+            const now = Date.now();
+            if (!remote.firstSeen) remote.firstSeen = now;
+            if (remote.videoShown == null || now - remote.firstSeen < call.timing.settle) {
+                remote.videoShown = shown;
+                return;
+            }
+            if (shown === remote.videoShown) return;
+            remote.videoShown = shown;
+            if (!state.current || state.phase === "joining" || !call.oneToOne()) return;
+            clearTimeout(remote.promptTimer);
+            remote.promptTimer = setTimeout(() => call.promptVideo(legId, shown), call.timing.promptWait);
+        },
+        promptVideo(legId, shown) {
+            const remote = state.remotes[legId];
+            if (!remote || remote.videoShown !== shown || !state.current || !call.oneToOne() || call.legHeld(legId)) return;
+            const mine = call.hasVideo() && !state.cameraOff;
+            if (shown && !mine) state.videoPrompt = { legId, name: remote.name, on: true };
+            else if (!shown && mine) state.videoPrompt = { legId, name: remote.name, on: false };
+            else if (state.videoPrompt && state.videoPrompt.legId === legId) state.videoPrompt = null;
+        },
+        // a call of two: one other leg here, one other person in it
+        oneToOne() {
+            const view = state.calls[state.current];
+            const others = view ? (view.participants || []).filter((p) => p.userId !== call.me && p.inCall).length : 1;
+            return Object.keys(state.remotes).length === 1 && others <= 1;
+        },
+        legHeld(legId) {
+            const view = state.calls[state.current];
+            return !!view && (view.participants || []).some((p) => (p.legs || []).some((l) => l.callLegId === legId) && (p.onHold || (p.legs || []).some((l) => l.callLegId === legId && l.held)));
+        },
+        answerPrompt(yes) {
+            const prompt = state.videoPrompt;
+            state.videoPrompt = null;
+            if (!prompt || !yes) return Promise.resolve(false);
+            return prompt.on ? call.addVideo() : call.dropVideo();
+        },
+        // the other camera: the next camera this browser has, else the phone's other side (facingMode); no renegotiation
+        flipCamera() {
+            const media = root.navigator && root.navigator.mediaDevices;
+            const stream = state.localStream;
+            const old = stream && stream.getVideoTracks()[0];
+            if (!old || !call.cameraTx || !media) return Promise.resolve(false);
+            const cams = state.cameras;
+            let video;
+            if (cams.length > 1) {
+                const now = old.getSettings ? old.getSettings().deviceId : null;
+                const at = cams.findIndex((d) => d.deviceId === now);
+                video = { deviceId: { exact: cams[(at + 1) % cams.length].deviceId } };
+            } else {
+                state.facing = state.facing === "user" ? "environment" : "user";
+                video = { facingMode: state.facing };
+            }
+            return media.getUserMedia({ video }).then((got) => {
+                const track = got.getVideoTracks()[0];
+                if (!track || !call.cameraTx) return false;
+                return call.cameraTx.sender.replaceTrack(track).then(() => {
+                    old.stop();
+                    track.enabled = !state.cameraOff;
+                    call.setTracks(stream.getAudioTracks().concat([track]));
+                    return true;
+                });
+            }, () => false);
+        },
+        // the microphones, cameras and speakers this browser has (for the speaker and flip buttons), once media is open
+        listDevices() {
+            const media = root.navigator && root.navigator.mediaDevices;
+            if (!media || !media.enumerateDevices) return Promise.resolve();
+            return media.enumerateDevices().then((list) => {
+                state.outputs = list.filter((d) => d.kind === "audiooutput" && d.deviceId);
+                state.cameras = list.filter((d) => d.kind === "videoinput" && d.deviceId);
+            }, () => null);
+        },
+        canChooseOutput() {
+            return !!(root.HTMLMediaElement && root.HTMLMediaElement.prototype && "setSinkId" in root.HTMLMediaElement.prototype) && state.outputs.length > 1;
+        },
+        chooseOutput(deviceId) {
+            call.saveSettings({ audioOut: deviceId || "" });
+        },
+
+        // ---- Move to this device (item 6) ----
+        // the user's leg in a call answered on another device or tab, with its socket open there (live)
+        legElsewhere(view) {
+            if (!view || view.status === "ended" || view.myLegStatus !== "answered" || view.callSessionId === state.current) return false;
+            // the call this page holds (call waiting) is resumed, not moved
+            if (state.held && state.held.callSessionId === view.callSessionId) return false;
+            const legs = (view.participants || []).flatMap((p) => (p.userId === call.me ? p.legs || [] : []));
+            return legs.some((leg) => leg.status === "answered" && leg.live);
+        },
+        // A new leg here (move#Call); the other device's leaves once this one's media is connected, so the other side
+        // hears no gap. The move goes through the media server: the direct path pairs two legs, and a move makes three.
+        moveHere(callSessionId, options) {
+            if (call.needsConnection()) return Promise.resolve({ reasonCode: "offline" });
+            if (call.inAppWindow()) return call.toShell(callSessionId);
+            const view = state.calls[callSessionId];
+            const video = options && options.video != null ? options.video : !!(view && view.video);
+            call.relayOnly[callSessionId] = true;
+            state.movedAway = null;
+            return call.requestWithDevice("moveCall", { callSessionId }, !!(view && view.e2ee), callSessionId).then((json) => {
+                if (!json.callLegId) return json;
+                call.show(callSessionId);
+                return call.join(callSessionId, json.callLegId, { video, stream: options && options.stream }).then(() => json);
+            });
+        },
+        // the push that this page's leg moved: its media stops (the server closed the leg; nothing to leave)
+        movedElsewhere(callSessionId, fromLegIds) {
+            const mine = state.current === callSessionId && fromLegIds.includes(state.legId);
+            const last = call.lastLeg && call.lastLeg.callSessionId === callSessionId && fromLegIds.includes(call.lastLeg.legId);
+            // the call on hold here was taken to another device: it is held here no more
+            const held = state.held && state.held.callSessionId === callSessionId && fromLegIds.includes(state.held.legId);
+            if (held) state.held = null;
+            if (!mine && !last && !held) return;
+            if (mine) call.hangUp("moved");
+            state.movedAway = { callSessionId };
+        },
+
+        // ---- call waiting (item 7): hold and answer, end and answer, decline with a quick text ----
+        // This page's call goes on hold (hold#OwnLeg): once the server has it on hold its media stops here, its leg stays
+        // in the call (the server keeps a held leg without its socket for half an hour), and the others hear it is held.
+        // Resolves to the held call, or null when it was not put on hold (the call goes on, and the page says why).
+        hold() {
+            const id = state.current;
+            const legId = state.legId;
+            if (!id) return Promise.resolve(null);
+            const video = call.hasVideo() && !state.cameraOff;
+            const view = state.calls[id];
+            const name = view ? (view.participants || []).filter((p) => p.userId !== call.me).map((p) => p.displayName).join(", ") : "";
+            const failed = () => {
+                if (moqui.notifyMessages) moqui.notifyMessages([{ type: "warning", message: t("The call could not be put on hold: it goes on") }]);
+                return null;
+            };
+            return call.request("holdOwnLeg", { callSessionId: id, callLegId: legId, held: "true" }, "POST", true).then((json) => {
+                if (json.reasonCode || json.errors || state.current !== id) return failed();
+                call.send({ rtc: "mute", callSessionId: id, callLegId: legId, audioMuted: true, cameraOff: true });
+                call.hangUp("held");
+                state.held = { callSessionId: id, legId, video, name };
+                return state.held;
+            }, failed);
+        },
+        // the call on hold back here; the one this page is in goes on hold in its place (a swap)
+        // The held leg is checked first (it may have ended, or moved to another device); the call this page is in is
+        // held only then, and kept when that hold is refused.
+        resume() {
+            const held = state.held;
+            if (!held) return Promise.resolve(null);
+            return call.request("callState", { callSessionId: held.callSessionId }, "GET", true).then((json) => {
+                const view = json.call;
+                const leg = view && (view.participants || []).flatMap((p) => (p.userId === call.me ? p.legs || [] : [])).find((l) => l.callLegId === held.legId);
+                if (!view || view.status === "ended" || !leg || leg.status !== "answered") {
+                    if (state.held === held) state.held = null;
+                    if (moqui.notifyMessages) moqui.notifyMessages([{ type: "info", message: t("The call on hold has ended or moved to another device") }]);
+                    return null;
+                }
+                const swap = state.current ? call.hold() : Promise.resolve(true);
+                return swap.then((ok) => {
+                    if (!ok) return null;
+                    if (state.held === held) state.held = null;
+                    call.show(held.callSessionId);
+                    return call.join(held.callSessionId, held.legId, { video: held.video });
+                });
+            }, () => null);
+        },
+        // the second call is answered only once the first is on hold
+        holdAndAnswer(callSessionId, video) {
+            return call.hold().then((held) => {
+                if (held) return call.answer(callSessionId, video);
+                if (moqui.notifyMessages) moqui.notifyMessages([{ type: "warning", message: t("The other call was not answered: this one could not be put on hold") }]);
+                return { reasonCode: "notHeld" };
+            });
+        },
+        endAndAnswer(callSessionId, video) {
+            return call.leave().then(() => call.answer(callSessionId, video));
+        },
+        // the held call left from its banner
+        leaveHeld() {
+            const held = state.held;
+            if (!held) return Promise.resolve({});
+            state.held = null;
+            call.send({ rtc: "leave", callSessionId: held.callSessionId, callLegId: held.legId, id: call.nextId++ });
+            return call.request("leaveCall", { callSessionId: held.callSessionId, callLegId: held.legId });
+        },
+        quickTexts() {
+            return [t("Can't talk now. I'll call you back."), t("I'm in a call. I'll call you back soon."), t("Can you text me instead?")];
+        },
+        chatBase() {
+            return "/apps" + call.appRoot().replace(/^\/qapps/, "") + "/Chat";
+        },
+        // Decline, then a chat message to the caller in their direct room with the user: the call's own room for a direct
+        // call, else that room made or found. An encrypted room's message is encrypted here (moqui.chat.sealMessage), as
+        // every message there; a page that cannot encrypt sends nothing to it.
+        declineWithText(callSessionId, text) {
+            const view = state.calls[callSessionId];
+            const body = String(text || "").trim();
+            return call.decline(callSessionId).then((declined) => {
+                // a phone caller has no chat room: nothing is sent, and the page says so
+                if (view && view.kind === "phone") {
+                    if (moqui.notifyMessages) moqui.notifyMessages([{ type: "info", message: t("Declined. A phone caller gets no chat message: text them from Calls if you want to.") }]);
+                    return Object.assign({}, declined, { texted: false });
+                }
+                const callerId = view && (view.startedByUserId || ((view.participants || []).find((p) => p.role === "host") || {}).userId);
+                if (!body || !callerId || callerId === call.me) return declined;
+                return call.textTo(view.kind === "direct" ? view.chatRoomId : null, callerId, body).then((sent) => Object.assign({}, declined, { texted: sent }));
+            });
+        },
+        textTo(chatRoomId, userId, text) {
+            const base = call.chatBase();
+            const roomOf = chatRoomId ? Promise.resolve(chatRoomId)
+                : moqui.request(base + "/createDirect", { method: "POST", params: { userIds: userId } }).then((r) => (r.json || {}).chatRoomId || null);
+            const failed = () => {
+                if (moqui.notifyMessages) moqui.notifyMessages([{ type: "warning", message: t("The message to the caller was not sent") }]);
+                return false;
+            };
+            return roomOf.then((roomId) => {
+                if (!roomId) return failed();
+                return moqui.request(base + "/room", { params: { chatRoomId: roomId } }).then((r) => {
+                    const json = r.json || {};
+                    const html = moqui.chat && moqui.chat.escapeHtml ? moqui.chat.escapeHtml(text) : String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+                    const url = base + "/send";
+                    const send = (params, sealed) => moqui.chat && moqui.chat.send ? moqui.chat.send({ chatRoomId: roomId, url, params, text: sealed ? "" : text, sealed })
+                        : moqui.request(url, { method: "POST", params: Object.assign({ chatRoomId: roomId }, params) });
+                    if (!(json.room && json.room.encrypted)) return send({ body: html }, false);
+                    if (!moqui.chat || !moqui.chat.sealMessage || !moqui.crypto) return failed();
+                    const memberIds = (json.memberList || []).map((m) => m.userId).filter((id) => id);
+                    return moqui.chat.sealMessage(roomId, memberIds, html, []).then((sealed) => send(sealed, true));
+                });
+            }).then((outcome) => !!outcome && !(outcome && outcome.failed), failed);
+        },
+
+        // ---- picture-in-picture (item 4): a small call window over other windows (Document Picture-in-Picture), else
+        // the floating window in the page (the call's screen left; m-call-dock's LiveCall window) ----
+        openPip() {
+            if (!state.current) return Promise.resolve(false);
+            const dpip = root.documentPictureInPicture;
+            if (!dpip || typeof dpip.requestWindow !== "function") {
+                call.minimize();
+                return Promise.resolve(false);
+            }
+            if (call.pipWindow) {
+                try { call.pipWindow.focus(); } catch (e) { /* closed */ }
+                return Promise.resolve(true);
+            }
+            return dpip.requestWindow({ width: 320, height: 240 }).then((win) => { call.fillPip(win); return true; }, () => {
+                call.minimize();
+                return false;
+            });
+        },
+        closePip() {
+            if (call.pipWindow) {
+                try { call.pipWindow.close(); } catch (e) { /* closed */ }
+            }
+        },
+        // the window's own small page: the speaker's video (or their name), mute, camera and leave; kept current from the store
+        fillPip(win) {
+            const doc = win.document;
+            doc.title = t("Call");
+            const style = doc.createElement("style");
+            style.textContent = "html,body{margin:0;height:100%;background:#111;color:#fff;font:14px system-ui,sans-serif;overflow:hidden}" +
+                ".stage{position:absolute;inset:0 0 48px 0;display:flex;align-items:center;justify-content:center}" +
+                "video{width:100%;height:100%;object-fit:cover}.name{position:absolute;left:8px;bottom:4px;font-size:12px;text-shadow:0 0 4px #000}" +
+                ".bar{position:absolute;left:0;right:0;bottom:0;height:48px;display:flex;gap:8px;align-items:center;justify-content:center}" +
+                "button{border:0;border-radius:18px;padding:6px 12px;background:#444;color:#fff;font:inherit;cursor:pointer}" +
+                "button.on{background:#c62828}button.leave{background:#c62828}";
+            doc.head.appendChild(style);
+            const stage = doc.createElement("div");
+            stage.className = "stage";
+            const video = doc.createElement("video");
+            video.autoplay = true;
+            video.muted = true;
+            video.playsInline = true;
+            const big = doc.createElement("div");
+            const name = doc.createElement("div");
+            name.className = "name";
+            stage.append(video, big, name);
+            const bar = doc.createElement("div");
+            bar.className = "bar";
+            const button = (label, act, cls) => {
+                const b = doc.createElement("button");
+                b.textContent = label;
+                if (cls) b.className = cls;
+                b.addEventListener("click", act);
+                bar.appendChild(b);
+                return b;
+            };
+            const mute = button(t("Mute"), () => call.toggleMute());
+            const camera = button(t("Video"), () => call.toggleVideo());
+            button(t("Leave"), () => call.leave(), "leave");
+            doc.body.append(stage, bar);
+            call.pipWindow = win;
+            state.pip = "window";
+            const update = () => {
+                if (!state.current) { try { win.close(); } catch (e) { /* closed */ } return; }
+                const remotes = Object.values(state.remotes);
+                const seen = (r) => r.stream && r.stream.getVideoTracks().length && !r.cameraOff;
+                const main = remotes.find((r) => r.screen) || remotes.find((r) => r.legId === state.speaker && seen(r)) || remotes.find(seen) || null;
+                const stream = main ? main.screen || main.stream : null;
+                if (video.srcObject !== stream) video.srcObject = stream;
+                video.style.display = stream ? "" : "none";
+                const view = state.calls[state.current];
+                const others = view ? (view.participants || []).filter((p) => p.userId !== call.me && p.inCall).map((p) => p.displayName).join(", ") : "";
+                big.textContent = stream ? "" : others;
+                name.textContent = main ? main.name : "";
+                mute.textContent = state.muted ? t("Unmute") : t("Mute");
+                mute.className = state.muted ? "on" : "";
+                camera.textContent = call.hasVideo() && !state.cameraOff ? t("Stop video") : t("Video");
+            };
+            update();
+            const timer = setInterval(update, 500);
+            win.addEventListener("pagehide", () => {
+                clearInterval(timer);
+                if (call.pipWindow === win) call.pipWindow = null;
+                state.pip = null;
+            });
+        },
+        // Chrome's automatic picture-in-picture for a call when the user leaves its tab (the Media Session action)
+        offerAutoPip() {
+            const session = root.navigator && root.navigator.mediaSession;
+            if (!session || !session.setActionHandler || !root.documentPictureInPicture) return;
+            try { session.setActionHandler("enterpictureinpicture", () => { call.openPip(); }); } catch (e) { /* not this browser */ }
         },
 
         // ---- V5: call-context, a merge's move, and the call actions of m-call-actions ----
@@ -507,7 +964,15 @@
 
         // Joins the media of a call with the user's leg in it: the camera and microphone, the offer, and the socket's frames.
         join(callSessionId, legId, options) {
-            if (state.current && state.current !== callSessionId) call.hangUp("switched");
+            // another call this page is in (not one on hold): left, so its leg does not stay in it
+            if (state.current && state.current !== callSessionId) {
+                const was = { callSessionId: state.current, callLegId: state.legId };
+                call.send({ rtc: "leave", callSessionId: was.callSessionId, callLegId: was.callLegId, id: call.nextId++ });
+                call.hangUp("switched");
+                call.request("leaveCall", was, "POST", true).catch(() => null);
+            }
+            // the call on hold joined again (its lobby's Join): it is held no more
+            if (state.held && state.held.callSessionId === callSessionId) state.held = null;
             const video = options.video !== false && !state.settings.cameraOff;
             state.current = callSessionId;
             state.legId = legId;
@@ -525,7 +990,11 @@
                     if (stream && (state.settings.joinMuted || state.muted)) stream.getAudioTracks().forEach((track) => (track.enabled = false));
                     state.muted = !!(stream && stream.getAudioTracks().some((track) => !track.enabled));
                     return call.connect(stream).then((done) => {
-                        if (state.current === callSessionId) call.hostCallState(callSessionId, "joined");
+                        if (state.current === callSessionId) {
+                            call.hostCallState(callSessionId, "joined");
+                            call.listDevices();
+                            call.offerAutoPip();
+                        }
                         return done;
                     });
                 });
@@ -620,6 +1089,8 @@
             const camera = stream && stream.getVideoTracks()[0];
             const audioTx = audio ? pc.addTransceiver(audio, { direction: "sendonly", streams: [stream] }) : null;
             const videoTx = camera ? pc.addTransceiver(camera, { direction: "sendonly", streams: [stream], sendEncodings: LAYERS }) : null;
+            // the camera's transceiver: video turned on later (addVideo) uses it again
+            call.cameraTx = videoTx;
             call.audioCodecs(audioTx, id);
             // W8: what an encrypted call's page sends goes through its SFrame worker
             if (call.keysOn(id)) {
@@ -643,7 +1114,8 @@
                 if (pc !== call.pc) return;
                 // the join's id: its "joined" (which carries it) is applied to this pc only, not to a later one's
                 call.joinId = call.nextId++;
-                call.send({ rtc: "join", callSessionId: id, callLegId: legId, sdp: pc.localDescription.sdp, id: call.joinId });
+                call.send(Object.assign({ rtc: "join", callSessionId: id, callLegId: legId, sdp: pc.localDescription.sdp, id: call.joinId },
+                    state.held ? { keep: [state.held.legId] } : {}));
             });
         },
 
@@ -728,7 +1200,10 @@
                     if (!frame.connected) delete state.remotes[frame.callLegId];
                     break;
                 case "mute":
-                    if (frame.from) Object.assign(call.remote(frame.from), { muted: !!frame.audioMuted, cameraOff: !!frame.cameraOff });
+                    if (frame.from) {
+                        Object.assign(call.remote(frame.from), { muted: !!frame.audioMuted, cameraOff: !!frame.cameraOff });
+                        call.noteVideo(frame.from);
+                    }
                     break;
                 case "hand":
                     if (frame.from) call.remote(frame.from).hand = !!frame.raised;
@@ -765,7 +1240,7 @@
         remote(legId) {
             if (!state.remotes[legId]) {
                 state.remotes[legId] = { legId, name: call.nameOf(legId), stream: null, screen: null, connected: true, muted: false,
-                    cameraOff: false, hand: false, reaction: null, audioOnly: false };
+                    cameraOff: false, hand: false, reaction: null, audioOnly: false, videoShown: null, firstSeen: 0 };
                 call.tracks[legId] = [];
             }
             return state.remotes[legId];
@@ -781,6 +1256,7 @@
             remote.stream = main.length ? new root.MediaStream(main) : null;
             remote.screen = screen.some((tr) => tr.kind === "video") ? new root.MediaStream(screen) : null;
             call.chooseLayers();
+            call.noteVideo(legId);
         },
         react(legId, emoji) {
             const remote = call.remote(legId);
@@ -876,16 +1352,17 @@
             }
             return call.renegotiate(null);
         },
-        // the page's own offer (a track added or stopped); its answer comes as an "answer" frame
-        renegotiate(source) {
+        // the page's own offer (a track added or stopped: a screen share, the camera); its answer comes as an "answer" frame
+        renegotiate(source, tx) {
             const pc = call.pc;
             if (!pc) return Promise.resolve(false);
             if (call.direct) return call.directOffer().then(() => true);
+            const sent = tx || call.screenTx;
             call.chain = (call.chain || Promise.resolve()).then(() => {
                 call.pendingOffer = true;
                 return pc.createOffer().then((offer) => pc.setLocalDescription(offer)).then(() => {
-                    if (source && call.screenTx && call.screenTx.mid)
-                        call.send({ rtc: "publish", callSessionId: state.current, callLegId: state.legId, mid: call.screenTx.mid, source });
+                    if (source && sent && sent.mid)
+                        call.send({ rtc: "publish", callSessionId: state.current, callLegId: state.legId, mid: sent.mid, source });
                     call.send({ rtc: "offer", callSessionId: state.current, callLegId: state.legId, sdp: pc.localDescription.sdp, id: call.nextId++ });
                 });
             }).catch((err) => { call.pendingOffer = false; console.warn("call renegotiation failed", err); });
@@ -921,9 +1398,19 @@
         },
 
         // Leaves the media (the services hear of it from leave#Call or the socket); the call's state stays in the store.
-        hangUp() {
+        // reason: held (call waiting) and switched keep the side panel for what comes next.
+        hangUp(reason) {
+            if (state.current) call.lastLeg = { callSessionId: state.current, legId: state.legId };
+            if (reason !== "held" && reason !== "switched") state.panel = null;
+            call.closePip();
+            call.cameraTx = null;
+            state.videoPrompt = null;
             if (state.current) delete state.recordingOf[state.current];
-            if (state.current) call.hostCallState(state.current, "left");
+            if (state.current) call.hostCallState(state.current, reason === "held" ? "held" : "left");
+            // the socket's binding of a call this page is done with goes (a held call's stays; a guest's socket is its own)
+            if (state.current && state.legId && reason !== "held" && !call.guest) {
+                call.send({ rtc: "release", callSessionId: state.current, callLegId: state.legId });
+            }
             if (moqui.callKeys && moqui.callKeys.state.active) moqui.callKeys.end();
             if (call.guest) {
                 call.guest.close();
@@ -1255,6 +1742,7 @@
             // first answer starts (negotiationneeded).
             const audioTx = audio ? pc.addTransceiver(audio, { direction: "sendonly", streams: [stream] }) : null;
             const videoTx = camera ? pc.addTransceiver(camera, { direction: "sendonly", streams: [stream] }) : null;
+            call.cameraTx = videoTx;
             if (!audio && !camera) pc.addTransceiver("audio", { direction: "recvonly" });
             call.audioCodecs(audioTx, id);
             if (call.keysOn(id)) {
@@ -1523,6 +2011,23 @@
     }
     moqui.callRecordingText = recordingText;
 
+    // a text with its {name} places filled in
+    function fillIn(text, values) {
+        return String(text).replace(/\{(\w+)\}/g, (all, key) => (values && values[key] != null ? String(values[key]) : all));
+    }
+    // The call's E2EE label (plans/Comms-Messaging.md §6.2): moqui.chat.e2eeLabel's call states (call-encrypted, call-phone,
+    // call), with the short text of the call's header; the same words where the chat store is not loaded (a guest's page).
+    function callLabel(view) {
+        const e2ee = !!(view && view.e2ee);
+        const phone = !!view && (view.kind === "phone" || (view.participants || []).some((p) => p.identity === "phone"));
+        const label = moqui.chat && moqui.chat.e2eeLabel ? moqui.chat.e2eeLabel({ call: { e2ee, phone } })
+            : { state: e2ee ? "call-encrypted" : phone ? "call-phone" : "call", lock: e2ee, icon: e2ee ? "sym_o_lock" : "sym_o_lock_open",
+                banner: e2ee ? t("This call is end-to-end encrypted.") : phone ? t("Phone calls are not end-to-end encrypted.")
+                    : t("This call is encrypted to the server, not end to end.") };
+        const short = label.lock ? t("End-to-end encrypted") : phone ? t("Not end-to-end encrypted") : t("Encrypted to the server");
+        return Object.assign({}, label, { short });
+    }
+
     function elapsedText(since) {
         if (!since) return "";
         const seconds = Math.max(0, Math.floor((Date.now() - since) / 1000));
@@ -1535,16 +2040,18 @@
     components["m-call-dock"] = {
         name: "mCallDock",
         data() {
-            return { call: state, now: Date.now(), timer: null };
+            return { call: state, now: Date.now(), timer: null, quick: { open: false, view: null, text: "" } };
         },
         computed: {
             ringingCalls() {
                 return this.call.ringing.map((id) => this.call.calls[id]).filter((view) => view);
             },
-            // calls the user is in that this page has no media for (after a reload, or from another tab)
+            // calls the user is in that this page has no media for (after a reload, from another tab or device), not the one
+            // on hold here
             elsewhere() {
+                const held = this.call.held && this.call.held.callSessionId;
                 return Object.values(this.call.calls).filter((view) => view.status !== "ended" && view.myLegStatus === "answered" &&
-                    view.callSessionId !== this.call.current);
+                    view.callSessionId !== this.call.current && view.callSessionId !== held);
             },
             remotes() {
                 return Object.values(this.call.remotes);
@@ -1553,6 +2060,17 @@
                 const params = this.$root.currentParameters || {};
                 const list = this.$root.currentPathList || [];
                 return list[list.length - 1] === "Call" && params.callSessionId === this.call.current;
+            },
+            // the side panel of a call on a desktop (moqui.call.show), unless its own screen is open
+            panelShown() {
+                const id = this.call.panel;
+                if (!id) return false;
+                const params = this.$root.currentParameters || {};
+                const list = this.$root.currentPathList || [];
+                return !(list[list.length - 1] === "Call" && params.callSessionId === id);
+            },
+            onScreen() {
+                return this.onCallScreen || (this.panelShown && this.call.panel === this.call.current);
             },
             current() {
                 return this.call.current ? this.call.calls[this.call.current] : null;
@@ -1566,17 +2084,27 @@
             },
             elapsed() {
                 return this.now && elapsedText(this.call.startedAt);
-            }
+            },
+            quickTexts() { return moqui.call.quickTexts(); },
+            canPip() { return !!root.documentPictureInPicture; },
+            hasVideo() { return !!(this.call.localStream && this.call.localStream.getVideoTracks().length) && !this.call.cameraOff; }
         },
         watch: {
-            // off the call's screen only the LiveCall window's speaker is shown: the others' video is not received
-            onCallScreen: { immediate: true, handler(on) { moqui.call.setOffScreen(!on); } }
+            // off the call's screen and its panel only the LiveCall window's speaker is shown: the others' video is not received
+            onScreen: { immediate: true, handler(on) { moqui.call.setOffScreen(!on); } },
+            // the page's content keeps clear of the side panel
+            panelShown: { immediate: true, handler(on) {
+                const el = root.document && root.document.documentElement;
+                if (el && el.classList) el.classList.toggle("m-call-panel-open", !!on);
+            } }
         },
         mounted() {
             this.timer = setInterval(() => (this.now = Date.now()), 1000);
         },
         beforeUnmount() {
             clearInterval(this.timer);
+            const el = root.document && root.document.documentElement;
+            if (el && el.classList) el.classList.remove("m-call-panel-open");
         },
         methods: {
             t,
@@ -1584,7 +2112,11 @@
                 const host = (view.participants || []).find((p) => p.role === "host");
                 return (host && host.displayName) || view.startedByName || t("Someone");
             },
+            // a call rings while this page is in another (call waiting)
+            waiting(view) { return !!this.call.current && this.call.current !== view.callSessionId; },
             answer(view, video) { moqui.call.answer(view.callSessionId, video); },
+            holdAndAnswer(view) { moqui.call.holdAndAnswer(view.callSessionId, view.video); },
+            endAndAnswer(view) { moqui.call.endAndAnswer(view.callSessionId, view.video); },
             // the desktop client's app window answers in its main window (moqui.call.answer), which owns the calls
             answerLabel(view, audioOnly) {
                 const shell = moqui.call.inAppWindow();
@@ -1594,8 +2126,18 @@
             // the desktop client's app window does not end the main window's call (its Return opens it there)
             canLeaveElsewhere() { return !moqui.call.inAppWindow(); },
             decline(view) { moqui.call.decline(view.callSessionId); },
-            back() { if (this.call.current) moqui.call.open(this.call.current); },
+            declineWith(view, text) { moqui.call.declineWithText(view.callSessionId, text); },
+            writeMessage(view) { this.quick = { open: true, view, text: "" }; },
+            sendQuick() {
+                const q = this.quick;
+                this.quick = { open: false, view: null, text: "" };
+                if (q.view && q.text.trim()) moqui.call.declineWithText(q.view.callSessionId, q.text);
+            },
+            back() { if (this.call.current) moqui.call.show(this.call.current); },
+            // a call the user is in on another device (its socket open there) moves here; one whose page is gone joins again
+            elsewhereLive(view) { return moqui.call.legElsewhere(view); },
             returnTo(view) { moqui.call.open(view.callSessionId); },
+            moveHere(view) { moqui.call.moveHere(view.callSessionId); },
             openLobby() { const id = this.call.lobbyNotice && this.call.lobbyNotice.callSessionId; this.call.lobbyNotice = null; if (id) moqui.call.open(id); },
             leaveElsewhere(view) { moqui.call.request("leaveCall", { callSessionId: view.callSessionId }); },
             leave() { moqui.call.leave(); }
@@ -1603,27 +2145,56 @@
         template:
             '<div class="m-call-dock">' +
             '<m-call-audio v-for="r in remotes" :key="\'a\' + r.legId" :stream="r.stream" :sink-id="call.settings.audioOut"></m-call-audio>' +
-            '<q-page-sticky v-if="ringingCalls.length" position="top" :offset="[0, 8]" style="z-index:2100">' +
-            '<q-card v-for="view in ringingCalls" :key="view.callSessionId" class="m-call-ring q-mb-sm" style="min-width:300px">' +
+            '<q-page-sticky v-if="ringingCalls.length" position="top" :offset="[0, 8]" style="z-index:2600">' +
+            '<q-card v-for="view in ringingCalls" :key="view.callSessionId" class="m-call-ring q-mb-sm" style="min-width:300px;max-width:96vw">' +
             '<q-card-section class="row items-center no-wrap q-py-sm">' +
             '<q-icon :name="view.video ? \'sym_o_videocam\' : \'sym_o_call\'" size="28px" class="q-mr-sm"></q-icon>' +
             '<div class="col"><div class="text-subtitle2">{{fromName(view)}}</div><div class="text-caption m-muted">{{view.video ? t(\'Video call\') : t(\'Audio call\')}}<span v-if="view.e2ee"> · <q-icon name="sym_o_lock" size="14px"></q-icon> {{t(\'End-to-end encrypted\')}}</span></div>' +
+            '<div v-if="waiting(view)" class="text-caption text-warning m-call-waiting">{{t(\'You are in another call\')}}</div>' +
             '<m-call-context :call-session-id="view.callSessionId" dense></m-call-context></div>' +
+            '<template v-if="!waiting(view)">' +
             '<q-btn round unelevated color="positive" icon="sym_o_call" class="q-ml-sm" :aria-label="answerLabel(view)" @click="answer(view, view.video)"><q-tooltip>{{answerLabel(view)}}</q-tooltip></q-btn>' +
-            '<q-btn v-if="view.video" round flat color="positive" icon="sym_o_mic" class="q-ml-xs" :aria-label="answerLabel(view, true)" @click="answer(view, false)"><q-tooltip>{{answerLabel(view, true)}}</q-tooltip></q-btn>' +
+            '<q-btn v-if="view.video" round flat color="positive" icon="sym_o_mic" class="q-ml-xs" :aria-label="answerLabel(view, true)" @click="answer(view, false)"><q-tooltip>{{answerLabel(view, true)}}</q-tooltip></q-btn></template>' +
+            '<q-btn v-if="view.kind !== \'phone\'" round flat icon="sym_o_sms" class="q-ml-xs m-call-quick" :aria-label="t(\'Decline with a message\')"><q-tooltip>{{t(\'Decline with a message\')}}</q-tooltip>' +
+            '<q-menu><q-list dense style="min-width:240px"><q-item v-for="text in quickTexts" :key="text" clickable v-close-popup @click="declineWith(view, text)"><q-item-section>{{text}}</q-item-section></q-item>' +
+            '<q-separator></q-separator><q-item clickable v-close-popup @click="writeMessage(view)"><q-item-section avatar><q-icon name="sym_o_edit"></q-icon></q-item-section><q-item-section>{{t(\'Write a message\')}}</q-item-section></q-item></q-list></q-menu></q-btn>' +
             '<q-btn round unelevated color="negative" icon="sym_o_call_end" class="q-ml-xs" :aria-label="t(\'Decline\')" @click="decline(view)"><q-tooltip>{{t(\'Decline\')}}</q-tooltip></q-btn>' +
-            "</q-card-section></q-card></q-page-sticky>" +
-            '<q-page-sticky v-if="elsewhere.length && !ringingCalls.length && !onCallScreen" position="top" :offset="[0, 8]" style="z-index:2050">' +
-            '<q-banner v-for="view in elsewhere" :key="\'e\' + view.callSessionId" dense rounded class="m-tonal q-mb-sm">' +
-            '<template v-slot:avatar><q-icon name="sym_o_call"></q-icon></template>{{t(\'You are in a call\')}}: {{fromName(view)}}' +
-            '<template v-slot:action><q-btn flat no-caps :label="t(\'Return to the call\')" @click="returnTo(view)"></q-btn>' +
+            "</q-card-section>" +
+            // call waiting: hold the call this page is in and answer, or end it and answer
+            '<q-card-actions v-if="waiting(view)" align="right" class="q-pt-none">' +
+            '<q-btn flat no-caps color="negative" icon="sym_o_call_end" :label="t(\'End and answer\')" @click="endAndAnswer(view)"></q-btn>' +
+            '<q-btn unelevated no-caps color="positive" icon="sym_o_phone_paused" :label="t(\'Hold and answer\')" @click="holdAndAnswer(view)"></q-btn></q-card-actions>' +
+            "</q-card></q-page-sticky>" +
+            '<q-dialog :model-value="quick.open" @update:model-value="v => { if (!v) quick.open = false }"><q-card style="min-width:320px">' +
+            '<q-card-section class="text-h6">{{t(\'Decline with a message\')}}</q-card-section>' +
+            '<q-card-section class="q-pt-none"><q-input v-model="quick.text" autofocus outlined dense autogrow maxlength="500" :label="t(\'Message\')" @keyup.enter="sendQuick"></q-input></q-card-section>' +
+            '<q-card-actions align="right"><q-btn flat no-caps :label="t(\'Cancel\')" @click="quick.open = false"></q-btn>' +
+            '<q-btn unelevated no-caps color="primary" :disable="!quick.text.trim()" :label="t(\'Decline and send\')" @click="sendQuick"></q-btn></q-card-actions></q-card></q-dialog>' +
+            // the call on hold (call waiting): back to it (the call here goes on hold in its place), or leave it
+            '<q-page-sticky v-if="call.held && !ringingCalls.length" position="top" :offset="[0, 8]" style="z-index:2070">' +
+            '<q-banner dense rounded class="m-tonal m-call-held"><template v-slot:avatar><q-icon name="sym_o_phone_paused" color="warning"></q-icon></template>' +
+            '{{t(\'On hold\')}}: {{call.held.name || t(\'Call\')}}' +
+            '<template v-slot:action><q-btn flat no-caps color="primary" :label="call.current ? t(\'Swap\') : t(\'Resume\')" @click="moquiCall().resume()"></q-btn>' +
+            '<q-btn flat no-caps color="negative" :label="t(\'Leave\')" @click="moquiCall().leaveHeld()"></q-btn></template></q-banner></q-page-sticky>' +
+            '<q-page-sticky v-if="elsewhere.length && !ringingCalls.length && !onCallScreen" position="top" :offset="[0, call.held ? 64 : 8]" style="z-index:2050">' +
+            '<q-banner v-for="view in elsewhere" :key="\'e\' + view.callSessionId" dense rounded class="m-tonal q-mb-sm m-call-elsewhere">' +
+            '<template v-slot:avatar><q-icon name="sym_o_call"></q-icon></template>' +
+            '{{call.movedAway && call.movedAway.callSessionId === view.callSessionId ? t(\'The call moved to your other device\') : t(\'You are in a call\')}}: {{fromName(view)}}' +
+            '<template v-slot:action><q-btn v-if="elsewhereLive(view)" flat no-caps color="primary" icon="sym_o_devices" :label="t(\'Move to this device\')" @click="moveHere(view)"></q-btn>' +
+            '<q-btn v-else flat no-caps :label="t(\'Return to the call\')" @click="returnTo(view)"></q-btn>' +
             '<q-btn v-if="canLeaveElsewhere()" flat no-caps color="negative" :label="t(\'Leave\')" @click="leaveElsewhere(view)"></q-btn></template></q-banner></q-page-sticky>' +
             '<q-page-sticky v-if="call.lobbyNotice && !onCallScreen && !ringingCalls.length" position="top" :offset="[0, 8]" style="z-index:2060">' +
             '<q-banner dense rounded class="m-tonal"><template v-slot:avatar><q-icon name="sym_o_person_add"></q-icon></template>' +
             '{{call.lobbyNotice.guestName}} {{t(\'is waiting to join your call\')}}' +
             '<template v-slot:action><q-btn flat no-caps :label="t(\'Open the call\')" @click="openLobby"></q-btn>' +
             '<q-btn flat round dense icon="sym_o_close" :aria-label="t(\'Close\')" @click="call.lobbyNotice = null"></q-btn></template></q-banner></q-page-sticky>' +
-            '<q-page-sticky v-if="call.current && !onCallScreen" position="bottom-right" :offset="[16, 16]" style="z-index:2000">' +
+            // the side panel on a desktop: the call beside the screen the user is on
+            '<q-page-sticky v-if="panelShown" position="right" expand style="z-index:2000">' +
+            '<div class="m-call-panel q-pa-sm" style="width:380px;height:100%;overflow:auto;border-left:1px solid rgba(128,128,128,.3)" :class="$q.dark.isActive ? \'bg-dark\' : \'bg-white\'">' +
+            '<m-call :call-session-id="call.panel" panel></m-call></div></q-page-sticky>' +
+            // the floating window: the call off its screen and its panel (where the browser has no picture-in-picture
+            // window, this is the small call window)
+            '<q-page-sticky v-if="call.current && !onCallScreen && !panelShown && call.pip !== \'window\'" position="bottom-right" :offset="[16, 16]" style="z-index:2000">' +
             '<q-card class="m-live-call" style="width:320px">' +
             '<div class="m-live-call-media cursor-pointer" style="height:180px;background:#000" @click="back">' +
             '<m-call-video v-if="speaker" :stream="speaker.stream" muted style="width:100%;height:100%;object-fit:cover"></m-call-video>' +
@@ -1631,7 +2202,8 @@
             "</div>" +
             '<q-card-actions class="q-py-xs"><span class="text-caption q-ml-sm">{{elapsed}}</span><q-space></q-space>' +
             '<q-btn flat round dense :icon="call.muted ? \'sym_o_mic_off\' : \'sym_o_mic\'" :aria-label="t(\'Mute\')" @click="$event.stopPropagation(); moquiCall().toggleMute()"></q-btn>' +
-            '<q-btn flat round dense :icon="call.cameraOff ? \'sym_o_videocam_off\' : \'sym_o_videocam\'" :aria-label="t(\'Camera\')" @click="moquiCall().toggleCamera()"></q-btn>' +
+            '<q-btn flat round dense :icon="hasVideo ? \'sym_o_videocam\' : \'sym_o_videocam_off\'" :aria-label="hasVideo ? t(\'Turn off video\') : t(\'Turn on video\')" @click="moquiCall().toggleVideo()"></q-btn>' +
+            '<q-btn v-if="canPip" flat round dense icon="sym_o_picture_in_picture_alt" :aria-label="t(\'Picture in picture\')" @click="moquiCall().openPip()"></q-btn>' +
             '<q-btn flat round dense color="negative" icon="sym_o_call_end" :aria-label="t(\'Leave\')" @click="leave"></q-btn>' +
             "</q-card-actions></q-card></q-page-sticky>" +
             "</div>"
@@ -1641,7 +2213,8 @@
     // The lobby and the call view of one call: what a Call screen shows.
     components["m-call"] = {
         name: "mCall",
-        props: { callSessionId: String },
+        // panel: shown in the side panel of a desktop (m-call-dock), in the compact layout a phone has full screen
+        props: { callSessionId: String, panel: Boolean },
         data() {
             // video off when the screen's query asks (video=false: an app window's Answer with audio only, moqui.call.toShell)
             const query = (this.$root && this.$root.currentParameters) || {};
@@ -1652,6 +2225,26 @@
             inThis() { return this.call.current === this.callSessionId; },
             remotes() { return Object.values(this.call.remotes); },
             known() { return this.call.calls[this.callSessionId] || this.view; },
+            // a phone's width: the call in the compact layout, full screen; the side panel has the same layout
+            phone() { return ((this.$q && this.$q.screen && this.$q.screen.width) || root.innerWidth || 0) < 600; },
+            compactLayout() { return this.panel || this.phone; },
+            fullScreen() { return this.phone && !this.panel && this.inThis; },
+            // the call's E2EE label (moqui.chat.e2eeLabel's call states, Comms-Messaging §6.2)
+            label() { return callLabel(this.known); },
+            // the user is in this call on another device (its socket open there): Move to this device, not Join
+            elsewhereLive() { return moqui.call.legElsewhere(this.known); },
+            hasVideo() { return !!(this.call.localStream && this.call.localStream.getVideoTracks().length) && !this.call.cameraOff; },
+            // the others who put the call on hold (call waiting on their side)
+            heldBy() {
+                const v = this.known;
+                return v ? (v.participants || []).filter((p) => p.userId !== moqui.call.me && p.onHold && p.identity !== "phone").map((p) => p.displayName) : [];
+            },
+            promptText() {
+                const p = this.call.videoPrompt;
+                if (!p) return "";
+                return p.on ? fillIn(t("{name} turned on video"), { name: p.name }) : fillIn(t("{name} turned off video"), { name: p.name });
+            },
+            canPip() { return !!root.documentPictureInPicture; },
             isHost() {
                 const me = moqui.call.me;
                 const v = this.known;
@@ -1727,7 +2320,6 @@
             keys() { return ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"]; },
             // W8: the call's media encryption, apart from the room's message encryption
             e2ee() { return !!(this.known && this.known.e2ee); },
-            encryptionText() { return this.e2ee ? t("End-to-end encrypted") : t("Encrypted to the server"); },
             encryptionTip() {
                 return this.e2ee ? t("Only the people in the call can hear and see it: each one's media is encrypted in their browser with keys the server never has. No recording, captions, phones or guests.")
                     : t("Encrypted between each browser and the server, which forwards it (and can record or caption it). The encryption of the room's messages is separate.");
@@ -1835,6 +2427,11 @@
                 start.then(() => this.load());
             },
             leave() { moqui.call.leave().then(() => this.load()); },
+            moveHere() {
+                const stream = this.preview;
+                this.stopPreview(true);
+                moqui.call.moveHere(this.callSessionId, { video: this.video, stream }).then(() => this.load());
+            },
             openInShell() { moqui.call.openInShell(moqui.call.callUrl(this.callSessionId)); },
             recAction(name) { moqui.call.recordingAction(this.callSessionId, name); },
             dtmf(key) { moqui.call.request("sendDtmf", { callSessionId: this.callSessionId, digits: key }); },
@@ -1869,13 +2466,19 @@
             }
         },
         template:
-            '<div class="m-call column q-gutter-sm">' +
-            '<div class="row items-center"><div class="text-h6 q-mr-md">{{known ? (known.participants || []).filter(p => p.userId !== moquiCallMe()).map(p => p.displayName).join(\', \') || t(\'Call\') : t(\'Call\')}}</div>' +
+            '<div class="m-call column" :class="fullScreen ? \'m-call-full\' : \'q-gutter-sm\'" :style="fullScreen ? \'position:fixed;inset:0;z-index:2500;background:#111;color:#fff;padding:8px;overflow:auto\' : \'\'">' +
+            '<div v-if="!(inThis && compactLayout)" class="row items-center"><q-btn v-if="panel" flat round dense icon="sym_o_close" class="q-mr-xs" :aria-label="t(\'Close the panel\')" @click="moquiCall().closePanel()"></q-btn><div class="text-h6 q-mr-md">{{known ? (known.participants || []).filter(p => p.userId !== moquiCallMe()).map(p => p.displayName).join(\', \') || t(\'Call\') : t(\'Call\')}}</div>' +
             '<q-chip dense square :color="known && known.status === \'ended\' ? \'grey-6\' : \'positive\'" text-color="white">{{stateText}}</q-chip>' +
             '<q-chip v-if="recording" dense square :color="recording.state === \'recording\' ? \'negative\' : \'warning\'" text-color="white" icon="sym_o_fiber_manual_record" class="m-call-recording">{{recordingText}}</q-chip>' +
-            '<q-chip v-if="known && known.encryptionMode" dense square :class="e2ee ? \'m-call-encryption m-call-e2ee m-tonal text-positive\' : \'m-call-encryption m-tonal\'" :icon="e2ee ? \'sym_o_lock\' : \'sym_o_shield\'">{{encryptionText}}<q-tooltip max-width="320px">{{encryptionTip}}</q-tooltip></q-chip>' +
+            '<q-chip v-if="known && known.encryptionMode" dense square :class="e2ee ? \'m-call-encryption m-call-e2ee m-tonal text-positive\' : \'m-call-encryption m-tonal\'" :icon="label.icon" :data-e2ee="label.state">{{label.short}}<q-tooltip max-width="320px">{{label.banner}} {{encryptionTip}}</q-tooltip></q-chip>' +
             '<span v-if="inThis" class="text-caption q-ml-sm">{{elapsed}}</span><q-space></q-space>' +
-            '<m-call-network v-if="inThis"></m-call-network></div>' +
+            '<m-call-network v-if="inThis"></m-call-network>' +
+            '<q-btn v-if="inThis" flat round dense icon="sym_o_picture_in_picture_alt" class="q-ml-xs m-call-pip" :aria-label="t(\'Picture in picture\')" @click="moquiCall().openPip()"><q-tooltip>{{canPip ? t(\'Picture in picture\') : t(\'A small call window\')}}</q-tooltip></q-btn></div>' +
+            // the other side turned their video on or off (voice to video and back): a prompt, not a new call
+            '<q-banner v-if="inThis && call.videoPrompt" dense rounded class="m-tonal m-call-video-prompt"><template v-slot:avatar><q-icon :name="call.videoPrompt.on ? \'sym_o_videocam\' : \'sym_o_videocam_off\'"></q-icon></template>{{promptText}}' +
+            '<template v-slot:action><q-btn flat no-caps color="primary" :label="call.videoPrompt.on ? t(\'Turn on my video\') : t(\'Turn off my video\')" @click="moquiCall().answerPrompt(true)"></q-btn>' +
+            '<q-btn flat no-caps :label="t(\'Not now\')" @click="moquiCall().answerPrompt(false)"></q-btn></template></q-banner>' +
+            '<q-banner v-if="inThis && heldBy.length" dense rounded class="m-tonal text-warning m-call-held-by"><template v-slot:avatar><q-icon name="sym_o_phone_paused"></q-icon></template>{{heldBy.join(\', \')}} {{t(\'put the call on hold\')}}</q-banner>' +
             '<q-banner v-if="call.error && inThis" dense rounded class="m-tonal text-warning">{{call.error}}</q-banner>' +
             '<q-banner v-if="offline && !inThis" dense rounded class="m-tonal text-warning m-call-offline"><template v-slot:avatar><q-icon name="sym_o_cloud_off"></q-icon></template>' +
             '{{offlineText}}</q-banner>' +
@@ -1902,17 +2505,21 @@
             '<div v-if="!known && !loading && !offline" class="m-muted">{{t(\'Call not found\')}}</div>' +
             // the lobby
             '<div v-if="known && !inThis && canJoin && !keysInShell" class="row q-col-gutter-md">' +
-            '<div class="col-12 col-md-7"><div style="background:#000;aspect-ratio:16/9;border-radius:8px;overflow:hidden">' +
+            '<div :class="compactLayout ? \'col-12\' : \'col-12 col-md-7\'"><div style="background:#000;aspect-ratio:16/9;border-radius:8px;overflow:hidden">' +
             '<m-call-video v-if="preview && preview.getVideoTracks().length" :stream="preview" muted mirror style="width:100%;height:100%;object-fit:cover"></m-call-video>' +
             '<div v-else class="fit flex flex-center text-white">{{preview ? t(\'Camera off\') : t(\'No camera or no permission for it\')}}</div></div>' +
             '<q-linear-progress :value="level" class="q-mt-xs" color="positive" :aria-label="t(\'Microphone level\')"></q-linear-progress></div>' +
-            '<div class="col-12 col-md-5 column q-gutter-sm">' +
+            '<div class="column q-gutter-sm" :class="compactLayout ? \'col-12\' : \'col-12 col-md-5\'">' +
             '<q-select dense outlined emit-value map-options :label="t(\'Microphone\')" :options="audioInputs.map(d => ({value: d.deviceId, label: d.label || t(\'Microphone\')}))" :model-value="call.settings.audioIn" @update:model-value="v => pick({audioIn: v})"></q-select>' +
             '<q-select dense outlined emit-value map-options :label="t(\'Camera\')" :options="videoInputs.map(d => ({value: d.deviceId, label: d.label || t(\'Camera\')}))" :model-value="call.settings.videoIn" @update:model-value="v => pick({videoIn: v})"></q-select>' +
             '<q-toggle v-model="video" :label="t(\'Join with video\')" @update:model-value="pick({})"></q-toggle>' +
-            '<q-btn unelevated color="primary" icon="sym_o_call" :disable="e2eeUnsupported || offline" :label="known.myLegStatus === \'offered\' ? t(\'Answer\') : t(\'Join\')" @click="join"></q-btn></div></div>' +
+            '<q-btn v-if="elsewhereLive" unelevated color="primary" icon="sym_o_devices" class="m-call-move" :disable="e2eeUnsupported || offline" :label="t(\'Move to this device\')" @click="moveHere"></q-btn>' +
+            '<div v-if="elsewhereLive" class="text-caption m-muted">{{t(\'You are in this call on another device. Moving it here keeps it going: the other device leaves once this one is connected.\')}}</div>' +
+            '<q-btn v-else unelevated color="primary" icon="sym_o_call" :disable="e2eeUnsupported || offline" :label="known.myLegStatus === \'offered\' ? t(\'Answer\') : t(\'Join\')" @click="join"></q-btn></div></div>' +
+            // in the call, a phone's width or the side panel: the compact call screen
+            '<m-call-compact v-if="inThis && compactLayout && known" :view="known" :panel="panel" :label="label"></m-call-compact>' +
             // the call view: the grid, or the speaker (or a screen share) large over a strip of the rest
-            '<div v-if="inThis && mainTile" style="height:60vh" class="q-mb-sm">' +
+            '<div v-if="inThis && !compactLayout && mainTile" style="height:60vh" class="q-mb-sm">' +
             '<div v-for="tile in [mainTile]" :key="\'main\' + tile.key" class="fit">' + '<div class="m-call-tile" :style="tileStyle(tile)">' +
             '<m-call-video v-if="tile.stream" :stream="tile.stream" muted :mirror="!!tile.mirror" :style="tile.screen ? \'width:100%;height:100%;object-fit:contain\' : \'width:100%;height:100%;object-fit:cover\'"></m-call-video>' +
             '<div v-else class="fit flex flex-center text-white text-subtitle1"><q-icon v-if="tile.phone" name="sym_o_call" class="q-mr-xs"></q-icon>{{tile.name}}</div>' +
@@ -1920,7 +2527,7 @@
             '<q-chip v-if="tile.audioOnly" dense square class="absolute-top-right q-ma-xs" color="grey-9" text-color="white" icon="sym_o_signal_cellular_alt_1_bar">{{t(\'Audio only: low bandwidth\')}}</q-chip>' +
             '<div class="absolute-bottom-left q-pa-xs text-white text-caption">{{tile.name}}<q-icon v-if="tile.muted" name="sym_o_mic_off" class="q-ml-xs"></q-icon>' +
             '<q-icon v-if="tile.hand" name="sym_o_back_hand" color="warning" class="q-ml-xs"></q-icon></div></div>' + '</div></div>' +
-            '<div v-if="inThis" :style="gridStyle">' +
+            '<div v-if="inThis && !compactLayout" :style="gridStyle">' +
             '<div v-for="tile in stripTiles" :key="tile.key">' + '<div class="m-call-tile" :style="tileStyle(tile)">' +
             '<m-call-video v-if="tile.stream" :stream="tile.stream" muted :mirror="!!tile.mirror" :style="tile.screen ? \'width:100%;height:100%;object-fit:contain\' : \'width:100%;height:100%;object-fit:cover\'"></m-call-video>' +
             '<div v-else class="fit flex flex-center text-white text-subtitle1"><q-icon v-if="tile.phone" name="sym_o_call" class="q-mr-xs"></q-icon>{{tile.name}}</div>' +
@@ -1928,13 +2535,13 @@
             '<q-chip v-if="tile.audioOnly" dense square class="absolute-top-right q-ma-xs" color="grey-9" text-color="white" icon="sym_o_signal_cellular_alt_1_bar">{{t(\'Audio only: low bandwidth\')}}</q-chip>' +
             '<div class="absolute-bottom-left q-pa-xs text-white text-caption">{{tile.name}}<q-icon v-if="tile.muted" name="sym_o_mic_off" class="q-ml-xs"></q-icon>' +
             '<q-icon v-if="tile.hand" name="sym_o_back_hand" color="warning" class="q-ml-xs"></q-icon></div></div>' + '</div></div>' +
-            '<div v-if="inThis && !remotes.length" class="m-muted">{{call.phase === \'connected\' ? t(\'Waiting for the others\') : t(\'Connecting\')}}</div>' +
+            '<div v-if="inThis && !compactLayout && !remotes.length" class="m-muted">{{call.phase === \'connected\' ? t(\'Waiting for the others\') : t(\'Connecting\')}}</div>' +
             // the captions: the notice while they are on, why they are unavailable, and each speaker's last lines
-            captionsBox("inThis", "captionLines") +
+            captionsBox("inThis && !compactLayout", "captionLines") +
             // the bottom bar
-            '<div v-if="inThis" class="row justify-center q-gutter-sm q-mt-sm">' +
+            '<div v-if="inThis && !compactLayout" class="row justify-center q-gutter-sm q-mt-sm">' +
             '<q-btn round unelevated :color="call.muted ? \'negative\' : \'grey-8\'" :icon="call.muted ? \'sym_o_mic_off\' : \'sym_o_mic\'" :aria-label="t(\'Mute\')" @click="moquiCall().toggleMute()"><q-tooltip>{{call.muted ? t(\'Unmute\') : t(\'Mute\')}}</q-tooltip></q-btn>' +
-            '<q-btn round unelevated :color="call.cameraOff ? \'negative\' : \'grey-8\'" :icon="call.cameraOff ? \'sym_o_videocam_off\' : \'sym_o_videocam\'" :aria-label="t(\'Camera\')" :disable="!call.localStream || !call.localStream.getVideoTracks().length" @click="moquiCall().toggleCamera()"><q-tooltip>{{t(\'Camera\')}}</q-tooltip></q-btn>' +
+            '<q-btn round unelevated :color="hasVideo ? \'grey-8\' : \'negative\'" :icon="hasVideo ? \'sym_o_videocam\' : \'sym_o_videocam_off\'" class="m-call-video-toggle" :aria-label="hasVideo ? t(\'Turn off video\') : t(\'Turn on video\')" @click="moquiCall().toggleVideo()"><q-tooltip>{{hasVideo ? t(\'Turn off video\') : t(\'Turn on video\')}}</q-tooltip></q-btn>' +
             '<q-btn v-if="canShare" round unelevated :color="call.sharing ? \'primary\' : \'grey-8\'" :icon="call.sharing ? \'sym_o_stop_screen_share\' : \'sym_o_present_to_all\'" :aria-label="call.sharing ? t(\'Stop sharing\') : t(\'Share the screen\')" @click="call.sharing ? moquiCall().stopShare() : moquiCall().shareScreen()"><q-tooltip>{{call.sharing ? t(\'Stop sharing\') : t(\'Share the screen\')}}</q-tooltip></q-btn>' +
             '<q-btn round unelevated :color="call.hand ? \'warning\' : \'grey-8\'" icon="sym_o_back_hand" :aria-label="t(\'Raise your hand\')" @click="moquiCall().toggleHand()"><q-tooltip>{{call.hand ? t(\'Lower your hand\') : t(\'Raise your hand\')}}</q-tooltip></q-btn>' +
             '<q-btn v-if="call.captions.allowed || call.captions.on" round unelevated :color="call.captions.on ? \'primary\' : \'grey-8\'" icon="sym_o_closed_caption" :aria-label="call.captions.on ? t(\'Turn off captions\') : t(\'Turn on captions\')" @click="moquiCall().toggleCaptions()"><q-tooltip>{{call.captions.on ? t(\'Turn off captions\') : t(\'Turn on captions\')}}</q-tooltip></q-btn>' +
@@ -1954,7 +2561,7 @@
             '<q-btn v-if="isHost && known && known.kind !== \'direct\'" flat no-caps color="negative" :label="t(\'End for everyone\')" @click="endForAll"></q-btn>' +
             '<m-ext-actions v-if="known" slot="call-actions" :item="{callSessionId: callSessionId}"></m-ext-actions></div>' +
             // the participants: who is in it, who is ringing, raised hands
-            '<q-list v-if="inThis && call.participantsOpen && known" bordered separator dense class="rounded-borders q-mt-sm">' +
+            '<q-list v-if="inThis && !compactLayout && call.participantsOpen && known" bordered separator dense class="rounded-borders q-mt-sm">' +
             '<q-item v-for="p in known.participants || []" :key="p.callParticipantId"><q-item-section avatar><m-avatar :name="p.displayName" :user-id="p.userId || undefined" size="28px"></m-avatar></q-item-section>' +
             '<q-item-section><q-item-label>{{p.displayName}}<span v-if="p.role === \'host\'" class="text-caption m-muted"> · {{t(\'host\')}}</span></q-item-label>' +
             '<q-item-label caption>{{p.inCall ? t(\'In the call\') : p.ringing ? t(\'Ringing\') : t(\'Not in the call\')}}<span v-if="keyText(p)" class="m-call-key-state"> · <q-icon name="sym_o_key" size="14px"></q-icon> {{keyText(p)}}</span></q-item-label></q-item-section>' +
@@ -1963,6 +2570,109 @@
             '</q-item-section></q-item></q-list>' +
             "</div>"
     };
+    // The call screen in its compact layout (plans/Comms-Messaging.md §8.3 item 2): full screen on a phone, the same in the
+    // side panel of a desktop. Voice: the other person's big avatar; video: their video large and the self view in a
+    // corner; a screen share takes the stage. The controls: mute, speaker (where the browser chooses its output), video
+    // on and off (voice to video and back, item 3), flip, add people, hang up; picture-in-picture and the rest in the
+    // header and its menu.
+    components["m-call-compact"] = {
+        name: "mCallCompact",
+        props: { view: Object, panel: Boolean, label: Object },
+        data() { return { call: state, now: Date.now(), timer: null }; },
+        computed: {
+            others() { return (this.view.participants || []).filter((p) => p.userId !== moqui.call.me); },
+            title() { return this.others.map((p) => p.displayName).join(", ") || t("Call"); },
+            remotes() { return Object.values(this.call.remotes); },
+            seen() { return this.remotes.filter((r) => r.stream && r.stream.getVideoTracks().length && !r.cameraOff); },
+            // the stage: a screen share, else the speaker's video, else anyone's
+            main() {
+                const shared = this.remotes.find((r) => r.screen);
+                if (shared) return { key: shared.legId + ":screen", stream: shared.screen, name: shared.name, screen: true };
+                const r = this.seen.find((x) => x.legId === this.call.speaker) || this.seen[0];
+                return r ? { key: r.legId, stream: r.stream, name: r.name } : null;
+            },
+            // the others with video beside the stage (a group call)
+            strip() { return this.seen.filter((r) => !this.main || r.legId !== this.main.key); },
+            person() { return this.others.find((p) => p.inCall) || this.others[0] || { displayName: t("Call") }; },
+            hasVideo() { return !!(this.call.localStream && this.call.localStream.getVideoTracks().length) && !this.call.cameraOff; },
+            selfVideo() { return this.hasVideo ? this.call.localStream : null; },
+            statusText() {
+                if (this.call.phase === "reconnecting") return t("Reconnecting…");
+                if (!this.remotes.length) return this.view.status === "ringing" ? t("Ringing…") : this.call.phase === "connected" ? t("Waiting for the others") : t("Connecting");
+                return this.now && elapsedText(this.call.startedAt);
+            },
+            canOutput() { return moqui.call.canChooseOutput(); },
+            canFlip() {
+                const coarse = !!(root.matchMedia && root.matchMedia("(pointer: coarse)").matches);
+                return this.hasVideo && (this.call.cameras.length > 1 || coarse);
+            },
+            canPip() { return !!root.documentPictureInPicture; },
+            // a phone call (V1): the keypad sends tones to its phone legs
+            hasPhone() { return (this.view.participants || []).some((p) => p.identity === "phone"); },
+            keys() { return ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"]; },
+            captionLines() { return this.call.captions.lines.filter((line) => this.now - line.at < 10000); },
+            captionNotice() { return captionNotice(this.call.captions); }
+        },
+        mounted() { this.timer = setInterval(() => (this.now = Date.now()), 1000); },
+        beforeUnmount() { clearInterval(this.timer); },
+        methods: {
+            t,
+            addPeople() { const actions = this.$refs.actions; if (actions && actions.open) actions.open("add"); },
+            dtmf(key) { moqui.call.request("sendDtmf", { callSessionId: this.view.callSessionId, digits: key }); },
+            outputLabel(d, i) { return d.label || t("Speaker") + " " + (i + 1); }
+        },
+        template:
+            '<div class="m-call-compact column no-wrap" :style="panel ? \'min-height:calc(100vh - 140px)\' : \'min-height:calc(100vh - 16px)\'">' +
+            '<div class="row items-center no-wrap q-mb-xs">' +
+            '<q-btn flat round dense :icon="panel ? \'sym_o_open_in_full\' : \'sym_o_keyboard_arrow_down\'" class="m-call-minimize" :aria-label="panel ? t(\'Open the call full size\') : t(\'Minimize the call\')" @click="panel ? moquiCall().open(view.callSessionId) : moquiCall().minimize()">' +
+            '<q-tooltip>{{panel ? t(\'Open the call full size\') : t(\'Minimize the call\')}}</q-tooltip></q-btn>' +
+            '<div class="col q-ml-xs" style="min-width:0"><div class="text-subtitle1 text-weight-medium ellipsis">{{title}}</div>' +
+            '<div class="text-caption ellipsis m-call-status">{{statusText}}</div></div>' +
+            '<m-call-network></m-call-network>' +
+            '<q-btn flat round dense icon="sym_o_picture_in_picture_alt" class="m-call-pip" :aria-label="t(\'Picture in picture\')" @click="moquiCall().openPip()"><q-tooltip>{{canPip ? t(\'Picture in picture\') : t(\'A small call window\')}}</q-tooltip></q-btn>' +
+            '<m-call-actions v-if="view.status !== \'ended\'" ref="actions" :view="view"></m-call-actions>' +
+            '<q-btn v-if="panel" flat round dense icon="sym_o_close" :aria-label="t(\'Close the panel\')" @click="moquiCall().closePanel()"><q-tooltip>{{t(\'Close the panel\')}}</q-tooltip></q-btn></div>' +
+            // the call on hold (call waiting): on a phone the call covers the dock, so its banner is here too
+            '<q-banner v-if="call.held" dense rounded class="m-tonal q-mb-xs m-call-held-here"><template v-slot:avatar><q-icon name="sym_o_phone_paused" color="warning"></q-icon></template>' +
+            '{{t(\'On hold\')}}: {{call.held.name || t(\'Call\')}}' +
+            '<template v-slot:action><q-btn flat no-caps color="primary" :label="t(\'Swap\')" @click="moquiCall().resume()"></q-btn>' +
+            '<q-btn flat no-caps color="negative" :label="t(\'Leave\')" @click="moquiCall().leaveHeld()"></q-btn></template></q-banner>' +
+            // the call's E2EE label
+            '<div class="row q-mb-xs"><q-chip dense square :icon="label.icon" class="m-call-encryption m-tonal" :class="label.lock ? \'m-call-e2ee text-positive\' : \'\'" :data-e2ee="label.state">{{label.short}}<q-tooltip max-width="320px">{{label.banner}}</q-tooltip></q-chip></div>' +
+            // the stage
+            '<div class="col relative-position m-call-stage" style="min-height:240px;background:#000;border-radius:12px;overflow:hidden">' +
+            '<div v-if="main" :key="main.key" class="m-call-tile absolute-full"><m-call-video :stream="main.stream" muted :style="main.screen ? \'width:100%;height:100%;object-fit:contain\' : \'width:100%;height:100%;object-fit:cover\'"></m-call-video>' +
+            '<div class="absolute-bottom-left q-pa-sm text-white text-caption">{{main.name}}</div></div>' +
+            '<div v-else class="absolute-full column flex-center text-white m-call-voice">' +
+            '<m-avatar :name="person.displayName" :user-id="person.userId || undefined" size="120px"></m-avatar>' +
+            '<div class="text-h6 q-mt-md text-center q-px-md">{{person.displayName}}</div><div class="text-caption" style="opacity:.8">{{view.video ? t(\'Video call\') : t(\'Voice call\')}}</div></div>' +
+            '<div v-if="strip.length" class="absolute-top-left row no-wrap q-gutter-xs q-pa-xs">' +
+            '<div v-for="r in strip" :key="r.legId" class="m-call-tile" style="width:72px;height:96px;border-radius:8px;overflow:hidden;background:#222">' +
+            '<m-call-video :stream="r.stream" muted style="width:100%;height:100%;object-fit:cover"></m-call-video></div></div>' +
+            '<div v-for="r in remotes.filter((x) => x.reaction)" :key="\'r\' + r.legId" class="absolute-center text-h3">{{r.reaction}}</div>' +
+            '<div v-if="selfVideo" class="absolute-bottom-right q-ma-sm m-call-self" style="width:96px;height:128px;border-radius:8px;overflow:hidden;background:#222;box-shadow:0 2px 8px rgba(0,0,0,.5)">' +
+            '<m-call-video :stream="selfVideo" muted mirror style="width:100%;height:100%;object-fit:cover"></m-call-video></div></div>' +
+            captionsBox("true", "captionLines") +
+            // the controls
+            '<div class="row justify-center items-center no-wrap q-gutter-sm q-py-sm m-call-controls">' +
+            '<q-btn round unelevated :color="call.muted ? \'negative\' : \'grey-8\'" :icon="call.muted ? \'sym_o_mic_off\' : \'sym_o_mic\'" :aria-label="call.muted ? t(\'Unmute\') : t(\'Mute\')" @click="moquiCall().toggleMute()"><q-tooltip>{{call.muted ? t(\'Unmute\') : t(\'Mute\')}}</q-tooltip></q-btn>' +
+            '<q-btn v-if="canOutput" round unelevated color="grey-8" icon="sym_o_volume_up" :aria-label="t(\'Speaker\')"><q-tooltip>{{t(\'Speaker\')}}</q-tooltip><q-menu><q-list dense style="min-width:220px">' +
+            '<q-item v-for="(d, i) in call.outputs" :key="d.deviceId" clickable v-close-popup :active="(call.settings.audioOut || \'default\') === d.deviceId" @click="moquiCall().chooseOutput(d.deviceId)"><q-item-section>{{outputLabel(d, i)}}</q-item-section></q-item></q-list></q-menu></q-btn>' +
+            '<q-btn round unelevated :color="hasVideo ? \'grey-8\' : \'negative\'" :icon="hasVideo ? \'sym_o_videocam\' : \'sym_o_videocam_off\'" class="m-call-video-toggle" :aria-label="hasVideo ? t(\'Turn off video\') : t(\'Turn on video\')" @click="moquiCall().toggleVideo()"><q-tooltip>{{hasVideo ? t(\'Turn off video\') : t(\'Turn on video\')}}</q-tooltip></q-btn>' +
+            '<q-btn v-if="canFlip" round unelevated color="grey-8" icon="sym_o_cameraswitch" :aria-label="t(\'Switch camera\')" @click="moquiCall().flipCamera()"><q-tooltip>{{t(\'Switch camera\')}}</q-tooltip></q-btn>' +
+            '<q-btn v-if="view.status !== \'ended\'" round unelevated color="grey-8" icon="sym_o_person_add" :aria-label="t(\'Add people\')" @click="addPeople"><q-tooltip>{{t(\'Add people\')}}</q-tooltip></q-btn>' +
+            '<q-btn v-if="hasPhone" round unelevated color="grey-8" icon="sym_o_dialpad" :aria-label="t(\'Keypad\')"><q-tooltip>{{t(\'Keypad\')}}</q-tooltip><q-menu>' +
+            '<div class="q-pa-sm" style="display:grid;grid-template-columns:repeat(3,48px);gap:4px"><q-btn v-for="key in keys" :key="key" outline dense size="lg" @click="dtmf(key)">{{key}}</q-btn></div></q-menu></q-btn>' +
+            '<q-btn round unelevated color="grey-8" icon="sym_o_more_vert" :aria-label="t(\'More\')"><q-menu><q-list dense style="min-width:220px">' +
+            '<q-item clickable v-close-popup @click="moquiCall().toggleHand()"><q-item-section avatar><q-icon name="sym_o_back_hand" :color="call.hand ? \'warning\' : undefined"></q-icon></q-item-section><q-item-section>{{call.hand ? t(\'Lower your hand\') : t(\'Raise your hand\')}}</q-item-section></q-item>' +
+            '<q-item v-if="call.captions.allowed || call.captions.on" clickable v-close-popup @click="moquiCall().toggleCaptions()"><q-item-section avatar><q-icon name="sym_o_closed_caption"></q-icon></q-item-section><q-item-section>{{call.captions.on ? t(\'Turn off captions\') : t(\'Turn on captions\')}}</q-item-section></q-item>' +
+            '<q-item v-if="!panel" clickable v-close-popup @click="moquiCall().minimize()"><q-item-section avatar><q-icon name="sym_o_close_fullscreen"></q-icon></q-item-section><q-item-section>{{t(\'Back to the app\')}}</q-item-section></q-item>' +
+            '</q-list></q-menu></q-btn>' +
+            '<q-btn round unelevated color="negative" icon="sym_o_call_end" size="lg" :aria-label="t(\'Leave\')" @click="moquiCall().leave()"><q-tooltip>{{t(\'Leave\')}}</q-tooltip></q-btn>' +
+            "</div></div>"
+    };
+    components["m-call-compact"].methods.moquiCall = () => moqui.call;
+
     // V5: who a phone caller is (the call-context providers, as the user rung): names with their record links, open records
     components["m-call-context"] = {
         name: "mCallContext",

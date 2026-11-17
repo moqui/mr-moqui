@@ -133,7 +133,16 @@ window.phone = {
     },
     async whoReacted() {
         const count = reacts().length;
-        await press(chip(1, "👍"));
+        // a long press as Android's WebView makes it: the hold, then its context menu while still held, then the touchend
+        const held = chip(1, "👍");
+        touch(held, "touchstart");
+        await wait(600);
+        const menu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+        held.dispatchEvent(menu);
+        touch(held, "touchend");
+        await wait(300);
+        const sheet = !!document.querySelector(".m-chat-sheet");
+        const lists = document.querySelectorAll(".m-chat-people").length;
         const box = await until(() => document.querySelector(".m-chat-people"), "who reacted");
         const people = Array.from(box.querySelectorAll("[data-person]")).map((el) => el.querySelector(".q-item__section--main").textContent.trim());
         const title = box.querySelector(".text-subtitle1").textContent.trim();
@@ -145,7 +154,7 @@ window.phone = {
         await until(() => reacts().length === count + 1, "the reaction taken back");
         await until(() => { const el = chip(1, "👍"); return el && el.textContent.includes("👍 1"); }, "the chip with Bob's only");
         // Bob's stays; mine is gone from it
-        return { people, title, reactsAfterHold, closed: true, removed: reacts().slice(-1)[0].params, notMine: !chip(1, "👍").classList.contains("bg-primary") };
+        return { people, title, reactsAfterHold, sheet, lists, menuPrevented: menu.defaultPrevented, closed: true, removed: reacts().slice(-1)[0].params, notMine: !chip(1, "👍").classList.contains("bg-primary") };
     },
     async picker() {
         const sheet = await openSheet(3);

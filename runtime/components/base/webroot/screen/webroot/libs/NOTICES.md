@@ -1353,10 +1353,13 @@ THIS SOFTWARE.
 
 ## unicode-emoji-json 0.9.0
 
-License: MIT. Source: npm `unicode-emoji-json@0.9.0`.
-The data is from unicode.org (the Unicode License v3 of its data files: https://www.unicode.org/license.txt).
+License: MIT AND Unicode-3.0. Source: npm `unicode-emoji-json@0.9.0`.
+The package is MIT; the emoji data in it is from unicode.org, under the Unicode License v3.
 
 ```text
+The emoji and their names are Unicode's data (emoji-test.txt), under the Unicode License v3: the full text is in
+licenses/Unicode-3.0.txt, from https://www.unicode.org/license.txt.
+
 --- LICENSE ---
 The MIT License (MIT)
 

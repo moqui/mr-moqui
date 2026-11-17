@@ -34,6 +34,11 @@
     "allow-client-show-shell",
     "allow-open-in-shell",
     "allow-notify",
+    "allow-notify-clear",
+    "allow-chat-room-shown",
+    "allow-push-check",
+    "allow-push-check-fix",
+    "allow-push-test",
     "allow-open-external",
     "allow-call-state",
     "allow-call-take-answer"

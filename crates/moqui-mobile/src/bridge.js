@@ -225,9 +225,12 @@
     });
     const notify = (options) => {
         const given = options || {};
-        return invoke("notify", { title: String(given.title || ""), body: text(given.body), link: null, tag: text(given.tag) });
+        return invoke("notify", { title: String(given.title || ""), body: text(given.body), link: text(given.link), tag: text(given.tag) });
     };
     const windowSeen = () => !document.hidden;
+    // the room the page shows now (none: no room): its pushes show no notification while the app is in front, and a
+    // room shown clears its notification (plans/Comms-Messaging.md §7.5)
+    const roomShown = (room) => invoke("chat_room_shown", { room: room ? String(room) : null }).catch(() => null);
 
     if (appPage) {
         // a server's page: its account's storage scope and the scopes to clear, asked of the host as the page starts
@@ -244,7 +247,8 @@
         window.__moquiCryptoInShell = true;
         if (Array.isArray(page.clearScopes) && page.clearScopes.length) clearScopes(page.clearScopes);
         const backToShell = () => ask("client_show_shell");
-        window.moquiDesktop = Object.freeze({ socket, outbox, drafts, notify, windowSeen,
+        // pushDelivers: the chat's notifications come by FCM, not from the page's socket (plans/Comms-Messaging.md §7.2 rule 7)
+        window.moquiDesktop = Object.freeze({ socket, outbox, drafts, notify, windowSeen, pushDelivers: true,
             storageScope: String(page.storageScope || ""),
             openInShell: (path) => ask("open_in_shell", { path: String(path || "") }),
             openExternal: (url) => invoke("open_external", { url: String(url || "") }),
@@ -269,7 +273,13 @@
         return;
     }
     window.moquiDesktop = Object.freeze({
-        socket, drafts, notify, windowSeen, clearScopes,
+        socket, drafts, notify, windowSeen, clearScopes, pushDelivers: true, roomShown,
+        // a room read here: its notification goes (plans/Comms-Messaging.md §7.5)
+        notifyClear: (tag) => invoke("notify_clear", { tag: String(tag || "") }),
+        // the account view's notification check (§7.6): the phone's state, a fix of one item, a test through the server
+        pushCheck: () => ask("push_check"),
+        pushCheckFix: (what) => ask("push_check_fix", { what: String(what || "") }),
+        pushTest: () => ask("push_test"),
         outbox: Object.freeze(Object.assign({ unsent: () => ask("outbox_unsent") }, outbox)),
         setCounts: () => Promise.resolve(null),
         setPresence: () => Promise.resolve(null),

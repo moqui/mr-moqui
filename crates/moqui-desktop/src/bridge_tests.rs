@@ -178,6 +178,7 @@ fn the_capability_resolves_against_the_built_acl_to_the_bridge_commands_only() {
         commands,
         [
             "notify",
+            "notify_clear",
             "open_external",
             "plugin:notification|is_permission_granted",
             "set_comms_root",
@@ -258,4 +259,22 @@ fn the_main_window_is_told_whether_the_user_sees_it() {
     assert_eq!(focus_script(true), "window.__moquiWindowFocused = true;");
     assert_eq!(focus_script(false), "window.__moquiWindowFocused = false;");
     assert!(SCRIPT.contains("windowSeen: () =>") && SCRIPT.contains("window.__moquiWindowFocused"));
+}
+
+// plans/Comms-Messaging.md §7.5: a room's tag of an account is one notification, replaced and removed by it; another
+// account's room of the same id is another (a review finding)
+#[test]
+fn a_tag_is_one_notification_id_per_account() {
+    let a = Some("chat.example.com-0123456789ab");
+    let b = Some("chat.example.org-ba9876543210");
+    let room = tag_id(a, Some("chat-100")).unwrap();
+    assert_eq!(tag_id(a, Some(" chat-100 ")), Some(room));
+    assert_ne!(tag_id(a, Some("chat-101")), Some(room));
+    assert_ne!(tag_id(b, Some("chat-100")), Some(room));
+    assert!(room >= 1000);
+    assert_eq!(tag_id(a, Some("")), None);
+    assert_eq!(tag_id(None, None), None);
+    // a node's pages (configurations 1 and 2) may clear their notifications too
+    assert!(PERMISSIONS.contains(&"allow-notify-clear"));
+    assert!(SCRIPT.contains("notifyClear: (tag) => invoke(\"notify_clear\""));
 }

@@ -158,7 +158,10 @@ feature("a user who is not in the call is refused what works for john.doe, throu
         const refused = roots.map(r => ({
             state: request(r, "Calls/callState", {callSessionId: callId}, null).json,
             join: post(r, "joinCall", {callSessionId: callId}).json,
-            end: post(r, "endCall", {callSessionId: callId}).json
+            end: post(r, "endCall", {callSessionId: callId}).json,
+            // Move to this device and call waiting's hold (plans/Comms-Messaging.md phase 4)
+            move: post(r, "moveCall", {callSessionId: callId}).json,
+            hold: post(r, "holdOwnLeg", {callSessionId: callId}).json
         }))
         login("john.doe")
         const allowed = roots.map(r => request(r, "Calls/callState", {callSessionId: callId}, null).json)
@@ -168,22 +171,27 @@ feature("a user who is not in the call is refused what works for john.doe, throu
         refused.every(r => r.state.reasonCode == "notFound" && r.state.call == null)
         refused.every(r => r.join.reasonCode == "notFound")
         refused.every(r => r.end.reasonCode == "notFound")
+        refused.every(r => r.move.reasonCode == "notFound" && r.move.callLegId == null)
+        refused.every(r => r.hold.reasonCode == "notFound")
         allowed.every(a => a.call && a.call.status == "active")
     }
 })
 
-feature("the terminal twin shows the call, its captions with Turn on while the policy allows them, and leaves it", {
+feature("the terminal twin shows the call, its captions with Turn on while the policy allows them, a person on hold, and leaves it", {
     when() {
         login("john.doe")
+        const held = post(root, "holdOwnLeg", {callSessionId: callId}).json
         const shown = withProperty("call_captions_enabled", "true", () =>
             sys(() => ec.screen.makeTest().rootScreen(root).renderMode("tui").render("Calls/CallTui", {callSessionId: callId}, null)))
         const text = String(shown.output || "")
         ec.message.clearErrors()
         request(root, "Calls/CallTui/leave", {callSessionId: callId}, "post")
         const after = request(root, "Calls/callState", {callSessionId: callId}, null).json
-        return {text, after}
+        return {held, text, after}
     },
-    then({text, after}) {
+    then({held, text, after}) {
+        held.errors == null && held.call.participants.some(p => p.onHold)
+        text.includes("On hold")
         text.includes("not live in the terminal")
         text.includes("Calls basic.comms.caller")
         text.includes("Captions are off")

@@ -245,6 +245,7 @@ const LGPL_URL = 'https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt';
 // Kept as committed: the npm package does not carry it.
 const CRYPTO_CRATES_NOTICE = 'licenses/matrix-sdk-crypto-wasm-18.9.0-crates.txt';
 const OFL_URL = 'https://openfontlicense.org/documents/OFL.txt';
+const UNICODE_URL = 'https://www.unicode.org/license.txt';
 
 // Each entry: npm package and exact version, SPDX license, files copied from the package
 // ([path in package, path under libs/]), the license files to print in NOTICES.md, and an optional build.
@@ -433,8 +434,11 @@ SIL Open Font License 1.1 (the fonts): the full text is in licenses/OFL-1.1.txt,
     // The emoji and their names of m-emoji-picker (js/WebrootEmoji.js, plans/Comms-Messaging.md §4): Unicode's emoji by group,
     // made smaller (the emoji and its name only) and left at Emoji 15.1, which current systems draw. Pinned Nov 17, 2026;
     // 0.9.0 was published Apr 18, 2026.
-    id: 'emoji', name: 'unicode-emoji-json', npm: 'unicode-emoji-json', version: '0.9.0', license: 'MIT',
-    licenseNote: 'The data is from unicode.org (the Unicode License v3 of its data files: https://www.unicode.org/license.txt).',
+    id: 'emoji', name: 'unicode-emoji-json', npm: 'unicode-emoji-json', version: '0.9.0', license: 'MIT AND Unicode-3.0',
+    licenseNote: 'The package is MIT; the emoji data in it is from unicode.org, under the Unicode License v3.',
+    noticeText: () => `The emoji and their names are Unicode's data (emoji-test.txt), under the Unicode License v3: the full text is in
+licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
+`,
     copy: [],
     build: 'data-by-group.json made into {version, groups: [{slug, name, emoji: [[emoji, name]]}]}, the emoji of ' +
       'emoji_version 15.1 or earlier, in the order of the file.',
@@ -593,6 +597,7 @@ OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 const LICENSE_TEXTS = [
   { path: 'licenses/LGPL-2.1.txt', url: LGPL_URL },
   { path: 'licenses/OFL-1.1.txt', url: OFL_URL },
+  { path: 'licenses/Unicode-3.0.txt', url: UNICODE_URL },
   // Kept as committed (no url): made once per pin from the crates' own license files (see CRYPTO_CRATES_NOTICE).
   { path: CRYPTO_CRATES_NOTICE, url: null },
 ];

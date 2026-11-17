@@ -624,7 +624,7 @@ test("the Inbox: a thread change that conflicted says it changed on the server a
         assert.ok(disclosure.getAttribute("aria-label").startsWith("Collapse message from Pat Sender"));
         await until(() => {
             const frame = document.querySelector("#inbox-body-email_KEY1 iframe");
-            return frame && frame.contentDocument && frame.contentDocument.body.textContent.includes("Older body available by keyboard");
+            return frame && frame.contentDocument && frame.contentDocument.body && frame.contentDocument.body.textContent.includes("Older body available by keyboard");
         }, "the older message body");
         const recipients = document.getElementById("inbox-recipients-email_KEY1");
         assert.equal(recipients.tagName, "BUTTON");
@@ -1284,6 +1284,37 @@ test("one action list (COM-UI-035): the sheet, the More menu and a right click o
         link.dispatchEvent(onLink);
         link.remove();
         assert.equal(onLink.defaultPrevented, false);
+        // a picture keeps the browser's menu too; text selected in another message is not this one's
+        const picture = document.createElement("img");
+        picture.alt = "a picture";
+        row.querySelector(".m-chat-body").appendChild(picture);
+        const onPicture = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+        picture.dispatchEvent(onPicture);
+        picture.remove();
+        assert.equal(onPicture.defaultPrevented, false);
+        window.getSelection().selectAllChildren(vm.$el.querySelector('.m-chat-msg[data-seq="5"] .m-chat-body'));
+        const elsewhere = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 300, clientY: 200 });
+        row.querySelector(".m-chat-body").dispatchEvent(elsewhere);
+        assert.ok(elsewhere.defaultPrevented, "a selection in another message leaves this one's menu");
+        await closed(await until(() => document.querySelector(".m-chat-context-menu"), "the menu"), "the menu");
+        window.getSelection().removeAllRanges();
+        // a reaction chip's own context menu (Android's long press there) and Shift+Enter: who reacted, not the message's menu
+        eventOf(vm, 5).reactions = [{ key: "👀", count: 1, userIds: ["bob"], mine: false }];
+        const chip = await until(() => vm.$el.querySelector('.m-chat-msg[data-seq="5"] .m-chat-reaction'), "a reaction chip");
+        assert.ok(chip.getAttribute("aria-label").includes("Bob") && chip.getAttribute("aria-keyshortcuts") === "Shift+Enter", chip.getAttribute("aria-label"));
+        const onChip = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+        chip.dispatchEvent(onChip);
+        assert.ok(onChip.defaultPrevented);
+        const people = await until(() => document.querySelector(".m-chat-people [data-person='bob']") && document.querySelector(".m-chat-people"), "who reacted");
+        assert.equal(document.querySelector(".m-chat-context-menu"), null, "not the message's menu");
+        await closed(people, "who reacted");
+        // the click that may follow it (a key's, a touch's) is not a tap on the chip
+        chip.click();
+        await Vue.nextTick();
+        assert.ok(!eventOf(vm, 5).reactions.some((reaction) => reaction.mine), "no reaction from the click after it");
+        chip.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true }));
+        await closed(await until(() => document.querySelector(".m-chat-people"), "who reacted by the keyboard"), "who reacted");
+        eventOf(vm, 5).reactions = [];
     } finally {
         moqui.ext.items = priorItems;
         answers["/apps/BasicComms/Chat/timeline"] = priorTimeline;
@@ -1311,6 +1342,77 @@ test("the shell's history: a link forward to a place on the stack is a new entry
     assert.equal(vm.side, null);
     assert.equal(root.backStack.length, 0, "closing the thread by Back took its entry and put none on");
     assert.ok(!root.currentParameters.thread);
+});
+
+// plans/Comms-Messaging.md §7.6: the account view's notification check, as the host (the app) answers it
+test("the notification check shows the device's state, a fix for each item that is off, and a test's time to arrive", async () => {
+    await open("/qapps/BasicComms/Chat?chatRoomId=R1", "chat");
+    let state = { permission: true, channels: { "chat-messages": true, "chat-mentions": false }, batteryOptimized: true, fullScreen: true,
+        fcm: false, distributor: null, distributors: 1, registered: true, lastPushDate: null, lastAckId: null, recentAcks: {} };
+    const fixes = [];
+    const desktop = window.moquiDesktop;
+    let tests = 0;
+    Object.assign(desktop, {
+        pushCheck: () => Promise.resolve(state),
+        pushCheckFix: (what) => { fixes.push(what); return Promise.resolve(); },
+        // the server queues one; another push comes first (its id is not the test's), then the test's, as the phone's
+        // check then says; a second test at once is too soon
+        pushTest: () => {
+            tests++;
+            if (tests > 1) return Promise.resolve({ ackIdList: [], queuedDate: Date.now(), reasonCode: "tooSoon" });
+            const started = Date.now();
+            setTimeout(() => { state = Object.assign({}, state, { lastPushDate: Date.now(), lastAckId: "P0", recentAcks: { P0: Date.now() } }); }, 100);
+            setTimeout(() => { state = Object.assign({}, state, { lastPushDate: started + 400, lastAckId: "P2",
+                recentAcks: { P0: started + 100, P1: started + 400, P2: started + 450 } }); }, 400);
+            return Promise.resolve({ ackIdList: ["P1"], queuedDate: Date.now() });
+        }
+    });
+    try {
+        root.openPushCheck();
+        const row = (key) => document.querySelector(".m-shell-push-row[data-check='" + key + "']");
+        await until(() => row("battery"), "the check's items");
+        assert.ok(row("permission").textContent.includes("Notifications are allowed"));
+        assert.ok(!row("permission").querySelector("button"), "an item that is on has no fix");
+        assert.ok(row("channels").textContent.includes("chat-mentions"), "the channel that is off is named");
+        assert.ok(row("registered") && row("lastPush").textContent.includes("None yet"));
+        row("battery").querySelector("button").click();
+        // no Firebase: a UnifiedPush distributor to pick
+        assert.ok(row("service").textContent.includes("Pick a UnifiedPush distributor"));
+        row("service").querySelector("button").click();
+        assert.deepEqual(fixes, ["battery", "distributor"]);
+        // where Firebase works it stays: switching to UnifiedPush asks first
+        state = Object.assign({}, state, { fcm: true });
+        await root.readPushCheck();
+        await until(() => row("service").textContent.includes("Firebase"), "Firebase in use");
+        [...row("service").querySelectorAll("button")].find((button) => button.textContent.includes("Use UnifiedPush")).click();
+        assert.deepEqual(fixes, ["battery", "distributor"], "not switched before the answer");
+        const confirm = await until(() => [...document.querySelectorAll(".m-shell-push-confirm button")]
+            .find((button) => button.textContent.includes("Use UnifiedPush")), "the question");
+        confirm.click();
+        assert.deepEqual(fixes, ["battery", "distributor", "distributor"]);
+        // switched: a way back
+        state = Object.assign({}, state, { distributor: "io.heckel.ntfy" });
+        await root.readPushCheck();
+        await until(() => row("service").textContent.includes("in place of Firebase"), "UnifiedPush in place of Firebase");
+        [...row("service").querySelectorAll("button")].find((button) => button.textContent.includes("Use Firebase")).click();
+        assert.deepEqual(fixes.slice(-1), ["firebase"]);
+        state = Object.assign({}, state, { fcm: false, distributor: null });
+        await root.readPushCheck();
+        const testButton = () => [...document.querySelectorAll(".m-shell-push-check button")].find((button) => button.textContent.includes("Send a test notification"));
+        const result = () => (document.querySelector(".m-shell-push-result") || {}).textContent || "";
+        testButton().click();
+        await until(() => result().includes("Arrived in"), "the test's time");
+        // its own push's time (P1, 0.4 s), not another's that came first or after
+        assert.ok(/Arrived in 0\.[34] s/.test(result()), result());
+        assert.ok(row("lastPush").textContent.trim().length > "Last notification received".length, "the last push shows when");
+        testButton().click();
+        await until(() => result().includes("try again"), "a test too soon");
+    } finally {
+        root.pushBox.open = false;
+        delete desktop.pushCheck;
+        delete desktop.pushCheckFix;
+        delete desktop.pushTest;
+    }
 });
 
 test("with no host, as on the web, a message's changes are asked of the server as before", async () => {
