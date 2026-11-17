@@ -30,11 +30,11 @@ Parts:
 | §3: desktop gaps | Planned; the palette and its Rooms source are built for the web | 8 |
 | §4: reactions and the message menu | Partial: the long-press sheet and a fixed emoji grid are built | 6 |
 | §5: details tabs and new services | Partial: People, Pinned and Files (All, Pictures) panes are built; the services are planned | 7 |
-| §6: E2EE policy and labels | Planned; the call rule is decided (§19). E2EE by default needs a design (§6.5) | 3 |
+| §6: E2EE policy and labels | Planned; the call rule and what E2EE by default makes are decided (§19). First sign-in on a new phone still needs a design (§6.5) | 3 |
 | §7: notifications | Planned; payload encryption reuses the Web Push code | 2 |
 | §8: voice and video calls | Partial: one call button, the media server and TURN are built | 4, 5 |
 | §9: the user's own phone number | Partial: most of it is built; the gaps are listed | 9 |
-| §10: the phone's SIM texts (`sim-sms`) | Needs a design | 10+ |
+| §10: the phone's SIM texts (`sim-sms`) | Phone only with an opt-in sync, decided; MMS and the synced room need a design | 10+ |
 | §11–§15: other networks and app equivalents | Plan; each network needs an adapter or a bridge | 10+ |
 | §16: RCS | Research done; business RCS through Telnyx is ready to build | 10+ |
 
@@ -163,6 +163,7 @@ The desktop layout exists (§1). Add:
 | Activity view | A sidebar entry: mentions, reactions to my messages, and replies to my messages and in my threads, newest first. New service `find#ChatActivity` (§5) | Planned |
 | Threads view | A sidebar entry for all threads I am in. `find#RoomThreads` with Mine works in one room only (`ChatServices.xml:2196`); across rooms the view reads the thread replies of `find#ChatActivity` | Planned |
 | Sidebar sections | Fold the groups. Add groups: Phone (rooms of type `CrtExternal`) and Bridged. Today the groups are Pinned and Recent, and a phone room shows only under All | Planned |
+| Mail on a person's row | Where the user has a direct chat with a person, that person's latest mail thread shows on the row as a second line ("Email: subject") and opens in the Inbox, with "Email is not end-to-end encrypted" (§6.1 rule 7). No mail-only rows; mail stays in the Inbox (decided, §19). A user of this server matches by the mail address of their account; an outside person waits for unified contacts (§11). Also on the phone home | Planned |
 
 **Done when:** in Comms, Mod+K, two letters and Enter open a room, on the web and in the desktop app. The Activity
 view lists a mention and a reaction from another user (regression service spec for the feed; the views in an
@@ -280,7 +281,8 @@ and three reactions, on a phone and on a desktop (acceptance client spec).
    rings on for the others. A call's encryption is set at its start and never lowered: there is no fallback to a
    plain call, with or without the user's agreement. A plain call is started only from a plain room. (Decided, §19;
    COM-UI-004.)
-5. New direct rooms and private groups are encrypted by default (needs the design in §6.5 first).
+5. New direct rooms and private groups are encrypted by default when every person in them has a crypto device
+   (decided, §19; the rest of the design is §6.5).
 6. A lock icon means E2EE and nothing else. A private room (members only) that the server can read does not show a
    lock (COM-UI-001).
 7. Mail is never shown with a lock or a chat E2EE label. Where a person's mail shows beside their chats, it says
@@ -352,7 +354,9 @@ The UI explains this when the user picks an encrypted room:
 
 - **Rooms.** Today an encrypted direct room is a separate room from the plain direct room with the same person
   (`directKey` with an `e2ee:` prefix, `ChatServices.xml:1428`), and encryption cannot be turned on or off after the
-  room is made. Decide what `createDirect` makes, and what happens to the plain direct rooms that exist.
+  room is made. Decided (§19): `createDirect` and a new private group make an encrypted room when every person in
+  it has a crypto device, else a plain room with the plain banner. The plain direct rooms that exist stay. When a
+  person has both, the picker opens the encrypted one.
 - **Device verification.** Emoji verification stalls today: after Compare emoji, no emoji show on either device
   (COM-UI-012, P1). Fix it before any label or default depends on "verified" (§18 phase 0).
 - **Android.** The crypto device already runs in the Android WebView (the shell page, as on the desktop), and its
@@ -361,11 +365,12 @@ The UI explains this when the user picks an encrypted room:
   wide on a 390 px phone (COM-UI-014).
 - **First sign-in on a new phone.** Restore from key backup with the recovery key, or verify from another device.
 - **Search on the device.** The offline store is plain SQLite and relies on the OS disk encryption
-  ([Desktop-Client](../docs/ui/Desktop-Client.md)). Keeping decrypted text there for search is a security decision.
-  Options: no search in encrypted rooms, search in memory only, or an encrypted index.
+  ([Desktop-Client](../docs/ui/Desktop-Client.md)). Decided (§19): no search in an encrypted room at first, and the
+  search pane says so before a query. Later, search in memory over the messages the device has decrypted. Nothing
+  decrypted is written to disk for search.
 - **Message text in a phone notification.** The crypto store is the WebView's, with one owner, so native code cannot
-  decrypt a push. Options: a hidden WebView started by the push, or a crypto store in Rust that the page uses through
-  the host. Until then a notification for an encrypted room has no text (§7.4).
+  decrypt a push. Decided (§19): a notification for an encrypted room shows the room and sender only (§7.4). No
+  hidden WebView and no crypto store in Rust is planned for it; revisit only if daily use asks for it.
 
 **Labels done when:** each state in §6.2 shows on a phone and on a desktop, and the SMS room shows the SMS banner
 (acceptance client spec). A regression spec covers rule 4: a call in an encrypted room is encrypted, a phone and a
@@ -406,8 +411,10 @@ promised, and what happens when a push cannot be sent.
    other devices remove that room's notification. A push can still arrive just after a read on another device; the
    `clear` follows it.
 4. **Do not disturb.** The worker holds a user's pushes while their status is `dnd`, set by hand or by the hours job,
-   and sends one summary for each room when it ends. Calls from people the user marks as allowed still ring (a new
-   list for each user).
+   and sends one summary for each room when it ends. A call still rings when it is from a person on the user's
+   allowed list (a new list for each user, in Chat settings beside the hours), or when it is the same person's
+   second call within 3 minutes. (Decided, §19.)
+   - A reaction to the user's message never pushes; it shows in Activity (§3) and on the message. (Decided, §19.)
 5. **Content privacy.** The push carries no readable text. The server encrypts a small payload (room, sender name,
    and the snippet when the room is plain and `CHAT_NOTIFY_PREVIEW` is not N) with a key that belongs to the device,
    with the Web Push code the server has (`notify/push_crypto.rs`, RFC 8291). Google and Apple see only that a push
@@ -452,7 +459,7 @@ promised, and what happens when a push cannot be sent.
 | Token | Register the FCM token at every start and on `onNewToken`, and retry until the server answers. Today a failed registration waits for the next start, token or sign-in |
 | Device key | The app makes the push key pair and keeps the private key sealed by the Android Keystore, as the device keys are (`KeyVault.kt`) |
 | After reboot and update | Nothing to start: FCM delivers to a stopped app. Test it (§7.6). A force-stopped app gets nothing until it is opened; the app says so |
-| Without Google Play | Optional UnifiedPush distributor (for example ntfy). Same encrypted payload. Later, after FCM works |
+| Without Google Play | A UnifiedPush distributor (for example ntfy) where the phone has no Google Play. Same encrypted payload, same outbox; the device registers its endpoint as it registers an FCM token. In the first release, in phase 2 (decided, §19) |
 
 ### 7.5 Desktop and browser
 
@@ -554,9 +561,15 @@ and they keep going when the network gets bad or changes.
 | 13 | Keepalives tuned for mobile NATs (STUN consent and the socket's ping), so a quiet call does not lose its path | Planned |
 | 14 | A quality icon from `getStats` (loss, RTT, jitter), and "Your network is weak" when the uplink is the cause | Planned |
 
-**Direct path for one-to-one calls (option)**
-- One-to-one calls could go peer to peer when both sides can reach each other, and fall back to the media server.
-  This cuts delay. It adds a second media path to keep working. Decide after the §8.4 tests show the server's delay.
+**Direct path for one-to-one calls** (decided, §19)
+
+15. A one-to-one call goes peer to peer when both sides can reach each other, and falls back to the media server.
+    - Only between two users of this server in a direct room. Guests and phone calls use the media server.
+    - A user setting "Always relay my calls" keeps the user's calls on the media server, so the other side never
+      sees the user's IP address.
+    - When a third person joins, the call moves to the media server.
+    - SFrame stays on in an encrypted call on either path, so a move keeps the call's keys and its label.
+    - Built in phase 5, after the §8.4 tests. The browser suite of §8.4 runs each profile on both paths.
 
 ### 8.4 Network tests
 
@@ -632,11 +645,16 @@ Optional: the app becomes the Android default SMS app for the phone's own SIM.
 - The plugin has the parts Android needs for the default SMS role: an `SMS_DELIVER` receiver, a `WAP_PUSH_DELIVER`
   receiver for MMS, the `RESPOND_VIA_MESSAGE` service, and handlers for `sms:`, `smsto:`, `mms:` and `mmsto:` links.
 - Release builds make two APKs: the default one and one with `sim-sms`.
+- SIM texts stay on the phone by default. A per-user switch, off by default, syncs SIM threads to the server as rooms,
+  so they show on the desktop and the web too. Both are in the first `sim-sms` version (decided, §19). The switch
+  says that synced texts are stored on the server.
 
 **Design needed:**
-- Do SIM texts stay on the phone only, or sync to the server as rooms? Syncing puts the phone's texts on the server.
 - MMS send and receive: the PDU encoding and the download of MMS content.
-- How SIM threads and server rooms show together in the list, and what happens when a person has both.
+- A synced SIM thread: its room type and bridge type, and how a text sent from the desktop goes out through the
+  phone (the phone as the bridge, through a push and the Rust outbox) and what the room shows while the phone is off.
+- How SIM threads and server rooms show together in the list, and what happens when a person has both a SIM thread
+  and a room on the user's Telnyx number.
 
 # Part 2: One app for all messaging
 
@@ -1132,6 +1150,7 @@ Server first, then the Android app, then the desktop and the check screen.
 | 2e | Android: decrypt and show in Kotlin, channels, `MessagingStyle`, Reply and Mark read through the Rust outbox, `clear`, the permission and battery prompts, token retry | `PushService.kt`, `CallManager.kt`, a new notifications class, `Native.kt`, `crates/moqui-mobile/src` |
 | 2f | Desktop and mobile `notify` with tag and link; missed messages on start; the browser payload | `crates/moqui-desktop/src/bridge.rs`, `crates/moqui-mobile/src/bridge.js`, `MoquiLib.js` |
 | 2g | The check screen in the shell with its host command; "Send a test notification" | `Root.qvue`, `bridge.js`, `commands.rs` |
+| 2h | UnifiedPush: the app registers a distributor's endpoint where the phone has no Google Play; the worker sends the same encrypted payload to it (§7.4) | `web_push.rs` or a new `unified_push.rs`, `PushService.kt`, `NotificationServices.xml` |
 
 - Reuse: the bridge delivery worker's pattern (`chat_bridge.rs`: lease, backoff, sweep, a round at a given time);
   `push_crypto::encrypt`; `WebPushSubscription`'s key fields; the Rust outbox kinds `chat-send` and `chat-read` with
@@ -1167,6 +1186,8 @@ Server first, then the Android app, then the desktop and the check screen.
 1. The in-memory cases in `sfu/testnet.rs`, then the browser suite (§8.4). Record the first results.
 2. The resilience items of §8.3 in the order the results give: RED and DTX, ICE restart, the 60 s keep, keepalives,
    the quality icon. Check the built items (FEC, RTX, TURN on 443).
+3. The direct path for one-to-one calls (§8.3 item 15) with "Always relay my calls", then the browser suite on both
+   paths.
 - Files: `crates/moqui-rtc/src/sfu/`, `WebrootCall.js`, `Calls.js`, `MainActivity.kt`, a new acceptance suite.
 - Done when: §8.5.
 
@@ -1195,6 +1216,8 @@ Server first, then the Android app, then the desktop and the check screen.
 - The palette source: people, phone rooms, rooms without the prefix in Comms. The palette in the desktop and mobile
   shell (shared with the [Shared/Gallery review](ui-review-shared-gallery.md), which owns the shell's keys).
 - The Activity and Threads views on `find#ChatActivity`; folding; the Phone and Bridged groups.
+- The mail line on a person's row (§3), from a new read-only service that finds each person's latest mail thread
+  among the user's accounts.
 - Files: `ChatScreenServices.xml` (`search#PaletteRooms`), `Root.qvue`, `Chat.qvue`.
 - Done when: §3.
 
@@ -1213,11 +1236,10 @@ Each of these needs its design first:
 
 | Work | Design needed |
 |---|---|
-| E2EE by default | §6.5: what `createDirect` makes; the existing plain direct rooms |
-| Message text in a phone notification for an encrypted room | §6.5: a hidden WebView or a crypto store in Rust |
-| `sim-sms` | §10 |
+| E2EE by default | §6.5: first sign-in on a new phone, and the Android check. What `createDirect` makes is decided |
+| `sim-sms` | §10: MMS, a synced SIM room and its sends, SIM threads beside server rooms |
 | `sim-dialer` and the contacts sync | §14.7, §14.8; what a server without mr-mantle offers |
-| Unified contacts and the per-message network choice | §11; where mail fits (§19.2) |
+| Unified contacts and the per-message network choice | §11; mail stays in the Inbox, with a line on a person's row (§3, §19.1) |
 
 Then the other networks and the rest of §17, in this order:
 1. The number on Telnyx, block and spam, contacts sync (the user stops using Google Messages and Cheogram).
@@ -1258,20 +1280,19 @@ These cannot be shown by a browser at phone width. They are collected here for e
 | 2026-11-16 | A phone notification for an encrypted room shows the room and sender only; the text shows when the app opens. Decryption in the background is a later design (§6.5, §7.4) |
 | 2026-11-16 | Mod+K stays the shell palette's key. Chat adds to its sources and adds no key listener of its own (§3) |
 | 2026-11-16 | No chat component moves to a plain `.js` file. Helpers go to `moqui.chat`; a new shared component is an `m-` component (§2.2) |
+| 2026-11-16 | E2EE by default: a new direct chat or private group is encrypted when every person in it has a crypto device, else plain with the plain banner. The plain direct rooms that exist stay; the picker opens the encrypted room when a person has both (§6.1 rule 5, §6.5) |
+| 2026-11-16 | Search in an encrypted room: none at first, said in the pane before a query. Later, in memory over the messages the device has decrypted; nothing decrypted is written to disk for search (§6.5) |
+| 2026-11-16 | A phone notification for an encrypted room keeps the room and sender only, with no later design for its text. Revisit only from daily use (§6.5, §7.4) |
+| 2026-11-16 | A reaction to my message shows in Activity, with no push (§7.2 rule 4) |
+| 2026-11-16 | SIM texts stay on the phone by default, with a per-user opt-in switch to sync them to the server as rooms, both in the first `sim-sms` version (§10) |
+| 2026-11-16 | One-to-one calls go peer to peer first, between two users of this server in a direct room, with "Always relay my calls" and the media server as fallback; a third person moves the call to the media server (§8.3 item 15, phase 5) |
+| 2026-11-16 | UnifiedPush is in the first release, in phase 2 beside FCM (§7.4, step 2h) |
+| 2026-11-16 | Mail stays in the Inbox. A person's latest mail thread shows as a line on their direct chat's row and opens in the Inbox; no mail-only rows (§3, phase 8). If mail ever joins as rooms, the rules of §18.2 "Mail stays working" come with it |
+| 2026-11-16 | During Do not disturb a call rings from a person on the user's allowed list (Chat settings, beside the hours), or as the same person's second call within 3 minutes (§7.2 rule 4) |
 
 ### 19.2 Open: the app
 
-| Question | Recommended |
-|---|---|
-| E2EE by default (§6.5): what does `createDirect` make, and what happens to the plain direct rooms? | A new direct chat is encrypted when every person in it has a crypto device. The plain rooms that exist stay, and the picker opens the encrypted one when a person has both |
-| Search in encrypted rooms: none, in memory, or an encrypted index? | None at first, said plainly in the pane. Then in memory, over the messages the device has loaded |
-| SIM texts (§10): phone only, or synced to the server? | Phone only at first: syncing puts every SIM text on the server |
-| One-to-one calls peer to peer (§8.3), or always through the media server? | Through the media server, unless the §8.4 results show a delay that matters |
-| Notifications without Google Play (UnifiedPush): in the first release, or later? | Later, after FCM works. The encrypted payload is the same |
-| Does a reaction to my message push, or only show in Activity? | Activity only |
-| Do mail conversations join the one inbox as rooms, or stay in the Inbox? | Stay in the Inbox. A contact links to that person's mail (COM-UI-019, 022, 024, 029). If mail ever joins, the rules of §18.2 "Mail stays working" come with it |
-| Who may ring during Do not disturb, and where is that list kept? | A list of people for each user, in Chat settings, beside the hours |
-| Message text in a notification for an encrypted room: a hidden WebView, or a crypto store in Rust? | Decide with the E2EE-by-default design |
+None. The questions asked here are decided in §19.1.
 
 ### 19.3 Open: other networks
 
