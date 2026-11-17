@@ -4,7 +4,7 @@ A chat room can reach outside Moqui: a connector maps it to a room or conversati
 Telegram, Slack and others), and a native endpoint (XMPP, Matrix) serves Moqui rooms to their clients. This is the layer
 under both: chat actors, the input from a network, and the durable delivery of what goes out. The design is
 [plans/archive/Comms-Framework.md](../../plans/archive/Comms-Framework.md) §4.1, §4.3 and §4.4, milestone C1. C1 has no network adapter
-of its own: C4-SMS adds the first, `sms` on Telnyx ([SMS](SMS.md)). The user guide is [Comms](../tools/Comms.md#bridged-rooms).
+of its own: C4-SMS adds the SMS adapters, one for each provider (`sms` on Telnyx; [SMS](SMS.md)). The user guide is [Comms](../tools/Comms.md#bridged-rooms).
 
 - **Entities:** the C1 block at the end of `framework/entity/ChatEntities.xml` (`ChatActor`, `ChatExternalUser`,
   `ChatBridge`, `ChatRoomBridge`, `ChatEventExternal`, `ChatBridgeInbound`, `ChatBridgeDelivery`), with
@@ -42,11 +42,13 @@ A network adapter implements `ChatBridgeAdapter` (moqui-core `service/chat_bridg
 | Part | What it does |
 | --- | --- |
 | `name` | The name a `ChatBridge` row selects it by: its `adapterName`, else its network's enumeration code (`sms`, `whatsapp`, `xmpp` and so on). |
-| `capabilities` | `edit`, `delete`, `reaction`, `idempotent` (the network dedupes a send by its idempotency key), `sends_per_minute` (0: no limit), `encryption` (below). Each implementation narrows these to the API version it verified. |
+| `capabilities` | `edit`, `delete`, `reaction`, `idempotent` (the network dedupes a send by its idempotency key), `sends_per_minute` (0: no limit), `encryption` (below), `group_max` (the most outside numbers of a group text: Telnyx 8; 0 for none, and a group room then refuses to send, `groupTextsNotSupported`). Each implementation narrows these to the API version it verified. |
 | `start`, `stop` | Connect the bridge on this node, or disconnect it. An error marks the bridge not connected, with the error as its last error, and the next round tries again. |
 | `deliver` | Send one event (`DeliveryRequest`: the idempotency key, the external room, the kind, the text and HTML, the sender's name and local user, the message's files (`attachments`, its `ChatAttachment` rows in order), the network id of the message an edit, reaction or delete is about, the reaction key, the attempt) and answer `Accepted` (the network's id), `Retry` (with `not_connected`), `Failed` (a reason code) or `Uncertain`. A request with no room is a direct send (`send#BridgeDirect`, below). |
 | `webhook` | A request to the bridge's webhook route, `POST /channels/{chatBridgeId}/webhook` (C4-SMS): the raw body, read within its bound, and the headers. The adapter checks the network's signature over those bytes and its replay window before it parses anything, then hands what came to `ingest#Event`. The default answers as an unsigned request (`WebhookResponse::not_signed`). |
-| `verify_webhook` | The signature step alone, for a disabled bridge: whether the request is the network's. The default refuses every request. |
+| `verify_webhook` | The signature step alone, for a disabled bridge and behind an edge node: whether the request is the network's. It keeps no replay state. The default refuses every request. |
+| `webhook_verification` | Where `verify_webhook` runs behind an edge node: `Edge` (the default; with the bridge's replicated copy, a public key) or `Core { signature_header }` (a secret only the local node holds: the edge node checks the header is there and queues, the local node verifies before it applies). |
+| `webhook_event_id`, `apply_webhook` | For an edge node's queue: the event's id (a repeat is dropped) and what orders it, and the work of `webhook` after its checks, on the local node. |
 | `fetch_media` | The bytes of a file a network's message names, within a bound (`store#BridgeMedia`). The default fetches nothing. |
 
 The web side is `chat_bridge_web.rs`: `chat_bridge::webhook` (the host's route; an unknown bridge, one with no adapter
@@ -62,13 +64,26 @@ A framework crate lists its adapters in `Extension::chat_bridge_adapters` (`moqu
 `chat_bridge::register_adapter` adds one to a factory at run time (the tests' in-memory adapter). Protocol I/O is the
 adapter's, above moqui-core: `deliver` runs on the worker's thread and may block.
 
+**SMS providers.** The SMS adapters share one implementation, `crates/moqui-channels/src/sms.rs` (`SmsAdapter`): the
+checks before the provider (`check#SmsSend` once a recipient, its reserve let go when the text does not reach the
+provider), the bridge's limits and its files' addresses, the guarded client, the answer's classes (2xx accepted, 429 and
+503 retry, 401 and 403 retry with the bridge not connected, another 4xx as the provider reads it, 5xx uncertain; a request
+whose answer was lost is uncertain, never sent again), and the webhook's POST, replay cache and events (`receive#Sms`,
+`note#DeliveryReceipt`, `note#SmsKeyword`). A provider module (`crates/moqui-channels/src/providers/`) implements
+`SmsProvider`: its settings, its send request (endpoint, auth, a JSON or form body) and how it reads the answer, its
+group maximum, its webhook signature (and whether an edge node can check it), its event key and its events, and its
+files' fetch auth. Each provider is one adapter, chosen by `ChatBridge.adapterName` (`sms` is Telnyx's), so an edge node,
+which sees no `configJson`, picks it too. A provider that signs the URL it posted to checks it against
+`chat_bridge::webhook_public_url`: the bridge's `webhookUrl`, else `channels_public_url` and the request's path and query
+as received (`WebhookRequest.url`).
+
 An operation the adapter does not carry is refused before the local change: `edit#Message`, `redact#Message` and
 `react#Message` answer `reasonCode` `bridgeUnsupported` for a message that went to (or came from) such a bridge, and the
 screens leave the action out (`get#Room` `bridgeCapabilities`). An inbound edit relayed to such a network fails there
 with the same reason; it is never shown as synchronized.
 
 `encryption` is how far the network keeps a message from others: `None` (the network and its providers read it: SMS and
-MMS, the Telnyx adapter), `Transport` (TLS in transit only), `BridgeDecrypted` (end to end on the network, decrypted by
+MMS, every SMS adapter), `Transport` (TLS in transit only), `BridgeDecrypted` (end to end on the network, decrypted by
 the bridge here: WhatsApp through a bridge) or `EndToEnd` (end to end through the bridge; none yet). An adapter that says
 nothing says `None`, and so does a bridge with no adapter in the build. `get#BridgeCapabilities` returns it, each bridge
 of `get#RoomBridges` (and so `get#Room`'s `bridges`) has it, and `find#Rooms` gives each room's `bridgeNetworks`
@@ -164,7 +179,11 @@ each mapping with its name there and its direction; it does not change them.
 **Behind an edge node** ([plan](../../plans/archive/Edge-Node.md) §5.4). A network's webhook URL is the edge node's,
 `/channels/{chatBridgeId}/webhook`; the edge node checks the request with the bridge's replicated copy (its type,
 adapter, status and webhook key, never `configJson`) and queues it, and the local node applies it through the adapter's
-`apply_webhook` with the same input checks and dedupe. Files a message sends by address (MMS) are put on the edge node
+`apply_webhook` with the same input checks and dedupe. A network that signs with a secret (`webhook_verification`
+`Core`) is checked on the local node instead: the edge node checks only the method, the size, that the signature header
+is there and a rate cap per bridge (`channels_edge_webhooks_per_minute`, 600), and queues the request with its path and
+query; `apply#EdgeWebhook` verifies it before it applies it and drops one that fails (done, not applied, not tried
+again; counted, logged once per bridge every ten minutes). Files a message sends by address (MMS) are put on the edge node
 and served there at `/channels/{chatBridgeId}/media/{token}`. The local node's `channels_public_url` names the edge
 node; the Edge Node wizard sets it and lists each bridge's webhook URL ([SMS](SMS.md) has the steps). Networks that
 only connect out (Telegram's `getUpdates`, Slack Socket Mode, the Discord Gateway) need no edge node. On an
@@ -188,10 +207,15 @@ name it.
   stale edit, a whole batch refused for security and malformed items rejected by name, an unsupported edit refused before
   the change.
 - `crates/moqui-channels/src/tests.rs`: an unknown and a disabled bridge answering as an unsigned request, the
-  disabled one its network 503; a webhook's replay held in the shared replay cache.
+  disabled one its network 503; a webhook's replay held in the shared replay cache; a group room on a bridge whose
+  provider carries no group texts refused at the send and at Text a number. Its bed takes the provider under test
+  (`Provider`: adapter, settings, the fake's answer, the signer).
+- `crates/moqui-core/src/service/chat_bridge_edge_tests.rs`: a queued webhook carrying its path and query; an edge
+  node's checks of a webhook it cannot verify (size, signature header, the rate cap); a queued webhook verified on the
+  local node, applied when good and dropped and counted when not.
 - `crates/moqui-host/tests/it/lock_then_insert.rs`: racing first joins make one actor.
 - `basic-comms/test/BasicCommsBridges.spec.js`: a bridged room that is not connected in the browser, the terminal and the
   admin screen, and who may retry and administer.
 
 **Not checked live:** no real network. C1 has no network adapter; each one is checked against its provider. C4-SMS's
-Telnyx adapter is checked against a fake Telnyx ([SMS, Tests](SMS.md#tests)), not Telnyx itself.
+SMS adapters are checked against a fake provider ([SMS, Tests](SMS.md#tests)), not the provider itself.

@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- SMS and MMS (plans/archive/Comms-Framework.md §5.6, C4-SMS; docs/interfaces/SMS.md): a number's texts through its messaging
     bridge (PhoneNumber.messagingBridgeId), in the number pair's external room. The logic is Sms.js beside this file; the
-    provider's adapter is crates/moqui-channels (Telnyx), which calls receive#Sms from its webhook and check#SmsSend before
+    provider's adapter is crates/moqui-channels (one for each provider: Telnyx's is sms), which calls receive#Sms from its webhook and check#SmsSend before
     each send. org.moqui.SmsServices.send#SmsMessage is the system's sender (a sign-in code). No Java counterpart.
 
     Access. open#PairRoom, find#MyTextNumbers and find#PhoneNames are the current user's; the rest are internal (allow-remote
@@ -24,9 +24,10 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="open" noun="PairRoom">
         <description>Text a number: the room of the current user's number fromNumber (one they are granted that has messaging;
             their only one when empty) and toNumber, found or made, with the user in it; several numbers in toNumber
-            (comma-separated, at most 8) are a group text, one room for that set of numbers (plans/Comms-Messaging.md §9,
-            group texts). Refusals carry reasonCode: notSignedIn, badNumber, emergency, numberNotGranted, noMessaging,
-            internationalNotEnabled, premiumNotEnabled, tooManyNumbers.</description>
+            (comma-separated, at most the number's provider's group maximum: Telnyx 8) are a group text, one room for that set
+            of numbers (plans/Comms-Messaging.md §9, group texts). Refusals carry reasonCode: notSignedIn, badNumber, emergency,
+            numberNotGranted, noMessaging, internationalNotEnabled, premiumNotEnabled, tooManyNumbers, groupTextsNotSupported
+            (the provider carries no group texts).</description>
         <in-parameters>
             <parameter name="toNumber" required="true"/>
             <parameter name="fromNumber"/>
@@ -68,7 +69,9 @@ along with this software (see the LICENSE.md file). If not, see
             reaches (its user or ring group, and its caller-ID grants) members of it; one who left stays out. reasonCode
             noMessaging when our number has no messaging bridge. Called in a transaction of its own before a text is taken in
             and before a call links to it. With theirNumberList of two or more outside numbers, the group text's room of that
-            set (externalRoomId ours/a,b,c, the numbers in E.164 and sorted; at most 8, else tooManyNumbers).</description>
+            set (externalRoomId ours/a,b,c, the numbers in E.164 and sorted; at most the bridge's group maximum, its adapter's
+            get#BridgeCapabilities groupMax, else tooManyNumbers; groupTextsNotSupported on a bridge whose provider carries
+            none).</description>
         <in-parameters>
             <parameter name="ourNumber" required="true"/>
             <parameter name="theirNumber"/>

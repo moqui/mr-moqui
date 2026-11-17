@@ -24,6 +24,8 @@
 //!   [`crate::extension::Extension::chat_bridge_adapters`]; [`register_adapter`] adds one to a factory at run time (the
 //!   tests' in-memory adapter). It answers its [`Capabilities`], starts and stops with its bridge, and delivers one event
 //!   at a time. Protocol I/O is the adapter's, above this crate; `deliver` is called on a worker thread and may block.
+//!   Behind an edge node a webhook's signature is checked where its key is ([`WebhookVerification`]): on the edge node
+//!   for a public key it replicates, else on this node before the queued request is applied.
 //! - Outbound delivery. `append#Event` writes a `ChatBridgeDelivery` row for each mapping the event goes to, in the
 //!   event's transaction, and `wake#BridgeDelivery` wakes this node's worker once that transaction commits. The worker
 //!   ([`start`]: a thread per node, woken, and once a minute while any bridge exists, and once at start, so rows a
@@ -120,6 +122,26 @@ pub struct Capabilities {
     /// How far the network keeps a message from others: the room's E2EE label comes from it (plans/Comms-Messaging.md
     /// §6.2, §6.3).
     pub encryption: Encryption,
+    /// The most outside numbers a group text has (an SMS provider's group MMS: Telnyx 8); 0 when the network carries no
+    /// group texts, and a group room on it then refuses to send (`Sms.js`, the adapter).
+    pub group_max: u32,
+}
+
+/// Where a bridge's webhook signature is checked when an edge node takes the network's requests (plans/archive/Edge-Node.md
+/// §5.4).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WebhookVerification {
+    /// On the edge node, with what the bridge's replicated copy holds (Telnyx's Ed25519 public key): the edge node
+    /// queues only a request it verified.
+    #[default]
+    Edge,
+    /// On the local node, which holds the secret the network signs with (an HMAC under an auth token or a webhook
+    /// secret, never replicated): the edge node checks only that `signature_header` is there, the size and a rate cap,
+    /// and queues the raw request with its URL; the local node verifies it before it applies it and drops one that
+    /// fails. Its [`ChatBridgeAdapter::verify_webhook`] then checks only, at the request's `now_millis` (when it came)
+    /// and against its URL ([`webhook_public_url`]), and keeps no replay state: a queued item is verified again on each
+    /// try, and the queue dedupes by the event id.
+    Core { signature_header: &'static str },
 }
 
 /// A network's encryption, as its adapter knows it. A bridged room is never end-to-end encrypted on this server: the
@@ -252,6 +274,11 @@ pub trait ChatBridgeAdapter: Send + Sync {
     fn verify_webhook(&self, bridge: &BridgeInfo, request: &WebhookRequest) -> Option<WebhookResponse> {
         let _ = (bridge, request);
         Some(WebhookResponse::not_signed())
+    }
+    /// Where [`Self::verify_webhook`] runs behind an edge node: there, with the bridge's replicated copy (the default),
+    /// or on the local node, for a network that signs with a secret the edge node never holds.
+    fn webhook_verification(&self) -> WebhookVerification {
+        WebhookVerification::Edge
     }
     /// The network's id of the event a request [`Self::verify_webhook`] passed, and what orders it with others (their
     /// number), for an edge node that queues it for its local node (plans/archive/Edge-Node.md §5.4): the id is the queue
@@ -522,8 +549,8 @@ fn check_bridge_token(
 // ---- capabilities ----
 
 /// `get#BridgeCapabilities`: for each bridge of `chatBridgeIdList`, `{edit, delete, reaction, idempotent, encryption,
-/// adapter}` (`adapter` false when this build has no adapter for it: then nothing is supported, and its encryption is
-/// `None`).
+/// groupTexts, groupMax, adapter}` (`adapter` false when this build has no adapter for it: then nothing is supported,
+/// and its encryption is `None`; `groupMax` 0 and `groupTexts` false for a network without group texts).
 fn get_bridge_capabilities(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -552,6 +579,8 @@ fn get_bridge_capabilities(
             ("reaction", Value::Bool(caps.reaction)),
             ("idempotent", Value::Bool(caps.idempotent)),
             ("encryption", Value::string(caps.encryption.as_str())),
+            ("groupTexts", Value::Bool(caps.group_max > 0)),
+            ("groupMax", Value::I64(i64::from(caps.group_max))),
             ("adapter", Value::Bool(adapter.is_some())),
         ]
         .into_iter()
@@ -1579,15 +1608,15 @@ fn push_state(room_id: &str, seq: i64) {
 #[path = "chat_bridge_web.rs"]
 mod web;
 pub use web::{
-    media, media_at, media_token_valid, media_url, replay_finish, replay_take, replay_window_ms, webhook, FetchedMedia,
-    MediaFile, Replay, WebhookRequest, WebhookResponse, WEBHOOK_MARK,
+    media, media_at, media_token_valid, media_url, replay_finish, replay_take, replay_window_ms, webhook,
+    webhook_public_url, FetchedMedia, MediaFile, Replay, WebhookRequest, WebhookResponse, WEBHOOK_MARK,
 };
 
 #[path = "chat_bridge_edge.rs"]
 mod edge;
 pub use edge::{
-    fill_webhook_keys, media_urls, sweep_edge_media, MediaUrls, KIND_MEDIA, KIND_WEBHOOK, MEDIA_RETRY_MILLIS,
-    REPLICA_SET,
+    dropped_webhooks, fill_webhook_keys, media_urls, sweep_edge_media, MediaUrls, KIND_MEDIA, KIND_WEBHOOK,
+    MEDIA_RETRY_MILLIS, REPLICA_SET,
 };
 
 #[cfg(test)]

@@ -511,7 +511,8 @@ adapter (C4 on) brings its own transport, and C1 ships none.
   `storeRoomBridge` and `endRoomBridge` transitions call `find#Bridges`, `store#RoomBridge` and `end#RoomBridge` with
   authorization disabled; each service checks the permission itself. System › ChatBridges has two transitions,
   `setDisabled` (`store#Bridge`) and `retryDelivery`; no screen that edits `configJson` was found. The SMS adapter
-  (`crates/moqui-channels/src/telnyx.rs`) reads from the bridge's `configJson`: `apiKey` (sent as `Authorization:
+  (`crates/moqui-channels/src/sms.rs`, Telnyx's settings in `providers/telnyx.rs`) reads from the bridge's
+  `configJson`: `apiKey` (sent as `Authorization:
   Bearer`), `apiBaseUrl` (`https://api.telnyx.com` by default; an `http://` address is accepted), `publicKey`,
   `webhookToleranceSeconds`, `maxInboundMediaBytes` (at most the adapter's 20 MiB cap) and `allowInternalAddresses`.
   Files a text names are fetched from public addresses only (3 redirects, each checked) unless `allowInternalAddresses`
@@ -543,7 +544,7 @@ A component's MoquiConf.xml may register a provider of the hooks the framework a
 
 These are gaps in this pass. A line that was read is stated above and is not repeated here.
 
-- Chat bridges and SMS, Web Push and FCM, and call recording and captions were sampled only. `chat_bridge.rs` (the delivery worker), `chat_bridge_edge.rs`, `crates/moqui-channels/src/webhook.rs`, `fcm.rs`, `crates/moqui-rtc/src/sfu/`, `record/`, `audio/` and `tap.rs`, and `crates/moqui-host/src/rtc/mod.rs`, `media.rs`, `recorder.rs` and `captions.rs` were not read. What the sections above say of those areas was not rechecked line by line.
+- Chat bridges and SMS, Web Push and FCM, and call recording and captions were sampled only. `chat_bridge.rs` (the delivery worker), `chat_bridge_edge.rs`, `crates/moqui-channels/src/sms.rs`, `fcm.rs`, `crates/moqui-rtc/src/sfu/`, `record/`, `audio/` and `tap.rs`, and `crates/moqui-host/src/rtc/mod.rs`, `media.rs`, `recorder.rs` and `captions.rs` were not read. What the sections above say of those areas was not rechecked line by line.
 - BasicComms: the `Settings` screens `Index`, `Calls`, `Chat`, `Devices`, `Identities`, `Rules`, `OutOfOffice` and `TextBlocks`, the `Home` and `Panel` screens, the `*Tui.xml` screens, `template/FilePickerTransitions.xml`, `ComposeServices.xml`, `CommsHomeServices.xml` and `FilePickerServices.xml` were not read. `ChatScreenServices.xml` and the `Calls`, `Inbox` and `Settings` screens were read only for their transition names, authorization calls and file responses.
 - `Chat.qvue`, `Call.qvue` and `CallGuest.qvue` were not read: what the clients do with relayed call frames, guest names and a forwarded message's body (`v-html`) was not checked.
 - Whether an account that holds `EXTERNAL_USER` can also hold `BASIC_COMMS_USERS`, or reach an app's Comms root, was not traced.

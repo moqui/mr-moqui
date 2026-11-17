@@ -6,8 +6,9 @@ room per outside number. The design is [plans/archive/Comms-Framework.md](../../
 conversation per outside number"), §4.3 ("Business channels"), milestone C4-SMS. Texting needs no SIP engine: a number
 with a messaging bridge and no trunk texts.
 
-- **Rust:** `crates/moqui-channels` (the `channels` feature of the host, in Maximal and Enterprise): the `sms` adapter
-  (`telnyx.rs`) and its webhook (`webhook.rs`). `crates/moqui-core/src/service/chat_bridge_web.rs`: the webhook and media
+- **Rust:** `crates/moqui-channels` (the `channels` feature of the host, in Maximal and Enterprise): the
+  provider-neutral adapter and its webhook (`sms.rs`), and each provider's module (`providers/`: Telnyx's `telnyx.rs` is
+  the `sms` adapter). `crates/moqui-core/src/service/chat_bridge_web.rs`: the webhook and media
   routes' core (`chat_bridge::webhook`, `media`, `media_url`), `store#BridgeMedia` and `send#BridgeDirect`. The host's
   routes are `crates/moqui-host/src/channels.rs`.
 - **Services:** `org.moqui.call.SmsServices` and `Sms.js` (the pair room, the checks before a send, texts that come in),
@@ -109,11 +110,14 @@ call. The outside person is an external actor of the bridge (`ChatExternalUser` 
 A group MMS is one room for its set of outside numbers: `CrtExternal`, named the numbers (`+1801..., +1385...`), its
 `externalRoomId` `ours/<a>,<b>,...` with the others' numbers in E.164, unique and sorted (`Sms.js` `groupKey`), so the
 same people make the same room whoever writes first. A group is our number and at most 8 others: a send has 8
-recipients at most, and a group text that came in is its sender plus at most 7 others (`GROUP_MAX`; Telnyx's limit is
-the carrier's, about 10 in all); a send to more is refused (`tooManyNumbers`). Our own numbers are never a group's
+recipients at most, and a group text that came in is its sender plus at most 7 others (the adapter's `group_max`,
+`get#BridgeCapabilities` `groupMax`; Telnyx's limit is the carrier's, about 10 in all); a send to more is refused
+(`tooManyNumbers`). On a bridge whose provider carries no group texts (`groupMax` 0) Text a number with several numbers
+is refused and a group room refuses to send (`groupTextsNotSupported`), and a group text that comes in is the sender's
+pair room. Our own numbers are never a group's
 others: a group that has two of ours is ours, and a group MMS never goes to one of our numbers.
 
-- **In.** A `message.received` with more than one recipient (Telnyx's `to` and `cc`, `webhook.rs` `recipients_of`, at
+- **In.** A `message.received` with more than one recipient (Telnyx's `to` and `cc`, `providers/telnyx.rs` `recipients_of`, at
   most 32 read) passes `recipientList` to `receive#Sms`, which finds our number among them (one of this bridge's) and
   the group's room of the sender and the other recipients: the sender is always kept, then the first 7 others in
   order. A sender that is not a number in E.164 (a short code) keeps a room of its own, never another person's pair

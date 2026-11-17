@@ -85,6 +85,7 @@ impl TestAdapter {
                 idempotent,
                 sends_per_minute: 0,
                 encryption: Encryption::BridgeDecrypted,
+                group_max: 0,
             },
             network: Mutex::new(Network::default()),
         })
