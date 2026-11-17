@@ -27,6 +27,7 @@ use serde_json::json;
 
 use super::{
     register_adapter, BridgeInfo, Capabilities, ChatBridgeAdapter, DeliveryKind, DeliveryOutcome, DeliveryRequest,
+    Encryption,
 };
 use crate::context::{ExecutionContext, ExecutionContextFactory};
 use crate::entity::EntityFacade;
@@ -83,6 +84,7 @@ impl TestAdapter {
                 reaction: true,
                 idempotent,
                 sends_per_minute: 0,
+                encryption: Encryption::BridgeDecrypted,
             },
             network: Mutex::new(Network::default()),
         })
@@ -942,6 +944,22 @@ fn an_unsupported_edit_is_refused_before_the_change() {
     };
     assert_eq!(field(&caps, "edit"), "false");
     assert_eq!(field(&caps, "reaction"), "true");
+    // each bridge carries its network's encryption, from its adapter, for the room's label (Comms-Messaging §6.2)
+    let encryptions: Vec<String> = match room.get("bridges") {
+        Some(Value::List(list)) => list
+            .iter()
+            .map(|bridge| match bridge {
+                Value::Map(map) => field(map, "encryption"),
+                other => panic!("{other:?}"),
+            })
+            .collect(),
+        other => panic!("{other:?}"),
+    };
+    assert!(!encryptions.is_empty());
+    assert!(
+        encryptions.iter().all(|value| value == "BridgeDecrypted"),
+        "{encryptions:?}"
+    );
     // a reaction both carry goes
     ok(
         &format!("{CHAT}.react#Message"),

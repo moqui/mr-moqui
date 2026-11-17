@@ -865,6 +865,8 @@
     const SETTINGS_MS = 30000;
     const roomSettings = new Map();
     const roomStrategy = new Map();
+    // the devices the last message of each room was not shared with, under only verified devices (COM-UI-013)
+    const roomLeftOut = new Map();
     async function verifiedOnly(chatRoomId) {
         const known = roomSettings.get(chatRoomId);
         if (known && Date.now() - known.at < SETTINGS_MS) return known.on;
@@ -897,6 +899,9 @@
             const settings = new sdk.EncryptionSettings();
             settings.historyVisibility = sdk.HistoryVisibility.Shared;
             settings.sharingStrategy = onlyVerified ? sdk.CollectStrategy.onlyTrustedDevices() : sdk.CollectStrategy.allDevices();
+            // who the strategy leaves out: the devices that are not verified (the machine tells each one why, m.unverified)
+            roomLeftOut.set(chatRoomId, onlyVerified ? (await devicesIn(ids)).filter((device) => !device.verified)
+                .map((device) => ({ userId: device.userId, deviceId: device.deviceId, displayName: device.displayName })) : []);
             const requests = await machine.shareRoomKey(new sdk.RoomId(roomIdOf(chatRoomId)), users(), settings);
             for (const request of requests) await sendRequest(request);
             const text = await machine.encryptRoomEvent(new sdk.RoomId(roomIdOf(chatRoomId)), eventType, JSON.stringify(content || {}));
@@ -929,10 +934,47 @@
                 await sync();
                 return await once();
             } catch (again) {
-                return { error: (again && (again.description || again.errors || again.message)) || "This message cannot be read on this device" };
+                // a key its sender withheld says why (m.unverified: this device is not verified for them; COM-UI-013)
+                let withheld = null;
+                try { withheld = (again && again.withheldCode) || null; } catch (err) { withheld = null; }
+                return { error: (again && (again.description || again.errors || again.message)) || "This message cannot be read on this device", withheld };
             }
         }
     }
+
+    /** The devices of users (userIds) as this machine knows them, this device left out: [{userId, deviceId, displayName, verified}]. */
+    async function devicesIn(userIds) {
+        const out = [];
+        for (const userId of userIds) {
+            const list = await machine.getUserDevices(new sdk.UserId(matrixId(userId)), 5);
+            for (const device of list.devices()) {
+                const deviceId = device.deviceId.toString();
+                if ((userId === me && deviceId === state.deviceId) || device.isDeleted()) continue;
+                out.push({ userId, deviceId, displayName: device.displayName || null, verified: !!device.isVerified() && !device.isBlacklisted() });
+            }
+        }
+        return out;
+    }
+
+    /**
+     * The trust of an encrypted room's devices (§6.2's labels, COM-UI-013): {verifiedOnly (the user's or the room's setting),
+     * users: [{userId, devices: [{deviceId, displayName, verified}]}]}, the members' device lists queried first.
+     */
+    async function roomTrustNow(chatRoomId, memberUserIds) {
+        await ensureDevice();
+        const onlyVerified = await verifiedOnly(chatRoomId);
+        return serial(async () => {
+            if (!machine) throw closedError();
+            const ids = Array.from(new Set(Array.from(memberUserIds || []).concat([me]).filter((id) => id)));
+            await machine.updateTrackedUsers(ids.map((id) => new sdk.UserId(matrixId(id))));
+            await flushNow();
+            const devices = await devicesIn(ids);
+            return { verifiedOnly: onlyVerified, users: ids.map((userId) => ({ userId, devices: devices.filter((device) => device.userId === userId)
+                .map((device) => ({ deviceId: device.deviceId, displayName: device.displayName, verified: device.verified })) })) };
+        });
+    }
+    /** The devices the last message this page encrypted for a room was not shared with ([] when it went to all). */
+    function leftOutNow(chatRoomId) { return Promise.resolve(roomLeftOut.get(chatRoomId) || []); }
 
     /** A new Megolm session for the room's next message: a member left or was removed. */
     async function rotateRoomNow(chatRoomId) {
@@ -1317,6 +1359,7 @@
         sendToDevices: api("sendToDevices", sendToDevicesNow), devicesOf: api("devicesOf", devicesOfNow), sync: relayOnly("sync", sync),
         forget: relayOnly("forget", forgetNow), startOver: startOverNow, settingsChanged: relayOnly("settingsChanged", settingsChanged),
         encryptRoom: api("encryptRoom", encryptRoomNow), decryptRoom: api("decryptRoom", decryptRoomNow), rotateRoom: api("rotateRoom", rotateRoomNow),
+        roomTrust: api("roomTrust", roomTrustNow), leftOut: relayOnly("leftOut", leftOutNow),
         backupStatus: api("backupStatus", backupStatusNow), enableBackup: api("enableBackup", enableBackupNow),
         restoreBackup: api("restoreBackup", restoreBackupNow), crossSigningStatus: api("crossSigningStatus", crossSigningStatusNow),
         setupCrossSigning: api("setupCrossSigning", setupCrossSigningNow), verifyDevice: api("verifyDevice", verifyDeviceNow),

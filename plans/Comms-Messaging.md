@@ -94,7 +94,7 @@ The width selects the layout, with the thresholds in §1. They stay as built: th
 | Area | Phone layout | Status |
 |---|---|---|
 | Home | The room list at full size, not a card. Search bar on top. Start chat button (FAB) at the bottom right | Built (`Root.qvue:154`, `ChatPanel.qvue:102`). The search bar shows only with more than six rooms |
-| Room row | Avatar, name, last message, time, unread badge, E2EE or SMS icon | Partial: no E2EE icon (§6); a phone-number room has no icon on the home (`ChatPanel.qvue:153` has no `CrtExternal`) |
+| Room row | Avatar, name, last message, time, unread badge, E2EE or SMS icon | Partial: no E2EE icon (§6); a phone-number room has the SMS icon (`CrtExternal`, phase 0) |
 | Room row actions | Swipe right: pin. Swipe left: archive. Long press: pin, mute, mark read or unread, archive | Built (`ChatPanel.qvue:56-60`, `118-134`) |
 | New chat | Full-screen picker: search people and phone numbers, select one or several, Start. A name makes it a room | Built (phase 1): `searchUsers` with `numbers=true` offers a typed number, `textRoom` opens its room, a name with two or more people calls `createRoom` (`moqui.chat.startChat`) |
 | Room header | Back, avatar, name, E2EE status icon (§6), call and video buttons, menu | Partial: one call button; the E2EE icon is planned |
@@ -105,6 +105,8 @@ The width selects the layout, with the thresholds in §1. They stay as built: th
 
 ### 2.2 Work
 
+Steps 1 to 7 are built (phase 0 and phase 1); the voice button of step 5 comes with phase 7.
+
 1. **Shared helpers.** `moqui.chat` in `webroot/js/WebrootChat.js` (the shell already loads it) gets the helpers that
    `Chat.qvue` and `ChatPanel.qvue` each have a copy of: the room icon, the unread and mention counts, the snippet,
    the layout thresholds, and the time and day labels on `moqui.l10n`'s zoned helpers. `Chat.qvue`, `ChatPanel.qvue`
@@ -113,8 +115,6 @@ The width selects the layout, with the thresholds in §1. They stay as built: th
      `.qvue` files, so a plain `.js` file with templates would not render in the app. A new component that other
      screens can use (the emoji picker, §4) is an `m-` component in `webroot/js`, added to the list of
      `client_components_are_precompiled`. A chat-only template stays in `Chat.qvue`.
-Steps 1 to 7 are built (phase 0 and phase 1); the voice button of step 5 comes with phase 7.
-
 2. **Back layers.** One registry in the page, `moqui.back`: an open sheet, menu, details pane, thread or room pushes a
    function that closes it, and takes it off when it closes another way. `moqui.back.pop()` closes the top one and
    says if there was one.
@@ -128,8 +128,11 @@ Steps 1 to 7 are built (phase 0 and phase 1); the voice button of step 5 comes w
      the room").
    - As built: the layers are the message sheet, an edit, the side pane or thread (`Chat.qvue`), and the room, the
      picker, a room's actions and the archive of the chat panel (`ChatPanel.qvue`, the phone's home). A room of the Chat
-     screen is not a layer: it is in the history (the browser's, or the shell's, `moqui.back.base`). A link to the place
-     on top of the shell's history is a step back, so a room's Back does not leave the room on the stack.
+     screen is not a layer: it is in the history (the browser's, or the shell's, `moqui.back.base`). The shell's drawer
+     over a narrow window is a layer. A link followed while a layer closes by Back (`moqui.back.closing`: a thread) is a
+     step back in the shell's history, so the next Back does not open the thread again; any other link is a new entry.
+     What is in front closes first: with the tray open (or a floating window focused), Esc closes its layers, then the
+     tray, never a layer of the screen behind.
    - As built on Android: Tauri's `TauriActivity` turns off `WryActivity`'s back callback (`handleBackNavigation` false)
      and handles back in its app plugin, so the app's `MainActivity.kt` adds its own callback after Tauri's, once the
      webview is made; when the page closes nothing, Tauri's back goes on.
@@ -149,7 +152,7 @@ Steps 1 to 7 are built (phase 0 and phase 1); the voice button of step 5 comes w
 | Check | How it is checked |
 |---|---|
 | At 390×844 the list fills the screen, and Start chat opens the full-screen picker | Acceptance client spec (a phone-width check is an acceptance test) |
-| A direct chat with one person, a named group with two, and a text to a number can be started from the phone | Acceptance client spec; the number with the fake SMS adapter |
+| A direct chat with one person, a named group with two, and a text to a number can be started from the phone | Acceptance client spec `PhoneChat`, on a stand-in server; the real `searchUsers` and `textRoom` path is covered by `BasicCommsTexts` |
 | Bubbles show own messages on the right; a list time and a room time agree for a user whose zone is not the browser's | Regression client spec for the time; the rest in the acceptance spec |
 | Back closes a sheet, then a pane, then the room, and does not leave the app from inside a room | Regression client spec for `moqui.back`; the Android gesture on a real phone |
 | The composer stays above the keyboard; a long press vibrates | Real phone. The manifest has no `VIBRATE` permission, so `navigator.vibrate` may do nothing in the app; if so, add a host command |
@@ -293,17 +296,24 @@ and three reactions, on a phone and on a desktop (acceptance client spec).
 7. Mail is never shown with a lock or a chat E2EE label. Where a person's mail shows beside their chats, it says
    "Email is not end-to-end encrypted" (COM-UI-019).
 
-Server work for rule 4:
-- `roomRequiresE2ee` reads only the room's `callE2eeRequired` today (`Calls.js:599-602`). It also returns true for a
-  room with `encrypted`. The room's call setting then shows on and fixed in an encrypted room.
-- `set#RoomCallEncryption` refuses a direct room (`Calls.js:634`); a plain direct room keeps the per-call choice
-  ("start an encrypted call").
+Rules 1, 2, 4, 6 and 7 are built (phase 3, `fdd1ab597`): the labels of §6.2 in the room and its lists, and rule 4 on the
+server. Rule 3's check marks are the lock's check of a room whose devices are all verified; the warning before a send
+to a verified person's new device is not built. Rule 5 is phase 10.
+
+Server work for rule 4 (built):
+- `roomRequiresE2ee` read only the room's `callE2eeRequired`. It now also returns true for a room with `encrypted`.
+  The room's call setting shows on and fixed in an encrypted room, and `set#RoomCallEncryption` refuses to turn it off
+  there.
+- `set#RoomCallEncryption` refuses a direct room; a plain direct room keeps the per-call choice ("start an encrypted
+  call").
 - The refusals exist and stay: `callNotEncrypted`, `unsupportedClient`, `noCryptoDevice` (`Calls.js:717-722`,
   `749-754`).
 
 ### 6.2 Labels
 
-This is the one table of labels. §16.5 adds only the RCS rows.
+This is the one table of labels. §16.5 adds only the RCS rows. Built in phase 3 (`fdd1ab597`): `moqui.chat.e2eeLabel` in
+`WebrootChat.js` answers each state (the call states too, for the call screen of phase 4); the room's header, banner,
+start and composer, Chat's rail and the home list use it, and the terminal shows it as one line.
 
 | State | Icon | Banner at the top of the room | Composer hint |
 |---|---|---|---|
@@ -323,7 +333,7 @@ This is the one table of labels. §16.5 adds only the RCS rows.
 - A bridge's label comes from its adapter: `Capabilities` (`chat_bridge.rs:110-119`) gets an `encryption` field with
   the values `None`, `Transport`, `BridgeDecrypted` and `EndToEnd`, and `get#BridgeCapabilities` returns it.
 
-States the review found without a label today:
+States the review found without a label (both built: COM-UI-013 in phase 3, `fdd1ab597`; COM-UI-011 in phase 0):
 - **A recipient who cannot read a message.** With "verified devices only" on, a message goes out and looks sent, and
   a member with an unverified device gets "missing key" (COM-UI-013). The sender sees who cannot read it, with a
   Verify link. The recipient's text says the sender has not verified this device; it is not the "restore from backup"
@@ -378,7 +388,7 @@ The UI explains this when the user picks an encrypted room:
   hidden WebView and no crypto store in Rust is planned for it; revisit only if daily use asks for it.
 
 **Labels done when:** each state in §6.2 shows on a phone and on a desktop, and the SMS room shows the SMS banner
-(acceptance client spec). A regression spec covers rule 4: a call in an encrypted room is encrypted, a phone and a
+(acceptance client spec `ChatLabels`; the call states on the call screen come with phase 4). A regression spec covers rule 4: a call in an encrypted room is encrypted, a phone and a
 guest are refused, and an encrypted direct room's call is encrypted.
 
 ## 7. Notifications
@@ -389,16 +399,22 @@ promised, and what happens when a push cannot be sent.
 
 ### 7.1 Today
 
+The server side of phase 2 (steps 2a to 2d, 2h) is built (2026-11-17): the rows below marked "since phase 2". The
+Android app (2e), the desktop and mobile `notify` (2f) and the check screen (2g) are not yet.
+
 | Path | What it does |
 |---|---|
 | Chat socket | Each event goes to members' open pages (`chatRoom:<id>`). Nothing when the app is closed |
-| Mentions | `notify#Mention` makes a notification on topic `ChatMention`. It is stored and pushed only if an app seeds the topic. mr-mantle does; a server with only the framework and BasicComms stores and pushes no mention |
-| Direct and room messages | Not pushed: a socket-only message never is (`notify/message.rs:400`; [Qvt-Client](../docs/ui/Qvt-Client.md)) |
-| Web Push | Title, link, topic and tag, encrypted to the browser (RFC 8291). Never the body, but Mantle's `ChatMention` title holds up to 120 characters of the message for a user with previews on. Disabled after 404, 410 or 5 failures in a row. No retry |
-| FCM | Data messages of kind `ring`, `ringEnded` and `notification`, with the title and link in clear text, so Google can read a mention's summary. Three tries in the request, then dropped. A registration is removed when FCM says the token is gone. The app shows `ring` and `ringEnded` and drops `notification` (`CallManager.kt:94`). The registration is tied to the device key |
-| Order | The mention notification and the call ring are sent before the message's transaction commits, so one that rolls back can still notify |
+| Mentions | Since phase 2: the framework seeds the `ChatMention` topic (`ChatSetupData.xml`), so `notify#Mention` stores every mention in the list. It is not pushed by `send#WebPush`; the chat push worker pushes it with its message (no double push) |
+| Activity | Since phase 2: `ChatUserActivity` (mention, reply, thread reply, reaction), written by `send#Message`, `edit#Message` and `react#Message` in the message's transaction, removed by a redaction, a reaction taken back and the retention. The feed service (`find#ChatActivity`) is phase 7 |
+| Direct and room messages | Since phase 2: pushed by the chat push worker (`service/chat_push.rs`, `ChatPushServices.xml`): `append#Event` writes a `ChatPushJob` in the transaction; after the commit the worker applies rules 1, 3 and 4 and writes a `PushOutbox` row per device, merged per device and room with a count; a missed call and a voicemail push as messages in their room (rule 6) ([Qvt-Client, Chat push](../docs/ui/Qvt-Client.md#install-and-web-push)) |
+| Web Push | Title, link, topic and tag, encrypted to the browser (RFC 8291). Never the body, but Mantle's `ChatMention` title holds up to 120 characters of the message for a user with previews on (since phase 2 that topic is not pushed by `send#WebPush`). Disabled after 404, 410 or 5 failures in a row. A chat push to a browser is the encrypted chat payload, with TTL, `Urgency` and a `Topic` per room, and retries |
+| FCM | Data messages of kind `ring`, `ringEnded` and `notification`, and since phase 2 `chat` and `clear`. Since phase 2 a device gives its push keys at `register#PushDevice` and a `notification` or chat push carries only `{kind, pushId, enc}` (encrypted, COM-UI-031); a device with no keys gets no text. `send#WebPush` tries three times in the request; the chat outbox retries 429 and 5xx with backoff, jitter and `Retry-After`, at most an hour a wait, 12 tries or the 4-week TTL, and deletes a registration FCM says is gone. A ring still carries its caller in clear text until the app decrypts (2e). The app shows `ring` and `ringEnded` and drops the others (`CallManager.kt:94`). The registration is tied to the device key |
+| UnifiedPush | Since phase 2: `register#PushDevice` with `provider=unifiedpush` keeps a distributor's endpoint (`PushUnified`, keys required); the worker and `send#WebPush` post the same encrypted payload to it as Web Push |
+| Order | Since phase 2 the push of a message and the call's ring and its end go after the commit (`registerOnCommit`, COM-UI-032); the mention notification is still stored in the transaction (force-cache), but not pushed |
 | Settings | Room level `CnlAll`, `CnlMentions`, `CnlNone`; `CHAT_NOTIFY_DEFAULT`; `CHAT_NOTIFY_PREVIEW`. A muted room counts and notifies as Mentions (`ChatEntities.xml:107`) |
-| Do not disturb | A server job sets and clears the `dnd` status by the user's hours every 5 minutes (`apply#DndHours`). No server path reads the status before a notification or a ring: only the client silences toasts and sounds (COM-UI-015) |
+| Do not disturb | A server job sets and clears the `dnd` status by the user's hours every 5 minutes (`apply#DndHours`). Since phase 2 the push worker holds a user's chat pushes while the status is `dnd` and sends one summary per room and device when it ends, and a call rings the devices only from a person on the user's allowed list (`CHAT_DND_ALLOWED`, Settings, Chat) or as the same person's or number's second call within 3 minutes, on the apps and the desk and soft phones alike (`filter#RingUsers`). The client still silences toasts and sounds itself (COM-UI-015) |
+| Health | Since phase 2: each device keeps sent, acknowledged and failed counts and its last registration, push and acknowledgement (`ack#Push`, `/qapps/ackClientPush`); System, Push Health lists them, the devices with unacknowledged pushes of the last day first |
 
 ### 7.2 Rules
 
@@ -1063,7 +1079,7 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 | 0 | Fixes from the UI review: done 2026-11-16 (`82affc535`) | §5.2 paging, §6.5 | Small |
 | 1 | Shared helpers and the rest of the phone layout: done 2026-11-17 (`c88df4a3f`) | §2 | Medium |
 | 2 | Notifications | §7 | Large |
-| 3 | E2EE labels and the call rule | §6.1–§6.4 | Medium |
+| 3 | E2EE labels and the call rule: done 2026-11-17 (`fdd1ab597`) | §6.1–§6.4 | Medium |
 | 4 | Calls: flow and screen | §8.3 items 1–7 | Large |
 | 5 | Calls: network tests, then resilience | §8.3 items 8–14, §8.4 | Large |
 | 6 | Message menu, reactions, Info | §4 | Medium |
@@ -1159,16 +1175,22 @@ Send button (step 5) and the home list's icon and `setNotification` (step 6).
 
 Server first, then the Android app, then the desktop and the check screen.
 
+The server side is done (2026-11-17, `ce99f253c`, `9fe2bde2e`): steps 2a to 2d and the server of 2h. `service/chat_push.rs` and
+`ChatPushServices.xml` are the worker; `ChatUserActivity`, `ChatPushJob` and `PushOutbox` are in `ChatEntities.xml`;
+the Settings, Chat list "Calls that ring through" keeps `CHAT_DND_ALLOWED`; System, Push Health is basic-comms'
+`screen/System/PushHealth.xml`. The rules are regression tests of `chat_push_tests.rs` on the worker's clock. Left for
+2e: the app's push key pair and its decryption of `enc` (and then the ring's own fields, which still go in clear text).
+
 | Step | Work | Files |
 |---|---|---|
-| 2a | Seed `ChatMention` in the base data. `ChatUserActivity`, written by `send#Message` and `react#Message`, removed by redaction and retention (§5.2). The feed service comes in phase 7 | `ChatEntities.xml`, `ChatServices.xml`, the base setup data |
-| 2b | `ChatPushJob` written by `append#Event`; the worker; `PushOutbox` with merge, retries, TTL, collapse and priority; the ring sent after the commit | new `crates/moqui-core/src/service/chat_push.rs`, `fcm.rs`, `web_push.rs`, `Calls.js` |
-| 2c | Rules 1 to 4 in the worker: level, mute as Mentions, read marker, `clear` on a read, DND hold and summary | `chat_push.rs`, `ChatServices.xml` (`mark#Read`) |
-| 2d | The device's push key at `register#PushDevice`; the encrypted payload; `ack#Push`; the System health screen | `NotificationServices.xml`, `web_push.rs`, `notify/push_crypto.rs`, a System screen |
+| 2a (done) | Seed `ChatMention` in the base data. `ChatUserActivity`, written by `send#Message` and `react#Message`, removed by redaction and retention (§5.2). The feed service comes in phase 7 | `ChatEntities.xml`, `ChatServices.xml`, the base setup data |
+| 2b (done) | `ChatPushJob` written by `append#Event`; the worker; `PushOutbox` with merge, retries, TTL, collapse and priority; the ring sent after the commit | new `crates/moqui-core/src/service/chat_push.rs`, `fcm.rs`, `web_push.rs`, `Calls.js` |
+| 2c (done) | Rules 1 to 4 in the worker: level, mute as Mentions, read marker, `clear` on a read, DND hold and summary | `chat_push.rs`, `ChatServices.xml` (`mark#Read`) |
+| 2d (done) | The device's push key at `register#PushDevice`; the encrypted payload; `ack#Push`; the System health screen | `NotificationServices.xml`, `web_push.rs`, `notify/push_crypto.rs`, a System screen |
 | 2e | Android: decrypt and show in Kotlin, channels, `MessagingStyle`, Reply and Mark read through the Rust outbox, `clear`, the permission and battery prompts, token retry | `PushService.kt`, `CallManager.kt`, a new notifications class, `Native.kt`, `crates/moqui-mobile/src` |
 | 2f | Desktop and mobile `notify` with tag and link; missed messages on start; the browser payload | `crates/moqui-desktop/src/bridge.rs`, `crates/moqui-mobile/src/bridge.js`, `MoquiLib.js` |
 | 2g | The check screen in the shell with its host command; "Send a test notification" | `Root.qvue`, `bridge.js`, `commands.rs` |
-| 2h | UnifiedPush: the app registers a distributor's endpoint where the phone has no Google Play; the worker sends the same encrypted payload to it (§7.4) | `web_push.rs` or a new `unified_push.rs`, `PushService.kt`, `NotificationServices.xml` |
+| 2h (server done) | UnifiedPush: the app registers a distributor's endpoint where the phone has no Google Play; the worker sends the same encrypted payload to it (§7.4) | `web_push.rs` or a new `unified_push.rs`, `PushService.kt`, `NotificationServices.xml` |
 
 - Reuse: the bridge delivery worker's pattern (`chat_bridge.rs`: lease, backoff, sweep, a round at a given time);
   `push_crypto::encrypt`; `WebPushSubscription`'s key fields; the Rust outbox kinds `chat-send` and `chat-read` with
@@ -1178,6 +1200,31 @@ Server first, then the Android app, then the desktop and the check screen.
 
 #### Phase 3: E2EE labels and the call rule
 
+Done 2026-11-17 in `fdd1ab597` ([review](ui-review-basic-comms.md) COM-UI-001, 004, 013).
+
+| Work | Files |
+|---|---|
+| `moqui.chat.e2eeLabel` (state, icon, banner, hint, Verify, one line), `trustOf`, `leftOutText`, `undecryptableText`; `ROOM_ICONS.CrtPrivate` is people | `WebrootChat.js` |
+| The lock (with its check) in the header and the rail and the home list for E2EE only, the open lock otherwise; the banner under the header (closed per room) and at the room's start; the composer's Text message and network name; the bridges' encryption and the calls' setting (on and fixed in an encrypted room) in Room settings | `Chat.qvue`, `ChatPanel.qvue` |
+| `Capabilities.encryption` (`None`, `Transport`, `BridgeDecrypted`, `EndToEnd`); `get#BridgeCapabilities`, the room's `bridges` and `find#Rooms`' `bridgeNetworks`; Telnyx SMS says `None` | `chat_bridge.rs`, `telnyx.rs`, `ChatServices.xml` |
+| Rule 4: `roomRequiresE2ee` for an encrypted room; `set#RoomCallEncryption` refuses to turn it off there | `Calls.js`, `CallServices.xml` |
+| COM-UI-013: the devices a share left out (`moqui.crypto.leftOut`), a room's device trust (`roomTrust`, asked only of a device already open), the withheld code in `decryptRoom` | `WebrootCrypto.js`, `Chat.qvue` |
+| The terminal's one line | `ChatTui.xml` |
+| Bundled screens regenerated | `bundled-screens.js` |
+
+- SMS is `None`, not `Transport` (§6.3: "Never"): Telnyx is reached over TLS, but the provider, the carriers and the
+  phone network read every text.
+- Tests. Regression: the label's rules, the trust and the texts (`WebrootChat`); rule 4 (`CallEncryption`: an encrypted
+  room's call, a phone and a guest refused, the setting fixed, an encrypted direct room, a plain direct room's choice);
+  the terminal's line (`BasicCommsChat`, `BasicCommsEncrypted`, `BasicCommsBridges`); the bridges' encryption
+  (`BasicCommsBridges`, `chat_bridge_tests`, moqui-channels). Acceptance: `ChatLabels` (each room state at 390×844 and
+  1280×800 in the bundled shell, offline) and `EncryptedChatFlow`'s verified-only feature (who was left out, and
+  `m.unverified` to the reader).
+- Left: the call screen's label (phase 4, from `e2eeLabel`'s call states); the warning before a send to a verified
+  person's new device (rule 3); the label in a notification (phase 2's payload); Mail's line beside a person's chats
+  (phase 8, the `mail` state).
+
+Planned:
 - The label state function in `moqui.chat`; the lock and the room type icons; the banners and composer hints of §6.2
   in the header, room info, room list and home list.
 - `Capabilities.encryption` on the adapter trait, `get#BridgeCapabilities` and the Telnyx SMS adapter.

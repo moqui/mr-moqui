@@ -443,7 +443,10 @@ scope everywhere, another while its app is the current one. The `KEYMAP` user pr
 opened (a sheet, a details pane, a thread, a room opened in a list): `push(close, el)` returns the function that takes it off,
 and `track(vm, isOpen, close)` (in `mounted`; the returned function in `beforeUnmount`) keeps one while `isOpen()` is true.
 `pop()` closes an open dialog or menu (the Esc Quasar takes), else the top layer whose element is shown, else calls `base`,
-the page root's own history (the desktop and mobile shell's), and answers whether it closed something. Esc asks
+the page root's own history (the desktop and mobile shell's), and answers whether it closed something. What is in front
+goes first (`front()`: the floating window with the focus, else the open tray): while it is there only its layers close,
+and with none `pop` answers false, so Esc then closes the tray. `within` keeps it to the layers inside an element (Chat's
+Esc). `closing` is true while a layer closes, so a link it follows is a step back in the shell's history. Esc asks
 `pop({popups: false, base: false})`; the shell's Back and Android's back gesture ask `pop()`. Layers are not in the browser's
 history, so the browser's Back does not close them.
 
@@ -1158,7 +1161,8 @@ From then on each **persisted** notification the user wants pushed (`pushNotific
 `NotificationTopic`, else yes but for the `NinUpdates` inbox) also goes to that browser, through
 `send#WebPush` on a service worker (`service/web_push.rs`: RFC 8291 encryption, RFC 8292 VAPID). The payload is the
 title, link and topic, and the message id as the tag, never the message body. A click on the notification focuses an
-open `/qapps` window at the link, or opens one. Socket messages (a chat event, a signal) are never pushed.
+open `/qapps` window at the link, or opens one. Socket messages (a chat event, a signal) are never pushed this way; a
+chat message has its own push (Chat push, below), whose notification the service worker builds and closes.
 
 The desktop notification a page shows for a socket message has the same tag as the push, so the browser shows one.
 In the desktop app, which defines `window.moquiDesktop` (below, In the desktop app),
@@ -1190,17 +1194,24 @@ as a notification.
 The server keeps its key in `web_push_vapid_key` (generated, an `is-secret` default-property shared by the cluster) and
 names itself to the push services with `web_push_subject` (a `mailto:` or `https:` URL; set it in production).
 
-**Native apps (FCM).** The mobile app is not a browser and gets no Web Push. Signed in with its device key, it registers
-its Firebase Cloud Messaging token (`POST /qapps/registerClientPush` with `provider=fcm`, `token`, `appId`, `platform`;
-`register#PushDevice`), stored in the same `WebPushSubscription` entity with `pushProviderEnumId` `PushFcm` and the device
-key (`loginKey`). A request not signed in by a device key is refused, so the registration ends with its device: the
-key's revoke (`revoke#UserDeviceKey`, or logout with `revokeLoginKey`) deletes it, its renewal moves it to the new key,
-and one whose key ended otherwise is deleted at the next push. `POST /qapps/unregisterClientPush` forgets it.
-`/qapps/clientConfig` says what the server offers in `server.features.nativePush` (`providers`, `fcmConfigured`,
-`registered`).
+**Native apps (FCM, UnifiedPush).** The mobile app is not a browser and gets no Web Push. Signed in with its device key,
+it registers its Firebase Cloud Messaging token (`POST /qapps/registerClientPush` with `provider=fcm`, `token`, `appId`,
+`platform`; `register#PushDevice`), stored in the same `WebPushSubscription` entity with `pushProviderEnumId` `PushFcm`
+and the device key (`loginKey`), and with its push public key and auth secret (`p256dhKey`, `authSecret`: Web Push keys,
+RFC 8291), which every push to it is then encrypted with. On a phone without Google Play it registers a UnifiedPush
+distributor's endpoint instead (`provider=unifiedpush`, `token` the https endpoint, the keys required; `PushUnified`),
+which the server posts to as it does a Web Push (with its VAPID token when it has the key). A request not signed in by
+a device key is refused, so the registration ends with its device: the key's revoke (`revoke#UserDeviceKey`, or logout
+with `revokeLoginKey`) deletes it, its renewal moves it to the new key, and one whose key ended otherwise is deleted at
+the next push. `POST /qapps/unregisterClientPush` forgets it, and `POST /qapps/ackClientPush` with a chat push's
+`ackId` (or a notification's `pushId`) says the app showed it (`ack#Push`). `/qapps/clientConfig` says what the server offers in `server.features.nativePush`
+(`providers` `fcm` and `unifiedpush`, `fcmConfigured`, `registered`, `encrypted`, `ack`).
 
 `send#WebPush` sends to these through FCM's HTTP v1 API (`service/fcm.rs`) as a data message, which the app's own code
-shows: `{kind, title, link, topic, tag}`, `kind` `notification` or `ring`; a call's ring adds `callSessionId`,
+shows: `{kind, topic, tag}`, `kind` `notification` or `ring`. A `notification` carries no readable text through
+Google: to a device that gave its keys its title, link, topic and tag are in `enc` (the RFC 8291 body, base64url), and
+one that gave none gets no title or link. A UnifiedPush device gets every field of the data message, encrypted to it.
+A call's ring adds `callSessionId`,
 `chatRoomId`, `caller` (FCM reserves `from`), `video`, `expiresAt` and `ringSeconds` (the time left when it is sent),
 with `android.priority` `HIGH` and the ring time as its `ttl`, so the app can show the incoming call with the screen
 locked. Every message carries `pushId`, the registration's `subscriptionId` (which `registerClientPush` answered), so
@@ -1217,6 +1228,39 @@ or the JSON itself (an `is-secret` default-property, from the environment or `ru
 `fcm_project_id` the project (by default the key's `project_id`). An RS256 JWT is exchanged at the key's `token_uri` for
 an access token, kept until five minutes before it expires. Unset, nothing goes to FCM and the log says so once.
 `fcm_base_url` replaces `https://fcm.googleapis.com`, for a test stand-in.
+
+A call's ring and its end are sent once the call's transaction commits, and on do not disturb (the apps and the desk
+and soft phones alike) only to a user whose allowed list (Chat settings, `CHAT_DND_ALLOWED`) has the caller, or whom
+the same caller (a user, or for an outside call the same number) called in the 3 minutes before
+(`ChatPushServices.filter#RingUsers`; when that check fails, everyone rings, logged).
+
+**Chat push.** A chat message reaches the devices of the members who should hear of it through the chat push worker
+(`service/chat_push.rs`, `org.moqui.chat.ChatPushServices`; [Comms-Messaging](../../plans/Comms-Messaging.md) §7), not
+`send#WebPush`: `append#Event` writes a `ChatPushJob` in the message's transaction, and after the commit the worker
+applies the room's level (All; Mentions, also for a muted room: the user's mentions, replies and thread replies;
+Nothing), leaves out a user who has read it, holds the pushes of a user on do not disturb until it ends (one summary
+per room then), and writes one `PushOutbox` row per device, a pending one of the same device and room taking the next
+message in with a count (an edit is not another message). A missed call pushes as a message to those who missed it,
+and a voicemail to the room's members (`call: missed` or `voicemail`, no snippet). Each push is encrypted to its
+device for every provider; the payload is `{v, kind: message, pushId, ackId, chatRoomId, eventSeq, roomName, direct,
+senderName, snippet, count, mention, encrypted, call, sentDate, title, link, tag, topic: ChatMessage}` (`pushId` the
+registration, as on a ring; `ackId` the push, for `ack#Push`; `tag` `chat-<chatRoomId>`), the snippet only in a plain
+room for a user whose `CHAT_NOTIFY_PREVIEW` is not N. FCM gets `{kind: chat, pushId, enc}` (a device with no keys
+`{kind, pushId}`), high priority, a TTL of 4 weeks and a collapse key; Web Push and UnifiedPush the same TTL,
+`Urgency: high` and a `Topic`. The key is an HMAC, keyed by the server's VAPID key, of the registration, the room and
+the push's kind, so a push service can neither find a room id nor tell that two users' pushes are of one room, and a
+clear never replaces a message waiting there. A push is sent as its lease locked it (another node may have merged a
+message in), never to a device that now belongs to another user (moving one drops what waits for it). A read marker
+moved forward (`mark#Read`, in a transaction of its own so it never fails the read) drops the room's pushes not yet
+sent, lowers the count of one newer than the read, and sends `{kind: clear, chatRoomId, lastReadEventSeq, tag}` at
+normal priority to the user's other devices that were sent one, but not to a device whose newer push of the room is
+unread. The browser's service worker (`sw.js`) builds a chat notification's title and body from the fields, closes the
+room's notifications on a clear and shows nothing, and acknowledges each chat push it shows
+(`/qapps/ackClientPush`). A push not taken (FCM 429 or 5xx, no answer) waits with backoff and jitter, at most an hour, or FCM's
+`Retry-After`, up to 12 tries or its TTL; FCM `UNREGISTERED` deletes the registration, a Web Push or UnifiedPush 404 or
+410 disables it. A `ChatMention` notification is stored and on the socket but not pushed by `send#WebPush`, so a
+mention is pushed once. Each device keeps its sent, acknowledged and failed counts, shown in System, Push Health,
+which alerts only on a device that acknowledges pushes (one it has acknowledged before).
 
 ## In the desktop app
 

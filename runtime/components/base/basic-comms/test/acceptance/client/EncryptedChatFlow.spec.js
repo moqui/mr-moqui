@@ -7,7 +7,8 @@
 // shares the browser's storage, Web Locks and BroadcastChannel) reads through the tab that holds the store, and takes the store
 // when that one closes it. A new device of john.doe (a page of its own, so a new store) reads nothing older until it
 // restores the key backup with the recovery key, and after "New recovery key" the old key still restores its older version.
-// With only verified devices on (the sender's setting, or the room's), an unverified device cannot read the next message. A
+// With only verified devices on (the sender's setting, or the room's), an unverified device cannot read the next message: the
+// sender's page knows whose device it left out, and the reader's says the sender has not verified it (COM-UI-013). A
 // store re-made under another key is reported and kept, never deleted unasked, until "Start over". A store from before the
 // derived store key (its random key stored, set here through Tools) moves to a new device with its room keys.
 // Run: ./moq test-client basic-comms --serve --spec EncryptedChatFlow
@@ -198,11 +199,16 @@ feature("only verified devices: with the sender's setting, or the room's, a devi
         // b's own setting: john.doe's device is not verified for b, so it cannot read b's next message
         setMine(b, true)
         const mine = b.evaluate(([roomId, members]) => window.__e2ee.send(roomId, members, "<p>Only verified b</p>"), [room.id, members])
+        const leftOut = b.evaluate((roomId) => window.moqui.crypto.leftOut(roomId), room.id)
         const aReadsMine = readBy(a, mine.eventSeq)
+        const aWhy = a.evaluate(([roomId, seq]) => window.__e2ee.get("timeline", {chatRoomId: roomId, eventSeq: seq})
+            .then((p) => window.moqui.crypto.decryptRoom(roomId, p.eventList[0]))
+            .then((out) => ({withheld: out.withheld || null, text: window.moqui.chat.undecryptableText(out.withheld, "B")})), [room.id, mine.eventSeq])
         const bReadsMine = readBy(b, mine.eventSeq)
         setMine(b, false)
         const open = b.evaluate(([roomId, members]) => window.__e2ee.send(roomId, members, "<p>To all b</p>"), [room.id, members])
         const aReadsOpen = readBy(a, open.eventSeq)
+        const leftOutOpen = b.evaluate((roomId) => window.moqui.crypto.leftOut(roomId), room.id)
         // the room's setting, by its owner john.doe: b's device is not verified for john.doe
         const roomOn = a.evaluate((roomId) => window.__e2ee.post("setVerifiedDevicesOnly", {chatRoomId: roomId, verifiedDevicesOnly: "true"})
             .then((out) => { window.moqui.crypto.settingsChanged(); return out }), room.id)
@@ -211,10 +217,14 @@ feature("only verified devices: with the sender's setting, or the room's, a devi
         const bReadsRoom = readBy(b, roomMessage.eventSeq)
         a.evaluate((roomId) => window.__e2ee.post("setVerifiedDevicesOnly", {chatRoomId: roomId, verifiedDevicesOnly: "false"})
             .then(() => window.moqui.crypto.settingsChanged()), room.id)
-        return {aReadsMine, bReadsMine, aReadsOpen, roomOn, notMember, bReadsRoom}
+        return {aReadsMine, bReadsMine, aReadsOpen, roomOn, notMember, bReadsRoom, leftOut, aWhy, leftOutOpen}
     },
-    then({aReadsMine, bReadsMine, aReadsOpen, roomOn, notMember, bReadsRoom}) {
+    then({aReadsMine, bReadsMine, aReadsOpen, roomOn, notMember, bReadsRoom, leftOut, aWhy, leftOutOpen}) {
         aReadsMine == null
+        leftOut.some((device) => device.userId == room.a)
+        aWhy.withheld == "m.unverified"
+        aWhy.text.startsWith("B has not verified this device")
+        leftOutOpen.length == 0
         bReadsMine == "Only verified b"
         aReadsOpen == "To all b"
         roomOn.verifiedDevicesOnly == true

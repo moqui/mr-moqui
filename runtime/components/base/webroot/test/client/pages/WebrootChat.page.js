@@ -769,3 +769,64 @@ test("the new-chat pickers: one person is a direct chat, several a group (with a
     assert.deepEqual(chat.numberOptions([{ phoneNumber: "+15550004000", description: "Office" }, { phoneNumber: "+15550004001" }]),
         [{ value: "+15550004000", label: "+15550004000 · Office" }, { value: "+15550004001", label: "+15550004001" }]);
 });
+
+test("the E2EE label (Comms-Messaging §6.2): a lock only for end to end, the open lock and its banner for the rest, the composer's hint for a text and a bridge", () => {
+    const label = (room, trust) => chat.e2eeLabel(room, trust);
+    // a private room's type icon is people, not a lock (COM-UI-001)
+    assert.equal(chat.roomIcon({ roomTypeEnumId: "CrtPrivate" }), "sym_o_groups");
+    const verified = label({ roomTypeEnumId: "CrtPrivate", encrypted: true }, { allVerified: true });
+    assert.deepEqual([verified.state, verified.lock, verified.verified, verified.icon, verified.verify], ["verified", true, true, "sym_o_lock", false]);
+    assert.ok(verified.banner.startsWith("Messages and calls are end-to-end encrypted"));
+    const sealed = label({ roomTypeEnumId: "CrtDirect", encrypted: true }, { allVerified: false });
+    assert.deepEqual([sealed.state, sealed.lock, sealed.verified, sealed.verify], ["encrypted", true, false, true], "not all verified: Verify");
+    assert.equal(label({ encrypted: true }).state, "encrypted", "trust not known is not verified");
+    for (const room of [{ roomTypeEnumId: "CrtPrivate", visibilityEnumId: "CrvMembers" }, { roomTypeEnumId: "CrtDirect" }]) {
+        const plain = label(room, { allVerified: true });
+        assert.deepEqual([plain.state, plain.lock, plain.icon, plain.hint], ["plain", false, "sym_o_lock_open", ""]);
+        assert.equal(plain.banner, "Not end-to-end encrypted. The server can read these messages.");
+    }
+    const channel = label({ roomTypeEnumId: "CrtPublic", visibilityEnumId: "CrvUsers" });
+    assert.deepEqual([channel.state, channel.lock, channel.banner], ["public", false, ""], "a public channel: the open lock, no banner");
+    assert.ok(channel.text, "but a line of text");
+    assert.equal(label({ roomTypeEnumId: "CrtRecord", visibilityEnumId: "CrvRecord" }).state, "public");
+    // a text: its pair room, or a room bridged to SMS (the adapter's encryption None)
+    for (const room of [{ roomTypeEnumId: "CrtExternal" }, { roomTypeEnumId: "CrtPrivate", bridges: [{ network: "sms", networkName: "SMS", encryption: "None" }] }]) {
+        const text = label(room);
+        assert.deepEqual([text.state, text.lock, text.hint], ["sms", false, "Text message"]);
+        assert.equal(text.banner, "Not end-to-end encrypted. Texts go through the phone network and the SMS provider.");
+    }
+    // a bridge, as get#Room gives it and as find#Rooms does: the network's name in the composer
+    const bridged = label({ roomTypeEnumId: "CrtPrivate", bridges: [{ network: "whatsapp", networkName: "WhatsApp", encryption: "BridgeDecrypted" }] });
+    assert.deepEqual([bridged.state, bridged.lock, bridged.hint], ["bridged", false, "WhatsApp message"]);
+    assert.equal(bridged.banner, "Not end-to-end encrypted on this server. The bridge reads messages to pass them on.");
+    assert.equal(label({ roomTypeEnumId: "CrtPublic", bridgeNetworks: [{ network: "xmpp", networkName: "XMPP", encryption: "Transport" }] }).hint, "XMPP message");
+    assert.equal(label({ roomTypeEnumId: "CrtPublic", bridged: true, bridgeNetworkNames: ["Matrix"] }).state, "bridged", "a cached row with names only");
+    // calls and mail
+    assert.deepEqual([label({ call: { e2ee: true } }).state, label({ call: { e2ee: true } }).lock], ["call-encrypted", true]);
+    assert.deepEqual([label({ call: { phone: true, e2ee: true } }).state, label({ call: { phone: true } }).lock], ["call-phone", false]);
+    assert.equal(label({ call: { phone: true } }).banner, "Phone calls are not end-to-end encrypted.");
+    assert.equal(label({ call: {} }).lock, false);
+    const mail = label({ mail: true });
+    assert.deepEqual([mail.state, mail.lock, mail.icon, mail.text], ["mail", false, null, "Email is not end-to-end encrypted"], "mail never has a lock");
+    assert.equal(label(null).state, "plain");
+});
+
+test("an encrypted room's trust: every other member's devices verified, else Verify; under only verified devices who cannot read, and why the reader cannot (COM-UI-013)", () => {
+    const device = (deviceId, verified) => ({ deviceId, displayName: deviceId + " phone", verified });
+    const all = chat.trustOf({ verifiedOnly: false, users: [{ userId: "ann", devices: [] }, { userId: "bob", devices: [device("B1", true)] }] }, "ann");
+    assert.deepEqual([all.known, all.allVerified, all.leftOut.length], [true, true, 0], "my only device is this one");
+    const some = chat.trustOf({ verifiedOnly: true, users: [{ userId: "ann", devices: [device("A2", false)] }, { userId: "bob", devices: [device("B1", true), device("B2", false)] }] }, "ann");
+    assert.equal(some.allVerified, false);
+    assert.deepEqual(some.leftOut.map((one) => one.userId + "/" + one.deviceId), ["ann/A2", "bob/B2"]);
+    assert.equal(chat.trustOf({ verifiedOnly: false, users: [{ userId: "bob", devices: [device("B2", false)] }] }, "ann").leftOut.length, 0, "shared with all: no one left out");
+    assert.equal(chat.trustOf({ users: [{ userId: "ann", devices: [] }, { userId: "bob", devices: [] }] }, "ann").allVerified, false, "a member with no known device is not verified");
+    assert.equal(chat.trustOf(null, "ann").known, false);
+    assert.equal(chat.leftOutText(some.leftOut, "ann", (id) => (id === "bob" ? "Bob Baker" : id)), "Not readable by Bob Baker, your other devices: their devices are not verified");
+    assert.equal(chat.leftOutText([], "ann"), "");
+    assert.ok(chat.undecryptableText("m.unverified", "Bob").startsWith("Bob has not verified this device"), "the sender withheld it from this device");
+    assert.ok(chat.undecryptableText(null, "Bob").includes("Restore your key backup"), "else the key backup");
+    // a withheld key's reason reaches the message
+    const item = {};
+    chat.applyOpened(item, { error: "unreadable", withheld: "m.unverified" });
+    assert.deepEqual([item.undecryptable, item.withheld], [true, "m.unverified"]);
+});

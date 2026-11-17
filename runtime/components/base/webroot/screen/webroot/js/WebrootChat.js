@@ -775,14 +775,14 @@
         // a decrypted message's content on an event or timeline item: body (cleaned), bodyText, files and mentions
         applyOpened(item, opened, attachmentUrl, roomId) {
             if (!opened || opened.error) {
-                Object.assign(item, { body: null, bodyText: null, undecryptable: true });
+                Object.assign(item, { body: null, bodyText: null, undecryptable: true, withheld: (opened && opened.withheld) || null });
                 return Promise.resolve(item);
             }
             const content = opened.content || {};
             const html = content.formatted_body ? chat.clean(content.formatted_body) : chat.escapeHtml(content.body);
             const files = Array.isArray(content["io.moqui.files"]) ? content["io.moqui.files"] : [];
             const stored = Array.isArray(item.attachments) ? item.attachments : [];
-            Object.assign(item, { body: html || null, bodyText: content.body || "", undecryptable: false, verifiedSender: !!opened.verified });
+            Object.assign(item, { body: html || null, bodyText: content.body || "", undecryptable: false, withheld: null, verifiedSender: !!opened.verified });
             if (files.length || stored.length) {
                 item.attachments = stored.map((file) => {
                     const sealed = files.find((one) => one.chatAttachmentId === file.chatAttachmentId) || {};
@@ -1106,9 +1106,11 @@
     // compare calendar days, so the boundaries hold through daylight saving changes (COM-UI-007; Comms-Messaging §2.2).
     const l10n = () => moqui.l10n;
     const tr = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+    const fillIn = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? "" : String(values[key])));
     Object.assign(chat, {
-        // a room's type icon; a record room shows its record's own
-        ROOM_ICONS: { CrtDirect: "sym_o_group", CrtPrivate: "sym_o_lock", CrtPublic: "sym_o_tag", CrtRecord: "sym_o_description", CrtExternal: "sym_o_sms" },
+        // a room's type icon (people for a private room: a lock means end-to-end encrypted only, COM-UI-001); a record room
+        // shows its record's own
+        ROOM_ICONS: { CrtDirect: "sym_o_group", CrtPrivate: "sym_o_groups", CrtPublic: "sym_o_tag", CrtRecord: "sym_o_description", CrtExternal: "sym_o_sms" },
         // the layout thresholds (Comms-Messaging §1): a room under NARROW_PX wide shows bubbles, under SIDE_OVERLAY_PX a
         // details pane over the timeline; a screen under Quasar's md (1024 px) is the stacked layout
         NARROW_PX: 640,
@@ -1184,6 +1186,90 @@
         // the user's numbers that text (Chat's textNumbers), as a picker's From options
         numberOptions(list) {
             return (list || []).map((number) => ({ value: number.phoneNumber, label: number.phoneNumber + (number.description ? " · " + number.description : "") }));
+        },
+        // ---- the E2EE label (Comms-Messaging §6.2, its one table; COM-UI-001) ----
+        // A lock means end-to-end encrypted and nothing else (§6.1 rule 6): an encrypted room has it, with a check when every
+        // device in it is verified; any other room has the open lock, and a public or record room no banner. A bridge says
+        // what its network does (encryption, from its adapter: None, Transport, BridgeDecrypted, EndToEnd), but a bridged
+        // room is never end to end on this server: the bridge reads its messages to pass them on. Mail never has a lock
+        // (rule 7). subject: a room as get#Room or find#Rooms gives it ({encrypted, roomTypeEnumId, visibilityEnumId, bridges
+        // or bridgeNetworks, bridged, bridgeNetworkNames}), a call ({call: {e2ee, phone}}) or mail ({mail: true}); trust: the
+        // room's devices when known (chat.trustOf). Answers {state, lock, verified, icon, banner, hint, verify, text}: state
+        // verified, encrypted, plain, public, sms, bridged, call-encrypted, call-phone, call or mail; lock true only for end
+        // to end; icon a Material symbol (none for mail); banner the text at the top of the room ('' for none); hint the
+        // composer's ('' for its own); verify whether the banner offers Verify; text the label as one line.
+        e2eeLabel(subject, trust) {
+            const it = subject || {};
+            const label = (state, lock, banner, more) => Object.assign({ state, lock, verified: false, icon: lock ? "sym_o_lock" : "sym_o_lock_open",
+                banner, hint: "", verify: false, text: banner }, more || {});
+            const sealedText = tr("Messages and calls are end-to-end encrypted. Only people in this chat can read them.");
+            if (it.mail) return label("mail", false, tr("Email is not end-to-end encrypted"), { icon: null });
+            if (it.call) {
+                if (it.call.phone) return label("call-phone", false, tr("Phone calls are not end-to-end encrypted."));
+                if (it.call.e2ee) return label("call-encrypted", true, tr("This call is end-to-end encrypted."));
+                return label("call", false, tr("This call is encrypted to the server, not end to end."));
+            }
+            if (it.encrypted) {
+                if (trust && trust.allVerified) return label("verified", true, sealedText, { verified: true, text: tr("End-to-end encrypted, every device verified") });
+                return label("encrypted", true, sealedText, { verify: true, text: tr("End-to-end encrypted") });
+            }
+            const bridges = Array.isArray(it.bridges) ? it.bridges : Array.isArray(it.bridgeNetworks) ? it.bridgeNetworks : [];
+            if (it.roomTypeEnumId === "CrtExternal" || bridges.some((bridge) => bridge && bridge.network === "sms")) {
+                return label("sms", false, tr("Not end-to-end encrypted. Texts go through the phone network and the SMS provider."), { hint: tr("Text message") });
+            }
+            if (bridges.length || it.bridged) {
+                const names = Array.from(new Set(bridges.map((bridge) => bridge && (bridge.networkName || bridge.name)).concat(it.bridgeNetworkNames || [])
+                    .filter((name) => name))).join(", ");
+                return label("bridged", false, tr("Not end-to-end encrypted on this server. The bridge reads messages to pass them on."),
+                    { hint: names ? fillIn(tr("{network} message"), { network: names }) : "" });
+            }
+            const visibility = it.visibilityEnumId;
+            if (it.roomTypeEnumId === "CrtPublic" || it.roomTypeEnumId === "CrtRecord" || visibility === "CrvUsers" || visibility === "CrvRecord") {
+                return label("public", false, "", { text: tr("Not end-to-end encrypted: the server can read this room") });
+            }
+            return label("plain", false, tr("Not end-to-end encrypted. The server can read these messages."));
+        },
+        // The trust of an encrypted room's devices, from moqui.crypto.roomTrust ({verifiedOnly, users: [{userId, devices:
+        // [{deviceId, displayName, verified}]}]}, this device left out): allVerified when every other member has a device
+        // and every device is verified; unverified, the devices that are not; leftOut, those the next message does not
+        // reach (only verified devices is on). Unknown (null) is not verified.
+        trustOf(answer, me) {
+            if (!answer || !Array.isArray(answer.users)) return { known: false, allVerified: false, verifiedOnly: false, unverified: [], leftOut: [] };
+            const unverified = [];
+            let missing = false;
+            for (const user of answer.users) {
+                const devices = Array.isArray(user.devices) ? user.devices : [];
+                if (!devices.length && user.userId !== me) missing = true;
+                for (const device of devices) if (!device.verified) unverified.push({ userId: user.userId, deviceId: device.deviceId, displayName: device.displayName || null });
+            }
+            const verifiedOnly = !!answer.verifiedOnly;
+            return { known: true, allVerified: !missing && !unverified.length && answer.users.length > 0, verifiedOnly, unverified,
+                leftOut: verifiedOnly ? unverified : [] };
+        },
+        // Who cannot read what this user sends now (COM-UI-013): the people of devices (chat.trustOf's leftOut, or
+        // moqui.crypto.leftOut's), by name (nameOf(userId)), and "your other devices" for the user's own; '' for none.
+        leftOutText(devices, me, nameOf) {
+            const list = Array.isArray(devices) ? devices : [];
+            if (!list.length) return "";
+            const people = Array.from(new Set(list.filter((device) => device.userId !== me).map((device) => (nameOf ? nameOf(device.userId) : null) || device.userId)));
+            if (list.some((device) => device.userId === me)) people.push(tr("your other devices"));
+            return fillIn(tr("Not readable by {who}: their devices are not verified"), { who: people.join(", ") });
+        },
+        // An encrypted message this device cannot read: why, when the sender withheld its key from an unverified device
+        // (m.room_key.withheld m.unverified, "only verified devices"), else the key backup or another device's share
+        undecryptableText(withheld, senderName) {
+            if (withheld === "m.unverified") {
+                return fillIn(tr("{name} has not verified this device, so it cannot read this message. Once {name} verifies it (Settings, My devices), their next messages can be read here."),
+                    { name: senderName || tr("The sender") });
+            }
+            return tr("Encrypted message: this device has no key for it yet. Restore your key backup in Settings, My devices, or keep this page open while another of your devices shares it.");
+        },
+        // a room's banner closed by this user (until its state changes), in this browser only
+        bannerClosed(roomId, state) {
+            try { return !!root.localStorage && root.localStorage.getItem("moqui.chat.banner." + roomId) === state; } catch (err) { return false; }
+        },
+        closeBanner(roomId, state) {
+            try { if (root.localStorage) root.localStorage.setItem("moqui.chat.banner." + roomId, state); } catch (err) { /* this page only */ }
         }
     });
     moqui.chat = chat;

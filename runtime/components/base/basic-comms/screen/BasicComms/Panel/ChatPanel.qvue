@@ -72,6 +72,8 @@ along with this software (see the LICENSE.md file). If not, see
                     <q-item-section style="min-width:0">
                         <q-item-label class="row no-wrap items-center">
                             <span class="ellipsis" :class="countsOf(room).unread || countsOf(room).mentions ? 'text-weight-bold' : ''">{{room.displayName}}</span>
+                            <q-icon v-if="labelOf(room).lock" name="sym_o_lock" size="14px" class="text-positive q-ml-xs m-chat-e2ee-lock" :data-e2ee="room.chatRoomId"
+                                    :aria-label="labelOf(room).text"></q-icon>
                             <q-icon v-if="room.isMuted" name="sym_o_notifications_off" size="14px" class="m-muted q-ml-xs" :aria-label="t('Muted')"></q-icon>
                             <q-icon v-if="room.isPinned && home" name="sym_o_keep" size="14px" class="m-muted q-ml-xs" :aria-label="t('Pinned')"></q-icon>
                             <q-space></q-space>
@@ -269,6 +271,8 @@ module.exports = {
         },
         // the type icon (a phone number's room too), counts and snippet as Chat shows them (moqui.chat)
         roomIcon(room) { return moqui.chat.roomIcon(room); },
+        // the room's E2EE label (moqui.chat.e2eeLabel): a row shows its lock when it is end to end only (COM-UI-001)
+        labelOf(room) { return moqui.chat.e2eeLabel(room); },
         countsOf(room) { return moqui.chat.countsOf(room); },
         snippetOf(room) { return moqui.chat.roomSnippet(room, this.me.userId); },
         // the rooms, few and light: the panel is a glance (Open in Comms has them all)

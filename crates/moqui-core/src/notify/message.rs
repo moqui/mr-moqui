@@ -398,8 +398,9 @@ impl NotificationMessage {
             self.notification_message_id.as_deref(),
         );
         // A persisted message is in its users' lists; those who want it pushed get a Web Push to each browser they
-        // subscribed. A socket-only message (a chat event, a signal) never is.
-        if persist {
+        // subscribed. A socket-only message (a chat event, a signal) never is, nor a topic the chat push worker pushes
+        // (a mention goes with its message, by the room's level: plans/Comms-Messaging.md §7.3), so none goes twice.
+        if persist && !crate::service::chat_push::PUSHED_TOPICS.contains(&self.topic.as_str()) {
             let push_users: Vec<String> = self
                 .notify_user_ids
                 .iter()

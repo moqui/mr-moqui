@@ -125,6 +125,8 @@ module.exports = {
         },
         // the type icon (a phone number's room too), counts and snippet as Chat shows them (moqui.chat)
         roomIcon(room) { return moqui.chat.roomIcon(room); },
+        // the room's E2EE label (moqui.chat.e2eeLabel): a row shows its lock when it is end to end only (COM-UI-001)
+        labelOf(room) { return moqui.chat.e2eeLabel(room); },
         countsOf(room) { return moqui.chat.countsOf(room); },
         snippetOf(room) { return moqui.chat.roomSnippet(room, this.me.userId); },
         // the rooms, few and light: the panel is a glance (Open in Comms has them all)
@@ -552,9 +554,19 @@ module.exports = {
                                                       _createElementVNode("span", {
                                                         class: _normalizeClass(["ellipsis", _ctx.countsOf(room).unread || _ctx.countsOf(room).mentions ? 'text-weight-bold' : ''])
                                                       }, _toDisplayString(room.displayName), 3),
-                                                      (room.isMuted)
+                                                      (_ctx.labelOf(room).lock)
                                                         ? (_openBlock(), _createBlock(_component_q_icon, {
                                                             key: 0,
+                                                            name: "sym_o_lock",
+                                                            size: "14px",
+                                                            class: "text-positive q-ml-xs m-chat-e2ee-lock",
+                                                            "data-e2ee": room.chatRoomId,
+                                                            "aria-label": _ctx.labelOf(room).text
+                                                          }, null, 8, ["data-e2ee", "aria-label"]))
+                                                        : _createCommentVNode("", true),
+                                                      (room.isMuted)
+                                                        ? (_openBlock(), _createBlock(_component_q_icon, {
+                                                            key: 1,
                                                             name: "sym_o_notifications_off",
                                                             size: "14px",
                                                             class: "m-muted q-ml-xs",
@@ -563,7 +575,7 @@ module.exports = {
                                                         : _createCommentVNode("", true),
                                                       (room.isPinned && _ctx.home)
                                                         ? (_openBlock(), _createBlock(_component_q_icon, {
-                                                            key: 1,
+                                                            key: 2,
                                                             name: "sym_o_keep",
                                                             size: "14px",
                                                             class: "m-muted q-ml-xs",
@@ -1248,14 +1260,18 @@ module.exports = {
                 if (before) this.remember(before);
             }
         },
-        // the shell's history: the place left (before) goes on the back stack, unless the place now is the one on top of
-        // it, which is a step back (a room's or a thread's Back, which links to where it came from)
+        // the shell's history: the place left (before) goes on the back stack. A link a back layer follows as it closes
+        // (moqui.back.closing: a thread closed by Back) is a step back instead: it takes the place now off the top of the
+        // stack when it is there, and puts nothing on, so the next Back does not open the thread again.
         remember(before) {
             const stack = this.backStack;
             const now = this.currentLinkUrl;
             if (now === before) return;
-            if (stack.length && stack[stack.length - 1] === now) this.backStack = stack.slice(0, -1);
-            else this.backStack = stack.concat([before]).slice(-30);
+            if (moqui.back && moqui.back.closing) {
+                if (stack.length && stack[stack.length - 1] === now) this.backStack = stack.slice(0, -1);
+                return;
+            }
+            this.backStack = stack.concat([before]).slice(-30);
         },
         // Back (the header's, and Android's through moqui.back.pop): the top back layer (a dialog, menu, sheet, pane or
         // room the screens opened: moqui.back), else the shell's history (historyBack, moqui.back.base)
@@ -1358,7 +1374,11 @@ module.exports = {
     mounted() {
         // Back with no layer open goes back in the shell's history, and at the home answers that it did nothing (so
         // Android's back leaves the app there)
-        if (moqui.back) moqui.back.base = () => { if (!this.view) return false; this.historyBack(); return true; };
+        if (moqui.back) {
+            moqui.back.base = () => { if (!this.view) return false; this.historyBack(); return true; };
+            // the drawer over the page (a narrow screen) is a layer too
+            this.backOff = moqui.back.track(this, () => this.drawer && this.$q.screen.lt.md, () => { this.drawer = false; });
+        }
         // what the host had to tell after the sign-in (an account kept as a personal device's)
         if (this.state && this.state.notice) this.$q.notify({ type: 'info', message: t(this.state.notice), timeout: 12000 });
         if (moqui.chat) moqui.chat.start(this);
@@ -1380,6 +1400,7 @@ module.exports = {
     unmounted() {
         clearInterval(this.countsTimer);
         if (moqui.back && moqui.back.base) moqui.back.base = null;
+        if (this.backOff) this.backOff();
     }
 };
         })(module.exports);
@@ -2615,6 +2636,8 @@ const needsConnection = () => {
     moqui.notifyMessages([{ type: 'info', message: t('This needs a connection to the server: try again when it is back') }]);
     return true;
 };
+// who could not read a sealed message, by its clientRef until it is sent (COM-UI-013): in this page only
+const leftOutByRef = {};
 // the drafts of encrypted rooms: in this page only (C7)
 const sealedDrafts = {};
 const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
@@ -2737,7 +2760,7 @@ const messageTemplate = `
             </div>
         </div>
         <div v-if="item.redacted" class="text-body2 m-muted text-italic">{{item.removedLabel || room.t('Message removed')}}</div>
-        <div v-else-if="item.undecryptable" class="text-body2 m-muted text-italic m-chat-undecryptable"><q-icon name="sym_o_lock" size="16px" class="q-mr-xs"></q-icon>{{room.t('Encrypted message: this device has no key for it yet. Restore your key backup in Settings, My devices, or keep this page open while another of your devices shares it.')}}</div>
+        <div v-else-if="item.undecryptable" class="text-body2 m-muted text-italic m-chat-undecryptable" :data-withheld="item.withheld || undefined"><q-icon name="sym_o_lock" size="16px" class="q-mr-xs"></q-icon>{{room.undecryptableText(item)}}</div>
         <template v-else>
             <chat-edit v-if="room.isEditing(item)" :room="room" :item="item"></chat-edit>
             <div v-else-if="item.bodyHtml && !item.poll" class="m-rich-text-content text-body2" style="padding:0;cursor:auto;max-height:none;overflow:visible;overflow-wrap:anywhere"
@@ -2801,6 +2824,11 @@ const messageTemplate = `
             <div v-if="!inThread && item.threadReplyCount" class="q-mt-xs">
                 <a href="#" class="text-primary text-caption text-weight-medium" @click.prevent.stop="room.openThread(item.eventSeq)">{{room.repliesText(item.threadReplyCount)}}</a>
                 <span class="text-caption m-muted"> · {{room.t('last reply')}} {{room.shortWhen(item.threadLastDate)}}</span>
+            </div>
+            <!-- my message in an encrypted room with only verified devices on: who cannot read it, and Verify (COM-UI-013) -->
+            <div v-if="item.mine && room.leftOutBySeq[item.eventSeq]" class="row items-center no-wrap q-mt-xs text-caption text-warning m-chat-left-out">
+                <q-icon name="sym_o_no_encryption" size="14px" class="q-mr-xs"></q-icon><span class="ellipsis">{{room.leftOutBySeq[item.eventSeq]}}</span>
+                <q-btn flat dense no-caps size="sm" color="primary" class="q-ml-xs" :label="room.t('Verify')" @click.stop="room.openDevices()"></q-btn>
             </div>
             <!-- its delivery to the room's bridges: sending, delivered, not delivered (with Send again) or uncertain -->
             <div v-if="item.event.delivery" class="row items-center no-wrap q-mt-xs text-caption m-chat-delivery" :class="room.deliveryClass(item)"
@@ -2927,7 +2955,7 @@ const composerTemplate = `
         <q-btn flat round dense size="sm" icon="sym_o_attach_file" class="m-chat-attach" :aria-label="room.t('Attach files')" :disable="room.offline" @click="attachClick">
             <q-tooltip>{{room.offline ? room.t('Files go up when you are back online') : room.t('Attach files')}}</q-tooltip>
             <!-- on a phone (bubbles): the camera, the gallery or a file -->
-            <q-menu v-if="room.useBubbles" anchor="top left" self="bottom left"><q-list class="m-chat-attach-menu" style="min-width:200px">
+            <q-menu v-if="room.phoneAttach" anchor="top left" self="bottom left"><q-list class="m-chat-attach-menu" style="min-width:200px">
                 <q-item clickable v-close-popup data-attach="camera" @click="pickNative('camera')"><q-item-section avatar><q-icon name="sym_o_photo_camera"></q-icon></q-item-section>
                     <q-item-section>{{room.t('Camera')}}</q-item-section></q-item>
                 <q-item clickable v-close-popup data-attach="gallery" @click="pickNative('gallery')"><q-item-section avatar><q-icon name="sym_o_photo_library"></q-icon></q-item-section>
@@ -3045,8 +3073,8 @@ const chatComposer = {
             const input = this.$refs.picker && this.$refs.picker.$el && this.$refs.picker.$el.querySelector('input[type=file]');
             if (input) input.click();
         },
-        // the attach button: the file picker, or with bubbles its menu (camera, gallery, file)
-        attachClick() { if (!this.room.useBubbles) this.pickFiles(); },
+        // the attach button: the file picker, or on a phone its menu (camera, gallery, file)
+        attachClick() { if (!this.room.phoneAttach) this.pickFiles(); },
         pickNative(kind) { const input = this.$refs[kind]; if (input) input.click(); },
         onNative(event) {
             const list = Array.from((event.target && event.target.files) || []);
@@ -3164,8 +3192,12 @@ const roomTemplate = `
                     <q-icon v-if="member && (member.isMuted || member.notificationLevelEnumId === 'CnlNone')" name="sym_o_notifications_off" size="14px" class="q-ml-xs m-muted">
                         <q-tooltip>{{t('Muted')}}</q-tooltip></q-icon>
                     <q-chip v-if="room.archivedDate" dense square class="m-tonal text-warning q-ml-xs">{{t('Archived')}}</q-chip>
-                    <q-chip v-if="sealed" dense square icon="sym_o_lock" class="m-tonal text-positive q-ml-xs m-chat-encrypted">{{t('Encrypted')}}
-                        <q-tooltip>{{t('End-to-end encrypted: only the devices of its members read it. Search, link previews, agents, polls, bridges, forwards and filing on records are off here.')}}</q-tooltip></q-chip>
+                    <!-- the room's E2EE label (moqui.chat.e2eeLabel): the lock for end to end only, else the open lock (COM-UI-001) -->
+                    <q-chip v-if="label.lock" dense square icon="sym_o_lock" class="m-tonal text-positive q-ml-xs m-chat-encrypted" :data-e2ee="label.state">{{t('Encrypted')}}
+                        <q-icon v-if="label.verified" name="sym_o_check" size="14px" class="q-ml-xs m-chat-verified"></q-icon>
+                        <q-tooltip>{{label.text}}. {{t('Search, link previews, agents, polls, bridges, forwards and filing on records are off here.')}}</q-tooltip></q-chip>
+                    <q-icon v-else name="sym_o_lock_open" size="16px" class="q-ml-xs m-muted m-chat-not-e2ee" :data-e2ee="label.state" :aria-label="label.text">
+                        <q-tooltip>{{label.text}}</q-tooltip></q-icon>
                     <q-chip v-if="room.bridged" dense square icon="sym_o_hub" class="m-tonal text-info q-ml-xs m-chat-bridged">{{bridgeNames}}
                         <q-tooltip>{{bridgeTooltip}}</q-tooltip></q-chip>
                     <q-chip v-if="room.notConnected" dense square icon="sym_o_link_off" class="m-tonal text-warning q-ml-xs m-chat-not-connected">{{t('Not connected')}}
@@ -3232,6 +3264,14 @@ const roomTemplate = `
         </template>
     </div>
     <q-separator></q-separator>
+    <!-- the room's E2EE banner (Comms-Messaging §6.2): what reads its messages, with Verify in an encrypted room not all verified -->
+    <div v-if="room && label.banner && !bannerHidden" class="row no-wrap items-center q-px-sm q-py-xs text-caption m-tonal m-chat-e2ee-banner" :data-e2ee="label.state">
+        <q-icon :name="label.icon" size="16px" :class="label.lock ? 'text-positive' : 'm-muted'"></q-icon>
+        <q-icon v-if="label.verified" name="sym_o_check" size="12px" class="text-positive"></q-icon>
+        <span class="col q-ml-xs m-chat-e2ee-banner-text">{{label.banner}}</span>
+        <q-btn v-if="label.verify" flat dense no-caps size="sm" color="primary" class="q-ml-xs m-chat-verify" :label="t('Verify')" @click="openDevices"></q-btn>
+        <q-btn flat round dense size="xs" icon="sym_o_close" class="q-ml-xs" :aria-label="t('Close the note')" @click="closeBanner"></q-btn>
+    </div>
 
     <div class="col row no-wrap" style="min-height:0">
         <!-- the timeline and the composer -->
@@ -3270,6 +3310,7 @@ const roomTemplate = `
                             <q-avatar v-else size="48px" rounded class="m-tonal text-primary" :icon="roomIcon"></q-avatar>
                             <div class="text-subtitle1 text-weight-medium q-mt-sm">{{displayName}}</div>
                             <div class="text-caption m-muted">{{startText}}</div>
+                            <div v-if="label.banner" class="text-caption m-muted q-mt-xs m-chat-e2ee-intro"><q-icon :name="label.icon" size="14px" class="q-mr-xs"></q-icon><span class="m-chat-e2ee-intro-text">{{label.banner}}</span></div>
                         </div>
                         <template v-for="item in items" :key="item.key">
                             <div v-if="item.kind === 'day'" class="row items-center no-wrap q-my-sm q-px-sm">
@@ -3484,6 +3525,7 @@ const roomTemplate = `
                     <q-item-section>
                         <q-item-label>{{bridge.networkName || bridge.name}}<span v-if="bridge.externalRoomName"> · <a v-if="bridge.externalRoomUrl" :href="bridge.externalRoomUrl" target="_blank" rel="noopener noreferrer">{{bridge.externalRoomName}}</a><template v-else>{{bridge.externalRoomName}}</template></span></q-item-label>
                         <q-item-label caption>{{directionText(bridge.directionEnumId)}} · <span :class="bridge.connected ? 'text-positive' : 'text-warning'">{{bridge.connected ? t('connected') : t('not connected')}}</span></q-item-label>
+                        <q-item-label caption class="m-chat-bridge-encryption" :data-encryption="bridge.encryption">{{bridgeEncryptionText(bridge.encryption)}}</q-item-label>
                     </q-item-section>
                     <q-item-section v-if="me && me.bridgeAdmin" side class="row no-wrap">
                         <div class="row no-wrap">
@@ -3510,8 +3552,11 @@ const roomTemplate = `
                 </div>
             </template>
         </template>
-        <q-toggle v-model="settings.callE2ee" :label="t('Calls in this room are end-to-end encrypted')" class="q-mt-sm"></q-toggle>
-        <div class="text-caption m-muted">{{t('Only the people in a call hear and see it: no recording, captions, phones or guests. This is apart from the encryption of the messages.')}}</div>
+        <!-- an encrypted room's calls are encrypted, and that is not a setting (Comms-Messaging §6.1 rule 4) -->
+        <q-toggle :model-value="sealed || settings.callE2ee" :disable="sealed" :label="t('Calls in this room are end-to-end encrypted')" class="q-mt-sm m-chat-room-call-e2ee"
+                @update:model-value="(value) => { settings.callE2ee = value; }"></q-toggle>
+        <div v-if="sealed" class="text-caption m-muted">{{t('Every call in an encrypted room is end-to-end encrypted: no recording, captions, phones or guests.')}}</div>
+        <div v-else class="text-caption m-muted">{{t('Only the people in a call hear and see it: no recording, captions, phones or guests. This is apart from the encryption of the messages.')}}</div>
         <div class="row q-gutter-sm q-mt-md items-center">
             <q-btn unelevated no-caps color="primary" :label="t('Save')" :loading="settings.busy" @click="saveSettings"></q-btn>
             <q-btn flat no-caps :label="t('Cancel')" v-close-popup></q-btn>
@@ -3627,7 +3672,7 @@ const chatRoom = {
             settings: { open: false, roomName: '', topic: '', visibility: '', busy: false },
             bridgeForm: { open: false, chatRoomBridgeId: null, chatBridgeId: null, externalRoomId: '', externalRoomName: '', externalRoomUrl: '', directionEnumId: 'CrbBoth', busy: false },
             bridgeChoices: [], previewBox: { open: false, src: '', name: '', download: '', file: null },
-            tick: Date.now(), width: 0, dragOver: false, anchor: null,
+            tick: Date.now(), width: 0, dragOver: false, anchor: null, trust: null, bannerTick: 0, leftOutBySeq: {},
             fileOn: { open: false, item: null, value: null, busy: false },
             quickReactions: QUICK_REACTIONS, emoji: EMOJI, levels: LEVELS
         };
@@ -3663,6 +3708,10 @@ const chatRoom = {
         bridgeTooltip() { return fill(t('Messages here also go to {names}'), { names: this.bridgeNames }); },
         displayName() { return this.room ? (this.room.displayName || this.room.roomName || this.room.chatRoomId) : ''; },
         roomIcon() { return moqui.chat.roomIcon(this.room); },
+        // the room's E2EE label (Comms-Messaging §6.2): its state, icon, banner and composer hint, from the room, its bridges
+        // and, in an encrypted room, its devices' trust
+        label() { return moqui.chat.e2eeLabel(this.room, this.trust); },
+        bannerHidden() { void this.bannerTick; return !!this.room && moqui.chat.bannerClosed(this.roomId, this.label.state); },
         recordLabel() { const record = this.room && this.room.record; return record ? [record.typeLabel, record.title].filter((part) => part).join(' · ') : ''; },
         roomKindText() {
             if (!this.room) return '';
@@ -3682,6 +3731,8 @@ const chatRoom = {
         narrow() { return this.compact || (this.width > 0 && this.width < moqui.chat.NARROW_PX); },
         // a phone messaging layout: mine on the right, the others on the left, each in a bubble (the phone home, the stacked Chat, a narrow room)
         useBubbles() { return this.bubbles || this.narrow; },
+        // the attach choice of a phone (camera, gallery, file): bubbles on a mobile platform, not the desktop's narrow tray
+        phoneAttach() { return this.useBubbles && !!(this.$q.platform && this.$q.platform.is && this.$q.platform.is.mobile); },
         sideOverlay() { return this.compact || (this.width > 0 && this.width < moqui.chat.SIDE_OVERLAY_PX); },
         sideTitle() {
             return { thread: t('Thread'), members: fill(t('Members ({count})'), { count: this.members.length }), pinned: t('Pinned messages'),
@@ -3693,6 +3744,8 @@ const chatRoom = {
         noConnection() { return noConnection(); },
         // an encrypted room in a desktop client's app window, whose shell owns the crypto device: it opens in Chat there
         cryptoElsewhere() { return this.sealed && !!(moqui.crypto && moqui.crypto.elsewhere && moqui.crypto.elsewhere()); },
+        // this page's crypto device is open: an encrypted room's trust can be asked of it
+        cryptoReady() { return !!(moqui.crypto && moqui.crypto.state && moqui.crypto.state.status === 'ready'); },
         // the outbox's messages of this room and of the open thread (the chat store's state, so they follow other tabs)
         pendingMain() { void (moqui.chat && moqui.chat.state.outbox && moqui.chat.state.sending); return moqui.chat && moqui.chat.pendingIn ? moqui.chat.pendingIn(this.roomId, null) : []; },
         pendingThread() {
@@ -3705,7 +3758,8 @@ const chatRoom = {
             const options = this.pollBox.options.map((text) => String(text || '').trim()).filter((text) => text);
             return !!String(this.pollBox.question || '').trim() && options.length >= 2 && !this.pollBox.busy;
         },
-        composerPlaceholder() { return fill(this.isDirect ? t('Message {name}') : t('Message {name}… @ to mention'), { name: this.displayName }); },
+        // a text or a bridged network's message says so (Comms-Messaging §6.2)
+        composerPlaceholder() { return this.label.hint || fill(this.isDirect ? t('Message {name}') : t('Message {name}… @ to mention'), { name: this.displayName }); },
         visibilityOptions() {
             if (this.room && this.room.roomTypeEnumId === 'CrtRecord')
                 return [{ value: 'CrvRecord', label: t('Anyone who can see the record') }, { value: 'CrvMembers', label: t('Members only: added by a member') }];
@@ -3742,6 +3796,7 @@ const chatRoom = {
     },
     watch: {
         seq(value) { if (value && this.state === 'ready') this.jumpTo(Number(value)); },
+        cryptoReady(value) { if (value) this.loadTrust(); },
         thread(value) {
             if (this.state !== 'ready') return;
             if (value && Number(value) !== this.threadView.rootSeq) this.openThread(Number(value), true);
@@ -3790,6 +3845,27 @@ const chatRoom = {
         needsConnection() { return needsConnection(); },
         // the members' userIds, who get an encrypted room's keys
         memberIds() { return this.members.filter((person) => person.userId).map((person) => person.userId); },
+        // ---- the room's E2EE label (Comms-Messaging §6.2) ----
+        // an encrypted room's devices: verified or not (the lock's check, Verify), and who the next message leaves out. Asked
+        // only of a crypto device that is open (the room's messages open it), never to open one for the label.
+        loadTrust() {
+            const crypto = moqui.crypto;
+            if (!this.sealed || this.cryptoElsewhere || !crypto || !crypto.roomTrust || !crypto.state || crypto.state.status !== 'ready') return;
+            const roomId = this.roomId;
+            crypto.roomTrust(roomId, this.memberIds()).then((answer) => {
+                if (roomId === this.roomId) this.trust = moqui.chat.trustOf(answer, this.me.userId);
+            }, () => { if (roomId === this.roomId) this.trust = null; });
+        },
+        closeBanner() { moqui.chat.closeBanner(this.roomId, this.label.state); this.bannerTick += 1; },
+        // Verify: My devices, where a device is verified by emoji or QR code
+        openDevices() { this.go(this.linkBase.replace(/\/Chat$/, '/Settings/Devices')); },
+        undecryptableText(item) { return moqui.chat.undecryptableText(item.withheld, item.senderName); },
+        bridgeEncryptionText(encryption) {
+            if (encryption === 'EndToEnd') return t('End-to-end encrypted through the bridge');
+            if (encryption === 'BridgeDecrypted') return t('End-to-end encrypted on that network; the bridge here decrypts it');
+            if (encryption === 'Transport') return t('Encrypted in transit only: the network can read it');
+            return t('Not encrypted: the network and its providers can read it');
+        },
         // new room keys came (from a member, or the key backup): the messages that could not be read are tried again
         onRoomKeys() {
             if (!this.sealed || this.state !== 'ready') return;
@@ -3848,7 +3924,7 @@ const chatRoom = {
                 const item = { kind: 'message', key: 'e' + event.eventSeq, eventSeq: Number(event.eventSeq), event, senderUserId: event.senderUserId,
                     senderName: this.nameOf(event.senderUserId, event.senderName), sentDate: sent, timeText: timeText(sent), timeShort: timeText(sent), fullTime: fullTime(sent),
                     bodyHtml: event.redacted ? null : (event.body ? decorateBody(event.body, me) : null), redacted: !!event.redacted, removedLabel: event.removedLabel,
-                    undecryptable: !event.redacted && !!event.undecryptable,
+                    undecryptable: !event.redacted && !!event.undecryptable, withheld: event.withheld || null,
                     edited: !!event.edited, editedText: event.editedDate ? fill(t('Edited {when}'), { when: fullTime(event.editedDate) }) : t('Edited'),
                     attachments: event.attachments || [], records: event.records || [], reactions: event.reactions || [],
                     forwardOf: event.forwardOf ? Object.assign({}, event.forwardOf, { body: event.forwardOf.body && moqui.chat && moqui.chat.ownImages ? moqui.chat.ownImages(event.forwardOf.body) : event.forwardOf.body }) : null, poll: event.poll || null, linkPreviews: event.linkPreviews || [],
@@ -3910,6 +3986,7 @@ const chatRoom = {
             this.members = json.memberList || [];
             this.members.forEach((person) => { if (person.name) this.names[person.userId] = person.name; });
             if (moqui.chat) moqui.chat.watchUsers(this.members.map((person) => person.userId));
+            this.loadTrust();
         },
         reloadMeta() {
             return this.get('room', { chatRoomId: this.roomId }).then((json) => { if (json.room) this.applyMeta(json); }, () => {});
@@ -4149,8 +4226,13 @@ const chatRoom = {
                     moqui.chat.sealedTexts[clientRef] = plainOf(html) || t('Files');
                     const sealedParams = { encryptedJson: sealed.encryptedJson, mentionUserIds: sealed.mentionUserIds, replyToEventSeq: params.replyToEventSeq,
                         threadRootEventSeq: params.threadRootEventSeq, chatAttachmentIds: params.chatAttachmentIds };
-                    return moqui.chat.send({ clientRef, chatRoomId: this.roomId, url: this.url('send'), params: sealedParams, text: '', sealed: true,
-                        threadRootEventSeq: threadRoot, hasFiles: !!(message.attachmentIds || []).length });
+                    // who cannot read it: the devices only verified devices left out (COM-UI-013), shown under it once it is sent
+                    const leftOut = moqui.crypto && moqui.crypto.leftOut ? moqui.crypto.leftOut(this.roomId).catch(() => []) : Promise.resolve([]);
+                    return leftOut.then((devices) => {
+                        if (devices && devices.length) leftOutByRef[clientRef] = moqui.chat.leftOutText(devices, this.me.userId, (id) => this.nameOf(id));
+                        return moqui.chat.send({ clientRef, chatRoomId: this.roomId, url: this.url('send'), params: sealedParams, text: '', sealed: true,
+                            threadRootEventSeq: threadRoot, hasFiles: !!(message.attachmentIds || []).length });
+                    });
                 }).then((outcome) => {
                     if (outcome && outcome.failed && outcome.error) moqui.notifyMessages([{ type: 'warning', message: outcome.error }]);
                     return outcome;
@@ -4188,6 +4270,10 @@ const chatRoom = {
             const me = this.me.userId;
             const threadRoot = payload.threadRootEventSeq != null ? Number(payload.threadRootEventSeq) : null;
             const seq = Number(event.eventSeq);
+            if (payload.clientRef && leftOutByRef[payload.clientRef]) {
+                this.leftOutBySeq = Object.assign({}, this.leftOutBySeq, { [seq]: leftOutByRef[payload.clientRef] });
+                delete leftOutByRef[payload.clientRef];
+            }
             this.myLastRead = Math.max(this.myLastRead, seq);
             if (this.room) this.room.lastEventSeq = Math.max(Number(this.room.lastEventSeq || 0), seq);
             this.dividerSeq = null;
@@ -4311,10 +4397,20 @@ const chatRoom = {
             if (!this.useBubbles || (event.touches && event.touches.length > 1)) return;
             if (event.target && event.target.closest && event.target.closest('input, textarea, [contenteditable="true"], .q-btn')) return;
             const touch = event.touches && event.touches[0];
-            if (touch) this.touchFrom = { x: touch.clientX, y: touch.clientY, item, inThread: !!inThread };
+            // a touch in what scrolls sideways (a wide code block or table) is that scroll, never a swipe
+            if (touch && !this.scrollsSideways(event.target, event.currentTarget)) this.touchFrom = { x: touch.clientX, y: touch.clientY, item, inThread: !!inThread };
             this.holdTimer = setTimeout(() => { this.holdTimer = null; this.held = true; this.openSheet(item, inThread); }, 450);
         },
         holdCancel() { if (this.holdTimer) { clearTimeout(this.holdTimer); this.holdTimer = null; } },
+        // whether target, up to the message's row, is in a code block or table, or in an element that scrolls sideways
+        scrollsSideways(target, row) {
+            if (target && target.closest && target.closest('pre, table')) return true;
+            for (let el = target; el && el !== row && el.nodeType === 1; el = el.parentElement) {
+                const overflow = window.getComputedStyle(el).overflowX;
+                if ((overflow === 'auto' || overflow === 'scroll') && el.scrollWidth > el.clientWidth + 1) return true;
+            }
+            return false;
+        },
         // a move cancels the long press; in the room's timeline, one to the right is a swipe to reply, which the bubble
         // follows and which replies when let go past SWIPE_REPLY_PX (an up or down move is a scroll, not a swipe)
         holdMove(event) {
@@ -4938,7 +5034,7 @@ const chatRoom = {
             if (this.isOwner && this.settings.visibility && this.settings.visibility !== this.room.visibilityEnumId) params.visibilityEnumId = this.settings.visibility;
             this.settings.busy = true;
             // the calls' encryption (W8) is its own setting, saved first
-            const e2ee = !!this.settings.callE2ee !== !!this.room.callE2eeRequired
+            const e2ee = !this.sealed && !!this.settings.callE2ee !== !!this.room.callE2eeRequired
                 ? this.post('setCallEncryption', { chatRoomId: this.roomId, required: this.settings.callE2ee ? 'true' : 'false' }).then((json) => {
                     if (json.errors) { moqui.notifyMessages([], json.errors); throw json; }
                 }) : Promise.resolve();
@@ -4979,7 +5075,7 @@ const chatRoom = {
         onEscape() {
             if (moqui.back && moqui.back.popupOpen()) return false;
             if (this.editing) { this.cancelEdit(); return true; }
-            if (moqui.back ? moqui.back.pop({ popups: false, base: false }) : (this.side && (this.closeSide(), true))) return true;
+            if (moqui.back ? moqui.back.pop({ popups: false, base: false, within: this.$el }) : (this.side && (this.closeSide(), true))) return true;
             this.markRead(true);
             return true;
         },
@@ -5144,6 +5240,8 @@ module.exports = {
             });
         },
         roomIcon(room) { return moqui.chat.roomIcon(room); },
+        // the room's E2EE label (moqui.chat.e2eeLabel): a row shows its lock when it is end to end only
+        labelOf(room) { return moqui.chat.e2eeLabel(room); },
         bridgeText(room) {
             const names = (room.bridgeNetworkNames || []).join(', ');
             return room.notConnected ? fill(t('Not connected to {names}: messages wait here'), { names }) : fill(t('Also on {names}'), { names });
@@ -5891,9 +5989,29 @@ module.exports = {
                                                           class: "m-muted q-ml-xs"
                                                         }))
                                                       : _createCommentVNode("", true),
-                                                    (room.bridged)
+                                                    (_ctx.labelOf(room).lock)
                                                       ? (_openBlock(), _createBlock(_component_q_icon, {
                                                           key: 1,
+                                                          name: "sym_o_lock",
+                                                          size: "12px",
+                                                          class: "q-ml-xs text-positive m-chat-e2ee-lock",
+                                                          "data-e2ee": room.chatRoomId,
+                                                          "aria-label": _ctx.labelOf(room).text
+                                                        }, {
+                                                          default: _withCtx(() => [
+                                                            _createVNode(_component_q_tooltip, null, {
+                                                              default: _withCtx(() => [
+                                                                _createTextVNode(_toDisplayString(_ctx.labelOf(room).text), 1)
+                                                              ]),
+                                                              _: 2
+                                                            }, 1024)
+                                                          ]),
+                                                          _: 2
+                                                        }, 1032, ["data-e2ee", "aria-label"]))
+                                                      : _createCommentVNode("", true),
+                                                    (room.bridged)
+                                                      ? (_openBlock(), _createBlock(_component_q_icon, {
+                                                          key: 2,
                                                           name: room.notConnected ? 'sym_o_link_off' : 'sym_o_hub',
                                                           size: "12px",
                                                           class: _normalizeClass(["q-ml-xs", room.notConnected ? 'text-warning' : 'm-muted']),
@@ -6511,29 +6629,55 @@ module.exports = {
                                       _: 1
                                     }))
                                   : _createCommentVNode("", true),
-                                (_ctx.sealed)
+                                (_ctx.label.lock)
                                   ? (_openBlock(), _createBlock(_component_q_chip, {
                                       key: 3,
                                       dense: "",
                                       square: "",
                                       icon: "sym_o_lock",
-                                      class: "m-tonal text-positive q-ml-xs m-chat-encrypted"
+                                      class: "m-tonal text-positive q-ml-xs m-chat-encrypted",
+                                      "data-e2ee": _ctx.label.state
                                     }, {
                                       default: _withCtx(() => [
                                         _createTextVNode(_toDisplayString(_ctx.t('Encrypted')) + " ", 1),
+                                        (_ctx.label.verified)
+                                          ? (_openBlock(), _createBlock(_component_q_icon, {
+                                              key: 0,
+                                              name: "sym_o_check",
+                                              size: "14px",
+                                              class: "q-ml-xs m-chat-verified"
+                                            }))
+                                          : _createCommentVNode("", true),
                                         _createVNode(_component_q_tooltip, null, {
                                           default: _withCtx(() => [
-                                            _createTextVNode(_toDisplayString(_ctx.t('End-to-end encrypted: only the devices of its members read it. Search, link previews, agents, polls, bridges, forwards and filing on records are off here.')), 1)
+                                            _createTextVNode(_toDisplayString(_ctx.label.text) + ". " + _toDisplayString(_ctx.t('Search, link previews, agents, polls, bridges, forwards and filing on records are off here.')), 1)
                                           ]),
                                           _: 1
                                         })
                                       ]),
                                       _: 1
-                                    }))
-                                  : _createCommentVNode("", true),
+                                    }, 8, ["data-e2ee"]))
+                                  : (_openBlock(), _createBlock(_component_q_icon, {
+                                      key: 4,
+                                      name: "sym_o_lock_open",
+                                      size: "16px",
+                                      class: "q-ml-xs m-muted m-chat-not-e2ee",
+                                      "data-e2ee": _ctx.label.state,
+                                      "aria-label": _ctx.label.text
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_tooltip, null, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(_ctx.label.text), 1)
+                                          ]),
+                                          _: 1
+                                        })
+                                      ]),
+                                      _: 1
+                                    }, 8, ["data-e2ee", "aria-label"])),
                                 (_ctx.room.bridged)
                                   ? (_openBlock(), _createBlock(_component_q_chip, {
-                                      key: 4,
+                                      key: 5,
                                       dense: "",
                                       square: "",
                                       icon: "sym_o_hub",
@@ -6553,7 +6697,7 @@ module.exports = {
                                   : _createCommentVNode("", true),
                                 (_ctx.room.notConnected)
                                   ? (_openBlock(), _createBlock(_component_q_chip, {
-                                      key: 5,
+                                      key: 6,
                                       dense: "",
                                       square: "",
                                       icon: "sym_o_link_off",
@@ -7140,6 +7284,51 @@ module.exports = {
                         : _createCommentVNode("", true)
                     ]),
                     _createVNode(_component_q_separator),
+                    (_ctx.room && _ctx.label.banner && !_ctx.bannerHidden)
+                      ? (_openBlock(), _createElementBlock("div", {
+                          key: 0,
+                          class: "row no-wrap items-center q-px-sm q-py-xs text-caption m-tonal m-chat-e2ee-banner",
+                          "data-e2ee": _ctx.label.state
+                        }, [
+                          _createVNode(_component_q_icon, {
+                            name: _ctx.label.icon,
+                            size: "16px",
+                            class: _normalizeClass(_ctx.label.lock ? 'text-positive' : 'm-muted')
+                          }, null, 8, ["name", "class"]),
+                          (_ctx.label.verified)
+                            ? (_openBlock(), _createBlock(_component_q_icon, {
+                                key: 0,
+                                name: "sym_o_check",
+                                size: "12px",
+                                class: "text-positive"
+                              }))
+                            : _createCommentVNode("", true),
+                          _createElementVNode("span", { class: "col q-ml-xs m-chat-e2ee-banner-text" }, _toDisplayString(_ctx.label.banner), 1),
+                          (_ctx.label.verify)
+                            ? (_openBlock(), _createBlock(_component_q_btn, {
+                                key: 1,
+                                flat: "",
+                                dense: "",
+                                "no-caps": "",
+                                size: "sm",
+                                color: "primary",
+                                class: "q-ml-xs m-chat-verify",
+                                label: _ctx.t('Verify'),
+                                onClick: _ctx.openDevices
+                              }, null, 8, ["label", "onClick"]))
+                            : _createCommentVNode("", true),
+                          _createVNode(_component_q_btn, {
+                            flat: "",
+                            round: "",
+                            dense: "",
+                            size: "xs",
+                            icon: "sym_o_close",
+                            class: "q-ml-xs",
+                            "aria-label": _ctx.t('Close the note'),
+                            onClick: _ctx.closeBanner
+                          }, null, 8, ["aria-label", "onClick"])
+                        ], 8, ["data-e2ee"]))
+                      : _createCommentVNode("", true),
                     _createElementVNode("div", {
                       class: "col row no-wrap",
                       style: {"min-height":"0"}
@@ -7277,7 +7466,20 @@ module.exports = {
                                                       icon: _ctx.roomIcon
                                                     }, null, 8, ["icon"])),
                                                 _createElementVNode("div", { class: "text-subtitle1 text-weight-medium q-mt-sm" }, _toDisplayString(_ctx.displayName), 1),
-                                                _createElementVNode("div", { class: "text-caption m-muted" }, _toDisplayString(_ctx.startText), 1)
+                                                _createElementVNode("div", { class: "text-caption m-muted" }, _toDisplayString(_ctx.startText), 1),
+                                                (_ctx.label.banner)
+                                                  ? (_openBlock(), _createElementBlock("div", {
+                                                      key: 2,
+                                                      class: "text-caption m-muted q-mt-xs m-chat-e2ee-intro"
+                                                    }, [
+                                                      _createVNode(_component_q_icon, {
+                                                        name: _ctx.label.icon,
+                                                        size: "14px",
+                                                        class: "q-mr-xs"
+                                                      }, null, 8, ["name"]),
+                                                      _createElementVNode("span", { class: "m-chat-e2ee-intro-text" }, _toDisplayString(_ctx.label.banner), 1)
+                                                    ]))
+                                                  : _createCommentVNode("", true)
                                               ])),
                                         (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.items, (item) => {
                                           return (_openBlock(), _createElementBlock(_Fragment, {
@@ -8530,7 +8732,17 @@ module.exports = {
                                                 }, _toDisplayString(bridge.connected ? _ctx.t('connected') : _ctx.t('not connected')), 3)
                                               ]),
                                               _: 2
-                                            }, 1024)
+                                            }, 1024),
+                                            _createVNode(_component_q_item_label, {
+                                              caption: "",
+                                              class: "m-chat-bridge-encryption",
+                                              "data-encryption": bridge.encryption
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(_ctx.bridgeEncryptionText(bridge.encryption)), 1)
+                                              ]),
+                                              _: 2
+                                            }, 1032, ["data-encryption"])
                                           ]),
                                           _: 2
                                         }, 1024),
@@ -8686,12 +8898,21 @@ module.exports = {
                             ], 64))
                           : _createCommentVNode("", true),
                         _createVNode(_component_q_toggle, {
-                          modelValue: _ctx.settings.callE2ee,
-                          "onUpdate:modelValue": $event => ((_ctx.settings.callE2ee) = $event),
+                          "model-value": _ctx.sealed || _ctx.settings.callE2ee,
+                          disable: _ctx.sealed,
                           label: _ctx.t('Calls in this room are end-to-end encrypted'),
-                          class: "q-mt-sm"
-                        }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
-                        _createElementVNode("div", { class: "text-caption m-muted" }, _toDisplayString(_ctx.t('Only the people in a call hear and see it: no recording, captions, phones or guests. This is apart from the encryption of the messages.')), 1),
+                          class: "q-mt-sm m-chat-room-call-e2ee",
+                          "onUpdate:modelValue": (value) => { _ctx.settings.callE2ee = value; }
+                        }, null, 8, ["model-value", "disable", "label", "onUpdate:modelValue"]),
+                        (_ctx.sealed)
+                          ? (_openBlock(), _createElementBlock("div", {
+                              key: 4,
+                              class: "text-caption m-muted"
+                            }, _toDisplayString(_ctx.t('Every call in an encrypted room is end-to-end encrypted: no recording, captions, phones or guests.')), 1))
+                          : (_openBlock(), _createElementBlock("div", {
+                              key: 5,
+                              class: "text-caption m-muted"
+                            }, _toDisplayString(_ctx.t('Only the people in a call hear and see it: no recording, captions, phones or guests. This is apart from the encryption of the messages.')), 1)),
                         _createElementVNode("div", { class: "row q-gutter-sm q-mt-md items-center" }, [
                           _createVNode(_component_q_btn, {
                             unelevated: "",
@@ -9381,7 +9602,7 @@ module.exports = {
                             ]),
                             _: 1
                           }),
-                          (_ctx.room.useBubbles)
+                          (_ctx.room.phoneAttach)
                             ? (_openBlock(), _createBlock(_component_q_menu, {
                                 key: 0,
                                 anchor: "top left",
@@ -9762,15 +9983,16 @@ module.exports = {
                         : (_ctx.item.undecryptable)
                           ? (_openBlock(), _createElementBlock("div", {
                               key: 3,
-                              class: "text-body2 m-muted text-italic m-chat-undecryptable"
+                              class: "text-body2 m-muted text-italic m-chat-undecryptable",
+                              "data-withheld": _ctx.item.withheld || undefined
                             }, [
                               _createVNode(_component_q_icon, {
                                 name: "sym_o_lock",
                                 size: "16px",
                                 class: "q-mr-xs"
                               }),
-                              _createTextVNode(_toDisplayString(_ctx.room.t('Encrypted message: this device has no key for it yet. Restore your key backup in Settings, My devices, or keep this page open while another of your devices shares it.')), 1)
-                            ]))
+                              _createTextVNode(_toDisplayString(_ctx.room.undecryptableText(_ctx.item)), 1)
+                            ], 8, ["data-withheld"]))
                           : (_openBlock(), _createElementBlock(_Fragment, { key: 4 }, [
                               (_ctx.room.isEditing(_ctx.item))
                                 ? (_openBlock(), _createBlock(_component_chat_edit, {
@@ -10115,9 +10337,32 @@ module.exports = {
                                     _createElementVNode("span", { class: "text-caption m-muted" }, " · " + _toDisplayString(_ctx.room.t('last reply')) + " " + _toDisplayString(_ctx.room.shortWhen(_ctx.item.threadLastDate)), 1)
                                   ]))
                                 : _createCommentVNode("", true),
-                              (_ctx.item.event.delivery)
+                              (_ctx.item.mine && _ctx.room.leftOutBySeq[_ctx.item.eventSeq])
                                 ? (_openBlock(), _createElementBlock("div", {
                                     key: 10,
+                                    class: "row items-center no-wrap q-mt-xs text-caption text-warning m-chat-left-out"
+                                  }, [
+                                    _createVNode(_component_q_icon, {
+                                      name: "sym_o_no_encryption",
+                                      size: "14px",
+                                      class: "q-mr-xs"
+                                    }),
+                                    _createElementVNode("span", { class: "ellipsis" }, _toDisplayString(_ctx.room.leftOutBySeq[_ctx.item.eventSeq]), 1),
+                                    _createVNode(_component_q_btn, {
+                                      flat: "",
+                                      dense: "",
+                                      "no-caps": "",
+                                      size: "sm",
+                                      color: "primary",
+                                      class: "q-ml-xs",
+                                      label: _ctx.room.t('Verify'),
+                                      onClick: _withModifiers($event => (_ctx.room.openDevices()), ["stop"])
+                                    }, null, 8, ["label", "onClick"])
+                                  ]))
+                                : _createCommentVNode("", true),
+                              (_ctx.item.event.delivery)
+                                ? (_openBlock(), _createElementBlock("div", {
+                                    key: 11,
                                     class: _normalizeClass(["row items-center no-wrap q-mt-xs text-caption m-chat-delivery", _ctx.room.deliveryClass(_ctx.item)]),
                                     "data-delivery": _ctx.item.event.delivery.state
                                   }, [

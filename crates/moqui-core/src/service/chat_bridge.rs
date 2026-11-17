@@ -36,7 +36,8 @@
 //!   per minute on each node (the bridge's `sendsPerMinute`, else the adapter's). An adapter that panics is taken as a
 //!   crash: the row keeps its lease and is tried again when it runs out.
 //! - `get#BridgeCapabilities` (what each bridge's adapter supports, so an edit, delete or reaction it cannot carry is
-//!   refused before the change), `check#BridgeToken` (an adapter's inbound token against the bridge's hash) and
+//!   refused before the change, and its network's [`Encryption`] for the room's label), `check#BridgeToken` (an
+//!   adapter's inbound token against the bridge's hash) and
 //!   `run#BridgeDeliveries` (one round now, at a given time: the tests' simulated clock).
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -116,6 +117,36 @@ pub struct Capabilities {
     pub idempotent: bool,
     /// Sends a node makes to the bridge a minute; 0 for no limit.
     pub sends_per_minute: u32,
+    /// How far the network keeps a message from others: the room's E2EE label comes from it (plans/Comms-Messaging.md
+    /// §6.2, §6.3).
+    pub encryption: Encryption,
+}
+
+/// A network's encryption, as its adapter knows it. A bridged room is never end-to-end encrypted on this server: the
+/// bridge reads its messages to pass them on, whatever the network does after.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Encryption {
+    /// None: the network and its providers read every message (SMS and MMS). An adapter that says nothing says this.
+    #[default]
+    None,
+    /// In transit only (TLS to and between servers): the provider and the network's servers read it.
+    Transport,
+    /// End to end on the network, decrypted by the bridge on this server and encrypted again (WhatsApp through a bridge).
+    BridgeDecrypted,
+    /// End to end through the bridge, which never holds the keys (a Matrix room that stays encrypted; none yet).
+    EndToEnd,
+}
+
+impl Encryption {
+    /// Its name in `get#BridgeCapabilities` and the room's bridges (`encryption`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Encryption::None => "None",
+            Encryption::Transport => "Transport",
+            Encryption::BridgeDecrypted => "BridgeDecrypted",
+            Encryption::EndToEnd => "EndToEnd",
+        }
+    }
 }
 
 /// What a delivery carries.
@@ -283,7 +314,7 @@ fn adapter_named(factory: &ExecutionContextFactory, name: &str) -> Option<Arc<dy
 
 // ---- helpers ----
 
-fn text_of(row: &EntityValue, field: &str) -> Option<String> {
+pub(super) fn text_of(row: &EntityValue, field: &str) -> Option<String> {
     row.get(field)
         .filter(|value| !is_empty(value))
         .map(to_plain_string)
@@ -291,7 +322,7 @@ fn text_of(row: &EntityValue, field: &str) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
-fn int_of(row: &EntityValue, field: &str) -> Option<i64> {
+pub(super) fn int_of(row: &EntityValue, field: &str) -> Option<i64> {
     match row.get(field)? {
         Value::I32(n) => Some(i64::from(*n)),
         Value::I64(n) => Some(*n),
@@ -300,7 +331,7 @@ fn int_of(row: &EntityValue, field: &str) -> Option<i64> {
     }
 }
 
-fn millis_of(row: &EntityValue, field: &str) -> Option<i64> {
+pub(super) fn millis_of(row: &EntityValue, field: &str) -> Option<i64> {
     match row.get(field)? {
         Value::Timestamp(stamp) => Some(stamp.as_millisecond()),
         Value::I64(n) => Some(*n),
@@ -309,7 +340,7 @@ fn millis_of(row: &EntityValue, field: &str) -> Option<i64> {
     }
 }
 
-fn param(parameters: &BTreeMap<String, Value>, key: &str) -> Option<String> {
+pub(super) fn param(parameters: &BTreeMap<String, Value>, key: &str) -> Option<String> {
     parameters
         .get(key)
         .filter(|value| !is_empty(value))
@@ -318,19 +349,19 @@ fn param(parameters: &BTreeMap<String, Value>, key: &str) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
-fn stamp(millis: i64) -> Value {
+pub(super) fn stamp(millis: i64) -> Value {
     crate::user::stamp_value(millis)
 }
 
-fn now_millis() -> i64 {
+pub(super) fn now_millis() -> i64 {
     jiff::Timestamp::now().as_millisecond()
 }
 
-fn current_factory() -> Option<Arc<ExecutionContextFactory>> {
+pub(super) fn current_factory() -> Option<Arc<ExecutionContextFactory>> {
     ExecutionContext::with_current(|ec| Arc::clone(ec.factory()))
 }
 
-fn force_new<T>(
+pub(super) fn force_new<T>(
     facade: &EntityFacade,
     entity: &str,
     body: impl FnOnce() -> Result<T, LibError>,
@@ -490,8 +521,9 @@ fn check_bridge_token(
 
 // ---- capabilities ----
 
-/// `get#BridgeCapabilities`: for each bridge of `chatBridgeIdList`, `{edit, delete, reaction, idempotent, adapter}`
-/// (`adapter` false when this build has no adapter for it: then nothing is supported).
+/// `get#BridgeCapabilities`: for each bridge of `chatBridgeIdList`, `{edit, delete, reaction, idempotent, encryption,
+/// adapter}` (`adapter` false when this build has no adapter for it: then nothing is supported, and its encryption is
+/// `None`).
 fn get_bridge_capabilities(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -519,6 +551,7 @@ fn get_bridge_capabilities(
             ("delete", Value::Bool(caps.delete)),
             ("reaction", Value::Bool(caps.reaction)),
             ("idempotent", Value::Bool(caps.idempotent)),
+            ("encryption", Value::string(caps.encryption.as_str())),
             ("adapter", Value::Bool(adapter.is_some())),
         ]
         .into_iter()
@@ -732,7 +765,7 @@ fn run_bridge_deliveries(
     ]))
 }
 
-fn node_id(factory: &ExecutionContextFactory) -> String {
+pub(super) fn node_id(factory: &ExecutionContextFactory) -> String {
     crate::cluster::instance_id(factory).unwrap_or_else(|| format!("node-{}", std::process::id()))
 }
 
@@ -1410,7 +1443,7 @@ fn remote_id_of(
 }
 
 /// The name of an event's sender: the local user's, or the external actor's.
-fn sender_name(facade: &EntityFacade, event: &EntityValue) -> Result<Option<String>, LibError> {
+pub(super) fn sender_name(facade: &EntityFacade, event: &EntityValue) -> Result<Option<String>, LibError> {
     if let Some(user) = text_of(event, "senderUserId") {
         let account = facade
             .find("moqui.security.UserAccount")?

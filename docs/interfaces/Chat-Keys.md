@@ -266,7 +266,10 @@ preference `CHAT_VERIFIED_DEVICES_ONLY`), and a moderator of an encrypted room t
 `ChatRoom.verifiedDevicesOnly`, `set#RoomVerifiedDevicesOnly`). With either on, the sending browser shares the room's keys
 only with verified or cross-signed devices (matrix-sdk-crypto's `onlyTrustedDevices`); a device nobody verified cannot read
 what follows. A change of the setting, and the first message of a page under it, starts a new session. The browsers apply
-it; the server only keeps it. An encrypted call warns when its roster has a device of a participant this browser has not
+it; the server only keeps it. The sender is told who cannot read a message (COM-UI-013): the browser notes the devices
+the share left out (`leftOut`), and the message shows "Not readable by ...: their devices are not verified" with Verify
+(My devices). The machine sends each left-out device an `m.room_key.withheld` with the code `m.unverified`, so that
+device's page says the sender has not verified it (`decryptRoom`'s `withheld`), not the key backup's text. An encrypted call warns when its roster has a device of a participant this browser has not
 verified (`moqui.callKeys.state.unverified`; the call's keys still go to the roster's devices).
 
 **Verification.** My devices shows each device's verification as this browser's store holds it (trust is the clients'):
@@ -295,7 +298,9 @@ In `moqui.crypto` (the store's tab runs each call; another tab's call is relayed
 | `thisDeviceId()` | This browser's deviceId for the signed-in user, without loading anything |
 | `state` | `{status, deviceId, matrixUserId, error, role, verifications, problem}`; `status` is `idle`, `loading`, `ready` or `error`; `role` is `leader` or `follower`; `problem` is `{reasonCode: storeUnreadable, deviceId}` when the store cannot be read |
 | `encryptRoom(chatRoomId, memberUserIds, eventType, content)` | Shares the room key with the members' devices that lack it, and resolves to the Megolm ciphertext of the event |
-| `decryptRoom(chatRoomId, {eventSeq, sentDate, senderUserId, encrypted})` | `{type, content, verified}`, or `{error}` when this device has no key for it |
+| `decryptRoom(chatRoomId, {eventSeq, sentDate, senderUserId, encrypted})` | `{type, content, verified}`, or `{error, withheld}` when this device has no key for it (`withheld`: the code its sender gave, `m.unverified` under only verified devices, else null) |
+| `leftOut(chatRoomId)` | The devices the last message this browser encrypted for the room was not shared with: `[{userId, deviceId, displayName}]`, empty unless only verified devices is on |
+| `roomTrust(chatRoomId, memberUserIds)` | `{verifiedOnly, users: [{userId, devices: [{deviceId, displayName, verified}]}]}`, this device left out: the room's label (a check when all are verified, else Verify) and who the next message leaves out |
 | `rotateRoom(chatRoomId)` | A new session for the room's next message |
 | `onRoomKeys(fn)` | `fn([{roomId, sessionId}])` when room keys arrive (from a member, or a restore). Returns the unsubscribe |
 | `encryptFile(blob)`, `decryptFile(data, info)` | `{blob, info}` for upload; the decrypted bytes (the hash is checked) |
@@ -303,7 +308,9 @@ In `moqui.crypto` (the store's tab runs each call; another tab's call is relayed
 | `crossSigningStatus()`, `setupCrossSigning(reset)` | `{hasMaster, hasSelfSigning, hasUserSigning, identity, verified}` |
 | `verifyDevice(userId, deviceId)`, `verification(flowId, action, arg)`, `dismissVerification(flowId)` | Start a verification (its flowId); a step: `accept`, `sas`, `confirm`, `mismatch`, `cancel`, `showQr`, `scanned` (the code's bytes), `qrConfirm`. `state.verifications` lists them with their emoji or QR image |
 
-In `moqui.chat`: `sealMessage(roomId, memberIds, html, files)` (the send parameters `{encryptedJson, mentionUserIds}`),
+In `moqui.chat`: `e2eeLabel(room, trust)` (the room's label, [Comms-Messaging §6.2](../../plans/Comms-Messaging.md#62-labels):
+`{state, lock, verified, icon, banner, hint, verify, text}`), `trustOf(roomTrust's answer, me)` (`{allVerified, unverified,
+leftOut}`), `leftOutText`, `undecryptableText(withheld, senderName)`, `sealMessage(roomId, memberIds, html, files)` (the send parameters `{encryptedJson, mentionUserIds}`),
 `sealReaction`, `sealFile`, `openFile(url, file, roomId)` (a blob URL), `releaseFiles(roomId, ids)`,
 `openEvents(roomId, list, attachmentUrl)`, `openEvent(roomId, event, attachmentUrl)` and
 `myReaction(roomId, messageSeq, key, me)`. A decrypted file's blob URL is revoked when its room closes (the last view of it

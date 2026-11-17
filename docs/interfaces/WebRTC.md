@@ -150,9 +150,12 @@ still fails closed rather than joining without keys.
 through the SFU (every call before W8, and any call not asked to be more), or `e2ee-sframe`. Any other value is treated
 as end to end, never as plain.
 
-- **Asking for it.** `start#Call` with `requireE2ee` (New call, End-to-end encrypted); a room whose owner or moderator
-  set `ChatRoom.callE2eeRequired` (`set#RoomCallEncryption`; Room settings in Chat), for every call of the room and the
-  links made for it; a call link with `requireE2ee` (`CallLink.e2eeRequired`), for its meetings. Call back from History
+- **Asking for it.** `start#Call` with `requireE2ee` (New call, End-to-end encrypted); an encrypted room
+  (`ChatRoom.encrypted`, a direct one too), for every call of the room and the links made for it, with nothing to ask
+  ([Comms-Messaging §6.1](../../plans/Comms-Messaging.md#61-rules) rule 4); a room whose owner or moderator set
+  `ChatRoom.callE2eeRequired` (`set#RoomCallEncryption`; Room settings in Chat), for every call of the room and the
+  links made for it. In an encrypted room the setting shows on and fixed, and `set#RoomCallEncryption` refuses to turn
+  it off (`notAllowed`); it refuses a direct room too, whose caller chooses per call in a plain one; a call link with `requireE2ee` (`CallLink.e2eeRequired`), for its meetings. Call back from History
   of an encrypted call (`find#Calls` `e2ee`) asks for it again.
 - **No downgrade.** The mode is set at the start and nothing lowers it. A room's call going on that is not encrypted is
   refused to a start that asks for encryption, or in a room whose policy asks for it (`callNotEncrypted`), never

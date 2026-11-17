@@ -26,6 +26,10 @@
 //! with a growing wait, never past a ring's end; after that, as with no access token, FCM is taken to be down and the
 //! rest of the send is not tried ([`Outcome::Unsent`]), with no device counted against. Every request goes through
 //! [`crate::outbound::send`], so a spec's HTTP fixtures answer it.
+//!
+//! A notification to a device that gave its push keys is sealed to it ([`device_message`]: `enc`, RFC 8291), so Google
+//! reads no title (plans/Comms-Messaging.md §7.2 rule 5). The chat push outbox ([`super::chat_push`]) keeps its own
+//! retries and sends one try at a time ([`Sender::attempt`]).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -541,20 +545,7 @@ impl Sender<'_> {
                     return Outcome::Unsent;
                 }
             };
-            let sent = (self.send)(Request {
-                method: Method::Post,
-                url: self.config.send_url(),
-                headers: vec![
-                    ("authorization".to_string(), format!("Bearer {token}")),
-                    (
-                        "content-type".to_string(),
-                        "application/json; charset=UTF-8".to_string(),
-                    ),
-                ],
-                body: Some(body.to_string()),
-                timeout: Some(TIMEOUT),
-                deny_internal: false,
-            });
+            let sent = self.post(body, &token);
             let next = match &sent {
                 Ok(response) => answer(response),
                 // a lost answer is tried again, as a 5xx
@@ -604,33 +595,168 @@ impl Sender<'_> {
         Outcome::Unsent
     }
 
-    /// [`Self::deliver`] of `notice` to the device with `token`, with the notice's deadline.
-    pub(crate) fn deliver_notice(&self, device: &str, token: &str, notice: &Notice, now: i64) -> Outcome {
+    /// [`Self::deliver`] of `notice` to the device with `token`, with the notice's deadline. `keys` are the device's
+    /// push public key and auth secret when it gave them ([`device_message`]).
+    pub(crate) fn deliver_notice(
+        &self,
+        device: &str,
+        token: &str,
+        keys: Option<(&str, &str)>,
+        notice: &Notice,
+        now: i64,
+    ) -> Outcome {
         self.deliver(
             device,
-            &device_message(token, device, notice, now),
+            &device_message(token, device, keys, notice, now),
             now,
             notice.deadline(),
         )
     }
+
+    /// One try of `body`, for a caller that keeps its own retries (the chat push outbox, [`super::chat_push`]): taken
+    /// again at once only after a refused access token. FCM not taking messages (no access token, a 429 or 5xx, no
+    /// answer, a 403 of the project) is [`Attempt::Retry`], with FCM's Retry-After when it gave one.
+    pub(crate) fn attempt(&self, device: &str, body: &serde_json::Value, now: i64) -> Attempt {
+        let mut reauthorized = false;
+        loop {
+            let token = match self.tokens.get(&self.config.account, now, self.send) {
+                Ok(token) => token,
+                Err(reason) => {
+                    return Attempt::Retry {
+                        after: None,
+                        error: reason,
+                    }
+                }
+            };
+            let response = match self.post(body, &token) {
+                Ok(response) => response,
+                Err(err) => {
+                    return Attempt::Retry {
+                        after: None,
+                        error: format!("FCM did not answer: {}", err.message()),
+                    };
+                }
+            };
+            let codes = format!("{} {}", response.status, error_info(&response.body).codes.join(" "));
+            match answer(&response) {
+                Answer::Done(Outcome::Delivered) => return Attempt::Delivered,
+                Answer::Done(Outcome::Gone) => return Attempt::Gone,
+                Answer::Done(Outcome::Rejected) => {
+                    tracing::error!(subscription_id = %device, "FCM refused the message: {codes}");
+                    return Attempt::Rejected(codes);
+                }
+                Answer::Done(Outcome::Unsent) => {
+                    return Attempt::Retry {
+                        after: None,
+                        error: codes,
+                    }
+                }
+                Answer::Retry(after) => return Attempt::Retry { after, error: codes },
+                Answer::Reauthorize if !reauthorized => {
+                    reauthorized = true;
+                    self.tokens.clear();
+                }
+                Answer::Reauthorize => {
+                    return Attempt::Retry {
+                        after: None,
+                        error: "FCM refused the server's access token".to_string(),
+                    };
+                }
+            }
+        }
+    }
+
+    fn post(&self, body: &serde_json::Value, token: &str) -> Result<Response, Error> {
+        (self.send)(Request {
+            method: Method::Post,
+            url: self.config.send_url(),
+            headers: vec![
+                ("authorization".to_string(), format!("Bearer {token}")),
+                (
+                    "content-type".to_string(),
+                    "application/json; charset=UTF-8".to_string(),
+                ),
+            ],
+            body: Some(body.to_string()),
+            timeout: Some(TIMEOUT),
+            deny_internal: false,
+        })
+    }
+}
+
+/// What one try ([`Sender::attempt`]) came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Attempt {
+    Delivered,
+    /// The token is no good: never send to it again.
+    Gone,
+    /// FCM refused this message (a 400 not about the token), with its codes.
+    Rejected(String),
+    /// Not taken now; `after` is FCM's Retry-After.
+    Retry {
+        after: Option<Duration>,
+        error: String,
+    },
 }
 
 /// [`message`] for the registration `device` (its `subscriptionId`), at `now` (Unix seconds), with what only the
 /// send knows: `pushId`, the registration's id, which the app was answered at its registration and so tells which of
 /// its accounts a ring or its end is for; and a ring's `ringSeconds`, how long it rings from now, so the app does not
 /// go by its own clock.
-pub(crate) fn device_message(token: &str, device: &str, notice: &Notice, now: i64) -> serde_json::Value {
+///
+/// A notification carries no readable text through Google (plans/Comms-Messaging.md §7.2 rule 5, COM-UI-031): for a
+/// device that gave its push keys (`keys`: its public key and auth secret) its title, link, topic and tag are in `enc`,
+/// encrypted to the device (RFC 8291, base64url); one that gave none gets the kind, topic and tag only.
+pub(crate) fn device_message(
+    token: &str,
+    device: &str,
+    keys: Option<(&str, &str)>,
+    notice: &Notice,
+    now: i64,
+) -> serde_json::Value {
     let mut body = message(token, notice);
     if let Some(data) = body["message"]["data"].as_object_mut() {
-        data.insert("pushId".to_string(), cut_bytes(device, MAX_FIELD_BYTES).into());
-        if let Kind::Ring(ring) = &notice.kind {
-            if ring.expires_at > 0 {
-                let seconds = (ring.expires_at / 1000 - now).max(0);
-                data.insert("ringSeconds".to_string(), seconds.to_string().into());
+        if matches!(notice.kind, Kind::Notification) {
+            let sealed = keys.and_then(|(p256dh, auth)| {
+                // cut so the base64 of the sealed body stays within the data's budget
+                let plain = serde_json::json!({
+                    "title": cut_bytes(&notice.title, 400), "link": cut_bytes(&notice.link, 800),
+                    "topic": cut_bytes(&notice.topic, MAX_FIELD_BYTES), "tag": cut_bytes(&notice.tag, MAX_FIELD_BYTES),
+                });
+                crate::notify::push_crypto::encrypt(plain.to_string().as_bytes(), p256dh, auth)
+                    .map_err(|reason| tracing::warn!(subscription_id = %device, "FCM notice not encrypted: {reason}"))
+                    .ok()
+            });
+            data.remove("title");
+            data.remove("link");
+            if let Some(sealed) = sealed {
+                data.remove("topic");
+                data.remove("tag");
+                data.insert("enc".to_string(), URL_SAFE_NO_PAD.encode(sealed).into());
             }
         }
+        add_device_fields(data, device, notice, now);
     }
     body
+}
+
+/// The data of [`device_message`] as it is before it is sealed, every field in it: for a channel that encrypts the whole
+/// of it to the device (UnifiedPush, [`super::web_push`]).
+pub(crate) fn device_data(device: &str, notice: &Notice, now: i64) -> serde_json::Map<String, serde_json::Value> {
+    let body = message("", notice);
+    let mut data = body["message"]["data"].as_object().cloned().unwrap_or_default();
+    add_device_fields(&mut data, device, notice, now);
+    data
+}
+
+fn add_device_fields(data: &mut serde_json::Map<String, serde_json::Value>, device: &str, notice: &Notice, now: i64) {
+    data.insert("pushId".to_string(), cut_bytes(device, MAX_FIELD_BYTES).into());
+    if let Kind::Ring(ring) = &notice.kind {
+        if ring.expires_at > 0 {
+            let seconds = (ring.expires_at / 1000 - now).max(0);
+            data.insert("ringSeconds".to_string(), seconds.to_string().into());
+        }
+    }
 }
 
 /// The production sender: the configuration, the process's token and [`crate::outbound::send`] (refused under the read

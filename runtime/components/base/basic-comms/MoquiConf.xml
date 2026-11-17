@@ -24,6 +24,8 @@
         <screen location="component://tools/screen/System.xml">
             <subscreens-item name="Voice" menu-title="Voice" menu-index="17" menu-group="Integration" location="component://basic-comms/screen/System/Voice.xml"/>
             <subscreens-item name="ChatBridges" menu-title="Chat Bridges" menu-index="18" menu-group="Integration" location="component://basic-comms/screen/System/ChatBridges.xml"/>
+            <!-- every user's push devices and how their pushes go (plans/Comms-Messaging.md §7.3, Health) -->
+            <subscreens-item name="PushHealth" menu-title="Push Health" menu-index="19" menu-group="Integration" location="component://basic-comms/screen/System/PushHealth.xml"/>
         </screen>
     </screen-facade>
 </moqui-conf>

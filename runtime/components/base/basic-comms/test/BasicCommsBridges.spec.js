@@ -106,9 +106,13 @@ feature("a bridged room that is not connected shows its bridge, its external mem
         timeline.eventList.some(event => event.senderName == "Riley Outside" && event.senderExternal && event.senderExternal.networkName == "SMS")
         timeline.eventList.some(event => event.eventSeq == sent.eventSeq && event.delivery && event.delivery.state == "pending")
         rooms.roomList.some(item => item.chatRoomId == room && item.bridged && item.notConnected && item.bridgeNetworkNames.includes("SMS"))
+        // each bridge says its network's encryption (its adapter's: SMS None), for the room's label (Comms-Messaging §6.2)
+        roomOut.room.bridges.every(bridge => bridge.network == "sms" && bridge.encryption == "None")
+        rooms.roomList.some(item => item.chatRoomId == room && item.bridgeNetworks.some(bridge => bridge.network == "sms" && bridge.encryption == "None"))
         view.room.bridged === true
         !tui.broken
         tui.output.includes("Messages here also go to SMS")
+        tui.output.includes("Texts go through the phone network and the SMS provider")
         tui.output.includes("Not connected")
         tui.output.includes("Riley Outside (SMS)")
         tui.output.includes("Sending")

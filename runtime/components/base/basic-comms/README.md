@@ -7,8 +7,8 @@ usable with only the framework ([plans/archive/Comms-Framework.md](../../../../p
 | Path | What |
 | --- | --- |
 | `screen/BasicComms.xml`, `screen/BasicComms/` | The app root and its screens (`.qvue` with `.tui.json` twins beside their XML) |
-| `screen/System/` | Admin: Voice (trunks, numbers, caller IDs, fraud limits, emergency setup, desk and soft phones, ring groups, schedules, IVR menus, queues) and Chat Bridges ([docs/interfaces/Chat-Bridges.md](../../../../docs/interfaces/Chat-Bridges.md)), mounted into the tools System app by `MoquiConf.xml` |
-| `screen-extend/tools/screen/System/Home.xml` | Voice and Chat Bridges in the Integration group of the System home's navigation |
+| `screen/System/` | Admin: Voice (trunks, numbers, caller IDs, fraud limits, emergency setup, desk and soft phones, ring groups, schedules, IVR menus, queues), Chat Bridges ([docs/interfaces/Chat-Bridges.md](../../../../docs/interfaces/Chat-Bridges.md)) and Push Health (every user's push devices and their counts; [docs/ui/Qvt-Client.md](../../../../docs/ui/Qvt-Client.md#install-and-web-push)), mounted into the tools System app by `MoquiConf.xml` |
+| `screen-extend/tools/screen/System/Home.xml` | Voice, Chat Bridges and Push Health in the Integration group of the System home's navigation |
 | `service/org/moqui/comms/` | Screen services (`InboxServices` with `run#Operation`, `ComposeServices`, `CommsHomeServices`, `ChatScreenServices`, `MailSettingsServices`, `CommsServices`, `FilePickerServices` for Attach from Files and Save to Files) and the provider interfaces (`ProviderInterfaces`) |
 | `template/` | Transitions shared by screens (`FilePickerTransitions.xml`: the drive picker; `VoiceTransitions.xml`: the Voice screens' user and target search; `DialerTransitions.xml`: the Dialer's, for Calls/Dialer and the tray's Panel/Dialer; `UploadTransitions.xml`: files sent in chunks, for Compose and Chat) |
 | `data/` | The `BASIC_COMMS` artifact group, granted to the `BASIC_COMMS_USERS` group and `ADMIN` (not `ALL_USERS`: an account needs the group to open BasicComms), and the do-not-disturb job |
@@ -29,8 +29,8 @@ connection", the gaps of what is kept) shows only there
 
 Test ([the two suites](../../../../docs/Build-Test.md#the-two-suites)): the regression suite is `./moq test basic-comms`,
 the shell's sync states (no server) `./moq test-client basic-comms --offline` and the crypto walk
-`./moq test-client basic-comms --serve`; the acceptance suite, the call and encrypted chat walks and the phone's chat in
-the bundled shell at 390 × 844 (`test/acceptance/client/`), is `./moq accept basic-comms` with a binary that has the `rtc` feature
+`./moq test-client basic-comms --serve`; the acceptance suite, the call and encrypted chat walks, the phone's chat in
+the bundled shell at 390 × 844 and the E2EE labels there and at a desktop's width (`test/acceptance/client/`), is `./moq accept basic-comms` with a binary that has the `rtc` feature
 (calls: [docs/interfaces/WebRTC.md](../../../../docs/interfaces/WebRTC.md); voicemail, the Voicemail tab, Calls/Voicemail and Settings/Phone:
 [docs/interfaces/Voicemail.md](../../../../docs/interfaces/Voicemail.md); the Dialer and Settings/Call handling:
 [docs/interfaces/SIP.md](../../../../docs/interfaces/SIP.md#call-handling); Calls/Queues and transfer in the call:

@@ -61,7 +61,8 @@ along with this software (see the LICENSE.md file). If not, see
             room of two is a direct call, any other a group call, ringing its current members). A room with a call going
             answers that call with reasonCode callActive instead. The caller is the host and is in the call at once
             (callLegId). The same idempotencyKey answers the same call (repeated). An external user (EXTERNAL_USER) starts
-            calls only from a room. requireE2ee (or the room's policy, set#RoomCallEncryption) makes it end-to-end encrypted
+            calls only from a room. requireE2ee, an encrypted room (ChatRoom.encrypted, direct rooms too) or the room's policy
+            (set#RoomCallEncryption) makes it end-to-end encrypted
             (W8, encryptionMode e2ee-sframe), for good: a room's call going on that is not is refused (callNotEncrypted),
             never answered in its place; the caller's browser names its device here or with register#CallDevice before
             its media binds.</description>
@@ -287,7 +288,9 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="set" noun="RoomCallEncryption">
         <description>A room's owner or moderator makes every new call of the room (and of call links made for it)
-            end-to-end encrypted (required true), or not; a call going on keeps its mode. Not for a direct room.</description>
+            end-to-end encrypted (required true), or not; a call going on keeps its mode. Not for a direct room (its
+            caller chooses per call), and never off in an encrypted room, whose every call is encrypted (reasonCode
+            notAllowed; Comms-Messaging §6.1 rule 4).</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="required" type="Boolean" required="true"/>

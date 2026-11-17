@@ -555,6 +555,24 @@ fn bridge_info(bed: &Bed) -> moqui_core::service::chat_bridge::BridgeInfo {
     }
 }
 
+/// SMS is never end-to-end encrypted, not even in transit past Telnyx: the room shows the SMS label (Comms-Messaging
+/// §6.3); and a text carries no edit, delete or reaction.
+#[test]
+fn a_text_says_it_is_not_encrypted() {
+    use moqui_core::service::chat_bridge::{ChatBridgeAdapter as _, Encryption};
+    let bridge = moqui_core::service::chat_bridge::BridgeInfo {
+        chat_bridge_id: BRIDGE.to_string(),
+        type_enum_id: "CbtSms".to_string(),
+        adapter_name: "sms".to_string(),
+        name: "Telnyx".to_string(),
+        config: json!({"apiKey": "KEY-1"}),
+    };
+    let caps = crate::telnyx::TelnyxSms::new().capabilities(&bridge);
+    assert_eq!(caps.encryption, Encryption::None);
+    assert_eq!(caps.encryption.as_str(), "None");
+    assert!(!caps.edit && !caps.delete && !caps.reaction);
+}
+
 #[test]
 fn an_unknown_or_disabled_bridge_answers_anyone_but_its_network_as_an_unsigned_request() {
     let bed = bed();

@@ -311,13 +311,13 @@ fn a_device_hears_its_registration_and_how_long_a_ring_rings() {
         }),
         ..Notice::default()
     };
-    let body = device_message("t", "100050", &ring, 1_700_000_000);
+    let body = device_message("t", "100050", None, &ring, 1_700_000_000);
     assert_eq!(body["message"]["data"]["pushId"], "100050");
     assert_eq!(body["message"]["data"]["ringSeconds"], "45");
     // past its end, none left; a ring's end has the registration but no time
-    let late = device_message("t", "100050", &ring, 1_700_000_100);
+    let late = device_message("t", "100050", None, &ring, 1_700_000_100);
     assert_eq!(late["message"]["data"]["ringSeconds"], "0");
-    let ended = device_message("t", "100050", &every_kind()[2], 1_700_000_000);
+    let ended = device_message("t", "100050", None, &every_kind()[2], 1_700_000_000);
     assert_eq!(ended["message"]["data"]["pushId"], "100050");
     assert!(ended["message"]["data"].get("ringSeconds").is_none());
 }

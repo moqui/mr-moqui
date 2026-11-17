@@ -39,7 +39,8 @@ along with this software (see the LICENSE.md file). If not, see
             default), notifyPreview (CHAT_NOTIFY_PREVIEW, Y: a mention's notification has the message text; N: only who
             mentioned the user where, read by the framework's notify#Mention), autoAwayMinutes (CHAT_AUTO_AWAY_MINUTES,
             10, which the framework's presence reads), dndFrom and dndTo (CHAT_DND_FROM and CHAT_DND_TO, HH:mm in the
-            user's time zone, apply#DndHours), and statusPresets (CHAT_STATUS_PRESETS, a JSON list of {emoji, text,
+            user's time zone, apply#DndHours), dndAllowed (CHAT_DND_ALLOWED: the people whose calls still ring on do not
+            disturb, [{userId, name}], store#DndAllowed), and statusPresets (CHAT_STATUS_PRESETS, a JSON list of {emoji, text,
             clearAfter}: minutes, today, week or 0 for never; five presets until the user changes them; the account menu's
             status dialog, WebrootChat.js, reads the same preference).</description>
         <out-parameters><parameter name="prefs" type="Map"/></out-parameters>
@@ -54,9 +55,14 @@ along with this software (see the LICENSE.md file). If not, see
                 {emoji: '🌴', text: L('On vacation'), clearAfter: '0'}]
             const level = pref('CHAT_NOTIFY_DEFAULT')
             const minutes = Number(pref('CHAT_AUTO_AWAY_MINUTES'))
+            const allowedIds = String(pref('CHAT_DND_ALLOWED') || '').split(',').map((id) => id.trim()).filter((id) => id)
+            const names = {}
+            if (allowedIds.length) for (const row of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', allowedIds)
+                    .selectField('userId').selectField('userFullName').selectField('username').disableAuthz().list()) names[row.userId] = row.userFullName || row.username
+            const dndAllowed = allowedIds.filter((id) => names[id]).map((id) => ({userId: id, name: names[id]}))
             prefs = {enterSends: flag('CHAT_ENTER_SENDS', true), sounds: flag('CHAT_SOUNDS', true), readReceipts: flag('CHAT_READ_RECEIPTS', true),
                 typing: flag('CHAT_TYPING', true), linkPreviews: flag('CHAT_LINK_PREVIEWS', true), notifyDefault: ['all', 'mentions', 'none'].includes(level) ? level : '', notifyPreview: flag('CHAT_NOTIFY_PREVIEW', true),
-                autoAwayMinutes: minutes > 0 ? minutes : 10, dndFrom: pref('CHAT_DND_FROM'), dndTo: pref('CHAT_DND_TO'),
+                autoAwayMinutes: minutes > 0 ? minutes : 10, dndFrom: pref('CHAT_DND_FROM'), dndTo: pref('CHAT_DND_TO'), dndAllowed: dndAllowed,
                 statusPresets: presets.filter((item) => item && (item.text || item.emoji)).slice(0, 12).map((item) => ({emoji: String(item.emoji || ''),
                     text: String(item.text || ''), clearAfter: String(item.clearAfter ?? '0')}))}
         ]]></script></actions>
@@ -119,6 +125,31 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.user.setPreference('CHAT_DND_FROM', from || '')
                 ec.user.setPreference('CHAT_DND_TO', to || '')
             }
+        ]]></script></actions>
+    </service>
+
+    <service verb="store" noun="DndAllowed">
+        <description>Add a person to the current user's do not disturb allowed list (action add), or take one off it
+            (remove): CHAT_DND_ALLOWED, userIds joined by commas, which the framework's call ring reads
+            (org.moqui.chat.ChatPushServices.filter#RingUsers, plans/Comms-Messaging.md §7.2 rule 4): on do not disturb a
+            call from a person on it still rings the user's phones. At most 50 people; oneself is not on it.</description>
+        <in-parameters>
+            <parameter name="action" required="true"><description>add or remove</description></parameter>
+            <parameter name="userId" required="true"/>
+        </in-parameters>
+        <actions><script><![CDATA[
+            const current = String(ec.user.getPreference('CHAT_DND_ALLOWED') || '').split(',').map((id) => id.trim()).filter((id) => id)
+            const id = String(userId || '').trim()
+            let next
+            if (action === 'remove') next = current.filter((other) => other !== id)
+            else if (action === 'add') {
+                if (!id || id === ec.user.userId || !ec.entity.find('moqui.security.UserAccount').condition('userId', id).disableAuthz().count()) {
+                    ec.message.addError(ec.l10n.localize('Choose a person')); return }
+                if (current.includes(id)) return
+                if (current.length >= 50) { ec.message.addError(ec.l10n.localize('At most 50 people ring through do not disturb')); return }
+                next = current.concat([id])
+            } else { ec.message.addError(ec.l10n.localize('Add or remove a person')); return }
+            ec.user.setPreference('CHAT_DND_ALLOWED', next.join(','))
         ]]></script></actions>
     </service>
 

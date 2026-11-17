@@ -573,6 +573,7 @@ impl ExecutionContextFactory {
         }
         // the chat bridge worker stops its adapters, and releases the factory, before the workers stop
         crate::service::chat_bridge::shutdown(self);
+        crate::service::chat_push::shutdown(self);
         self.requests.shutdown();
         self.pools.shutdown();
         // before telemetry stops, so what they log on the way out is kept; before the host stops the database

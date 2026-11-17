@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Chat push (plans/Comms-Messaging.md §7.2, §7.3): a chat message reaches every device of the users who should hear of
+    it, after the commit, encrypted to each device. No Java counterpart.
+
+    append#Event (ChatServices) writes a ChatPushJob for a message or an edit in its transaction and wakes this node's push
+    worker once it commits (wake#ChatPush; crates/moqui-core/src/service/chat_push.rs). The worker, a thread per node woken
+    by a commit, once a minute while pushes wait and once at start (the rows a crash left), takes each job with a lease and
+    applies the rules:
+      1. Who: each member but the sender, by the room level: All (empty, and a direct room's start) every message; Mentions
+         (CnlMentions, and any muted room) the user's ChatUserActivity rows of the event of kind mention, reply and thread
+         reply; None nothing. A user mentioned who is not a member (a public or record room) is pushed by the mention. An
+         edit pushes only the mentions it adds. A reaction never pushes.
+      3. Not when read: nothing to a user whose read marker is at or past the event, at the job and again at the send.
+      4. Do not disturb (UserStatus UpsDnd, by hand or by the hours job): the pushes are held (PosHeld) and go as one
+         summary per room and device when it ends.
+      6. A call's event pushes as a message: a missed call (append#Event's content missedUserIdList) to those who missed
+         it, a voicemail to the room's members, each unless their level is None.
+    It writes one PushOutbox row for each device of each user (WebPushSubscription: a browser, an FCM app, a UnifiedPush
+    distributor), each in a transaction of its own and once however often the job is worked; a pending or held row of the
+    same device and room takes the message in, with a count (an edit is not another message, and a read of part of it
+    lowers the count). Each row is sent with a lease, as the lease locked it: never to a device that now belongs to
+    another user (a moved device drops what waits for it); its plain payload encrypted to the device (RFC 8291,
+    push_crypto) for every provider, so the push service sees nothing of it (an FCM device that gave no key gets only
+    {kind, pushId}). A payload has the room, the sender's name and, in a plain room for a user whose CHAT_NOTIFY_PREVIEW
+    is not N, a snippet; an encrypted room's has the room and the sender only; its tag is the room's (chat-roomId), which
+    a device replaces and closes the room's notifications by. Messages live 4 weeks at high priority with a collapse key
+    (FCM) or Topic (Web Push): an HMAC, keyed by the server's VAPID key, of the registration, the room and the kind, so a
+    push service can neither find a room id nor link two users' pushes of a room, and a clear (normal priority, its own
+    key) never replaces a message waiting there. No clear goes to a device whose newer push of the room is unread. FCM 429 and 5xx, no answer and FCM down wait with backoff and jitter, at most an hour each, Retry-After taken;
+    FCM UNREGISTERED deletes the registration; Web Push and UnifiedPush 404 and 410 disable it. Each job, row and device is
+    on its own: one that fails is logged and the rest go on.
+
+    A device acknowledges each push it showed (NotificationServices.ack#Push); the device keeps sent, acked and failed counts
+    (System, Push Health; a device that never acknowledged one is not alerted on). A call's ring is not in the outbox: it
+    goes after the commit straight to send#WebPush, and to the desk and soft phones, for the users filter#RingUsers keeps
+    during do not disturb (all of them when that check fails, logged). -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="wake" noun="ChatPush" type="rust" location="moqui_core::service::chat_push::wake_chat_push"
+            allow-remote="false" transaction="ignore">
+        <description>Internal: wake this node's push worker once the caller's transaction commits (at once outside one;
+            nothing on a rollback).</description>
+    </service>
+
+    <service verb="run" noun="ChatPush" type="rust" location="moqui_core::service::chat_push::run_chat_push"
+            allow-remote="false" transaction="ignore">
+        <description>Internal: one round of the push worker now, or at nowMillis (the tests' simulated clock): the jobs into
+            the outbox, the held pushes of users no longer on do not disturb, then the pushes due. Out: jobCount (jobs
+            worked), queuedCount (outbox rows written or merged), sentCount, retriedCount, failedCount, droppedCount (read
+            before they went).</description>
+        <in-parameters><parameter name="nowMillis" type="Long"/></in-parameters>
+        <out-parameters>
+            <parameter name="jobCount" type="Long"/>
+            <parameter name="queuedCount" type="Long"/>
+            <parameter name="sentCount" type="Long"/>
+            <parameter name="retriedCount" type="Long"/>
+            <parameter name="failedCount" type="Long"/>
+            <parameter name="droppedCount" type="Long"/>
+        </out-parameters>
+    </service>
+
+    <service verb="queue" noun="ReadClear" type="rust" location="moqui_core::service::chat_push::queue_read_clear"
+            allow-remote="false">
+        <description>Internal (mark#Read, mark#AllRead): the user read rooms up to readMap's eventSeq (chatRoomId to
+            lastReadEventSeq). Their pushes of those rooms not yet sent, up to it, are dropped; each device (but the one of
+            this request's device key) that was sent one gets a clear push, so it removes the room's notification. In the
+            caller's transaction; the worker is woken after the commit.</description>
+        <in-parameters>
+            <parameter name="userId" required="true"/>
+            <parameter name="readMap" type="Map" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="clearCount" type="Long"/></out-parameters>
+    </service>
+
+    <service verb="filter" noun="RingUsers" allow-remote="false">
+        <description>Internal (Calls.js ring): of userIdList, the users whose devices a call from fromUserId rings
+            (plans/Comms-Messaging.md §7.2 rule 4): everyone not on do not disturb, and on do not disturb a user whose allowed
+            list (the preference CHAT_DND_ALLOWED, userIds joined by commas, in Chat settings beside the hours) has the caller,
+            or whom the same caller called in the 3 minutes before (another call than callSessionId): the same user, or for a
+            call from an outside number (fromNumber) the same number. The allowed list holds users only, so an outside
+            number rings through only as a repeat.</description>
+        <in-parameters>
+            <parameter name="userIdList" type="List" required="true"/>
+            <parameter name="fromUserId"/>
+            <parameter name="fromNumber"><description>An outside caller's number (its call's phone leg)</description></parameter>
+            <parameter name="callSessionId"/>
+        </in-parameters>
+        <out-parameters><parameter name="ringUserIdList" type="List"/></out-parameters>
+        <actions><script><![CDATA[
+            const ids = Array.from(new Set(Array.from(userIdList || []).map((id) => String(id || '').trim()).filter((id) => id)))
+            ringUserIdList = ids
+            if (!ids.length) return
+            const now = Number(ec.user.nowTimestamp)
+            const dnd = new Set(Array.from(ec.entity.find('moqui.security.UserStatus').condition('userId', 'in', ids)
+                    .condition('statusEnumId', 'UpsDnd').disableAuthz().list())
+                    .filter((row) => row.clearAtDate == null || Number(row.clearAtDate) > now).map((row) => row.userId))
+            if (!dnd.size) return
+            const rings = new Set()
+            if (fromUserId) {
+                for (const row of ec.entity.find('moqui.security.UserPreference').condition('userId', 'in', Array.from(dnd))
+                        .condition('preferenceKey', 'CHAT_DND_ALLOWED').disableAuthz().list()) {
+                    if (String(row.preferenceValue || '').split(',').map((id) => id.trim()).includes(fromUserId)) rings.add(row.userId)
+                }
+            }
+            // the same person's second call within 3 minutes: a user who started it, or an outside number's phone leg
+            const number = String(fromNumber || '').trim()
+            if (fromUserId || number) {
+                const earlier = Array.from(ec.entity.find('moqui.call.CallUserLog').condition('userId', 'in', Array.from(dnd))
+                        .condition('logDate', 'greater-equals', new Date(now - 180000)).disableAuthz().list())
+                        .filter((row) => row.callSessionId !== callSessionId && row.roleEnumId !== 'CurCaller')
+                if (earlier.length) {
+                    const ids = Array.from(new Set(earlier.map((row) => row.callSessionId)))
+                    const byCaller = new Set(fromUserId ? Array.from(ec.entity.find('moqui.call.CallSession').condition('callSessionId', 'in', ids)
+                            .condition('startedByUserId', fromUserId).selectField('callSessionId').disableAuthz().list()).map((row) => row.callSessionId)
+                        : Array.from(ec.entity.find('moqui.call.CallLeg').condition('callSessionId', 'in', ids).condition('legTypeEnumId', 'CltPstn')
+                            .condition('phoneNumber', number).selectField('callSessionId').disableAuthz().list()).map((row) => row.callSessionId))
+                    for (const row of earlier) if (byCaller.has(row.callSessionId)) rings.add(row.userId)
+                }
+            }
+            ringUserIdList = ids.filter((id) => !dnd.has(id) || rings.has(id))
+        ]]></script></actions>
+    </service>
+</services>

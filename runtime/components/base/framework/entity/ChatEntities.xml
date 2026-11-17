@@ -652,6 +652,115 @@ along with this software (see the LICENSE.md file). If not, see
         </seed-data>
     </entity>
 
+    <!-- ========== Activity and push (plans/Comms-Messaging.md §5.2, §7) ==========
+        What a user should hear about (ChatUserActivity: the Mentions level of push and the Activity feed), the push of an
+        event to its room's members' devices after the commit (ChatPushJob, then a PushOutbox row per device), worked by
+        crates/moqui-core/src/service/chat_push.rs. -->
+    <entity entity-name="ChatUserActivity" package="moqui.chat" use="transactional" cache="never">
+        <description>One thing a user should hear about, written by send#Message, edit#Message and react#Message in the
+            message's transaction: a mention (CuaMention), a reply to the user's message (CuaReply), a reply in a thread the
+            user started or wrote in (CuaThreadReply), a reaction to the user's message (CuaReaction). eventSeq is the event
+            that made it (the message, the edit that added the mention, the reaction); messageEventSeq the message it is
+            about (the one reacted to, the one edited, else the same). A redaction of the message and the retention job
+            remove the rows; taking a reaction back removes its row. The kinds mention, reply and thread reply are the
+            Mentions level of push (§7.2 rule 1); a reaction never pushes.</description>
+        <field name="chatUserActivityId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="activityKindEnumId" type="id"/>
+        <field name="chatRoomId" type="id"/>
+        <field name="eventSeq" type="number-integer"/>
+        <field name="messageEventSeq" type="number-integer"/>
+        <field name="actorUserId" type="id"><description>Who did it, a local user; empty for an external actor</description></field>
+        <field name="chatActorId" type="id"/>
+        <field name="activityDate" type="date-time"/>
+        <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one" title="ChatUserActivityKind" related="moqui.basic.Enumeration" short-alias="kind">
+            <key-map field-name="activityKindEnumId"/></relationship>
+        <index name="CHAT_ACTIVITY_USER"><index-field name="userId"/><index-field name="activityDate"/></index>
+        <index name="CHAT_ACTIVITY_EVENT"><index-field name="chatRoomId"/><index-field name="eventSeq"/></index>
+        <index name="CHAT_ACTIVITY_MESSAGE"><index-field name="chatRoomId"/><index-field name="messageEventSeq"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Chat User Activity Kind" enumTypeId="ChatUserActivityKind"/>
+            <moqui.basic.Enumeration description="Mention" enumId="CuaMention" enumCode="mention" enumTypeId="ChatUserActivityKind" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Reply" enumId="CuaReply" enumCode="reply" enumTypeId="ChatUserActivityKind" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Thread reply" enumId="CuaThreadReply" enumCode="threadReply" enumTypeId="ChatUserActivityKind" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Reaction" enumId="CuaReaction" enumCode="reaction" enumTypeId="ChatUserActivityKind" sequenceNum="4"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="ChatPushJob" package="moqui.chat" use="transactional" cache="never">
+        <description>An event to push to its room's members' devices: written by append#Event in the event's transaction
+            (a message, or an edit that may mention someone), so a message that rolls back pushes nothing, and one row
+            however many members the room has. The push worker reads the members after the commit, applies the rules, writes
+            a PushOutbox row for each device and deletes the job. A worker holds a job while it works it (leaseOwner until
+            leaseExpiresDate); a job a crash left is taken again once its lease runs out.</description>
+        <field name="chatPushJobId" type="id" is-pk="true"/>
+        <field name="chatRoomId" type="id"/>
+        <field name="eventSeq" type="number-integer"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="attemptCount" type="number-integer"/>
+        <field name="leaseOwner" type="text-medium"/>
+        <field name="leaseExpiresDate" type="date-time"/>
+        <field name="lastErrorText" type="text-long"/>
+        <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
+        <index name="CHAT_PUSH_JOB_DATE"><index-field name="createdDate"/></index>
+    </entity>
+
+    <entity entity-name="PushOutbox" package="moqui.chat" use="transactional" cache="never">
+        <description>One push to one device (a WebPushSubscription: a browser, an FCM app or a UnifiedPush distributor), kept
+            until its push service takes it, its time to live ends or its tries run out, so a restart loses none. The
+            payload is the plain JSON the worker encrypts for the device at each send (RFC 8291); it never leaves the server
+            unencrypted. A pending or held push of the same device and room takes a new message in (messageCount, the
+            newest eventSeq): a phone offline for a week gets one per room. kindEnumId: PokMessage (a notification to show,
+            high priority) or PokClear (the room was read on another device: remove its notification, normal priority).
+            statusEnumId: PosPending, PosHeld (the user is on do not disturb: sent as one summary when it ends), PosSent
+            (its push service took it: sentDate; ackedDate once the app showed it, ack#Push), PosFailed (gone, refused, out
+            of tries or out of time), PosDropped (read before it was sent). A worker holds a row while it sends it
+            (leaseOwner until leaseExpiresDate). pushOutboxId is the push id the device acknowledges.</description>
+        <field name="pushOutboxId" type="id" is-pk="true"/>
+        <field name="subscriptionId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="chatRoomId" type="id"/>
+        <field name="eventSeq" type="number-integer"/>
+        <field name="kindEnumId" type="id"/>
+        <field name="statusEnumId" type="id"/>
+        <field name="messageCount" type="number-integer"/>
+        <field name="mention" type="text-indicator"><description>Y: one of its messages mentions or replies to the user</description></field>
+        <field name="payloadJson" type="text-very-long"/>
+        <field name="attemptCount" type="number-integer"/>
+        <field name="nextAttemptDate" type="date-time"/>
+        <field name="leaseOwner" type="text-medium"/>
+        <field name="leaseExpiresDate" type="date-time"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="expireDate" type="date-time"><description>The end of its time to live (4 weeks for a message): not sent after</description></field>
+        <field name="sentDate" type="date-time"/>
+        <field name="ackedDate" type="date-time"/>
+        <field name="clearedDate" type="date-time"><description>A sent message push whose room was read since: its clear is queued</description></field>
+        <field name="reasonCode" type="text-short"/>
+        <field name="lastErrorText" type="text-long"/>
+        <relationship type="one-nofk" related="moqui.security.user.WebPushSubscription" short-alias="device"/>
+        <relationship type="one" title="PushOutboxKind" related="moqui.basic.Enumeration" short-alias="kind">
+            <key-map field-name="kindEnumId"/></relationship>
+        <relationship type="one" title="PushOutboxStatus" related="moqui.basic.Enumeration" short-alias="status">
+            <key-map field-name="statusEnumId"/></relationship>
+        <index name="PUSH_OUTBOX_DUE"><index-field name="statusEnumId"/><index-field name="nextAttemptDate"/></index>
+        <index name="PUSH_OUTBOX_DEVICE"><index-field name="subscriptionId"/><index-field name="chatRoomId"/><index-field name="statusEnumId"/></index>
+        <index name="PUSH_OUTBOX_USER"><index-field name="userId"/><index-field name="chatRoomId"/><index-field name="statusEnumId"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Push Outbox Kind" enumTypeId="PushOutboxKind"/>
+            <moqui.basic.Enumeration description="Message" enumId="PokMessage" enumCode="message" enumTypeId="PushOutboxKind" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Clear" enumId="PokClear" enumCode="clear" enumTypeId="PushOutboxKind" sequenceNum="2"/>
+            <moqui.basic.EnumerationType description="Push Outbox Status" enumTypeId="PushOutboxStatus"/>
+            <moqui.basic.Enumeration description="Pending" enumId="PosPending" enumCode="pending" enumTypeId="PushOutboxStatus" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Held (do not disturb)" enumId="PosHeld" enumCode="held" enumTypeId="PushOutboxStatus" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Sent" enumId="PosSent" enumCode="sent" enumTypeId="PushOutboxStatus" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Failed" enumId="PosFailed" enumCode="failed" enumTypeId="PushOutboxStatus" sequenceNum="4"/>
+            <moqui.basic.Enumeration description="Dropped (read first)" enumId="PosDropped" enumCode="dropped" enumTypeId="PushOutboxStatus" sequenceNum="5"/>
+        </seed-data>
+    </entity>
+    <!-- ========== end activity and push ========== -->
+
     <!-- ========== Encrypted rooms (C7; plans/archive/Comms-Framework.md §4.5; docs/interfaces/Chat-Keys.md "Encrypted rooms") ==========
         A room made encrypted stays encrypted: its messages, edits and reactions are Megolm ciphertext the browsers make
         (m.room.encrypted content in contentJson.encrypted), with only the relation targets (replyToEventSeq,

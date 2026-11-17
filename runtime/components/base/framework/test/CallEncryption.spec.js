@@ -331,6 +331,48 @@ feature("a room's owner or moderator makes its calls encrypted; a plain call goi
     }
 })
 
+// Comms-Messaging §6.1 rule 4 (COM-UI-004): an encrypted room's calls need no asking, and its setting is not one
+feature("every call in an encrypted room is encrypted, a direct one too: a phone and a guest are refused there, the room's setting stays on, and a plain direct room keeps the caller's choice", {
+    when() {
+        ec.user.internalLoginUser("e2ee.spec.a")
+        const room = sys(() => call("org.moqui.chat.ChatServices.create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Encrypted room calls spec",
+            memberUserIdList: [B, C], encrypted: true}))
+        const roomCallNow = as(A, "start#Call", {chatRoomId: room.chatRoomId, ...browser(A)})
+        const phone = as(A, "org.moqui.call.CallTransferServices.add#CallParticipant", {callSessionId: roomCallNow.callSessionId, phoneNumber: "+15550199977"})
+        const link = as(A, "create#CallLink", {name: "Encrypted room meeting", policy: "link", chatRoomId: room.chatRoomId})
+        const guest = as(D, "join#AsGuest", {token: link.token, displayName: "Spec Guest"})
+        const settingOff = as(A, "set#RoomCallEncryption", {chatRoomId: room.chatRoomId, required: false})
+        const settingOn = as(A, "set#RoomCallEncryption", {chatRoomId: room.chatRoomId, required: true})
+        as(A, "end#Call", {callSessionId: roomCallNow.callSessionId})
+        ec.user.internalLoginUser("e2ee.spec.a")
+        const direct = sys(() => call("org.moqui.chat.ChatServices.create#Room", {roomTypeEnumId: "CrtDirect", memberUserIdList: [C], encrypted: true}))
+        const directCall = as(A, "start#Call", {chatRoomId: direct.chatRoomId, ...browser(A)})
+        const directSetting = as(A, "set#RoomCallEncryption", {chatRoomId: direct.chatRoomId, required: true})
+        as(A, "end#Call", {callSessionId: directCall.callSessionId})
+        // a plain direct room (B and D's, made by the call): plain unless the caller asks
+        const plainCall = as(B, "start#Call", {calleeUserIdList: [D], ...browser(B)})
+        as(B, "end#Call", {callSessionId: plainCall.callSessionId})
+        const askedCall = as(B, "start#Call", {calleeUserIdList: [D], requireE2ee: true, ...browser(B)})
+        as(B, "end#Call", {callSessionId: askedCall.callSessionId})
+        return {roomCallNow, phone, guest, settingOff, settingOn, directCall, directSetting, plainCall, askedCall}
+    },
+    then({roomCallNow, phone, guest, settingOff, settingOn, directCall, directSetting, plainCall, askedCall}) {
+        roomCallNow.errors == ""
+        roomCallNow.call.e2ee == true
+        legOf(roomCallNow.call, A).deviceId == DEVICES[A]
+        phone.reasonCode == "encrypted"
+        guest.reasonCode == "encryptedNoGuests"
+        guest.credential == null
+        settingOff.reasonCode == "notAllowed"
+        settingOn.required == true
+        directCall.errors == ""
+        directCall.call.e2ee == true
+        directSetting.reasonCode == "notAllowed"
+        plainCall.call.e2ee == false
+        askedCall.call.e2ee == true
+    }
+})
+
 feature("revoking a device takes its leg out of the encrypted call, and the others' roster no longer has it", {
     when() {
         // signed in with the password just now: a revoke of a device with keys needs a recent sign-in

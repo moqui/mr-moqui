@@ -60,8 +60,18 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   records and Create from; the terminal lists it but cannot read or write it. Set up the key backup in Settings, My
   devices, and keep the recovery key it shows once: a new browser reads older messages only after Restore with it (or
   when another of your devices shares the keys). My devices also verifies your devices (compare emoji, or scan a QR
-  code), and says when it waits for the other device. Search says an encrypted room is not searched. Open the room in any tab: the tab that holds this browser's keys does the work for the others. See [Chat
+  code), and says when it waits for the other device. Search says an encrypted room is not searched. Open the room in any tab: the tab that holds this browser's keys does the work for the others. Every call in an
+  encrypted room is end-to-end encrypted, a direct one too: its Room settings show the calls' setting on, and a phone
+  or a guest cannot join. With only verified devices on, your message says who cannot read it, with Verify; and a
+  message you cannot read says when its sender has not verified your device. See [Chat
   keys](../interfaces/Chat-Keys.md#encrypted-rooms).
+- <a id="e2ee-labels"></a>**What a room's lock means.** A lock means end-to-end encrypted, and only that: an encrypted
+  room has it in its header and in the room list, with a check when every device in it is verified, else Verify in its
+  note. Every other room has the open lock, and a note under its header (close it with its x) says what can read its
+  messages: the server, for a plain private room or a direct chat; the phone network and the SMS provider, for a
+  phone number's texts (its composer says Text message); the bridge, for a room bridged to another network (its composer
+  names the network). A public room has the open lock and no note. A private room's own icon is people, not a lock. The
+  terminal shows the same as one line. Mail never has a lock.
 - <a id="bridged-rooms"></a>**Bridged rooms** (C1). A room an administrator connected to another network (SMS, WhatsApp,
   XMPP, Matrix and others, as their adapters come) has the network's mark in the room list and its name in the room's
   header ("Messages here also go to ..."). People from that network are members with the network's badge, and their
@@ -216,8 +226,18 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
 - **Home.** Unread by account, flagged, snoozed, mentions, mail that was not sent, missed calls, unheard voicemail (once
   you have a voicemail box), Needs reply (mail a day old or more that is not answered and has no reply sent after it;
   `find#InboxRows` `needsReply`), and rooms with unread.
+- **Push health** (System, Push Health; the PushHealthAdmin permission, which ADMIN has). Every user's push devices (a
+  browser, the app through Firebase or a UnifiedPush distributor) with the last registration, push and acknowledgement,
+  the pushes sent, acknowledged, failed and waiting, and first, marked, the devices that acknowledge pushes whose pushes
+  of the last day were not acknowledged (a device that never acknowledged one is not marked).
 - **Notifications on this device.** The account menu turns on desktop notifications and Web Push for the browser or
-  the installed app ([Qvt-Client](../ui/Qvt-Client.md#install-and-web-push)).
+  the installed app ([Qvt-Client](../ui/Qvt-Client.md#install-and-web-push)). A chat message is pushed to every device
+  of each member it is for, by the room's level (a muted room as Mentions), not once it is read on another device (a
+  read there removes the notification), held on do not disturb and sent as one summary per room when it ends, and
+  encrypted to the device: the push service sees no text. A missed call and a voicemail push as messages in their
+  room. A reaction to your message shows in the room, never as a push. On do not disturb a call still rings, your
+  apps and your desk and soft phones, from the people in Settings, Chat, Calls that ring through, and as the same
+  person's or number's second call within 3 minutes ([Qvt-Client, Chat push](../ui/Qvt-Client.md#install-and-web-push)).
 
 ## For app authors
 
@@ -307,8 +327,10 @@ the rules, schedules across a time zone, forward loops and permissions, do not d
 the strategies, the shared box, and the first answer winning. `./moq test framework --spec ChatKeys`: crypto devices,
 their keys and to-device messages; `./moq test-client basic-comms --serve --spec CryptoFlow`: two browsers exchanging an
 Olm-encrypted message ([Chat keys](../interfaces/Chat-Keys.md#tests)). `./moq test framework --spec CallEncryption`: the
-policy and every refusal of end-to-end encrypted calls; `./moq test-client basic-comms --serve --spec EncryptedCallFlow`:
-an encrypted call in three browsers ([WebRTC, Encrypted calls](../interfaces/WebRTC.md#encrypted-calls)). `cargo test -p moqui-xmpp` and
+policy and every refusal of end-to-end encrypted calls, an encrypted room's calls among them; `./moq test-client basic-comms --serve --spec EncryptedCallFlow`:
+an encrypted call in three browsers ([WebRTC, Encrypted calls](../interfaces/WebRTC.md#encrypted-calls)). The lock and
+the notes: `./moq test-client webroot --offline --spec WebrootChat` (the rules of `moqui.chat.e2eeLabel`), and the
+acceptance walk `./moq accept basic-comms --spec ChatLabels` (each room's label on a phone and a desktop). `cargo test -p moqui-xmpp` and
 `cargo test -p moqui-host --test it -- xmpp::`: XMPP clients against recorded stanzas and on a real server ([XMPP,
 Tests](../interfaces/XMPP.md#tests)). IronStone's own parts are in its specs (`Inbox`, `Compose`,
 `Chat`, `CommsHome`, `InboxMailboxes`, `MailAccounts`, `MailSettings`).
