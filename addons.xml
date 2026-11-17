@@ -54,6 +54,8 @@
     <component name="mr-pass" group="moqui" version="" branch="master"/>
     <!-- IronStone HOME (Home Organization-Mechanization Ensuite) - depends on mr-boss -->
     <component name="mr-home" group="moqui" version="" branch="master"/>
+    <!-- IronStone THREE (Three-d Hosted-Roleplay Enterprise Ensuite) - depends on mr-boss, mr-pass -->
+    <component name="mr-three" group="moqui" version="" branch="master"/>
     <!-- Localization -->
     <component name="mr-l10n" group="moqui" version="" branch="master"/>
 
