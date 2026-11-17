@@ -406,12 +406,13 @@ fn opted_out(bridge: &BridgeInfo, ours: &str, theirs: &str) {
 /// Token of the URL and, for a form, each parameter's name and value sorted by name (case-sensitive), with no
 /// separators; for another body Twilio puts `bodySHA256` (its hex SHA-256) in the URL's query and signs the URL alone.
 /// Twilio signs the URL as it was set, which may or may not name the default port: both are tried. Credentials in the
-/// URL are not part of it. The comparison is in constant time (aws-lc-rs).
+/// URL and its fragment (a connection override) are not part of it. The comparison is in constant time (aws-lc-rs).
 pub fn signature_valid(auth_token: &str, url: &str, body: &[u8], signature: &str) -> bool {
     let Ok(signature) = base64::engine::general_purpose::STANDARD.decode(signature.trim()) else {
         return false;
     };
-    let url = without_credentials(url);
+    // a connection override (`#rc=...`) is not signed
+    let url = without_credentials(url.split('#').next().unwrap_or_default());
     let pairs = match query_value(&url, "bodySHA256") {
         Some(expected) => {
             let digest = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, body);

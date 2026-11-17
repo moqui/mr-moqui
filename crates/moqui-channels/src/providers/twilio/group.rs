@@ -20,7 +20,9 @@
 //!   A room with none gets one on its first send: looked up by its unique name first ([`unique_name`], of the bridge and
 //!   the room's numbers, so a send after a lost answer finds the one made before and never makes a second), else made
 //!   with it; then our number joins as the chat participant (`Identity` and `MessagingBinding.ProjectedAddress` our
-//!   number), each other number as an SMS participant (`MessagingBinding.Address`), and a webhook of the Conversation
+//!   number), each other number as an SMS participant (`MessagingBinding.Address`; when Twilio answers that another
+//!   Conversation has these numbers, 50438, as one it made for a group text that came in, that one is found by its
+//!   participants and taken instead), and a webhook of the Conversation
 //!   names the bridge's webhook URL for `onMessageAdded` and `onDeliveryUpdated`; then the mapping keeps the SID
 //!   (`store#MappingThread`). Nothing has reached anyone's phone until the message is posted, so a failure or a lost
 //!   answer in these steps is tried again. The message is `POST .../Conversations/{CH}/Messages` (`Author` our number,
@@ -44,7 +46,7 @@ use serde_json::Value as Json;
 use super::{auth_headers, is_sid, Config, Form, Twilio};
 use crate::sms::{
     call, exchange, never_sent, ApiBody, ApiRequest, Inbound, InboundMedia, Outgoing, Receipt, ReceiptStatus, Settings,
-    SmsEvent,
+    SmsEvent, SmsProvider as _,
 };
 
 /// The participants of each Conversation a process knows: by `CH...` SID, each participant's `MB...` SID and number
@@ -303,15 +305,38 @@ fn conversation_of(
                     roster.numbers.insert(participant.to_string(), number);
                 }
             }
+            // there already: a send before this one got this far (409; Twilio's 50416, 50433, 50437)
             409 => {}
             status => {
-                return Err(failed(
-                    "providerRefused",
-                    format!(
-                        "Twilio did not add {number} to the group's Conversation ({status}): {}",
-                        provider_error(&joined)
-                    ),
-                ))
+                let error = provider.error_of(joined.body());
+                match error.code.as_deref() {
+                    Some("50416" | "50433" | "50437") => {}
+                    // another Conversation has these numbers (Twilio made it for a text that came in): that one is the
+                    // room's, and the one made here goes
+                    Some("50438") => {
+                        let Some(other) = existing_group(provider, client, config, out) else {
+                            return Err(failed(
+                                "providerRefused",
+                                "Twilio has another Conversation of this group, and it was not found",
+                            ));
+                        };
+                        let _ = call(
+                            client,
+                            &form_request(config, Method::Delete, format!("{base}/Conversations/{sid}"), Vec::new()),
+                        );
+                        keep_thread(bridge, out, &other)?;
+                        return Ok(other);
+                    }
+                    _ => {
+                        return Err(failed(
+                            "providerRefused",
+                            format!(
+                                "Twilio did not add {number} to the group's Conversation ({status}): {}",
+                                error.text
+                            ),
+                        ))
+                    }
+                }
             }
         }
     }
@@ -349,8 +374,45 @@ fn conversation_of(
     Ok(sid)
 }
 
+/// The Conversation of exactly the group's numbers that Twilio has already (`ParticipantConversations` of the first
+/// other number, each one's participants compared), when there is one.
+fn existing_group(provider: &Twilio, client: &RestClient, config: &Config, out: &Outgoing<'_>) -> Option<String> {
+    let first = out.theirs.first()?;
+    let request = form_request(
+        config,
+        Method::Get,
+        format!(
+            "{}/ParticipantConversations?Address={}",
+            conversations_base(config),
+            first.replace('+', "%2B")
+        ),
+        Vec::new(),
+    );
+    let response = call(client, &request)
+        .ok()
+        .filter(|response| response.status() == 200)?;
+    let mut wanted: Vec<&str> = out.theirs.iter().map(String::as_str).collect();
+    wanted.push(out.ours);
+    wanted.sort_unstable();
+    let listed = json_of(&response);
+    let candidates = listed.get("conversations").and_then(Json::as_array)?;
+    candidates
+        .iter()
+        .filter(|entry| entry.get("conversation_state").and_then(Json::as_str) != Some("closed"))
+        .filter_map(|entry| entry.get("conversation_sid").and_then(Json::as_str))
+        .filter(|sid| is_sid(sid, "CH"))
+        .find(|sid| {
+            roster_of(provider, client, config, sid).is_ok_and(|roster| {
+                let mut numbers: Vec<&str> = roster.numbers.values().map(String::as_str).collect();
+                numbers.sort_unstable();
+                numbers.dedup();
+                numbers == wanted
+            })
+        })
+        .map(str::to_string)
+}
+
 fn provider_error(response: &RestResponse) -> String {
-    use crate::sms::SmsProvider as _;
     Twilio::default().error_of(response.body()).text
 }
 

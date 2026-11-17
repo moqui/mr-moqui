@@ -604,6 +604,8 @@ fn a_twilio_signature_takes_the_bridges_webhook_url_the_port_either_way_and_a_js
     };
     let hook = "https://hooks.example.test/twilio/sms?b=SMS1";
     assert!(check(hook, hook));
+    // a connection override in the configured URL is not signed
+    assert!(check(hook, &format!("{hook}#rc=3&rp=5xx")));
     assert!(check("https://hooks.example.test:443/twilio/sms?b=SMS1", hook));
     assert!(check(hook, "https://hooks.example.test:443/twilio/sms?b=SMS1"));
     assert!(check(
@@ -1022,4 +1024,50 @@ fn a_twilio_group_text_from_a_conversation_twilio_made_comes_into_the_group_room
         bed.count("moqui.chat.ChatAttachment", &[("chatRoomId", text(&room))]),
         1
     );
+}
+
+/// Twilio answers that another Conversation has the group's numbers (50438: one it made for a group text that came
+/// in): that one, found by its participants, is the room's, and the one just made is deleted.
+#[test]
+fn a_twilio_group_room_takes_the_conversation_twilio_has_of_its_numbers() {
+    let bed = twilio_bed();
+    let _entered = bed.ctx.enter();
+    let (room, _) = bed.twilio_group();
+    let theirs = sid("CH", 42);
+    bed.fake.file(
+        "/v1/ParticipantConversations?Address=%2B15553334444",
+        "application/json",
+        json!({"conversations": [
+            {"conversation_sid": sid("CH", 41), "conversation_state": "closed"},
+            {"conversation_sid": theirs, "conversation_state": "active"}]})
+        .to_string()
+        .as_bytes(),
+    );
+    bed.fake.file(
+        &format!("/v1/Conversations/{theirs}/Participants?PageSize=50"),
+        "application/json",
+        json!({"participants": [
+            {"sid": sid("MB", 81), "messaging_binding": {"projected_address": OURS}},
+            {"sid": sid("MB", 82), "messaging_binding": {"address": THEIRS}},
+            {"sid": sid("MB", 83), "messaging_binding": {"address": OTHER}}]})
+        .to_string()
+        .as_bytes(),
+    );
+    let made = sid("CH", 1);
+    bed.fake.script(&[
+        Reply::Status(201, json!({"sid": made}).to_string()),
+        Reply::Status(201, json!({"sid": sid("MB", 2)}).to_string()),
+        Reply::Status(
+            400,
+            json!({"code": 50438, "message": "Group conversation with given participant list already exists"})
+                .to_string(),
+        ),
+    ]);
+    let seq = bed.send(&room, "Hello again", &[]);
+    bed.round(0);
+    assert_eq!(bed.delivery(&room, seq).0, "CdsAccepted");
+    assert_eq!(bed.thread(&room), theirs);
+    let paths: Vec<String> = bed.fake.sends().into_iter().map(|seen| seen.path).collect();
+    assert!(paths.contains(&format!("/v1/Conversations/{made}")), "the one made is deleted: {paths:?}");
+    assert_eq!(paths.last(), Some(&format!("/v1/Conversations/{theirs}/Messages")));
 }

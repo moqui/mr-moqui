@@ -261,8 +261,10 @@ the limits); this section is what differs.
    https://<server>/channels/<chatBridgeId>/webhook`, exactly as Moqui sees it: `channels_public_url` and that path,
    or the bridge's `webhookUrl` when Twilio reaches the server at another address (a proxy). Twilio signs the URL it
    posts to, so a different scheme, host, path or query fails the signature (the default port may be named or not:
-   both are tried). Twilio does not try a webhook again after a 5xx by default: set the number's "Primary handler
-   fails" fallback URL to the same URL, so a text that came while the server was busy is not lost.
+   both are tried). Twilio does not try a webhook again after a 5xx by default (only a connection that could not be
+   made, once): set the number's "Primary handler fails" fallback URL to the same URL, or add a connection override
+   to the URL (`#rc=3&rp=5xx,ct`; Twilio does not sign the fragment, and Moqui leaves it out of the check), so a
+   text that came while the server was busy is not lost.
 4. **The bridge.** System, Chat Bridges, network SMS, adapter `sms-twilio`, configuration (kept encrypted):
 
    | Key | What |
@@ -321,7 +323,8 @@ most 9 others (a Twilio group Conversation has at most 10 participants), all US 
 is refused (`groupTextsNotSupported`). A group room's first send makes its Conversation: looked up by a unique name of
 the bridge and the room's numbers first (so a send after a lost answer finds the one made before, never a second), else
 made with that name; our number joins as the chat participant (`MessagingBinding.ProjectedAddress`), each other number
-as an SMS participant (`MessagingBinding.Address`); a webhook of the Conversation names the bridge's webhook URL for
+as an SMS participant (`MessagingBinding.Address`; when Twilio answers that another Conversation has these numbers,
+50438, as one it made for a group text that came in, that one is found by its participants and taken); a webhook of the Conversation names the bridge's webhook URL for
 `onMessageAdded` and `onDeliveryUpdated`; and the room's mapping keeps the Conversation's SID
 (`ChatRoomBridge.externalThreadId`, `store#MappingThread`). Nothing reaches a phone until the message is posted
 (`POST /v1/Conversations/{CH}/Messages`, `Author` our number), so a step before it that fails is tried again; an answer
@@ -336,9 +339,8 @@ bridge's webhook URL too. Turning that on moves every inbound text of the servic
 for a number kept for group texts.
 
 **Not confirmed in Twilio's documentation** (check them in the live test): the HTTP status Twilio answers for a
-Conversation or participant that is there already (taken as 409); the `Media` parameter of `onMessageAdded` and its
-files' address (`/v1/Services/{IS}/Media/{ME}/Content` on the Media Content Service); whether Twilio signs a URL's
-connection-override fragment (`#rc=...`; use the fallback URL instead); the codes 30032 and 30034.
+Conversation or participant that is there already (taken as 409, or the codes 50416, 50433 and 50437); the `Media` parameter of `onMessageAdded` and its
+files' address (`/v1/Services/{IS}/Media/{ME}/Content` on the Media Content Service); the codes 30032 and 30034.
 
 ## Tests
 
