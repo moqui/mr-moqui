@@ -35,7 +35,8 @@
  * up encrypted to a recovery key the user keeps (enableBackup, restoreBackup; the server's room_keys endpoints), and
  * cross-signing and emoji or QR verification run over to-device (setupCrossSigning, verifyDevice, verifications), with a
  * device of this user's or of another person (Chat's Verify). A verified person's new device or changed identity refuses
- * the next encryptRoom (verifiedUserProblem, with the problems) until it is verified or let through (acceptProblems);
+ * the next encryptRoom (verifiedUserProblem, with the problems) until it is verified or let through for the room
+ * (acceptProblems, kept in this browser, not as the SDK's trust);
  * roomTrust gives a room's people and devices as verified or not, and onTrust says when they change (Comms-Messaging
  * §6.1 rule 3).
  * Files are encrypted before they go up (encryptFile) and decrypted after they come down (decryptFile).
@@ -922,13 +923,16 @@
             roomStrategy.set(chatRoomId, onlyVerified);
             // §6.1 rule 3: a verified person's new device, or a new identity of a person who was verified, is said before the
             // send (refused with the problems: Verify, or Send anyway, acceptProblems); only verified devices leaves them out
+            // This check is the gate: once it passes, the keys go to all devices (allDevices), so a device the user let
+            // through for this room (acceptProblems, kept here, not as the SDK's trust) or verified by emoji gets them. Only
+            // verified devices stays the SDK's strict onlyTrustedDevices.
             if (!onlyVerified) {
-                const problems = await verifiedUserProblems(ids);
+                const problems = await verifiedUserProblems(ids, chatRoomId);
                 if (problems.length) throw { reasonCode: "verifiedUserProblem", errors: "A verified person has a new device or identity", problems };
             }
             const settings = new sdk.EncryptionSettings();
             settings.historyVisibility = sdk.HistoryVisibility.Shared;
-            settings.sharingStrategy = onlyVerified ? sdk.CollectStrategy.onlyTrustedDevices() : sdk.CollectStrategy.errorOnUnverifiedUserProblem();
+            settings.sharingStrategy = onlyVerified ? sdk.CollectStrategy.onlyTrustedDevices() : sdk.CollectStrategy.allDevices();
             // who the strategy leaves out: the devices that are not verified (the machine tells each one why, m.unverified)
             roomLeftOut.set(chatRoomId, onlyVerified ? (await devicesIn(ids)).filter((device) => !device.verified)
                 .map((device) => ({ userId: device.userId, deviceId: device.deviceId, displayName: device.displayName })) : []);
@@ -936,11 +940,9 @@
             try {
                 requests = await machine.shareRoomKey(new sdk.RoomId(roomIdOf(chatRoomId)), users(), settings);
             } catch (err) {
-                // the strategy found what verifiedUserProblems did not name: said the same way
-                if (onlyVerified) throw err;
-                const problems = await verifiedUserProblems(ids);
-                if (!problems.length) throw err;
-                throw { reasonCode: "verifiedUserProblem", errors: String((err && err.message) || err), problems };
+                // the SDK's own words are not shown: logged, and said plainly
+                console.error("The room key was not shared", err);
+                throw { reasonCode: "shareFailed", errors: "This message could not be encrypted for the devices of this room" };
             }
             for (const request of requests) await sendRequest(request);
             const text = await machine.encryptRoomEvent(new sdk.RoomId(roomIdOf(chatRoomId)), eventType, JSON.stringify(content || {}));
@@ -988,55 +990,95 @@
         }
     }
 
+    // Send anyway (§6.1 rule 3): what the user let through, per account and room, kept in this browser (never as the SDK's
+    // trust, which onlyTrustedDevices would take as verified): {roomId: [{userId, deviceId, key} | {userId, masterKey}]}
+    const allowedKey = () => (moqui.scopedKey ? moqui.scopedKey("moqui.crypto.allowed." + me) : "moqui.crypto.allowed." + me);
+    function readAllowed() {
+        try { return JSON.parse(root.localStorage.getItem(allowedKey()) || "{}") || {}; } catch (err) { return {}; }
+    }
+    function writeAllowed(all) {
+        try { root.localStorage.setItem(allowedKey(), JSON.stringify(all)); } catch (err) { /* this page only: asked again next time */ }
+    }
+    const keyOf = (device) => { try { return device.ed25519Key ? device.ed25519Key.toBase64() : null; } catch (err) { return null; } };
+    const masterKeyOf = (identity) => { try { return identity.masterKey ? String(identity.masterKey) : null; } catch (err) { return null; } };
+
     /**
-     * The problems of verified people among userIds (§6.1 rule 3, as matrix-sdk-crypto's errorOnUnverifiedUserProblem finds
-     * them): a device of a verified person that its owner did not sign and that is not trusted or let through here
-     * (newDevice), and a person verified before whose identity changed (changedIdentity). [{userId, deviceId, displayName, kind}].
+     * The problems among userIds before a send to chatRoomId (§6.1 rule 3): a device that is not verified (by emoji here, or
+     * signed by its owner whose identity is verified), of a person who is verified (their identity, or a device of theirs
+     * verified by emoji), and not let through for this room with the same key (newDevice); and a person verified before
+     * whose identity changed, not let through with this master key (changedIdentity). [{userId, deviceId, displayName, kind,
+     * key | masterKey}].
      */
-    async function verifiedUserProblems(userIds) {
-        const out = [];
+    async function verifiedUserProblems(userIds, chatRoomId) {
+        const people = [];
         for (const userId of userIds) {
             const id = new sdk.UserId(matrixId(userId));
             const identity = await machine.getIdentity(id);
-            if (identity && identity.hasVerificationViolation && identity.hasVerificationViolation()) {
-                out.push({ userId, deviceId: null, displayName: null, kind: "changedIdentity" });
+            const ask = (run) => { try { return !!run(); } catch (err) { return false; } };
+            const devices = [];
+            for (const device of (await machine.getUserDevices(id, 5)).devices()) {
+                if (device.isDeleted() || device.isBlacklisted() || (userId === me && device.deviceId.toString() === state.deviceId)) continue;
+                await unsetIgnored(device);
+                devices.push({ deviceId: device.deviceId.toString(), displayName: device.displayName || null, key: keyOf(device),
+                    verified: !!device.isVerified(), locallyTrusted: !!device.isLocallyTrusted() });
+            }
+            people.push({ userId, devices, identity: identity ? { verified: ask(() => identity.isVerified()),
+                changed: ask(() => identity.hasVerificationViolation && identity.hasVerificationViolation()), masterKey: masterKeyOf(identity) } : null });
+        }
+        return problemsOf(people, readAllowed()[chatRoomId] || []);
+    }
+    /**
+     * The rule of verifiedUserProblems on plain data (a regression test runs it): people [{userId, identity: {verified,
+     * changed, masterKey} | null, devices: [{deviceId, displayName, key, verified, locallyTrusted}]}] (this device left
+     * out), allowed the room's let-through list.
+     */
+    function problemsOf(people, allowed) {
+        const out = [];
+        for (const person of people || []) {
+            const userId = person.userId;
+            const identity = person.identity;
+            if (identity && identity.changed) {
+                if (!allowed.some((one) => one.userId === userId && one.masterKey && one.masterKey === identity.masterKey)) {
+                    out.push({ userId, deviceId: null, displayName: null, kind: "changedIdentity", masterKey: identity.masterKey || null });
+                }
                 continue;
             }
-            if (!identity || !identity.isVerified()) continue;
-            const list = await machine.getUserDevices(id, 5);
-            for (const device of list.devices()) {
-                const deviceId = device.deviceId.toString();
-                if ((userId === me && deviceId === state.deviceId) || device.isDeleted() || device.isBlacklisted()) continue;
-                const local = device.localTrustState;
-                if (device.isCrossSignedByOwner() || device.isLocallyTrusted() || local === sdk.LocalTrust.Ignored) continue;
-                out.push({ userId, deviceId, displayName: device.displayName || null, kind: "newDevice" });
+            const devices = person.devices || [];
+            const verifiedPerson = (!!identity && !!identity.verified) || devices.some((device) => device.locallyTrusted);
+            if (!verifiedPerson) continue;
+            for (const device of devices) {
+                if (device.verified || device.locallyTrusted) continue;
+                if (allowed.some((one) => one.userId === userId && one.deviceId === device.deviceId && one.key && one.key === device.key)) continue;
+                out.push({ userId, deviceId: device.deviceId, displayName: device.displayName || null, kind: "newDevice", key: device.key || null });
             }
         }
         return out;
     }
+    // the build of 1de64af65 let devices through as the SDK's Ignored, which onlyTrustedDevices shares with as if verified:
+    // put back, so a device is verified only when someone verified it
+    async function unsetIgnored(device) {
+        try { if (device.localTrustState === sdk.LocalTrust.Ignored) await device.setLocalTrust(sdk.LocalTrust.Unset); } catch (err) { /* left as it is */ }
+    }
 
     /**
-     * Send anyway (§6.1 rule 3): each problem let through, so the next encryptRoom shares with it: a new device's trust is
-     * Ignored (not verified), a changed identity's earlier verification withdrawn and the new one pinned.
+     * Send anyway (§6.1 rule 3): each problem let through for chatRoomId, in this browser for this account: a new device
+     * (by its key) then gets this room's keys from this message on and stays not verified; a changed identity (by its
+     * master key) is let through here and stays not verified until verified again. The SDK's trust is not changed.
      */
-    async function acceptProblemsNow(problems) {
-        await ensureDevice();
-        return serial(async () => {
-            if (!machine) throw closedError();
-            for (const problem of Array.from(problems || [])) {
-                if (!problem || !problem.userId) continue;
-                const id = new sdk.UserId(matrixId(problem.userId));
-                if (problem.kind === "changedIdentity") {
-                    const identity = await machine.getIdentity(id);
-                    if (identity && identity.wasPreviouslyVerified && identity.wasPreviouslyVerified()) await identity.withdrawVerification();
-                    if (identity && identity.pinCurrentMasterKey && identity.identityNeedsUserApproval && identity.identityNeedsUserApproval()) await identity.pinCurrentMasterKey();
-                } else if (problem.deviceId) {
-                    const device = await machine.getDevice(id, new sdk.DeviceId(String(problem.deviceId)), 5);
-                    if (device) await device.setLocalTrust(sdk.LocalTrust.Ignored);
-                }
-            }
-            return true;
-        });
+    // localStorage is the browser's, so any tab writes it (no relay)
+    async function acceptProblemsNow(chatRoomId, problems) {
+        if (!chatRoomId || !me) throw { reasonCode: "badRequest", errors: "No room or no device" };
+        const all = readAllowed();
+        const list = all[chatRoomId] = Array.isArray(all[chatRoomId]) ? all[chatRoomId] : [];
+        for (const problem of Array.from(problems || [])) {
+            if (!problem || !problem.userId) continue;
+            if (problem.kind === "changedIdentity" && problem.masterKey) list.push({ userId: problem.userId, masterKey: problem.masterKey });
+            else if (problem.deviceId && problem.key) list.push({ userId: problem.userId, deviceId: problem.deviceId, key: problem.key });
+        }
+        // the newest 200 of a room
+        all[chatRoomId] = list.slice(-200);
+        writeAllowed(all);
+        return true;
     }
 
     /** The devices of users (userIds) as this machine knows them, this device left out: [{userId, deviceId, displayName, verified}]. */
@@ -1047,6 +1089,7 @@
             for (const device of list.devices()) {
                 const deviceId = device.deviceId.toString();
                 if ((userId === me && deviceId === state.deviceId) || device.isDeleted()) continue;
+                await unsetIgnored(device);
                 out.push({ userId, deviceId, displayName: device.displayName || null, verified: !!device.isVerified() && !device.isBlacklisted() });
             }
         }
@@ -1345,7 +1388,14 @@
         if (!machine || !raw || raw.type !== "m.key.verification.request" || !raw.content || !raw.sender) return;
         const flowId = raw.content.transaction_id;
         if (!flowId || flows.has(flowId)) return;
-        track(machine.getVerificationRequest(new sdk.UserId(raw.sender), flowId));
+        const request = machine.getVerificationRequest(new sdk.UserId(raw.sender), flowId);
+        // the machine drops a request from someone whose devices it does not track (this browser never opened a room with
+        // them): it tracks them now, so the asker's Try again reaches it
+        if (!request) {
+            machine.updateTrackedUsers([new sdk.UserId(raw.sender)]).then(() => serial(() => flushNow())).catch(() => null);
+            return;
+        }
+        track(request);
     }
     function refreshVerifications() {
         const list = [];
@@ -1466,7 +1516,7 @@
         sendToDevices: api("sendToDevices", sendToDevicesNow), devicesOf: api("devicesOf", devicesOfNow), sync: relayOnly("sync", sync),
         forget: relayOnly("forget", forgetNow), startOver: startOverNow, settingsChanged: relayOnly("settingsChanged", settingsChanged),
         encryptRoom: api("encryptRoom", encryptRoomNow), decryptRoom: api("decryptRoom", decryptRoomNow), rotateRoom: api("rotateRoom", rotateRoomNow),
-        roomTrust: api("roomTrust", roomTrustNow), leftOut: relayOnly("leftOut", leftOutNow), acceptProblems: api("acceptProblems", acceptProblemsNow), onTrust,
+        roomTrust: api("roomTrust", roomTrustNow), leftOut: relayOnly("leftOut", leftOutNow), acceptProblems: acceptProblemsNow, problemsOf, readAllowed, onTrust,
         backupStatus: api("backupStatus", backupStatusNow), enableBackup: api("enableBackup", enableBackupNow),
         restoreBackup: api("restoreBackup", restoreBackupNow), crossSigningStatus: api("crossSigningStatus", crossSigningStatusNow),
         setupCrossSigning: api("setupCrossSigning", setupCrossSigningNow), verifyDevice: api("verifyDevice", verifyDeviceNow),

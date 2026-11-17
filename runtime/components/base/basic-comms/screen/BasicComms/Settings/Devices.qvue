@@ -93,7 +93,7 @@ module.exports = {
     name: 'ChatDevices',
     data() {
         return { devices: [], loaded: false, thisId: null, trust: {}, backup: { version: null, enabled: false, total: 0, backedUp: 0, busy: false },
-            recoveryKey: '', restore: { open: false, text: '', busy: false }, verifiedOnly: false };
+            recoveryKey: '', restore: { open: false, text: '', busy: false }, verifiedOnly: false, peerNames: {} };
     },
     computed: {
         verifications() { return (moqui.crypto && moqui.crypto.state.verifications) || []; },
@@ -107,6 +107,20 @@ module.exports = {
             if (!b.enabled) return t('Set up on another device: restore it here with your recovery key.');
             return t('On: room keys of this browser are backed up, encrypted to your recovery key') + ' (' + b.backedUp + '/' + b.total + ')';
         }
+    },
+    watch: {
+        // another person's verification: their name, asked once (peerNames: only people this user's devices reach)
+        verifications: { immediate: true, handler(list) {
+            const me = this.$root.userId;
+            const wanted = (list || []).map((v) => v.otherUserId).filter((id) => id && id !== me && !(id in this.peerNames));
+            if (!wanted.length) return;
+            const names = Object.assign({}, this.peerNames);
+            wanted.forEach((id) => { names[id] = null; });
+            this.peerNames = names;
+            this.request('peerNames', { userIds: Array.from(new Set(wanted)).join(',') }).then((json) => {
+                this.peerNames = Object.assign({}, this.peerNames, json.nameMap || {});
+            }, () => null);
+        } }
     },
     mounted() { this.load(); },
     methods: {
@@ -200,9 +214,9 @@ module.exports = {
         stepped(action) { if (action === 'confirm' || action === 'qrConfirm') setTimeout(() => this.loadCrypto(), 1500); },
         // the card dismisses it first (m-chat-verification's retry)
         retry(v) { const d = this.retryDevice(v); if (d) this.verify(d); },
-        // whom a verification is with: one of my devices by its name, another person by their userId (Chat names them)
+        // whom a verification is with: one of my devices by its name, another person by their name
         whoOf(v) {
-            if (v.otherUserId && v.otherUserId !== this.$root.userId) return v.otherUserId;
+            if (v.otherUserId && v.otherUserId !== this.$root.userId) return this.peerNames[v.otherUserId] || t('another person');
             const d = v.otherDeviceId ? this.devices.find((one) => one.deviceId === v.otherDeviceId) : null;
             return d ? d.displayName || d.deviceId : v.otherDeviceId || '';
         },

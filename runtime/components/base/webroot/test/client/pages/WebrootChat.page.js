@@ -938,3 +938,26 @@ test("Info (Comms-Messaging §4, COM-UI-008): Sent, a bridged message's delivery
     const inbound = chat.messageInfo(event({ eventSeq: 5, senderUserId: null, senderExternal: { network: "sms", networkName: "SMS" } }), members, { me: "ann" });
     assert.equal(chat.messageInfoLines(inbound, when).find((line) => line.key === "from").text, "SMS");
 });
+
+test("before a send (§6.1 rule 3): a verified person's device not verified is a problem unless let through for the room by its key; one verified by emoji passes; a changed identity until let through by its master key", async () => {
+    const problemsOf = moqui.crypto.problemsOf;
+    const device = (deviceId, more) => Object.assign({ deviceId, displayName: deviceId + " phone", key: "key-" + deviceId, verified: false, locallyTrusted: false }, more || {});
+    // bob's identity is verified: his new device B2 (signed by nobody I trust) is a problem; B1, signed by him, is not
+    const bob = { userId: "bob", identity: { verified: true }, devices: [device("B1", { verified: true }), device("B2")] };
+    assert.deepEqual(problemsOf([bob], []).map((p) => p.kind + ":" + p.deviceId), ["newDevice:B2"]);
+    // verified here by emoji (local trust, not signed by bob): it passes, the same rule the send then shares by
+    assert.deepEqual(problemsOf([{ userId: "bob", identity: { verified: true }, devices: [device("B1", { verified: true }), device("B2", { locallyTrusted: true })] }], []), []);
+    // let through for this room with its key; the same device id with another key is asked again
+    assert.deepEqual(problemsOf([bob], [{ userId: "bob", deviceId: "B2", key: "key-B2" }]), []);
+    assert.equal(problemsOf([bob], [{ userId: "bob", deviceId: "B2", key: "another" }]).length, 1);
+    // a person verified by emoji only (no verified identity) is a verified person too: their new device is asked
+    const cy = { userId: "cy", identity: { verified: false }, devices: [device("C1", { verified: true, locallyTrusted: true }), device("C2")] };
+    assert.deepEqual(problemsOf([cy], []).map((p) => p.deviceId), ["C2"]);
+    // nobody verified dee: no question
+    assert.deepEqual(problemsOf([{ userId: "dee", identity: null, devices: [device("D1")] }], []), []);
+    // a changed identity, until let through by this master key
+    const eve = { userId: "eve", identity: { verified: false, changed: true, masterKey: "mk-2" }, devices: [device("E1")] };
+    assert.deepEqual(problemsOf([eve], []).map((p) => p.kind + ":" + p.masterKey), ["changedIdentity:mk-2"]);
+    assert.deepEqual(problemsOf([eve], [{ userId: "eve", masterKey: "mk-2" }]), []);
+    assert.equal(problemsOf([eve], [{ userId: "eve", masterKey: "mk-1" }]).length, 1, "an identity let through before is not this one");
+});

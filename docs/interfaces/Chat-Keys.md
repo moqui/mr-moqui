@@ -278,18 +278,28 @@ verified (`moqui.callKeys.state.unverified`; the call's keys still go to the ros
 verified, and the room's banner and the "Not readable by" line open it for the first such person: their devices as this
 store knows them (`roomTrust`), each with Verify (`verifyDevice(theirUserId, deviceId)`, the same to-device SAS or QR flow
 as one's own), and the verifications with them in the shared `m-chat-verification` card (WebrootChat.js; My devices uses
-it too). A request another person makes shows in the room open in this browser and on My devices. A completed comparison
+it too). A request another person makes shows in the room open in this browser (named, or "someone outside this room";
+closing it cancels the request; its end shows a moment) and on My devices (named through `get#PeerNames`: only people
+this user's devices reach). The machine drops a request from someone whose devices it does not track yet (a browser that
+never opened a room with them): it then tracks them, so the asker's Try again reaches it. A completed comparison
 verifies their device locally; with cross-signing on both sides it verifies their identity (the user-signing key signs
 their master key), so every device they signed is verified. A person is shown verified (a check in Members and by their
 messages) when their identity is, or every device of theirs is.
 
-**A verified person changed** (§6.1 rule 3). Without only verified devices, `encryptRoom` first looks for a device of a
-verified person that its owner did not sign and that is neither trusted nor let through here (`newDevice`), and for a
-person verified before whose identity changed (`changedIdentity`), and refuses with `reasonCode` `verifiedUserProblem` and
-the `problems`; it shares with matrix-sdk-crypto's `errorOnUnverifiedUserProblem`, so the SDK's own check stays the last
-word. Chat then asks: Verify, or Send anyway (`acceptProblems`: the device's local trust `Ignored`, or the identity's
-verification withdrawn and the new one pinned) and the message goes. The machine's devices and identity callbacks are
-relayed to every tab (`onTrust`), so an open room reads its trust again.
+**A verified person changed** (§6.1 rule 3). Without only verified devices, `encryptRoom` first checks the members: a
+verified person is one whose identity is verified, or one with a device verified here by emoji. A device of theirs that is
+not verified (by emoji here, or signed by them with their identity verified) and not let through for this room with the
+same key is a `newDevice`; a person verified before whose identity changed, not let through with this master key, is a
+`changedIdentity`. It refuses with `reasonCode` `verifiedUserProblem` and the `problems` (`problemsOf` is the rule on
+plain data); once the check passes it shares with all devices, so the check is the one gate, and a device verified by
+emoji passes (Verify, then send). Chat then asks, per person: Verify, or Send anyway (`acceptProblems(chatRoomId,
+problems)`): what is let through is kept in this browser per account and room, by the device's ed25519 key or the
+identity's master key, and never as the SDK's trust: the device gets the room's keys from that message on and stays not
+verified, so "only verified devices" (the SDK's `onlyTrustedDevices`) still leaves it out. A failed share is said plainly,
+never with the SDK's words. The same question comes before an edit or a reaction. The machine's devices and identity
+callbacks are relayed to every tab (`onTrust`), so an open room reads its trust again. A message's sender has the check
+only when it came from a verified device of theirs (`verifiedSender`); a verified person's message from a device that is
+not has a warning mark.
 
 **Verification.** My devices shows each device's verification as this browser's store holds it (trust is the clients'):
 Verify asks another device; the two compare emoji (SAS), or one shows a QR code that the other reads with its camera
@@ -320,7 +330,8 @@ In `moqui.crypto` (the store's tab runs each call; another tab's call is relayed
 | `decryptRoom(chatRoomId, {eventSeq, sentDate, senderUserId, encrypted})` | `{type, content, verified}`, or `{error, withheld}` when this device has no key for it (`withheld`: the code its sender gave, `m.unverified` under only verified devices, else null) |
 | `leftOut(chatRoomId)` | The devices the last message this browser encrypted for the room was not shared with: `[{userId, deviceId, displayName}]`, empty unless only verified devices is on |
 | `roomTrust(chatRoomId, memberUserIds)` | `{verifiedOnly, users: [{userId, identity: {known, verified, changed}, devices: [{deviceId, displayName, verified}]}]}`, this device left out: the room's label (a check when all are verified, else Verify), each person's check, and who the next message leaves out |
-| `acceptProblems(problems)` | Send anyway after `verifiedUserProblem`: each new device's local trust set to Ignored, each changed identity's verification withdrawn and pinned |
+| `acceptProblems(chatRoomId, problems)` | Send anyway after `verifiedUserProblem`: each new device (by its key) and changed identity (by its master key) let through for the room, kept in this browser per account; the SDK's trust is not changed |
+| `problemsOf(people, allowed)` | The rule of the check before a send, on plain data |
 | `onTrust(fn)` | `fn([userId])` when users' devices or identities change, in every tab. Returns the unsubscribe |
 | `rotateRoom(chatRoomId)` | A new session for the room's next message |
 | `onRoomKeys(fn)` | `fn([{roomId, sessionId}])` when room keys arrive (from a member, or a restore). Returns the unsubscribe |

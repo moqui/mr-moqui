@@ -88,8 +88,11 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   verified (the room's note and a message that someone cannot read have it too): pick their device and compare emoji
   with them; when the emoji match on both sides their device is verified, and with cross-signing every device they sign.
   A verified person has a check by their name, in Members and on their messages. When someone you verified adds a device
-  you have not verified, or gets a new identity, your next message waits: Verify them, or Send anyway, which lets that
-  device or identity read it. A request from another person to verify shows in the room you have open and on My devices.
+  you have not verified, or gets a new identity, your next message, edit or reaction waits: Verify them (by each name),
+  or Send anyway, which lets that device read this room's messages from then on, or uses that identity here, without
+  verifying them: "Send my room keys only to verified devices" still leaves such a device out. A request from another
+  person to verify shows in the room you have open (closing it says no) and on My devices. A message from a verified
+  person's device that is not verified has a warning mark instead of the check.
 - <a id="bridged-rooms"></a>**Bridged rooms** (C1). A room an administrator connected to another network (SMS, WhatsApp,
   XMPP, Matrix and others, as their adapters come) has the network's mark in the room list and its name in the room's
   header ("Messages here also go to ..."). People from that network are members with the network's badge, and their
