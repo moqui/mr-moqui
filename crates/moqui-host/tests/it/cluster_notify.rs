@@ -72,9 +72,12 @@ fn a_notify_member_applies_peer_notifies_and_sends_its_own() {
     notify(&mut peer, &format!("entity-cache-invalidate\npeer-2\n@{id}"));
     wait_for_posts(&gate, before + 2);
 
-    // With a live peer that listens on NOTIFY, a write here goes out on the channel.
+    // With a live peer that listens on NOTIFY, a write here goes out on the channel. The peer's row names this
+    // member's session key and certificate, as a member of the same cluster writes it (SEC-CLU-04).
     peer.execute(
-        "INSERT INTO cluster_member (instance_id, cluster_base_url, heartbeat) VALUES ('peer-x', 'pg-notify:', now())",
+        "INSERT INTO cluster_member (instance_id, cluster_base_url, heartbeat, session_key_fingerprint, \
+         cert_fingerprint) SELECT 'peer-x', 'pg-notify:', now(), session_key_fingerprint, cert_fingerprint \
+         FROM cluster_member LIMIT 1",
         &[],
     )
     .unwrap();
