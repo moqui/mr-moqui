@@ -3,7 +3,7 @@
 // internal login is not a recent sign-in; the signed-in user's password, a wrong one counted as a failed login; with a
 // second factor the code too, a wrong code counted, the right one (a single-use code) accepted without the password again;
 // a code sent only once the password was checked, and not again within half a minute; another user's login drops the
-// sign-in. The ChatKeys specs check the actions it guards.
+// sign-in; a PASS public sign-in is one. The ChatKeys specs check the actions it guards.
 // Run: ./moq test framework --spec RecentAuth
 const A = "RECENTAUTH_SPEC_A"
 const B = "RECENTAUTH_SPEC_B"
@@ -177,5 +177,32 @@ feature("factor presentation omits authenticator secrets and recovery hashes; ex
         setupSecret == true
         codeVerified == true
         verifiedRedacted == true
+    }
+})
+
+feature("a PASS public sign-in (start#Session) is the session's recent sign-in; a delegation's internal login is not (SEC-PFS-63)", {
+    when() {
+        ec.user.logoutUser()
+        let thrown = ""
+        try {
+            sys(() => ec.service.sync().name("org.moqui.public.AccountServices.start#Session")
+                .parameters({input: {username: username(A), password: PASSWORD}}).call())
+        } catch (err) {
+            thrown = String(err.message || err)
+        }
+        const errors = thrown + (ec.message.hasError() ? ec.message.errorsString : "")
+        ec.message.clearErrors()
+        const signedIn = ec.user.userId
+        const after = as(null, "check#RecentAuth", {})
+        ec.user.logoutUser()
+        // authenticateDelegation signs a remote frontend's visitor in with internalLoginUser: no sign-in of a session
+        const delegated = as(A, "check#RecentAuth", {})
+        return {errors, signedIn, after, delegated}
+    },
+    then({errors, signedIn, after, delegated}) {
+        errors == ""
+        signedIn == A
+        after.recent == true
+        delegated.recent == false
     }
 })
