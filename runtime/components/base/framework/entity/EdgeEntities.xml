@@ -62,7 +62,16 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="queueMaxMegabytes" type="number-integer"><description>This pairing's own size cap on the items
             waiting for it (plans/Edge-Node2.md §4.1), in place of the conf's queue-max-megabytes, which otherwise holds
             for each pairing alone; the retention pass fails its oldest waiting items past it. Empty, 0 or less is
-            unset: the conf's cap holds.</description></field>
+            unset: the conf's cap holds. The content its link sends before deliveries, kept until each is answered,
+            counts against it too (SEC-CLU-02).</description></field>
+        <field name="replicaMaxRows" type="number-integer"><description>This pairing's own cap on the replicated
+            records the edge node keeps for it, all its sets together, in place of the conf's replica-max-rows
+            (SEC-CLU-02). Empty, 0 or less is unset.</description></field>
+        <field name="capPausedDate" type="date-time"><description>When the pairing paused at a cap (its replicated
+            records at replicaMaxRows, or its kept content at its queue cap): while set, its Replicate and PutContent
+            calls are refused as "try again later", nothing dropped, until resume#EdgeClient or update#EdgeClient
+            clears it. The administrators are told (the EdgePairingPaused notification).</description></field>
+        <field name="capPausedReason" type="text-medium"/>
         <field name="lastMemberId" type="id"><description>The member of the pairing that linked last
             (plans/Edge-Node2.md §4.4): every member of a local cluster links with the pairing's key and names its own
             instance id. With none of them linked, a node that is neither this one nor in the cluster's last member list

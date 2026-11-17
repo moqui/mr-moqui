@@ -51,6 +51,7 @@ pub(in crate::service) fn register(
     rust_service!(map, hold_new_members)?;
     rust_service!(map, approve_edge_member)?;
     rust_service!(map, clear_edge_takeover)?;
+    rust_service!(map, resume_edge_client)?;
     rust_service!(map, forget_edge_member)?;
     rust_service!(map, deliver_items_again)?;
     rust_service!(map, get_edge_hosts)?;
@@ -417,6 +418,12 @@ fn client_value(client: &EdgeClientInfo) -> Value {
         client.queue_max_megabytes.map_or(Value::Null, Value::I64),
     );
     row.insert(
+        "replicaMaxRows".to_string(),
+        client.replica_max_rows.map_or(Value::Null, Value::I64),
+    );
+    row.insert("pausedDate".to_string(), millis(client.paused_date));
+    row.insert("pausedReason".to_string(), Value::string(&client.paused_reason));
+    row.insert(
         "membersLinked".to_string(),
         Value::I64(i64::from(client.members_linked)),
     );
@@ -463,24 +470,48 @@ fn get_edge_clients(_parameters: &BTreeMap<String, Value>, facade: &EntityFacade
     )]))
 }
 
-/// `update#EdgeClient`: on a node that takes links, a pairing's own queue cap (`queueMaxMegabytes`, empty for the
-/// conf's).
+/// `update#EdgeClient`: on a node that takes links, a pairing's own caps (`queueMaxMegabytes` and `replicaMaxRows`,
+/// each empty for the conf's). A pause at a cap ends (SEC-CLU-02).
 fn update_edge_client(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
     takes_links("pairings")?;
     let node = required(parameters, "pairedNodeId")?;
-    let megabytes = match text(parameters, "queueMaxMegabytes") {
-        None => None,
-        Some(raw) => Some(
-            raw.trim()
+    let whole = |name: &str, what: &str| -> Result<Option<i64>, LibError> {
+        match text(parameters, name) {
+            None => Ok(None),
+            Some(raw) => raw
+                .trim()
                 .parse::<i64>()
-                .map_err(|_| LibError::new(format!("{} is not a whole number of megabytes", raw.trim())))?,
-        ),
+                .map(Some)
+                .map_err(|_| LibError::new(format!("{} is not a whole number of {what}", raw.trim()))),
+        }
     };
-    crate::edge::hosts::set_queue_cap(facade, &node, megabytes)?;
-    Ok(BTreeMap::from([(
-        "queueMaxMegabytes".to_string(),
-        megabytes.map_or(Value::Null, Value::I64),
-    )]))
+    let megabytes = whole("queueMaxMegabytes", "megabytes")?;
+    let rows = whole("replicaMaxRows", "records")?;
+    let resumed = crate::edge::caps::paused(facade, &node)?.is_some();
+    crate::edge::hosts::set_caps(facade, &node, megabytes, rows)?;
+    if resumed {
+        tracing::warn!("Edge node: pairing {node} has new caps and is resumed");
+    }
+    Ok(BTreeMap::from([
+        (
+            "queueMaxMegabytes".to_string(),
+            megabytes.map_or(Value::Null, Value::I64),
+        ),
+        ("replicaMaxRows".to_string(), rows.map_or(Value::Null, Value::I64)),
+        ("resumed".to_string(), Value::Bool(resumed)),
+    ]))
+}
+
+/// `resume#EdgeClient`: on a node that takes links, let pairing `pairedNodeId` send again after it paused at a cap
+/// (SEC-CLU-02); a send that still passes a cap pauses it again.
+fn resume_edge_client(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    takes_links("pairings")?;
+    let node = required(parameters, "pairedNodeId")?;
+    let resumed = crate::edge::caps::resume(facade, &node)?;
+    if resumed {
+        tracing::warn!("Edge node: pairing {node} is resumed after its pause at a cap");
+    }
+    Ok(BTreeMap::from([("resumed".to_string(), Value::Bool(resumed))]))
 }
 
 /// The most copies [`pairing_numbers`] reads of one set for one pairing.

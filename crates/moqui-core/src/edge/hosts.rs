@@ -432,6 +432,13 @@ pub fn clients(facade: &EntityFacade) -> Result<Vec<EdgeClientInfo>, Error> {
                     .next()
                     .and_then(|number| number.parse::<i64>().ok())
                     .filter(|megabytes| *megabytes > 0),
+                replica_max_rows: text(row, "replicaMaxRows")
+                    .split('.')
+                    .next()
+                    .and_then(|number| number.parse::<i64>().ok())
+                    .filter(|rows| *rows > 0),
+                paused_date: row.get("capPausedDate").and_then(crate::user::value_millis),
+                paused_reason: text(row, "capPausedReason"),
                 members_linked: 0,
                 last_member_id: text(row, "lastMemberId"),
                 hold_new_member: text(row, "holdNewMember") == "Y",
@@ -444,16 +451,23 @@ pub fn clients(facade: &EntityFacade) -> Result<Vec<EdgeClientInfo>, Error> {
     })
 }
 
-/// Set a pairing's own size cap on the items waiting for it (`EdgeClient.queueMaxMegabytes`, plans/Edge-Node2.md
-/// §4.1), or with `None` unset it, so the conf's `queue-max-megabytes` holds for it. The retention pass reads it.
+/// Set a pairing's own caps: the size cap on the items waiting for it (`EdgeClient.queueMaxMegabytes`,
+/// plans/Edge-Node2.md §4.1), which the retention pass and the content it sends count against, and the cap on its
+/// replicated records (`replicaMaxRows`, SEC-CLU-02); `None` unsets one, so the conf's `queue-max-megabytes` or
+/// `replica-max-rows` holds for it. A pause at a cap ends: its next send over a cap pauses it again.
 ///
 /// # Errors
 ///
 /// Refuses a cap of 0 or less (unset it instead) and a pairing with no row; returns the entity facade's error.
-pub fn set_queue_cap(facade: &EntityFacade, node: &str, megabytes: Option<i64>) -> Result<(), Error> {
+pub fn set_caps(facade: &EntityFacade, node: &str, megabytes: Option<i64>, rows: Option<i64>) -> Result<(), Error> {
     if megabytes.is_some_and(|megabytes| megabytes <= 0) {
         return Err(Error::new(
             "the queue cap is a number of megabytes above 0; leave it empty for the conf's",
+        ));
+    }
+    if rows.is_some_and(|rows| rows <= 0) {
+        return Err(Error::new(
+            "the records cap is a number above 0; leave it empty for the conf's",
         ));
     }
     let node = node.trim();
@@ -472,6 +486,9 @@ pub fn set_queue_cap(facade: &EntityFacade, node: &str, megabytes: Option<i64>) 
         let mut row = facade.make_value(CLIENT)?;
         row.set("pairedNodeId", Value::string(node));
         row.set("queueMaxMegabytes", megabytes.map_or(Value::Null, Value::I64));
+        row.set("replicaMaxRows", rows.map_or(Value::Null, Value::I64));
+        row.set("capPausedDate", Value::Null);
+        row.set("capPausedReason", Value::Null);
         row.update(facade)?;
         Ok(())
     })
