@@ -60,7 +60,7 @@ Parts:
 | Phone number | Telnyx SMS and MMS ([SMS](../docs/interfaces/SMS.md)); SIP trunks, `place#PhoneCall`, the Dialer, voicemail ([SIP](../docs/interfaces/SIP.md)). One room per outside number holds its texts, calls and voicemail |
 | Mobile push | The server sends FCM data messages of kind `ring`, `ringEnded` and `notification` (every persisted notification). The app shows only the ring (`PushService.kt`, `CallManager.kt`); a `notification` is dropped ([Mobile-Client](../docs/ui/Mobile-Client.md)) |
 | Mobile shell | Bundled `Root.qvue`. Home is `Panel/ChatPanel.qvue` at full size with the `home` prop; the shell header hides while a room is open. A room opens `Chat.qvue`'s `chat-room` in `compact` mode with bubbles |
-| Mail | The Comms Inbox: accounts and identities, folders and labels, threads, To, Cc and Bcc, quoted reply, drafts, undo send, saved searches, rules, automatic replies, shared mailboxes with read, send and manage rights, `.eml` and print output. This plan must keep all of it working (COM-UI-019, COM-UI-022) |
+| Mail | The Comms Inbox: accounts and identities, folders and labels, threads, To, Cc and Bcc, reply, reply all (with Reply-To) and forward with a copy of the attachments, drafts, undo send, uploads that resume, Save to Files and Attach from Files, saved searches, snooze, Spam and Trash, block and unsubscribe, invitations, text blocks (private or shared with a group), ordered rules with stop, automatic replies with a time window, shared mailboxes with read, send and manage rights, removal of an account with its mail kept, `.eml` and print output. This plan must keep all of it working (COM-UI-019, 022, 024, 029) |
 
 **Components in `Chat.qvue`** (2941 lines, one file): `ChatRoom` (room view, thread pane, details),
 `ChatMessage`, `ChatComposer`, `ChatEdit`, `ChatPending`, and the root (sidebar plus room). They are local to the
@@ -1066,7 +1066,15 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
   screens with a fake `moquiDesktop` host; shell checks build on it. The client test kit sets a viewport
   (`newPage({viewport})`) and runs two users, and has no touch emulation.
 - **Mail stays working.** A phase that changes shared code (the shell, the palette, back handling, notifications)
-  runs the mail specs too (§1, Mail).
+  runs the mail specs too (§1, Mail). Mail keeps its own rules where chat has a similar word (COM-UI-022, 024, 029):
+  - Mail rights (owner, manage, read, send) are not room roles. Leaving a shared mailbox is not removing the account.
+  - A mail reply, reply all and forward are not a chat reply and forward: they keep Reply-To, To and Cc, the quote and
+    the message references.
+  - A folder move is not a label. An attachment on a message, its copy on a forward, an uploaded file and a copy in
+    Files are four different things.
+  - An automatic reply is not chat Do not disturb, and neither holds back the other.
+  - An account removed with its mail kept cannot be restored; it is not a trash.
+  - A sent unsubscribe request is not a confirmed unsubscribe, and an invitation shown is not an answer sent.
 - **Terminal.** `Chat.xml` has a terminal twin (`Chat.tui.json`). Each phase says what the terminal shows for its new
   parts, or that it shows nothing.
 - **Text.** Every new UI text goes through `t()`.
@@ -1261,7 +1269,7 @@ These cannot be shown by a browser at phone width. They are collected here for e
 | One-to-one calls peer to peer (§8.3), or always through the media server? | Through the media server, unless the §8.4 results show a delay that matters |
 | Notifications without Google Play (UnifiedPush): in the first release, or later? | Later, after FCM works. The encrypted payload is the same |
 | Does a reaction to my message push, or only show in Activity? | Activity only |
-| Do mail conversations join the one inbox as rooms, or stay in the Inbox? | Stay in the Inbox. A contact links to that person's mail (COM-UI-019, COM-UI-022) |
+| Do mail conversations join the one inbox as rooms, or stay in the Inbox? | Stay in the Inbox. A contact links to that person's mail (COM-UI-019, 022, 024, 029). If mail ever joins, the rules of §18.2 "Mail stays working" come with it |
 | Who may ring during Do not disturb, and where is that list kept? | A list of people for each user, in Chat settings, beside the hours |
 | Message text in a notification for an encrypted room: a hidden WebView, or a crypto store in Rust? | Decide with the E2EE-by-default design |
 
