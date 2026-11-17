@@ -19,19 +19,25 @@
 //! - `append#Event` writes a `ChatPushJob` (room, event) in the event's transaction and `wake#ChatPush` wakes this
 //!   node's worker once it commits ([`start`]: a thread per node, woken, once a minute while pushes wait, and once at
 //!   start, so the rows a crash left are taken). A [`round`] at a given time (`run#ChatPush`, the tests' clock):
-//!   1. each job, claimed with a lease ([`LEASE_MILLIS`]): the members and the rules 1, 3 and 4 then, a `PushOutbox` row
-//!      for each device of each user who gets it, merged into a pending or held row of the same device and room with a
-//!      count, and the job deleted, in one transaction;
+//!   1. each job, claimed with a lease ([`LEASE_MILLIS`]): the members and the rules 1, 3, 4 and 6 then, a `PushOutbox`
+//!      row for each device of each user who gets it, merged into a pending or held row of the same device and room
+//!      with a count (an edit is not another message), each device in a transaction of its own and written once
+//!      however often the job is worked (a lease that ran out, a crash); then the job goes;
 //!   2. the held rows of users no longer on do not disturb become pending: one summary per room and device;
-//!   3. each pending row due, claimed with a lease: not sent when its user has read up to it since, else encrypted to
-//!      its device ([`push_crypto::encrypt`], RFC 8291) and sent by its provider through the [`PushTransport`];
+//!   3. each pending row due, claimed with a lease and sent as the claim locked it: not sent when its user has read up
+//!      to it since, when its device now belongs to another user, or (a clear) when a newer push of the room waits or
+//!      shows unread; else encrypted to its device ([`push_crypto::encrypt`], RFC 8291) and sent by its provider
+//!      through the [`PushTransport`], with a collapse key or Topic per device, room and kind ([`collapse_key`]);
 //!   4. once an hour, the rows done more than a week ago go.
 //! - Failures: each job, row and device is on its own; one that fails is logged and the rest go on. A send not taken
 //!   waits with backoff and jitter ([`FIRST_WAIT_MILLIS`] doubled, at most [`MAX_WAIT_MILLIS`], or the push service's
 //!   Retry-After), up to [`MAX_ATTEMPTS`] or its time to live; FCM's gone deletes the registration, Web Push's and
 //!   UnifiedPush's (404, 410) disable it.
-//! - `queue#ReadClear` (`mark#Read`): the user's rows of the room not yet sent are dropped, and each other device that
-//!   was sent one gets a `clear` push. `ack#Push` (the app showed a push) keeps the device's acked count.
+//! - `queue#ReadClear` (`mark#Read`, in a transaction of its own): the user's rows of the room not yet sent are dropped
+//!   (one newer than the read counts only what is left), and each other device that was sent one gets a `clear` push,
+//!   unless a newer push of the room is unread there. A device that moves to another user drops what waits for it
+//!   ([`forget_device_pushes`]). `ack#Push` (the app or the service worker showed a push) keeps the device's acked
+//!   count.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -135,12 +141,45 @@ fn cut_chars(text: &str, max: usize) -> String {
     out
 }
 
-/// The collapse key (FCM) and Topic (Web Push) of a room's pushes: a hash, so the push service learns no room id; at
+/// The key of the collapse keys: the server's VAPID key (`web_push_vapid_key`, generated and shared by the cluster),
+/// else one made for this process (no VAPID key: a test, or a server that pushes to no browser).
+fn collapse_secret() -> Vec<u8> {
+    static PROCESS: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+    let seed = moqui_lib::env::get_prop_or_env("web_push_vapid_key");
+    if !seed.trim().is_empty() && !seed.ends_with("CHANGEME") {
+        return seed.into_bytes();
+    }
+    PROCESS
+        .get_or_init(|| {
+            let mut key = [0_u8; 32];
+            if getrandom::fill(&mut key).is_err() {
+                key = sha2::Sha256::digest(format!("chat-push:{}", std::process::id()).as_bytes()).into();
+            }
+            key
+        })
+        .to_vec()
+}
+
+/// The collapse key (FCM) and Topic (Web Push) of a device's pushes of a room, a message's or a clear's (so a clear
+/// never replaces a message waiting at the push service): an HMAC with a server secret over the registration and the
+/// room, so the push service can neither find a room id from it nor tell that two users' pushes are of one room; at
 /// most 32 characters of the base64url alphabet (RFC 8030 §5.4).
-pub fn collapse_key(room_id: &str) -> String {
-    let digest = sha2::Sha256::digest(room_id.as_bytes());
-    let hex: String = digest.iter().take(8).map(|byte| format!("{byte:02x}")).collect();
-    format!("chat{hex}")
+pub fn collapse_key(device: &str, room_id: &str, clear: bool) -> String {
+    use hmac::{KeyInit, Mac};
+    let secret = collapse_secret();
+    let Ok(mut mac) = hmac::Hmac::<sha2::Sha256>::new_from_slice(&secret) else {
+        return String::new();
+    };
+    let kind = if clear { "clear" } else { "message" };
+    mac.update(format!("moqui-chat-push-collapse\0{device}\0{kind}\0{room_id}").as_bytes());
+    let digest = mac.finalize().into_bytes();
+    let hex: String = digest.iter().take(15).map(|byte| format!("{byte:02x}")).collect();
+    format!("c{hex}")
+}
+
+/// The tag a device replaces and closes a room's notifications by (in the encrypted payload only).
+fn room_tag(room_id: &str) -> String {
+    format!("chat-{room_id}")
 }
 
 /// The wait before a push's next send after `attempt` sends: the push service's Retry-After when it gave one, else
@@ -428,7 +467,8 @@ pub fn round(factory: &ExecutionContextFactory, facade: &EntityFacade, now: i64)
 }
 
 /// Take a row of `entity` (a job or a push) for this worker: in one transaction, read FOR UPDATE and checked to be
-/// still at `attempts` (and pending, for a push) with no live lease, then leased with one more attempt.
+/// still at `attempts` (and pending, for a push) with no live lease, then leased with one more attempt. The row as it
+/// was locked: what a send goes by, as another node may have merged a message into it since it was listed.
 fn claim(
     facade: &EntityFacade,
     entity: &str,
@@ -436,7 +476,7 @@ fn claim(
     attempts: i64,
     node: &str,
     now: i64,
-) -> Result<bool, LibError> {
+) -> Result<Option<EntityValue>, LibError> {
     force_new(facade, entity, || {
         let row = facade
             .find(entity)?
@@ -445,16 +485,16 @@ fn claim(
             .for_update(true)
             .disable_authz()
             .one()?;
-        let Some(mut row) = row else { return Ok(false) };
+        let Some(mut row) = row else { return Ok(None) };
         let pending = entity != OUTBOX || text_of(&row, "statusEnumId").as_deref() == Some(PENDING);
         if !pending || count_of(&row, "attemptCount") != attempts || leased(&row, now) {
-            return Ok(false);
+            return Ok(None);
         }
         row.set("attemptCount", Value::I64(attempts + 1));
         row.set("leaseOwner", Value::string(node));
         row.set("leaseExpiresDate", stamp(now + LEASE_MILLIS));
         row.update(facade)?;
-        Ok(true)
+        Ok(Some(row))
     })
 }
 
@@ -480,14 +520,14 @@ fn fan_out(
             continue;
         }
         match claim(facade, JOB, ("chatPushJobId", &job_id), attempts, node, now) {
-            Ok(true) => {}
-            Ok(false) => continue,
+            Ok(Some(_)) => {}
+            Ok(None) => continue,
             Err(error) => {
                 tracing::error!("chat push job {job_id} could not be taken: {error}");
                 continue;
             }
         }
-        match force_new(facade, OUTBOX, || fan_out_job(facade, transport, job, now)) {
+        match fan_out_job(facade, transport, job, now) {
             Ok(queued) => {
                 report.jobs += 1;
                 report.queued += queued;
@@ -525,6 +565,52 @@ struct Content {
     encrypted: bool,
     sent_date: i64,
     link: String,
+    /// An edit (that mentions someone): merged into a pending push of the room it is not another message.
+    edit: bool,
+    /// A call's event that pushes as a message (§7.2 rule 6): `missed` or `voicemail`.
+    call: Option<&'static str>,
+}
+
+/// What a call's event (CetCall) pushes as (§7.2 rule 6): a missed call to the users it names, a voicemail to the
+/// room; its other events (a call starting, an answered call ending) push nothing.
+fn call_kind(event: &EntityValue) -> Option<&'static str> {
+    if text_of(event, "eventTypeEnumId").as_deref() != Some("CetCall") {
+        return None;
+    }
+    let content: serde_json::Value = text_of(event, "contentJson")
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default();
+    match content["action"].as_str() {
+        Some("voicemail") => Some("voicemail"),
+        Some("ended")
+            if content["missedUserIdList"]
+                .as_array()
+                .is_some_and(|users| !users.is_empty()) =>
+        {
+            Some("missed")
+        }
+        _ => None,
+    }
+}
+
+/// The title a browser's service worker falls back on, from the payload's own fields (the app and a new service worker
+/// build theirs from the fields).
+fn title_of(payload: &serde_json::Value) -> String {
+    let sender = payload["senderName"].as_str().unwrap_or_default();
+    let room = payload["roomName"].as_str().filter(|room| !room.is_empty());
+    let place = room.unwrap_or(sender);
+    let count = payload["count"].as_i64().unwrap_or(1);
+    match (
+        payload["call"].as_str(),
+        room,
+        payload["direct"].as_bool().unwrap_or(false),
+    ) {
+        (Some("missed"), _, _) => format!("Missed call in {place}"),
+        (Some(_), _, _) => format!("Voicemail in {place}"),
+        _ if count > 1 => format!("{count} new messages in {place}"),
+        (None, Some(room), false) => format!("{sender} in {room}"),
+        _ => sender.to_string(),
+    }
 }
 
 impl Content {
@@ -532,7 +618,8 @@ impl Content {
         let room_id = text_of(room, "chatRoomId").unwrap_or_default();
         let encrypted =
             text_of(room, "encrypted").as_deref() == Some("Y") || text_of(event, "encrypted").as_deref() == Some("Y");
-        let snippet = if encrypted {
+        let call = call_kind(event);
+        let snippet = if encrypted || call.is_some() {
             None
         } else {
             let text = text_of(event, "bodyText").unwrap_or_default();
@@ -585,24 +672,18 @@ impl Content {
             snippet,
             encrypted,
             sent_date: millis_of(event, "sentDate").unwrap_or(0),
+            edit: text_of(event, "eventTypeEnumId").as_deref() == Some("CetEdit"),
+            call,
             room_id,
         })
     }
 
     /// The payload of a message push (plans/Comms-Messaging.md §7.2 rule 5): the room, the sender's name and, when
-    /// `preview` and the room is plain, a snippet; `count` messages merged, the newest's. `title` and `link` are for a
-    /// browser's service worker, which shows them as they are.
+    /// `preview` and the room is plain, a snippet; `count` messages merged, the newest's; for a call's event, `call`.
+    /// `title` is a fallback built from these fields (title_of), `tag` the room's, which a device's notification of the
+    /// room is replaced and closed by.
     fn payload(&self, preview: bool, count: i64, mention: bool) -> serde_json::Value {
-        let place = self.room_name.clone().unwrap_or_else(|| self.sender_name.clone());
-        let title = if count > 1 {
-            format!("{count} new messages in {place}")
-        } else {
-            match (&self.room_name, self.direct) {
-                (Some(room), false) => format!("{} in {room}", self.sender_name),
-                _ => self.sender_name.clone(),
-            }
-        };
-        json!({
+        let mut payload = json!({
             "v": 1,
             "kind": "message",
             "chatRoomId": self.room_id,
@@ -614,12 +695,14 @@ impl Content {
             "count": count,
             "mention": mention,
             "encrypted": self.encrypted,
+            "call": self.call,
             "sentDate": self.sent_date,
-            "title": title,
             "link": self.link,
-            "tag": collapse_key(&self.room_id),
+            "tag": room_tag(&self.room_id),
             "topic": "ChatMessage",
-        })
+        });
+        payload["title"] = title_of(&payload).into();
+        payload
     }
 }
 
@@ -641,9 +724,10 @@ fn level_of(member: &EntityValue) -> Level {
     }
 }
 
-/// Who gets the push of `event`, each with whether it mentions or replies to them (rules 1 and 3): each member but
-/// the sender and the agents (in a direct room also one who left), by level, not one who read it; and a user it
-/// mentions who is not a member (a public or record room).
+/// Who gets the push of `event`, each with whether it mentions or replies to them (rules 1, 3 and 6): each member but
+/// the sender and the agents (in a direct room also one who left), by level, not one who read it; a user it mentions
+/// who is not a member (a public or record room); for a call's event, a missed call's users or a voicemail's room
+/// (each member whose level is not None, as a mention would).
 fn recipients(
     facade: &EntityFacade,
     room: &EntityValue,
@@ -654,6 +738,19 @@ fn recipients(
     let sender = text_of(event, "senderUserId");
     let edit = text_of(event, "eventTypeEnumId").as_deref() == Some("CetEdit");
     let direct = text_of(room, "roomTypeEnumId").as_deref() == Some("CrtDirect");
+    let call = call_kind(event);
+    // a missed call is pushed to those who missed it
+    let missed: Option<HashSet<String>> = (call == Some("missed")).then(|| {
+        let content: serde_json::Value = text_of(event, "contentJson")
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default();
+        content["missedUserIdList"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|user| user.as_str().map(str::to_string))
+            .collect()
+    });
     let mentioned: BTreeSet<String> = facade
         .find(ACTIVITY)?
         .eq("chatRoomId", Value::string(&room_id))
@@ -690,25 +787,34 @@ fn recipients(
             continue;
         }
         let mention = mentioned.contains(&user);
-        let pushed = match level_of(member) {
-            Level::None => false,
-            Level::Mentions => mention,
-            Level::All => mention || !edit,
+        let level = level_of(member);
+        let pushed = match (call, &missed) {
+            (Some(_), Some(missed)) => level != Level::None && missed.contains(&user),
+            (Some(_), None) => level != Level::None,
+            _ => match level {
+                Level::None => false,
+                Level::Mentions => mention,
+                Level::All => mention || !edit,
+            },
         };
         if pushed {
             out.insert(user, mention);
         }
     }
-    for user in mentioned {
-        if !members.contains(&user) && sender.as_deref() != Some(user.as_str()) {
-            out.insert(user, true);
+    if call.is_none() {
+        for user in mentioned {
+            if !members.contains(&user) && sender.as_deref() != Some(user.as_str()) {
+                out.insert(user, true);
+            }
         }
     }
     Ok(out)
 }
 
-/// Work one job, in the caller's transaction: its recipients' devices get a push each (written or merged), and the
-/// job goes. Out: the rows written or merged.
+/// Work one job: its recipients' devices get a push each (written or merged), each in a transaction of its own, so one
+/// device that fails is logged and the rest go on; then the job goes. Out: the rows written or merged. A job worked
+/// again (its lease ran out during a long fan-out, a crash) writes nothing twice: a device that has a push of the room
+/// at this event or later is left as it is ([`queue_message`]).
 fn fan_out_job(
     facade: &EntityFacade,
     transport: &dyn PushTransport,
@@ -719,11 +825,13 @@ fn fan_out_job(
     let room_id = text_of(job, "chatRoomId").unwrap_or_default();
     let seq = count_of(job, "eventSeq");
     let delete_job = || {
-        facade
-            .find(JOB)?
-            .eq("chatPushJobId", Value::string(&job_id))
-            .disable_authz()
-            .delete_all()
+        force_new(facade, JOB, || {
+            facade
+                .find(JOB)?
+                .eq("chatPushJobId", Value::string(&job_id))
+                .disable_authz()
+                .delete_all()
+        })
     };
     let room = facade
         .find(ROOM)?
@@ -779,8 +887,14 @@ fn fan_out_job(
             preview: !hidden.contains(&user),
             held: dnd.contains(&user),
         };
-        queue_message(facade, device, &content, &push, now)?;
-        queued += 1;
+        match force_new(facade, OUTBOX, || queue_message(facade, device, &content, &push, now)) {
+            Ok(true) => queued += 1,
+            Ok(false) => {}
+            Err(error) => tracing::error!(
+                subscription_id = %text_of(device, "subscriptionId").unwrap_or_default(),
+                "the push of chat event {room_id}::{seq} was not queued for a device: {error}"
+            ),
+        }
     }
     delete_job()?;
     Ok(queued)
@@ -796,16 +910,28 @@ struct Push<'a> {
 }
 
 /// Write the push of `content` to `device`, or merge it into the device's pending or held push of the room that no
-/// worker holds: one push per room, with the count.
+/// worker holds: one push per room, with the count (an edit is not another message). Nothing when the device already
+/// has a push of the room at this event or later (the job worked again). Out: whether a row was written or merged.
 fn queue_message(
     facade: &EntityFacade,
     device: &EntityValue,
     content: &Content,
     push: &Push<'_>,
     now: i64,
-) -> Result<(), LibError> {
+) -> Result<bool, LibError> {
     let subscription = text_of(device, "subscriptionId").unwrap_or_default();
     let status = if push.held { HELD } else { PENDING };
+    let rows = facade
+        .find(OUTBOX)?
+        .eq("subscriptionId", Value::string(&subscription))
+        .eq("chatRoomId", Value::string(&content.room_id))
+        .eq("kindEnumId", Value::string(KIND_MESSAGE))
+        .condition(Condition::greater_equal("eventSeq", Value::I64(content.event_seq)))
+        .disable_authz()
+        .count()?;
+    if rows > 0 {
+        return Ok(false);
+    }
     let open = facade
         .find(OUTBOX)?
         .eq("subscriptionId", Value::string(&subscription))
@@ -825,7 +951,8 @@ fn queue_message(
         .cloned();
     let expire = stamp(now + MESSAGE_TTL_SECONDS * 1000);
     if let Some(mut row) = open {
-        let count = count_of(&row, "messageCount").max(1) + 1;
+        let before = count_of(&row, "messageCount").max(1);
+        let count = if content.edit { before } else { before + 1 };
         let mention = push.mention || text_of(&row, "mention").as_deref() == Some("Y");
         row.set("eventSeq", Value::I64(content.event_seq));
         row.set("messageCount", Value::I64(count));
@@ -836,7 +963,8 @@ fn queue_message(
         );
         row.set("statusEnumId", Value::string(status));
         row.set("expireDate", expire);
-        return row.update(facade);
+        row.update(facade)?;
+        return Ok(true);
     }
     let mut row = facade.make_value(OUTBOX)?;
     row.set_sequenced_id_primary(facade)?;
@@ -856,7 +984,8 @@ fn queue_message(
     row.set("nextAttemptDate", stamp(now));
     row.set("createdDate", stamp(now));
     row.set("expireDate", expire);
-    row.create(facade)
+    row.create(facade)?;
+    Ok(true)
 }
 
 // ---- 2. do not disturb ends ----
@@ -955,7 +1084,8 @@ fn deliver_due(
 
 /// The FCM `messages:send` body of a chat push: a data message of its kind (`chat` or `clear`) and `pushId`, the
 /// registration's id as on a ring (which account of the app it is for, so which key opens it), the payload sealed to
-/// the device (`enc`, base64url) when it gave its keys, else nothing more; with the room's collapse key.
+/// the device (`enc`, base64url) when it gave its keys, else nothing more; with the device's collapse key of the room
+/// ([`collapse_key`]).
 pub fn fcm_body(
     token: &str,
     device: &str,
@@ -964,6 +1094,7 @@ pub fn fcm_body(
     ttl_seconds: i64,
     room_id: &str,
 ) -> serde_json::Value {
+    let collapse = collapse_key(device, room_id, clear);
     let mut data = serde_json::Map::new();
     data.insert("kind".to_string(), (if clear { "clear" } else { "chat" }).into());
     data.insert("pushId".to_string(), device.into());
@@ -977,9 +1108,30 @@ pub fn fcm_body(
             // high only for a notification that shows: Android takes high priority from an app whose high pushes show nothing
             "priority": if clear { "NORMAL" } else { "HIGH" },
             "ttl": format!("{ttl_seconds}s"),
-            "collapse_key": collapse_key(room_id),
+            "collapse_key": collapse,
         },
     }})
+}
+
+/// Whether the device has a newer push of the room than `seq` that the user has not read: one waiting, or one shown
+/// and not cleared. A clear up to `seq` would remove its notification, so none is sent.
+fn newer_unread(facade: &EntityFacade, subscription: &str, room_id: &str, seq: i64) -> Result<bool, LibError> {
+    Ok(facade
+        .find(OUTBOX)?
+        .eq("subscriptionId", Value::string(subscription))
+        .eq("chatRoomId", Value::string(room_id))
+        .eq("kindEnumId", Value::string(KIND_MESSAGE))
+        .condition(Condition::greater("eventSeq", Value::I64(seq)))
+        .condition(Condition::or(vec![
+            Condition::is_in("statusEnumId", vec![Value::string(PENDING), Value::string(HELD)]),
+            Condition::and(vec![
+                Condition::equals("statusEnumId", Value::string(SENT)),
+                Condition::is_null("clearedDate"),
+            ]),
+        ]))
+        .disable_authz()
+        .count()?
+        > 0)
 }
 
 fn deliver_one(
@@ -1023,6 +1175,16 @@ fn deliver_one(
         finish(facade, &id, attempts, FAILED, Some("deviceGone"), None, now)?;
         return Ok(Step::Failed);
     };
+    // a browser or app now signed in as someone else gets nothing of the earlier user's
+    if text_of(&device, "userId").as_deref() != Some(user.as_str()) {
+        finish(facade, &id, attempts, DROPPED, Some("deviceMoved"), None, now)?;
+        return Ok(Step::Dropped);
+    }
+    // a clear that would remove the notification of a newer message not read
+    if clear && newer_unread(facade, &subscription, &room_id, count_of(row, "eventSeq"))? {
+        finish(facade, &id, attempts, DROPPED, Some("newer"), None, now)?;
+        return Ok(Step::Dropped);
+    }
     let provider = Provider::of(&device);
     // a native app's registration ends with its device key
     if provider != Provider::Web {
@@ -1034,9 +1196,12 @@ fn deliver_one(
             return Ok(Step::Failed);
         }
     }
-    if !claim(facade, OUTBOX, ("pushOutboxId", &id), attempts, node, now)? {
+    // the row as locked: another node may have merged a message into it since it was listed
+    let Some(row) = claim(facade, OUTBOX, ("pushOutboxId", &id), attempts, node, now)? else {
         return Ok(Step::Skipped);
-    }
+    };
+    let row = &row;
+    let expires = millis_of(row, "expireDate").unwrap_or(expires);
     let attempt = attempts + 1;
     let mut payload: serde_json::Value = text_of(row, "payloadJson")
         .and_then(|json| serde_json::from_str(&json).ok())
@@ -1079,7 +1244,7 @@ fn deliver_one(
                 body,
                 ttl_seconds,
                 urgency: if clear { "normal" } else { "high" },
-                topic: &collapse_key(&room_id),
+                topic: &collapse_key(&subscription, &room_id, clear),
             },
         ),
         // a browser or distributor always has its keys; one without cannot be pushed to
@@ -1316,7 +1481,7 @@ fn queue_clear(
     now: i64,
 ) -> Result<(), LibError> {
     let payload = json!({"v": 1, "kind": "clear", "chatRoomId": room_id, "lastReadEventSeq": seq,
-        "tag": collapse_key(room_id)})
+        "tag": room_tag(room_id)})
     .to_string();
     let open = facade
         .find(OUTBOX)?
@@ -1407,6 +1572,8 @@ fn queue_read_clear(
                 ("reasonCode".to_string(), Value::string("read")),
                 ("clearedDate".to_string(), stamp(now)),
             ])?;
+        // waiting, and newer than the read: what of it was read is no longer counted
+        recount_partly_read(facade, &user, room_id, seq)?;
         // sent: those devices remove the room's notification
         let shown = read(facade.find(OUTBOX)?)
             .eq("statusEnumId", Value::string(SENT))
@@ -1425,6 +1592,10 @@ fn queue_read_clear(
             .condition(Condition::is_null("clearedDate"))
             .update_all([("clearedDate".to_string(), stamp(now))])?;
         for device in devices.iter().filter(|device| !reader.contains(*device)) {
+            // its notification shows a newer message, not read: it stays
+            if newer_unread(facade, device, room_id, seq)? {
+                continue;
+            }
             queue_clear(facade, &user, device, room_id, seq, now)?;
             clears += 1;
         }
@@ -1433,6 +1604,68 @@ fn queue_read_clear(
         wake_after_commit(facade);
     }
     out(clears)
+}
+
+/// A waiting push of the room newer than the read at `seq` counted messages the user has now read: its count becomes
+/// at most the events after the read (an upper bound: not every event is a message), and its title follows.
+fn recount_partly_read(facade: &EntityFacade, user: &str, room_id: &str, seq: i64) -> Result<(), LibError> {
+    let rows = facade
+        .find(OUTBOX)?
+        .eq("userId", Value::string(user))
+        .eq("chatRoomId", Value::string(room_id))
+        .eq("kindEnumId", Value::string(KIND_MESSAGE))
+        .condition(Condition::greater("eventSeq", Value::I64(seq)))
+        .condition(Condition::is_in(
+            "statusEnumId",
+            vec![Value::string(PENDING), Value::string(HELD)],
+        ))
+        .use_cache(false)
+        .for_update(true)
+        .disable_authz()
+        .list()?;
+    for row in rows.values() {
+        let count = count_of(row, "messageCount");
+        let left = count.min((count_of(row, "eventSeq") - seq).max(1));
+        if left >= count {
+            continue;
+        }
+        let mut row = row.clone();
+        let mut payload: serde_json::Value = text_of(&row, "payloadJson")
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_else(|| json!({}));
+        payload["count"] = left.into();
+        payload["title"] = title_of(&payload).into();
+        row.set("messageCount", Value::I64(left));
+        row.set("payloadJson", Value::string(payload.to_string()));
+        row.update(facade)?;
+    }
+    Ok(())
+}
+
+/// Drop the pushes waiting for a device that now belongs to another user (a browser or app signed in as someone else,
+/// `register#PushDevice` and `store#WebPushSubscription`): its new user is never sent the earlier user's messages. The
+/// send checks the device's user too. Logged when it cannot be.
+pub(crate) fn forget_device_pushes(facade: &EntityFacade, subscription: &str) {
+    if subscription.is_empty() || !crate::entity::info::is_entity_defined(facade, OUTBOX) {
+        return;
+    }
+    let dropped = force_new(facade, OUTBOX, || {
+        facade
+            .find(OUTBOX)?
+            .eq("subscriptionId", Value::string(subscription))
+            .condition(Condition::is_in(
+                "statusEnumId",
+                vec![Value::string(PENDING), Value::string(HELD)],
+            ))
+            .disable_authz()
+            .update_all([
+                ("statusEnumId".to_string(), Value::string(DROPPED)),
+                ("reasonCode".to_string(), Value::string("deviceMoved")),
+            ])
+    });
+    if let Err(error) = dropped {
+        tracing::warn!(subscription_id = %subscription, "the pushes of a moved device were not dropped: {error}");
+    }
 }
 
 /// `ack#Push`: the current user's device showed the push `ackId` (a chat push's `ackId`, or the `pushId` a push of

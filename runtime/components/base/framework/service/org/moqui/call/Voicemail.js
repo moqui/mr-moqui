@@ -273,8 +273,8 @@ function store(p) {
     ec.message.popErrors()
   }
   voicemail.create()
-  roomNote(voicemail)
-  received(box, voicemail)
+  const noteRoom = roomNote(voicemail)
+  received(box, voicemail, noteRoom)
   return { voicemailId: voicemail.voicemailId }
 }
 
@@ -367,19 +367,22 @@ function receiveEdge(p) {
 
 /**
  * C4-SMS: a message left on a call in a number pair's room is shown there too, as an event of the call (CetCall, action
- * voicemail) that names it; its audio stays the box's, for the box's readers only. A failure is logged.
+ * voicemail) that names it; its audio stays the box's, for the box's readers only. A failure is logged. The room, when the
+ * event is in it: its members' devices get the chat push of it (plans/Comms-Messaging.md §7.2 rule 6).
  */
 function roomNote(voicemail) {
   const session = voicemail.callSessionId ? one(SESSION, { callSessionId: voicemail.callSessionId }) : null
-  if (!session || !session.chatRoomId) return
+  if (!session || !session.chatRoomId) return null
   ec.message.pushErrors()
   try {
     ec.service.sync().name('org.moqui.chat.ChatServices.append#Event').parameters({ chatRoomId: session.chatRoomId, eventTypeEnumId: 'CetCall',
       content: { callSessionId: session.callSessionId, action: 'voicemail', kind: 'phone', voicemailId: voicemail.voicemailId,
         durationSeconds: Math.round(Number(voicemail.durationMs || 0) / 1000), phoneNumber: voicemail.fromNumber || null } }).disableAuthz().call()
     if (ec.message.hasError()) throw new Error(ec.message.errorsString)
+    return session.chatRoomId
   } catch (err) {
     ec.logger.warn(`Voicemail ${voicemail.voicemailId}: not shown in room ${session.chatRoomId}: ${err && err.message ? err.message : err}`)
+    return null
   } finally {
     ec.message.clearErrors()
     ec.message.popErrors()
@@ -400,8 +403,11 @@ function discardSpool(tempPath) {
   }
 }
 
-/** The owner hears of a new message, and its transcription and email notice are queued; each part on its own. */
-function received(box, voicemail) {
+/**
+ * The owner hears of a new message, and its transcription and email notice are queued; each part on its own. A member
+ * of the room the message is shown in (noteRoom) gets its device push from the room's chat push, not a Web Push too.
+ */
+function received(box, voicemail, noteRoom) {
   const from = voicemail.fromName || voicemail.fromNumber || ec.l10n.localize('Unknown number')
   const title = ec.resource.expand('New voicemail from ${from}', '', { from })
   // a ring group's box tells each of its members (V3)
@@ -425,9 +431,12 @@ function received(box, voicemail) {
       }).disableAuthz().call()
     })
   }
-  if (userIds.length) {
+  const inRoom = new Set(noteRoom ? rows('moqui.chat.ChatRoomMember', { chatRoomId: noteRoom }).filter((m) => m.userId && !m.leftDate)
+    .map((m) => m.userId) : [])
+  const pushUserIds = userIds.filter((id) => !inRoom.has(id))
+  if (pushUserIds.length) {
     safely('the Web Push notice', () => {
-      ec.service.special().name('org.moqui.ui.NotificationServices.send#WebPush').parameters({ userIdList: userIds, title,
+      ec.service.special().name('org.moqui.ui.NotificationServices.send#WebPush').parameters({ userIdList: pushUserIds, title,
         link: voicemailPath(voicemail.voicemailId), topic: 'Voicemail', tag: 'voicemail-' + voicemail.voicemailId }).registerOnCommit()
     })
   }

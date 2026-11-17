@@ -252,7 +252,7 @@ feature("the do not disturb allowed list keeps users, not oneself, and Settings 
 
 // plans/Comms-Messaging.md §7.3, Health: System, Push Health (find#PushHealth, PushHealthAdmin) lists each device with
 // its counts, a device with pushes of the last day not acknowledged first and marked (its qvt render)
-feature("Push Health lists each device with its counts and marks one whose pushes went unacknowledged", {
+feature("Push Health lists each device with its counts and marks one that acknowledges whose pushes went unacknowledged", {
     when() {
         login("john.doe")
         const now = Number(ec.user.nowTimestamp)
@@ -262,26 +262,36 @@ feature("Push Health lists each device with its counts and marks one whose pushe
             if (!ec.entity.find("moqui.security.UserGroupPermission").condition("userGroupId", "ADMIN").condition("userPermissionId", "PushHealthAdmin").count())
                 ec.entity.makeValue("moqui.security.UserGroupPermission").setAll({userGroupId: "ADMIN", userPermissionId: "PushHealthAdmin",
                     fromDate: new Date(0)}).create()
-            ec.entity.find("moqui.chat.PushOutbox").condition("subscriptionId", "BC_SPEC_PHONE").deleteAll()
-            ec.entity.find("moqui.security.user.WebPushSubscription").condition("subscriptionId", "BC_SPEC_PHONE").deleteAll()
-            ec.entity.makeValue("moqui.security.user.WebPushSubscription").setAll({subscriptionId: "BC_SPEC_PHONE", userId: USER,
-                pushProviderEnumId: "PushFcm", endpoint: "bc-spec-token", endpointHash: "bc-spec-token-hash", platform: "android",
-                sentCount: 3, ackedCount: 2, failedCount: 1, lastPushDate: new Date(now - 3600000)}).create()
-            ec.entity.makeValue("moqui.chat.PushOutbox").setAll({pushOutboxId: "BC_SPEC_PUSH", subscriptionId: "BC_SPEC_PHONE", userId: USER,
-                chatRoomId: "BC_SPEC_ROOM", eventSeq: 1, kindEnumId: "PokMessage", statusEnumId: "PosSent", createdDate: new Date(now - 3600000),
-                sentDate: new Date(now - 3600000)}).create()
+            // a phone that acknowledges, and a browser that never acknowledged a push: each with a push of an hour ago unacknowledged
+            const devices = [["BC_SPEC_PHONE", "PushFcm", 2], ["BC_SPEC_WEB", "PushWeb", 0]]
+            for (const [id, provider, acked] of devices) {
+                ec.entity.find("moqui.chat.PushOutbox").condition("subscriptionId", id).deleteAll()
+                ec.entity.find("moqui.security.user.WebPushSubscription").condition("subscriptionId", id).deleteAll()
+                ec.entity.makeValue("moqui.security.user.WebPushSubscription").setAll({subscriptionId: id, userId: USER,
+                    pushProviderEnumId: provider, endpoint: "bc-spec-" + id, endpointHash: "bc-spec-hash-" + id, platform: "android",
+                    sentCount: 3, ackedCount: acked, failedCount: 1, lastPushDate: new Date(now - 3600000)}).create()
+                ec.entity.makeValue("moqui.chat.PushOutbox").setAll({pushOutboxId: id + "_PUSH", subscriptionId: id, userId: USER,
+                    chatRoomId: "BC_SPEC_ROOM", eventSeq: 1, kindEnumId: "PokMessage", statusEnumId: "PosSent", createdDate: new Date(now - 3600000),
+                    sentDate: new Date(now - 3600000)}).create()
+            }
         })
         const found = sys(() => call("org.moqui.ui.NotificationServices.find#PushHealth", {}))
         const page = render("component://tools/screen/System.xml", "PushHealth", "qvt", {})
         sys(() => {
-            ec.entity.find("moqui.chat.PushOutbox").condition("subscriptionId", "BC_SPEC_PHONE").deleteAll()
-            ec.entity.find("moqui.security.user.WebPushSubscription").condition("subscriptionId", "BC_SPEC_PHONE").deleteAll()
+            for (const id of ["BC_SPEC_PHONE", "BC_SPEC_WEB"]) {
+                ec.entity.find("moqui.chat.PushOutbox").condition("subscriptionId", id).deleteAll()
+                ec.entity.find("moqui.security.user.WebPushSubscription").condition("subscriptionId", id).deleteAll()
+            }
         })
-        return {device: Array.from(found.deviceList).find(device => device.subscriptionId == "BC_SPEC_PHONE"), first: found.deviceList[0], page}
+        const list = Array.from(found.deviceList)
+        return {device: list.find(device => device.subscriptionId == "BC_SPEC_PHONE"), web: list.find(device => device.subscriptionId == "BC_SPEC_WEB"),
+            first: list[0], page}
     },
-    then({device, first, page}) {
+    then({device, web, first, page}) {
         device.sentCount == 3 && device.ackedCount == 2 && device.failedCount == 1
         device.unackedCount == 1 && device.missedAcks == true && !device.keyed
+        // a device that never acknowledged is not alerted on
+        web.unackedCount == 1 && web.missedAcks == false && web.acknowledges == false
         first.missedAcks == true
         page.status == 200 && !page.broken
         page.output.includes("Push health") && page.output.includes("Basic Comms basic.comms.spec") && page.output.includes("1 not acknowledged")

@@ -241,6 +241,7 @@ fn store_subscription(
             subscription_id = %field(&row, "subscriptionId"),
             "Web Push subscription moved from user {previous} to the user now signed in"
         );
+        super::chat_push::forget_device_pushes(facade, &field(&row, "subscriptionId"));
     }
     row.set("userId", Value::string(&user_id));
     row.set("pushProviderEnumId", Value::string(PROVIDER_WEB));
@@ -427,6 +428,7 @@ fn register_device(
         } else {
             tracing::info!(subscription_id = %subscription_id, "FCM registration moved from user {earlier} to the user now signed in");
         }
+        super::chat_push::forget_device_pushes(facade, &subscription_id);
     }
     let subscription_id = field(&row, "subscriptionId");
     // one registration a device key: the app's token changed

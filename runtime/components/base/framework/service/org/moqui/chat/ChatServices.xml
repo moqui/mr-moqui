@@ -535,8 +535,11 @@ along with this software (see the LICENSE.md file). If not, see
 
             // the push to the members' devices (plans/Comms-Messaging.md §7.3): one job row in this transaction, however many
             // members, worked after the commit (crates/moqui-core/src/service/chat_push.rs), so a message that rolls back
-            // pushes nothing. An edit pushes only to the users it newly mentions.
-            if (!noPush && (eventTypeEnumId === 'CetMessage' || eventTypeEnumId === 'CetEdit')) {
+            // pushes nothing. An edit pushes only to the users it newly mentions; a call's event as a message when it is a
+            // missed call (the users it names) or a voicemail (§7.2 rule 6)
+            const callPush = eventTypeEnumId === 'CetCall' && (about.action === 'voicemail'
+                    || (about.action === 'ended' && Array.isArray(about.missedUserIdList) && about.missedUserIdList.length > 0))
+            if (!noPush && (eventTypeEnumId === 'CetMessage' || eventTypeEnumId === 'CetEdit' || callPush)) {
                 const job = ec.entity.makeValue('moqui.chat.ChatPushJob')
                 job.setSequencedIdPrimary()
                 job.setFields({chatRoomId: chatRoomId, eventSeq: eventSeq, createdDate: now, attemptCount: 0}, true, null, null)
@@ -3216,9 +3219,21 @@ along with this software (see the LICENSE.md file). If not, see
             lastReadEventSeq = next
             ec.service.sync().name('org.moqui.chat.ChatServices.record#UserChange').parameters({userIdList: [me], changeKind: 'read', chatRoomId: chatRoomId,
                 change: {lastReadEventSeq: next}, pushMessage: {kind: 'read', chatRoomId: chatRoomId, lastReadEventSeq: next}}).call()
-            // the user's other devices remove the room's notification; a push not yet sent is not sent (§7.2 rule 3)
-            if (!markUnread) ec.service.sync().name('org.moqui.chat.ChatPushServices.queue#ReadClear').parameters({userId: me,
-                readMap: {[chatRoomId]: next}}).disableAuthz().call()
+            // the user's other devices remove the room's notification; a push not yet sent is not sent (§7.2 rule 3). In a
+            // transaction of its own and logged: a failure there never fails the read
+            if (!markUnread) {
+                ec.message.pushErrors()
+                try {
+                    ec.service.sync().name('org.moqui.chat.ChatPushServices.queue#ReadClear').parameters({userId: me,
+                        readMap: {[chatRoomId]: next}}).requireNewTransaction(true).disableAuthz().call()
+                    if (ec.message.hasError()) ec.logger.warn(`The pushes of room ${chatRoomId} were not cleared for ${me}: ${ec.message.errorsString}`)
+                } catch (err) {
+                    ec.logger.warn(`The pushes of room ${chatRoomId} were not cleared for ${me}: ${err && err.message ? err.message : err}`)
+                } finally {
+                    ec.message.clearErrors()
+                    ec.message.popErrors()
+                }
+            }
             const isDirect = access.room.roomTypeEnumId === 'CrtDirect'
             const others = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('userId', 'not-equals', me)
                     .selectField('userId').selectField('leftDate').list()).filter((member) => member.userId && (isDirect || !member.leftDate))
@@ -3260,7 +3275,18 @@ along with this software (see the LICENSE.md file). If not, see
                 pushMessage: {kind: 'read', all: true}}).call()
             const readMap = {}
             for (const change of changes) readMap[change.chatRoomId] = change.change.lastReadEventSeq
-            ec.service.sync().name('org.moqui.chat.ChatPushServices.queue#ReadClear').parameters({userId: me, readMap: readMap}).disableAuthz().call()
+            // in a transaction of its own and logged: a failure there never fails the read (see mark#Read)
+            ec.message.pushErrors()
+            try {
+                ec.service.sync().name('org.moqui.chat.ChatPushServices.queue#ReadClear').parameters({userId: me, readMap: readMap})
+                        .requireNewTransaction(true).disableAuthz().call()
+                if (ec.message.hasError()) ec.logger.warn(`The pushes of ${roomCount} rooms were not cleared for ${me}: ${ec.message.errorsString}`)
+            } catch (err) {
+                ec.logger.warn(`The pushes of ${roomCount} rooms were not cleared for ${me}: ${err && err.message ? err.message : err}`)
+            } finally {
+                ec.message.clearErrors()
+                ec.message.popErrors()
+            }
             ec.service.sync().name('org.moqui.chat.ChatServices.publish#ChatCounts').parameter('userIdList', [me]).call()
         ]]></script></actions>
     </service>

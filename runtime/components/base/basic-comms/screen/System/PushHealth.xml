@@ -31,7 +31,8 @@ along with this software (see the LICENSE.md file). If not, see
             {deviceCount: totals.deviceCount || 0, waitingCount: totals.waitingCount || 0, failedDayCount: totals.failedDayCount || 0, missedCount: totals.missedCount || 0})
         deviceList = Array.from(out.deviceList || []).map((d) => Object.assign({}, d, {
             deviceText: [d.providerText, d.platform, d.appId || d.userAgent].filter((part) => part).join(' · '),
-            stateText: d.disabledDate ? L('Disabled') : d.missedAcks ? ec.resource.expand('${count} not acknowledged', '', {count: d.unackedCount}) : L('Working'),
+            stateText: d.disabledDate ? L('Disabled') : d.missedAcks ? ec.resource.expand('${count} not acknowledged', '', {count: d.unackedCount})
+                : d.acknowledges ? L('Working') : L('Sending (no acknowledgements)'),
             stateColor: d.disabledDate ? 'grey' : d.missedAcks ? 'negative' : 'positive',
             registeredText: when(d.lastRegisteredDate),
             pushText: when(d.lastPushDate),
@@ -49,7 +50,7 @@ along with this software (see the LICENSE.md file). If not, see
             <label type="p" style="m-muted" text="Push health is for administrators."/>
         </widgets></section>
         <section name="Devices" condition="allowed"><widgets>
-            <label type="p" style="m-muted" text="Each device a user gets notifications on: a browser, the app through Firebase, or the app through a UnifiedPush distributor. An app acknowledges each push it shows; pushes of the last day with no acknowledgement mean the device is not showing them."/>
+            <label type="p" style="m-muted" text="Each device a user gets notifications on: a browser, the app through Firebase, or the app through a UnifiedPush distributor. A device that acknowledges the pushes it shows (it has acknowledged one before) is marked when pushes of the last day went unacknowledged: it is not showing them. A device that never acknowledged one, such as an older app, is not marked."/>
             <label type="p" text="${totalsText}" style="text-body2"/>
             <section name="NoDevices" condition="!deviceList.length"><widgets>
                 <label type="p" style="m-muted" text="No devices yet. A device appears when a user turns notifications on in a browser or signs in with the app."/>

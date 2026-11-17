@@ -26,19 +26,27 @@ along with this software (see the LICENSE.md file). If not, see
       3. Not when read: nothing to a user whose read marker is at or past the event, at the job and again at the send.
       4. Do not disturb (UserStatus UpsDnd, by hand or by the hours job): the pushes are held (PosHeld) and go as one
          summary per room and device when it ends.
+      6. A call's event pushes as a message: a missed call (append#Event's content missedUserIdList) to those who missed
+         it, a voicemail to the room's members, each unless their level is None.
     It writes one PushOutbox row for each device of each user (WebPushSubscription: a browser, an FCM app, a UnifiedPush
-    distributor); a pending or held row of the same device and room takes the message in, with a count. Each row is sent
-    with a lease: its plain payload encrypted to the device (RFC 8291, push_crypto) for every provider, so the push service
-    sees nothing of it (an FCM device that gave no key gets only {kind, pushId}). A payload has the room, the sender's name
-    and, in a plain room for a user whose CHAT_NOTIFY_PREVIEW is not N, a snippet; an encrypted room's has the room and the
-    sender only. Messages live 4 weeks with a collapse key (FCM) or Topic (Web Push) per room, at high priority; a clear at
-    normal. FCM 429 and 5xx, no answer and FCM down wait with backoff and jitter, at most an hour each, Retry-After taken;
+    distributor), each in a transaction of its own and once however often the job is worked; a pending or held row of the
+    same device and room takes the message in, with a count (an edit is not another message, and a read of part of it
+    lowers the count). Each row is sent with a lease, as the lease locked it: never to a device that now belongs to
+    another user (a moved device drops what waits for it); its plain payload encrypted to the device (RFC 8291,
+    push_crypto) for every provider, so the push service sees nothing of it (an FCM device that gave no key gets only
+    {kind, pushId}). A payload has the room, the sender's name and, in a plain room for a user whose CHAT_NOTIFY_PREVIEW
+    is not N, a snippet; an encrypted room's has the room and the sender only; its tag is the room's (chat-roomId), which
+    a device replaces and closes the room's notifications by. Messages live 4 weeks at high priority with a collapse key
+    (FCM) or Topic (Web Push): an HMAC, keyed by the server's VAPID key, of the registration, the room and the kind, so a
+    push service can neither find a room id nor link two users' pushes of a room, and a clear (normal priority, its own
+    key) never replaces a message waiting there. No clear goes to a device whose newer push of the room is unread. FCM 429 and 5xx, no answer and FCM down wait with backoff and jitter, at most an hour each, Retry-After taken;
     FCM UNREGISTERED deletes the registration; Web Push and UnifiedPush 404 and 410 disable it. Each job, row and device is
     on its own: one that fails is logged and the rest go on.
 
     A device acknowledges each push it showed (NotificationServices.ack#Push); the device keeps sent, acked and failed counts
-    (System, Push Health). A call's ring is not in the outbox: it goes after the commit straight to send#WebPush, to the
-    users filter#RingUsers keeps during do not disturb. -->
+    (System, Push Health; a device that never acknowledged one is not alerted on). A call's ring is not in the outbox: it
+    goes after the commit straight to send#WebPush, and to the desk and soft phones, for the users filter#RingUsers keeps
+    during do not disturb (all of them when that check fails, logged). -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <service verb="wake" noun="ChatPush" type="rust" location="moqui_core::service::chat_push::wake_chat_push"
@@ -81,11 +89,13 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal (Calls.js ring): of userIdList, the users whose devices a call from fromUserId rings
             (plans/Comms-Messaging.md §7.2 rule 4): everyone not on do not disturb, and on do not disturb a user whose allowed
             list (the preference CHAT_DND_ALLOWED, userIds joined by commas, in Chat settings beside the hours) has the caller,
-            or whom the same caller called in the 3 minutes before (another call than callSessionId). A call from no user (an
-            outside number) does not ring a user on do not disturb.</description>
+            or whom the same caller called in the 3 minutes before (another call than callSessionId): the same user, or for a
+            call from an outside number (fromNumber) the same number. The allowed list holds users only, so an outside
+            number rings through only as a repeat.</description>
         <in-parameters>
             <parameter name="userIdList" type="List" required="true"/>
             <parameter name="fromUserId"/>
+            <parameter name="fromNumber"><description>An outside caller's number (its call's phone leg)</description></parameter>
             <parameter name="callSessionId"/>
         </in-parameters>
         <out-parameters><parameter name="ringUserIdList" type="List"/></out-parameters>
@@ -104,14 +114,19 @@ along with this software (see the LICENSE.md file). If not, see
                         .condition('preferenceKey', 'CHAT_DND_ALLOWED').disableAuthz().list()) {
                     if (String(row.preferenceValue || '').split(',').map((id) => id.trim()).includes(fromUserId)) rings.add(row.userId)
                 }
-                // the same person's second call within 3 minutes
+            }
+            // the same person's second call within 3 minutes: a user who started it, or an outside number's phone leg
+            const number = String(fromNumber || '').trim()
+            if (fromUserId || number) {
                 const earlier = Array.from(ec.entity.find('moqui.call.CallUserLog').condition('userId', 'in', Array.from(dnd))
-                        .condition('roleEnumId', 'CurCallee').condition('logDate', 'greater-equals', new Date(now - 180000))
-                        .disableAuthz().list()).filter((row) => row.callSessionId !== callSessionId)
+                        .condition('logDate', 'greater-equals', new Date(now - 180000)).disableAuthz().list())
+                        .filter((row) => row.callSessionId !== callSessionId && row.roleEnumId !== 'CurCaller')
                 if (earlier.length) {
-                    const byCaller = new Set(Array.from(ec.entity.find('moqui.call.CallSession')
-                            .condition('callSessionId', 'in', earlier.map((row) => row.callSessionId)).condition('startedByUserId', fromUserId)
-                            .selectField('callSessionId').disableAuthz().list()).map((row) => row.callSessionId))
+                    const ids = Array.from(new Set(earlier.map((row) => row.callSessionId)))
+                    const byCaller = new Set(fromUserId ? Array.from(ec.entity.find('moqui.call.CallSession').condition('callSessionId', 'in', ids)
+                            .condition('startedByUserId', fromUserId).selectField('callSessionId').disableAuthz().list()).map((row) => row.callSessionId)
+                        : Array.from(ec.entity.find('moqui.call.CallLeg').condition('callSessionId', 'in', ids).condition('legTypeEnumId', 'CltPstn')
+                            .condition('phoneNumber', number).selectField('callSessionId').disableAuthz().list()).map((row) => row.callSessionId))
                     for (const row of earlier) if (byCaller.has(row.callSessionId)) rings.add(row.userId)
                 }
             }

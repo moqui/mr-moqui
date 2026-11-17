@@ -214,15 +214,16 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   `find#InboxRows` `needsReply`), and rooms with unread.
 - **Push health** (System, Push Health; the PushHealthAdmin permission, which ADMIN has). Every user's push devices (a
   browser, the app through Firebase or a UnifiedPush distributor) with the last registration, push and acknowledgement,
-  the pushes sent, acknowledged, failed and waiting, and the devices whose pushes of the last day were not acknowledged
-  first.
+  the pushes sent, acknowledged, failed and waiting, and first, marked, the devices that acknowledge pushes whose pushes
+  of the last day were not acknowledged (a device that never acknowledged one is not marked).
 - **Notifications on this device.** The account menu turns on desktop notifications and Web Push for the browser or
   the installed app ([Qvt-Client](../ui/Qvt-Client.md#install-and-web-push)). A chat message is pushed to every device
   of each member it is for, by the room's level (a muted room as Mentions), not once it is read on another device (a
   read there removes the notification), held on do not disturb and sent as one summary per room when it ends, and
-  encrypted to the device: the push service sees no text. A reaction to your message shows in the room, never as a
-  push. On do not disturb a call still rings from the people in Settings, Chat, Calls that ring through, and as the
-  same person's second call within 3 minutes ([Qvt-Client, Chat push](../ui/Qvt-Client.md#install-and-web-push)).
+  encrypted to the device: the push service sees no text. A missed call and a voicemail push as messages in their
+  room. A reaction to your message shows in the room, never as a push. On do not disturb a call still rings, your
+  apps and your desk and soft phones, from the people in Settings, Chat, Calls that ring through, and as the same
+  person's or number's second call within 3 minutes ([Qvt-Client, Chat push](../ui/Qvt-Client.md#install-and-web-push)).
 
 ## For app authors
 

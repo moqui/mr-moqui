@@ -140,7 +140,9 @@ along with this software (see the LICENSE.md file). If not, see
             ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <transition name="ackClientPush" method="post">
+    <!-- the browser's service worker sends it too, and holds no session token: it only counts a push of the signed-in
+        user's own (a cross-site post could at most count one of theirs that it guessed) -->
+    <transition name="ackClientPush" method="post" require-session-token="false">
         <parameter name="ackId"/>
         <actions><script><![CDATA[
             if (!ec.user.userId) ec.web.sendJsonError(401, 'Authentication required')

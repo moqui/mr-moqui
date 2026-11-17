@@ -609,7 +609,9 @@ along with this software (see the LICENSE.md file). If not, see
             {subscriptionId, userId, userName, providerText, platform, appId, userAgent, keyed (it gave its push keys),
             createdDate, lastRegisteredDate, lastPushDate (its push service took one), lastAckDate, sentCount, ackedCount,
             failedCount, failureCount (in a row), disabledDate, waitingCount (pushes pending or held), unackedCount (pushes
-            sent between a day and ten minutes ago with no acknowledgement), missedAcks (unackedCount above 0: the alert)},
+            sent between a day and ten minutes ago with no acknowledgement), acknowledges (it has acknowledged a push: an
+            app that does, a browser with the acknowledging service worker), missedAcks (the alert: a device that
+            acknowledges with unackedCount above 0; a device that never acknowledged is not alerted on)},
             the devices with missed acknowledgements first, then the latest push; at most 500. With the totals: devices,
             waiting, failed in the last day, missed. The endpoint and keys are never returned.</description>
         <out-parameters>
@@ -650,7 +652,10 @@ along with this software (see the LICENSE.md file). If not, see
                     lastRegisteredDate: toMillis(row.lastRegisteredDate ?? row.createdDate), lastPushDate: toMillis(row.lastPushDate),
                     lastAckDate: toMillis(row.lastAckDate), sentCount: Number(row.sentCount || 0), ackedCount: Number(row.ackedCount || 0),
                     failedCount: Number(row.failedCount || 0), failureCount: Number(row.failureCount || 0), disabledDate: toMillis(row.disabledDate),
-                    waitingCount: waiting[id] || 0, unackedCount: unacked[id] || 0, missedAcks: (unacked[id] || 0) > 0})
+                    waitingCount: waiting[id] || 0, unackedCount: unacked[id] || 0,
+                    // only a device that acknowledges pushes (one it has acknowledged before: an app from 2e on, a browser with
+                    // the service worker that acknowledges) is alerted on; another one's acknowledgements never come
+                    acknowledges: Number(row.ackedCount || 0) > 0, missedAcks: Number(row.ackedCount || 0) > 0 && (unacked[id] || 0) > 0})
             }
             deviceList.sort((left, right) => Number(right.missedAcks) - Number(left.missedAcks))
             const failedDay = ec.entity.find('moqui.chat.PushOutbox').condition('statusEnumId', 'PosFailed')

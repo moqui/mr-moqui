@@ -787,20 +787,31 @@ fn a_message_has_its_ttl_collapse_key_and_priority() {
     send(&bed.room, &format!("<p>{}</p>", mention("erin")), &[]);
     run(bed.now);
     let posts = bed.net.take();
-    let key = collapse_key(&bed.room);
-    assert!(!key.contains(&bed.room) && key.len() <= 32);
+    // a keyed hash of the device and the room: no room id, and another per device and for a clear
+    let key = |device: &str| collapse_key(device, &bed.room, false);
+    assert!(!key("BOB-PHONE").contains(&bed.room) && key("BOB-PHONE").len() <= 32);
+    assert_ne!(
+        key("BOB-PHONE"),
+        key("BOB-WEB"),
+        "two devices' pushes of a room are not linked"
+    );
+    assert_ne!(
+        key("BOB-PHONE"),
+        collapse_key("BOB-PHONE", &bed.room, true),
+        "a clear never replaces a message"
+    );
     for post in &posts {
         match &post.fcm {
             Some(body) => {
                 let android = &body["message"]["android"];
                 assert_eq!(android["priority"], "HIGH");
                 assert_eq!(android["ttl"], format!("{MESSAGE_TTL_SECONDS}s"));
-                assert_eq!(android["collapse_key"], key.as_str());
+                assert_eq!(android["collapse_key"], key(&post.device).as_str());
             }
             None => {
                 assert_eq!(post.ttl, MESSAGE_TTL_SECONDS);
                 assert_eq!(post.urgency, "high");
-                assert_eq!(post.topic, key);
+                assert_eq!(post.topic, key(&post.device));
             }
         }
     }
@@ -1041,4 +1052,281 @@ fn a_redaction_removes_the_activity() {
     // its push job finds the message gone: nothing is pushed
     run(bed.now);
     assert!(bed.net.take().is_empty());
+}
+
+fn retry_once(bed: &Bed, device: &str) {
+    bed.net.answer(
+        device,
+        &[Sent::Retry {
+            after_millis: Some(1_000),
+            error: "503".to_string(),
+        }],
+    );
+}
+
+/// A push sends the row as its claim locked it: a message another node merged in after the row was listed goes with it.
+#[test]
+fn a_push_is_sent_as_its_claim_found_it() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    retry_once(&bed, "BOB-PHONE");
+    login("alice");
+    send(&bed.room, "<p>one</p>", &[]);
+    run(bed.now);
+    bed.net.take();
+    let listed = outbox(&bed.facade, "BOB-PHONE").remove(0);
+    // another node merges a message in after this one listed the row
+    let mut merged: serde_json::Value = serde_json::from_str(&field(&listed, "payloadJson")).unwrap();
+    merged["count"] = 2.into();
+    merged["snippet"] = "two".into();
+    update(
+        &bed.facade,
+        OUTBOX,
+        &[("pushOutboxId", &field(&listed, "pushOutboxId"))],
+        &[
+            ("messageCount", Value::I64(2)),
+            ("payloadJson", text(&merged.to_string())),
+        ],
+    );
+    let net: Arc<dyn PushTransport> = bed.net.clone();
+    deliver_one(&bed.facade, net.as_ref(), &listed, "node-test", bed.now + 5_000).unwrap();
+    let posts = bed.net.take();
+    assert_eq!(devices(&posts), set(["BOB-PHONE"]));
+    let said = payload(&posts[0]);
+    assert_eq!(said["count"], 2);
+    assert_eq!(said["snippet"], "two");
+}
+
+/// A device that now belongs to another user gets none of the earlier user's pushes: dropped when it moves, and checked
+/// at the send.
+#[test]
+fn a_moved_device_gets_nothing_of_the_earlier_user() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    retry_once(&bed, "BOB-PHONE");
+    retry_once(&bed, "BOB-WEB");
+    login("alice");
+    send(&bed.room, "<p>for bob</p>", &[]);
+    run(bed.now);
+    bed.net.take();
+    // the phone signs in as carol: checked at its send
+    update(
+        &bed.facade,
+        DEVICE,
+        &[("subscriptionId", "BOB-PHONE")],
+        &[("userId", text("carol"))],
+    );
+    // the browser moves through its registration: its waiting pushes are dropped then
+    update(
+        &bed.facade,
+        DEVICE,
+        &[("subscriptionId", "BOB-WEB")],
+        &[("userId", text("carol"))],
+    );
+    forget_device_pushes(&bed.facade, "BOB-WEB");
+    assert_eq!(
+        field(&outbox(&bed.facade, "BOB-WEB").remove(0), "reasonCode"),
+        "deviceMoved"
+    );
+    let out = run(bed.now + 10_000);
+    assert!(bed.net.take().is_empty());
+    assert_eq!(number(&out, "droppedCount"), 1);
+    assert_eq!(
+        field(&outbox(&bed.facade, "BOB-PHONE").remove(0), "reasonCode"),
+        "deviceMoved"
+    );
+}
+
+/// A clear has a collapse key of its own, closes the room's notifications by its tag, and is not sent while a newer
+/// push of the room is waiting or shown unread on the device.
+#[test]
+fn a_clear_never_hides_a_newer_message() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    login("alice");
+    let first = send(&bed.room, "<p>one</p>", &[]);
+    run(bed.now);
+    bed.net.take();
+    // the second waits at the phone's push service; the browser shows it
+    retry_once(&bed, "BOB-PHONE");
+    send(&bed.room, "<p>two</p>", &[]);
+    run(bed.now + 1_000);
+    bed.net.take();
+    login("bob");
+    ok(
+        &format!("{CHAT}.mark#Read"),
+        &[("chatRoomId", text(&bed.room)), ("eventSeq", Value::I64(first))],
+    );
+    run(bed.now + 10_000);
+    let posts = bed.net.take();
+    // the phone gets its second message and no clear, the browser no clear
+    assert_eq!(posts.len(), 1, "{posts:?}");
+    assert_eq!(posts[0].device, "BOB-PHONE");
+    assert_eq!(payload(&posts[0])["kind"], "message");
+    // read all: each device's clear, under the clear's own key, with the room's tag
+    ok(&format!("{CHAT}.mark#Read"), &[("chatRoomId", text(&bed.room))]);
+    run(bed.now + 20_000);
+    let clears = bed.net.take();
+    assert_eq!(devices(&clears), set(["BOB-PHONE", "BOB-WEB"]));
+    for post in &clears {
+        assert_eq!(payload(post)["tag"], format!("chat-{}", bed.room));
+        let key = collapse_key(&post.device, &bed.room, true);
+        match &post.fcm {
+            Some(body) => assert_eq!(body["message"]["android"]["collapse_key"], key.as_str()),
+            None => assert_eq!(post.topic, key),
+        }
+    }
+}
+
+/// An edit that mentions someone with a push waiting is not another message; a read of part of what waits lowers its
+/// count.
+#[test]
+fn an_edit_and_a_partial_read_keep_the_count_right() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    row(
+        &bed.facade,
+        "moqui.security.UserStatus",
+        &[("userId", text("bob")), ("statusEnumId", text("UpsDnd"))],
+    );
+    login("alice");
+    let first = send(&bed.room, "<p>one</p>", &[]);
+    run(bed.now);
+    ok(
+        &format!("{CHAT}.edit#Message"),
+        &[
+            ("chatRoomId", text(&bed.room)),
+            ("eventSeq", Value::I64(first)),
+            ("body", text(&format!("<p>one {}</p>", mention("bob")))),
+        ],
+    );
+    run(bed.now + 1_000);
+    let held = outbox(&bed.facade, "BOB-PHONE").remove(0);
+    assert_eq!(count_of(&held, "messageCount"), 1, "an edit is not another message");
+    assert_eq!(field(&held, "mention"), "Y");
+    let second = send(&bed.room, "<p>two</p>", &[]);
+    send(&bed.room, "<p>three</p>", &[]);
+    run(bed.now + 2_000);
+    assert_eq!(count_of(&outbox(&bed.facade, "BOB-PHONE").remove(0), "messageCount"), 3);
+    login("bob");
+    ok(
+        &format!("{CHAT}.mark#Read"),
+        &[("chatRoomId", text(&bed.room)), ("eventSeq", Value::I64(second))],
+    );
+    let held = outbox(&bed.facade, "BOB-PHONE").remove(0);
+    assert_eq!(count_of(&held, "messageCount"), 1, "two of the three were read");
+    let said: serde_json::Value = serde_json::from_str(&field(&held, "payloadJson")).unwrap();
+    assert_eq!(said["count"], 1);
+    assert_eq!(said["title"], "Alice in Team");
+}
+
+/// Rule 6: a missed call pushes to those who missed it, a voicemail to the room, as messages; a call's other events
+/// push nothing.
+#[test]
+fn a_missed_call_and_a_voicemail_push_as_messages() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    let event = |content: serde_json::Value| {
+        let content = moqui_lib::json::from_json(&content);
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        ok(
+            &format!("{CHAT}.append#Event"),
+            &[
+                ("chatRoomId", text(&bed.room)),
+                ("eventTypeEnumId", text("CetCall")),
+                ("senderUserId", text("alice")),
+                ("content", content),
+            ],
+        );
+    };
+    event(serde_json::json!({"callSessionId": "C1", "action": "started"}));
+    event(serde_json::json!({"callSessionId": "C1", "action": "ended", "missedUserIdList": ["bob", "frank"]}));
+    run(bed.now);
+    let posts = bed.net.take();
+    assert_eq!(
+        devices(&posts),
+        set(["BOB-PHONE", "BOB-WEB"]),
+        "frank's level is Nothing"
+    );
+    let said = payload(&posts[0]);
+    assert_eq!(said["call"], "missed");
+    assert!(said["snippet"].is_null());
+    assert_eq!(said["title"], "Missed call in Team");
+    event(serde_json::json!({"callSessionId": "C2", "action": "voicemail", "voicemailId": "V1"}));
+    run(bed.now + 1_000);
+    assert_eq!(
+        devices(&bed.net.take()),
+        set(["BOB-PHONE", "BOB-WEB", "CAROL-PHONE", "DAVE-UP", "ERIN-PHONE"])
+    );
+}
+
+/// A job worked again (its lease ran out during a long fan-out) writes no push twice.
+#[test]
+fn a_job_worked_twice_queues_each_push_once() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    login("alice");
+    send(&bed.room, "<p>once</p>", &[]);
+    let job = rows(&bed.facade, JOB, &[]).remove(0);
+    let net: Arc<dyn PushTransport> = bed.net.clone();
+    let first = fan_out_job(&bed.facade, net.as_ref(), &job, bed.now).unwrap();
+    // the same job again, as a second node holding its copy would work it
+    let again = fan_out_job(&bed.facade, net.as_ref(), &job, bed.now).unwrap();
+    assert_eq!(first, 3);
+    assert_eq!(again, 0);
+    assert_eq!(count_of(&outbox(&bed.facade, "BOB-PHONE").remove(0), "messageCount"), 1);
+}
+
+/// Rule 4: an outside number's second call within 3 minutes rings through do not disturb too.
+#[test]
+fn an_outside_number_calling_again_rings_through() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    row(
+        &bed.facade,
+        "moqui.security.UserStatus",
+        &[("userId", text("bob")), ("statusEnumId", text("UpsDnd"))],
+    );
+    let now = crate::user::now_millis();
+    row(
+        &bed.facade,
+        "moqui.call.CallSession",
+        &[("callSessionId", text("P0")), ("startedDate", Value::I64(now - 60_000))],
+    );
+    row(
+        &bed.facade,
+        "moqui.call.CallLeg",
+        &[
+            ("callLegId", text("L0")),
+            ("callSessionId", text("P0")),
+            ("legTypeEnumId", text("CltPstn")),
+            ("phoneNumber", text("+15550100")),
+        ],
+    );
+    row(
+        &bed.facade,
+        "moqui.call.CallUserLog",
+        &[
+            ("callSessionId", text("P0")),
+            ("userId", text("bob")),
+            ("roleEnumId", text("CurCallee")),
+            ("logDate", Value::I64(now - 60_000)),
+        ],
+    );
+    let ring = |number: &str| -> BTreeSet<String> {
+        let out = ok(
+            &format!("{PUSH}.filter#RingUsers"),
+            &[
+                ("userIdList", Value::List(vec![text("bob")])),
+                ("fromNumber", text(number)),
+                ("callSessionId", text("P1")),
+            ],
+        );
+        match out.get("ringUserIdList") {
+            Some(Value::List(items)) => items.iter().map(to_plain_string).collect(),
+            other => panic!("{other:?}"),
+        }
+    };
+    assert_eq!(ring("+15550100"), set(["bob"]));
+    assert!(ring("+15550199").is_empty());
 }

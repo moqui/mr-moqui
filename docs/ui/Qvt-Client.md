@@ -1151,7 +1151,7 @@ From then on each **persisted** notification the user wants pushed (`pushNotific
 `send#WebPush` on a service worker (`service/web_push.rs`: RFC 8291 encryption, RFC 8292 VAPID). The payload is the
 title, link and topic, and the message id as the tag, never the message body. A click on the notification focuses an
 open `/qapps` window at the link, or opens one. Socket messages (a chat event, a signal) are never pushed this way; a
-chat message has its own push (Chat push, below).
+chat message has its own push (Chat push, below), whose notification the service worker builds and closes.
 
 The desktop notification a page shows for a socket message has the same tag as the push, so the browser shows one.
 In the desktop app, which defines `window.moquiDesktop` (below, In the desktop app),
@@ -1218,9 +1218,10 @@ or the JSON itself (an `is-secret` default-property, from the environment or `ru
 an access token, kept until five minutes before it expires. Unset, nothing goes to FCM and the log says so once.
 `fcm_base_url` replaces `https://fcm.googleapis.com`, for a test stand-in.
 
-A call's ring and its end are sent once the call's transaction commits, and on do not disturb only to a user whose
-allowed list (Chat settings, `CHAT_DND_ALLOWED`) has the caller, or whom the same caller called in the 3 minutes before
-(`ChatPushServices.filter#RingUsers`).
+A call's ring and its end are sent once the call's transaction commits, and on do not disturb (the apps and the desk
+and soft phones alike) only to a user whose allowed list (Chat settings, `CHAT_DND_ALLOWED`) has the caller, or whom
+the same caller (a user, or for an outside call the same number) called in the 3 minutes before
+(`ChatPushServices.filter#RingUsers`; when that check fails, everyone rings, logged).
 
 **Chat push.** A chat message reaches the devices of the members who should hear of it through the chat push worker
 (`service/chat_push.rs`, `org.moqui.chat.ChatPushServices`; [Comms-Messaging](../../plans/Comms-Messaging.md) §7), not
@@ -1228,18 +1229,27 @@ allowed list (Chat settings, `CHAT_DND_ALLOWED`) has the caller, or whom the sam
 applies the room's level (All; Mentions, also for a muted room: the user's mentions, replies and thread replies;
 Nothing), leaves out a user who has read it, holds the pushes of a user on do not disturb until it ends (one summary
 per room then), and writes one `PushOutbox` row per device, a pending one of the same device and room taking the next
-message in with a count. Each push is encrypted to its device for every provider; the payload is
-`{v, kind: message, pushId, ackId, chatRoomId, eventSeq, roomName, direct, senderName, snippet, count, mention,
-encrypted, sentDate, title, link, tag, topic: ChatMessage}` (`pushId` the registration, as on a ring; `ackId` the push,
-for `ack#Push`), the snippet only in a plain room for a user whose `CHAT_NOTIFY_PREVIEW` is not N. FCM gets
-`{kind: chat, pushId, enc}` (a device with no keys `{kind, pushId}`), high
-priority, a TTL of 4 weeks and a collapse key per room (a hash, not the room id); Web Push and UnifiedPush the same TTL,
-`Urgency: high` and a `Topic` per room. A read marker moved forward (`mark#Read`) drops the room's pushes not yet sent
-and sends `{kind: clear, chatRoomId, lastReadEventSeq}` at normal priority to the user's other devices that were sent
-one. A push not taken (FCM 429 or 5xx, no answer) waits with backoff and jitter, at most an hour, or FCM's
+message in with a count (an edit is not another message). A missed call pushes as a message to those who missed it,
+and a voicemail to the room's members (`call: missed` or `voicemail`, no snippet). Each push is encrypted to its
+device for every provider; the payload is `{v, kind: message, pushId, ackId, chatRoomId, eventSeq, roomName, direct,
+senderName, snippet, count, mention, encrypted, call, sentDate, title, link, tag, topic: ChatMessage}` (`pushId` the
+registration, as on a ring; `ackId` the push, for `ack#Push`; `tag` `chat-<chatRoomId>`), the snippet only in a plain
+room for a user whose `CHAT_NOTIFY_PREVIEW` is not N. FCM gets `{kind: chat, pushId, enc}` (a device with no keys
+`{kind, pushId}`), high priority, a TTL of 4 weeks and a collapse key; Web Push and UnifiedPush the same TTL,
+`Urgency: high` and a `Topic`. The key is an HMAC, keyed by the server's VAPID key, of the registration, the room and
+the push's kind, so a push service can neither find a room id nor tell that two users' pushes are of one room, and a
+clear never replaces a message waiting there. A push is sent as its lease locked it (another node may have merged a
+message in), never to a device that now belongs to another user (moving one drops what waits for it). A read marker
+moved forward (`mark#Read`, in a transaction of its own so it never fails the read) drops the room's pushes not yet
+sent, lowers the count of one newer than the read, and sends `{kind: clear, chatRoomId, lastReadEventSeq, tag}` at
+normal priority to the user's other devices that were sent one, but not to a device whose newer push of the room is
+unread. The browser's service worker (`sw.js`) builds a chat notification's title and body from the fields, closes the
+room's notifications on a clear and shows nothing, and acknowledges each chat push it shows
+(`/qapps/ackClientPush`). A push not taken (FCM 429 or 5xx, no answer) waits with backoff and jitter, at most an hour, or FCM's
 `Retry-After`, up to 12 tries or its TTL; FCM `UNREGISTERED` deletes the registration, a Web Push or UnifiedPush 404 or
 410 disables it. A `ChatMention` notification is stored and on the socket but not pushed by `send#WebPush`, so a
-mention is pushed once. Each device keeps its sent, acknowledged and failed counts, shown in System, Push Health.
+mention is pushed once. Each device keeps its sent, acknowledged and failed counts, shown in System, Push Health,
+which alerts only on a device that acknowledges pushes (one it has acknowledged before).
 
 ## In the desktop app
 

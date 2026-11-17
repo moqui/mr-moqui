@@ -541,7 +541,10 @@ function endSession(session, reason, keepRoom) {
     v5('CallTransfers', 'sessionEnded', { callSessionId: session.callSessionId })
   }
   const duration = seconds(session.answeredDate, now)
-  roomEvent(session, 'ended', { endReason: END_CODES[reason] || null, durationSeconds: duration })
+  // who missed it: the room's push of a missed call goes to them (plans/Comms-Messaging.md §7.2 rule 6)
+  const missedBy = rows(USER_LOG, { callSessionId: session.callSessionId, outcomeEnumId: 'CuoMissed' }).map((l) => l.userId).filter((id) => id)
+  roomEvent(session, 'ended', { endReason: END_CODES[reason] || null, durationSeconds: duration,
+    missedUserIdList: missedBy.length ? missedBy : null })
   if (!keepRoom) mediaControl(session, { action: 'closeRoom' })
   pushState(session, 'ended')
   // everyone who was in it, the leg that just left too (updatePresence publishes only a change)
@@ -786,7 +789,7 @@ function start(p) {
 }
 
 /** Rings the invitees' tabs, and their devices by Web Push (expiring with the ring). */
-function ring(session, userIds, fromUserId, fromName) {
+function ring(session, userIds, fromUserId, fromName, fromNumber) {
   if (!userIds.length) return
   const from = { userId: fromUserId || null, name: fromName || userNames([fromUserId])[fromUserId] || fromUserId }
   for (const userId of userIds) {
@@ -796,9 +799,22 @@ function ring(session, userIds, fromUserId, fromName) {
   }
   // a native app gets the call too (callSessionId, chatRoomId, fromName, video, expiresAt), to show it as an incoming call:
   // after the commit, so a call that rolls back rings no phone (COM-UI-032), and on do not disturb only from a person on
-  // the user's allowed list or as the same person's second call within 3 minutes (plans/Comms-Messaging.md §7.2 rule 4)
-  const devices = ec.service.sync().name('org.moqui.chat.ChatPushServices.filter#RingUsers').parameters({ userIdList: userIds,
-    fromUserId: fromUserId || null, callSessionId: session.callSessionId }).disableAuthz().call()?.ringUserIdList ?? userIds
+  // the user's allowed list or as the same person's (or number's) second call within 3 minutes (plans/Comms-Messaging.md
+  // §7.2 rule 4); the desk and soft phones below too. In a transaction of its own: one that fails rings everyone, logged.
+  let devices = userIds
+  ec.message.pushErrors()
+  try {
+    const out = ec.service.sync().name('org.moqui.chat.ChatPushServices.filter#RingUsers').parameters({ userIdList: userIds,
+      fromUserId: fromUserId || null, fromNumber: fromNumber || null, callSessionId: session.callSessionId })
+      .requireNewTransaction(true).disableAuthz().call()
+    if (ec.message.hasError()) ec.logger.warn(`Call ${session.callSessionId}: do not disturb not checked, all rung: ${ec.message.errorsString}`)
+    else if (Array.isArray(out?.ringUserIdList)) devices = out.ringUserIdList
+  } catch (err) {
+    ec.logger.warn(`Call ${session.callSessionId}: do not disturb not checked, all rung: ${err && err.message ? err.message : err}`)
+  } finally {
+    ec.message.clearErrors()
+    ec.message.popErrors()
+  }
   if (devices.length) ec.service.special().name('org.moqui.ui.NotificationServices.send#WebPush').parameters({
     userIdList: devices, title: ec.l10n.localize('Call from') + ' ' + from.name, link: callLink(session.callSessionId),
     topic: 'IncomingCall', tag: 'call-' + session.callSessionId, ttlSeconds: ringSeconds(), urgency: 'high',
@@ -807,11 +823,11 @@ function ring(session, userIds, fromUserId, fromName) {
   }).registerOnCommit()
   // and their desk and soft phones (V4, SipDeviceServices); a failure leaves the tabs ringing. A phone cannot take an end-to-end
   // encrypted call (W8): it is not rung.
-  if (isE2ee(session)) return
+  if (isE2ee(session) || !devices.length) return
   ec.message.pushErrors()
   try {
     ec.service.sync().name('org.moqui.call.SipDeviceServices.ring#SipDevices').parameters({ callSessionId: session.callSessionId,
-      userIdList: userIds, fromUserId: fromUserId || null, fromName: from.name }).disableAuthz().call()
+      userIdList: devices, fromUserId: fromUserId || null, fromName: from.name }).disableAuthz().call()
     if (ec.message.hasError()) ec.logger.error(`Call ${session.callSessionId}: phones not rung: ${ec.message.errorsString}`)
   } catch (err) {
     ec.logger.error(`Call ${session.callSessionId}: phones not rung: ${err && err.message ? err.message : err}`)
@@ -1942,7 +1958,7 @@ function startPhone(p) {
   phoneLeg.set('phoneNumber', p.phoneNumber)
   phoneLeg.update()
   if (outbound) updatePresence([userId])
-  else if (userId && !p.silent) ring(session, [userId], null, name)
+  else if (userId && !p.silent) ring(session, [userId], null, name, p.phoneNumber || null)
   return { callSessionId: session.callSessionId, callLegId: userLeg ? userLeg.callLegId : null, phoneLegId: phoneLeg.callLegId,
     call: view(session, userId) }
 }
@@ -2241,7 +2257,8 @@ function ringStep(p) {
   bump(session)
   session.update()
   const caller = participantsOf(session.callSessionId).find((x) => x.identityKindEnumId === 'CikPhone' && x.roleEnumId !== 'CprForward')
-  ring(session, users, null, p.displayName || caller?.displayName || null)
+  const callerLeg = caller ? rows(LEG, { callSessionId: session.callSessionId, callParticipantId: caller.callParticipantId })[0] : null
+  ring(session, users, null, p.displayName || caller?.displayName || null, callerLeg?.phoneNumber || null)
   return { forwardLegList }
 }
 
