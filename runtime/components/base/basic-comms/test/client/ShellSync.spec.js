@@ -8,7 +8,7 @@
 // (moqui.back) closes the message sheet, then the pane, then goes back in the shell's history, and a swipe right replies; a
 // message's actions are one list in the sheet, the More menu and a desktop row's right click, and Info reads the message again;
 // the notification check's items (the phone's calling account and contacts among them), and a number the phone's dialer
-// handed the mobile app is placed once by the Dialer.
+// handed the mobile app is filled in on the Dialer, the user pressing Call (and picking the account when several can).
 spec({ server: false, timeout: 60 })
 
 browser.runInPage({

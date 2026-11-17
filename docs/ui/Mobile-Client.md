@@ -279,7 +279,8 @@ The call's media stays the WebView's; the native code gives it what a phone's ow
 ## The phone's dialer and contacts
 
 [plans/Comms-Messaging.md §9](../../plans/Comms-Messaging.md), phase 9. The Kotlin is `DialAccount` and `PhoneBook`;
-the Rust is `src/dial.rs` and the commands `call_dial_account`, `call_take_dial`, `contacts_search` and `contact_names`.
+the Rust is `src/dial.rs` and the commands `call_dial_account`, `call_dial_choice`, `call_dial_from`, `contacts_search`
+and `contact_names`.
 
 - **A calling account.** The app registers a managed `tel` `PhoneAccount` (`CAPABILITY_CALL_PROVIDER`, on
   `CallConnectionService`) while an account signed in here has a number to call from: the shell asks its Dialer's data
@@ -287,21 +288,31 @@ the Rust is `src/dial.rs` and the commands `call_dial_account`, `call_take_dial`
   accounts that can call (`client/dial.json`) and takes the account away when none can (a sign-out too). Android lists
   it under Calling accounts, where only the user turns it on; the notification check has a row for it, which opens that
   screen. Telecom tells the app whether it is on only with `READ_PHONE_NUMBERS`, which the app does not ask, so the row
-  says it is on once a number came through it.
+  (read again at each open of the check) says it is on once a number came through it, and not known again after a
+  number Telecom did not let through or a new registration. An account whose key was revoked elsewhere leaves the
+  list at the next start.
 - **A number dialed with it** (the phone's dialer, a contact's Call) reaches `CallConnectionService` as an outgoing
   call of that account: `DialAccount.dialed` hands the number to Rust (`Native.dialLink`, a nonce for it, two minutes,
   once), cancels Telecom's own call, and opens the app with `org.moqui.mobile:/dial?nonce=...`; when Android does not
   let the app come to the front by itself a notification hands it over on a tap. The link carries no number, and one the
-  app did not make is refused. The host shows the Dialer of the account that calls (the current one, else one that can,
-  made current) with the number, and the Dialer places it once, by itself, when the host confirms it is the one handed
-  over (`call_take_dial`): through `place#PhoneCall`, with the caller ID, the fraud limits and the emergency path. The
-  call then is the page's, as any call the page joins. Emergency numbers never come here: Telecom places them on the SIM.
+  app did not make is refused; but any app may place a call with the account (`placeCall`, `ACTION_CALL`) and so
+  choose the number, so nothing is called by itself (the decision is for cost and fraud safety). The host shows the
+  Dialer with the number filled in, and the user presses Call, once: through `place#PhoneCall`, with the caller ID, the
+  fraud limits and the emergency path. The Dialer is the current account's when it can call (or none can: it says
+  why), the one account that can otherwise (made current); when several can and the current one cannot, the Dialer
+  asks which (`call_dial_choice`, the user's pick `call_dial_from`, for two minutes and for the account it was shown
+  on), and the app never switches accounts for a number on its own. A leading `*67` or `#31#` is Hide my number: the
+  Dialer takes it off and sets Hide my number. The call then is the page's, as any call the page joins. Numbers
+  Android treats as emergency numbers never come here: Telecom places them on the SIM.
 - **Contacts** (`READ_CONTACTS`), read on the phone only, for the shell's page; nothing goes to the server. A phone
   room's numbers are named from them first (`contact_names`, `moqui.chat.nameRooms`), then from the server's
   `call-context` (`find#PhoneNames`); the new-chat pickers find them as the user types (`contacts_search`,
-  `moqui.chat.contactOptions`, at least two characters, ten at most). The first search asks, after a dialog that says
-  why; the names never ask (a room list opened is not a use), and the app does not ask again by itself: the notification
-  check's Contacts row asks on a tap, or opens the app's settings once Android no longer asks.
+  `moqui.chat.contactOptions`, at least two characters, ten at most). The server is asked for every number of the
+  rooms, not only those the phone does not know, so it cannot tell which are in the phone's contacts. The first search
+  asks, after a dialog that says why; the names never ask (a room list opened is not a use), and the app does not ask
+  again by itself: the notification check's Contacts row asks on a tap, or opens the app's settings once Android no
+  longer asks. Contacts allowed later (the question, or Android's settings while the app was away) name the rooms again
+  with no reload (`moqui.chat.contactsChanged`, told by `PhoneBook.check`).
 
 ## Chat notifications
 

@@ -45,7 +45,8 @@
     "allow-call-audio",
     "allow-call-audio-route",
     "allow-call-dial-account",
-    "allow-call-take-dial",
+    "allow-call-dial-choice",
+    "allow-call-dial-from",
     "allow-contacts-search",
     "allow-contact-names"
   ]

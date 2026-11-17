@@ -387,20 +387,42 @@ pub(crate) fn call_dial_account(
     host.set_dial_account(&account, can_call)
 }
 
-/// Whether the shell's Dialer places `number` by itself: only once, for the number the phone's dialer handed over (the
-/// host shows the Dialer with it), never for a link of a page's.
+/// The number from the phone's dialer waiting for the user's pick of the account that calls it (the current account
+/// cannot, several others can): `{number, accounts: [{id, label}]}`, or null. For the Dialer of the account it was
+/// shown on, within two minutes.
 #[tauri::command(async)]
-pub(crate) fn call_take_dial(
+pub(crate) fn call_dial_choice(
     app: AppHandle,
     webview: tauri::Webview,
     nonce: Option<String>,
-    number: String,
-) -> Result<bool, String> {
+) -> Result<serde_json::Value, String> {
     let host = host(&app)?;
     if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
         return Err("Not the shell's page".to_string());
     }
-    Ok(crate::dial::dial_number(&number).is_some_and(|number| host.take_dial(&number)))
+    Ok(match host.dial_choice() {
+        Some((number, accounts)) => serde_json::json!({
+            "number": number,
+            "accounts": accounts.into_iter().map(|(id, label)| serde_json::json!({"id": id, "label": label})).collect::<Vec<_>>(),
+        }),
+        None => serde_json::Value::Null,
+    })
+}
+
+/// The user's pick of `account` for the number waiting (`call_dial_choice`): that account's Dialer with the number
+/// filled in, the account made current. The user still presses Call.
+#[tauri::command(async)]
+pub(crate) fn call_dial_from(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+    account: String,
+) -> Result<(), String> {
+    let host = host(&app)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
+    host.dial_from(&account)
 }
 
 /// The most contacts a search gives.

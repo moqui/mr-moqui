@@ -74,7 +74,7 @@ pub(crate) fn host() -> Option<Arc<MobileHost>> {
     moqui_lib::sync::lock(&HOST).clone()
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX))

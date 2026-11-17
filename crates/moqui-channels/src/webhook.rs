@@ -194,7 +194,11 @@ fn work(bridge: &BridgeInfo, config: &Config, event: &Json) -> WebhookResponse {
     }
 }
 
-/// The numbers a text that came in went to: `to` and, for a group text, `cc`, each once (at most a group's and ours).
+/// The most recipients of a text that came in that are read: the server finds ours among them and keeps the sender and
+/// at most a group's others (receive#Sms), so this bounds only the input.
+const RECIPIENTS_READ: usize = 32;
+
+/// The numbers a text that came in went to: `to` and, for a group text, `cc`, each once.
 pub(crate) fn recipients_of(payload: &Json) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for list in ["to", "cc"] {
@@ -210,7 +214,7 @@ pub(crate) fn recipients_of(payload: &Json) -> Vec<String> {
             }
         }
     }
-    out.truncate(crate::telnyx::GROUP_MAX + 1);
+    out.truncate(RECIPIENTS_READ);
     out
 }
 
@@ -301,11 +305,14 @@ fn received(bridge: &BridgeInfo, config: &Config, event: &Json, payload: &Json) 
     }
 }
 
-/// A delivery receipt: the message's state at its (first) recipient.
+/// A delivery receipt: the message's state at its recipient. A group MMS has one a recipient, each naming the group's
+/// message (`group_message_id`, the delivery's remote id) and its one recipient.
 fn receipt(bridge: &BridgeInfo, event: &Json, payload: &Json) -> WebhookResponse {
-    let Some(message_id) = str_at(payload, "/id") else {
+    let Some(own_id) = str_at(payload, "/id") else {
         return WebhookResponse::text(400, "a receipt names its message");
     };
+    let group_id = str_at(payload, "/group_message_id");
+    let message_id = group_id.unwrap_or(own_id);
     let status = match str_at(payload, "/to/0/status").unwrap_or_default() {
         "sent" => "sent",
         "delivered" => "delivered",
@@ -321,6 +328,12 @@ fn receipt(bridge: &BridgeInfo, event: &Json, payload: &Json) -> WebhookResponse
     let error = str_at(payload, "/errors/0/detail").or_else(|| str_at(payload, "/errors/0/title"));
     if let Some(error) = error {
         parameters.insert("error".to_string(), Value::string(error));
+    }
+    if group_id.is_some() {
+        if let Some(number) = str_at(payload, "/to/0/phone_number") {
+            parameters.insert("recipientNumber".to_string(), Value::string(number));
+        }
+        parameters.insert("otherRemoteEventId".to_string(), Value::string(own_id));
     }
     if let Some(at) = millis_of(str_at(event, "/data/occurred_at")) {
         if let Ok(stamp) = jiff::Timestamp::from_millisecond(at) {

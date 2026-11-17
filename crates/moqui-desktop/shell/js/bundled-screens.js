@@ -22904,7 +22904,7 @@ module.exports = {
     inject: { mScreen: { default: null } },
     data() {
         return { loaded: false, data: { callerIdList: [], recentList: [], phoneActive: false }, text: '', number: null, results: [],
-            fromNumber: null, hideCallerId: false, busy: false, keys: KEYS, timer: null, seq: 0, loading: null };
+            fromNumber: null, hideCallerId: false, hideFromCode: false, busy: false, keys: KEYS, timer: null, seq: 0 };
     },
     computed: {
         base() { return (this.mScreen && this.mScreen.path) || (this.$root.basePath + '/BasicComms/Calls/Dialer'); },
@@ -22913,8 +22913,8 @@ module.exports = {
         noConnection() { return !!(moqui.connection && moqui.connection.offline); },
         // the number parameter (a tel: or sip: link)
         numberParam() { return this.params.number || ''; },
-        // a number the phone's dialer handed the mobile app: a new value for each handing
-        dialParam() { return this.params.dial || ''; },
+        // the mobile app asks which account calls a number its dialer handed over
+        chooseParam() { return String(this.params.chooseAccount || '') === 'true'; },
         params() { return (this.mScreen && this.mScreen.parameters) || this.$root.currentParameters || {}; },
         callerIdOptions() {
             return this.data.callerIdList.map((n) => ({ value: n.phoneNumber, label: n.phoneNumber + (n.description ? ' · ' + n.description : '') }));
@@ -22923,30 +22923,42 @@ module.exports = {
     watch: {
         // another tel: or sip: link while the Dialer is shown (the desktop client's shell keeps the screen): its number
         numberParam(number) { this.fill(number); },
-        dialParam() { this.dialHanded(); },
+        chooseParam(ask) { if (ask) this.askAccount(); },
         // the connection back: what the Dialer shows comes again
         noConnection(off) { if (!off) this.load(); }
     },
     mounted() {
-        this.loading = this.load();
+        this.load();
         this.fill(this.numberParam);
-        this.dialHanded();
+        if (this.chooseParam) this.askAccount();
     },
     beforeUnmount() { if (this.timer) clearTimeout(this.timer); },
     methods: {
         t,
         url(name) { return this.base + '/' + name; },
-        fill(number) { if (number) { this.text = String(number); this.search(); } },
-        // The number the phone's dialer handed the mobile app: placed once, when the host confirms it is that one (never
-        // for a link a page made), once the Dialer has loaded and has a number to call from.
-        dialHanded() {
+        fill(number) {
+            if (!number) return;
+            const coded = this.hideCode(String(number));
+            this.text = coded.number;
+            if (coded.hide) { this.hideCallerId = true; this.hideFromCode = true; }
+            this.search();
+        },
+        // a phone's Hide my number code before a number (*67 in North America, #31# on GSM): the number, and whether to hide
+        hideCode(text) {
+            const match = /^\s*(\*67|#31#)\s*(?=[+0-9(])/.exec(text);
+            return match ? { number: text.slice(match[0].length), hide: true } : { number: text, hide: false };
+        },
+        // The mobile app's number from its dialer, when the current account cannot call and several others can: which
+        // one calls it, the user's pick; that account's Dialer then shows it, and the user presses Call there.
+        askAccount() {
             const desktop = window.moquiDesktop;
-            const number = String(this.numberParam || '');
-            if (!this.dialParam || !number || !desktop || typeof desktop.takeDial !== 'function') return;
-            Promise.all([desktop.takeDial(number), this.loading]).then(([taken]) => {
-                if (!taken || !this.data.phoneActive || !this.data.callerIdList.length) return;
-                this.text = number;
-                this.call();
+            if (!desktop || typeof desktop.dialChoice !== 'function') return;
+            Promise.resolve(desktop.dialChoice()).then((choice) => {
+                if (!choice || !Array.isArray(choice.accounts) || !choice.accounts.length) return;
+                this.$q.dialog({ title: t('Call from which account?'), message: choice.number,
+                    options: { type: 'radio', model: choice.accounts[0].id, items: choice.accounts.map((one) => ({ label: one.label, value: one.id })) },
+                    cancel: { label: t('Cancel'), flat: true, noCaps: true }, ok: { label: t('Continue'), noCaps: true } })
+                    .onOk((account) => Promise.resolve(desktop.dialFrom(account)).catch((err) => moqui.notifyMessages([], String((err && err.message) || err))));
             }, () => null);
         },
         load() {
@@ -22954,7 +22966,7 @@ module.exports = {
                 const json = result.json || {};
                 this.data = Object.assign({ callerIdList: [], recentList: [] }, json);
                 this.fromNumber = this.data.callerIdList.length ? this.data.callerIdList[0].phoneNumber : null;
-                this.hideCallerId = !!json.hideCallerId;
+                this.hideCallerId = !!json.hideCallerId || this.hideFromCode;
                 this.loaded = true;
             }, (err) => { this.loaded = true; if (!(moqui.unreachable && moqui.unreachable(err))) moqui.handleAjaxError(err); });
         },
@@ -22981,6 +22993,9 @@ module.exports = {
         },
         call() {
             if (!this.text || this.busy || this.noConnection) return;
+            // a Hide my number code typed on the keypad
+            const coded = this.hideCode(this.text);
+            if (coded.hide) { this.hideCallerId = true; this.text = coded.number; this.number = null; }
             this.busy = true;
             const params = { phoneNumber: this.number || this.text, fromNumber: this.fromNumber || '', hideCallerId: this.hideCallerId ? 'true' : 'false',
                 idempotencyKey: 'd' + Date.now() + Math.random().toString(36).slice(2) };
@@ -22999,6 +23014,7 @@ module.exports = {
                 }
                 this.text = '';
                 this.number = null;
+                this.hideFromCode = false;
                 this.load();
             }, (err) => { this.busy = false; moqui.handleAjaxError(err); });
         }

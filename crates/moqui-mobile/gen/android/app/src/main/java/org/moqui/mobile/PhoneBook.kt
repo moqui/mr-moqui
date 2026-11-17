@@ -125,9 +125,25 @@ object PhoneBook {
         return granted(context)
     }
 
+    /** Whether the contacts were readable when the page was last told. */
+    @Volatile private var told: Boolean? = null
+
     /** The system's question was answered ([MainActivity.onRequestPermissionsResult]). */
-    fun answered() {
+    fun answered(context: Context) {
         answer?.countDown()
+        check(context)
+    }
+
+    /**
+     * The contacts became readable since the page was last told (the question answered, or the permission given in
+     * Android's settings while the app was away: [MainActivity.onResume]): the page names its phone rooms again, with no
+     * reload (`moqui.chat.contactsChanged`).
+     */
+    fun check(context: Context) {
+        val now = granted(context)
+        val before = told
+        told = now
+        if (now && before == false) Native.tellPage("contacts", "true")
     }
 
     /**

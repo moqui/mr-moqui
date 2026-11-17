@@ -61,15 +61,29 @@ fn a_dial_link_is_read_only_with_a_nonce_and_carries_no_number() {
 }
 
 #[test]
-fn the_dialer_path_carries_the_number_and_a_new_handing() {
+fn the_dialer_path_carries_the_number_and_asks_for_the_account_when_told() {
     assert_eq!(
-        dialer_path("/qapps/BasicComms/", "+18015550100", 3),
-        "/qapps/BasicComms/Calls/Dialer?number=%2B18015550100&dial=3"
+        dialer_path("/qapps/BasicComms/", "+18015550100", false),
+        "/qapps/BasicComms/Calls/Dialer?number=%2B18015550100"
     );
     assert_eq!(
-        dialer_path("/qapps/Comms", "*67#1", 4),
-        "/qapps/Comms/Calls/Dialer?number=%2A67%231&dial=4"
+        dialer_path("/qapps/Comms", "*67#1", true),
+        "/qapps/Comms/Calls/Dialer?number=%2A67%231&chooseAccount=true"
     );
+}
+
+#[test]
+fn a_pick_of_the_account_lasts_two_minutes_for_the_account_it_was_shown_on() {
+    let choice = DialChoice {
+        number: "+18015550100".to_string(),
+        accounts: vec!["a".to_string(), "b".to_string()],
+        shown_on: Some("c".to_string()),
+        at: 1_000,
+    };
+    assert!(choice.current(Some("c"), 1_000 + LINK_MS - 1));
+    assert!(!choice.current(Some("c"), 1_000 + LINK_MS), "too old");
+    assert!(!choice.current(Some("a"), 2_000), "another account shown since");
+    assert!(!choice.current(None, 2_000));
 }
 
 #[test]
@@ -87,21 +101,32 @@ fn the_number_is_called_from_the_current_account_or_another_that_can_call() {
     let accounts = DialAccounts::load(&dir);
     assert!(accounts.any());
     let signed_in = vec!["b.example.com-2".to_string(), "a.example.com-1".to_string()];
+    assert_eq!(accounts.choose(Some("a.example.com-1"), &signed_in), Chosen::Current);
     assert_eq!(
-        accounts.choose(Some("a.example.com-1"), &signed_in).as_deref(),
-        Some("a.example.com-1")
-    );
-    assert_eq!(
-        accounts.choose(Some("b.example.com-2"), &signed_in).as_deref(),
-        Some("a.example.com-1"),
+        accounts.choose(Some("b.example.com-2"), &signed_in),
+        Chosen::Switch("a.example.com-1".to_string()),
         "the current one has no number: the one that has"
     );
     assert_eq!(
         accounts.choose(None, &[]),
-        None,
+        Chosen::Current,
         "the account that could is not signed in"
     );
+    // two others can: the user picks, the app does not switch on its own
     let mut accounts = accounts;
+    accounts.set("c.example.com-3", true);
+    let three = vec![
+        "a.example.com-1".to_string(),
+        "b.example.com-2".to_string(),
+        "c.example.com-3".to_string(),
+    ];
+    assert_eq!(
+        accounts.choose(Some("b.example.com-2"), &three),
+        Chosen::Ask(vec!["a.example.com-1".to_string(), "c.example.com-3".to_string()])
+    );
+    // an account whose key went is dropped at the next start
+    assert!(accounts.keep_only(&signed_in));
+    assert!(!accounts.keep_only(&signed_in), "no change");
     assert!(accounts.set("a.example.com-1", false), "signed out, or its number gone");
     assert!(!accounts.any(), "the calling account is taken away");
     let _ = std::fs::remove_dir_all(&dir);

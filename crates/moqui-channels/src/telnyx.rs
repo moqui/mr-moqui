@@ -178,7 +178,7 @@ pub fn pair_of(external_room_id: &str) -> Option<(String, String)> {
     }
 }
 
-/// The most outside numbers of a group text (Telnyx's group MMS: our number and eight others).
+/// The most outside numbers of a group text (Telnyx's group MMS: our number, the sender, and eight recipients).
 pub const GROUP_MAX: usize = 8;
 
 /// Our number and the outside numbers, from a mapping's external room id: a pair's (`ours/theirs`) or a group text's
@@ -192,16 +192,16 @@ pub fn numbers_of(external_room_id: &str) -> Option<(String, Vec<String>)> {
     (valid(ours) && fits && !theirs.iter().any(|number| number == ours)).then(|| (ours.to_string(), theirs))
 }
 
-/// A text that did not reach the provider: its place in the day's count (check#SmsSend reserve) goes back.
-fn release(bridge: &BridgeInfo, reserved: Option<BTreeMap<String, Value>>) {
-    let Some(parameters) = reserved else {
-        return;
-    };
-    if let Err(error) = crate::call("org.moqui.call.SmsServices.release#SmsSend", parameters) {
-        tracing::warn!(
-            "a text of bridge {} was not taken off the day's count: {error}",
-            bridge.chat_bridge_id
-        );
+/// A text that did not reach the provider: its places in the day's count (check#SmsSend reserve, one a recipient) go
+/// back.
+fn release(bridge: &BridgeInfo, reserved: Vec<BTreeMap<String, Value>>) {
+    for parameters in reserved {
+        if let Err(error) = crate::call("org.moqui.call.SmsServices.release#SmsSend", parameters) {
+            tracing::warn!(
+                "a text of bridge {} was not taken off the day's count: {error}",
+                bridge.chat_bridge_id
+            );
+        }
     }
 }
 
@@ -293,33 +293,32 @@ impl ChatBridgeAdapter for TelnyxSms {
         let config = Config::of(&bridge.config);
         // a direct send (send#BridgeDirect) has no room: its caller checked it and holds its place in the day's count
         let in_room = !request.chat_room_id.is_empty();
-        // the day's count this send holds (check#SmsSend reserve), let go when it does not reach the provider
-        let mut reserved: Option<BTreeMap<String, Value>> = None;
+        // the day's counts this send holds (check#SmsSend reserve, one a recipient), let go when it does not reach the
+        // provider
+        let mut reserved: Vec<BTreeMap<String, Value>> = Vec::new();
         if in_room {
             // a text in a room goes from a user granted our number, never as the system
             let Some(user) = request.sender_user_id.as_deref().filter(|user| !user.is_empty()) else {
                 return failed("numberNotGranted", "A text goes from a user granted the number");
             };
-            // each number a group text goes to is checked as a text to it would be; the text counts once, for the first
-            for (index, to) in theirs.iter().enumerate() {
-                let reserve = index == 0;
+            // each number a group text goes to is checked as a text to it would be, and counts as one: the carrier
+            // bills a group MMS for each recipient, so the day's limits count each
+            for to in &theirs {
                 let parameters = BTreeMap::from([
                     ("fromNumber".to_string(), Value::string(&ours)),
                     ("toNumber".to_string(), Value::string(to)),
                     ("userId".to_string(), Value::string(user)),
-                    ("reserve".to_string(), Value::Bool(reserve)),
+                    ("reserve".to_string(), Value::Bool(true)),
                 ]);
                 let refusal = match crate::call("org.moqui.call.SmsServices.check#SmsSend", parameters) {
                     Ok(out) if out.get("allowed") == Some(&Value::Bool(true)) => {
-                        if reserve {
-                            reserved = Some(BTreeMap::from([
-                                ("userId".to_string(), Value::string(user)),
-                                (
-                                    "counterDay".to_string(),
-                                    out.get("counterDay").cloned().unwrap_or(Value::Null),
-                                ),
-                            ]));
-                        }
+                        reserved.push(BTreeMap::from([
+                            ("userId".to_string(), Value::string(user)),
+                            (
+                                "counterDay".to_string(),
+                                out.get("counterDay").cloned().unwrap_or(Value::Null),
+                            ),
+                        ]));
                         None
                     }
                     Ok(out) => {
@@ -332,7 +331,7 @@ impl ChatBridgeAdapter for TelnyxSms {
                     }),
                 };
                 if let Some(refusal) = refusal {
-                    release(bridge, reserved.take());
+                    release(bridge, std::mem::take(&mut reserved));
                     return refusal;
                 }
             }
@@ -427,7 +426,8 @@ impl TelnyxSms {
         if !media_urls.is_empty() {
             body["media_urls"] = json!(media_urls);
         }
-        if let Some(profile) = &config.messaging_profile_id {
+        // a group MMS goes from the number's own profile: the group endpoint takes no messaging_profile_id
+        if let (Some(profile), false) = (&config.messaging_profile_id, group) {
             body["messaging_profile_id"] = Json::String(profile.clone());
         }
         let path = if group {
@@ -455,7 +455,13 @@ impl TelnyxSms {
                 match status {
                     200..=299 => {
                         let parsed: Json = serde_json::from_str(response.body()).unwrap_or(Json::Null);
-                        match parsed.pointer("/data/id").and_then(Json::as_str) {
+                        // a group MMS: its receipts, one a recipient, name it by its group_message_id
+                        let id = parsed
+                            .pointer("/data/group_message_id")
+                            .and_then(Json::as_str)
+                            .filter(|id| group && !id.is_empty())
+                            .or_else(|| parsed.pointer("/data/id").and_then(Json::as_str));
+                        match id {
                             Some(id) if !id.is_empty() => DeliveryOutcome::Accepted {
                                 remote_event_id: id.to_string(),
                             },

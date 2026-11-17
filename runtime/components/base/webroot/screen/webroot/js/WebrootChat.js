@@ -1400,31 +1400,51 @@
             return numbers.map((number) => (names && names[number]) || number).join(", ");
         },
         // Phone rooms named by the names of their numbers: the phone's own contacts first (the mobile app's
-        // moquiDesktop.contactNames), then the apps' call-context (Chat's phoneNames); rooms is a screen's reactive list,
-        // its displayName set now from what is known and again when the rest comes. Never asks twice for a number.
+        // moquiDesktop.contactNames, read on the phone), then the apps' call-context (Chat's phoneNames). The server is asked
+        // for every number of the rooms, not only those the phone does not know, so it cannot tell which numbers are in the
+        // phone's contacts. rooms is a screen's reactive list, its displayName set now from what is known and again when the
+        // rest comes. Never asks twice for a number; contactsChanged (the contacts allowed later) asks the phone again.
         phoneNames: {},
+        contactNamesOf: {},
+        serverNamesOf: {},
+        namedRooms: [],
         nameRooms(rooms) {
             const list = Array.isArray(rooms) ? rooms : [];
+            chat.namedRooms = list;
             const apply = () => list.forEach((room) => {
                 const numbers = chat.roomNumbers(room);
                 if (numbers.length) room.displayName = chat.phoneTitle(numbers, chat.phoneNames);
             });
+            const merge = () => {
+                const names = {};
+                Object.keys(chat.serverNamesOf).forEach((number) => { if (chat.serverNamesOf[number]) names[number] = chat.serverNamesOf[number]; });
+                Object.keys(chat.contactNamesOf).forEach((number) => { if (chat.contactNamesOf[number]) names[number] = chat.contactNamesOf[number]; });
+                chat.phoneNames = names;
+                apply();
+            };
             apply();
-            const wanted = Array.from(new Set(list.flatMap((room) => chat.roomNumbers(room)))).filter((number) => !(number in chat.phoneNames)).slice(0, 50);
-            if (!wanted.length) return Promise.resolve();
-            wanted.forEach((number) => { chat.phoneNames[number] = null; });
+            const all = Array.from(new Set(list.flatMap((room) => chat.roomNumbers(room)))).slice(0, 50);
             const host = root.moquiDesktop;
-            const fromHost = host && typeof host.contactNames === "function" ? Promise.resolve(host.contactNames(wanted)).catch(() => ({})) : Promise.resolve({});
-            return fromHost.then((names) => {
-                Object.keys(names || {}).forEach((number) => { if (names[number]) chat.phoneNames[number] = String(names[number]); });
-                const rest = wanted.filter((number) => !chat.phoneNames[number]);
-                if (!rest.length) return null;
-                const base = moqui.call && moqui.call.chatBase ? moqui.call.chatBase() : "/apps/BasicComms/Chat";
-                return moqui.request(base + "/phoneNames", { params: { numbers: rest.join(",") } }).then((result) => {
-                    const map = (result.json && result.json.nameMap) || {};
-                    Object.keys(map).forEach((number) => { if (map[number]) chat.phoneNames[number] = String(map[number]); });
-                }, () => null);
-            }).then(apply);
+            const fromHost = all.filter((number) => !(number in chat.contactNamesOf));
+            const fromServer = all.filter((number) => !(number in chat.serverNamesOf));
+            fromHost.forEach((number) => { chat.contactNamesOf[number] = null; });
+            fromServer.forEach((number) => { chat.serverNamesOf[number] = null; });
+            const phone = fromHost.length && host && typeof host.contactNames === "function"
+                ? Promise.resolve(host.contactNames(fromHost)).then((names) => {
+                    Object.keys(names || {}).forEach((number) => { if (names[number]) chat.contactNamesOf[number] = String(names[number]); });
+                }, () => null) : Promise.resolve();
+            const base = moqui.call && moqui.call.chatBase ? moqui.call.chatBase() : "/apps/BasicComms/Chat";
+            const server = fromServer.length ? moqui.request(base + "/phoneNames", { params: { numbers: fromServer.join(",") } }).then((result) => {
+                const map = (result.json && result.json.nameMap) || {};
+                Object.keys(map).forEach((number) => { if (map[number]) chat.serverNamesOf[number] = String(map[number]); });
+            }, () => null) : Promise.resolve();
+            return Promise.all([phone, server]).then(merge);
+        },
+        // The phone's contacts became readable (the permission granted after the rooms were named): ask the phone again for
+        // the rooms last named, with no reload.
+        contactsChanged() {
+            chat.contactNamesOf = {};
+            return chat.nameRooms(chat.namedRooms);
         },
         // The phone's own contacts as a new-chat picker's extra options (the mobile app's moquiDesktop.contactsSearch, which
         // asks for the contacts permission on first use): each {value: tel:<number>, label: name · number}.
@@ -1459,7 +1479,9 @@
             const repeats = (name) => destinations.filter((one) => network(one) === name).length > 1;
             const delivered = destinations.length ? destinations.map((one) => ({
                 name: repeats(network(one)) && one.bridgeName && one.bridgeName !== network(one) ? network(one) + " · " + one.bridgeName : network(one),
-                state: one.state || "pending", receipt: one.receipt || null, error: one.error || null })) : null;
+                state: one.state || "pending", receipt: one.receipt || null, error: one.error || null,
+                // a group text's receipts, one a recipient (number to its receipt)
+                recipients: one.recipients && typeof one.recipients === "object" ? one.recipients : null })) : null;
             let readBy = null;
             if (!thread && options.receipts === false) readBy = { off: true };
             else if (!thread) {
@@ -1488,6 +1510,12 @@
             for (const one of info.delivered || []) {
                 const text = one.state === "accepted" ? (RECEIPTS[one.receipt] || tr("Taken by the network")) : (STATES[one.state] || one.state);
                 lines.push({ key: "delivered", label: one.name || tr("Bridge"), text: text + (one.error && one.state !== "accepted" ? ": " + one.error : ""), state: one.state });
+                // a group text: each recipient's own receipt, a failed one said as such even when the others got it
+                for (const number of Object.keys(one.recipients || {}).sort()) {
+                    const receipt = one.recipients[number];
+                    lines.push({ key: "recipient", label: number, text: receipt === "failed" ? tr("Not delivered") : (RECEIPTS[receipt] || tr("Taken by the network")),
+                        state: receipt === "failed" ? "failed" : "accepted" });
+                }
             }
             if (info.readBy && info.readBy.off) lines.push({ key: "read", label: tr("Read by"), text: tr("Your read receipts are off, so you do not see who has read it") });
             else if (info.readBy) {

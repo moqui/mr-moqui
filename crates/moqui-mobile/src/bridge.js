@@ -313,11 +313,12 @@
         callAudio: () => shellAsk("call_audio").catch(() => ({ route: null, routes: [] })),
         callAudioRoute: (route) => shellAsk("call_audio_route", { route: String(route || "") }).catch(() => false),
         // the phone's dialer through the app (plans/Comms-Messaging.md §9.1): whether this account has a number to call
-        // from (the calling account is registered while one here has), and the number the dialer handed over, once
+        // from (the calling account is registered while one here has); a number waiting for the user's pick of the
+        // account that calls it ({number, accounts: [{id, label}]}, or null), and the pick
         dialAccount: (canCall) => shellAsk("call_dial_account", { canCall: canCall === true })
             .catch((err) => console.info("The calling account was not told", err)),
-        takeDial: (number) => shellAsk("call_take_dial", { number: String(number || "") })
-            .then((taken) => taken === true, () => false),
+        dialChoice: () => shellAsk("call_dial_choice").catch(() => null),
+        dialFrom: (account) => shellAsk("call_dial_from", { account: String(account || "") }),
         // the phone's own contacts (§9.2), read on the phone only: a search (asks for the permission the first time) and
         // the names of numbers (never asks)
         contactsSearch: (term) => shellAsk("contacts_search", { term: String(term || "") })

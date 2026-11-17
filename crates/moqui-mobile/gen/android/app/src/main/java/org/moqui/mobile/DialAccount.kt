@@ -29,10 +29,11 @@ import androidx.core.app.NotificationCompat
  * that came through it says so): the notification check says so and opens that screen ([fix]).
  *
  * A number dialed with it is handed to the app, never called by Telecom: Telecom's call is cancelled at once, and the app
- * opens at its Dialer with the number, which places it once through the server (`place#PhoneCall`, with its caller ID,
- * fraud limits and emergency path). The link carries only a nonce Rust made for the number ([Native.dialLink]), so
- * another app cannot have the app call a number of its choice. Emergency numbers never come here: Telecom places them
- * on the SIM.
+ * opens at its Dialer with the number filled in; the user presses Call, which places it through the server
+ * (`place#PhoneCall`, with its caller ID, fraud limits and emergency path). The link carries only a nonce Rust made for
+ * the number ([Native.dialLink]), so a link sent to the app by itself opens nothing; but any app may place a call with
+ * this account (`placeCall`, `ACTION_CALL`) and so choose the number, which is why nothing is called without the user's
+ * tap. Numbers Android treats as emergency numbers never come here: Telecom places them on the SIM.
  */
 object DialAccount {
     const val ACCOUNT_ID = "moqui-dial"
@@ -160,6 +161,14 @@ object DialAccount {
         } catch (err: SecurityException) {
             Log.w(TAG, "The number's notification was not shown: ${err.message}")
         }
+    }
+
+    /**
+     * Telecom did not let a number through the account (it is off, or another call is in the way): the account is not
+     * known to be on any more, so the check says so again.
+     */
+    fun notTaken(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("used", false).apply()
     }
 
     /** The app opened for the number: its notification goes. */

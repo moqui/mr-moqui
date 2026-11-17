@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- For moqui test runs of basic-comms only (test/MoquiConf.xml mounts it under the apps root as textNamesTest): an app
+    root whose one provider is call-context (test/service/moqui/basiccommstest/TextNamesServices.xml), so the
+    BasicCommsTexts spec's phone names come from a provider of this component's own tests. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="true" default-menu-title="Text names test">
+    <shell-providers>
+        <call-context name="basicCommsTest.callContext" service="moqui.basiccommstest.TextNamesServices.get#CallContext" sequence="99"/>
+    </shell-providers>
+    <widgets><label text="Text names test" type="p"/></widgets>
+</screen>

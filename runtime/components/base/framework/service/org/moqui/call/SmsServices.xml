@@ -44,13 +44,14 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="find" noun="PhoneNames">
         <description>The current user's names of outside numbers (numbers comma-separated, or numberList; at most 50), from
             the call-context providers of the apps they may open (the first contact's name each gives): nameMap, number to
-            name, a number no app knows left out. The phone rooms' names on the server's side (plans/Comms-Messaging.md §9,
-            Phone book); the app adds the phone's own contacts.</description>
+            name, a number no app knows left out. Only the numbers of phone rooms the user is in are asked, and at most 600
+            numbers an hour a user (past that none: reasonCode rateLimited). The phone rooms' names on the server's side
+            (plans/Comms-Messaging.md §9, Phone book); the app puts the phone's own contacts first.</description>
         <in-parameters>
             <parameter name="numbers"/>
             <parameter name="numberList" type="List"/>
         </in-parameters>
-        <out-parameters><parameter name="nameMap" type="Map"/></out-parameters>
+        <out-parameters><parameter name="nameMap" type="Map"/><parameter name="reasonCode"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Sms.js').execute('phoneNames', context))</script></actions>
     </service>
 

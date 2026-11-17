@@ -33,7 +33,7 @@ Parts:
 | §6: E2EE policy and labels | Planned; the call rule and what E2EE by default makes are decided (§19). First sign-in on a new phone still needs a design (§6.5) | 3 |
 | §7: notifications | Planned; payload encryption reuses the Web Push code | 2 |
 | §8: voice and video calls | Partial: one call button, the media server and TURN are built | 4, 5 |
-| §9: the user's own phone number | Built (phase 9): group texts, the phone's dialer and Contacts through the app, contacts' names; the port, 10DLC and the live tests are the user's | 9, done |
+| §9: the user's own phone number | Built (phase 9): group texts, the phone's dialer and Contacts through the app, contacts' names; §9.2 waits for the user's port, 10DLC and live tests | 9, built |
 | §10: the phone's SIM texts (`sim-sms`) | Phone only with an opt-in sync, decided; MMS and the synced room need a design | 10+ |
 | §11–§15: other networks and app equivalents | Plan; each network needs an adapter or a bridge | 10+ |
 | §16: RCS | Research done; business RCS through Telnyx is ready to build | 10+ |
@@ -709,16 +709,21 @@ to the server's Telnyx account. The server already does texts, MMS, calls and vo
 
 Status (phase 9, 2026-11-17):
 - **Group texts** ([SMS, Group texts](../docs/interfaces/SMS.md#group-texts)): a group MMS is one room for its set of
-  outside numbers (at most 8, sorted, `<ours>/<a>,<b>,...`), whoever of them writes first; a reply goes out as one group
-  MMS to them all (Telnyx `/v2/messages/group_mms`), each number checked as a single text is.
+  outside numbers (8 recipients at most, sorted, `<ours>/<a>,<b>,...`), whoever of them writes first; a reply goes out
+  as one group MMS to them all (Telnyx `/v2/messages/group_mms`), each number checked and counted as a single text is,
+  each recipient's receipt kept; new group rooms are limited a day for one sender and one of our numbers.
 - **The phone's dialer and Contacts** ([Mobile-Client, The phone's dialer and contacts](../docs/ui/Mobile-Client.md#the-phones-dialer-and-contacts)):
   the app registers a managed `tel` calling account while an account signed in on the phone has a number to call
   from. Android lists it under Calling accounts, where only the user turns it on: the app says so in its notification
-  check, which opens that screen. A number dialed with it is handed to the app's Dialer, which places it once through
-  `place#PhoneCall` (caller ID, fraud limits, emergency path); Telecom's own call is cancelled. Emergency numbers stay
-  on the SIM.
+  check, which opens that screen. A number dialed with it is handed to the app's Dialer and filled in; the user presses
+  Call, which places it through `place#PhoneCall` (caller ID, fraud limits, emergency path); Telecom's own call is
+  cancelled. Nothing is placed by itself, for cost and fraud safety: any app may place a call with the account and so
+  choose the number. When several accounts can call and the current one cannot, the user picks which. Numbers Android
+  treats as emergency numbers stay on the SIM.
 - **Names**: phone rooms and the new-chat picker take names from the phone's contacts (read on the phone, asked at the
-  first search, never sent to the server) and then from the server's `call-context` providers (`find#PhoneNames`).
+  first search, never sent to the server) and then from the server's `call-context` providers (`find#PhoneNames`, only
+  for the user's own phone rooms, limited an hour), which is asked for every number so it cannot tell which the phone's
+  contacts have.
 - **The Telecom library.** The managed account and the self-managed calls stay on `android.telecom`.
   `androidx.core.telecom` (Core-Telecom) has no managed or call-provider account: its `CallsManager` makes only
   self-managed calls, so the dialer's path cannot be built on it. Moving the self-managed calls to Core-Telecom alone
@@ -1532,13 +1537,25 @@ Planned:
     `moqui.chat.nameRooms` and `contactOptions` (the phone's contacts first), `m-drop-down`'s `options-extra`.
   - Android: `DialAccount.kt` (the managed account, the handing over, the check's state), `PhoneBook.kt` (the
     contacts' search and names, the permission's question), `src/dial.rs` (the one-shot dial link, the accounts that
-    call), the shell's commands `call_dial_account`, `call_take_dial`, `contacts_search`, `contact_names`; the shell
-    tells the app whether the account calls (`Root.qvue`), and its Dialer places a handed number once (`Dialer.qvue`);
-    the notification check's Calling accounts and Contacts rows.
-  - Tests. Regression: `moqui-channels` (a group text's room and its one group MMS), `BasicCommsTexts`, `WebrootChat`
-    (the pick of several numbers, the names and the contacts' options), `ShellSync` (the check's rows, a handed number
-    placed once and a link's only filled in), moqui-mobile `dial` and `commands` (the link, the number, the accounts,
-    the contacts' arguments), JVM `CallRulesTest` (the account's state, a contact's number, the question once);
+    call), the shell's commands `call_dial_account`, `call_dial_choice`, `call_dial_from`, `contacts_search`,
+    `contact_names`; the shell tells the app whether the account calls (`Root.qvue`), and its Dialer fills a handed
+    number in (`Dialer.qvue`: the user presses Call; the account picked when several can; `*67` hides the number); the
+    notification check's Calling accounts and Contacts rows.
+  - Review fixes: nothing a link brings is called by itself; a group text counts once a recipient, sends no messaging
+    profile to the group endpoint, keeps each recipient's receipt (failed only when all failed), keeps its sender,
+    leaves our numbers out, gives a short code its own room and limits new group rooms a day; `find#PhoneNames` only for
+    the user's phone rooms, 600 numbers an hour; the server asked for every number; the names again when contacts are
+    allowed later; the pick of an account bound to the account and two minutes; the dial accounts pruned at start.
+    A framework fix: a conf's `service-file` outside a component's `service` directory is found by name (a component's
+    `test/MoquiConf.xml` names its test services), for the BasicCommsTexts `call-context` provider.
+  - Tests. Regression: `moqui-channels` (a group text's room and its one group MMS; receipts per recipient; a STOP from
+    one member; the sender kept, ours left out, a short code, the day's new groups), `BasicCommsTexts` (a group opened
+    in any order and our number left out; names from the component's own test provider for the user's rooms only),
+    `WebrootChat` (the pick of several numbers, the names asked of the server for every number and again when contacts
+    are allowed, the contacts' options, each recipient's receipt in Info), `ShellSync` (the check's rows, a handed
+    number filled in and placed only on Call, the account's pick, `*67`), moqui-mobile `dial` and `commands` (the link,
+    the number, the accounts, the pick, the contacts' arguments), JVM `CallRulesTest` (the account's state, a contact's
+    number, the question once);
     instrumented `DialAccountTest` (registered and taken away, a number handed over by a nonce with Telecom's call
     cancelled, a number refused, a contact's name and search). On the emulator: the system's CALL intent through the
     account reaches the app's Dialer path, cold, and a made-up dial link is refused.
@@ -1581,7 +1598,7 @@ These cannot be shown by a browser at phone width. They are collected here for e
 | 4 | The rows of §8.2 between two phones and with the desktop app. A voice call on the earpiece with the screen off at the ear; a video call on the speaker; a Bluetooth and a wired headset taking the call at once and giving it back; the audio button's choices. Home during a video call: picture-in-picture with the video only; Home during a voice call: the call goes on with its microphone (and a video call's camera) for minutes, screen off. A second call while in one: it rings, Answer holds the first, Swap, and a car's or watch's hold. Move a call from the desktop to the phone and back with no gap. The lock screen. An encrypted call on the phone's WebView. Opening a server page or switching account mid-call (the native call ends with the page). The held party hanging up (the native call on hold goes). A Bluetooth headset connected at the call's start. Chromium WebRTC's own audio routing against Telecom's. A car's or watch's mute, and what a car or a watch shows of a call |
 | 5 | Wi-Fi to mobile data during a call |
 | 7 | A voice note recorded and played |
-| 9 | The calling account turned on in Calling accounts; a number dialed in the phone's dialer and from Contacts with MR Moqui goes through the app's Dialer and is placed once (and with the app closed, and the phone locked); an emergency number stays on the SIM. Names from the phone's contacts on phone rooms and in the new-chat search, and the permission's question at the first search. A group MMS between three real phones: one room, and a reply all of them get |
+| 9 | The calling account turned on in Calling accounts; a number dialed in the phone's dialer and from Contacts with MR Moqui is filled in on the app's Dialer and placed on Call (and with the app closed, and the phone locked); the pick of an account with two that call; `*67`; an emergency number stays on the SIM; what a car or watch shows of the cancelled Telecom call. Names from the phone's contacts on phone rooms and in the new-chat search, the permission's question at the first search, and names after allowing contacts in Android's settings. A group MMS between three real phones: one room, a reply all of them get, and each one's receipt (Telnyx's group receipts are from its documentation) |
 
 ## 19. Decisions and open questions
 

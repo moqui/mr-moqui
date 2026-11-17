@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- For moqui test runs of basic-comms only (test/MoquiConf.xml registers this file): the call-context provider of the
+    test app root test/screen/TextNamesApp.xml, which names the BasicCommsTexts spec's outside numbers (+1555222....)
+    deterministically, so the phone names test never depends on another component. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="get" noun="CallContext">
+        <implements service="org.moqui.comms.ProviderInterfaces.call#Context"/>
+        <actions><script><![CDATA[
+            contactList = []
+            recordList = []
+            const n = String(number || '')
+            if (n.startsWith('+1555222')) contactList = [{name: 'Spec contact ' + n.slice(-4), kind: 'person', url: null, detail: 'BasicCommsTexts'}]
+        ]]></script></actions>
+    </service>
+</services>

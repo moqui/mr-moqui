@@ -63,8 +63,18 @@ function pairKey(ours, theirs) {
   return ours + '/' + theirs
 }
 
-/** The most outside numbers a group text has (the provider's group MMS takes our number and eight others). */
+/** The most outside numbers a group text has (the provider's group MMS: our number, the sender, eight recipients). */
 const GROUP_MAX = 8
+
+/** New group rooms a day that one outside number may start with one of our numbers, and that one of our numbers takes. */
+const GROUP_ROOMS_PER_SENDER = 5
+const GROUP_ROOMS_PER_NUMBER = 50
+
+/** A number in E.164 (a short code or an alphanumeric sender is not). */
+const isE164 = (number) => /^\+[0-9]{5,15}$/.test(String(number || ''))
+
+/** Whether a number is one of ours (any of the deployment's): never another party of a group text. */
+const isOurs = (number) => !!one(NUMBER, { phoneNumber: number })
 
 /** A set of outside numbers: in E.164, each once, in order (so a group has one key whoever writes first). */
 function numberSet(list) {
@@ -124,8 +134,9 @@ function textNumbersOf(userId) {
  */
 function ensurePairRoom(p) {
   const ours = p.ourNumber
-  // a group text (theirNumberList of two or more outside numbers): one room for that set of numbers
-  const group = numberSet(p.theirNumberList).filter((number) => number !== ours)
+  // a group text (theirNumberList of two or more outside numbers): one room for that set of numbers; our own numbers
+  // are never in it (a group MMS never goes to one of ours)
+  const group = numberSet(p.theirNumberList).filter((number) => number !== ours && !isOurs(number))
   if (group.length > GROUP_MAX) return refuse('tooManyNumbers', `A group text has at most ${GROUP_MAX} other numbers`)
   if (group.length === 1 && blank(p.theirNumber)) p.theirNumber = group[0]
   const isGroup = group.length > 1
@@ -505,9 +516,31 @@ function receive(p) {
   }
   if (!number || number.messagingBridgeId !== p.chatBridgeId) return { outcome: 'ignored', reasonCode: 'unknownNumber' }
   if (!theirs) return { outcome: 'ignored', reasonCode: 'badNumber' }
-  // the others it went to: a group's room, the sender and them, our number left out
-  const others = recipients.filter((value) => value !== ours && value !== theirs)
-  const groupNumbers = others.length ? numberSet([theirs].concat(others)).slice(0, GROUP_MAX) : null
+  // the others it went to: a group's room, the sender and them. Our numbers are left out (two of ours in one group are
+  // both ours), the sender is kept whatever is cut (then at most GROUP_MAX - 1 others), and a sender that is not a
+  // number in E.164 (a short code) keeps a room of its own: never another person's pair room
+  const others = isE164(theirs) ? recipients.filter((value) => value !== theirs && value !== ours && !isOurs(value)) : []
+  let groupNumbers = others.length ? numberSet([theirs].concat(others.slice(0, GROUP_MAX - 1))) : null
+  let note = null
+  if (groupNumbers) {
+    // a new group room: at most GROUP_ROOMS_PER_SENDER a day from one outside number, GROUP_ROOMS_PER_NUMBER for one of
+    // ours; past that the text goes to the sender's pair room, said so, and no new room reaches the number's users
+    const key = groupKey(ours, groupNumbers)
+    const known = find(MAPPING).condition('chatBridgeId', p.chatBridgeId).condition('externalRoomId', key).condition('thruDate', null).count() > 0
+    if (!known) {
+      const day = today()
+      const senderKey = 'group:' + ours + ':' + theirs
+      const numberKey = 'groups:' + ours
+      if (sentToday(senderKey, day) >= GROUP_ROOMS_PER_SENDER || sentToday(numberKey, day) >= GROUP_ROOMS_PER_NUMBER) {
+        ec.logger.warn(`SMS ${p.messageId}: a new group text from ${theirs} to ${ours} past the day's new groups; kept in their pair room`)
+        note = ec.resource.expand('[A group text with ${count} numbers, kept here: more new groups came from this number today than are opened]',
+          '', { count: groupNumbers.length + 1 })
+        groupNumbers = null
+      } else {
+        ec.transaction.runRequireNew(null, 'The new group text was not counted', () => countSent([senderKey, numberKey], day, 1))
+      }
+    }
+  }
   const keyword = keywordOf(p.text)
   const sub = (name, parameters) => {
     const out = ec.service.sync().name(name).parameters(parameters).requireNewTransaction(true).disableAuthz().call() || {}
@@ -519,7 +552,7 @@ function receive(p) {
     : { ourNumber: ours, theirNumber: theirs })
   if (!pair.chatRoomId) return { outcome: 'ignored', reasonCode: pair.reasonCode || 'noMessaging' }
   const item = { itemId: String(p.messageId), type: 'message', externalRoomId: pair.externalRoomId, externalEventId: String(p.messageId),
-    externalUserId: theirs, displayName: theirs, text: p.text || null, originDate: p.originMillis != null ? Number(p.originMillis) : null,
+    externalUserId: theirs, displayName: theirs, text: note ? note + (p.text ? '\n' + p.text : '') : p.text || null, originDate: p.originMillis != null ? Number(p.originMillis) : null,
     media: Array.from(p.mediaList || []).map((file) => ({ url: file.url, contentType: file.contentType || null, fileName: file.fileName || null,
       maxBytes: file.maxBytes != null ? Number(file.maxBytes) : null })) }
   if (keyword) item.metadata = { keyword }
@@ -598,19 +631,37 @@ function myTextNumbers() {
   return { numberList: textNumbersOf(me).map((n) => ({ phoneNumber: n.phoneNumber, description: n.description || null })) }
 }
 
-/** At most this many numbers are named in one find#PhoneNames. */
+/** At most this many numbers are named in one find#PhoneNames, and this many an hour for one user. */
 const NAMES_MAX = 50
+const NAMES_PER_HOUR = 600
+
+/** Whether the number is one of a phone room the user is in (a pair's or a group's mapping), so it may be named. */
+function inMyPhoneRoom(me, number) {
+  const mappings = Array.from(find(MAPPING).condition('externalRoomId', 'like', '%' + number + '%').condition('thruDate', null).list())
+    .filter((m) => String(m.externalRoomId).split('/')[1]?.split(',').includes(number))
+  return mappings.some((m) => find(MEMBER).condition({ chatRoomId: m.chatRoomId, userId: me }).condition('leftDate', null).count() > 0)
+}
 
 /**
  * The names of outside numbers for the current user (plans/Comms-Messaging.md §9, Phone book): what the call-context
  * providers of the apps the user may open say of each (ShellServices.call#Providers, as this user, the first contact's
- * name), for the phone rooms' names. A number no app knows is left out. Out: nameMap (number to name).
+ * name), for the phone rooms' names. Only a number of a phone room the user is in is asked; a number no app knows is
+ * left out; past NAMES_PER_HOUR numbers an hour, none (reasonCode rateLimited). Out: nameMap (number to name).
  */
 function phoneNames(p) {
   const me = ec.user.userId
   if (!me) return { nameMap: {} }
+  // only the numbers of the user's own phone rooms, so the apps' contacts cannot be read by number
   const numbers = numberSet(String(p.numbers || '').split(',').concat(Array.from(p.numberList || []))).slice(0, NAMES_MAX)
+    .filter((number) => inMyPhoneRoom(me, number))
   const nameMap = {}
+  if (!numbers.length) return { nameMap }
+  // at most NAMES_PER_HOUR numbers an hour a user (counted on the distributed cache by user and hour)
+  const asked = ec.cache.getCache('moqui.sms.names.asked')
+  const hourKey = me + ':' + Math.floor(nowMs() / 3600000)
+  const count = Number(asked.get(hourKey) || 0)
+  if (count + numbers.length > NAMES_PER_HOUR) return { nameMap, reasonCode: 'rateLimited' }
+  asked.put(hourKey, count + numbers.length)
   for (const number of numbers) {
     const answers = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers')
       .parameters({ hook: 'call-context', parameters: { number } }).call() || {}

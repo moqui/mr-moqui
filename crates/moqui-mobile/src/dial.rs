@@ -17,11 +17,14 @@
 //! account signed in here has a number to call from ([`DialAccounts`]), and hands each number dialed with it to the app.
 //!
 //! - **The link** is `org.moqui.mobile:/dial?nonce=...` (the activity's intent, `RunEvent::Opened`). It carries no
-//!   number: the native code keeps the number with Rust under a nonce ([`DialLinks`], once, within [`LINK_MS`]), so
-//!   another app, which may send the exported activity any link, cannot have the app call a number of its choice.
-//! - **The call** is the Dialer's of the account that calls ([`DialAccounts::choose`]): the shell shows it with the
-//!   number ([`dialer_path`]), and the Dialer places it once through the server (`place#PhoneCall`) when the host
-//!   hands it the number (`call_take_dial`); a Dialer opened any other way only fills the number in.
+//!   number: the native code keeps the number with Rust under a nonce ([`DialLinks`], once, within [`LINK_MS`]), so a
+//!   link sent to the exported activity by itself opens nothing. The nonce proves only that the number came through
+//!   Telecom to the calling account: any app may place a call with that account (`placeCall`, `ACTION_CALL`) and so
+//!   choose the number. So nothing is called by itself.
+//! - **The call** is the user's: the Dialer of the account that calls ([`DialAccounts::choose`]) shows the number
+//!   ([`dialer_path`]) and the user presses Call, once, which places it through the server (`place#PhoneCall`). When
+//!   the current account cannot call and several others can, the user picks which ([`DialChoice`]); the app does not
+//!   switch accounts for a number on its own.
 
 // The dialer's link is Android's; it is tested on the desktop.
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
@@ -93,9 +96,9 @@ pub(crate) fn nonce_of(url: &tauri::Url) -> Option<String> {
         .map(|(_, value)| value.into_owned())
 }
 
-/// The Dialer of the comms app at `root` (`/qapps/BasicComms`) with `number` ([`dial_number`]'s), which it places once
-/// the host hands it over; `seq` tells one handing from the next, so a second one while the Dialer shows is new to it.
-pub(crate) fn dialer_path(root: &str, number: &str, seq: u64) -> String {
+/// The Dialer of the comms app at `root` (`/qapps/BasicComms`) with `number` ([`dial_number`]'s) filled in; with
+/// `choose`, it asks the user which account calls ([`DialChoice`]).
+pub(crate) fn dialer_path(root: &str, number: &str, choose: bool) -> String {
     let encoded: String = number
         .chars()
         .map(|c| match c {
@@ -105,10 +108,36 @@ pub(crate) fn dialer_path(root: &str, number: &str, seq: u64) -> String {
             c => c.to_string(),
         })
         .collect();
-    format!(
-        "{}/Calls/Dialer?number={encoded}&dial={seq}",
-        root.trim_end_matches('/')
-    )
+    let ask = if choose { "&chooseAccount=true" } else { "" };
+    format!("{}/Calls/Dialer?number={encoded}{ask}", root.trim_end_matches('/'))
+}
+
+/// Which account a number from the phone's dialer is called from ([`DialAccounts::choose`]).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Chosen {
+    /// The current account: it can call, or none can (its Dialer then says why).
+    Current,
+    /// The one account signed in here that can call: made current.
+    Switch(String),
+    /// Several can, the current one not: the user picks.
+    Ask(Vec<String>),
+}
+
+/// A number from the phone's dialer waiting for the user's pick of the account that calls it: shown on the Dialer of
+/// `shown_on` (the current account then), for [`LINK_MS`] from `at`, once.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DialChoice {
+    pub(crate) number: String,
+    pub(crate) accounts: Vec<String>,
+    pub(crate) shown_on: Option<String>,
+    pub(crate) at: i64,
+}
+
+impl DialChoice {
+    /// The choice, while it lasts and for the account it was shown on.
+    pub(crate) fn current(&self, account: Option<&str>, now: i64) -> bool {
+        now >= self.at && now - self.at < LINK_MS && self.shown_on.as_deref() == account
+    }
 }
 
 /// The accounts signed in here with a number to call from (the shell says so as it loads for each, `call_dial_account`),
@@ -156,16 +185,30 @@ impl DialAccounts {
         !self.accounts.is_empty()
     }
 
-    /// The account a number from the dialer is called from: the current one when it can call, else the first one
-    /// signed in (`signed_in`) that can; none when none can (the current one's Dialer then says why).
-    pub(crate) fn choose(&self, current: Option<&str>, signed_in: &[String]) -> Option<String> {
-        if let Some(current) = current.filter(|current| self.accounts.contains(*current)) {
-            return Some(current.to_string());
+    /// The account a number from the dialer is called from: the current one when it can call; else the one signed in
+    /// (`signed_in`) that can, or the user's pick of several; the current one when none can.
+    pub(crate) fn choose(&self, current: Option<&str>, signed_in: &[String]) -> Chosen {
+        if current.is_some_and(|current| self.accounts.contains(current)) {
+            return Chosen::Current;
         }
-        signed_in
+        let able: Vec<String> = signed_in
             .iter()
-            .find(|account| self.accounts.contains(*account))
+            .filter(|account| self.accounts.contains(*account))
             .cloned()
+            .collect();
+        match able.len() {
+            0 => Chosen::Current,
+            1 => Chosen::Switch(able.into_iter().next().unwrap_or_default()),
+            _ => Chosen::Ask(able),
+        }
+    }
+
+    /// Only the accounts still signed in here (`signed_in`): a key revoked elsewhere, or an account gone, is dropped at
+    /// the next start. Whether that changed anything.
+    pub(crate) fn keep_only(&mut self, signed_in: &[String]) -> bool {
+        let before = self.accounts.len();
+        self.accounts.retain(|account| signed_in.contains(account));
+        self.accounts.len() != before
     }
 }
 

@@ -12,6 +12,7 @@ const BRIDGE = "BASIC_COMMS_SMS"
 const OURS = "+15550004000"
 const THEIRS = "+15552224000"
 const GROUP = "+15552224001,+15552224002"
+const NAMES_APP = "BASIC_COMMS_TEXT_NAMES"
 
 function sys(run) {
     const wasDisabled = ec.artifactExecution.disableAuthz()
@@ -55,6 +56,14 @@ spec({
     setupSpec() {
         makeUser(TEXTER, "basic.comms.texter")
         makeUser(STRANGER, "basic.comms.text.stranger")
+        // the test app root of the call-context provider (test/screen/TextNamesApp.xml), opened by BasicComms' users
+        sys(() => {
+            ec.entity.makeValue("moqui.security.ArtifactGroup").setFields({artifactGroupId: NAMES_APP, description: "BasicCommsTexts names"}, true, null, null).createOrUpdate()
+            ec.entity.makeValue("moqui.security.ArtifactGroupMember").setFields({artifactGroupId: NAMES_APP,
+                artifactName: "component://basic-comms/test/screen/TextNamesApp.xml", artifactTypeEnumId: "AT_XML_SCREEN", inheritAuthz: "Y"}, true, null, null).createOrUpdate()
+            ec.entity.makeValue("moqui.security.ArtifactAuthz").setFields({artifactAuthzId: NAMES_APP, artifactGroupId: NAMES_APP, userGroupId: "BASIC_COMMS_USERS",
+                authzTypeEnumId: "AUTHZT_ALWAYS", authzActionEnumId: "AUTHZA_ALL"}, true, null, null).createOrUpdate()
+        })
         sys(() => {
             const bridge = ec.entity.makeValue("moqui.chat.ChatBridge")
             bridge.setFields({chatBridgeId: BRIDGE, typeEnumId: "CbtSms", adapterName: "sms", name: "Spec texts", statusId: "CbsDisabled",
@@ -69,6 +78,11 @@ spec({
         })
     },
     cleanupSpec() {
+        sys(() => {
+            ec.entity.find("moqui.security.ArtifactAuthz").condition("artifactAuthzId", NAMES_APP).deleteAll()
+            ec.entity.find("moqui.security.ArtifactGroupMember").condition("artifactGroupId", NAMES_APP).deleteAll()
+            ec.entity.find("moqui.security.ArtifactGroup").condition("artifactGroupId", NAMES_APP).deleteAll()
+        })
         sys(() => {
             for (const mapping of mappings(THEIRS).concat(mappings(GROUP))) {
                 ec.entity.find("moqui.chat.ChatRoomMember").condition("chatRoomId", mapping.chatRoomId).deleteAll()
@@ -159,39 +173,45 @@ feature("A group text: several numbers open one room for the set, the same in an
         ec.user.internalLoginUser("basic.comms.texter")
         const opened = JSON.parse(render("Chat/textRoom", {textTo: "+15552224002, (555) 222-4001", textFrom: OURS}, "post").output || "{}")
         const again = JSON.parse(render("Chat/textRoom", {textTo: "+15552224001,+15552224002,+15552224001", textFrom: OURS}, "post").output || "{}")
+        const ownNumber = JSON.parse(render("Chat/textRoom", {textTo: "+15552224001,+15552224002," + OURS, textFrom: OURS}, "post").output || "{}")
         const many = Array.from({length: 9}, (_, n) => "+1555222410" + n).join(",")
         const tooMany = sys(() => ec.service.sync().name("org.moqui.call.SmsServices.open#PairRoom")
             .parameters({toNumber: many, fromNumber: OURS}).call()) || {}
         ec.message.clearErrors()
         const made = mappings(GROUP)
         const room = made.length ? sys(() => ec.entity.find("moqui.chat.ChatRoom").condition("chatRoomId", made[0].chatRoomId).one()) : null
-        return {opened, again, tooMany, made, room}
+        return {opened, again, ownNumber, tooMany, made, room}
     },
-    then({opened, again, tooMany, made, room}) {
+    then({opened, again, ownNumber, tooMany, made, room}) {
         made.length == 1
         opened.chatRoomId == made[0].chatRoomId
         again.chatRoomId == made[0].chatRoomId
+        // our own number in the list is never one of the group's others
+        ownNumber.chatRoomId == made[0].chatRoomId
         room.roomTypeEnumId == "CrtExternal"
         room.roomName == "+15552224001, +15552224002"
         tooMany.reasonCode == "tooManyNumbers"
     }
 })
 
-// the example gallery's call-context provider names +1555 0100 numbers; a user who cannot open the gallery gets no names
-const exampleInstalled = ec.resource.getLocationReference("component://example/screen/Gallery.xml").getExists()
-feature("A phone room's numbers are named by the apps' call-context, as the user; a number no app knows stays unnamed", {
+// this component's test app root (test/screen/TextNamesApp.xml, mounted by test/MoquiConf.xml) names +1555222 numbers;
+// the user is asked only of the numbers of their own phone rooms
+feature("A phone room's numbers are named by the apps' call-context, as the user, for the user's own phone rooms only", {
     when() {
-        if (!exampleInstalled) return {skip: true}
-        ec.user.internalLoginUser("john.doe")
-        const named = JSON.parse(render("Chat/phoneNames", {numbers: "+15550100777,+15559990000,not a number"}).output || "{}")
+        // the texter is in the pair room of THEIRS and in the group's; the stranger in neither (both may open the test app)
+        ec.user.internalLoginUser("basic.comms.texter")
+        const named = JSON.parse(render("Chat/phoneNames", {numbers: THEIRS + ",+15552224002,+15552229999,not a number"}).output || "{}")
+
         ec.user.internalLoginUser("basic.comms.text.stranger")
-        const stranger = JSON.parse(render("Chat/phoneNames", {numbers: "+15550100777"}).output || "{}")
+        const stranger = JSON.parse(render("Chat/phoneNames", {numbers: THEIRS}).output || "{}")
         return {named, stranger}
     },
-    then({skip, named, stranger}) {
-        skip || named.nameMap["+15550100777"] == "Gallery caller 0777"
-        skip || !("+15559990000" in named.nameMap)
-        skip || Object.keys(named.nameMap).length == 1
-        skip || !(stranger.nameMap && stranger.nameMap["+15550100777"])
+    then({named, stranger}) {
+
+        named.nameMap[THEIRS] == "Spec contact 4000"
+        named.nameMap["+15552224002"] == "Spec contact 4002"
+        !("+15552229999" in named.nameMap)
+        Object.keys(named.nameMap).length == 2
+        Object.keys(stranger.nameMap || {}).length == 0
     }
 })

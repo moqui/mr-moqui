@@ -203,7 +203,8 @@ pub(crate) fn is_call_link(url: &tauri::Url) -> bool {
 
 /// What the shell runs when the native call tells it something (`Native.tellPage`): `audio` (its route and routes,
 /// JSON), `pip` (picture-in-picture, `true` or `false`), `hold` (`{callSessionId, hold}`: Telecom holds or resumes the
-/// call). None for anything else, or a value that is not JSON of the right shape.
+/// call), `contacts` (the phone's contacts became readable: `moqui.chat.contactsChanged`). None for anything else, or a
+/// value that is not JSON of the right shape.
 pub(crate) fn tell_script(what: &str, json: &str) -> Option<String> {
     let value: Value = serde_json::from_str(json).ok()?;
     let (function, args) = match what {
@@ -216,6 +217,13 @@ pub(crate) fn tell_script(what: &str, json: &str) -> Option<String> {
             let id = call_id(value["callSessionId"].as_str()?)?;
             let hold = value["hold"].as_bool()?;
             ("hostHold", format!("{}, {hold}", serde_json::to_string(id).ok()?))
+        }
+        // the phone's contacts became readable: the phone rooms' names are asked of the phone again
+        "contacts" if value.is_boolean() => {
+            return Some(
+                "window.moqui && moqui.chat && typeof moqui.chat.contactsChanged === \"function\" && moqui.chat.contactsChanged()"
+                    .to_string(),
+            )
         }
         _ => return None,
     };

@@ -811,10 +811,12 @@ test("a phone room is named by its numbers' names, the phone's contacts first; t
     };
     moqui.request = (url, opts) => {
         asked.push(["server", url, opts.params.numbers]);
-        return Promise.resolve({ json: { nameMap: { "+15552225000": "Bo Server" } } });
+        return Promise.resolve({ json: { nameMap: { "+15552225000": "Bo Server", "+15552224000": "Ann Server" } } });
     };
     try {
-        Object.keys(chat.phoneNames).forEach((number) => delete chat.phoneNames[number]);
+        chat.phoneNames = {};
+        chat.contactNamesOf = {};
+        chat.serverNamesOf = {};
         const rooms = [
             { chatRoomId: "P1", roomTypeEnumId: "CrtExternal", roomName: "+15552224000", displayName: "+15552224000" },
             { chatRoomId: "P2", roomTypeEnumId: "CrtExternal", roomName: "+15552224000, +15552225000, +15552226000", displayName: "x" },
@@ -822,15 +824,21 @@ test("a phone room is named by its numbers' names, the phone's contacts first; t
             { chatRoomId: "B1", roomTypeEnumId: "CrtExternal", roomName: "Team on Slack", displayName: "Team on Slack" }
         ];
         await chat.nameRooms(rooms);
-        assert.equal(rooms[0].displayName, "Ann Phone");
+        assert.equal(rooms[0].displayName, "Ann Phone", "the phone's contact before the server's name");
         assert.equal(rooms[1].displayName, "Ann Phone, Bo Server, +15552226000", "a group text; a number no one knows stays");
         assert.equal(rooms[2].displayName, "Bob", "not a phone room");
         assert.equal(rooms[3].displayName, "Team on Slack", "a bridged room named otherwise");
         assert.deepEqual(asked[0], ["phone", ["+15552224000", "+15552225000", "+15552226000"]]);
-        assert.deepEqual(asked[1].slice(2), ["+15552225000,+15552226000"], "the server is asked only for what the phone did not know");
+        assert.deepEqual(asked[1].slice(2), ["+15552224000,+15552225000,+15552226000"],
+            "the server is asked for every number, so it cannot tell which the phone's contacts have");
         const count = asked.length;
         await chat.nameRooms(rooms);
         assert.equal(asked.length, count, "never asked twice for a number");
+        // the contacts allowed later: the phone is asked again for the rooms last named, no reload
+        window.moquiDesktop.contactNames = (numbers) => { asked.push(["phone", numbers]); return Promise.resolve({ "+15552226000": "Cy Phone" }); };
+        await chat.contactsChanged();
+        assert.deepEqual(asked.slice(count).map((one) => one[0]), ["phone"], "only the phone asked again");
+        assert.equal(rooms[1].displayName, "Ann Server, Bo Server, Cy Phone");
         assert.deepEqual(await chat.contactOptions("ann"), [{ value: "tel:+15552224000", label: "Ann Phone · +15552224000" }]);
         assert.deepEqual(await chat.contactOptions("a"), [], "two letters at least");
         delete window.moquiDesktop.contactsSearch;
@@ -838,7 +846,10 @@ test("a phone room is named by its numbers' names, the phone's contacts first; t
     } finally {
         window.moquiDesktop = host;
         moqui.request = request;
-        Object.keys(chat.phoneNames).forEach((number) => delete chat.phoneNames[number]);
+        chat.phoneNames = {};
+        chat.contactNamesOf = {};
+        chat.serverNamesOf = {};
+        chat.namedRooms = [];
     }
 });
 
@@ -1078,6 +1089,12 @@ test("Info (Comms-Messaging §4, COM-UI-008): Sent, a bridged message's delivery
         { networkName: "SMS", bridgeName: "Office line", state: "accepted" }, { networkName: "SMS", bridgeName: "Shop line", state: "pending" },
         { networkName: "Matrix", bridgeName: "Matrix bridge", state: "accepted" }] } });
     assert.deepEqual(chat.messageInfo(twice, members, { me: "ann" }).delivered.map((one) => one.name), ["SMS · Office line", "SMS · Shop line", "Matrix"]);
+    // a group text (plans/Comms-Messaging.md §9): each recipient's receipt, one failed while the other got it
+    const group = event({ eventSeq: 5, sentDate: 1000, senderUserId: "ann", delivery: { state: "accepted", destinations: [
+        { networkName: "SMS", state: "accepted", receipt: "delivered", recipients: { "+15552220002": "failed", "+15552220001": "delivered" } }] } });
+    lines = chat.messageInfoLines(chat.messageInfo(group, members, { me: "ann" }), when).filter((line) => line.key === "delivered" || line.key === "recipient");
+    assert.deepEqual(lines.map((line) => line.label + ": " + line.text), ["SMS: Delivered: the network's receipt says so",
+        "+15552220001: Delivered: the network's receipt says so", "+15552220002: Not delivered"]);
     // a thread: Sent and Delivered only, it has no read markers
     const reply = event({ eventSeq: 7, sentDate: 2000, senderUserId: "ann", threadRootEventSeq: 5, delivery: bridged.delivery });
     const thread = chat.messageInfo(reply, members, { me: "ann" });

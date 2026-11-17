@@ -457,6 +457,11 @@ fn the_native_call_tells_the_page_its_audio_picture_in_picture_and_hold() {
     assert!(tell_script("muteToggle", "true")
         .unwrap()
         .ends_with("moqui.call.toggleMute()"));
+    // the phone's contacts allowed later: the chat names its phone rooms again
+    assert!(tell_script("contacts", "true")
+        .unwrap()
+        .ends_with("moqui.chat.contactsChanged()"));
+    assert_eq!(tell_script("contacts", "{}"), None);
     assert!(tell_script("hold", r#"{"callSessionId":"100231","hold":true}"#)
         .unwrap()
         .ends_with("moqui.call.hostHold(\"100231\", true)"));

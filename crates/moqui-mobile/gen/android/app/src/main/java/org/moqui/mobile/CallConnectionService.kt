@@ -68,6 +68,7 @@ class CallConnectionService : ConnectionService() {
     override fun onCreateOutgoingConnectionFailed(account: PhoneAccountHandle?, request: ConnectionRequest?) {
         if (DialAccount.isDial(account ?: request?.accountHandle)) {
             Log.w(CallManager.TAG, "Telecom did not let the app take a number from the phone's dialer")
+            DialAccount.notTaken(this)
             return
         }
         val id = request?.extras?.getString(CallManager.EXTRA_CALL) ?: request?.address?.schemeSpecificPart

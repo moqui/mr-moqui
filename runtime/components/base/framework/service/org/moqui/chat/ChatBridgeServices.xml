@@ -621,6 +621,11 @@ along with this software (see the LICENSE.md file). If not, see
             const STATE = {CdsPending: 'pending', CdsAccepted: 'accepted', CdsFailed: 'failed', CdsUncertain: 'uncertain'}
             // C4-SMS: what the network's receipt said of one it took (delivered, sent, unconfirmed)
             const RANK = {failed: 4, uncertain: 3, pending: 2, accepted: 1}
+            // a group text's receipts, one a recipient (number to its receipt), or none
+            const recipientsOf = (row) => {
+                if (!row.recipientReceipts) return null
+                try { return JSON.parse(String(row.recipientReceipts)) } catch (err) { return null }
+            }
             for (const row of rows) {
                 const state = STATE[row.statusEnumId] || 'pending'
                 const bridge = bridges[row.chatBridgeId] || {}
@@ -628,7 +633,7 @@ along with this software (see the LICENSE.md file). If not, see
                 entry.destinations.push({chatBridgeDeliveryId: row.chatBridgeDeliveryId, chatBridgeId: row.chatBridgeId, bridgeName: bridge.name ?? null,
                     networkName: types[bridge.typeEnumId]?.description || null, state: state, reasonCode: row.reasonCode ?? null,
                     error: row.lastErrorText ?? null, attemptCount: Number(row.attemptCount || 0), retryable: state === 'failed' || state === 'uncertain',
-                    receipt: row.receiptStatus ?? null})
+                    receipt: row.receiptStatus ?? null, recipients: recipientsOf(row)})
                 if (RANK[state] > RANK[entry.state]) entry.state = state
                 if (state === 'failed' || state === 'uncertain') entry.retryable = true
             }
@@ -680,7 +685,10 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal (an adapter, for its network's delivery receipts): what became of message remoteEventId on bridge
             chatBridgeId: status sent, delivered, unconfirmed or failed (with error), at receiptDate. A failed one fails its
             delivery (reasonCode deliveryFailed, retryable); the others are kept as its receipt (receiptStatus) on an accepted
-            delivery. A receipt never takes a delivered message back to sent, and the same receipt again changes nothing. The
+            delivery. A receipt never takes a delivered message back to sent, and the same receipt again changes nothing. A
+            group text has one receipt a recipient (recipientNumber; a network may name the delivery by its group's id or by
+            otherRemoteEventId, its own): each recipient's is kept (recipientReceipts), and the delivery's receipt is theirs
+            together, the least of those not failed, and failed (the delivery failed) only when every recipient failed. The
             room hears of a change (push#DeliveryState). Out: found (a delivery of that message), changed.</description>
         <in-parameters>
             <parameter name="chatBridgeId" required="true"/>
@@ -688,6 +696,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="status" required="true"/>
             <parameter name="error"/>
             <parameter name="receiptDate" type="Timestamp"/>
+            <parameter name="recipientNumber"/>
+            <parameter name="otherRemoteEventId"/>
         </in-parameters>
         <out-parameters>
             <parameter name="found" type="Boolean"/>
@@ -697,13 +707,41 @@ along with this software (see the LICENSE.md file). If not, see
             found = false; changed = false
             const RANK = {sent: 1, unconfirmed: 2, delivered: 3, failed: 3}
             if (!RANK[status]) { ec.message.addError(`Unknown receipt status ${status}`); return }
-            const row = Array.from(ec.entity.find('moqui.chat.ChatBridgeDelivery').condition('chatBridgeId', chatBridgeId)
-                    .condition('remoteEventId', remoteEventId).forUpdate(true).disableAuthz().list())[0]
+            const byRemote = (id) => id ? Array.from(ec.entity.find('moqui.chat.ChatBridgeDelivery').condition('chatBridgeId', chatBridgeId)
+                    .condition('remoteEventId', id).forUpdate(true).disableAuthz().list())[0] : null
+            const row = byRemote(remoteEventId) || byRemote(otherRemoteEventId)
             if (!row) return
             found = true
-            if (row.receiptStatus === status || (RANK[row.receiptStatus] || 0) > RANK[status]) return
-            const fields = {receiptStatus: status, receiptDate: receiptDate || ec.user.nowTimestamp}
-            if (status === 'failed' && row.statusEnumId === 'CdsAccepted') Object.assign(fields, {statusEnumId: 'CdsFailed', reasonCode: 'deliveryFailed',
+            let overall = status
+            let recipientsText = null
+            if (recipientNumber) {
+                // a group text: this recipient's receipt, then the delivery's as theirs together
+                let recipients = {}
+                try { recipients = row.recipientReceipts ? JSON.parse(String(row.recipientReceipts)) : {} } catch (err) { recipients = {} }
+                const before = recipients[recipientNumber]
+                if (before === status || (RANK[before] || 0) > RANK[status]) return
+                recipients[recipientNumber] = status
+                recipientsText = JSON.stringify(recipients)
+                const mapping = Array.from(ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatRoomId', row.chatRoomId)
+                        .condition('chatBridgeId', chatBridgeId).disableAuthz().list())[0]
+                const slash = mapping ? String(mapping.externalRoomId || '').indexOf('/') : -1
+                const numbers = slash >= 0 ? String(mapping.externalRoomId).slice(slash + 1).split(',').filter((n) => n) : Object.keys(recipients)
+                const all = Array.from(new Set(numbers.concat(Object.keys(recipients))))
+                const states = all.map((number) => recipients[number] || 'sent')
+                const standing = states.filter((one) => one !== 'failed')
+                overall = !standing.length ? 'failed' : standing.reduce((low, one) => (RANK[one] < RANK[low] ? one : low), standing[0])
+                if (overall === row.receiptStatus) {
+                    row.setFields({recipientReceipts: recipientsText, receiptDate: receiptDate || ec.user.nowTimestamp}, true, null, null)
+                    row.update()
+                    changed = true
+                    ec.service.sync().name('org.moqui.chat.ChatBridgeServices.push#DeliveryState').parameters({chatRoomId: row.chatRoomId,
+                        eventSeq: row.eventSeq}).disableAuthz().call()
+                    return
+                }
+            } else if (row.receiptStatus === status || (RANK[row.receiptStatus] || 0) > RANK[status]) return
+            const fields = {receiptStatus: overall, receiptDate: receiptDate || ec.user.nowTimestamp}
+            if (recipientsText) fields.recipientReceipts = recipientsText
+            if (overall === 'failed' && row.statusEnumId === 'CdsAccepted') Object.assign(fields, {statusEnumId: 'CdsFailed', reasonCode: 'deliveryFailed',
                 lastErrorText: error ? String(error).slice(0, 2000) : ec.l10n.localize('The network could not deliver it')})
             row.setFields(fields, true, null, null)
             row.update()

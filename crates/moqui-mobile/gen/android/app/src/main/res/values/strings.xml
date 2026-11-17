@@ -52,5 +52,5 @@
     <string name="dial_account_about">Calls through your MR Moqui number</string>
     <string name="dial_not_called">This number cannot be called through MR Moqui</string>
     <string name="dial_handoff_title">Call through MR Moqui</string>
-    <string name="dial_handoff_text">Tap to call %1$s</string>
+    <string name="dial_handoff_text">Tap to open %1$s in the Dialer</string>
 </resources>

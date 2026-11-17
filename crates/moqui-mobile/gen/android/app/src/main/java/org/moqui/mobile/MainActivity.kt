@@ -145,6 +145,8 @@ class MainActivity : TauriActivity() {
   override fun onResume() {
     super.onResume()
     ChatNotifications.foreground = true
+    // the contacts allowed in Android's settings while the app was away: the page names its phone rooms again
+    PhoneBook.check(this)
     askForCallsOnce()
     tellForceStopOnce()
   }
@@ -158,7 +160,7 @@ class MainActivity : TauriActivity() {
   override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
     super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     if (requestCode == ASK_CALLS) askForFullScreenOnce()
-    if (requestCode == PhoneBook.ASK_CONTACTS) PhoneBook.answered()
+    if (requestCode == PhoneBook.ASK_CONTACTS) PhoneBook.answered(this)
   }
 
   private companion object {

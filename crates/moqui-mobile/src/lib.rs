@@ -134,7 +134,8 @@ pub fn run() {
             commands::call_audio,
             commands::call_audio_route,
             commands::call_dial_account,
-            commands::call_take_dial,
+            commands::call_dial_choice,
+            commands::call_dial_from,
             commands::contacts_search,
             commands::contact_names
         ])
@@ -202,6 +203,8 @@ fn start(app: &AppHandle, files: Box<dyn tauri::Assets<tauri::DynRuntime>>) -> R
         }
     }
     native::set_host(&host);
+    // the accounts that call from the phone's dialer: only those still signed in (a key revoked elsewhere)
+    host.prune_dial_accounts(&native::signed_in_ids(&core));
     // a call link that came before the host was made (a cold start's Answer), and a number from the phone's dialer
     if let Some(link) = moqui_lib::sync::lock(&EARLY_CALL).take() {
         let early = Arc::clone(&host);
