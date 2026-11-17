@@ -103,6 +103,14 @@ test("the current app's switcher groups (its sources with a prefix) lead with no
     assert.deepEqual(palette.leadGroups(apps, "Hub"), ["People"]);
     assert.deepEqual(palette.leadGroups(apps, "gallery"), ["GalleryEnumerations"]);
     assert.deepEqual(palette.leadGroups(apps, "Nowhere"), []);
+    // an app that mounts another's screens and declares its sources leads with them (BOSS's Comms, BasicComms' Chat rooms);
+    // the app it hides from the launcher is no app of the shell's, so a page under it has no lead
+    const boss = [{ name: "Comms", title: "Comms", path: "/qapps/Comms", menu: [], providers: { paletteSources: [{ group: "Messages", label: "Messages and rooms" },
+        { group: "Rooms", label: "Chat rooms", prefix: "#" }] } }, { name: "Products", title: "Products", path: "/qapps/Products", menu: [],
+        providers: { paletteSources: [{ group: "Products", label: "Product identifiers", prefix: "#" }] } }];
+    assert.deepEqual(palette.leadGroups(boss, "Comms"), ["Rooms"]);
+    assert.deepEqual(palette.leadGroups(boss, "BasicComms"), []);
+    assert.deepEqual(palette.leadGroups(boss, "Products"), ["Products"], "another app's # is its own lead, never Comms'");
     const input = { labels: {}, screens: palette.screens(apps), actions: [], savedFinds: [],
         remote: [{ group: "Records", label: "Records", rows: [{ title: "A record", url: "/qapps/r1" }] },
             { group: "People", label: "People", rows: [{ title: "Hub person", url: "/qapps/p1" }] }] };
