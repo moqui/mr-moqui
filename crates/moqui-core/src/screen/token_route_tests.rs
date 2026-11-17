@@ -24,6 +24,77 @@ fn route(name: &str) -> TokenRoute {
     }
 }
 
+fn redaction_of<const N: usize>(routes: [TokenRoute; N]) -> Redaction {
+    Redaction {
+        routes: routes.to_vec(),
+        paths: Vec::new(),
+    }
+}
+
+/// SEC-PSF-03: a component's token path (PASS's held mail, held report and preview links) loses its token wherever the
+/// server records a path or URL, at the root or under a mount as the pattern says; a shorter segment (an operation's
+/// name, `held-mail/claim`) and a path the pattern does not name are kept.
+#[test]
+fn a_token_paths_token_is_redacted_from_a_recorded_path_or_url() {
+    let patterns = ["/preview/{token}", "/**/held-mail/{token}", "/**/-/held-report/{token}"];
+    let redaction = Redaction {
+        routes: vec![route("i")],
+        paths: patterns
+            .iter()
+            .map(|pattern| TokenPath::parse(pattern).unwrap())
+            .collect(),
+    };
+    let url = |text: &str| redact_url(&redaction, text).into_owned();
+    assert_eq!(url("/preview/Prev.iew~Token_01-x"), "/preview/:token");
+    assert_eq!(
+        url("/preview/PreviewToken01/asset/a.css?v=1"),
+        "/preview/:token/asset/a.css?v=1"
+    );
+    assert_eq!(
+        url("/shop/preview/PreviewToken01"),
+        "/shop/preview/PreviewToken01",
+        "/preview is at the root only"
+    );
+    assert_eq!(url("/held-mail/HeldMailToken01"), "/held-mail/:token");
+    assert_eq!(
+        url("/forum/held-mail/HeldMailToken01/claim"),
+        "/forum/held-mail/:token/claim"
+    );
+    assert_eq!(
+        url("https://pass.example.com/acme/-/forum/held-mail/HeldMailToken01#x"),
+        "https://pass.example.com/acme/-/forum/held-mail/:token#x"
+    );
+    assert_eq!(
+        url("/acme/tools/-/held-report/HeldReportToken01"),
+        "/acme/tools/-/held-report/:token"
+    );
+    assert_eq!(
+        url("/acme/held-report/HeldReportToken01"),
+        "/acme/held-report/HeldReportToken01"
+    );
+    assert_eq!(url("/rest/s1/pass/held-mail/claim"), "/rest/s1/pass/held-mail/claim");
+    assert_eq!(
+        url("/i/abcDEF12345/held-mail/HeldMailToken01"),
+        "/i/:token/held-mail/:token"
+    );
+    assert_eq!(url("/forum/held-mail"), "/forum/held-mail");
+    let text = redact_text(
+        &redaction,
+        "GET /forum/held-mail/HeldMailToken01 from /preview/PreviewToken01",
+    );
+    assert_eq!(text, "GET /forum/held-mail/:token from /preview/:token");
+    for bad in [
+        "/preview/*",
+        "preview/{token}",
+        "/{token}",
+        "/**/{token}",
+        "/a/**/b/{token}",
+        "/a//{token}",
+    ] {
+        assert_eq!(TokenPath::parse(bad), None, "{bad}");
+    }
+}
+
 #[test]
 fn a_path_under_a_route_is_the_shell_the_screen_in_a_mode_or_a_path_below() {
     let routes = [route("s"), route("u")];
@@ -54,7 +125,7 @@ fn a_path_under_a_route_is_the_shell_the_screen_in_a_mode_or_a_path_below() {
 
 #[test]
 fn a_routes_token_is_redacted_from_a_recorded_path_or_url() {
-    let routes = [route("i"), route("u"), route("call")];
+    let routes = redaction_of([route("i"), route("u"), route("call")]);
     let path = |text: &str| redact_path(&routes, text);
     assert_eq!(path("/i/abcDEF12_-xyz").as_deref(), Some("/i/:token"));
     assert_eq!(path("/i/abcDEF12_-xyz/").as_deref(), Some("/i/:token/"));
@@ -82,12 +153,12 @@ fn a_routes_token_is_redacted_from_a_recorded_path_or_url() {
     assert_eq!(url("https://example.com"), "https://example.com");
     assert_eq!(url("//staff.example.com/i/abcDEF12345"), "//staff.example.com/i/:token");
     assert_eq!(url("plain text"), "plain text");
-    assert_eq!(redact_url(&[], "/i/abcDEF12345"), "/i/abcDEF12345");
+    assert_eq!(redact_url(&Redaction::default(), "/i/abcDEF12345"), "/i/abcDEF12345");
 }
 
 #[test]
 fn a_routes_token_is_redacted_within_text_and_json() {
-    let routes = [route("i"), route("tk")];
+    let routes = redaction_of([route("i"), route("tk")]);
     let text = |text: &str| redact_text(&routes, text).into_owned();
     assert_eq!(text("GET /i/abcDEF12345/accept"), "GET /i/:token/accept");
     assert_eq!(
