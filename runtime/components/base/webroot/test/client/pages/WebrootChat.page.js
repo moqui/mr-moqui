@@ -1066,3 +1066,44 @@ test("before a send (§6.1 rule 3): a verified person's device not verified is a
     assert.deepEqual(problemsOf([eve], [{ userId: "eve", masterKey: "mk-2" }]), []);
     assert.equal(problemsOf([eve], [{ userId: "eve", masterKey: "mk-1" }]).length, 1, "an identity let through before is not this one");
 });
+
+test("a dm link opens the plain direct room of exactly those people, else none (an unsaved message: no room until the first send)", () => {
+    const rooms = [{ chatRoomId: "D1", roomTypeEnumId: "CrtDirect", isMember: true, otherUserIdList: ["bob"] },
+        { chatRoomId: "D2", roomTypeEnumId: "CrtDirect", isMember: true, otherUserIdList: ["cy", "bob"] },
+        { chatRoomId: "E1", roomTypeEnumId: "CrtDirect", isMember: true, encrypted: true, otherUserIdList: ["dee"] },
+        { chatRoomId: "P1", roomTypeEnumId: "CrtPrivate", isMember: true, otherUserIdList: ["eve"] },
+        { chatRoomId: "L1", roomTypeEnumId: "CrtDirect", isMember: false, otherUserIdList: ["fay"] }];
+    assert.equal(chat.directRoomFor(rooms, ["bob"], "ann"), "D1");
+    assert.equal(chat.directRoomFor(rooms, ["bob", "cy", "ann"], "ann"), "D2", "a group's, in any order, me left out");
+    assert.equal(chat.directRoomFor(rooms, ["dee"], "ann"), null, "an encrypted room is its own");
+    assert.equal(chat.directRoomFor(rooms, ["eve"], "ann"), null, "a private room is no direct chat");
+    assert.equal(chat.directRoomFor(rooms, ["fay"], "ann"), null, "one I am not in");
+    assert.equal(chat.directRoomFor(rooms, ["gus"], "ann"), null);
+    assert.equal(chat.directRoomFor(rooms, ["ann"], "ann"), null, "myself alone is nobody");
+});
+
+test("the mail lines are asked once for the page within five minutes, by room; a failure keeps nothing", async () => {
+    chat.mailCache = null;
+    let asked = 0;
+    let fail = false;
+    const request = () => {
+        asked++;
+        return fail ? Promise.reject({ status: 0 })
+            : Promise.resolve({ json: { mailList: [{ chatRoomId: "D1", url: "/qapps/BasicComms/Inbox?thread=email%3AM1", subject: "Q3" }, { chatRoomId: "D2" }] } });
+    };
+    const url = "/apps/BasicComms/Chat/mailLines";
+    const first = await chat.mailLines(url, request);
+    const again = await chat.mailLines(url, request);
+    assert.deepEqual(Object.keys(first), ["D1"], "a line with no link is left out");
+    assert.equal(again.D1.subject, "Q3");
+    assert.equal(asked, 1, "the Chat screen and the panel share one request");
+    chat.mailCache.at -= 300001;
+    fail = true;
+    assert.deepEqual(await chat.mailLines(url, request), {});
+    assert.equal(asked, 2);
+    assert.equal(chat.mailCache, null, "the failure is not kept");
+    fail = false;
+    await chat.mailLines(url, request);
+    assert.equal(asked, 3);
+    chat.mailCache = null;
+});

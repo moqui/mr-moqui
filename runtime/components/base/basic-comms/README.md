@@ -25,13 +25,14 @@ windows open them there); the rest of the app opens in its app windows. Their of
 sends and message changes, conflicts and the copy of a draft changed elsewhere, the Inbox's Outbox, "needs a
 connection", the gaps of what is kept) shows only there
 ([docs/ui/Desktop-Client.md](../../../../docs/ui/Desktop-Client.md#bundled-screens-and-app-windows)). A room's details (people, media,
-files, voice notes, links, reactions, pinned) and voice notes: [Comms](../../../../docs/tools/Comms.md#room-details). After a change to one of them:
+files, voice notes, links, reactions, pinned) and voice notes: [Comms](../../../../docs/tools/Comms.md#room-details); the palette's Chat rooms, Activity,
+Threads, the rail's groups and the mail line on a person's row: [Comms](../../../../docs/tools/Comms.md#chat-desktop). After a change to one of them:
 `UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled`.
 
 Test ([the two suites](../../../../docs/Build-Test.md#the-two-suites)): the regression suite is `./moq test basic-comms`,
 the shell's sync states (no server) `./moq test-client basic-comms --offline` and the crypto walk
 `./moq test-client basic-comms --serve`; the acceptance suite, the call and encrypted chat walks, the direct path, the
-phone's chat in the bundled shell at 390 × 844 (and reactions, who reacted and Info there by touch), the E2EE labels and a room's details tabs and a voice note there and at a desktop's width
+phone's chat in the bundled shell at 390 × 844 (and reactions, who reacted and Info there by touch), the E2EE labels and a room's details tabs and a voice note there and at a desktop's width, the palette, Activity, Threads, the groups and the mail line in the shell (`ChatDesktop`) and the palette on the web (`ChatPalette`)
 (`test/acceptance/client/`), is `./moq accept basic-comms` with a binary that has the `rtc` feature; its calls on shaped
 networks (`CallNetwork`) run only under `sudo scripts/call-network.sh` and skip otherwise
 ([WebRTC, The network tests](../../../../docs/interfaces/WebRTC.md#the-network-tests)). See also

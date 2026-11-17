@@ -27,7 +27,7 @@ Parts:
 | Part | Status | Phase (§18) |
 |---|---|---|
 | §2: phone layout | Built (PR #203, phase 1) except voice notes (phase 7) and the checks on a real phone (§2.3) | 1, done |
-| §3: desktop gaps | Planned; the palette and its Rooms source are built for the web | 8 |
+| §3: desktop gaps | Built (phase 8): the palette in the app's shell, its rooms first in Comms, people and phone rooms; Activity, Threads, the groups and the mail line | 8, done |
 | §4: reactions and the message menu | Built (phase 6): one action list, the emoji picker, who reacted and voted by touch, Info; a real phone's feel left | 6, done |
 | §5: details tabs and new services | Partial: People, Pinned and Files (All, Pictures) panes are built; the services are planned | 7 |
 | §6: E2EE policy and labels | Planned; the call rule and what E2EE by default makes are decided (§19). First sign-in on a new phone still needs a design (§6.5) | 3 |
@@ -167,15 +167,15 @@ The desktop layout exists (§1). Add:
 
 | Item | Work | Status |
 |---|---|---|
-| Quick switcher | Mod+K is the shell palette (`WebrootVue.qvt.js:10010`), and BasicComms gives it a Rooms source with the `#` prefix (`BasicComms.xml:34`, `search#PaletteRooms`). Do not add a second Ctrl+K listener (COM-UI-006). Add: people the user has no room with (choosing one starts the direct chat), phone-number rooms, and rooms without the prefix while Comms is the current app. Bring the palette to the desktop and mobile shell, which has none (`Root.qvue`) | Partial |
-| Activity view | A sidebar entry: mentions, reactions to my messages, and replies to my messages and in my threads, newest first. New service `find#ChatActivity` (§5) | Planned |
-| Threads view | A sidebar entry for all threads I am in. `find#RoomThreads` with Mine works in one room only (`ChatServices.xml:2196`); across rooms the view reads the thread replies of `find#ChatActivity` | Planned |
-| Sidebar sections | Fold the groups. Add groups: Phone (rooms of type `CrtExternal`) and Bridged. Today the groups are Pinned and Recent, and a phone room shows only under All | Planned |
-| Mail on a person's row | Where the user has a direct chat with a person, that person's latest mail thread shows on the row as a second line ("Email: subject") and opens in the Inbox, with "Email is not end-to-end encrypted" (§6.1 rule 7). No mail-only rows; mail stays in the Inbox (decided, §19). A user of this server matches by the mail address of their account; an outside person waits for unified contacts (§11). Also on the phone home | Planned |
+| Quick switcher | Mod+K is the shell palette (`WebrootVue.qvt.js:10010`), and BasicComms gives it a Rooms source with the `#` prefix (`BasicComms.xml:34`, `search#PaletteRooms`). Do not add a second Ctrl+K listener (COM-UI-006). Add: people the user has no room with (choosing one starts the direct chat), phone-number rooms, and rooms without the prefix while Comms is the current app. Bring the palette to the desktop and mobile shell, which has none (`Root.qvue`) | Built (phase 8): the current app's prefixed sources lead (`palette.leadGroups`), Enter waits for their answer; people are a group of their own (People to message) that never leads, and a person's `dm` link opens an unsaved message, the room made by its first send; `Root.qvue` has the palette and the keymap |
+| Activity view | A sidebar entry: mentions, reactions to my messages, and replies to my messages and in my threads, newest first. New service `find#ChatActivity` (§5) | Built (phase 8): the Activity entry beside the filters, more as it scrolls, an encrypted room's text decrypted in the page |
+| Threads view | A sidebar entry for all threads I am in. `find#RoomThreads` with Mine works in one room only (`ChatServices.xml:2196`); across rooms the view reads the thread replies of `find#ChatActivity` | Built (phase 8): `find#ChatThreads`, the threads I started or replied in across rooms (mine with only my reply, and those where I wrote last), the latest reply first |
+| Sidebar sections | Fold the groups. Add groups: Phone (rooms of type `CrtExternal`) and Bridged. Today the groups are Pinned and Recent, and a phone room shows only under All | Built (phase 8): Pinned, Recent, Phone, Bridged, each folding (per user, in the browser); a Phone filter, and All and Phone on the phone's home |
+| Mail on a person's row | Where the user has a direct chat with a person, that person's latest mail thread shows on the row as a second line ("Email: subject") and opens in the Inbox, with "Email is not end-to-end encrypted" (§6.1 rule 7). No mail-only rows; mail stays in the Inbox (decided, §19). A user of this server matches by the mail address of their account; an outside person waits for unified contacts (§11). Also on the phone home | Built (phase 8): `find#DirectChatMail`, by the person's user account address only, whole addresses in To and Cc, the last 180 days, one query for the list (the latest 300 matching messages), read once a page for Chat and the panel (`moqui.chat.mailLines`) |
 
 **Done when:** in Comms, Mod+K, two letters and Enter open a room, on the web and in the desktop app. The Activity
 view lists a mention and a reaction from another user (regression service spec for the feed; the views in an
-acceptance client spec).
+acceptance client spec). Met in phase 8: acceptance `ChatPalette` (the web) and `ChatDesktop` (the app's shell).
 
 ## 4. Reactions and the message menu
 
@@ -308,7 +308,7 @@ Rules 1 to 4, 6 and 7 are built (phase 3, `fdd1ab597`, and its review, `1de64af6
 lists, its members pane and settings; rule 3's checks by a verified person (Members, their messages), verifying another
 person by emoji in Chat, and the warning before a send to a verified person's new device or new identity (Verify, or
 Send anyway); rule 4 on the server and in Chat's call. Rule 7: no lock in Mail; the "Email is not end-to-end encrypted"
-line waits for the place a person's mail shows beside their chats (phase 8, the `mail` state of the label). Rule 5 is
+line is on a person's mail line beside their chats (phase 8, the `mail` state of the label). Rule 5 is
 phase 10.
 
 Server work for rule 4 (built):
@@ -1143,7 +1143,7 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 | 5 | Calls: network tests, then resilience: done 2026-11-17 (`64c002d20`; the browser suite under sudo and real phones left) | §8.3 items 8–15, §8.4 | Large |
 | 6 | Message menu, reactions, Info: done 2026-11-17 (`acc6d1b66`; a real phone's feel left) | §4 | Medium |
 | 7 | Details tabs and services, voice notes: done 2026-11-17 (`533f3c0f2`; a voice note on a real phone left) | §5 | Medium |
-| 8 | Desktop gaps | §3 | Medium |
+| 8 | Desktop gaps: done 2026-11-17 | §3 | Medium |
 | 9 | The user's phone number | §9 | Medium, plus the user's steps |
 | 10+ | Work that needs a design first, then the other networks | §6.5, §10–§17 | — |
 
@@ -1448,6 +1448,38 @@ Planned:
 - Done when: §5.
 
 #### Phase 8: desktop gaps
+
+Done 2026-11-17.
+
+| Work | Files |
+|---|---|
+| The palette's Chat rooms: rooms by name, a phone room by its digits (its number or its bridge's, of all the user's rooms); a private room's icon is people, not a lock. People to message (`search#PalettePeople`): the people with no direct chat, a group that never leads; Chat's `dm` opens an unsaved message (`moqui.chat.directRoomFor`), the direct chat made by its first send | `ChatScreenServices.xml`, `BasicComms.xml`, `Chat.qvue`, `WebrootChat.js` |
+| The current app's prefixed sources lead with no prefix (`palette.leadGroups`, the root's `paletteLead`); Enter typed with the text waits for their answer; each opening starts empty; Ctrl+Enter takes the root's `openNewTab` (the shell's app window); offline, one note and no error per search | `WebrootVue.qvt.js` |
+| The palette in the desktop and mobile shell: Search, Mod+K through `moqui.keymap` (so Chat's keys work there too), the comms app's rooms first | `Root.qvue` |
+| Activity and Threads (`find#ChatThreads`, the `myThreads` transition) beside the filters, more as they scroll, what is new merged at the top on a push that concerns them, an encrypted room's text decrypted in the page; the groups Pinned, Recent, Phone and Bridged, folding (per user); the Phone filter | `Chat.qvue`, `ChatScreenServices.xml`, `Chat.xml` |
+| The mail line: `find#DirectChatMail` (a person's latest thread by their user account's address, a whole address of To or Cc, the last 180 days, in mail the user may read, Spam, Trash and drafts left out, one query), the `mailLines` transition read once a page (`moqui.chat.mailLines`), the line, a link Tab and Enter reach, with the `mail` label on the rail and the phone's home; the home's All and Phone | `ChatScreenServices.xml`, `Chat.xml`, `Chat.qvue`, `ChatPanel.qvue`, `WebrootChat.js` |
+| The terminal's Threads (`chatView` threads: `find#ChatThreads`, its own empty text) | `ChatTui.xml` |
+| Bundled screens regenerated | `bundled-screens.js` |
+
+- Tests. Regression: `BasicCommsDesktop` (the palette source's rules: a room by name, a phone room by its digits, a
+  person with no direct chat and not one with, a stranger finds no private room; the Threads feed: thread replies with
+  the root for the starter and a writer, never the replier's own, a stranger none; the mail line: the latest thread by
+  address in mail the user may read, a shared account's too, Trash, drafts, a look-alike address and an account not the
+  user's left out, no line for a person with no direct chat, a stranger nothing), `WebrootVue.qvt.shell` (the lead
+  groups). Acceptance: `ChatDesktop` (the app's shell, offline: the palette's two letters and Enter before a screen of
+  the same letters, a person started from it, Activity's mention and reaction from another user, Threads, the groups and
+  folding, the mail line at 1280 × 800 and on the phone's home, the Phone filter) and `ChatPalette` (the web, on the
+  suite's server).
+- Review (2026-11-17): the mail line by the person's account address only (an owned or shared box is not theirs), whole
+  addresses, 180 days, read once a page; People to message as a group of its own and the unsaved `dm` message; Threads
+  from `find#ChatThreads` (no `ChatUserActivity` kind added, so nothing new notifies); a push merges at the top; the mail
+  line a link; phone rooms by their bridge's number; Ctrl+Enter and offline in the shell. Regression: `BasicCommsDesktop`
+  (the alias left out, People to message apart, `find#ChatThreads`), `WebrootChat` (`directRoomFor`, `mailLines`).
+- Left: a message with no reply is no thread; the mail line reads the latest 300 matching messages of 180 days, so a
+  person whose mail is older has none; the shell's palette has no Recent or Saved finds and does not read the `KEYMAP`
+  preference.
+
+Planned:
 
 - The palette source: people, phone rooms, rooms without the prefix in Comms. The palette in the desktop and mobile
   shell (shared with the [Shared/Gallery review](ui-review-shared-gallery.md), which owns the shell's keys).

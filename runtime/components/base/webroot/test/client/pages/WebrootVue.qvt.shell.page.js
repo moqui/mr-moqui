@@ -98,6 +98,24 @@ test("the groups: Recent before typing; Screens, Saved finds, Actions, then the 
     assert.deepEqual(palette.groups(palette.parse("zzz", sources), Object.assign({}, input, { remote: [] })), []);
 });
 
+test("the current app's switcher groups (its sources with a prefix) lead with no prefix; another app's and a prefix keep their place", () => {
+    // the lead groups: the current app's prefixed sources only (Comms' Chat rooms; the gallery's ~)
+    assert.deepEqual(palette.leadGroups(apps, "Hub"), ["People"]);
+    assert.deepEqual(palette.leadGroups(apps, "gallery"), ["GalleryEnumerations"]);
+    assert.deepEqual(palette.leadGroups(apps, "Nowhere"), []);
+    const input = { labels: {}, screens: palette.screens(apps), actions: [], savedFinds: [],
+        remote: [{ group: "Records", label: "Records", rows: [{ title: "A record", url: "/qapps/r1" }] },
+            { group: "People", label: "People", rows: [{ title: "Hub person", url: "/qapps/p1" }] }] };
+    // first, before Screens, so a few letters and Enter open the switcher's first row
+    const led = palette.groups(palette.parse("hu", sources), Object.assign({ lead: ["People"] }, input));
+    assert.deepEqual(led.map((group) => group.key), ["source:People", "screens", "source:Records"]);
+    assert.equal(palette.rows(led)[0].title, "Hub person");
+    assert.deepEqual(palette.rows(led).map((row) => row.index), [0, 1, 2]);
+    // with no lead (another app current) the order is as before; with a prefix only its groups, lead or not
+    assert.deepEqual(palette.groups(palette.parse("hu", sources), input).map((group) => group.key), ["screens", "source:Records", "source:People"]);
+    assert.deepEqual(palette.groups(palette.parse("@hu", sources), Object.assign({ lead: ["People"] }, input)).map((group) => group.key), ["source:People"]);
+});
+
 const key = (k, extra) => Object.assign({ key: k, ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, target: { tagName: "BODY" },
     preventDefault() { this.prevented = true; } }, extra);
 
