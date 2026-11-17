@@ -72,6 +72,35 @@ function callRegistered(serviceName, parameters) {
     }
     return failure ? {failure} : {out}
 }
+// Whether a registration names the service as an owner's: a RecoveryDescriptor's describeService, recoverService or
+// itemsService, or a MailOutcomeOwner's ownerService or recoverService, that is not disabled.
+function registeredOwnerService(serviceName) {
+    if (!serviceName) return false
+    const named = (entityName, fields) =>
+        fields.some(field => lib.rows(entityName, {[field]: serviceName}).some(row => row.disabled !== "Y"))
+    return (
+        named("moqui.server.RecoveryDescriptor", ["describeService", "recoverService", "itemsService"]) ||
+        named("moqui.server.MailOutcomeOwner", ["ownerService", "recoverService"])
+    )
+}
+// call#OwnerService: the owner's service a registration names, with the parameters given, under the caller's own
+// authorization (its group's ALLOW is not inheritable), so the operation service that dispatches lends it no right: one
+// the caller is not authorized for is refused, as a direct call is (SEC-ADM-10). result is the owner's answer.
+function callOwnerService(p) {
+    const serviceName = text(p.serviceName)
+    if (!registeredOwnerService(serviceName)) throw new Error("No registration names the owner service " + serviceName)
+    const given = p.parameters && typeof p.parameters === "object" ? (p.parameters.getMap ? p.parameters.getMap() : p.parameters) : {}
+    const parameters = {}
+    for (const name of Object.keys(given)) parameters[name] = given[name]
+    return {result: ec.service.sync().name(serviceName).parameters(parameters).call() || {}}
+}
+// An owner's registered service (a describe, recover, items or mail owner service), as callRegistered calls one, through
+// call#OwnerService, so it runs only by the caller's own grant to it: {out} its answer, or {failure} why it has none.
+// The framework's own steps (a claim, a send, an apply) keep callRegistered.
+function callOwner(serviceName, parameters) {
+    const asked = callRegistered("org.moqui.admin.OperationServices.call#OwnerService", {serviceName, parameters})
+    return asked.failure ? asked : {out: asked.out.result || {}}
+}
 // A page of a find: pageIndex from 0, pageSize 1 to 100 (50 when not given).
 function pageOf(p) {
     const pageSize = Math.min(Math.max(Number(p.pageSize) || 50, 1), 100)
@@ -90,5 +119,7 @@ function pageOf(p) {
     operationKey,
     once,
     callRegistered,
+    callOwner,
+    callOwnerService,
     pageOf
 })
