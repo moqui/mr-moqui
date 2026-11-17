@@ -546,7 +546,15 @@ impl Backend for SplitBackend {
             if let Some(Some(account)) = bounce_recipient(&facade, &copies, &address)? {
                 return Ok(RcptAnswer::Local(account));
             }
-            Ok(choose(&address, own, leveled_lookup(&copies, &address, &delimiters)))
+            // the server's own account is held to its mailbox quota as on a normal node (SEC-MAIL-07)
+            Ok(
+                match choose(&address, own, leveled_lookup(&copies, &address, &delimiters)) {
+                    RcptAnswer::Local(account) if side(&account) == Side::Own => {
+                        super::own_account_answer(&facade, account)
+                    }
+                    answer => answer,
+                },
+            )
         })
         .await;
         found.unwrap_or_else(|err| RcptAnswer::TempFail(err.message().to_string()))

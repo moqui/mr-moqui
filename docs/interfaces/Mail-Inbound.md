@@ -47,6 +47,7 @@ in the environment or `runtime/.env`), and the others are changed in a runtime o
 | `smtp_tls_cert_file`, `smtp_tls_key_file` | empty | The certificate (with its chain) and private key PEM files, absolute or under the runtime directory (`runtime://` works too); both or neither. Read again when they change. |
 | `smtp-server` `chunking` | `true` | CHUNKING (RFC 3030): `BDAT n [LAST]`, the chunk taken as it is (no dot-stuffing). |
 | `smtp-server` `dsn` | `false` | DSN (RFC 3461): `RET` and `ENVID` on `MAIL`, `NOTIFY` and `ORCPT` on `RCPT`, checked (`501` when they do not parse) and kept. See [DSN](#dsn). |
+| `email-client` `mailbox-quota` | `10737418240` (10 GiB) | The bytes of mail an account keeps when its `EmailAccount.quotaBytes` is empty. See [Mailbox quota](#mailbox-quota). |
 
 The accounts are made as usual (`create#EmailAccount` with `accountKindEnumId` `EakHosted` or `EakShared`, the BOSS
 MailAccounts wizard). An account gets the listener's mail when it is hosted or shared, not removed, and has **no incoming
@@ -145,6 +146,15 @@ with `554`. In LMTP each recipient gets its own answer ([LMTP](#lmtp)).
 
 The `Received` field names the protocol (RFC 3848, RFC 6531): `ESMTP`, `ESMTPS` after STARTTLS, `LMTP`, `LMTPS`, and
 `UTF8SMTP`, `UTF8LMTPS` and so on for `SMTPUTF8` mail.
+
+### Mailbox quota
+
+An account keeps at most its `EmailAccount.quotaBytes` of mail, else the conf's `email-client` `mailbox-quota` (10 GiB):
+the sum of its messages' `messageSize`, attachments included (the view `EmailAccountBytes`). Once it has that much, a
+`RCPT TO` of its address is answered `452 4.2.2 Mailbox full`, which the sender takes as "try again later" (not an
+error, so it never closes the connection), and the message goes to the other recipients. Mail already accepted, or
+queued by an edge node, when the account filled up is held at delivery (a `451`, or the edge queue's retry) until it is
+under. A warning names the account the first time it goes over; telling its owner is not done yet.
 
 ### DSN
 

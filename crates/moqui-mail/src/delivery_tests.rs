@@ -21,7 +21,7 @@
 use moqui_lib::object::Value;
 
 use super::delivery::{
-    deliver, find_recipient, Envelope, Options, Outcome, RecipientAccount, RecipientDsn, RecipientIdentity,
+    deliver, find_recipient, over_quota, Envelope, Options, Outcome, RecipientAccount, RecipientDsn, RecipientIdentity,
     RecipientMap, Recipients, Report,
 };
 use super::sync_tests::{
@@ -645,6 +645,66 @@ fn the_gateways_spam_verdict_files_in_junk() {
         folder_id(&facade, &sales, "EfkInbox")
     );
     assert_eq!(eca_lines().len(), 1);
+}
+
+/// SEC-MAIL-07: an account that keeps its quota of mail (`quotaBytes`, else the conf's 10 GiB) is over it, and a message
+/// for it is held (a temporary failure, the listener's 451, an edge node's retry) while another account takes it; once
+/// it has room, the retry stores it.
+#[test]
+fn a_full_account_takes_no_more_mail_until_it_has_room() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let sales = account("EakHosted", "sales@example.com", &[]);
+    let support = account("EakShared", "support@example.com", &[]);
+    moqui_core::user::logout().unwrap();
+    let both = [
+        to(&sales, &["sales@example.com"]),
+        to(&support, &["support@example.com"]),
+    ];
+    let first = plain("<q1@example.org>", "One", "sales@example.com, support@example.com", "");
+    receive(&facade, &first, "dan@example.org", &both).unwrap();
+    let full = |account: &str| {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        over_quota(&facade, account).unwrap()
+    };
+    assert!(!full(&sales) && !full(&support), "under the default quota");
+    update(
+        &facade,
+        ACCOUNT,
+        ("emailAccountId", &sales),
+        &[("quotaBytes", Value::I64(1))],
+    );
+    assert!(full(&sales));
+    assert!(!full(&support));
+    let second = plain("<q2@example.org>", "Two", "sales@example.com, support@example.com", "");
+    let report = receive(&facade, &second, "dan@example.org", &both).unwrap();
+    assert!(report.store_failed());
+    let held = report
+        .deliveries
+        .iter()
+        .find(|delivery| delivery.email_account_id == sales)
+        .unwrap();
+    assert!(
+        matches!(&held.result, Err(text) if text.contains("over its mailbox quota")),
+        "{held:?}"
+    );
+    stored(&report, &support);
+    update(
+        &facade,
+        ACCOUNT,
+        ("emailAccountId", &sales),
+        &[("quotaBytes", Value::I64(1 << 30))],
+    );
+    assert!(!full(&sales));
+    let retry = receive(&facade, &second, "dan@example.org", &both).unwrap();
+    stored(&retry, &sales);
+    assert!(retry
+        .deliveries
+        .iter()
+        .any(|delivery| delivery.email_account_id == support && delivery.result == Ok(Outcome::Duplicate)));
 }
 
 /// A store that fails is that account's error (the listener's 451) and the other account keeps its copy; after the

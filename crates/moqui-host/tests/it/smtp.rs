@@ -405,6 +405,26 @@ fn the_smtp_listener_stores_gateway_mail_for_hosted_and_shared_accounts() {
         1
     );
     assert!(rows("moqui.basic.email.EmailMessage", &[("emailAccountId", &broken)]).is_empty());
+
+    // an account that keeps its quotaBytes of mail is answered 452 at RCPT, not an error; another still takes mail,
+    // and once the quota is raised so does it (SEC-MAIL-07)
+    let quota = |bytes: Value| {
+        let mut row = rows("moqui.basic.email.EmailAccount", &[("emailAccountId", &sales)]).remove(0);
+        row.set("quotaBytes", bytes);
+        row.update(&entity).unwrap();
+    };
+    quota(Value::I64(1));
+    assert_eq!(gateway.command("MAIL FROM:<dan@example.org>"), "250 2.1.0 Ok");
+    assert_eq!(
+        gateway.command("RCPT TO:<sales@example.com>"),
+        "452 4.2.2 <sales@example.com>: Mailbox full, try again later"
+    );
+    assert_eq!(gateway.command("RCPT TO:<help@example.com>"), "250 2.1.5 Ok");
+    assert_eq!(gateway.command("RSET"), "250 2.0.0 Ok");
+    quota(Value::I64(1 << 30));
+    assert_eq!(gateway.command("MAIL FROM:<dan@example.org>"), "250 2.1.0 Ok");
+    assert_eq!(gateway.command("RCPT TO:<sales@example.com>"), "250 2.1.5 Ok");
+    assert_eq!(gateway.command("RSET"), "250 2.0.0 Ok");
     assert_eq!(gateway.command("QUIT"), "221 2.0.0 Bye");
     assert_eq!(gateway.reply(), "");
 

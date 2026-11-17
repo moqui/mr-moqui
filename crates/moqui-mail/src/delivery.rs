@@ -59,13 +59,64 @@ use moqui_lib::object::Value;
 use super::implementation::{find_one, force_cache};
 use super::inbound::{run_stored_ecas, StoredMessage};
 use super::store::{self, header_value, parse_message, Placement, MESSAGE};
-use super::sync::{account_info, after_new_mail, load_folders, publish_counts, run_rules, run_rules_in_frame, ACCOUNT};
+use super::sync::{
+    account_info, after_new_mail, load_folders, property_number, publish_counts, run_rules, run_rules_in_frame,
+    value_number, ACCOUNT,
+};
 use moqui_core::entity::{Condition, EntityFacade, EntityValue};
 use moqui_core::service::util::{field_text, now_millis};
 
 const IDENTITY: &str = "moqui.basic.email.EmailIdentity";
+/// The sum of an account's `EmailMessage.messageSize`, held to its quota.
+const ACCOUNT_BYTES: &str = "moqui.basic.email.EmailAccountBytes";
+/// The bytes of mail an account keeps when its `quotaBytes` is empty and the conf's `email-client` `mailbox-quota`
+/// names none: 10 GiB.
+const DEFAULT_QUOTA: i64 = 10 * 1024 * 1024 * 1024;
 /// The account kinds the listener delivers to.
 const KINDS: [&str; 2] = ["EakHosted", "EakShared"];
+
+/// The accounts found over their quota since they were last found under it, so each going over is warned of once.
+static OVER_QUOTA: std::sync::LazyLock<std::sync::Mutex<HashSet<String>>> = std::sync::LazyLock::new(Default::default);
+
+/// Whether account `account_id` keeps its quota of mail or more (SEC-MAIL-07): the sum of its messages'
+/// `messageSize` (which counts their attachments) against its `quotaBytes`, else the conf's `email-client`
+/// `mailbox-quota` (10 GiB). The listener then answers its recipients 452 at `RCPT TO`, and [`deliver`] holds mail
+/// an edge node queued for it (a temporary failure, tried again), so nothing is lost while its owner makes room. The
+/// first time an account is found over, a warning names it; telling its owner is left for later. False for an account
+/// that is not there.
+///
+/// # Errors
+///
+/// Returns an error when the database cannot be read; the listener answers that with a temporary failure.
+pub fn over_quota(facade: &EntityFacade, account_id: &str) -> Result<bool, LibError> {
+    let Some(row) = find_one(facade, ACCOUNT, "emailAccountId", account_id)? else {
+        return Ok(false);
+    };
+    over_quota_of(facade, &row)
+}
+
+/// [`over_quota`] of an account's row.
+fn over_quota_of(facade: &EntityFacade, account: &EntityValue) -> Result<bool, LibError> {
+    let account_id = field_text(account, "emailAccountId");
+    let quota = value_number(account.get("quotaBytes"))
+        .filter(|bytes| *bytes > 0)
+        .unwrap_or_else(|| property_number("mailbox-quota", DEFAULT_QUOTA));
+    let used = find_one(facade, ACCOUNT_BYTES, "emailAccountId", &account_id)?
+        .and_then(|row| value_number(row.get("totalBytes")))
+        .unwrap_or(0);
+    let over = used >= quota;
+    let mut warned = moqui_lib::sync::lock(&OVER_QUOTA);
+    if !over {
+        warned.remove(&account_id);
+    } else if warned.insert(account_id.clone()) {
+        tracing::warn!(
+            account = %account_id,
+            "Email account {account_id} is over its mailbox quota ({used} of {quota} bytes): the SMTP listener \
+             refuses its mail with 452 until it is under (quotaBytes, email-client mailbox-quota)"
+        );
+    }
+    Ok(over)
+}
 
 /// The hosted or shared account mail to `address` goes to, or none when no account takes it. `delimiters` are the
 /// plus-addressing characters (`+` by default); empty turns plus addressing off.
@@ -917,6 +968,10 @@ fn deliver_one(
             );
             return Ok(Outcome::Duplicate);
         }
+    }
+    // full since RCPT TO, or queued by an edge node before it was: held, and tried again (SEC-MAIL-07)
+    if over_quota_of(facade, &row).map_err(failed)? {
+        return Err(format!("email account {account_id} is over its mailbox quota"));
     }
     let received = now_millis();
     let place = Placement {

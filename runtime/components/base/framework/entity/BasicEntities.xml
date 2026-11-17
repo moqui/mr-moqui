@@ -906,6 +906,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="lastSyncError" type="text-long"/>
         <field name="syncIntervalMinutes" type="number-integer"><description>How often the sync job syncs the account;
             empty for the email-client sync-interval in the conf (5 minutes)</description></field>
+        <field name="quotaBytes" type="number-integer"><description>The most bytes of mail the account keeps (the sum of its
+            messages' messageSize, attachments included, EmailAccountBytes): once it has that much, mail the SMTP listener
+            receives for it is refused with 452 until it is under; empty for the email-client mailbox-quota in the conf
+            (10 GiB)</description></field>
         <field name="syncLockedUntil" type="date-time"><description>A sync of the account holds it until then
             (sync#EmailAccount), so no two run at once, on this server or another; the lock of a server that stopped
             ends then</description></field>
@@ -964,6 +968,13 @@ along with this software (see the LICENSE.md file). If not, see
             <detail relationship="labels"/>
         </master>
     </entity>
+    <view-entity entity-name="EmailAccountBytes" package="moqui.basic.email">
+        <description>The bytes of an account's mail in all: the sum of its messages' messageSize, which counts their
+            attachments. The SMTP listener holds it to the account's quotaBytes (moqui-mail delivery over_quota).</description>
+        <member-entity entity-alias="MSG" entity-name="moqui.basic.email.EmailMessage"/>
+        <alias entity-alias="MSG" name="emailAccountId"/>
+        <alias entity-alias="MSG" name="totalBytes" field="messageSize" function="sum"/>
+    </view-entity>
     <entity entity-name="EmailAccountUser" package="moqui.basic.email" use="transactional" cache="never">
         <description>A member of a shared account (or another user an account is shared with) and what they may do:
             EapRead reads the mail and marks it read, EapSend also sends from the account and files its mail (drafts,

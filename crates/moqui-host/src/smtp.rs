@@ -528,6 +528,18 @@ pub(crate) enum RcptAnswer {
     Local(String),
     Unknown,
     TempFail(String),
+    /// The account keeps its mailbox quota of mail or more: 452, and the sender tries again later (SEC-MAIL-07).
+    OverQuota,
+}
+
+/// The answer for the server's own account `account`: [`RcptAnswer::OverQuota`] when it is over its mailbox quota
+/// ([`inbound::over_quota`]), else [`RcptAnswer::Local`].
+pub(crate) fn own_account_answer(facade: &moqui_core::entity::EntityFacade, account: String) -> RcptAnswer {
+    match inbound::over_quota(facade, &account) {
+        Ok(true) => RcptAnswer::OverQuota,
+        Ok(false) => RcptAnswer::Local(account),
+        Err(err) => RcptAnswer::TempFail(err.to_string()),
+    }
 }
 
 /// What became of a message in one account.
@@ -582,11 +594,12 @@ impl Backend for FactoryBackend {
             let facade = factory
                 .entity()
                 .ok_or_else(|| CoreError::new("the entity facade is not ready"))?;
-            inbound::find_recipient(&facade, &address, &delimiters).map_err(CoreError::from)
+            let found = inbound::find_recipient(&facade, &address, &delimiters).map_err(CoreError::from)?;
+            Ok(found.map(|account| own_account_answer(&facade, account)))
         })
         .await;
         match found {
-            Ok(Some(account)) => RcptAnswer::Local(account),
+            Ok(Some(answer)) => answer,
             Ok(None) => RcptAnswer::Unknown,
             Err(err) => RcptAnswer::TempFail(err.message().to_string()),
         }
@@ -1617,6 +1630,20 @@ impl<B: Backend> Session<'_, B> {
                     return self.error(&line).await;
                 }
                 self.reply(&line).await
+            }
+            RcptAnswer::OverQuota => {
+                // not an error: the sender keeps the mail and tries again once the owner has made room
+                self.refused += 1;
+                tracing::info!(
+                    "SMTP session {} answered recipient {} with 452: its account is over its mailbox quota",
+                    self.id,
+                    clip(&address)
+                );
+                self.reply(&format!(
+                    "452 4.2.2 <{}>: Mailbox full, try again later",
+                    clip(&address)
+                ))
+                .await
             }
             RcptAnswer::TempFail(text) => {
                 self.refused += 1;
