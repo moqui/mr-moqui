@@ -63,7 +63,7 @@ const RELEASE_SERVICE: &str = "org.moqui.call.CallServices.release#Connection";
 const HEARTBEAT_EVERY: Duration = Duration::from_secs(20);
 /// A frame larger than this is refused.
 const MAX_FRAME: usize = 128 * 1024;
-/// The bindings one socket may hold (one per call it is in).
+/// The bindings one socket keeps (one per call it is in or was in): past this the oldest is released for a new one.
 const MAX_BINDINGS: usize = 4;
 
 static SIGNAL: OnceLock<moqui_core::notify::Subscription> = OnceLock::new();
@@ -331,25 +331,23 @@ fn join(
                 o.remove("direct");
             }
         }
-        {
-            let mut all = lock(bindings());
-            let list = all.entry(slot.id).or_default();
-            list.retain(|b| !(b.call == call && b.leg == leg));
-            if list.len() >= MAX_BINDINGS {
-                drop(all);
-                return error(
-                    &slot,
-                    &call,
-                    &leg,
-                    &id,
-                    "tooManyCalls",
-                    "this connection is in too many calls",
-                );
-            }
-            list.push(binding.clone());
+        let evicted = keep(lock(bindings()).entry(slot.id).or_default(), binding.clone());
+        if let Some(old) = evicted {
+            release(&factory, vec![old]);
         }
         forward(&factory, &slot, &binding, &id, frame);
     });
+}
+
+/// A socket's new binding, in place of one of the same leg. A page whose call ended (the other side hung up, or its leg
+/// moved to another device) sends no leave, so its binding stays: past [`MAX_BINDINGS`] the oldest goes for the new one
+/// (returned, to release), rather than a page that took a few calls in a row being refused its next. A page holds two
+/// calls at most (one it is in, one on hold for call waiting).
+fn keep(list: &mut Vec<Binding>, binding: Binding) -> Option<Binding> {
+    list.retain(|b| !(b.call == binding.call && b.leg == binding.leg));
+    let evicted = (list.len() >= MAX_BINDINGS).then(|| list.remove(0));
+    list.push(binding);
+    evicted
 }
 
 fn leave(
@@ -457,6 +455,12 @@ pub(super) fn socket_closed(factory: &Arc<ExecutionContextFactory>, slot_id: u64
     let Some(list) = lock(bindings()).remove(&slot_id) else {
         return;
     };
+    release(factory, list);
+}
+
+/// Releases bindings this socket no longer holds (`release#Connection`): their legs leave after the reconnect grace
+/// unless a socket binds them again; a leg already closed stays as it is.
+fn release(factory: &Arc<ExecutionContextFactory>, list: Vec<Binding>) {
     if list.is_empty() {
         return;
     }
@@ -901,5 +905,38 @@ fn guest_frame(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, scope: 
                 "join the call on this connection first",
             ),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{keep, Binding, MAX_BINDINGS};
+
+    fn binding(call: &str, leg: &str, generation: u64) -> Binding {
+        Binding {
+            call: call.to_string(),
+            leg: leg.to_string(),
+            generation,
+            media_node: "n1".to_string(),
+            origin_node: "n1".to_string(),
+            direct: false,
+        }
+    }
+
+    /// A page that took call after call (each ended with no leave from it) is never refused its next: the oldest
+    /// binding goes; binding a leg again replaces its own.
+    #[test]
+    fn a_socket_keeps_its_newest_bindings() {
+        let mut list = Vec::new();
+        for n in 0..MAX_BINDINGS {
+            assert!(keep(&mut list, binding(&format!("c{n}"), &format!("l{n}"), 1)).is_none());
+        }
+        assert!(keep(&mut list, binding("c1", "l1", 2)).is_none(), "the same leg again");
+        assert_eq!(list.len(), MAX_BINDINGS);
+        let evicted = keep(&mut list, binding("c9", "l9", 1)).expect("the oldest goes");
+        assert_eq!((evicted.call.as_str(), evicted.leg.as_str()), ("c0", "l0"));
+        assert_eq!(list.len(), MAX_BINDINGS);
+        assert!(list.iter().any(|b| b.call == "c1" && b.generation == 2));
+        assert_eq!(list.last().map(|b| b.call.as_str()), Some("c9"));
     }
 }

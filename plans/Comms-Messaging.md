@@ -530,7 +530,7 @@ and they keep going when the network gets bad or changes.
 | Media server | `crates/moqui-rtc` on str0m: ICE-lite, DTLS-SRTP, three simulcast layers, TWCC bandwidth estimate, audio before video, audio only below a floor ([WebRTC](../docs/interfaces/WebRTC.md)) |
 | Codecs | Opus with in-band FEC; RED is off (`enable_opus(true, false)`, `sfu/mod.rs:542`) and DTX is not set. VP8 with RTX by str0m's default. Phase 5: RED on, DTX asked by the page (§8.3 item 8) |
 | E2EE | SFrame, per room or per call link, set at the start and never lowered |
-| Start from a chat | One call button in the room header; it rings everyone in the room and always starts with video (`Chat.qvue:807`, `1418`) |
+| Start from a chat | One call button in the room header; it rings everyone in the room and always starts with video (`Chat.qvue:807`, `1418`). Phase 4: Voice call and Video call (§8.3 item 1) |
 | Ring on Android | FCM high-priority `ring` to `CallManager`; self-managed Android Telecom call (`CallConnectionService`), incoming only; CallStyle notification; full-screen ring over the lock screen; Decline with no WebView ([Mobile-Client](../docs/ui/Mobile-Client.md)). This is MT2 of [Mobile-Desktop](Mobile-Desktop.md), built |
 | Media on Android | The WebView's WebRTC (`WebrootCall.js`). A native audio client is a later item (Mobile-Desktop, MT3's record) |
 | Reconnect | A closed socket keeps its leg for 30 s (`RECONNECT_GRACE_MS`, `Calls.js:45`). When the connection fails the page joins again (`WebrootCall.js:613`); it does not restart ICE. The media server takes a leg's new offer. Phase 5: 60 s, and an ICE restart before a join (§8.3 items 10, 11) |
@@ -568,6 +568,18 @@ and they keep going when the network gets bad or changes.
 6. "Move to this device": a second device of the same user joins the call as a new leg, then the first leg leaves.
    The other side hears no gap.
 7. Call waiting and decline with a quick text.
+
+Status of items 1 to 7 (phase 4, web part; [WebRTC, The call's flow](../docs/interfaces/WebRTC.md#the-calls-flow)):
+
+| # | Status |
+|---|---|
+| 1 | Built: Voice call and Video call in the room header on both layouts (the tray's narrow Chat tab has them in its menu); a direct room calls the person, a group room starts a group call its members join; an encrypted room passes `requireE2ee` |
+| 2 | Built on the web: `m-call-compact`, full screen at a phone's width (big avatar for voice, the video and self view for video, mute, speaker where the browser chooses its output, video, flip, add people, hang up), and the same in the desktop's side panel (`state.panel`); the header shows the call's label from `e2eeLabel`. The Android app's native call screen is later |
+| 3 | Built: `addVideo` and `dropVideo` on the same connection (renegotiation, SFrame on the new sender); the other side gets a prompt |
+| 4 | Built on the desktop web: a Document Picture-in-Picture window (Chrome and Edge, and their automatic one), else the floating LiveCall window. Android's picture-in-picture is later |
+| 5 | Later (Android: Telecom `CallEndpoint`, the proximity wake lock) |
+| 6 | Built: `move#Call`, a new leg that closes the user's others once its media connected (`note#MediaEvent`); the other side's connection goes on (acceptance `CallFlow`). On the direct path the move first goes to the media server, a short gap. From and to the Android app is later |
+| 7 | Built: Hold and answer (`hold#OwnLeg`), End and answer, Swap or Resume, Decline with a message (ready texts or one's own, to the caller's direct room; sealed in an encrypted room) |
 
 **Network resilience** (the test results from §8.4 decide the order)
 
@@ -1280,6 +1292,22 @@ Planned:
 - Done when: the rows of §8.2 from Start to Leave the app, Move the call, Missed call and Second call, on real
   phones. The existing acceptance specs `CallFlow` and `EncryptedCallFlow` are extended for voice-only start and the
   upgrade.
+- Status (2026-11-17): the web part is built; the Android part (items 4's picture-in-picture, 5, the native call screen,
+  Move to and from the app) is pending.
+  - Built: §8.3 items 1, 2, 3, 4 (desktop), 6 and 7 (the status table there). `Chat.qvue`'s two buttons;
+    `WebrootCall.js`'s side panel, `m-call-compact`, `addVideo`/`dropVideo` and the prompt, `openPip`, `moveHere`,
+    `hold`/`resume` and `declineWithText`; `Calls.js` `move#Call` (finished on the new leg's `connected`) and
+    `hold#OwnLeg`, a leg's `live` and `movedFromLegId` in the call's view, a direct call going on while its person has
+    another leg; a socket keeps its four newest bindings, the oldest released (`notws/rtc.rs`: a page whose calls ended
+    was refused its fifth).
+  - Terminal: `CallTui` shows a person on hold; its comment says the rest is the browser's.
+  - Tests. Regression: `Calls` (the move, a move left, the hold), `BasicCommsCalls` (both refused to a stranger through
+    either mount, the terminal's On hold), `WebrootCall` (webroot, offline: the panel or the screen, the prompt, the
+    move's offer and push, the quick text sealed in an encrypted room), `notws::rtc` (the bindings). Acceptance:
+    `CallFlow` (a voice-only start and the upgrade and downgrade, Move to this device, call waiting with swap and a
+    quick text), `EncryptedCallFlow` (an encrypted voice-only start and the upgrade).
+  - Left: the Android parts; on the direct path a move goes through the media server first (a short gap); the
+    picture-in-picture window in the desktop client's CEF is not checked; §8.2 on real phones.
 
 #### Phase 5: calls, network
 

@@ -22,12 +22,14 @@ along with this software (see the LICENSE.md file). If not, see
     a group call's host ends it for everyone; anyone else leaves. Repeated requests are safe: start#Call with the same
     idempotencyKey answers the same call, and answering, joining or leaving again answers the state as it is. Refusals
     carry reasonCode (notFound, callEnded, notRinging, notAllowed, notAdmitted, legClosed, callFull, tooManyJoins, noCallee,
-    mediaUnavailable, notSignedIn; for end-to-end encrypted calls unsupportedClient, noCryptoDevice, callNotEncrypted,
+    mediaUnavailable, notSignedIn, notInCall; for end-to-end encrypted calls unsupportedClient, noCryptoDevice, callNotEncrypted,
     encryptedNoGuests, notEncrypted).
 
     The pushes, on chatUser:<userId> to each participant's tabs (after the commit):
       {kind: 'call', action: 'ring', callSessionId, revision, from {userId, name}, video, callKind, chatRoomId, expiresAt, call}
       {kind: 'call', action: 'answered' | 'declined' | 'joined' | 'left' | 'timedOut' | 'ended', callSessionId, revision, call}
+      {kind: 'call', action: 'moving' (callLegId, fromLegId) | 'legMoved' (callLegId, fromLegIds) | 'held' | 'resumed'
+       (callLegId), callSessionId, revision, call}: a move to another device (move#Call) and call waiting (hold#OwnLeg)
     call is get#Call's view for that user. A ring also goes by Web Push (send#WebPush), expiring with the ring; an old push
     opens the call's current state, never a finished ring. To a native app (FCM) the ring is a high-priority data message
     {kind: 'ring', title, link, topic, tag, callSessionId, chatRoomId, caller, video, expiresAt} with the ring time as its
@@ -168,6 +170,45 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="repeated" type="Boolean"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Calls.js').execute('end', context))</script></actions>
+    </service>
+
+    <service verb="move" noun="Call">
+        <description>Move to this device (plans/Comms-Messaging.md §8.3 item 6): the user, in the call on another device or
+            tab, takes it here. A new browser leg of theirs joins the call (movedFromLegId names the leg it moves from), and
+            their other legs leave once its media is connected (note#MediaEvent), so the others hear no gap; the pushes are
+            moving, then legMoved. notInCall for a user who is not in the call (join#Call is theirs). An end-to-end
+            encrypted call is taken only by a browser that can take part, as for join#Call.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="cryptoDeviceId"><description>An end-to-end encrypted call: the browser's crypto device</description></parameter>
+            <parameter name="scriptTransform" type="Boolean"><description>An end-to-end encrypted call: the browser has
+                RTCRtpScriptTransform</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callLegId"/>
+            <parameter name="movedFromLegId"/>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Calls.js').execute('move', context))</script></actions>
+    </service>
+
+    <service verb="hold" noun="OwnLeg">
+        <description>Call waiting (plans/Comms-Messaging.md §8.3 item 7): the user puts their own leg in a call on hold
+            (held true), to answer another call, or takes it off (held false; the leg binding again does that too). The leg
+            stays in the call while the page's socket is open; everyone in the call hears held or resumed.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="callLegId"><description>The user's leg; their newest answered one when empty</description></parameter>
+            <parameter name="held" type="Boolean" default="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callLegId"/>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+            <parameter name="repeated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Calls.js').execute('holdOwn', context))</script></actions>
     </service>
 
     <service verb="get" noun="Call">

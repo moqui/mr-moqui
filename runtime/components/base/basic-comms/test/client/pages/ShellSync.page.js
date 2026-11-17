@@ -624,7 +624,7 @@ test("the Inbox: a thread change that conflicted says it changed on the server a
         assert.ok(disclosure.getAttribute("aria-label").startsWith("Collapse message from Pat Sender"));
         await until(() => {
             const frame = document.querySelector("#inbox-body-email_KEY1 iframe");
-            return frame && frame.contentDocument && frame.contentDocument.body.textContent.includes("Older body available by keyboard");
+            return frame && frame.contentDocument && frame.contentDocument.body && frame.contentDocument.body.textContent.includes("Older body available by keyboard");
         }, "the older message body");
         const recipients = document.getElementById("inbox-recipients-email_KEY1");
         assert.equal(recipients.tagName, "BUTTON");

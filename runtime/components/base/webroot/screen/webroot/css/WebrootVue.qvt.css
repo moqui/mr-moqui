@@ -1250,3 +1250,5 @@ body.m-terminal-solo .q-page-container { padding:0 !important; }
 .m-terminal-keys { overflow-x:auto; gap:2px; padding:2px 0; border-top:1px solid var(--m-border, rgba(0,0,0,.12)); }
 .m-terminal-key { min-width:36px; font-family:ui-monospace, monospace; }
 .m-terminal-key-on { background:color-mix(in srgb, var(--q-primary) 22%, transparent); }
+/* a call's side panel on a desktop (WebrootCall.js m-call-dock, plans/Comms-Messaging.md §8.3 item 2): the screen keeps clear of it */
+html.m-call-panel-open #m-canvas > .q-page, html.m-call-panel-open .m-shell-view { margin-right:380px; }

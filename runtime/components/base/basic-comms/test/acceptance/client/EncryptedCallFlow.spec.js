@@ -5,8 +5,9 @@
 // media goes both ways, decrypted with the keys each got from the other's device. The third person answers later: they get
 // both keys and the others get theirs. Recording the call is refused. The third leaves: the others rotate their keys, and
 // the new keys go only to the two still in it. Chromium's fake camera and microphone stand in for devices; needs a binary
-// with the rtc feature (the suite's --serve server sets rtc_media_port).
-// Run: ./moq test-client basic-comms --serve --spec EncryptedCallFlow
+// with the rtc feature (the suite's --serve server sets rtc_media_port). Then an encrypted voice call (phase 4 of
+// plans/Comms-Messaging.md): audio only, and video turned on in the call, under the same keys, as a prompt on the other side.
+// Run: ./moq accept basic-comms --spec EncryptedCallFlow
 const PASSWORD = "CallsClient1!!"
 let caller = null
 let callee = null
@@ -127,6 +128,54 @@ feature("an encrypted call: media both ways under SFrame, a third joiner gets th
         after[0].lastSend.devices.every(d => d.deviceId != thirdDevice)
         after[0].epoch > before[0].epoch
         newKeyThere == true
+        after.every(k => !k.error)
+    }
+})
+
+// The call's flow (plans/Comms-Messaging.md §8.3 items 1 and 3, phase 4): an encrypted call started for voice sends audio
+// only; video turned on in the call goes through the same SFrame keys, and the other side is asked, not called again.
+feature("an encrypted voice call starts with audio only, and video turned on in it is SFrame-encrypted and reaches the other side as a prompt", {
+    when() {
+        // the first feature's group call goes on with the callee: they leave it first
+        callee.evaluate(() => (window.moqui.call.state.current ? window.moqui.call.leave() : null))
+        const b = userIdOf(caller, "Calls Client B")
+        const started = caller.evaluate(id => window.moqui.call.startCall({calleeUserIdList: id, video: false, requireE2ee: true})
+            .then(json => ({callSessionId: json.callSessionId, e2ee: !!(json.call && json.call.e2ee)})), b)
+        callee.waitFor(id => window.moqui.call.state.ringing.includes(id), {timeout: 15, arg: started.callSessionId})
+        callee.evaluate(id => window.moqui.call.answer(id, false), started.callSessionId)
+        const aLeg = caller.evaluate(() => window.moqui.call.state.legId)
+        const bLeg = callee.evaluate(() => window.moqui.call.state.legId)
+        // audio only, decrypted both ways
+        let voice = false
+        try {
+            voice = [[caller, bLeg], [callee, aLeg]].every(([page, leg]) => page.waitFor(leg => {
+                const frames = window.moqui.callKeys.state.frames
+                return window.moqui.call.state.phase === "connected" && !!frames[leg] && frames[leg].received > 20
+            }, {timeout: 15, arg: leg}))
+        } catch (err) { voice = false }
+        const sendsVideo = [caller, callee].map(page => page.evaluate(() => window.moqui.call.hasVideo()))
+        caller.evaluate(() => window.moqui.call.addVideo())
+        let prompt = false
+        try {
+            prompt = callee.waitFor(() => !!window.moqui.call.state.videoPrompt && window.moqui.call.state.videoPrompt.on, {timeout: 15})
+        } catch (err) { prompt = false }
+        const calleeSees = decrypting(callee, [aLeg])
+        const sameCall = callee.evaluate(() => window.moqui.call.state.current)
+        callee.evaluate(() => window.moqui.call.answerPrompt(true))
+        const callerSees = decrypting(caller, [bLeg])
+        const after = [keysOf(caller), keysOf(callee)]
+        caller.evaluate(() => window.moqui.call.leave())
+        callee.waitFor(() => window.moqui.call.state.current === null, {timeout: 15})
+        return {started, voice, sendsVideo, prompt, calleeSees, sameCall, callerSees, after}
+    },
+    then({started, voice, sendsVideo, prompt, calleeSees, sameCall, callerSees, after}) {
+        started.e2ee == true
+        voice == true
+        sendsVideo.every(v => v == false)
+        prompt == true
+        calleeSees == true
+        sameCall == started.callSessionId
+        callerSees == true
         after.every(k => !k.error)
     }
 })
