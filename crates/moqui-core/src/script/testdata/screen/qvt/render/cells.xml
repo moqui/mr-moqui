@@ -28,6 +28,9 @@
             </default-field></field>
             <field name="open"><default-field><link url="open" text="Open ${id}"/></default-field></field>
             <field name="chip"><default-field><link url="open" text="Chip" link-type="anchor-button" btn-type="${on ? 'primary' : 'danger'}"/></default-field></field>
+            <!-- a style that is an expression, of a label and of a display, read in each row -->
+            <field name="state"><default-field title="State"><label text="${note}" style="${on ? 'text-weight-medium' : 'm-muted'}"/></default-field></field>
+            <field name="kind"><default-field><display style="${on ? 'text-positive' : ''}"/></default-field></field>
             <field name="note"><default-field>
                 <editable id="NoteEdit" text="${note}" transition="saveNote" display-if-empty="true"><parameter name="id"/></editable></default-field></field>
         </form-list>

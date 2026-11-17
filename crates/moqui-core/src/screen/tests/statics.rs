@@ -1770,7 +1770,8 @@ fn the_parity_fixture_is_a_template_with_its_data_in_the_packages() {
 
 /// A status-bar of a server-static screen is bound over the scope (the status, the title, a read-only or list expression)
 /// and asks the root screen's statusBar transition for the flow in the browser; a btn-type and row-col sizes that are
-/// expressions are bound through `$mq.btnKind` and `$mq.cols`, and an empty editable is hidden unless display-if-empty.
+/// expressions are bound through `$mq.btnKind` and `$mq.cols`, a label's and a display's style that is an expression is a bound
+/// `:class`, and an empty editable is hidden unless display-if-empty.
 #[test]
 fn a_status_bar_and_expression_styles_are_bound_in_a_static_template() {
     let (status, _) = static_fixture("status");
@@ -1790,9 +1791,16 @@ fn a_status_bar_and_expression_styles_are_bound_in_a_static_template() {
         r#":class="$mq.cols(ec.resource.expandNoL10n('${wide}',{'wide':()=&gt;(wide)}),ec.resource.expandNoL10n('${wide}',{'wide':()=&gt;(wide)}),'','',false)""#,
         r#"value="B" :options="[{value:'A',label:ec.l10n.localize('First')},{value:'B',label:ec.l10n.localize('Second')}]""#,
         r#":placeholder="ec.l10n.localize('Click to edit')""#,
+        // a label's and a display's style that is an expression is bound over the row, beside the widget's own class (PR-UI-039)
+        r#"class="text-inline" :class="ec.resource.expandNoL10n('${on ? \'text-weight-medium\' : \'m-muted\'}'"#,
+        r#":class="ec.resource.expandNoL10n('${on ? \'text-positive\' : \'\'}'"#,
     ] {
         assert!(cells.contains(expected), "{expected} in {cells}");
     }
+    assert!(
+        !cells.contains(r#"class="text-inline ${on"#),
+        "no literal expression class: {cells}"
+    );
 }
 
 /// A row-selection condition and a view's move-condition in a server-static screen are evaluated by the template over the scope: the

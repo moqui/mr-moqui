@@ -874,6 +874,41 @@ fn enter_prefers_a_link_to_another_screen_and_says_when_nothing_opens() {
     );
 }
 
+/// The link a list names to open its rows (`open`, its row-open-field's) may post: Enter posts it and goes where it
+/// answers (a notification read as its record opens). A post that is not the open link stays off Enter.
+#[test]
+fn enter_posts_a_rows_open_link_and_follows_its_answer() {
+    let main = serde_json::json!({"v":1,"screen":{"path":"/notes"},"c":[
+        {"t":"formList","id":"Notes","name":"Notes","columns":[{"title":"Title"},{"title":"Read"}],"rows":[
+            {"id":"A","cells":[{"t":"link","id":"open-A","text":"Note A","url":"/openRead?id=A","method":"post","writes":true,"open":true},
+                               ""]},
+            {"id":"B","cells":["Note B",
+                               {"t":"link","id":"mark-B","text":"Mark read","url":"/markRead?id=B","method":"post","writes":true}]}
+        ]}
+    ]})
+    .to_string();
+    let record = serde_json::json!({"v":1,"screen":{"path":"/record"},"c":[]}).to_string();
+    let link = FakeLink::from_json(&[&main, &record]).unwrap();
+    let mut outcome = moqui_tui::TransitionOutcome::saved("");
+    outcome.screen_url = "/record".into();
+    outcome.parameters = map(&[("id", "A")]);
+    link.answer_transition("/openRead", outcome);
+    let mut session = Session::start("/notes");
+    session.run_now(&link);
+    press(&mut session, &link, Key::Down);
+    press(&mut session, &link, Key::Enter);
+    assert!(
+        session.message().starts_with("Nothing to open on this row"),
+        "{}",
+        session.message()
+    );
+    assert_eq!(last_transition(&link), None);
+    press(&mut session, &link, Key::Up);
+    press(&mut session, &link, Key::Enter);
+    assert_eq!(last_transition(&link), Some(("/openRead".into(), map(&[("id", "A")]))));
+    assert_eq!(session.path(), "/record");
+}
+
 /// A validation error the screen's render added (a find value that is not a date) is on the message line: no submitted
 /// form is there to mark it.
 #[test]

@@ -1080,6 +1080,50 @@ fn a_section_in_a_form_list_cell_keeps_the_rows_form_for_the_cells_after_it() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A list column whose title is written only on its conditional-field is headed by that title in every render mode, an
+/// empty one by nothing (but in csv), and not by the field name in words (PR-UI-040: Staff's "Rate Text" and "Staff Link").
+#[test]
+fn a_list_column_titled_only_on_its_conditional_field_is_headed_by_that_title() {
+    let dir = std::env::temp_dir().join(format!("moqui-forms-conditional-title-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let root = dir.join("Form.xml").to_string_lossy().into_owned();
+    std::fs::write(
+        &root,
+        r#"<screen require-authentication="false">
+    <transition name="staff"><default-response url="."/></transition>
+    <actions>
+        <script>shown = true; candidates = [{name: 'Ana', rateText: 'USD 140', marginText: '12%'}]</script>
+    </actions>
+    <widgets>
+        <form-list name="Candidates" list="candidates" skip-form="true">
+            <field name="name"><default-field title="Candidate"><display/></default-field></field>
+            <field name="rateText"><conditional-field condition="shown" title="Cost"><display/></conditional-field>
+                <default-field><ignored/></default-field></field>
+            <field name="marginText"><conditional-field condition="shown" title="Margin"><display/></conditional-field></field>
+            <field name="staffLink"><conditional-field condition="shown" title=""><link url="staff" text="Staff"/></conditional-field>
+                <default-field><ignored/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>"#,
+    )
+    .unwrap();
+    let world = World::open("");
+    for mode in ["html", "qvt", "tui", "csv"] {
+        let mut get = request("GET", "/");
+        get.query.push(("renderMode".into(), mode.into()));
+        let out = serve_at(&world.factory, get, &root).body_text();
+        assert!(out.contains("Cost") && out.contains("Margin"), "{mode}: {out}");
+        assert!(
+            !out.contains("Rate Text") && !out.contains("Margin Text"),
+            "{mode}: {out}"
+        );
+        // an empty title is a blank header; a csv column always has a name, as for an empty default-field title
+        assert!(mode == "csv" || !out.contains("Staff Link"), "{mode}: {out}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A native date-time or time input starts at its value rounded to the minute step, so the browser takes it as valid
 /// and the form posts the time it shows: the hour and the day roll over when needed.
 #[test]

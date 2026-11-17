@@ -461,9 +461,10 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:annotation><xs:documentation>The name of the field whose link opens a row, where a row has no single
                 record to open by itself (a log line's Surrounding entries beside its User and Trace links). The terminal
                 client opens it with Enter and Right on the row, and a board card or calendar event with it, before any
-                other link of the row; without it the row opens its first link to another screen. The link must be a
-                plain GET link (not one that posts or writes); when the field has none on a row (a condition fails) the
-                row opens as without the attribute. The browser does not open rows by a link, so it ignores this.
+                other link of the row; without it the row opens its first link to another screen. The link may post
+                (a hidden-form-link to a transition that reads a notification and redirects to its record): Enter posts
+                it, after its confirmation, and goes where it answers; when the field has none on a row (a condition
+                fails) the row opens as without the attribute. The browser does not open rows by a link, so it ignores this.
                 See docs/ui/TUI.md, Keys.</xs:documentation></xs:annotation>
         </xs:attribute>
         <xs:attribute name="skip-start" type="boolean" default="false"/>
@@ -1090,7 +1091,10 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="validate-entity" type="xs:string"/>
         <xs:attribute name="validate-field" type="xs:string"/>
     </xs:complexType>
-    <xs:complexType name="form-list-conditional-field"><xs:complexContent><xs:extension base="form-list-default-field">
+    <xs:complexType name="form-list-conditional-field"><xs:annotation><xs:documentation>
+        In a form-list, when neither the header-field nor the default-field has a title, the first conditional-field's title
+        heads the column (an empty one a blank header), not the field name in words as Java does.
+    </xs:documentation></xs:annotation><xs:complexContent><xs:extension base="form-list-default-field">
         <xs:attribute name="condition" type="xs:string" use="required">
             <xs:annotation><xs:documentation>A boolean expression in Groovy.</xs:documentation></xs:annotation>
         </xs:attribute>

@@ -919,8 +919,10 @@ fn page_nodes(nodes: &mut [Node], index: usize) {
 /// The link Right and Enter open on a row, as its id and url: the link the list names to open its rows (its
 /// `row-open-field`'s, marked `open`), else its first navigation link to another screen, else its first link back to the
 /// screen shown (`here`, its path), as a list beside its detail selects a row with one. A link to the screen shown is
-/// often a filter or a toggle that stages a change, so a link that opens the record wins over it. A row action that
-/// posts or writes stays on its own key and on F10. None for the show-total row.
+/// often a filter or a toggle that stages a change, so a link that opens the record wins over it. The list's own open
+/// link may post (a notification read as it opens its record): the author named it to open the row, so Enter posts it
+/// and follows where it answers. Any other row action that posts or writes stays on its own key and on F10. None for
+/// the show-total row.
 pub fn row_link_target<'a>(row: &'a ListRow, here: &str) -> Option<(&'a str, &'a str)> {
     if row.total {
         return None;
@@ -930,7 +932,9 @@ pub fn row_link_target<'a>(row: &'a ListRow, here: &str) -> Option<(&'a str, &'a
         .iter()
         .flat_map(Cell::nodes)
         .filter_map(|node| match node {
-            Node::Link { id, url, open, .. } if navigates(node) => Some((id.as_str(), url.as_str(), *open)),
+            Node::Link { id, url, open, .. } if navigates(node) || (*open && opens_by_post(node)) => {
+                Some((id.as_str(), url.as_str(), *open))
+            }
             _ => None,
         })
         .collect();
@@ -960,6 +964,11 @@ pub fn navigates(node: &Node) -> bool {
         && kind != "hidden-form"
         && kind != "hidden-form-link"
         && !method.eq_ignore_ascii_case("post"))
+}
+
+/// A link that is not disabled and has a url: a list's open link may post or write, see [`row_link_target`].
+fn opens_by_post(node: &Node) -> bool {
+    matches!(node, Node::Link { url, disabled, .. } if !url.is_empty() && !disabled)
 }
 
 /// Whether `url` is the screen at the path `here`, whatever its parameters.
