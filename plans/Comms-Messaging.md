@@ -2,8 +2,9 @@
 
 Plan, 2026-11-16; revised the same day against the source and the
 [BasicComms UI review](ui-review-basic-comms.md) (findings `COM-UI-…`). One plan for the Comms chat as a messaging
-app, for one app for all messaging, and for RCS. Most of the phone layout is built (PR #203); the rest is a plan. The
-build order is in §18.
+app, for one app for all messaging, and for RCS. Phases 0 to 9 are built (2026-11-17), each reviewed by a separate
+agent and fixed; what waits for real phones is in §18.4, and the user's own steps (the port, 10DLC) in §9. Phase 10 and
+later (§18.3) need a design first. The build order is in §18.
 
 In the tables, **Built** means it is in the source today, **Partial** names what is missing, and **Planned** means
 this plan adds it. A file and line is where the statement was checked on 2026-11-16.
@@ -29,10 +30,10 @@ Parts:
 | §2: phone layout | Built (PR #203, phase 1) except voice notes (phase 7) and the checks on a real phone (§2.3) | 1, done |
 | §3: desktop gaps | Built (phase 8): the palette in the app's shell, its rooms first in Comms, people and phone rooms; Activity, Threads, the groups and the mail line | 8, done |
 | §4: reactions and the message menu | Built (phase 6): one action list, the emoji picker, who reacted and voted by touch, Info; a real phone's feel left | 6, done |
-| §5: details tabs and new services | Partial: People, Pinned and Files (All, Pictures) panes are built; the services are planned | 7 |
-| §6: E2EE policy and labels | Planned; the call rule and what E2EE by default makes are decided (§19). First sign-in on a new phone still needs a design (§6.5) | 3 |
-| §7: notifications | Planned; payload encryption reuses the Web Push code | 2 |
-| §8: voice and video calls | Partial: one call button, the media server and TURN are built | 4, 5 |
+| §5: details tabs and new services | Built (phase 7): the tabs, the list services with one paging rule, voice notes; a voice note on a real phone left | 7, done |
+| §6: E2EE policy and labels | Built (phase 3): the labels, the call rule, verifying people and the new-device warning. E2EE by default (decided, §19) and first sign-in on a new phone are later work (§6.5) | 3, done |
+| §7: notifications | Built (phase 2): the push worker and its rules, encrypted payloads per device for FCM, Web Push and UnifiedPush, the Android app's notifications, the desktop's, the check screen; the soak tests on real phones left | 2, done |
+| §8: voice and video calls | Built (phases 4 and 5): voice and video buttons, the call screen, voice to video, picture-in-picture, move, call waiting, Telecom on Android, the network tests and resilience, the direct path; EDGE and the bandwidth step not met, the browser network suite and real phones left | 4, 5, done |
 | §9: the user's own phone number | Built (phase 9): group texts, the phone's dialer and Contacts through the app, contacts' names; §9.2 waits for the user's port, 10DLC and live tests | 9, built |
 | §10: the phone's SIM texts (`sim-sms`) | Phone only with an opt-in sync, decided; MMS and the synced room need a design | 10+ |
 | §11–§15: other networks and app equivalents | Plan; each network needs an adapter or a bridge | 10+ |
@@ -1161,14 +1162,14 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 |---|---|---|---|
 | 0 | Fixes from the UI review: done 2026-11-16 (`82affc535`) | §5.2 paging, §6.5 | Small |
 | 1 | Shared helpers and the rest of the phone layout: done 2026-11-17 (`c88df4a3f`) | §2 | Medium |
-| 2 | Notifications | §7 | Large |
+| 2 | Notifications: done 2026-11-17 (`93476615a`; UnifiedPush with a real distributor and the soak tests on real phones left) | §7 | Large |
 | 3 | E2EE labels and the call rule: done 2026-11-17 (`fdd1ab597`) | §6.1–§6.4 | Medium |
-| 4 | Calls: flow and screen | §8.3 items 1–7 | Large |
+| 4 | Calls: flow and screen: done 2026-11-17 (web `20ce6c8d1`, Android `adc40de76`; the real-phone checks of §18.4 left) | §8.3 items 1–7 | Large |
 | 5 | Calls: network tests, then resilience: done 2026-11-17 (`64c002d20`; the browser suite under sudo and real phones left) | §8.3 items 8–15, §8.4 | Large |
 | 6 | Message menu, reactions, Info: done 2026-11-17 (`acc6d1b66`; a real phone's feel left) | §4 | Medium |
 | 7 | Details tabs and services, voice notes: done 2026-11-17 (`533f3c0f2`; a voice note on a real phone left) | §5 | Medium |
-| 8 | Desktop gaps: done 2026-11-17 | §3 | Medium |
-| 9 | The user's phone number | §9 | Medium, plus the user's steps |
+| 8 | Desktop gaps: done 2026-11-17 (`4e451b601`) | §3 | Medium |
+| 9 | The user's phone number: built 2026-11-17 (`adc40de76`; the port, 10DLC and the live tests are the user's steps) | §9 | Medium, plus the user's steps |
 | 10+ | Work that needs a design first, then the other networks | §6.5, §10–§17 | — |
 
 - Phase 0 is first because two of its fixes are under later work: the paging rule (§5) and device verification (§6).
