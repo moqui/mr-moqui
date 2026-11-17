@@ -72,6 +72,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
     rust_service!(map, queue_webhook_event)?;
     rust_service!(map, send_webhook_delivery)?;
     rust_service!(map, test_webhook)?;
+    rust_service!(map, check_webhook_url)?;
     rust_service!(map, merge_merge_request)?;
     rust_service!(map, get_merge_request_approvals)?;
     Ok(())
@@ -319,7 +320,7 @@ fn find_repositories(parameters: &Parameters, facade: &EntityFacade) -> Out {
                 ("lastUpdateDate", field_value(row, "lastUpdateDate")),
                 ("archivedDate", field_value(row, "archivedDate")),
                 ("defaultMergeMethodEnumId", field_value(row, "defaultMergeMethodEnumId")),
-                ("remoteUrl", field_value(row, "remoteUrl")),
+                ("remoteUrl", shown_remote_url(row, &id)),
                 ("openMergeRequestCount", Value::I64(open.get(&id).copied().unwrap_or(0))),
             ])
         })
@@ -1670,14 +1671,38 @@ pub(crate) fn signature(secret: &str, body: &[u8]) -> String {
     format!("sha256={}", hex(&mac.finalize().into_bytes()))
 }
 
+/// Whether a webhook may go to `url`, as a mirror's URL is checked: https, or http only with `git-server`
+/// `webhook-private-network`, and no user or password in it (SEC-GIT-16): a delivery carries commit messages, author
+/// addresses and its signature, and a URL's credential would be kept in clear and answered by `find#GitWebhooks`.
+fn webhook_url_allowed(url: &str) -> Result<(), String> {
+    crate::server::smart_http::check_url(url, crate::setting("webhook-private-network") == "true")
+}
+
+/// `check#GitWebhookUrl`: [`webhook_url_allowed`] for `store#GitWebhook`; an error says why not.
+fn check_webhook_url(parameters: &Parameters, _facade: &EntityFacade) -> Out {
+    let url = text(parameters, "url").unwrap_or_default();
+    if let Err(why) = webhook_url_allowed(&url) {
+        add_error(format!("Webhook URL {}: {why}", moqui_lib::http::redacted(&url)));
+    }
+    none()
+}
+
+/// A repository's `remoteUrl` as the list answers it (SEC-GIT-16): only to who may delete the repository (who may set
+/// it), and a URL's user, password and query left out.
+fn shown_remote_url(row: &EntityValue, id: &str) -> Value {
+    match field(row, "remoteUrl") {
+        Some(url) if may(id, "delete") => Value::string(if url.contains("://") {
+            moqui_lib::http::redacted(&url)
+        } else {
+            url
+        }),
+        _ => Value::Null,
+    }
+}
+
 /// POST a webhook's body. The status, or why it was not sent.
 fn deliver(url: &str, event: &str, delivery: &str, secret: Option<&str>, body: &str) -> Result<u16, String> {
-    if !(url.starts_with("https://") || url.starts_with("http://")) {
-        return Err(format!(
-            "{} is not an http or https URL",
-            moqui_lib::http::redacted(url)
-        ));
-    }
+    webhook_url_allowed(url).map_err(|why| format!("{}: {why}", moqui_lib::http::redacted(url)))?;
     let private = crate::setting("webhook-private-network") == "true";
     let sim = ExecutionContext::with_current(|ec| ec.factory().entity().is_some_and(|entity| entity.sim_active()))
         .unwrap_or(false);

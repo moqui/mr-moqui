@@ -379,6 +379,32 @@ fn branch_rules_refuse_pushes_and_an_archived_repository_refuses_all() {
         &[("includeArchived", Value::Bool(true))],
     );
     assert_eq!(list(&listed, "repositoryList").len(), 1);
+    // the remote URL only to who may change it, with no credential in it (SEC-GIT-16)
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        fixture
+            .entity
+            .find(crate::GIT_REPOSITORY)
+            .unwrap()
+            .eq("repositoryId", s("guarded"))
+            .update_all([(
+                "remoteUrl".to_string(),
+                s("https://bot:t0ken@git.internal.example/app.git"),
+            )])
+            .unwrap();
+    }
+    let remote_of = |user: &str| {
+        let listed = ok(
+            &fixture,
+            user,
+            "org.moqui.git.GitServices.find#GitRepositories",
+            &[("includeArchived", Value::Bool(true))],
+        );
+        text_of(entry(&list(&listed, "repositoryList")[0], "remoteUrl"))
+    };
+    assert_eq!(remote_of(READER), "");
+    assert_eq!(remote_of(WRITER), "https://git.internal.example/app.git");
     ok(
         &fixture,
         WRITER,
@@ -1349,6 +1375,15 @@ fn webhooks_are_signed_logged_and_retried() {
         &[("repositoryId", s("hooked")), ("url", s(&url))],
     );
     assert!(errors.contains("may not change the webhooks"), "{errors}");
+    // a user and password in the URL would be kept in clear and sent as basic authorization (SEC-GIT-16)
+    let with_user = url.replacen("http://", "http://hook:pw@", 1);
+    let (_, errors) = call(
+        &fixture,
+        WRITER,
+        "org.moqui.git.GitServices.store#GitWebhook",
+        &[("repositoryId", s("hooked")), ("url", s(&with_user))],
+    );
+    assert!(errors.contains("user or password"), "{errors}");
     let hook = row(&fixture, "moqui.resource.GitWebhook", "webhookId", &webhook_id);
     assert_eq!(
         field(&hook, "secret"),

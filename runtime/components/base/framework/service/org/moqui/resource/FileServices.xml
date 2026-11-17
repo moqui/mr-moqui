@@ -324,6 +324,11 @@ along with this software (see the LICENSE.md file). If not, see
             const STORAGES = ['folder', 'gitDb', 'gitLocal', 'mirror']
             if (!STORAGES.includes(storage)) { ec.message.addError(`Unknown drive storage ${storage}`); return }
             if (storage === 'mirror' && !isAdmin) { ec.message.addError('Only an administrator adds a mirror'); return }
+            // a credential in the URL would be kept in clear and shown with the drive: it goes in username and accessToken
+            // (SEC-GIT-16); an ssh user (git@host) is not one
+            const userinfo = (/^[a-z][a-z0-9+.-]*:\/\/([^\/?#]*)@/i.exec(String(remoteUrl || '')) || [])[1]
+            if (storage === 'mirror' && userinfo != null && (userinfo.includes(':') || /^https?:/i.test(String(remoteUrl)))) {
+                ec.message.addError('A mirror URL has no user or password in it: give them as the username and access token'); return }
             if (!driveKindEnumId) driveKindEnumId = storage === 'mirror' ? 'RdkMirror' : 'RdkShared'
             if (driveKindEnumId === 'RdkPersonal') { ec.message.addError('A personal drive is made by ensure#PersonalDrive'); return }
             if ((driveKindEnumId === 'RdkRecords' || rootLocation) && !isAdmin) { ec.message.addError('Only an administrator sets a drive location'); return }

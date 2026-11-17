@@ -874,6 +874,11 @@ along with this software (see the LICENSE.md file). If not, see
             const isAdmin = ec.artifactExecution.authzDisabled() || ec.user.isInGroup('ADMIN')
             if (repositoryKind === 'remote' && !isAdmin) { ec.message.addError(ec.l10n.localize('Only an administrator adds a mirror')); return }
             if (repositoryKind === 'remote' && !remoteUrl) { ec.message.addError(ec.l10n.localize('A mirror needs the URL to fetch')); return }
+            // a credential in the URL would be kept in clear and shown with the repository: it goes in username and
+            // accessToken (SEC-GIT-16); an ssh user (git@host) is not one
+            const userinfo = (/^[a-z][a-z0-9+.-]*:\/\/([^\/?#]*)@/i.exec(String(remoteUrl || '')) || [])[1]
+            if (repositoryKind === 'remote' && userinfo != null && (userinfo.includes(':') || /^https?:/i.test(String(remoteUrl)))) {
+                ec.message.addError(ec.l10n.localize('A mirror URL has no user or password in it: give them as the username and access token')); return }
             const given = !!repositoryId
             if (!repositoryId) repositoryId = `WIKI_${wikiSpaceId}`
             const existing = ec.entity.find('moqui.resource.GitRepository').condition('repositoryId', repositoryId).disableAuthz().one()

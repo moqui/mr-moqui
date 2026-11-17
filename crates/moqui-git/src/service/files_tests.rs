@@ -2975,3 +2975,30 @@ fn a_webdav_lock_holds_every_writer_of_that_file_and_nothing_beside_it() {
     }
     logout();
 }
+
+/// A mirror drive's credential goes in its username and access token, not in its URL, where it would be kept in clear
+/// and shown with the drive; an ssh user is not a credential (SEC-GIT-16).
+#[test]
+fn a_mirror_url_with_a_user_or_password_is_refused() {
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    install();
+    users(&facade);
+    login("alice");
+    let _authz = context.disable_authz();
+    for url in [
+        "https://bot:t0ken@git.example.com/app.git",
+        "https://bot@git.example.com/app.git",
+        "ssh://git:secret@git.example.com/app.git",
+    ] {
+        refused(
+            "create#Drive",
+            &[
+                ("driveName", text("Mirror")),
+                ("storage", text("mirror")),
+                ("remoteUrl", text(url)),
+            ],
+            "user or password",
+        );
+    }
+}

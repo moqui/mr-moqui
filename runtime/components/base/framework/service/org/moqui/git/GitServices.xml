@@ -1120,9 +1120,10 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
     <service verb="store" noun="GitWebhook">
-        <description>Create or update a webhook: an http or https URL, the events (push, tag, merge_request; all when
-            empty), the secret its deliveries are signed with (kept when left empty on an update), active. Needs delete
-            on the repository.</description>
+        <description>Create or update a webhook: an https URL (http only with git-server webhook-private-network), with
+            no user or password in it, the events (push, tag, merge_request; all when empty), the secret its
+            deliveries are signed with (kept when left empty on an update), active. Needs delete on the
+            repository.</description>
         <in-parameters>
             <parameter name="webhookId"/>
             <parameter name="repositoryId" required="true"/>
@@ -1139,6 +1140,9 @@ along with this software (see the LICENSE.md file). If not, see
                 if (!access.canDelete) { ec.message.addError(ec.resource.expand('You may not change the webhooks of ${repositoryId}', '', {repositoryId})); return }
                 const target = String(url).trim()
                 if (!/^https?:\/\/[^\s/]+/.test(target)) { ec.message.addError(ec.l10n.localize('A webhook URL is http or https')); return }
+                // as its deliveries check it: https (http only on a private network), no user or password in it (SEC-GIT-16)
+                ec.service.sync().name('org.moqui.git.GitServices.check#GitWebhookUrl').parameter('url', target).call()
+                if (ec.message.hasError()) return
                 const known = ['push', 'tag', 'merge_request']
                 const list = String(events || '').split(',').map((item) => item.trim()).filter((item) => item)
                 const unknown = list.filter((item) => !known.includes(item))
@@ -1177,6 +1181,12 @@ along with this software (see the LICENSE.md file). If not, see
                 hook.delete()
             ]]></script>
         </actions>
+    </service>
+    <service verb="check" noun="GitWebhookUrl" type="rust" location="moqui_git::service::hosting::check_webhook_url"
+            allow-remote="false" transaction="ignore">
+        <description>Whether a webhook may be sent to url, as each delivery checks it: https, or http only with
+            git-server webhook-private-network, and no user or password in it. An error says why not.</description>
+        <in-parameters><parameter name="url" required="true"/></in-parameters>
     </service>
     <service verb="test" noun="GitWebhook" type="rust" location="moqui_git::service::hosting::test_webhook"
             transaction="ignore">
