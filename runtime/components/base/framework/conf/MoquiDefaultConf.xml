@@ -1436,7 +1436,9 @@
         session). protocol: smtp, or lmtp (LHLO, and a reply per recipient after the data). starttls: offer STARTTLS,
         with the tls-cert-file and tls-key-file pair (see the smtp_tls_ properties) or else runtime/cert by the name the
         gateway asks for or hostname; with no certificate the listener does not start. require-tls: refuse MAIL before
-        STARTTLS. chunking: BDAT (RFC 3030). dsn: the DSN parameters (RFC 3461) and "delivered" reports.
+        STARTTLS. chunking: BDAT (RFC 3030). dsn: the DSN parameters (RFC 3461) and "delivered" reports; a delivered
+        report goes only when the sender is authenticated: authserv-id is set and its Authentication-Results show
+        spf=pass, or dmarc=pass with header.from aligned with the envelope sender's domain.
     -->
     <smtp-server listen-port="${smtp_listen_port}" listen-host="${smtp_listen_host}"
             allowed-addresses="${smtp_allowed_addresses}" hostname="${smtp_hostname}" authserv-id="${smtp_authserv_id}"

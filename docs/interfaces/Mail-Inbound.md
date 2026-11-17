@@ -154,7 +154,11 @@ With `dsn="true"` the listener advertises `DSN` and takes the parameters the gat
 `Original-Recipient` field on its copy. The recipients whose `NOTIFY` has `SUCCESS` and whose account stored the message
 get one "delivered" report (`multipart/report`, RFC 3464, with the message's header) to the envelope sender, from the
 null reverse path, through the outgoing server of the first such account (usually the gateway); an account with no
-outgoing server, or a send that fails, is logged and the mail stays delivered. The gateway's resend after a `451` tells
+outgoing server, or a send that fails, is logged and the mail stays delivered. The report goes only when the sender is
+authenticated, so it is never backscatter to an address someone else wrote: `smtp_authserv_id` is set (in internet mode
+it always is) and the kept `Authentication-Results` show `spf=pass`, or `dmarc=pass` with its `header.from` aligned
+with the envelope sender's domain (the same domain, or one a subdomain of the other). Otherwise it is logged and not
+sent. The gateway's resend after a `451` tells
 nothing again. Failures need no DSN from mr-moqui: it refuses at the time and the gateway reports them. With `dsn` off
 the gateway handles `NOTIFY=SUCCESS` itself (Postfix sends a "relayed" notice).
 

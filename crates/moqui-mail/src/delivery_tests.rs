@@ -765,7 +765,7 @@ fn a_delivered_report_goes_to_the_sender_for_notify_success() {
         "<dsn@example.org>",
         "Tell me",
         "sales@example.com, support@example.com",
-        "",
+        "Authentication-Results: gw.example.com; spf=pass smtp.mailfrom=example.org\r\n",
     );
     let envelope = Envelope {
         dsn_envid: "QQ314159".to_string(),
@@ -803,6 +803,45 @@ fn a_delivered_report_goes_to_the_sender_for_notify_success() {
         .iter()
         .all(|delivery| delivery.result == Ok(Outcome::Duplicate)));
     assert_eq!(sink.sent().len(), 1, "a resend tells nothing again");
+
+    // SEC-MAIL-06: only an authenticated sender is told, under a set authserv-id
+    let gw = "gw.example.com";
+    let cases = [
+        (
+            gw,
+            gw,
+            "spf=fail smtp.mailfrom=example.org; dmarc=pass header.from=example.org",
+            true,
+        ),
+        (gw, gw, "spf=softfail; dmarc=pass header.from=news.example.org", true),
+        (gw, gw, "spf=fail; dmarc=pass header.from=bank.example", false),
+        (
+            gw,
+            gw,
+            "spf=fail; dmarc=pass (header.from=example.org) header.from=bank.example",
+            false,
+        ),
+        (gw, gw, "none", false),
+        (gw, "evil.example", "spf=pass smtp.mailfrom=example.org", false),
+        ("", gw, "spf=pass smtp.mailfrom=example.org", false),
+    ];
+    for (index, (authserv, writer, results, told)) in cases.into_iter().enumerate() {
+        let before = sink.sent().len();
+        let raw = plain(
+            &format!("<dsn{index}@example.org>"),
+            "Tell me",
+            "sales@example.com",
+            &format!("Authentication-Results: {writer}; {results}\r\n"),
+        );
+        let options = Options {
+            authserv_id: authserv.to_string(),
+            ..options()
+        };
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let report = deliver(&facade, raw.as_bytes(), &envelope, &recipients[..1], &options).unwrap();
+        stored(&report, &sales);
+        assert_eq!(sink.sent().len(), before + usize::from(told), "{authserv}: {results}");
+    }
 }
 
 // The message text helpers, with no database: header fields, the gateway's verdict, the trace fields and the
@@ -810,8 +849,8 @@ fn a_delivered_report_goes_to_the_sender_for_notify_success() {
 
 mod text {
     use crate::delivery::{
-        authserv_of, authserv_warning, delivered_report, field_name_value, header_fields, says_yes, split_head,
-        verdict, with_trace, Envelope, RecipientDsn, Recipients,
+        authserv_of, authserv_warning, delivered_report, field_name_value, header_fields, notice_authenticated,
+        relaxed_aligned, says_yes, split_head, verdict, with_trace, Envelope, RecipientDsn, Recipients,
     };
     use crate::store::parse_message;
 
@@ -858,6 +897,28 @@ mod text {
             ]),
             "spf=fail dmarc=fail"
         );
+    }
+
+    /// SEC-MAIL-06: a delivered notice needs a trusted spf=pass, or dmarc=pass aligned with the envelope sender.
+    #[test]
+    fn a_delivered_notice_needs_an_authenticated_sender() {
+        let ok = |id: &str, value: &str| notice_authenticated(id, &[value.to_string()], "dan@mail.example.org");
+        assert!(ok("mx", "mx; spf=pass smtp.mailfrom=mail.example.org"));
+        assert!(ok("mx", "mx; spf=none; dmarc=pass (p=reject) header.from=example.org"));
+        assert!(!ok("mx", "mx; spf=fail; dmarc=pass header.from=example.net"));
+        assert!(!ok("mx", "mx; spf=fail; dmarc=pass"));
+        assert!(!ok("mx", "mx; dkim=pass header.d=mail.example.org"));
+        assert!(!ok(
+            "mx",
+            "mx; spf=fail (spf=pass); dmarc=fail header.from=mail.example.org"
+        ));
+        assert!(!ok("", "mx; spf=pass smtp.mailfrom=mail.example.org"));
+        assert!(!notice_authenticated("mx", &[], "dan@example.org"));
+        assert!(relaxed_aligned("Example.org.", "example.org"));
+        assert!(relaxed_aligned("a.example.org", "example.org"));
+        assert!(!relaxed_aligned("a.example.org", "b.example.org"));
+        assert!(!relaxed_aligned("evilexample.org", "example.org"));
+        assert!(!relaxed_aligned("org", "example.org"));
     }
 
     #[test]
