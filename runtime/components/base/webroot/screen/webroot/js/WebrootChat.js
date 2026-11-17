@@ -1187,6 +1187,61 @@
         numberOptions(list) {
             return (list || []).map((number) => ({ value: number.phoneNumber, label: number.phoneNumber + (number.description ? " · " + number.description : "") }));
         },
+        // ---- a message's Info (Comms-Messaging §4, COM-UI-008): only what the server knows ----
+        // event: as get#Timeline gives it (eventSeq, sentDate, senderUserId, senderExternal, delivery, threadRootEventSeq);
+        // members: the room's memberList, whose lastReadEventSeq is a position ("has read up to here or later") and is blank
+        // for another member with read receipts off; opts: {me, receipts (false: the viewer's read receipts are off), inThread,
+        // limit (the names shown, 8)}. Answers {sent (millis), from (the network a bridged message came from), delivered (per
+        // network, only for a message that went out on a bridge: [{name, state, receipt, error}]), readBy (null in a thread,
+        // which has no read markers; {off: true} when the viewer's receipts are off; else {people, more, count}), thread}.
+        // Delivery to a member's device is never in it: the server does not know it, and a push acknowledgement is not it.
+        messageInfo(event, members, opts) {
+            const it = event || {};
+            const options = opts || {};
+            const seq = Number(it.eventSeq);
+            const thread = !!options.inThread || (it.threadRootEventSeq != null && it.threadRootEventSeq !== "");
+            const destinations = (it.delivery && it.delivery.destinations) || [];
+            const delivered = destinations.length ? destinations.map((one) => ({ name: one.networkName || one.bridgeName || "",
+                state: one.state || "pending", receipt: one.receipt || null, error: one.error || null })) : null;
+            let readBy = null;
+            if (!thread && options.receipts === false) readBy = { off: true };
+            else if (!thread) {
+                const people = (members || []).filter((member) => member && member.userId && member.userId !== options.me && member.userId !== it.senderUserId
+                    && !member.isAgent && member.lastReadEventSeq != null && member.lastReadEventSeq !== "" && Number(member.lastReadEventSeq) >= seq)
+                    .map((member) => ({ userId: member.userId, name: member.name || member.userId }));
+                const limit = options.limit || 8;
+                readBy = { people: people.slice(0, limit), more: Math.max(0, people.length - limit), count: people.length };
+            }
+            return { sent: it.sentDate != null && it.sentDate !== "" ? Number(it.sentDate) : null,
+                from: it.senderExternal ? (it.senderExternal.networkName || it.senderExternal.network || tr("another network")) : null, delivered, readBy, thread };
+        },
+        // Info as lines [{key, label, text}] (the dialog's, and what a test reads): when is fullTime(millis). A read receipt is
+        // never said to be missing: an empty Read by says who is not listed, and receipts off say so.
+        messageInfoLines(info, when) {
+            const lines = [];
+            if (info.sent != null) lines.push({ key: "sent", label: tr("Sent"), text: when ? when(info.sent) : String(info.sent) });
+            if (info.from) lines.push({ key: "from", label: tr("Came from"), text: info.from });
+            const STATES = { pending: tr("Sending"), failed: tr("Not delivered"), uncertain: tr("May not have arrived") };
+            const RECEIPTS = { delivered: tr("Delivered: the network's receipt says so"), sent: tr("Sent on by the network"),
+                unconfirmed: tr("Taken by the network; it has not confirmed delivery") };
+            for (const one of info.delivered || []) {
+                const text = one.state === "accepted" ? (RECEIPTS[one.receipt] || tr("Taken by the network")) : (STATES[one.state] || one.state);
+                lines.push({ key: "delivered", label: one.name || tr("Bridge"), text: text + (one.error && one.state !== "accepted" ? ": " + one.error : ""), state: one.state });
+            }
+            if (info.readBy && info.readBy.off) lines.push({ key: "read", label: tr("Read by"), text: tr("Your read receipts are off, so you do not see who has read it") });
+            else if (info.readBy) {
+                const names = info.readBy.people.map((person) => person.name);
+                const text = !names.length ? tr("No one yet, of those with read receipts on")
+                    : names.join(", ") + (info.readBy.more ? " " + tr("and {count} more").replace("{count}", info.readBy.more) : "");
+                lines.push({ key: "read", label: tr("Read by"), text, count: info.readBy.count });
+            }
+            const notes = [];
+            if (info.thread) notes.push(tr("A thread has no read receipts."));
+            else if (info.readBy && !info.readBy.off) notes.push(tr("People with read receipts off are not listed. Read by means read up to here or later."));
+            notes.push(tr("Delivery to each person's devices is not known to the server."));
+            lines.push({ key: "note", label: "", text: notes.join(" ") });
+            return lines;
+        },
         // ---- the E2EE label (Comms-Messaging §6.2, its one table; COM-UI-001) ----
         // A lock means end-to-end encrypted and nothing else (§6.1 rule 6): an encrypted room has it, with a check when every
         // device in it is verified; any other room has the open lock, and a public or record room no banner. A bridge says

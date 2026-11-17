@@ -22,7 +22,11 @@ along with this software (see the LICENSE.md file). If not, see
     its messages go and whether a bridge is not connected; an external member's messages carry their network, and each message
     of a bridged room its delivery, with Send again for one that failed or is uncertain (its sender or a moderator). Threads,
     reactions, files, polls and the room's settings (its bridges' mappings among them) are the browser's; the terminal names each
-    mapping with its name there and which way it carries. An encrypted room (C7) is read and written only in a
+    mapping with its name there and which way it carries. Each message has Info (infoSeq, Comms-Messaging §4): when it was
+    sent, its delivery to each network of a bridged room (from its delivery rows) and who has read up to it (the members'
+    read markers, with "and N more"; not in a thread, and not where the user's or the member's read receipts are off: it
+    says so, never "not read"); delivery to a person's devices is not known, and it says that too. The emoji picker is
+    the browser's. An encrypted room (C7) is read and written only in a
     browser, which holds its keys: the terminal lists its messages as "Encrypted message" and says to open it in a browser,
     and its send refuses (reasonCode encryptedRoom from send#Message). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
@@ -30,6 +34,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <parameter name="chatRoomId"/>
     <parameter name="limit"/>
+    <parameter name="infoSeq"/>
 
     <!-- a message of plain text, as paragraphs of light HTML -->
     <transition name="send">
@@ -164,7 +169,7 @@ along with this software (see the LICENSE.md file). If not, see
                         const failed = delivery ? Array.from(delivery.destinations || []).find((destination) => destination.error && destination.state !== 'accepted') : null
                         const retryIds = delivery && delivery.retryable && (event.senderUserId === ec.user.userId || canModerate)
                                 ? Array.from(delivery.destinations || []).filter((destination) => destination.retryable).map((destination) => destination.chatBridgeDeliveryId).join(',') : ''
-                        return {eventSeq: event.eventSeq, senderName: (event.senderName || names[event.senderUserId] || '')
+                        return {eventSeq: event.eventSeq, isMessage: event.type === 'message', senderName: (event.senderName || names[event.senderUserId] || '')
                                 + (event.senderExternal ? ' (' + (event.senderExternal.networkName || ec.l10n.localize('Outside')) + ')' : ''),
                             timeText: when(event.sentDate), text: text,
                             deliveryText: delivery ? ec.l10n.localize(STATES[delivery.state] || delivery.state) + (failed ? ': ' + failed.error : '') : '',
@@ -186,6 +191,41 @@ along with this software (see the LICENSE.md file). If not, see
                             countText: counts, lastText: last ? (last.senderName ? last.senderName + ': ' : '') + (last.encrypted ? ec.l10n.localize('Encrypted message') : last.snippet || '') : '',
                             timeText: last ? when(last.sentDate) : ''}
                     })
+                }
+            }
+            // Info of one message (infoSeq): the event read again with the members' read markers (get#Timeline, which checks
+            // the room), as moqui.chat.messageInfo words it in the browser
+            infoList = []
+            infoNote = ''
+            if (room && infoSeq) {
+                const page = ec.service.sync().name('org.moqui.chat.ChatServices.get#Timeline').parameters({chatRoomId: chatRoomId,
+                    eventSeq: Number(infoSeq), limit: 1}).call() || {}
+                const event = Array.from(page.eventList || []).find((one) => Number(one.eventSeq) === Number(infoSeq))
+                if (event && event.type === 'message') {
+                    const say = (label, text) => infoList.push({label: ec.l10n.localize(label), text: text})
+                    say('Sent', ec.l10n.format(new Date(Number(event.sentDate)), 'MMM d, yyyy, h:mm a'))
+                    if (event.senderExternal) say('Came from', event.senderExternal.networkName || event.senderExternal.network || '')
+                    const RECEIPTS = {delivered: "Delivered: the network's receipt says so", sent: 'Sent on by the network',
+                        unconfirmed: 'Taken by the network; it has not confirmed delivery'}
+                    const STATES = {pending: 'Sending', failed: 'Not delivered', uncertain: 'May not have arrived'}
+                    for (const one of Array.from((event.delivery && event.delivery.destinations) || [])) {
+                        const text = one.state === 'accepted' ? ec.l10n.localize(RECEIPTS[one.receipt] || 'Taken by the network')
+                            : ec.l10n.localize(STATES[one.state] || one.state)
+                        infoList.push({label: one.networkName || one.bridgeName || ec.l10n.localize('Bridge'),
+                            text: text + (one.error && one.state !== 'accepted' ? ': ' + one.error : '')})
+                    }
+                    const thread = event.threadRootEventSeq != null
+                    if (thread) infoNote = ec.l10n.localize('A thread has no read receipts.')
+                    else if (ec.user.getPreference('CHAT_READ_RECEIPTS') === 'N') say('Read by', ec.l10n.localize('Your read receipts are off, so you do not see who has read it'))
+                    else {
+                        const readers = Array.from(page.memberList || []).filter((member) => member.userId && member.userId !== ec.user.userId
+                                && member.userId !== event.senderUserId && !member.isAgent && member.lastReadEventSeq != null
+                                && Number(member.lastReadEventSeq) >= Number(event.eventSeq)).map((member) => member.name || member.userId)
+                        say('Read by', !readers.length ? ec.l10n.localize('No one yet, of those with read receipts on')
+                            : readers.slice(0, 8).join(', ') + (readers.length > 8 ? ' ' + fill('and {count} more', {count: readers.length - 8}) : ''))
+                        infoNote = ec.l10n.localize('People with read receipts off are not listed. Read by means read up to here or later.')
+                    }
+                    infoNote = (infoNote ? infoNote + ' ' : '') + ec.l10n.localize("Delivery to each person's devices is not known to the server.")
                 }
             }
             roomTitle = room ? (room.displayName || room.roomName || chatRoomId) : ''
@@ -235,7 +275,21 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="retryIds"><default-field title="">
                     <link url="retryDelivery" link-type="hidden-form-link" text="Send again" condition="retryIds.length &gt; 0"
                             parameter-map="{chatRoomId:chatRoomId, deliveryIds:retryIds}"/></default-field></field>
+                <field name="infoLink"><default-field title="">
+                    <link url="../Chat" link-type="anchor" text="Info" condition="isMessage" parameter-map="{chatRoomId:chatRoomId, infoSeq:eventSeq}"/></default-field></field>
             </form-list>
+            <section name="ChatTuiInfo" condition="infoList.length"><widgets>
+                <container style="row items-center q-mt-sm">
+                    <label type="h6" text="Message info" style="q-my-none"/>
+                    <container style="col"/>
+                    <link url="../Chat" text="Close" parameter-map="{chatRoomId:chatRoomId}"/>
+                </container>
+                <form-list name="ChatTuiInfoLines" list="infoList" skip-form="true" paginate="false">
+                    <field name="label"><default-field title=""><display style="text-weight-medium"/></default-field></field>
+                    <field name="text"><default-field title=""><display/></default-field></field>
+                </form-list>
+                <label type="p" text="${infoNote}" style="text-caption m-muted"/>
+            </widgets></section>
             <section name="ChatTuiNoEvents" condition="!eventList.length"><widgets>
                 <label type="p" text="No messages yet" style="m-muted"/>
             </widgets></section>

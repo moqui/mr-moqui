@@ -884,3 +884,57 @@ test("who could not read my message is kept per account in this browser: from it
         moqui.storageScope = priorScope;
     }
 });
+
+test("Info (Comms-Messaging §4, COM-UI-008): Sent, a bridged message's delivery per network, Read by from read markers; receipts off on either side; a thread", () => {
+    const members = [{ userId: "ann", name: "Ann", lastReadEventSeq: 3 }, { userId: "bob", name: "Bob", lastReadEventSeq: 9 },
+        { userId: "cy", name: "Cy", lastReadEventSeq: 5 }, { userId: "dee", name: "Dee", lastReadEventSeq: 4 },
+        // receipts off: the server blanks the marker for others
+        { userId: "eve", name: "Eve", lastReadEventSeq: null }, { userId: "agent", name: "Helper", isAgent: true, lastReadEventSeq: 9 }];
+    const message = event({ eventSeq: 5, sentDate: 1000, senderUserId: "ann" });
+    const when = (millis) => "at " + millis;
+    const texts = (lines) => lines.map((line) => line.text).join(" | ");
+    // read up to here or later; not me, not the sender, not an agent, not one whose receipts are off
+    const info = chat.messageInfo(message, members, { me: "ann" });
+    assert.deepEqual(info.readBy.people.map((person) => person.userId), ["bob", "cy"]);
+    assert.equal(info.delivered, null, "a message that went out on no bridge has no delivery line");
+    assert.equal(info.sent, 1000);
+    let lines = chat.messageInfoLines(info, when);
+    assert.deepEqual(lines.map((line) => line.key), ["sent", "read", "note"]);
+    assert.equal(lines[0].text, "at 1000");
+    assert.equal(lines[1].text, "Bob, Cy");
+    assert.ok(lines[2].text.includes("read receipts off are not listed") && lines[2].text.includes("devices is not known"));
+    // and N more
+    const many = Array.from({ length: 11 }, (unused, n) => ({ userId: "u" + n, name: "User " + n, lastReadEventSeq: 6 }));
+    const more = chat.messageInfo(message, many, { me: "ann", limit: 8 });
+    assert.equal(more.readBy.people.length, 8);
+    assert.equal(more.readBy.more, 3);
+    assert.ok(chat.messageInfoLines(more, when)[1].text.endsWith("User 7 and 3 more"));
+    // no one has read up to it: said so, never "not read"
+    const none = chat.messageInfoLines(chat.messageInfo(event({ eventSeq: 99, senderUserId: "ann" }), members, { me: "ann" }), when);
+    assert.equal(none[1].text, "No one yet, of those with read receipts on");
+    // the viewer's receipts off: no names, and it says why
+    const off = chat.messageInfo(message, members, { me: "ann", receipts: false });
+    assert.deepEqual(off.readBy, { off: true });
+    lines = chat.messageInfoLines(off, when);
+    assert.equal(lines[1].text, "Your read receipts are off, so you do not see who has read it");
+    assert.ok(!/not read\b/i.test(texts(lines)) && !texts(lines).includes("Bob"));
+    // a bridged message: each network's delivery, from its delivery row
+    const bridged = event({ eventSeq: 5, sentDate: 1000, senderUserId: "ann", delivery: { state: "failed", destinations: [
+        { networkName: "SMS", state: "accepted", receipt: "delivered" }, { bridgeName: "Ops Slack", state: "failed", error: "Channel archived" },
+        { networkName: "Telegram", state: "uncertain" }, { networkName: "Matrix", state: "accepted" }, { networkName: "XMPP", state: "pending" }] } });
+    lines = chat.messageInfoLines(chat.messageInfo(bridged, members, { me: "ann" }), when).filter((line) => line.key === "delivered");
+    assert.deepEqual(lines.map((line) => line.label + ": " + line.text), ["SMS: Delivered: the network's receipt says so", "Ops Slack: Not delivered: Channel archived",
+        "Telegram: May not have arrived", "Matrix: Taken by the network", "XMPP: Sending"]);
+    // a thread: Sent and Delivered only, it has no read markers
+    const reply = event({ eventSeq: 7, sentDate: 2000, senderUserId: "ann", threadRootEventSeq: 5, delivery: bridged.delivery });
+    const thread = chat.messageInfo(reply, members, { me: "ann" });
+    assert.equal(thread.readBy, null);
+    assert.equal(thread.thread, true);
+    lines = chat.messageInfoLines(thread, when);
+    assert.deepEqual(Array.from(new Set(lines.map((line) => line.key))), ["sent", "delivered", "note"]);
+    assert.ok(lines[lines.length - 1].text.includes("A thread has no read receipts."));
+    assert.equal(chat.messageInfo(message, members, { me: "ann", inThread: true }).readBy, null, "the root shown in its thread too");
+    // a message that came in from a network says where from
+    const inbound = chat.messageInfo(event({ eventSeq: 5, senderUserId: null, senderExternal: { network: "sms", networkName: "SMS" } }), members, { me: "ann" });
+    assert.equal(chat.messageInfoLines(inbound, when).find((line) => line.key === "from").text, "SMS");
+});

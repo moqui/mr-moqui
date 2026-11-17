@@ -910,6 +910,7 @@ fn client_components_are_precompiled() {
             &read("js/WebrootAssist.js"),
             &read("js/WebrootPush.js"),
             &read("js/WebrootExt.js"),
+            &read("js/WebrootEmoji.js"),
             &read("js/WebrootTerminal.js"),
             &read("js/WebrootVue.qvt.js"),
         ],

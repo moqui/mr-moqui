@@ -50,7 +50,18 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   chat) takes one person, several (with a name they become a private room), or, for a user with a number that texts, a
   phone number typed in its search, which opens that number's room as Calls' Text a number does. On a phone a swipe to
   the right on a message replies to it, Attach offers the camera, the gallery or a file, and Back closes a menu or sheet,
-  then a pane or thread, then the room. When the last owner leaves, the
+  then a pane or thread, then the room. A message's actions are one list wherever they show: a long press on a phone
+  opens them as a sheet, a right click on a desktop row (not on a link, an editor or selected text, which keep the
+  browser's menu) opens them at the pointer, and the hover toolbar's More has them too. The sheet and the right-click
+  menu start with the quick reactions and "+", which opens the emoji picker (a search by name, the groups, and your
+  recent emoji, kept in this browser); then Reply, Reply in thread, Copy text, Copy link, Forward, Edit, Pin, Mark
+  unread from here, the apps' actions, File on a record, Info and Delete. A tap on a reaction adds or takes back yours;
+  a long press on it (or a hover) lists who reacted, and the same on a poll option lists who voted. **Info** says only
+  what the server knows: when the message was sent, for a message that went to another network (SMS, a bridge) its
+  delivery there per network, and who has read up to it (the members' read markers, "and N more"). A member with read
+  receipts off is not listed, and with your own off you see no names: Info says so, and never "not read". A thread has
+  no read markers, so its Info shows sent and delivery only; delivery to someone's devices is not known and is never
+  shown. The terminal's room has Info for each message, as text. When the last owner leaves, the
   longest-standing moderator (else member) becomes an owner: Leave names them, and the room says they became an owner
   when the owner left.
 - <a id="encrypted-rooms"></a>**Encrypted rooms** (C7). New room has Encrypted for a private room (and an encrypted direct

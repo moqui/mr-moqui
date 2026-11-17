@@ -4630,6 +4630,113 @@
               return (_openBlock(), _createElementBlock("span", { class: "m-elapsed" }, _toDisplayString(_ctx.text), 1))
             }
         } },
+        "m-emoji-picker": { hash: "76b61247", make: function (Vue) {
+            const { resolveComponent: _resolveComponent, createVNode: _createVNode, withModifiers: _withModifiers, withKeys: _withKeys, withCtx: _withCtx, renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, normalizeClass: _normalizeClass, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementVNode: _createElementVNode } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_icon = _resolveComponent("q-icon")
+              const _component_q_input = _resolveComponent("q-input")
+              const _component_q_tooltip = _resolveComponent("q-tooltip")
+              const _component_q_btn = _resolveComponent("q-btn")
+              const _component_q_spinner = _resolveComponent("q-spinner")
+
+              return (_openBlock(), _createElementBlock("div", { class: "m-emoji-picker column no-wrap" }, [
+                _createVNode(_component_q_input, {
+                  modelValue: _ctx.query,
+                  "onUpdate:modelValue": $event => ((_ctx.query) = $event),
+                  dense: "",
+                  outlined: "",
+                  clearable: "",
+                  type: "search",
+                  class: "q-ma-sm m-emoji-search",
+                  placeholder: _ctx.t('Search emoji'),
+                  "aria-label": _ctx.t('Search emoji'),
+                  onKeydown: _withKeys(_withModifiers(_ctx.first, ["prevent"]), ["enter"])
+                }, {
+                  prepend: _withCtx(() => [
+                    _createVNode(_component_q_icon, {
+                      name: "sym_o_search",
+                      size: "18px"
+                    })
+                  ]),
+                  _: 1
+                }, 8, ["modelValue", "onUpdate:modelValue", "placeholder", "aria-label", "onKeydown"]),
+                (!_ctx.searching)
+                  ? (_openBlock(), _createElementBlock("div", {
+                      key: 0,
+                      class: "row no-wrap q-px-xs m-emoji-tabs",
+                      role: "tablist"
+                    }, [
+                      (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.tabs, (tab) => {
+                        return (_openBlock(), _createBlock(_component_q_btn, {
+                          key: tab.slug,
+                          flat: "",
+                          dense: "",
+                          round: "",
+                          size: "sm",
+                          role: "tab",
+                          icon: tab.icon,
+                          "aria-label": tab.label,
+                          "aria-selected": tab.slug === _ctx.current ? 'true' : 'false',
+                          class: _normalizeClass(tab.slug === _ctx.current ? 'text-primary m-emoji-tab-on' : 'm-muted'),
+                          "data-group": tab.slug,
+                          onClick: $event => (_ctx.show(tab.slug))
+                        }, {
+                          default: _withCtx(() => [
+                            _createVNode(_component_q_tooltip, null, {
+                              default: _withCtx(() => [
+                                _createTextVNode(_toDisplayString(tab.label), 1)
+                              ]),
+                              _: 2
+                            }, 1024)
+                          ]),
+                          _: 2
+                        }, 1032, ["icon", "aria-label", "aria-selected", "class", "data-group", "onClick"]))
+                      }), 128))
+                    ]))
+                  : _createCommentVNode("", true),
+                _createElementVNode("div", {
+                  ref: "grid",
+                  class: "scroll m-emoji-grid"
+                }, [
+                  (!_ctx.loaded)
+                    ? (_openBlock(), _createElementBlock("div", {
+                        key: 0,
+                        class: "row justify-center q-pa-md"
+                      }, [
+                        _createVNode(_component_q_spinner, { size: "24px" })
+                      ]))
+                    : (_ctx.failed && !_ctx.shown.length)
+                      ? (_openBlock(), _createElementBlock("div", {
+                          key: 1,
+                          class: "text-caption m-muted q-pa-sm"
+                        }, _toDisplayString(_ctx.t('The emoji did not load')), 1))
+                      : (_openBlock(), _createElementBlock(_Fragment, { key: 2 }, [
+                          _createElementVNode("div", { class: "text-caption m-muted q-px-sm m-emoji-heading" }, _toDisplayString(_ctx.heading), 1),
+                          _createElementVNode("div", { class: "row q-px-xs" }, [
+                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.shown, (one) => {
+                              return (_openBlock(), _createElementBlock("button", {
+                                key: one[0],
+                                type: "button",
+                                class: "m-emoji-cell",
+                                title: one[1],
+                                "aria-label": one[1],
+                                "data-emoji": one[0],
+                                onClick: $event => (_ctx.pick(one[0]))
+                              }, _toDisplayString(one[0]), 9, ["title", "aria-label", "data-emoji", "onClick"]))
+                            }), 128))
+                          ]),
+                          (_ctx.searching && !_ctx.shown.length)
+                            ? (_openBlock(), _createElementBlock("div", {
+                                key: 0,
+                                class: "text-caption m-muted q-pa-sm m-emoji-none"
+                              }, _toDisplayString(_ctx.t('No emoji match')), 1))
+                            : _createCommentVNode("", true)
+                        ], 64))
+                ], 512)
+              ]))
+            }
+        } },
         "m-ext-actions": { hash: "4d9b8ce6", make: function (Vue) {
             const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createVNode: _createVNode, withCtx: _withCtx, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
 

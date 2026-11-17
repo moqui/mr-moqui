@@ -113,7 +113,7 @@
   },
   "notices": {
     "path": "NOTICES.md",
-    "sha256": "77289f911062ff12df7dafdd42eb3faf03fdad4c8404e03b6b55dc588548d523"
+    "sha256": "449e9a4e1ae3937b2786c47c50c57bf3cf72fe6d80ae8383e5f3d7c1524edfa9"
   },
   "libraries": [
     {
@@ -609,6 +609,25 @@
           "from": "countries-110m.json",
           "size": 107761,
           "sha256": "2516c915867c7baf18ddec727aec46c315541a07cfb3d79a6559b05d5e94eee8"
+        }
+      ]
+    },
+    {
+      "id": "emoji",
+      "name": "unicode-emoji-json",
+      "version": "0.9.0",
+      "license": "MIT",
+      "note": "The data is from unicode.org (the Unicode License v3 of its data files: https://www.unicode.org/license.txt).",
+      "source": "https://registry.npmjs.org/unicode-emoji-json/-/unicode-emoji-json-0.9.0.tgz",
+      "npm": "unicode-emoji-json@0.9.0",
+      "tarballIntegrity": "sha512-HdrQW/7SdbXUsTd8uTATv7LvQJkCSgbAgRCDCtOhQ6xn3EAx+xZHQtRniOXWJK3ywIqPegkNhP4U4EbuFsiQng==",
+      "build": "data-by-group.json made into {version, groups: [{slug, name, emoji: [[emoji, name]]}]}, the emoji of emoji_version 15.1 or earlier, in the order of the file.",
+      "files": [
+        {
+          "path": "emoji/emoji.json",
+          "from": "build",
+          "size": 52023,
+          "sha256": "2ff6f3c947fd61e523c062069e0cf26193188378ae0296de2cee699e895079e0"
         }
       ]
     },
