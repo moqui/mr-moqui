@@ -30,9 +30,32 @@
 //!   takes packets only from the SDP's address (on any port, for a NAT that changes ports), latches to the first
 //!   one's port, and drops everything else. Plain RTP is for a PBX on a private network, where the SDP's address is
 //!   where the media comes from.
+//! - **Where RTP may go.** The SDP names any address, so [`media_target_allowed`] keeps the host from aiming packets at
+//!   an address no phone can be: nothing to an unspecified, multicast or broadcast address, port 0, or the leg
+//!   socket's own address, and nothing to loopback or link-local unless the socket is bound in that scope (a phone on
+//!   the same machine in development). A private address is allowed: a phone behind NAT names one.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
+
+/// Whether RTP may be sent to `target` from a leg socket bound to `local` (SEC-COM-27): see the module docs.
+pub fn media_target_allowed(target: SocketAddr, local: IpAddr) -> bool {
+    let to = target.ip().to_canonical();
+    let local = local.to_canonical();
+    let link_local = |ip: IpAddr| match ip {
+        IpAddr::V4(v4) => v4.is_link_local(),
+        IpAddr::V6(v6) => v6.is_unicast_link_local(),
+    };
+    let broadcast = matches!(to, IpAddr::V4(v4) if v4.is_broadcast());
+    if target.port() == 0 || to.is_unspecified() || to.is_multicast() || broadcast {
+        return false;
+    }
+    if to.is_loopback() || link_local(to) {
+        // only within the scope the socket itself is bound in (loopback to loopback in development)
+        return (to.is_loopback() && local.is_loopback()) || (link_local(to) && link_local(local));
+    }
+    to != local
+}
 
 use moqui_rtc::audio::codec::{self, Codec};
 use moqui_rtc::audio::resample::Resampler;
