@@ -1543,10 +1543,7 @@ fn redirect_to_login(factory: &ExecutionContextFactory, job: &Job<'_>, info: &Sc
         || super::statics::report_active()
         || user::current_username()?.is_some()
         || user::is_anonymous()?
-        || !info
-            .render_defs()
-            .iter()
-            .any(|def| def.authentication == Authentication::Required)
+        || !path_requires_authentication(info)
     {
         return Ok(false);
     }
@@ -1579,23 +1576,31 @@ fn redirect_to_login(factory: &ExecutionContextFactory, job: &Job<'_>, info: &Sc
     Ok(true)
 }
 
-/// Every screen that renders and requires authentication needs a user. Anonymous access screens
-/// and `require-authentication="false"` screens do not. As in Java, an anonymous login (a service such
+/// A path with a screen that requires authentication needs a user. Anonymous access screens and
+/// `require-authentication="false"` screens do not. As in Java, an anonymous login (a service such
 /// as `send#EmailTemplate` that is `anonymous-view` rendering an email body) counts.
 fn check_authentication(info: &ScreenUrlInfo) -> Result<(), Error> {
     // The compatibility report looks at screens, not at who may see them.
     if super::statics::report_active() || user::current_username()?.is_some() || user::is_anonymous()? {
         return Ok(());
     }
-    for def in info.render_defs() {
-        if def.authentication == Authentication::Required {
-            return Err(Error::of_kind(
-                ErrorKind::AuthenticationRequired,
-                "Authentication required",
-            ));
-        }
+    if path_requires_authentication(info) {
+        return Err(Error::of_kind(
+            ErrorKind::AuthenticationRequired,
+            "Authentication required",
+        ));
     }
     Ok(())
+}
+
+/// Whether a screen of the path requires authentication: every screen from the root, not only those that render, so a
+/// `lastStandalone` fragment or a standalone screen does not take its parents out of the check, and a screen (or its
+/// transitions) under a parent that needs a user needs one too, whatever it says itself (SEC-RTE-09). The parents'
+/// always-actions run for it anyway.
+fn path_requires_authentication(info: &ScreenUrlInfo) -> bool {
+    info.path_defs
+        .iter()
+        .any(|def| def.authentication == Authentication::Required)
 }
 
 /// Artifact frames pushed for a request, popped in reverse when this drops. Anonymous-access
