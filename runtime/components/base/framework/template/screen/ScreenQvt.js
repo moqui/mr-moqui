@@ -1206,7 +1206,7 @@
             const options = widgetType === "select" ? optionList(sri.getFieldOptions(n)) : null;
             const value = n.attrs && n.attrs.value !== undefined ? xn(at(n, "value")) : null;
             w("<m-editable" + A({
-                id: nodeId(n), "label-type": at(n, "type") || "span", "label-value": empty ? "" : at(n, "encode") === "true" ? e(text).replace(/\n/g, "<br>") : text,
+                id: nodeId(n), "label-type": at(n, "type") || "span", "label-value": empty ? "" : at(n, "encode") === "false" ? text : e(text).replace(/\n/g, "<br>"),
                 url: url.url, ":url-parameters": js_(url.getParameterMap()), "parameter-name": at(n, "parameter-name") || "value",
                 "widget-type": widgetType, indicator: L("Saving"), tooltip: L("Click to edit"), cancel: L("Cancel"), submit: L("Save"),
                 placeholder: empty ? L("Click to edit") : null, value: value === null || value === "null" ? null : value,

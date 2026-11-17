@@ -930,6 +930,8 @@
     const NUMBER_TEXT = /^[-+]?\d+(\.\d+)?$/;
     qvt.helpers = {
         str: (value) => (value === null || value === undefined ? "" : String(value)),
+        // A text as HTML that shows it as it is, its line breaks as <br>: an editable's label (encode, the default, SEC-SCR-08).
+        enc: (value) => moqui.htmlEncode(value === null || value === undefined ? "" : String(value)).replace(/\n/g, "<br>"),
         dflt: (value, fallback) => (value === null || value === undefined || value === "" ? fallback : value),
         nul: (value) => (value === undefined || value === "" ? null : value),
         // The number checks of a field's browser rules, the same the server writes into the rule text

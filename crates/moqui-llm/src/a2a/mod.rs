@@ -229,7 +229,7 @@ pub(crate) fn log_in(request: &HttpRequest, bearer: bool, api_key: bool) -> Logi
             }
             if let Some((username, password)) = moqui_core::web::basic_credentials(header) {
                 if moqui_core::user::looks_like_app_password(&password)
-                    && moqui_core::user::login_app_password(&username, &password).is_ok()
+                    && moqui_core::user::login_app_password(&username, &password, "ai").is_ok()
                 {
                     return true;
                 }

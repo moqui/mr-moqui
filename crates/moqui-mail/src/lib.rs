@@ -125,6 +125,7 @@ fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), Strin
         rust_service!(map, poll_server)?;
         rust_service!(map, sync_account)?;
         rust_service!(map, sync_due_accounts)?;
+        rust_service!(map, check_full_mailboxes)?;
         rust_service!(map, discover_server)?;
         rust_service!(map, import_messages)?;
         rust_service!(map, export_message)?;
@@ -228,6 +229,8 @@ mail_service!(poll_server, inbound::poll_server);
 mail_service!(sync_account, sync::sync_account_service);
 #[cfg(feature = "imap")]
 mail_service!(sync_due_accounts, sync::sync_due_accounts);
+#[cfg(feature = "imap")]
+mail_service!(check_full_mailboxes, delivery::check_full_mailboxes);
 #[cfg(feature = "imap")]
 mail_service!(push_remote_changes, remote::push_changes);
 

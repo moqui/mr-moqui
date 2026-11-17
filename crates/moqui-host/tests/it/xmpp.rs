@@ -313,7 +313,7 @@ fn xmpp_clients_sign_in_chat_with_the_web_page_the_archive_upload_publish_and_re
         get(
             &call(
                 "org.moqui.impl.UserServices.create#UserAppPassword",
-                &[("name", Value::string("phone"))],
+                &[("name", Value::string("phone")), ("scope", Value::string("xmpp"))],
             ),
             "password",
         )
@@ -322,7 +322,7 @@ fn xmpp_clients_sign_in_chat_with_the_web_page_the_archive_upload_publish_and_re
         get(
             &call(
                 "org.moqui.impl.UserServices.create#UserAppPassword",
-                &[("name", Value::string("laptop"))],
+                &[("name", Value::string("laptop")), ("scope", Value::string("xmpp"))],
             ),
             "password",
         )

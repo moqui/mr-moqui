@@ -1062,8 +1062,9 @@
             const load = first(n, "editable-load");
             const widgetType = at(n, "widget-type") || "textarea";
             const labelValue = exp(at(n, "text"), n, "text", true);
+            // escaped unless encode="false", as the server's templates (SEC-SCR-08): m-editable shows its label as HTML
             const out = Object.assign({
-                "label-type": at(n, "type") || "span", ":label-value": labelValue, url: found.path, ":url-parameters": allParams(n, null, withInline(found, [])),
+                "label-type": at(n, "type") || "span", ":label-value": at(n, "encode") === "false" ? labelValue : "$mq.enc(" + labelValue + ")", url: found.path, ":url-parameters": allParams(n, null, withInline(found, [])),
                 "parameter-name": at(n, "parameter-name") || "value", "widget-type": widgetType, ":indicator": "ec.l10n.localize('Saving')",
                 ":tooltip": "ec.l10n.localize('Click to edit')", ":cancel": "ec.l10n.localize('Cancel')", ":submit": "ec.l10n.localize('Save')"
             });

@@ -413,6 +413,15 @@ fn create_app_password(
         add_error("name is required: the device or app the password is for");
         return Ok(BTreeMap::new());
     };
+    // the one protocol that takes it (SEC-COM-21)
+    let scope = text(parameters, "scope").unwrap_or_default();
+    if !crate::user::APP_PASSWORD_SCOPES.contains(&scope.as_str()) {
+        add_error(format!(
+            "scope is the protocol the password is for: one of {}",
+            crate::user::APP_PASSWORD_SCOPES.join(", ")
+        ));
+        return Ok(BTreeMap::new());
+    }
     if !super::recent_auth::require_recent_auth() {
         return Ok(BTreeMap::new());
     }
@@ -427,6 +436,7 @@ fn create_app_password(
     row.set("userId", Value::string(&user_id));
     row.set("name", Value::string(name.chars().take(255).collect::<String>()));
     row.set("passwordHash", Value::string(hashed));
+    row.set("scope", Value::string(&scope));
     row.set("createdDate", crate::user::now_value());
     row.create(facade)?;
     Ok(out([
@@ -517,7 +527,8 @@ fn get_scram_credentials(
     let mut ids = Vec::new();
     for row in rows.iter() {
         let field = |name: &str| row.get(name).map(to_plain_string).unwrap_or_default();
-        if field("scramSalt").is_empty() {
+        // one made for another protocol does not sign in to XMPP (SEC-COM-21)
+        if field("scramSalt").is_empty() || !(field("scope").is_empty() || field("scope") == "xmpp") {
             continue;
         }
         // the first salt is the user's; a row made with another (none should be) is left out
@@ -558,7 +569,7 @@ fn check_plain_password(
         return Ok(BTreeMap::new());
     };
     if !crate::user::looks_like_app_password(&password)
-        || crate::user::login_app_password(&username, &password).is_err()
+        || crate::user::login_app_password(&username, &password, "xmpp").is_err()
     {
         add_error("not an app password");
         return Ok(BTreeMap::new());
@@ -630,7 +641,14 @@ fn get_app_passwords(
         .iter()
         .map(|row| {
             let mut map = indexmap::IndexMap::default();
-            for field in ["appPasswordId", "name", "createdDate", "lastUsedDate", "revokedDate"] {
+            for field in [
+                "appPasswordId",
+                "name",
+                "scope",
+                "createdDate",
+                "lastUsedDate",
+                "revokedDate",
+            ] {
                 map.insert(field.to_string(), row.get(field).cloned().unwrap_or(Value::Null));
             }
             Value::Map(map)

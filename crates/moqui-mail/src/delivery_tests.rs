@@ -21,8 +21,8 @@
 use moqui_lib::object::Value;
 
 use super::delivery::{
-    deliver, find_recipient, over_quota, Envelope, Options, Outcome, RecipientAccount, RecipientDsn, RecipientIdentity,
-    RecipientMap, Recipients, Report,
+    check_full_mailboxes, deliver, find_recipient, over_quota, Envelope, Options, Outcome, RecipientAccount,
+    RecipientDsn, RecipientIdentity, RecipientMap, Recipients, Report, FULL_TOPIC,
 };
 use super::sync_tests::{
     alice, by_message_id, field, folder_id, install, map, now, ok, one, out_text, rows, setup, setup_inline, stamp,
@@ -253,6 +253,7 @@ fn recipient_map(facade: &EntityFacade) -> RecipientMap {
             account_kind_enum_id: field(row, "accountKindEnumId"),
             status_id: field(row, "statusId"),
             has_store_server: stores.contains(&field(row, "emailServerId")),
+            quota_full: !field(row, "quotaFullDate").is_empty(),
         })
         .collect();
     let identities: Vec<RecipientIdentity> = list("moqui.basic.email.EmailIdentity")
@@ -671,6 +672,23 @@ fn a_full_account_takes_no_more_mail_until_it_has_room() {
         over_quota(&facade, account).unwrap()
     };
     assert!(!full(&sales) && !full(&support), "under the default quota");
+    {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let mut topic = facade.make_value("moqui.security.user.NotificationTopic").unwrap();
+        topic.set("topic", Value::string(FULL_TOPIC));
+        topic.set("persistOnSend", Value::string("Y"));
+        topic.create(&facade).unwrap();
+    }
+    let marked = |account: &str| !field(&one(&facade, ACCOUNT, "emailAccountId", account), "quotaFullDate").is_empty();
+    let notices = || {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        facade
+            .find("moqui.security.user.NotificationMessage")
+            .unwrap()
+            .eq("topic", Value::string(FULL_TOPIC))
+            .count()
+            .unwrap()
+    };
     update(
         &facade,
         ACCOUNT,
@@ -679,6 +697,12 @@ fn a_full_account_takes_no_more_mail_until_it_has_room() {
     );
     assert!(full(&sales));
     assert!(!full(&support));
+    assert!(
+        marked(&sales) && !marked(&support),
+        "the full mark, which an edge node answers 452 by"
+    );
+    assert!(full(&sales));
+    assert_eq!(notices(), 1, "its users are told once");
     let second = plain("<q2@example.org>", "Two", "sales@example.com, support@example.com", "");
     let report = receive(&facade, &second, "dan@example.org", &both).unwrap();
     assert!(report.store_failed());
@@ -699,12 +723,36 @@ fn a_full_account_takes_no_more_mail_until_it_has_room() {
         &[("quotaBytes", Value::I64(1 << 30))],
     );
     assert!(!full(&sales));
+    assert!(!marked(&sales), "found under, the mark is cleared");
     let retry = receive(&facade, &second, "dan@example.org", &both).unwrap();
     stored(&retry, &sales);
     assert!(retry
         .deliveries
         .iter()
         .any(|delivery| delivery.email_account_id == support && delivery.result == Ok(Outcome::Duplicate)));
+
+    // a full account gets no mail that would check it again: the job clears the mark once it has room
+    update(
+        &facade,
+        ACCOUNT,
+        ("emailAccountId", &sales),
+        &[("quotaBytes", Value::I64(1))],
+    );
+    assert!(full(&sales) && marked(&sales));
+    assert_eq!(notices(), 2, "each time it fills up again");
+    update(
+        &facade,
+        ACCOUNT,
+        ("emailAccountId", &sales),
+        &[("quotaBytes", Value::I64(1 << 30))],
+    );
+    assert!(marked(&sales), "nothing checked it yet");
+    let out = {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        check_full_mailboxes(&std::collections::BTreeMap::new(), &facade).unwrap()
+    };
+    assert_eq!(out.get("clearedCount"), Some(&Value::I64(1)));
+    assert!(!marked(&sales));
 }
 
 /// A store that fails is that account's error (the listener's 451) and the other account keeps its copy; after the

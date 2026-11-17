@@ -610,7 +610,7 @@ fn authenticate_with(authorization: Option<&str>, api_key: Option<&str>) -> Resu
         if let Some((username, password)) = moqui_core::web::basic_credentials(header) {
             // an app password, as the DAV servers take it
             if moqui_core::user::looks_like_app_password(&password) {
-                if moqui_core::user::login_app_password(&username, &password).is_ok() {
+                if moqui_core::user::login_app_password(&username, &password, "git").is_ok() {
                     return Ok(true);
                 }
                 // not one, so an account password of that form: only the password login below counts as a failure

@@ -851,7 +851,7 @@
                 "data-widget": widget, "data-load-url": loadUrl ? loadUrl.url : null,
                 "data-load-params": loadUrl ? json(loadUrl.getParameterMap()) : null, "data-options": options.length ? json(options) : null,
                 "data-value": n.attrs && n.attrs.value !== undefined ? xn(at(n, "value")) : null, "data-empty": empty ? "true" : null, title: L("Click to edit")
-            }) + ">" + (empty ? '<span class="muted">' + e(L("Click to edit")) + "</span>" : at(n, "encode") === "true" ? e(text).replace(/\n/g, "<br>") : text) + "</" + type + ">");
+            }) + ">" + (empty ? '<span class="muted">' + e(L("Click to edit")) + "</span>" : at(n, "encode") === "false" ? text : e(text).replace(/\n/g, "<br>")) + "</" + type + ">");
         };
 
         // ---- containers ----

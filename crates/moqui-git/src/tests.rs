@@ -206,6 +206,26 @@ fn a_local_repository_is_a_bare_repository_on_disk() {
     }
 }
 
+/// An import from a caller's http(s) source connects only to a public address, the kind its source was checked for: a
+/// name that resolves to loopback by the time of the fetch is refused at resolution, with no connection made.
+#[test]
+fn an_import_from_an_https_source_connects_only_to_a_public_address() {
+    let fixture = fixture("db");
+    let _entered = fixture.context.enter();
+    define(&fixture.entity, "wiki", "db", None, None);
+    let provider = crate::provider(fixture.context.factory()).expect("git provider");
+    // a server on loopback, where the name localhost leads: the import must not reach it
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let refused = provider.import("wiki", Some(&format!("http://localhost:{port}/repo.git")));
+    assert!(refused.is_err());
+    assert!(
+        matches!(listener.accept(), Err(err) if err.kind() == std::io::ErrorKind::WouldBlock),
+        "the fetch connected to loopback"
+    );
+}
+
 #[test]
 fn a_db_repository_exports_and_imports_with_the_same_ids() {
     let fixture = fixture("db");

@@ -145,7 +145,7 @@ Accounts, passwords, second factors and the current user's keys.
 | `create#SingleUseAuthcCodes` | `userId*`, `numberOfCodes` → `singleUseCodes` |
 | `create#UserAccessToken`, `revoke#UserAccessToken` | `description`, `expireDays` → `accessToken`, `tokenId`, `loginKey`, `thruDate`. The token is shown once; revoke takes `tokenId` (or `loginKey`, the stored hash) |
 | `find#UserAccessTokens` | `includeEnded` → `accessTokenList` of the current user: `tokenId`, `description`, `fromDate`, `thruDate`; never a token or its hash |
-| `create#UserAppPassword`, `revoke#UserAppPassword`, `get#UserAppPasswords` | `name*` → `appPasswordId`, `password`: for a device on DAV or SFTP |
+| `create#UserAppPassword`, `revoke#UserAppPassword`, `get#UserAppPasswords` | `name*`, `scope*` (`dav`, `ssh`, `git`, `xmpp` or `ai`, the one protocol that takes it) → `appPasswordId`, `password` |
 | `create#UserSshKey`, `delete#UserSshKey` | `publicKey*`, `description` → `sshKeyId`, `fingerprint` |
 | `find#UserSshKeys` | `includeEnded` → `sshKeyList` of the current user: `sshKeyId`, `description`, `keyType`, `fingerprint`, `fromDate`, `thruDate` |
 | `get#UserDeviceKeys`, `revoke#UserDeviceKey`, `renew#UserDeviceKey` | The devices signed in by key (the desktop and mobile clients) |

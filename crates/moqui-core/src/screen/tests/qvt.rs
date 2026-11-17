@@ -1214,6 +1214,13 @@ fn a_section_in_a_list_cell_keeps_the_list_and_link_styles_are_expanded() {
     );
     // an empty editable without display-if-empty writes nothing
     assert!(!out.contains(r#"id="Hidden""#), "{out}");
+    // a record's text in an editable is escaped, as a label's (SEC-SCR-08): m-editable shows its label as HTML
+    assert!(
+        out.contains(
+            r#"id="NoteEdit_0" label-type="span" label-value="first &amp;lt;b&amp;gt;note&amp;lt;/b&amp;gt;""#
+        ),
+        "{out}"
+    );
 }
 
 /// `columns type="mobile"` are the columns of a request with `_uiType=mobile` (the client sends it below 600 px), as Java;

@@ -297,7 +297,7 @@ fn sftp_and_the_admin_shell_run_on_the_built_in_server() {
     moqui_core::user::internal_login_user("no.ssh").unwrap();
     let (out, errors) = sync(
         "org.moqui.impl.UserServices.create#UserAppPassword",
-        &[("name", Value::string("Script"))],
+        &[("name", Value::string("Script")), ("scope", Value::string("ssh"))],
     );
     assert!(errors.is_empty(), "{errors}");
     let app_password = to_plain_string(out.get("password").unwrap());
@@ -518,7 +518,7 @@ fn sftp_and_the_admin_shell_run_on_the_built_in_server() {
     // user with SSH_SHELL and SSH_SFTP too: no admin shell, no sftp-root, no agent-apps.
     let (out, errors) = sync(
         "org.moqui.impl.UserServices.create#UserAppPassword",
-        &[("name", Value::string("Sync client"))],
+        &[("name", Value::string("Sync client")), ("scope", Value::string("ssh"))],
     );
     assert!(errors.is_empty(), "{errors}");
     let john_app = to_plain_string(out.get("password").unwrap());

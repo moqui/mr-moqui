@@ -80,7 +80,7 @@ fn app_password(user_id: &str, name: &str) -> (String, String) {
     let authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let out = service(
         "org.moqui.impl.UserServices.create#UserAppPassword",
-        &[("name", Value::string(name))],
+        &[("name", Value::string(name)), ("scope", Value::string("dav"))],
     );
     drop(authz);
     moqui_core::user::logout().unwrap();

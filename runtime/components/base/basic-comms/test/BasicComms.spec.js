@@ -477,7 +477,7 @@ feature("Chat apps gives the XMPP settings, lists the app passwords and offers a
     when() {
         ec.user.internalLoginUser("basic.comms.spec")
         sys(() => ec.entity.find("moqui.security.UserAppPassword").condition("userId", USER).deleteAll())
-        sys(() => call("org.moqui.impl.UserServices.create#UserAppPassword", {name: "Phone chat"}))
+        sys(() => call("org.moqui.impl.UserServices.create#UserAppPassword", {name: "Phone chat", scope: "xmpp"}))
         const served = withProperty("xmpp_domain", "moqui.local", () => ({
             qvt: render(root, "Settings/ChatApps", "qvt", {}),
             tui: render(root, "Settings/ChatApps", "tui", {}),

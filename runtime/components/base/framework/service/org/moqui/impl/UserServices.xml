@@ -1350,11 +1350,15 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="revoked" type="Boolean"/></out-parameters>
     </service>
     <service verb="create" noun="UserAppPassword" type="rust" location="moqui_core::service::user_keys::create_app_password">
-        <description>A new app password for the current user, for one device or app: the CalDAV, CardDAV and WebDAV
-            servers and SFTP to drives take it with the username; the web login does not. It is shown only in the out
-            parameters (20 letters and digits in groups of four); only its hash is stored. Needs a sign-in in the last five
-            minutes (require#RecentAuth).</description>
-        <in-parameters><parameter name="name" required="true"><description>The device or app, such as "Pat's iPhone"</description></parameter></in-parameters>
+        <description>A new app password for the current user, for one device or app and one protocol (scope): only that
+            protocol's server takes it, with the username; the web login does not. It is shown only in the out parameters
+            (20 letters and digits in groups of four); only its hash is stored. Needs a sign-in in the last five minutes
+            (require#RecentAuth).</description>
+        <in-parameters>
+            <parameter name="name" required="true"><description>The device or app, such as "Pat's iPhone"</description></parameter>
+            <parameter name="scope" required="true"><description>dav (CalDAV, CardDAV, WebDAV), ssh (SSH, SFTP, git over
+                SSH), git (git over HTTP), xmpp, or ai (the LLM gateway, A2A, MCP)</description></parameter>
+        </in-parameters>
         <out-parameters>
             <parameter name="appPasswordId"/>
             <parameter name="password"/>
@@ -1365,8 +1369,8 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="appPasswordId" required="true"/></in-parameters>
     </service>
     <service verb="get" noun="UserAppPasswords" type="rust" location="moqui_core::service::user_keys::get_app_passwords">
-        <description>The current user's app passwords, newest first: appPasswordId, name, createdDate, lastUsedDate,
-            and revokedDate (revoked ones only with includeRevoked). No password or hash.</description>
+        <description>The current user's app passwords, newest first: appPasswordId, name, scope, createdDate,
+            lastUsedDate, and revokedDate (revoked ones only with includeRevoked). No password or hash.</description>
         <in-parameters><parameter name="includeRevoked" type="Boolean" default="false"/></in-parameters>
         <out-parameters><parameter name="appPasswordList" type="List"/></out-parameters>
     </service>

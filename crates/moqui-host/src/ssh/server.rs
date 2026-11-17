@@ -956,7 +956,7 @@ impl russh::server::Handler for Connection {
             // an app password, the device password SFTP to the drives takes, before the account password
             let by_app_password = moqui_core::user::looks_like_app_password(&secret)
                 && moqui_core::user::with_client_ip(&client_ip, || {
-                    moqui_core::user::login_app_password(&username, &secret)
+                    moqui_core::user::login_app_password(&username, &secret, "ssh")
                 })
                 .is_ok();
             if !by_app_password {

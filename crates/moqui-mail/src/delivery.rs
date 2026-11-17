@@ -56,12 +56,12 @@ use std::collections::{HashMap, HashSet};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 
-use super::implementation::{find_one, force_cache};
-use super::inbound::{run_stored_ecas, StoredMessage};
+use super::implementation::{find_one, force_cache, force_new};
+use super::inbound::{run_stored_ecas, stamp_millis, StoredMessage};
 use super::store::{self, header_value, parse_message, Placement, MESSAGE};
 use super::sync::{
-    account_info, after_new_mail, load_folders, property_number, publish_counts, run_rules, run_rules_in_frame,
-    value_number, ACCOUNT,
+    account_info, account_users, after_new_mail, load_folders, property_number, publish_counts, run_rules,
+    run_rules_in_frame, value_number, ACCOUNT,
 };
 use moqui_core::entity::{Condition, EntityFacade, EntityValue};
 use moqui_core::service::util::{field_text, now_millis};
@@ -75,14 +75,18 @@ const DEFAULT_QUOTA: i64 = 10 * 1024 * 1024 * 1024;
 /// The account kinds the listener delivers to.
 const KINDS: [&str; 2] = ["EakHosted", "EakShared"];
 
-/// The accounts found over their quota since they were last found under it, so each going over is warned of once.
-static OVER_QUOTA: std::sync::LazyLock<std::sync::Mutex<HashSet<String>>> = std::sync::LazyLock::new(Default::default);
+/// The notification an account's users get when it fills up (SEC-MAIL-07).
+pub const FULL_TOPIC: &str = "EmailMailboxFull";
 
 /// Whether account `account_id` keeps its quota of mail or more (SEC-MAIL-07): the sum of its messages'
 /// `messageSize` (which counts their attachments) against its `quotaBytes`, else the conf's `email-client`
 /// `mailbox-quota` (10 GiB). The listener then answers its recipients 452 at `RCPT TO`, and [`deliver`] holds mail
-/// an edge node queued for it (a temporary failure, tried again), so nothing is lost while its owner makes room. The
-/// first time an account is found over, a warning names it; telling its owner is left for later. False for an account
+/// an edge node queued for it (a temporary failure, tried again), so nothing is lost while its owner makes room.
+///
+/// Each check keeps `EmailAccount.quotaFullDate`: set when the account is found over, cleared when found under. The
+/// field is replicated to an edge node (`mailRecipients`), whose listener answers 452 for it too, and the job
+/// `check#FullMailboxes` checks the accounts it marks again, since a full account gets no mail that would. The first
+/// time an account is found over, a warning names it and its users are told ([`FULL_TOPIC`]). False for an account
 /// that is not there.
 ///
 /// # Errors
@@ -105,17 +109,110 @@ fn over_quota_of(facade: &EntityFacade, account: &EntityValue) -> Result<bool, L
         .and_then(|row| value_number(row.get("totalBytes")))
         .unwrap_or(0);
     let over = used >= quota;
-    let mut warned = moqui_lib::sync::lock(&OVER_QUOTA);
-    if !over {
-        warned.remove(&account_id);
-    } else if warned.insert(account_id.clone()) {
-        tracing::warn!(
-            account = %account_id,
-            "Email account {account_id} is over its mailbox quota ({used} of {quota} bytes): the SMTP listener \
-             refuses its mail with 452 until it is under (quotaBytes, email-client mailbox-quota)"
-        );
+    let marked = !field_text(account, "quotaFullDate").is_empty();
+    if over == marked {
+        return Ok(over);
+    }
+    match mark_full(facade, &account_id, over) {
+        Ok(true) if over => {
+            tracing::warn!(
+                account = %account_id,
+                "Email account {account_id} is over its mailbox quota ({used} of {quota} bytes): the SMTP listener \
+                 and the edge node refuse its mail with 452 until it is under (quotaBytes, email-client mailbox-quota)"
+            );
+            if let Err(err) = notify_full(&account_id, &field_text(account, "emailAddress"), used, quota) {
+                tracing::error!("Email account {account_id}: its users were not told it is full: {err}");
+            }
+        }
+        Ok(true) => {
+            tracing::info!("Email account {account_id} is under its mailbox quota again ({used} of {quota} bytes)")
+        }
+        Ok(false) => {}
+        Err(err) => tracing::error!("Email account {account_id}: quotaFullDate could not be kept: {err}"),
     }
     Ok(over)
+}
+
+/// Set (`full`) or clear `EmailAccount.quotaFullDate` of `account_id` in a transaction of its own: true when it changed,
+/// so a change is told once though several sessions find it.
+fn mark_full(facade: &EntityFacade, account_id: &str, full: bool) -> Result<bool, LibError> {
+    force_new(facade, || {
+        let Some(mut row) = facade
+            .find(ACCOUNT)?
+            .eq("emailAccountId", Value::string(account_id))
+            .for_update(true)
+            .disable_authz()
+            .one()?
+        else {
+            return Ok(false);
+        };
+        if field_text(&row, "quotaFullDate").is_empty() != full {
+            return Ok(false);
+        }
+        row.set(
+            "quotaFullDate",
+            if full { stamp_millis(now_millis()) } else { Value::Null },
+        );
+        row.update(facade)?;
+        Ok(true)
+    })
+}
+
+/// Tell the users of `account_id` (its owner and members) that it is full. In the current context.
+fn notify_full(account_id: &str, address: &str, used: i64, quota: i64) -> Result<(), LibError> {
+    let users = account_users(account_id)?;
+    if users.is_empty() {
+        return Ok(());
+    }
+    // plain text: an address holds no template
+    let clean = |text: &str| text.replace(['$', '{', '}'], "");
+    let mut message = moqui_lib::object::ValueMap::default();
+    message.insert("emailAccountId".to_string(), Value::string(account_id));
+    message.insert("emailAddress".to_string(), Value::string(address));
+    message.insert("usedBytes".to_string(), Value::I64(used));
+    message.insert("quotaBytes".to_string(), Value::I64(quota));
+    moqui_core::notify::NotificationMessage::new()
+        .topic(FULL_TOPIC)
+        .user_ids(users)
+        .notification_type("warning")
+        .message_map(message)
+        .title(format!(
+            "Mailbox {} is full: new mail waits until you delete some",
+            clean(address)
+        ))
+        .send()
+        .map_err(|err| LibError::new(err.message().to_string()))
+}
+
+/// The job `check#FullMailboxes`: check each account marked full (`quotaFullDate`) again, which clears the mark of one
+/// that has room now, so its mail comes again. Each account is on its own; one that fails is logged.
+///
+/// # Errors
+///
+/// Returns an error when the marked accounts cannot be read.
+pub(super) fn check_full_mailboxes(
+    _parameters: &std::collections::BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<std::collections::BTreeMap<String, Value>, LibError> {
+    let marked = facade
+        .find(ACCOUNT)?
+        .condition(Condition::is_not_null("quotaFullDate"))
+        .disable_authz()
+        .list()?;
+    let mut cleared = 0_i64;
+    for row in marked.values() {
+        match over_quota_of(facade, row) {
+            Ok(false) => cleared += 1,
+            Ok(true) => {}
+            Err(err) => tracing::error!(
+                "Email account {}: its mailbox quota could not be checked: {err}",
+                field_text(row, "emailAccountId")
+            ),
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    out.insert("clearedCount".to_string(), Value::I64(cleared));
+    Ok(out)
 }
 
 /// The hosted or shared account mail to `address` goes to, or none when no account takes it. `delimiters` are the
@@ -181,6 +278,8 @@ pub struct RecipientAccount {
     pub status_id: String,
     /// Its `EmailServer` has a `storeHost`: the sync feeds it.
     pub has_store_server: bool,
+    /// Its `quotaFullDate` is set: its local node found it over its mailbox quota ([`over_quota`]).
+    pub quota_full: bool,
 }
 
 /// What routing reads of an `EmailIdentity`.
@@ -200,6 +299,8 @@ pub struct RecipientMap {
     by_account: HashMap<String, Vec<String>>,
     /// Lower-case address → (identity id, account id) of the identities with it whose account takes mail.
     by_identity: HashMap<String, Vec<(String, String)>>,
+    /// The accounts marked full ([`RecipientAccount::quota_full`]).
+    full: HashSet<String>,
 }
 
 impl RecipientMap {
@@ -216,6 +317,9 @@ impl RecipientMap {
                 continue;
             }
             receiving.insert(account.email_account_id.as_str());
+            if account.quota_full {
+                map.full.insert(account.email_account_id.clone());
+            }
             let address = account.email_address.trim().to_lowercase();
             if !address.is_empty() {
                 map.by_account
@@ -267,6 +371,12 @@ impl RecipientMap {
         None
     }
 
+    /// Whether account `account_id` is marked full: an edge node answers its recipients 452, as its local node does.
+    #[must_use]
+    pub fn is_full(&self, account_id: &str) -> bool {
+        self.full.contains(account_id)
+    }
+
     /// The number of addresses it knows, accounts' and identities'.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -309,6 +419,7 @@ pub fn recipient_maps(values: &[moqui_core::edge::replica::ReplicaValue]) -> Vec
                     account_kind_enum_id: replica_field(&value.fields, "accountKindEnumId"),
                     status_id: replica_field(&value.fields, "statusId"),
                     has_store_server: false,
+                    quota_full: !replica_field(&value.fields, "quotaFullDate").trim().is_empty(),
                 },
                 replica_field(&value.fields, "emailServerId"),
             )),

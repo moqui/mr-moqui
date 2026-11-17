@@ -42,6 +42,8 @@ use crate::error::ErrorKind;
 const MAX_DEPTH: u32 = 32;
 /// The largest `pageSize` a REST find reads, unless the `entity-facade` `rest-max-page-size` property sets another.
 const DEFAULT_MAX_PAGE_SIZE: i64 = 1_000;
+/// The most rows of a search form find with `pageNoLimit`, unless the `entity-facade` `screen-max-rows` sets another.
+const DEFAULT_SCREEN_MAX_ROWS: i64 = 100_000;
 
 /// Build a view from `parameters` and return its rows.
 pub fn dynamic_view(
@@ -679,17 +681,29 @@ fn page_numbers(page: &Page, parameters: &BTreeMap<String, Value>, total: i64) -
 }
 
 /// The conf's `entity-facade` `rest-max-page-size`, else [`DEFAULT_MAX_PAGE_SIZE`].
-/// Service REST entity lists are capped at it too.
+/// Service REST entity lists are capped at it too, and so is a request's `pageSize` of a search form find
+/// (`EntityFind::search_form_map`, SEC-DAT-09).
 pub fn rest_max_page_size() -> i64 {
     max_page_size()
 }
 
 fn max_page_size() -> i64 {
-    (crate::hooks::get().conf_setting)("entity-facade", "rest-max-page-size")
+    conf_number("rest-max-page-size", DEFAULT_MAX_PAGE_SIZE)
+}
+
+/// The conf's `entity-facade` `screen-max-rows`, else [`DEFAULT_SCREEN_MAX_ROWS`]: the rows a search form find with
+/// `pageNoLimit=true` (an export) reads at most (SEC-DAT-09).
+pub fn screen_max_rows() -> i64 {
+    conf_number("screen-max-rows", DEFAULT_SCREEN_MAX_ROWS)
+}
+
+/// A whole number above 0 from the conf's `entity-facade` attribute `name`, else `default`.
+fn conf_number(name: &str, default: i64) -> i64 {
+    (crate::hooks::get().conf_setting)("entity-facade", name)
         .parse::<i64>()
         .ok()
         .filter(|size| *size > 0)
-        .unwrap_or(DEFAULT_MAX_PAGE_SIZE)
+        .unwrap_or(default)
 }
 
 fn pk_complete(snap: &EntitySnap, parameters: &BTreeMap<String, Value>) -> bool {

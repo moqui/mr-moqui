@@ -227,6 +227,123 @@ impl GitStore for FsStore {
     }
 }
 
+thread_local! {
+    /// Whether this thread's fetches connect only to public addresses ([`deny_internal`]).
+    static DENY_INTERNAL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// While it lives, a fetch on this thread connects only to a public address of the remote's host, the address it
+/// checks (SEC-TLS-08): over https the client's resolver refuses a host with any internal address at each connection,
+/// a redirect's too, and a redirect to an internal address written out; over ssh the `ssh` command is pinned to an
+/// address resolved and checked here, the host's name kept for its known host key. A deploy holds one on a production
+/// instance, so a name that resolves to a public address when checked and to an internal one when fetched is refused.
+#[must_use = "the fetches deny internal addresses only while it lives"]
+pub struct DenyInternal {
+    was: bool,
+}
+
+impl Drop for DenyInternal {
+    fn drop(&mut self) {
+        DENY_INTERNAL.with(|deny| deny.set(self.was));
+    }
+}
+
+/// See [`DenyInternal`].
+pub fn deny_internal() -> DenyInternal {
+    DenyInternal {
+        was: DENY_INTERNAL.with(|deny| deny.replace(true)),
+    }
+}
+
+/// The `ssh` command, as `core.sshCommand` takes it, that connects to `address` for `host` and checks the host key
+/// known for `host`: for a fetch pinned to the address it checked ([`DenyInternal`]). A host that is not a plain host
+/// name is refused, since the command is read by a shell.
+///
+/// # Errors
+///
+/// When `host` has a character other than a letter, a digit, `.`, `-`, `_` or `:`.
+pub fn pinned_ssh_command(host: &str, address: std::net::IpAddr) -> Result<String, Error> {
+    if host.is_empty()
+        || !host
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | ':' | '_'))
+    {
+        return Err(Error::new(format!("the ssh host {host} is not a host name")));
+    }
+    Ok(format!(
+        "ssh -o HostName={address} -o HostKeyAlias={host} -o CheckHostIP=no"
+    ))
+}
+
+/// The host and port of an ssh remote `url` (`ssh://` or the scp form `user@host:path`), none for another scheme.
+fn ssh_host(url: &str) -> Option<(String, u16)> {
+    let parsed = gix::url::parse(gix::bstr::BStr::new(url.as_bytes())).ok()?;
+    if parsed.scheme != gix::url::Scheme::Ssh {
+        return None;
+    }
+    let host = parsed.host()?.trim_matches(['[', ']']).to_string();
+    Some((host, parsed.port.unwrap_or(22)))
+}
+
+/// Pin `repo`'s `ssh` to a public address of an ssh remote's host ([`DenyInternal`]); nothing for another scheme.
+fn pin_ssh(repo: &mut gix::Repository, url: &str) -> Result<(), Error> {
+    let Some((host, port)) = ssh_host(url) else {
+        return Ok(());
+    };
+    let addresses = moqui_lib::net::public_addresses(&host, port)
+        .map_err(|err| Error::new(format!("the ssh host {host}: {err}")))?;
+    let Some(address) = addresses.first() else {
+        return Err(Error::new(format!("the ssh host {host} was not found")));
+    };
+    let mut config = repo.config_snapshot_mut();
+    config
+        .set_value(
+            &gix::config::tree::Core::SSH_COMMAND,
+            pinned_ssh_command(&host, address.ip())?.as_str(),
+        )
+        .and_then(|_| config.set_value(&gix::config::tree::Ssh::VARIANT, "ssh"))
+        .map_err(|err| Error::new(format!("the ssh command could not be pinned: {err}")))?;
+    config
+        .commit()
+        .map_err(|err| Error::new(format!("the ssh command could not be pinned: {err}")))?;
+    Ok(())
+}
+
+/// The transport options of an https remote `url` whose client resolves through [`moqui_lib::http::PublicOnly`],
+/// with no proxy (which would resolve the name itself), and refuses a request to an internal address written out
+/// ([`DenyInternal`]); none for another scheme.
+fn public_only_options(repo: &gix::Repository, url: &str) -> Result<Option<Box<dyn std::any::Any>>, Error> {
+    use gix::error::ErrorExt as _;
+    use gix::protocol::transport::client::blocking_io::http;
+    let options = repo.transport_options(url, None).map_err(|err| {
+        Error::new(format!(
+            "the fetch options of {}: {err}",
+            moqui_core::outbound::redacted(url)
+        ))
+    })?;
+    let Some(options) = options else {
+        return Ok(None);
+    };
+    let Ok(mut options) = options.downcast::<http::Options>() else {
+        return Ok(None);
+    };
+    let backend = http::reqwest::Options {
+        configure_client: Some(Box::new(|builder| {
+            Ok(builder
+                .no_proxy()
+                .dns_resolver(std::sync::Arc::new(moqui_lib::http::PublicOnly)))
+        })),
+        configure_request: Some(Box::new(|request| {
+            if moqui_lib::http::internal_literal(request.url()) {
+                return Err(gix::error::message("the fetch was sent to an internal address").raise());
+            }
+            Ok(())
+        })),
+    };
+    options.backend = Some(std::sync::Arc::new(std::sync::Mutex::new(backend)));
+    Ok(Some(options))
+}
+
 /// HTTPS credentials for a fetch.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Credentials {
@@ -285,7 +402,16 @@ pub(crate) fn fetch(
 ) -> Result<FetchOutcome, Error> {
     let store = FsStore::init(path, branch)?;
     let before = mirrored_refs(&store)?;
-    let repo = store.local();
+    let deny_internal = DENY_INTERNAL.with(std::cell::Cell::get);
+    let mut repo = store.local();
+    if deny_internal {
+        pin_ssh(&mut repo, url)?;
+    }
+    let public_only = if deny_internal {
+        public_only_options(&repo, url)?
+    } else {
+        None
+    };
     let specs: Vec<String> = if mirror {
         MIRRORED
             .iter()
@@ -305,6 +431,10 @@ pub(crate) fn fetch(
             moqui_core::outbound::redacted(url)
         ))
     })?;
+    let connection = match public_only {
+        Some(options) => connection.with_transport_options(options),
+        None => connection,
+    };
     let username = credentials.username.clone().unwrap_or_default();
     let token = credentials.token.clone();
     let connection = connection.with_credentials(move |action| match action {
@@ -401,3 +531,7 @@ pub(crate) fn fetch(
         refused,
     })
 }
+
+#[cfg(test)]
+#[path = "fs_tests.rs"]
+mod tests;

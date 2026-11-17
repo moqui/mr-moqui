@@ -1090,10 +1090,12 @@ fn the_gateway_passes_calls_through_with_keys_quotas_and_usage_on_postgres() {
         let _entered = context.enter();
         moqui_core::user::internal_login_user("ann.gw").unwrap();
         let _authz = context.disable_authz();
-        let parameters: std::collections::BTreeMap<String, Value> =
-            [("name".to_string(), Value::string("Gateway test"))]
-                .into_iter()
-                .collect();
+        let parameters: std::collections::BTreeMap<String, Value> = [
+            ("name".to_string(), Value::string("Gateway test")),
+            ("scope".to_string(), Value::string("ai")),
+        ]
+        .into_iter()
+        .collect();
         let out = moqui_core::service::sync("org.moqui.impl.UserServices.create#UserAppPassword", &parameters).unwrap();
         let id = moqui_lib::object::to_plain_string(out.get("appPasswordId").unwrap());
         create(
@@ -1479,10 +1481,13 @@ fn the_gateway_bounds_a_call_by_its_own_timeout_and_app_passwords_need_a_client(
         let _entered = context.enter();
         moqui_core::user::internal_login_user("ann.gw").unwrap();
         let _authz = context.disable_authz();
-        let parameters: std::collections::BTreeMap<String, Value> =
-            [("name".to_string(), Value::string("A DAV client"))]
-                .into_iter()
-                .collect();
+        let parameters: std::collections::BTreeMap<String, Value> = [
+            ("name".to_string(), Value::string("A DAV client")),
+            // made for the gateway, so the refusal is its client's
+            ("scope".to_string(), Value::string("ai")),
+        ]
+        .into_iter()
+        .collect();
         let out = moqui_core::service::sync("org.moqui.impl.UserServices.create#UserAppPassword", &parameters).unwrap();
         moqui_lib::object::to_plain_string(out.get("password").unwrap())
     };

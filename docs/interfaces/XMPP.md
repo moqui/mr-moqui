@@ -101,7 +101,8 @@ A local server behind an edge node ([Run-Deploy](../Run-Deploy.md), [plans/archi
 
 A client signs in with an **app password**, as DAV and SFTP clients do. Settings, Chat apps (basic-comms,
 `XmppServices.get#ClientSettings`) shows what to enter (the JID, the server and its ports, the WebSocket) and the user's
-app passwords, each saying whether it works with XMPP apps, with New app password for XMPP. The account password
+app passwords XMPP takes (made for `xmpp`, or before app passwords had a scope), with New app password for XMPP, which
+makes one only XMPP takes. The account password
 is never taken: a failure would count toward the account's lockout, and it cannot carry a second factor. An account
 with a second factor signs in with an app password, which is made after it.
 

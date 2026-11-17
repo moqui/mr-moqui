@@ -1627,7 +1627,12 @@ fn a_drive_repository_takes_the_drive_members() {
         moqui_core::user::internal_login_user("drive.viewer").unwrap();
         let out = moqui_core::service::sync(
             "org.moqui.impl.UserServices.create#UserAppPassword",
-            &[("name".to_string(), Value::string("CI"))].into_iter().collect(),
+            &[
+                ("name".to_string(), Value::string("CI")),
+                ("scope".to_string(), Value::string("git")),
+            ]
+            .into_iter()
+            .collect(),
         )
         .unwrap();
         moqui_core::user::logout().unwrap();

@@ -68,6 +68,9 @@ pub struct EdgeSettings {
     pub sets: Vec<ReplicaSet>,
     pub retention_days: u32,
     pub max_bytes: u64,
+    /// The content files kept for one pairing's deliveries at most, whatever their size (`queue-max-content-files`);
+    /// 0 for no cap. At it, as at `max_bytes`, an edge node pauses the pairing (SEC-CLU-02, [`super::caps`]).
+    pub max_content_files: u64,
     /// The replicated records an edge node keeps for one pairing at most (`replica-max-rows`), all its sets together;
     /// a pairing's `EdgeClient.replicaMaxRows` above 0 in place of it. At it the pairing pauses (SEC-CLU-02,
     /// [`super::caps`]).
@@ -109,6 +112,9 @@ pub const MAX_SSH_TUNNELS: usize = 1_000_000;
 /// would overflow the clock it is added to.
 pub const MAX_WAIT: Duration = Duration::from_secs(86_400);
 
+/// The default of `queue-max-content-files`.
+pub const DEFAULT_MAX_CONTENT_FILES: u64 = 10_000;
+
 /// The default of `replica-max-rows`.
 pub const DEFAULT_REPLICA_MAX_ROWS: u64 = 1_000_000;
 
@@ -125,6 +131,7 @@ impl Default for EdgeSettings {
             sets: Vec::new(),
             retention_days: 14,
             max_bytes: 1024 * 1024 * 1024,
+            max_content_files: DEFAULT_MAX_CONTENT_FILES,
             replica_max_rows: DEFAULT_REPLICA_MAX_ROWS,
             max_attempts: 10,
             retry_first: Duration::from_secs(5),
@@ -181,6 +188,7 @@ impl EdgeSettings {
         };
         settings.retention_days = u32::try_from(number("queue-retention-days", 14)).unwrap_or(14);
         settings.max_bytes = number("queue-max-megabytes", 1024).saturating_mul(1024 * 1024);
+        settings.max_content_files = number("queue-max-content-files", DEFAULT_MAX_CONTENT_FILES);
         settings.replica_max_rows = number("replica-max-rows", DEFAULT_REPLICA_MAX_ROWS);
         settings.max_attempts = u32::try_from(number("queue-max-attempts", 10)).unwrap_or(10).max(1);
         let retry = edge.attribute("queue-retry-seconds").unwrap_or_default();

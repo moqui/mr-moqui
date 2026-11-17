@@ -828,7 +828,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>What the current user enters in an XMPP app (basic-comms Settings, Chat apps): enabled (xmpp_domain is
             set), jid (the username in lower case, escaped as XEP-0106 has it, at the domain), server (the domain), port
             (STARTTLS, xmpp_port) and tlsPort (direct TLS, xmpp_tls_port), each empty while off, and websocketUrl
-            (/xmpp-websocket with xmpp_websocket_enabled); and appPasswordList, the user's app passwords
+            (/xmpp-websocket with xmpp_websocket_enabled); and appPasswordList, the user's app passwords that XMPP takes
             (UserServices.get#UserAppPasswords). Behind an edge node the ports are still this node's own: the edge
             node's tunnel ports (edge_xmpp_port, edge_xmpp_tls_port) are given the same numbers (docs/interfaces/XMPP.md).</description>
         <out-parameters>
@@ -850,7 +850,9 @@ along with this software (see the LICENSE.md file). If not, see
             const escapes = {' ': '\\20', '"': '\\22', '&': '\\26', "'": '\\27', '/': '\\2f', ':': '\\3a', '<': '\\3c', '>': '\\3e', '@': '\\40', '\\': '\\5c'}
             const node = String(ec.user.username || '').toLowerCase().split('').map((ch) => escapes[ch] || ch).join('')
             jid = enabled && node ? node + '@' + domain : null
+            // the ones XMPP takes: made for it, or before passwords had a scope (SEC-COM-21)
             appPasswordList = Array.from(ec.service.sync().name('org.moqui.impl.UserServices.get#UserAppPasswords').call()?.appPasswordList || [])
+                    .filter((row) => !row.scope || row.scope === 'xmpp')
         ]]></script></actions>
     </service>
 

@@ -161,7 +161,7 @@ async fn token(
         .as_secs();
     let id_token = jwt(&serde_json::json!({
         "iss": idp.issuer, "sub": "idp-user-1", "aud": CLIENT, "exp": now + 300, "iat": now, "auth_time": now - idp.auth_age,
-        "nonce": nonce, "preferred_username": "sso.joe", "email": "sso.joe@example.com",
+        "nonce": nonce, "preferred_username": "sso.joe", "email": "sso.joe@example.com", "email_verified": true,
         "given_name": "Joe", "family_name": "Single", "roles": idp.roles,
     }));
     (

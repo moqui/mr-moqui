@@ -14,13 +14,13 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Chat apps (XMPP for local users, C3a; docs/interfaces/XMPP.md): what the user enters in an XMPP app (Conversations, Monal,
     Dino, Gajim) to chat in this server's rooms, and the app passwords those apps sign in with. NewXmppPassword makes a new
-    one for XMPP (shown once, after the redirect), and Revoke ends one. org.moqui.chat.XmppServices.get#ClientSettings,
+    one that only XMPP takes (scope xmpp, shown once, after the redirect), and Revoke ends one. org.moqui.chat.XmppServices.get#ClientSettings,
     org.moqui.impl.UserServices create# and revoke#UserAppPassword. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Chat apps" default-menu-index="11" server-static="qvt" menu-image="sym_o_forum" menu-image-type="icon">
 
     <transition name="createXmppPassword">
-        <service-call name="org.moqui.impl.UserServices.create#UserAppPassword" in-map="{name:name}" out-map="passwordOut"/>
+        <service-call name="org.moqui.impl.UserServices.create#UserAppPassword" in-map="{name:name, scope:'xmpp'}" out-map="passwordOut"/>
         <actions><!-- shown once, after the redirect -->
             <script>if (!ec.message.hasError()) { ec.web.sessionAttributes.newXmppPassword = passwordOut.password ?? ''; ec.web.sessionAttributes.newXmppPasswordName = name ?? '' }</script></actions>
         <default-response url="."/><error-response url="."/>

@@ -1304,8 +1304,8 @@
         command sessions at once, and max-sessions-per-user of them for one user; a session in its login dialog counts toward
         the first only. A kept apps session with no window ends after detach-seconds, a command or host session after
         host-detach-hours; a command or host session keeps replay-kb of its output for a window that comes back.
-        On a dev instance (terminal_command_line and terminal_host_sessions: dev by default, false off, empty on for any
-        purpose) the browser terminal offers the moqui> command line to a user with SSH_SHELL and programs on the server's
+        On a dev instance (terminal_command_line and terminal_host_sessions: dev by default, false off, true on for any
+        purpose; any other value off, logged) the browser terminal offers the moqui> command line to a user with SSH_SHELL and programs on the server's
         operating system (the host-profile elements, and the shell profile: the server user's own shell) to a user with
         TERMINAL_HOST. From anywhere but this machine those need terminal_remote=true, HTTPS and a sign-in within
         remote-reauth-minutes (docs/ui/Terminal.md). -->
@@ -1478,14 +1478,14 @@
         sends as mailOut, and the edge node answers each with a mailStatus (from its relay, or a later bounce to its
         VERP address); a mailOut that fails for good puts its message back in the Outbox. With the MTA in moqui (E5b) the
         edge node answers from its MX delivery: bounced for the recipients refused, accepted once all are delivered. -->
-    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5"
-            replica-max-rows="1000000">
+    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-content-files="10000" queue-max-attempts="10"
+            queue-retry-seconds="5" replica-max-rows="1000000">
         <queue-kind name="mail" service="org.moqui.mail.EmailServices.deliver#EdgeMail"/>
         <queue-kind name="mailOut" service="org.moqui.mail.EmailServices.deliver#EdgeOutboundMail"
                 failed-service="org.moqui.mail.EmailServices.fail#EdgeOutboundMail"/>
         <queue-kind name="mailStatus" service="org.moqui.mail.EmailServices.note#EdgeMailStatus"/>
         <replicate set="mailRecipients">
-            <entity name="moqui.basic.email.EmailAccount" fields="emailAddress,accountKindEnumId,statusId,emailServerId"/>
+            <entity name="moqui.basic.email.EmailAccount" fields="emailAddress,accountKindEnumId,statusId,emailServerId,quotaFullDate"/>
             <entity name="moqui.basic.email.EmailIdentity" fields="emailAddress,emailAccountId"/>
             <entity name="moqui.basic.email.EmailServer" fields="storeHost"/>
         </replicate>
@@ -1576,7 +1576,7 @@
             default-group-name="transactional" entity-eca-enabled="true" sequenced-id-prefix=""
             distributed-cache-invalidate="false" dci-topic-factory="" query-stats="false"
             database-locale="${default_locale}" database-time-zone="${database_time_zone ?: default_time_zone}"
-            rest-max-page-size="1000"
+            rest-max-page-size="1000" screen-max-rows="100000"
             crypt-salt="20201202" crypt-iter="10" crypt-algo="PBEWithHmacSHA256AndAES_128" crypt-pass="${entity_ds_crypt_pass}"
             crypt-read-plain="${entity_ds_crypt_read_plain ?: 'false'}">
         <!-- crypt-read-plain: entity_ds_crypt_read_plain=true reads the stored text of an encrypted field that is not

@@ -43,6 +43,7 @@ pub(crate) mod fetch_refs;
 pub(crate) mod file_commit;
 pub(crate) mod fork;
 pub(crate) mod fs;
+pub use fs::{deny_internal, pinned_ssh_command, DenyInternal};
 pub mod gc;
 pub(crate) mod hosting;
 pub(crate) mod index;
@@ -1525,6 +1526,8 @@ impl GitProvider {
                 "import is for db repositories; {repository_id} is not one"
             )));
         }
+        // a caller's source, which import_source_allowed checked; the repository's own remoteUrl is its administrator's
+        let from_caller = source.map(str::trim).is_some_and(|source| !source.is_empty());
         let source = source
             .map(str::trim)
             .filter(|source| !source.is_empty())
@@ -1566,6 +1569,13 @@ impl GitProvider {
                 "git-import-{repository_id}-{}",
                 jiff::Timestamp::now().as_millisecond()
             ));
+            // an http(s) source was checked for public addresses (import_source_allowed): the fetch connects only to one,
+            // so a name that resolves to an internal address by then is refused, unless webhook-private-network allows
+            // them. Another scheme is a TERMINAL_HOST holder's, who may name an internal host.
+            let checked_public = from_caller
+                && (source.starts_with("https://") || source.starts_with("http://"))
+                && !mirror::private_network();
+            let _deny = checked_public.then(fs::deny_internal);
             fs::fetch(
                 &path,
                 &source,

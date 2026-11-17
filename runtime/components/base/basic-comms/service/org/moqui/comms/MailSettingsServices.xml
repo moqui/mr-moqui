@@ -374,7 +374,7 @@ along with this software (see the LICENSE.md file). If not, see
                     lastSyncError: account.lastSyncError ?? null, syncing: false, setupIncomplete: false, hasServer: !!account.emailServerId,
                     hasIncomingServer: false, isOAuth: false,
                     canSync: false, canPause: false, canResume: false, serverText: null, memberText: null, memberCount: 0,
-                    usedBytes: null, storageText: null,
+                    usedBytes: null, storageText: null, quotaBytes: null, quotaFull: false,
                     folderCount: Array.from(account.folderList || []).filter((folder) => !folder.removed).length,
                     filingText: account.recordFilingEnumId === 'ErfAllMatches' ? L('Files mail with known contacts on their records')
                         : (account.recordFilingEnumId === 'ErfLinkedOnly' ? L('Files only the mail you link') : null)}
@@ -388,19 +388,25 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.message.pushErrors()
                 try {
                     const row = ec.entity.find('moqui.basic.email.EmailAccount').condition('emailAccountId', id)
-                            .selectField('emailAccountId').selectField('syncLockedUntil').selectField('lastSyncDate').one()
+                            .selectField('emailAccountId').selectField('syncLockedUntil').selectField('lastSyncDate')
+                            .selectField('quotaBytes').selectField('quotaFullDate').one()
                     const lockedUntil = toMillis(row?.syncLockedUntil)
                     const lastSync = toMillis(account.lastSyncDate ?? row?.lastSyncDate)
                     const server = account.emailServerId ? ec.entity.find('moqui.basic.email.EmailServer').condition('emailServerId', account.emailServerId)
                             .selectField('authTypeEnumId,oauthProviderEnumId,storeHost,storePort,storeProtocol,smtpHost,smtpPort,smtpSsl,smtpStartTls').one() : null
                     item.hasIncomingServer = !!server?.storeHost
                     item.deliveredHere = !item.hasIncomingServer && (account.accountKindEnumId === 'EakHosted' || account.accountKindEnumId === 'EakShared')
+                    // a mailbox delivered here keeps its quota of mail (SEC-MAIL-07): empty for the conf's default
+                    item.quotaBytes = row?.quotaBytes != null ? Number(row.quotaBytes) : null
+                    item.quotaFull = item.deliveredHere && row?.quotaFullDate != null
                     try {
                         item.usedBytes = ec.resource.getTreeSize('dbresource://email/' + id)
                         item.storageText = fmtSize(item.usedBytes)
                     } catch (sizeErr) {
                         ec.logger.warn(`Mail account ${id}: its storage could not be sized: ${sizeErr && sizeErr.message ? sizeErr.message : sizeErr}`)
                     }
+                    if (item.deliveredHere && item.quotaBytes) item.storageText = ec.resource.expand('${used} of ${quota}', '',
+                        {used: item.storageText || '0 B', quota: fmtSize(item.quotaBytes)})
                     item.syncing = item.hasIncomingServer && lockedUntil != null && lockedUntil > nowMillis
                     item.lastSyncText = lastSync != null ? agoText(lastSync) : null
                     item.setupIncomplete = item.statusId === 'EasPaused' && lastSync == null && item.canManage && (item.hasServer || item.deliveredHere)
@@ -409,6 +415,8 @@ along with this software (see the LICENSE.md file). If not, see
                     const status = item.statusId
                     if (item.deliveredHere && item.setupIncomplete) Object.assign(item, {statusLabel: L('Setup not finished'), statusColor: 'warning',
                         problemText: L('The account is not on until its setup is finished')})
+                    else if (item.deliveredHere && item.quotaFull) Object.assign(item, {statusLabel: L('Mailbox full'), statusColor: 'warning',
+                        problemText: L('The mailbox is full: new mail waits at the sender until you delete some, or a mail administrator raises its quota')})
                     else if (item.deliveredHere) Object.assign(item, {statusLabel: L('Delivered here'), statusColor: 'positive', problemText: null})
                     else if (!item.hasIncomingServer) Object.assign(item, {statusLabel: L('Local only'), statusColor: 'info',
                         problemText: L('No incoming mailbox: the mail here is kept only here and does not sync')})

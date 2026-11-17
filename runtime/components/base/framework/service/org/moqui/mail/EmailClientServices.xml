@@ -323,10 +323,16 @@ along with this software (see the LICENSE.md file). If not, see
             owner stays, managing it), from shared only when one person is left on it (the owner and no other current
             member; with no owner, the one member left becomes the owner). The filing policy follows the new kind's
             default (an external account files only what is linked, the others every match), unless recordFilingEnumId is
-            given or the account's policy was not its kind's default.</description>
+            given or the account's policy was not its kind's default.
+
+            quotaBytes, the most bytes of mail the account keeps (empty for the conf's email-client mailbox-quota), is set
+            only by a mail administrator (EMAIL_ACCOUNT_HOSTED). A new quota clears the account's full mark (quotaFullDate), so
+            an edge node takes its mail again; the next mail checks it against the new quota and marks it again if it is
+            still full (SEC-MAIL-07).</description>
         <in-parameters>
             <parameter name="emailAccountId" required="true"/>
             <parameter name="accountName"/>
+            <parameter name="quotaBytes"/>
             <parameter name="emailAddress" allow-html="any"/>
             <parameter name="accountKindEnumId"/>
             <parameter name="color"/>
@@ -369,8 +375,19 @@ along with this software (see the LICENSE.md file). If not, see
             const serverFields = {smtpHost, smtpPort, smtpStartTls, smtpSsl, storeHost, storePort, storeProtocol, storeFolder,
                 storeAllowPlain, mailUsername, mailPassword, smtpUsername, smtpPassword, authTypeEnumId, oauthProviderEnumId}
             const serverGiven = Object.keys(serverFields).filter((name) => given(serverFields[name]))
+            if (given(quotaBytes)) {
+                if (!ec.artifactExecution.authzDisabled() && !ec.user.hasPermission('EMAIL_ACCOUNT_HOSTED')) {
+                    ec.message.addError(ec.l10n.localize('Only a mail administrator sets a mailbox quota; ask one')); return }
+                const text = String(quotaBytes).trim()
+                if (text !== '' && !/^[0-9]+$/.test(text)) { ec.message.addError(ec.l10n.localize('A mailbox quota is a whole number of bytes, or empty for the default')); return }
+                const next = text === '' || text === '0' ? null : text
+                if (String(account.quotaBytes ?? '') !== String(next ?? '')) {
+                    account.set('quotaBytes', next)
+                    account.set('quotaFullDate', null)
+                }
+            }
             if (isInternal) {
-                if (serverGiven.length || given(emailAddress) || given(syncWindowDays) || given(recordFilingEnumId) || given(statusId) ||
+                if (serverGiven.length || given(emailAddress) || given(syncWindowDays) || given(recordFilingEnumId) || given(statusId) || given(quotaBytes) ||
                         (given(accountKindEnumId) && accountKindEnumId !== 'EakInternal')) {
                     ec.message.addError(ec.l10n.localize('The Internal account takes only a name, a color and a sequence')); return }
                 account.update()
@@ -2038,6 +2055,14 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="skippedCount" type="Integer"><description>Messages that did not parse or could not be stored</description></parameter>
             <parameter name="folderErrorList" type="List"/>
         </out-parameters>
+    </service>
+    <service verb="check" noun="FullMailboxes" type="rust" location="moqui_mail::check_full_mailboxes"
+            transaction="ignore" authenticate="anonymous-all" allow-remote="false">
+        <description>The ServiceJob check_FullMailboxes_frequent: check each account marked full (quotaFullDate) against
+            its quota again, and clear the mark of one that has room now (SEC-MAIL-07). A full account gets no mail, so
+            nothing else would; an edge node takes its mail again once the cleared mark is replicated. Each account is on
+            its own.</description>
+        <out-parameters><parameter name="clearedCount" type="Integer"/></out-parameters>
     </service>
     <service verb="sync" noun="DueEmailAccounts" type="rust" location="moqui_mail::sync_due_accounts"
             transaction="ignore" authenticate="anonymous-all" allow-remote="false">

@@ -113,7 +113,13 @@ async fn a_screen_request_has_a_root_span_with_identity_and_health_is_independen
         .find(|entry| entry.get("url.path").and_then(Value::as_str) == Some("/screen"))
         .expect("root span");
     assert_eq!(screen["kind"].as_str(), Some("SERVER"));
-    assert_eq!(screen["session.id"].as_str(), Some("session-1"));
+    // a digest of the session id, never the id that signs the session in (SEC-TLS-18)
+    assert_eq!(
+        screen["session.id"].as_str(),
+        Some(super::session_tag("session-1").as_str())
+    );
+    assert_eq!(super::session_tag("session-1").len(), 32);
+    assert_ne!(super::session_tag("session-1"), super::session_tag("session-2"));
     assert_eq!(screen["user.id"].as_str(), Some("user-1"));
     assert_eq!(screen["moqui.visitor.id"].as_str(), Some("visitor-1"));
     assert!(!screen["url.query"].as_str().unwrap().contains("private"));
