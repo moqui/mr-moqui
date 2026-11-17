@@ -154,6 +154,11 @@ feature("an encrypted voice call starts with audio only, and video turned on in 
             }, {timeout: 15, arg: leg}))
         } catch (err) { voice = false }
         const sendsVideo = [caller, callee].map(page => page.evaluate(() => window.moqui.call.hasVideo()))
+        // past the other leg's first seconds, whose tracks are its start and not a change to ask about
+        callee.waitFor(() => {
+            const remotes = Object.values(window.moqui.call.state.remotes)
+            return remotes.length > 0 && remotes.every(r => r.firstSeen && Date.now() - r.firstSeen > window.moqui.call.timing.settle + 100)
+        }, {timeout: 15})
         caller.evaluate(() => window.moqui.call.addVideo())
         let prompt = false
         try {

@@ -213,9 +213,17 @@
         },
         // the mobile app's native call (a ring answered on the phone's call screen) lasts while the shell has the call:
         // joined, left, and its call screen shown or left (over the lock screen the app shows only that)
+        // joined, left, held (call waiting: the native call stays; an older app that does not know it keeps "joined"), and
+        // its call screen shown or left (over the lock screen the app shows only that)
         hostCallState(callSessionId, what) {
             const host = root.moquiDesktop;
-            if (host && typeof host.callState === "function") host.callState(callSessionId, what);
+            if (!host || typeof host.callState !== "function") return;
+            try {
+                const asked = host.callState(callSessionId, what);
+                if (asked && typeof asked.catch === "function") asked.catch(() => null);
+            } catch (e) {
+                /* an app that does not know this state */
+            }
         },
         // whether this call screen answers the call by itself: only the mobile app's host says so, once, for the call
         // the user answered on the phone; never on the web or for a link
@@ -238,6 +246,24 @@
             call.ring(state.ringing.length > 0);
             // the direct path: the other page answered (say hello), or the call is no longer one of two (to the media server)
             if (state.current === view.callSessionId) call.directViewChanged(view);
+            call.heldView(view);
+        },
+        // Call waiting across a reload or a socket that came back: the server keeps a held leg (hold#OwnLeg) with no
+        // socket, and marks it held in the call's view; a page with no call on hold takes it as its own (Resume), and a
+        // held call that ended, or whose leg moved or left, is held no more.
+        heldView(view) {
+            const held = state.held;
+            if (held && held.callSessionId === view.callSessionId) {
+                const leg = (view.participants || []).flatMap((p) => p.legs || []).find((l) => l.callLegId === held.legId);
+                if (view.status === "ended" || !leg || leg.status !== "answered") state.held = null;
+                return;
+            }
+            if (held || view.status === "ended" || view.callSessionId === state.current || view.myLegStatus !== "answered") return;
+            const mine = (view.participants || []).filter((p) => p.userId === call.me);
+            const leg = mine.flatMap((p) => p.legs || []).find((l) => l.callLegId === view.myLegId);
+            if (!leg || !leg.held || leg.live) return;
+            const name = (view.participants || []).filter((p) => p.userId !== call.me).map((p) => p.displayName).join(", ");
+            state.held = { callSessionId: view.callSessionId, legId: leg.callLegId, video: false, name };
         },
 
         // ---- the store: started once the shell is mounted ----
@@ -506,17 +532,43 @@
         },
         // The other side's video came or went: a prompt, not a new call. "on": they turned theirs on and this page sends
         // none; "off": they turned theirs off and this page still sends.
+        // Only in a call of two, only for a change the other person made: not the first moments of a leg (a late joiner,
+        // the other's new leg after a move), and not their hold (its mute comes before the call's held push, so the
+        // prompt waits a moment and looks again). A group call asks nothing.
+        timing: { settle: 3000, promptWait: 1500 },
         noteVideo(legId) {
             const remote = state.remotes[legId];
-            if (!remote) return;
-            const shown = !!(remote.stream && remote.stream.getVideoTracks().some((track) => track.readyState !== "ended")) && !remote.cameraOff;
-            const was = !!remote.videoShown;
+            if (!remote || !remote.stream) return;
+            const shown = !!remote.stream.getVideoTracks().some((track) => track.readyState !== "ended") && !remote.cameraOff;
+            const now = Date.now();
+            if (!remote.firstSeen) remote.firstSeen = now;
+            if (remote.videoShown == null || now - remote.firstSeen < call.timing.settle) {
+                remote.videoShown = shown;
+                return;
+            }
+            if (shown === remote.videoShown) return;
             remote.videoShown = shown;
-            if (shown === was || !state.current || state.phase === "joining") return;
+            if (!state.current || state.phase === "joining" || !call.oneToOne()) return;
+            clearTimeout(remote.promptTimer);
+            remote.promptTimer = setTimeout(() => call.promptVideo(legId, shown), call.timing.promptWait);
+        },
+        promptVideo(legId, shown) {
+            const remote = state.remotes[legId];
+            if (!remote || remote.videoShown !== shown || !state.current || !call.oneToOne() || call.legHeld(legId)) return;
             const mine = call.hasVideo() && !state.cameraOff;
             if (shown && !mine) state.videoPrompt = { legId, name: remote.name, on: true };
             else if (!shown && mine) state.videoPrompt = { legId, name: remote.name, on: false };
             else if (state.videoPrompt && state.videoPrompt.legId === legId) state.videoPrompt = null;
+        },
+        // a call of two: one other leg here, one other person in it
+        oneToOne() {
+            const view = state.calls[state.current];
+            const others = view ? (view.participants || []).filter((p) => p.userId !== call.me && p.inCall).length : 1;
+            return Object.keys(state.remotes).length === 1 && others <= 1;
+        },
+        legHeld(legId) {
+            const view = state.calls[state.current];
+            return !!view && (view.participants || []).some((p) => (p.legs || []).some((l) => l.callLegId === legId) && (p.onHold || (p.legs || []).some((l) => l.callLegId === legId && l.held)));
         },
         answerPrompt(yes) {
             const prompt = state.videoPrompt;
@@ -595,14 +647,18 @@
         movedElsewhere(callSessionId, fromLegIds) {
             const mine = state.current === callSessionId && fromLegIds.includes(state.legId);
             const last = call.lastLeg && call.lastLeg.callSessionId === callSessionId && fromLegIds.includes(call.lastLeg.legId);
-            if (!mine && !last) return;
+            // the call on hold here was taken to another device: it is held here no more
+            const held = state.held && state.held.callSessionId === callSessionId && fromLegIds.includes(state.held.legId);
+            if (held) state.held = null;
+            if (!mine && !last && !held) return;
             if (mine) call.hangUp("moved");
             state.movedAway = { callSessionId };
         },
 
         // ---- call waiting (item 7): hold and answer, end and answer, decline with a quick text ----
-        // This page's call goes on hold (hold#OwnLeg): its media stops here, its leg stays in the call (the socket keeps
-        // it), and the others hear it is held. Resolves to the held call.
+        // This page's call goes on hold (hold#OwnLeg): once the server has it on hold its media stops here, its leg stays
+        // in the call (the server keeps a held leg without its socket for half an hour), and the others hear it is held.
+        // Resolves to the held call, or null when it was not put on hold (the call goes on, and the page says why).
         hold() {
             const id = state.current;
             const legId = state.legId;
@@ -610,26 +666,48 @@
             const video = call.hasVideo() && !state.cameraOff;
             const view = state.calls[id];
             const name = view ? (view.participants || []).filter((p) => p.userId !== call.me).map((p) => p.displayName).join(", ") : "";
-            call.send({ rtc: "mute", callSessionId: id, callLegId: legId, audioMuted: true, cameraOff: true });
-            return call.request("holdOwnLeg", { callSessionId: id, callLegId: legId, held: "true" }).then((json) => {
+            const failed = () => {
+                if (moqui.notifyMessages) moqui.notifyMessages([{ type: "warning", message: t("The call could not be put on hold: it goes on") }]);
+                return null;
+            };
+            return call.request("holdOwnLeg", { callSessionId: id, callLegId: legId, held: "true" }, "POST", true).then((json) => {
+                if (json.reasonCode || json.errors || state.current !== id) return failed();
+                call.send({ rtc: "mute", callSessionId: id, callLegId: legId, audioMuted: true, cameraOff: true });
                 call.hangUp("held");
-                state.held = json.reasonCode ? null : { callSessionId: id, legId, video, name };
+                state.held = { callSessionId: id, legId, video, name };
                 return state.held;
-            });
+            }, failed);
         },
         // the call on hold back here; the one this page is in goes on hold in its place (a swap)
+        // The held leg is checked first (it may have ended, or moved to another device); the call this page is in is
+        // held only then, and kept when that hold is refused.
         resume() {
             const held = state.held;
             if (!held) return Promise.resolve(null);
-            state.held = null;
-            const swap = state.current ? call.hold() : Promise.resolve(null);
-            return swap.then(() => {
-                call.show(held.callSessionId);
-                return call.join(held.callSessionId, held.legId, { video: held.video });
-            });
+            return call.request("callState", { callSessionId: held.callSessionId }, "GET", true).then((json) => {
+                const view = json.call;
+                const leg = view && (view.participants || []).flatMap((p) => (p.userId === call.me ? p.legs || [] : [])).find((l) => l.callLegId === held.legId);
+                if (!view || view.status === "ended" || !leg || leg.status !== "answered") {
+                    if (state.held === held) state.held = null;
+                    if (moqui.notifyMessages) moqui.notifyMessages([{ type: "info", message: t("The call on hold has ended or moved to another device") }]);
+                    return null;
+                }
+                const swap = state.current ? call.hold() : Promise.resolve(true);
+                return swap.then((ok) => {
+                    if (!ok) return null;
+                    if (state.held === held) state.held = null;
+                    call.show(held.callSessionId);
+                    return call.join(held.callSessionId, held.legId, { video: held.video });
+                });
+            }, () => null);
         },
+        // the second call is answered only once the first is on hold
         holdAndAnswer(callSessionId, video) {
-            return call.hold().then(() => call.answer(callSessionId, video));
+            return call.hold().then((held) => {
+                if (held) return call.answer(callSessionId, video);
+                if (moqui.notifyMessages) moqui.notifyMessages([{ type: "warning", message: t("The other call was not answered: this one could not be put on hold") }]);
+                return { reasonCode: "notHeld" };
+            });
         },
         endAndAnswer(callSessionId, video) {
             return call.leave().then(() => call.answer(callSessionId, video));
@@ -655,6 +733,11 @@
             const view = state.calls[callSessionId];
             const body = String(text || "").trim();
             return call.decline(callSessionId).then((declined) => {
+                // a phone caller has no chat room: nothing is sent, and the page says so
+                if (view && view.kind === "phone") {
+                    if (moqui.notifyMessages) moqui.notifyMessages([{ type: "info", message: t("Declined. A phone caller gets no chat message: text them from Calls if you want to.") }]);
+                    return Object.assign({}, declined, { texted: false });
+                }
                 const callerId = view && (view.startedByUserId || ((view.participants || []).find((p) => p.role === "host") || {}).userId);
                 if (!body || !callerId || callerId === call.me) return declined;
                 return call.textTo(view.kind === "direct" ? view.chatRoomId : null, callerId, body).then((sent) => Object.assign({}, declined, { texted: sent }));
@@ -881,7 +964,13 @@
 
         // Joins the media of a call with the user's leg in it: the camera and microphone, the offer, and the socket's frames.
         join(callSessionId, legId, options) {
-            if (state.current && state.current !== callSessionId) call.hangUp("switched");
+            // another call this page is in (not one on hold): left, so its leg does not stay in it
+            if (state.current && state.current !== callSessionId) {
+                const was = { callSessionId: state.current, callLegId: state.legId };
+                call.send({ rtc: "leave", callSessionId: was.callSessionId, callLegId: was.callLegId, id: call.nextId++ });
+                call.hangUp("switched");
+                call.request("leaveCall", was, "POST", true).catch(() => null);
+            }
             // the call on hold joined again (its lobby's Join): it is held no more
             if (state.held && state.held.callSessionId === callSessionId) state.held = null;
             const video = options.video !== false && !state.settings.cameraOff;
@@ -1025,7 +1114,8 @@
                 if (pc !== call.pc) return;
                 // the join's id: its "joined" (which carries it) is applied to this pc only, not to a later one's
                 call.joinId = call.nextId++;
-                call.send({ rtc: "join", callSessionId: id, callLegId: legId, sdp: pc.localDescription.sdp, id: call.joinId });
+                call.send(Object.assign({ rtc: "join", callSessionId: id, callLegId: legId, sdp: pc.localDescription.sdp, id: call.joinId },
+                    state.held ? { keep: [state.held.legId] } : {}));
             });
         },
 
@@ -1150,7 +1240,7 @@
         remote(legId) {
             if (!state.remotes[legId]) {
                 state.remotes[legId] = { legId, name: call.nameOf(legId), stream: null, screen: null, connected: true, muted: false,
-                    cameraOff: false, hand: false, reaction: null, audioOnly: false, videoShown: false };
+                    cameraOff: false, hand: false, reaction: null, audioOnly: false, videoShown: null, firstSeen: 0 };
                 call.tracks[legId] = [];
             }
             return state.remotes[legId];
@@ -1316,7 +1406,11 @@
             call.cameraTx = null;
             state.videoPrompt = null;
             if (state.current) delete state.recordingOf[state.current];
-            if (state.current) call.hostCallState(state.current, "left");
+            if (state.current) call.hostCallState(state.current, reason === "held" ? "held" : "left");
+            // the socket's binding of a call this page is done with goes (a held call's stays; a guest's socket is its own)
+            if (state.current && state.legId && reason !== "held" && !call.guest) {
+                call.send({ rtc: "release", callSessionId: state.current, callLegId: state.legId });
+            }
             if (moqui.callKeys && moqui.callKeys.state.active) moqui.callKeys.end();
             if (call.guest) {
                 call.guest.close();
@@ -2061,7 +2155,7 @@
             '<template v-if="!waiting(view)">' +
             '<q-btn round unelevated color="positive" icon="sym_o_call" class="q-ml-sm" :aria-label="answerLabel(view)" @click="answer(view, view.video)"><q-tooltip>{{answerLabel(view)}}</q-tooltip></q-btn>' +
             '<q-btn v-if="view.video" round flat color="positive" icon="sym_o_mic" class="q-ml-xs" :aria-label="answerLabel(view, true)" @click="answer(view, false)"><q-tooltip>{{answerLabel(view, true)}}</q-tooltip></q-btn></template>' +
-            '<q-btn round flat icon="sym_o_sms" class="q-ml-xs m-call-quick" :aria-label="t(\'Decline with a message\')"><q-tooltip>{{t(\'Decline with a message\')}}</q-tooltip>' +
+            '<q-btn v-if="view.kind !== \'phone\'" round flat icon="sym_o_sms" class="q-ml-xs m-call-quick" :aria-label="t(\'Decline with a message\')"><q-tooltip>{{t(\'Decline with a message\')}}</q-tooltip>' +
             '<q-menu><q-list dense style="min-width:240px"><q-item v-for="text in quickTexts" :key="text" clickable v-close-popup @click="declineWith(view, text)"><q-item-section>{{text}}</q-item-section></q-item>' +
             '<q-separator></q-separator><q-item clickable v-close-popup @click="writeMessage(view)"><q-item-section avatar><q-icon name="sym_o_edit"></q-icon></q-item-section><q-item-section>{{t(\'Write a message\')}}</q-item-section></q-item></q-list></q-menu></q-btn>' +
             '<q-btn round unelevated color="negative" icon="sym_o_call_end" class="q-ml-xs" :aria-label="t(\'Decline\')" @click="decline(view)"><q-tooltip>{{t(\'Decline\')}}</q-tooltip></q-btn>' +
@@ -2538,6 +2632,11 @@
             '<q-btn flat round dense icon="sym_o_picture_in_picture_alt" class="m-call-pip" :aria-label="t(\'Picture in picture\')" @click="moquiCall().openPip()"><q-tooltip>{{canPip ? t(\'Picture in picture\') : t(\'A small call window\')}}</q-tooltip></q-btn>' +
             '<m-call-actions v-if="view.status !== \'ended\'" ref="actions" :view="view"></m-call-actions>' +
             '<q-btn v-if="panel" flat round dense icon="sym_o_close" :aria-label="t(\'Close the panel\')" @click="moquiCall().closePanel()"><q-tooltip>{{t(\'Close the panel\')}}</q-tooltip></q-btn></div>' +
+            // the call on hold (call waiting): on a phone the call covers the dock, so its banner is here too
+            '<q-banner v-if="call.held" dense rounded class="m-tonal q-mb-xs m-call-held-here"><template v-slot:avatar><q-icon name="sym_o_phone_paused" color="warning"></q-icon></template>' +
+            '{{t(\'On hold\')}}: {{call.held.name || t(\'Call\')}}' +
+            '<template v-slot:action><q-btn flat no-caps color="primary" :label="t(\'Swap\')" @click="moquiCall().resume()"></q-btn>' +
+            '<q-btn flat no-caps color="negative" :label="t(\'Leave\')" @click="moquiCall().leaveHeld()"></q-btn></template></q-banner>' +
             // the call's E2EE label
             '<div class="row q-mb-xs"><q-chip dense square :icon="label.icon" class="m-call-encryption m-tonal" :class="label.lock ? \'m-call-e2ee text-positive\' : \'\'" :data-e2ee="label.state">{{label.short}}<q-tooltip max-width="320px">{{label.banner}}</q-tooltip></q-chip></div>' +
             // the stage

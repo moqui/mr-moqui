@@ -77,8 +77,10 @@ items 4's picture-in-picture, 5 and the native call screen, are later). The user
 - **Voice to video and back.** Video on adds the camera's track to the same connection (`addVideo`: a send-only
   transceiver, in simulcast layers through the media server, with the SFrame sender of an encrypted call) and
   renegotiates with `publish` source `camera`; video off stops the track and makes the transceiver inactive
-  (`dropVideo`), with a `mute` frame saying the camera is off. The other page sees the track come or go and asks, "Bob
-  turned on video" with Turn on my video, or "turned off video" with Turn off my video: a prompt, not a new call.
+  (`dropVideo`), with a `mute` frame saying the camera is off. In a call of two the other page sees the track come or
+  go and asks, "Bob turned on video" with Turn on my video, or "turned off video" with Turn off my video: a prompt, not a
+  new call. It asks only for a change the other person made: not in a leg's first seconds (a late joiner, the other's
+  new leg after a move), not for their hold (the prompt waits a moment and looks again), and never in a group call.
 - **Picture in picture.** `openPip`: a Document Picture-in-Picture window where the browser has one (the speaker's
   video, mute, video and leave, kept current from the store; Chrome's automatic one when the tab is left, through the
   Media Session action), else the call's screen is left for the floating LiveCall window in the page.
@@ -88,19 +90,28 @@ items 4's picture-in-picture, 5 and the native call screen, are later). The user
   its media connected (`note#MediaEvent` `connected`), the user's other browser legs close (`CerMoved`), the push
   `legMoved` (with `fromLegIds`) stops the first page's media, and the media node's `ended` reaches it too. The other
   side's connection is untouched: it gets the new leg's tracks before the old ones go. A move that never connects is
-  left (`leave#Call` with its `callLegId`), and the call goes on with the first leg; a direct call ends only when its
-  person has no leg left in it. A call on the direct path first moves to the media server (the new leg binds there),
+  left (`leave#Call` with its `callLegId`), and the call goes on with the first leg. One move at a time: a new
+  `move#Call` closes a move that has not connected (`CerCanceled`). A direct call ends when its person has no leg in it
+  that connected or a socket holds: a move that never bound keeps nothing going. A call on the direct path first moves to the media server (the new leg binds there),
   so there the other side has the short gap of that move.
 - **Call waiting.** A call that rings while the page is in one offers Hold and answer, End and answer, Decline and
-  Decline with a message. Hold (`hold#OwnLeg`, the push `held`) puts the page's own leg on hold: a `mute` frame, then its
-  media stops while the leg stays in the call, kept by the socket's binding; the others see who put the call on hold.
-  The held call's banner has Swap (or Resume): the page joins that leg again, which takes it off hold (`bind#Connection`
-  clears `heldDate`, the push `resumed`), and the call it was in goes on hold in its place. Decline with a message
-  declines, then sends the text to the caller's direct room with the user (the call's own room for a direct call, else
-  `createDirect`); an encrypted room's message is encrypted in the page, as every message there.
-- **A socket's bindings.** A socket keeps its four newest bindings: a page whose call ended sends no leave (the other
-  side hung up, or its leg moved), so past four the oldest is released for the new one (`notws/rtc.rs` `keep`), rather
-  than the page's next call being refused.
+  Decline with a message. Hold (`hold#OwnLeg`, the push `held`) puts the page's own leg on hold; only once the server
+  has it on hold does the page send a `mute` frame and stop its media (a refused hold keeps the call, says so, and
+  answers nothing). The leg stays in the call: the server keeps a held browser leg with no socket for 30 minutes
+  (`HELD_KEEP_MS`), so a socket that reconnects or a page that reloads does not lose it, and the call's view marks it
+  `held`, so a reloaded page shows it on hold again. The others see who put the call on hold. The held call's banner
+  (in the dock, and inside the call on a phone, whose call covers the dock) has Swap (or Resume): the page first reads
+  the held leg (one that ended or moved to another device is dropped, and the call here kept), then holds the call it
+  is in, then joins the held leg again, which takes it off hold (`bind#Connection` clears `heldDate`, the push
+  `resumed`). In the mobile app the page tells the host `held` (`call_state`), not `left`, so the native call stays.
+  Decline with a message declines, then sends the text to the caller's direct room with the user (the call's own room
+  for a direct call, else `createDirect`); an encrypted room's message is encrypted in the page, as every message
+  there. A phone call has no such room: it is declined and the page says nothing was sent, and the ring bar offers no
+  message for one.
+- **A socket's bindings.** A page done with a call (it ended, its leg moved, the page joined another) sends `release`:
+  its binding goes and its connection is released, with no leave. Joining another call while in one leaves the first.
+  A socket keeps at most four bindings: past four the oldest goes for the new one (`notws/rtc.rs` `keep`), never a leg
+  the join names in `keep` (the page's call on hold), rather than the page's next call being refused.
 - **Terminal.** `CallTui` shows a person on hold; the rest needs the call's media or (a message to an encrypted room)
   its encryption, so it is the browser's.
 
@@ -487,7 +498,7 @@ between the edge node and a local media node is later work.
   left before it connects keeps the call) and a user's own leg on hold, back when it binds again.
   `./moq test-client webroot --offline --spec WebrootCall`: the side panel or the call screen, the voice-to-video
   prompt, the move's offer and push, and a declined call's quick text (sealed in an encrypted room).
-  `cargo test -p moqui-host --lib notws::rtc`: a socket keeps its newest bindings.
+  `cargo test -p moqui-host --lib notws::rtc`: a socket keeps its newest bindings, and the page's held call's.
 - `./moq accept basic-comms --spec CallFlow,EncryptedCallFlow` (acceptance): a voice call started with audio only, video
   turned on in it as a prompt on the other side and off again (encrypted too, under the same keys); Move to this device
   to a second page of the caller, the other side's connection and phase unchanged; call waiting's hold and answer, swap,

@@ -196,7 +196,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="hold" noun="OwnLeg">
         <description>Call waiting (plans/Comms-Messaging.md §8.3 item 7): the user puts their own leg in a call on hold
             (held true), to answer another call, or takes it off (held false; the leg binding again does that too). The leg
-            stays in the call while the page's socket is open; everyone in the call hears held or resumed.</description>
+            stays in the call, with no socket too for half an hour; everyone in the call hears held or resumed.</description>
         <in-parameters>
             <parameter name="callSessionId" required="true"/>
             <parameter name="callLegId"><description>The user's leg; their newest answered one when empty</description></parameter>

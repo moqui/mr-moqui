@@ -61,6 +61,11 @@ const ringsFor = (page, id) => page.waitFor(id => window.moqui.call.state.ringin
 const alwaysRelay = (page, on) =>
     page.evaluate(on => window.moqui.request("/apps/BasicComms/Settings/Calls/saveCallPreferences",
         {method: "POST", params: {alwaysRelay: on ? "true" : "false"}}).then(result => result.json && result.json.alwaysRelay), on)
+// until the page has seen each other leg for longer than the prompt's settling time (moqui.call.timing.settle)
+const settled = page => page.waitFor(() => {
+    const remotes = Object.values(window.moqui.call.state.remotes)
+    return remotes.length > 0 && remotes.every(r => r.firstSeen && Date.now() - r.firstSeen > window.moqui.call.timing.settle + 100)
+}, {timeout: 15})
 const hangUp = page => page.evaluate(() => (window.moqui.call.state.current ? window.moqui.call.leave() : null))
 
 spec({
@@ -129,6 +134,8 @@ feature("a voice call starts with audio only; video turned on in it reaches the 
         const before = [caller, callee].map(page => page.evaluate(() => ({sends: window.moqui.call.hasVideo(),
             avatar: !!document.querySelector(".m-call-voice")})))
         // the caller turns on video from the call's controls: the same call, a new track
+        // past the other leg's first seconds, whose tracks are its start and not a change to ask about
+        settled(callee)
         caller.locator(".m-call-video-toggle").click()
         let prompt = false
         try {

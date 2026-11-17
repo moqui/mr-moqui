@@ -1316,6 +1316,12 @@ Planned:
     `hold#OwnLeg`, a leg's `live` and `movedFromLegId` in the call's view, a direct call going on while its person has
     another leg; a socket keeps its four newest bindings, the oldest released (`notws/rtc.rs`: a page whose calls ended
     was refused its fifth).
+  - Review fixes: a held leg is kept without its socket for 30 minutes and shown held again after a reload; Swap
+    checks the held leg first and a refused hold keeps the call (and answers nothing); the voice-to-video prompt only
+    in a call of two, for the other person's own change; the held banner inside the phone's call; one pending move per
+    user; a move that never bound keeps no direct call going; the page releases a call's binding when done (`release`)
+    and never loses its held one to eviction; joining another call leaves the first; the mobile host hears `held`, not
+    `left`; no call button in a room with nobody here to ring; a phone caller gets no quick text, and the page says so.
   - Terminal: `CallTui` shows a person on hold; its comment says the rest is the browser's.
   - Tests. Regression: `Calls` (the move, a move left, the hold), `BasicCommsCalls` (both refused to a stranger through
     either mount, the terminal's On hold), `WebrootCall` (webroot, offline: the panel or the screen, the prompt, the

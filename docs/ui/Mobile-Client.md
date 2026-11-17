@@ -158,7 +158,8 @@ answered (plans/Mobile-Desktop.md MD6, MT2; a Rust native audio client is later)
 - **The call in the app.** WebrootCall.js tells the host what the call does (`moquiDesktop.callState`, the shell's
   `call_state` command, then `CallManager.pageCallState` through JNI): `joined` once its media is up, `left` when it is
   left or could not be joined (an encrypted call this WebView cannot take, offline, not ringing for this account),
-  `screen` and `offScreen` as its call screen shows and goes. The Telecom call and the foreground service last while
+  `screen` and `offScreen` as its call screen shows and goes, and `held` when call waiting puts it on hold (the native
+  code keeps its call; mapping it to Telecom's hold is the Android part of plans/Comms-Messaging.md phase 4). The Telecom call and the foreground service last while
   the page has the call; one the page has not joined in 30 seconds is given up, and a `ringEnded` (timed out,
   declined, canceled) ends one not yet joined. Over the lock screen the app shows only the call screen of a call
   answered on the ring screen: leaving it (another screen, a server page) shows the lock screen, which asks for the

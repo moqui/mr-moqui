@@ -1486,7 +1486,7 @@
               }, null, 512))
             }
         } },
-        "m-call-compact": { hash: "e0a460ab", make: function (Vue) {
+        "m-call-compact": { hash: "68de5fac", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, createElementVNode: _createElementVNode, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, normalizeClass: _normalizeClass, normalizeStyle: _normalizeStyle, createElementBlock: _createElementBlock, renderList: _renderList, Fragment: _Fragment, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
 
             return function render(_ctx, _cache) {
@@ -1494,10 +1494,11 @@
               const _component_q_btn = _resolveComponent("q-btn")
               const _component_m_call_network = _resolveComponent("m-call-network")
               const _component_m_call_actions = _resolveComponent("m-call-actions")
+              const _component_q_icon = _resolveComponent("q-icon")
+              const _component_q_banner = _resolveComponent("q-banner")
               const _component_q_chip = _resolveComponent("q-chip")
               const _component_m_call_video = _resolveComponent("m-call-video")
               const _component_m_avatar = _resolveComponent("m-avatar")
-              const _component_q_icon = _resolveComponent("q-icon")
               const _component_q_item_section = _resolveComponent("q-item-section")
               const _component_q_item = _resolveComponent("q-item")
               const _component_q_list = _resolveComponent("q-list")
@@ -1584,6 +1585,41 @@
                       }, 8, ["aria-label", "onClick"]))
                     : _createCommentVNode("", true)
                 ]),
+                (_ctx.call.held)
+                  ? (_openBlock(), _createBlock(_component_q_banner, {
+                      key: 0,
+                      dense: "",
+                      rounded: "",
+                      class: "m-tonal q-mb-xs m-call-held-here"
+                    }, {
+                      avatar: _withCtx(() => [
+                        _createVNode(_component_q_icon, {
+                          name: "sym_o_phone_paused",
+                          color: "warning"
+                        })
+                      ]),
+                      action: _withCtx(() => [
+                        _createVNode(_component_q_btn, {
+                          flat: "",
+                          "no-caps": "",
+                          color: "primary",
+                          label: _ctx.t('Swap'),
+                          onClick: $event => (_ctx.moquiCall().resume())
+                        }, null, 8, ["label", "onClick"]),
+                        _createVNode(_component_q_btn, {
+                          flat: "",
+                          "no-caps": "",
+                          color: "negative",
+                          label: _ctx.t('Leave'),
+                          onClick: $event => (_ctx.moquiCall().leaveHeld())
+                        }, null, 8, ["label", "onClick"])
+                      ]),
+                      default: _withCtx(() => [
+                        _createTextVNode(_toDisplayString(_ctx.t('On hold')) + ": " + _toDisplayString(_ctx.call.held.name || _ctx.t('Call')), 1)
+                      ]),
+                      _: 1
+                    }))
+                  : _createCommentVNode("", true),
                 _createElementVNode("div", { class: "row q-mb-xs" }, [
                   _createVNode(_component_q_chip, {
                     dense: "",
@@ -1678,7 +1714,7 @@
                 ]),
                 (true && (_ctx.call.captions.on || _ctx.call.captions.unavailable))
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 0,
+                      key: 1,
                       class: "m-call-captions q-pa-sm rounded-borders",
                       style: {"background":"rgba(0,0,0,.78)","color":"#fff"},
                       "aria-live": "polite"
@@ -2081,7 +2117,7 @@
                 : _createCommentVNode("", true)
             }
         } },
-        "m-call-dock": { hash: "a3778d5b", make: function (Vue) {
+        "m-call-dock": { hash: "9331be0", make: function (Vue) {
             const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createBlock: _createBlock, createVNode: _createVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, createCommentVNode: _createCommentVNode, withCtx: _withCtx, resolveDirective: _resolveDirective, withDirectives: _withDirectives, withKeys: _withKeys, normalizeClass: _normalizeClass } = Vue
 
             return function render(_ctx, _cache) {
@@ -2208,78 +2244,81 @@
                                           : _createCommentVNode("", true)
                                       ], 64))
                                     : _createCommentVNode("", true),
-                                  _createVNode(_component_q_btn, {
-                                    round: "",
-                                    flat: "",
-                                    icon: "sym_o_sms",
-                                    class: "q-ml-xs m-call-quick",
-                                    "aria-label": _ctx.t('Decline with a message')
-                                  }, {
-                                    default: _withCtx(() => [
-                                      _createVNode(_component_q_tooltip, null, {
+                                  (view.kind !== 'phone')
+                                    ? (_openBlock(), _createBlock(_component_q_btn, {
+                                        key: 1,
+                                        round: "",
+                                        flat: "",
+                                        icon: "sym_o_sms",
+                                        class: "q-ml-xs m-call-quick",
+                                        "aria-label": _ctx.t('Decline with a message')
+                                      }, {
                                         default: _withCtx(() => [
-                                          _createTextVNode(_toDisplayString(_ctx.t('Decline with a message')), 1)
-                                        ]),
-                                        _: 1
-                                      }),
-                                      _createVNode(_component_q_menu, null, {
-                                        default: _withCtx(() => [
-                                          _createVNode(_component_q_list, {
-                                            dense: "",
-                                            style: {"min-width":"240px"}
-                                          }, {
+                                          _createVNode(_component_q_tooltip, null, {
                                             default: _withCtx(() => [
-                                              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.quickTexts, (text) => {
-                                                return _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                  key: text,
-                                                  clickable: "",
-                                                  onClick: $event => (_ctx.declineWith(view, text))
-                                                }, {
-                                                  default: _withCtx(() => [
-                                                    _createVNode(_component_q_item_section, null, {
-                                                      default: _withCtx(() => [
-                                                        _createTextVNode(_toDisplayString(text), 1)
-                                                      ]),
-                                                      _: 2
-                                                    }, 1024)
-                                                  ]),
-                                                  _: 2
-                                                }, 1032, ["onClick"])), [
-                                                  [_directive_close_popup]
-                                                ])
-                                              }), 128)),
-                                              _createVNode(_component_q_separator),
-                                              _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                clickable: "",
-                                                onClick: $event => (_ctx.writeMessage(view))
+                                              _createTextVNode(_toDisplayString(_ctx.t('Decline with a message')), 1)
+                                            ]),
+                                            _: 1
+                                          }),
+                                          _createVNode(_component_q_menu, null, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_list, {
+                                                dense: "",
+                                                style: {"min-width":"240px"}
                                               }, {
                                                 default: _withCtx(() => [
-                                                  _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                  (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.quickTexts, (text) => {
+                                                    return _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                      key: text,
+                                                      clickable: "",
+                                                      onClick: $event => (_ctx.declineWith(view, text))
+                                                    }, {
+                                                      default: _withCtx(() => [
+                                                        _createVNode(_component_q_item_section, null, {
+                                                          default: _withCtx(() => [
+                                                            _createTextVNode(_toDisplayString(text), 1)
+                                                          ]),
+                                                          _: 2
+                                                        }, 1024)
+                                                      ]),
+                                                      _: 2
+                                                    }, 1032, ["onClick"])), [
+                                                      [_directive_close_popup]
+                                                    ])
+                                                  }), 128)),
+                                                  _createVNode(_component_q_separator),
+                                                  _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                    clickable: "",
+                                                    onClick: $event => (_ctx.writeMessage(view))
+                                                  }, {
                                                     default: _withCtx(() => [
-                                                      _createVNode(_component_q_icon, { name: "sym_o_edit" })
+                                                      _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                        default: _withCtx(() => [
+                                                          _createVNode(_component_q_icon, { name: "sym_o_edit" })
+                                                        ]),
+                                                        _: 1
+                                                      }),
+                                                      _createVNode(_component_q_item_section, null, {
+                                                        default: _withCtx(() => [
+                                                          _createTextVNode(_toDisplayString(_ctx.t('Write a message')), 1)
+                                                        ]),
+                                                        _: 1
+                                                      })
                                                     ]),
                                                     _: 1
-                                                  }),
-                                                  _createVNode(_component_q_item_section, null, {
-                                                    default: _withCtx(() => [
-                                                      _createTextVNode(_toDisplayString(_ctx.t('Write a message')), 1)
-                                                    ]),
-                                                    _: 1
-                                                  })
+                                                  }, 8, ["onClick"])), [
+                                                    [_directive_close_popup]
+                                                  ])
                                                 ]),
-                                                _: 1
-                                              }, 8, ["onClick"])), [
-                                                [_directive_close_popup]
-                                              ])
+                                                _: 2
+                                              }, 1024)
                                             ]),
                                             _: 2
                                           }, 1024)
                                         ]),
                                         _: 2
-                                      }, 1024)
-                                    ]),
-                                    _: 2
-                                  }, 1032, ["aria-label"]),
+                                      }, 1032, ["aria-label"]))
+                                    : _createCommentVNode("", true),
                                   _createVNode(_component_q_btn, {
                                     round: "",
                                     unelevated: "",

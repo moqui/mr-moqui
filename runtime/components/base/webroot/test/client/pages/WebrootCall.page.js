@@ -16,32 +16,57 @@ const view = (id, extra) => Object.assign({ callSessionId: id, status: "active",
         { userId: "bob", displayName: "Bob", inCall: true, legs: [{ callLegId: "L2", status: "answered", live: true }] }] }, extra || {});
 call.me = "ann";
 
-test("the other side's video coming or going is a prompt, not a new call: on when this page sends none, off when it still sends", () => {
-    reset();
-    Object.assign(state, { current: "C1", legId: "L1", phase: "connected" });
-    const bob = call.remote("L2");
-    bob.name = "Bob";
-    bob.stream = stream("audio");
-    call.noteVideo("L2");
-    assert.equal(state.videoPrompt, null, "audio only: nothing to ask");
-    bob.stream = stream("audio", "video");
-    call.noteVideo("L2");
-    assert.deepEqual(state.videoPrompt, { legId: "L2", name: "Bob", on: true });
-    // this page turns its video on too: nothing to ask when Bob turns his off... until he does
-    state.videoPrompt = null;
-    state.localStream = stream("audio", "video");
-    bob.cameraOff = true;
-    call.noteVideo("L2");
-    assert.deepEqual(state.videoPrompt, { legId: "L2", name: "Bob", on: false });
-    // Not now: no prompt, and nothing changes
-    call.answerPrompt(false);
-    assert.equal(state.videoPrompt, null);
-    // while joining, a track coming is the call's start, not a change
-    reset();
-    Object.assign(state, { current: "C1", legId: "L1", phase: "joining" });
-    call.remote("L2").stream = stream("audio", "video");
-    call.noteVideo("L2");
-    assert.equal(state.videoPrompt, null);
+test("the other person's video coming or going in a call of two is a prompt, not a new call; not on first sight, not their hold, not in a group", async () => {
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 20));
+    const timing = call.timing;
+    call.timing = { settle: 0, promptWait: 0 };
+    try {
+        reset();
+        Object.assign(state, { current: "C1", legId: "L1", phase: "connected" });
+        const bob = call.remote("L2");
+        bob.name = "Bob";
+        // a leg seen first with its video (a late joiner, the other's new leg after a move) is its start: no prompt
+        bob.stream = stream("audio", "video");
+        call.noteVideo("L2");
+        await tick();
+        assert.equal(state.videoPrompt, null, "the first sight of a leg");
+        bob.cameraOff = true;
+        call.noteVideo("L2");
+        await tick();
+        assert.equal(state.videoPrompt, null, "this page sends no video: nothing to ask when theirs goes");
+        bob.cameraOff = false;
+        call.noteVideo("L2");
+        await tick();
+        assert.deepEqual(state.videoPrompt, { legId: "L2", name: "Bob", on: true });
+        // this page turns its video on too; Bob turns his off: asked whether to turn ours off
+        state.videoPrompt = null;
+        state.localStream = stream("audio", "video");
+        bob.cameraOff = true;
+        call.noteVideo("L2");
+        await tick();
+        assert.deepEqual(state.videoPrompt, { legId: "L2", name: "Bob", on: false });
+        call.answerPrompt(false);
+        assert.equal(state.videoPrompt, null, "Not now");
+        // Bob's hold sends his camera off: not a choice to answer
+        state.calls.C1 = view("C1");
+        state.calls.C1.participants[1].onHold = true;
+        bob.cameraOff = false;
+        call.noteVideo("L2");
+        bob.cameraOff = true;
+        call.noteVideo("L2");
+        await tick();
+        assert.equal(state.videoPrompt, null, "the other side's hold");
+        // a group call asks nothing
+        state.calls.C1.participants[1].onHold = false;
+        const cat = call.remote("L3");
+        cat.stream = stream("audio");
+        bob.cameraOff = false;
+        call.noteVideo("L2");
+        await tick();
+        assert.equal(state.videoPrompt, null, "a group call");
+    } finally {
+        call.timing = timing;
+    }
 });
 
 test("a call shows in the side panel on a desktop's width and on the call screen on a phone's", () => {
@@ -117,9 +142,55 @@ test("a declined call's quick text goes to the caller's direct room, sealed in a
         assert.deepEqual(sealed, [["D7", ["ann", "bob"], "Later"]]);
         assert.equal(posted[3][1].body, undefined, "no plain text to an encrypted room");
         assert.equal(posted[3][1].encryptedJson, "{}");
+        // a phone call's caller has no chat room: declined, nothing sent
+        posted.length = 0;
+        state.calls.P1 = view("P1", { kind: "phone", myLegStatus: "offered", startedByUserId: null, chatRoomId: null });
+        const phone = await call.declineWithText("P1", "Later");
+        assert.equal(phone.texted, false);
+        assert.deepEqual(posted.map((p) => p[0]), ["declineCall"]);
     } finally {
         moqui.request = request;
         moqui.chat = chat;
         moqui.crypto = crypto;
+    }
+});
+
+test("call waiting: a refused hold keeps the call and answers nothing; a held leg that moved or a reloaded page's held leg", async () => {
+    reset();
+    const request = moqui.request;
+    const answer = call.answer;
+    const answered = [];
+    let refuse = true;
+    moqui.request = (url) => {
+        if (url.endsWith("/holdOwnLeg")) return Promise.resolve({ json: refuse ? { reasonCode: "notFound", errors: "Call not found" } : { callLegId: "L1" } });
+        return Promise.resolve({ json: {} });
+    };
+    call.answer = (id) => { answered.push(id); return Promise.resolve({}); };
+    try {
+        Object.assign(state, { current: "C1", legId: "L1", phase: "connected" });
+        const out = await call.holdAndAnswer("C2", false);
+        assert.equal(out.reasonCode, "notHeld");
+        assert.equal(state.current, "C1", "the call goes on");
+        assert.deepEqual(answered, []);
+        refuse = false;
+        await call.holdAndAnswer("C2", false);
+        assert.deepEqual(state.held && [state.held.callSessionId, state.held.legId], ["C1", "L1"]);
+        assert.deepEqual(answered, ["C2"]);
+        // the held leg taken to another device: held here no more
+        call.movedElsewhere("C1", ["L1"]);
+        assert.equal(state.held, null);
+        assert.deepEqual(state.movedAway, { callSessionId: "C1" });
+        // a reloaded page: the view marks the user's leg held, with no socket holding it
+        reset();
+        const reloaded = view("C3");
+        reloaded.participants[0].legs[0].held = true;
+        reloaded.participants[0].legs[0].live = false;
+        call.remember(reloaded);
+        assert.deepEqual(state.held && [state.held.callSessionId, state.held.legId, state.held.name], ["C3", "L1", "Bob"]);
+        call.remember(view("C3", { status: "ended" }));
+        assert.equal(state.held, null, "a held call that ended");
+    } finally {
+        moqui.request = request;
+        call.answer = answer;
     }
 });
