@@ -5,6 +5,7 @@ package org.moqui.mobile
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.util.Log
 import androidx.core.app.RemoteInput
 
@@ -17,9 +18,12 @@ import androidx.core.app.RemoteInput
 class ChatActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val app = context.applicationContext
-        val account = intent.getStringExtra(ACCOUNT) ?: return
-        val room = ChatRules.plainId(intent.getStringExtra(ROOM)) ?: return
-        val eventSeq = intent.getLongExtra(EVENT_SEQ, 0L)
+        // the ids are the intent's data, which a Reply's fill-in cannot change (never its extras)
+        val data = intent.data ?: return
+        if (data.scheme != ACTION_SCHEME) return
+        val account = ChatRules.accountId(data.getQueryParameter(ACCOUNT)) ?: return
+        val room = ChatRules.plainId(data.getQueryParameter(ROOM)) ?: return
+        val eventSeq = data.getQueryParameter(EVENT_SEQ)?.toLongOrNull() ?: 0L
         when (intent.action) {
             REPLY -> {
                 val text = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(REPLY_TEXT)?.toString()?.trim()
@@ -85,6 +89,17 @@ class ChatActionReceiver : BroadcastReceiver() {
         const val ROOM = "chatRoomId"
         const val EVENT_SEQ = "eventSeq"
         const val REPLY_TEXT = "replyText"
+        /** The scheme of an action's data: the receiver is not exported, so only the app's own intents come. */
+        const val ACTION_SCHEME = "org.moqui.mobile.chat"
+
+        /** An action's data: the account, room and message it acts on. */
+        fun actionUri(account: String, room: String, eventSeq: Long): Uri = Uri.Builder()
+            .scheme(ACTION_SCHEME)
+            .authority("room")
+            .appendQueryParameter(ACCOUNT, account)
+            .appendQueryParameter(ROOM, room)
+            .appendQueryParameter(EVENT_SEQ, eventSeq.toString())
+            .build()
 
         /** The outbox the actions go to (the tests put their own). */
         @Volatile var outbox: Outbox = RustOutbox

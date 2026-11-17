@@ -1061,8 +1061,8 @@ time). Input after an idle beat past the auto-away minutes beats at once, so the
 **The webroot transitions** of the store, each as the current user (401 without one): `GET /userStatus` `{myStatus}`, `POST /setUserStatus`
 (`status`, `statusText`, `emoji`, `clearAtDate` in epoch millis, `clearAfterMinutes`, `clearStatus`), `POST /userStatusHeartbeat`
 (`idleSeconds`), `GET /userStatuses?userIds=a,b` `{statusMap}`, `POST /chatTyping` (`chatRoomId`, `typing`) and `GET /chatUnread`
-`{total, unread, mentions, roomCounts, levelMap}` (`levelMap`: each room's notification level, all, mentions or none,
-which the desktop app's notifications follow).
+`{total, unread, mentions, roomCounts, levelMap, roomNameMap}` (`levelMap`: each room's notification level, all,
+mentions or none; `roomNameMap`: each group room's name; the desktop app's notifications follow them).
 
 **The account menu's status**: `m-user-status-menu` (the current status and its message, the four statuses, "Set a status message", "Clear status
 message") and `m-user-status-dialog` (emoji, text up to 100 characters, clear after: don't clear, 30 minutes, 1 hour, 4 hours, today, this
@@ -1207,7 +1207,8 @@ with `revokeLoginKey`) deletes it, its renewal moves it to the new key, and one 
 the next push. `POST /qapps/unregisterClientPush` forgets it, and `POST /qapps/ackClientPush` with a chat push's
 `ackId` (or a notification's `pushId`) says the app showed it (`ack#Push`). `POST /qapps/testClientPush` (with
 `endpoint` from a browser) queues a test push to the calling device through the same path and answers its `ackIdList`
-and `queuedDate`, so the app's notification check shows how long it took to arrive (`send#TestPush`). `/qapps/clientConfig` says what the server offers in `server.features.nativePush`
+and `queuedDate`, so the app's notification check shows how long it took to arrive (`send#TestPush`; once a device in 10
+seconds, else `reasonCode` `tooSoon`). `/qapps/clientConfig` says what the server offers in `server.features.nativePush`
 (`providers` `fcm` and `unifiedpush`, `fcmConfigured`, `registered`, `encrypted`, `ack`).
 
 `send#WebPush` sends to these through FCM's HTTP v1 API (`service/fcm.rs`) as a data message, which the app's own code

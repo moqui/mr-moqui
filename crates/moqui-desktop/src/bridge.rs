@@ -39,8 +39,9 @@ pub(crate) const SCRIPT: &str = include_str!("bridge.js");
 
 /// The permissions of the node's origin: the app commands of `build.rs` (`allow-` and the command with `-` for `_`),
 /// and the notification plugin's permission check, which its `window.Notification` stand-in asks on every page.
-const PERMISSIONS: [&str; 6] = [
+const PERMISSIONS: [&str; 7] = [
     "allow-notify",
+    "allow-notify-clear",
     "allow-set-counts",
     "allow-set-presence",
     "allow-open-external",
@@ -212,21 +213,33 @@ fn open_in_page(app: &AppHandle, link: &str) {
     }
 }
 
-/// The notification id of a page's `tag` (a room's `chat-<id>`, a call's `call-<id>`): the same tag replaces and removes
-/// the same notification (plans/Comms-Messaging.md §7.5). None for no tag.
-pub(crate) fn tag_id(tag: Option<&str>) -> Option<i32> {
+/// The notification id of a page's `tag` (a room's `chat-<id>`, a call's `call-<id>`) for `account` (the client's
+/// current account; none on a node): the same tag of the same account replaces and removes the same notification, and
+/// another account's room of the same id is another (plans/Comms-Messaging.md §7.5). None for no tag.
+pub(crate) fn tag_id(account: Option<&str>, tag: Option<&str>) -> Option<i32> {
     let tag = tag.map(str::trim).filter(|tag| !tag.is_empty())?;
     let mut hash: u32 = 0x811c_9dc5;
-    for byte in tag.bytes() {
+    for byte in account
+        .unwrap_or("")
+        .bytes()
+        .chain(std::iter::once(b'\n'))
+        .chain(tag.bytes())
+    {
         hash ^= u32::from(byte);
         hash = hash.wrapping_mul(0x0100_0193);
     }
     Some(i32::try_from(hash % 0x7fff_0000).unwrap_or(0) + 1000)
 }
 
+/// The account a page's notification is of: the client's current one (its shell and its app windows), none on a node.
+fn notify_account(app: &AppHandle) -> Option<String> {
+    let client = app.try_state::<crate::client::Client>()?;
+    client.core.current().map(|(account, _)| account.id)
+}
+
 /// A native notification. A click shows the window and follows `link` when it is on the node's origin. A `tag` (a
-/// room's) replaces the notification of the same tag: the earlier one is closed first where the platform can (Linux and
-/// the BSDs; on macOS and Windows a shown notification stays, `remove_active`).
+/// room's) replaces the notification of the same tag of the same account: the earlier one is closed first where the
+/// platform can (Linux and the BSDs; on macOS and Windows a shown notification stays, `remove_active`).
 #[tauri::command]
 pub(crate) fn notify(
     app: AppHandle,
@@ -243,7 +256,7 @@ pub(crate) fn notify(
     if let Some(body) = body.map(|body| clip(&body, BODY_MAX)).filter(|body| !body.is_empty()) {
         builder = builder.body(body);
     }
-    if let Some(id) = tag_id(tag.as_deref()) {
+    if let Some(id) = tag_id(notify_account(&app).as_deref(), tag.as_deref()) {
         let _ = app.notification().remove_active(vec![id]);
         builder = builder.id(id);
     }
@@ -254,10 +267,11 @@ pub(crate) fn notify(
     builder.show().map_err(|err| err.to_string())
 }
 
-/// Remove the notification of `tag` (a room read: its notification goes, §7.2 rule 3), where the platform can.
+/// Remove the notification of `tag` of the current account (a room read: its notification goes, §7.2 rule 3), where
+/// the platform can.
 #[tauri::command]
 pub(crate) fn notify_clear(app: AppHandle, tag: String) -> Result<(), String> {
-    match tag_id(Some(&tag)) {
+    match tag_id(notify_account(&app).as_deref(), Some(&tag)) {
         Some(id) => app
             .notification()
             .remove_active(vec![id])

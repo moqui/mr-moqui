@@ -108,18 +108,27 @@ pub(crate) fn take_link(nonce: &str, id: &str) -> Option<CallLink> {
         .take(nonce, id, now_ms())
 }
 
-/// The account a push with `push_id` is for ([`calls::ring_account`]); none for a push that is no account's here.
+/// The accounts here with a key (signed in).
+fn keyed_ids(core: &Client) -> Vec<String> {
+    let ids: Vec<String> = {
+        let accounts = moqui_lib::sync::lock(core.accounts());
+        accounts.list().iter().map(|account| account.id.clone()).collect()
+    };
+    ids.into_iter().filter(|id| core.keys().get(id).is_some()).collect()
+}
+
+/// The push record, read under the lock.
+fn load_record(dir: &Path) -> PushRecord {
+    let _one = moqui_lib::sync::lock(&PUSH);
+    PushRecord::load(dir)
+}
+
+/// The account an unsealed ring is for ([`calls::ring_account`]): the one account its `push_id` can be; none for a
+/// push that is no account's here, or that two accounts could be.
 pub(crate) fn ring_account(dir: &Path, push_id: &str) -> Option<String> {
     let core = core_in(dir).ok()?;
-    let (keyed, current) = {
-        let accounts = moqui_lib::sync::lock(core.accounts());
-        let current = accounts.current().map(|account| account.id.clone());
-        let ids: Vec<String> = accounts.list().iter().map(|account| account.id.clone()).collect();
-        (ids, current)
-    };
-    let keyed: Vec<String> = keyed.into_iter().filter(|id| core.keys().get(id).is_some()).collect();
-    let _one = moqui_lib::sync::lock(&PUSH);
-    calls::ring_account(&PushRecord::load(dir), push_id, &keyed, current.as_deref())
+    let keyed = keyed_ids(&core);
+    calls::ring_account(&load_record(dir), push_id, &keyed)
 }
 
 /// Telecom ended an answered call (a headset's or a car's hang-up): the page leaves it.
@@ -231,72 +240,110 @@ pub(crate) fn decline_call(dir: &Path, id: &str, account: &str) -> String {
     }
 }
 
-/// The app's push keys on `record` (made on first use, sealed as the device keys are): new ones register again.
-fn with_push_keys(core: &Client, record: &mut PushRecord) -> bool {
-    match crate::push::keys_of(core.keys()) {
-        Ok(keys) => record.set_keys(&keys.public_b64(), &keys.auth_b64()),
-        Err(err) => {
-            // registered without keys: the server then pushes no text to this device
-            log::error!("Push: no push keys: {err}");
-            false
+/// Each account's push keys on `record` (made at its first registration, sealed as the device keys are; `again`, an
+/// account that just signed in, may have new ones made if its kept ones cannot be read): new ones register again.
+fn with_push_keys(core: &Client, record: &mut PushRecord, again: Option<&str>) -> bool {
+    let mut changed = false;
+    for id in keyed_ids(core) {
+        let registered = if again == Some(id.as_str()) {
+            None
+        } else {
+            record.keys.get(&id).map(|(public, _)| public.as_str())
+        };
+        match crate::push::keys_for(core.keys(), &id, registered) {
+            Ok(keys) => changed |= record.set_keys(&id, &keys.public_b64(), &keys.auth_b64()),
+            // tried again at the next registration; the registration made with them stays
+            Err(err) => log::error!("Push: no push keys for {id}: {err}"),
+        }
+    }
+    changed
+}
+
+/// Change the push record under the lock, keeping it when `change` says it changed.
+fn change_record(dir: &Path, change: impl FnOnce(&mut PushRecord) -> bool) {
+    let _one = moqui_lib::sync::lock(&PUSH);
+    let mut record = PushRecord::load(dir);
+    if change(&mut record) {
+        if let Err(err) = record.save(dir) {
+            log::error!("Push: the push record was not kept: {err}");
         }
     }
 }
 
 /// A token from Firebase: kept, and registered with each account signed in.
 pub(crate) fn push_token(dir: &Path, token: &str) {
-    push_token_of(dir, "fcm", token);
-}
-
-/// A token of `provider` (`fcm`, or `unifiedpush` with a distributor's https endpoint): kept, and registered with each
-/// account signed in, with the app's push keys.
-pub(crate) fn push_token_of(dir: &Path, provider: &str, token: &str) {
     let token = token.trim();
-    if token.is_empty() || token.len() > 4096 || !matches!(provider, "fcm" | "unifiedpush") {
+    if token.is_empty() || token.len() > 4096 {
         log::warn!("Push: a token that is not one was passed over");
         return;
     }
-    let _one = moqui_lib::sync::lock(&PUSH);
-    let mut record = PushRecord::load(dir);
-    let mut changed = record.set_token_of(provider, token);
-    if network_ready() {
-        match core_in(dir) {
-            Ok(core) => {
-                changed |= with_push_keys(&core, &mut record);
-                changed |= record.register(&asked(&core), &ProxyPoster(&core));
-            }
-            Err(err) => log::warn!("Push: no client to register with: {err}"),
-        }
-    }
-    if changed {
-        if let Err(err) = record.save(dir) {
-            log::error!("Push: the token was not kept: {err}");
-        }
-    }
+    change_record(dir, |record| record.set_token(token));
+    register_pending(dir);
 }
 
-/// Register the kept token with the accounts it is not registered with (the app's start), or again with `again`
-/// (it signed in, with a new key). Nothing without a token. Whether every account signed in has it registered now
-/// (the native code tries again until then: `RegisterWorker.kt`).
+/// `account`'s UnifiedPush distributor endpoint (none: it was unregistered), from the connector
+/// (`UnifiedPushService.kt`, whose instance is the account): kept, and registered with the account's server.
+pub(crate) fn unified_endpoint(dir: &Path, account: &str, endpoint: Option<&str>) {
+    let Some(account) = calls::account_id(account) else {
+        log::warn!("Push: a UnifiedPush endpoint of no account was passed over");
+        return;
+    };
+    let endpoint = endpoint.map(str::trim).filter(|endpoint| !endpoint.is_empty());
+    if endpoint.is_some_and(|endpoint| endpoint.len() > 4096 || !endpoint.starts_with("https://")) {
+        log::warn!("Push: a UnifiedPush endpoint that is not https was passed over");
+        return;
+    }
+    change_record(dir, |record| record.set_endpoint(account, endpoint));
+    register_pending(dir);
+}
+
+/// Register each account signed in that is not registered yet (the app's start, a token, an endpoint), or again with
+/// `again` (it signed in, with a new key). The posts go with no lock held, on a copy whose outcome is merged after.
+/// Whether every account signed in has a registration now (the native code tries again until then:
+/// `RegisterWorker.kt`).
 pub(crate) fn register_push(core: &Client, dir: &Path, again: Option<&str>) -> bool {
     if !network_ready() {
         return false;
     }
-    let _one = moqui_lib::sync::lock(&PUSH);
-    let mut record = PushRecord::load(dir);
-    if record.token.is_none() {
+    let (before, accounts) = {
+        let _one = moqui_lib::sync::lock(&PUSH);
+        let mut record = PushRecord::load(dir);
+        let mut changed = again.is_some_and(|id| record.forget(id));
+        changed |= with_push_keys(core, &mut record, again);
+        if changed {
+            if let Err(err) = record.save(dir) {
+                log::error!("Push: the push record was not kept: {err}");
+            }
+        }
+        (record, asked(core))
+    };
+    if !before.pending(&accounts) {
         return true;
     }
-    let mut changed = again.is_some_and(|id| record.forget(id));
-    changed |= with_push_keys(core, &mut record);
-    let accounts = asked(core);
-    changed |= record.register(&accounts, &ProxyPoster(core));
-    if changed {
+    let mut done = before.clone();
+    if !done.register(&accounts, &ProxyPoster(core)) {
+        return false;
+    }
+    let _one = moqui_lib::sync::lock(&PUSH);
+    let mut record = PushRecord::load(dir);
+    if record.merge(&before, &done) {
         if let Err(err) = record.save(dir) {
             log::error!("Push: the registrations were not kept: {err}");
         }
     }
     !record.pending(&accounts)
+}
+
+/// [`register_push`], and when an account is still not registered, the native code's retry worker scheduled
+/// (`RegisterWorker.kt`, only then: a worker scheduled at every start would start the process again after it ended).
+pub(crate) fn register_or_retry(core: &Client, dir: &Path, again: Option<&str>) {
+    if register_push(core, dir, again) {
+        return;
+    }
+    #[cfg(target_os = "android")]
+    if let Err(err) = crate::android::register_worker_start() {
+        log::warn!("Push: the registration's retry was not scheduled: {err}");
+    }
 }
 
 /// [`register_push`] from the native code (its retry worker), with no activity: whether it is done.
@@ -310,28 +357,136 @@ pub(crate) fn register_pending(dir: &Path) -> bool {
     }
 }
 
-/// Open a push (`enc`, encrypted to the app's push keys) of the registration `push_id`: its JSON with `account`, the
-/// account it is for, as a text for the native code. None for a push that is no account's here or does not open.
-pub(crate) fn open_push(dir: &Path, push_id: &str, enc: &str) -> Option<String> {
-    let account = ring_account(dir, push_id)?;
+/// Open an FCM push of the registration `push_id` (`enc`, sealed to an account's push keys; `kind`, its outer kind,
+/// which a sealed notification keeps only outside): its JSON with `account`, the account whose keys opened it, and its
+/// `kind` and `pushId`, as a text for the native code. The accounts registered with `push_id` are tried, and only the
+/// one whose keys open it is the push's (a server cannot make a push open as another's); none for a push that is no
+/// account's here or does not open (logged). Keys are only read here, never made.
+pub(crate) fn open_push(dir: &Path, push_id: &str, kind: &str, enc: &str) -> Option<String> {
     let core = core_in(dir).ok()?;
-    let keys = match crate::push::keys_of(core.keys()) {
-        Ok(keys) => keys,
-        Err(err) => {
-            log::error!("Push: no push keys to open a push with: {err}");
-            return None;
-        }
-    };
-    match keys.open_b64(enc) {
-        Ok(mut opened) => {
-            opened["account"] = Value::String(account);
-            Some(opened.to_string())
-        }
-        Err(err) => {
-            log::warn!("Push: a push of {push_id} did not open: {err}");
+    let keyed = keyed_ids(&core);
+    let accounts = calls::push_accounts(&load_record(dir), push_id, &keyed);
+    if accounts.is_empty() {
+        log::warn!("Push: a push of {push_id} is no account's here; dropped");
+        return None;
+    }
+    let keyed: Vec<(String, Option<crate::push::PushKeys>)> = accounts
+        .into_iter()
+        .map(|account| {
+            let keys = crate::push::kept_keys(core.keys(), &account);
+            if keys.is_none() {
+                log::warn!("Push: the push keys of {account} cannot be read now");
+            }
+            (account, keys)
+        })
+        .collect();
+    match open_with(&keyed, enc) {
+        Some((account, opened)) => Some(opened_for(opened, &account, kind, push_id).to_string()),
+        None => {
+            log::warn!("Push: a push of {push_id} opened with no account's keys here; dropped");
             None
         }
     }
+}
+
+/// The account of `candidates` whose keys open `enc`, and what it opened to: the keys prove which account's server
+/// sent it.
+pub(crate) fn open_with(candidates: &[(String, Option<crate::push::PushKeys>)], enc: &str) -> Option<(String, Value)> {
+    candidates.iter().find_map(|(account, keys)| {
+        let opened = keys.as_ref()?.open_b64(enc).ok()?;
+        Some((account.clone(), opened))
+    })
+}
+
+/// An opened push with the account it is for, and its outer `kind` and `pushId` where it has none of its own.
+pub(crate) fn opened_for(mut opened: Value, account: &str, kind: &str, push_id: &str) -> Value {
+    if opened.get("kind").and_then(Value::as_str).is_none_or(str::is_empty) && !kind.is_empty() {
+        opened["kind"] = Value::String(kind.to_string());
+    }
+    if opened.get("pushId").is_none() && !push_id.is_empty() {
+        opened["pushId"] = Value::String(push_id.to_string());
+    }
+    opened["account"] = Value::String(account.to_string());
+    opened
+}
+
+/// The UnifiedPush connector's key manager (`RustKeyManager.kt`): open a push body to `account` (the connector's
+/// instance) with its keys; none for an account not signed in here or a body that does not open. Only reads keys.
+pub(crate) fn open_for(dir: &Path, account: &str, body: &[u8]) -> Option<Vec<u8>> {
+    let core = core_in(dir).ok()?;
+    if !keyed_ids(&core).iter().any(|id| id == account) {
+        log::warn!("Push: a UnifiedPush message for {account}, not signed in here; dropped");
+        return None;
+    }
+    let keys = crate::push::kept_keys(core.keys(), account)?;
+    match keys.open(body) {
+        Ok(plain) => Some(plain),
+        Err(err) => {
+            log::warn!("Push: a UnifiedPush message for {account} did not open: {err}");
+            None
+        }
+    }
+}
+
+/// The connector's key manager asks for `account`'s public key and auth secret (`make`: make them if it has none, as
+/// at a registration): `<public>.<auth>`, base64url; none for an account not signed in here.
+pub(crate) fn push_public(dir: &Path, account: &str, make: bool) -> Option<String> {
+    let core = core_in(dir).ok()?;
+    if !keyed_ids(&core).iter().any(|id| id == account) {
+        return None;
+    }
+    let keys = if make {
+        let _one = moqui_lib::sync::lock(&PUSH);
+        let record = PushRecord::load(dir);
+        let registered = record.keys.get(account).map(|(public, _)| public.clone());
+        match crate::push::keys_for(core.keys(), account, registered.as_deref()) {
+            Ok(keys) => keys,
+            Err(err) => {
+                log::error!("Push: no push keys for {account}: {err}");
+                return None;
+            }
+        }
+    } else {
+        crate::push::kept_keys(core.keys(), account)?
+    };
+    Some(format!("{}.{}", keys.public_b64(), keys.auth_b64()))
+}
+
+/// The accounts signed in here, one id a line: the UnifiedPush connector registers an instance for each.
+pub(crate) fn account_ids(dir: &Path) -> String {
+    core_in(dir).map(|core| keyed_ids(&core).join("\n")).unwrap_or_default()
+}
+
+/// The app's key for its room links (`calls::room_link`), made and kept in the key store on first use. A key that
+/// cannot be read now is made again: the links already shown then open nothing, and nothing else.
+fn link_key(core: &Client) -> Option<Vec<u8>> {
+    const ENTRY: &str = "app.link-key";
+    if let Some(key) = core.keys().get(ENTRY).and_then(|text| crate::push::unb64(&text).ok()) {
+        if key.len() == 32 {
+            return Some(key);
+        }
+    }
+    let mut key = vec![0_u8; 32];
+    getrandom::fill(&mut key).ok()?;
+    use base64::Engine;
+    let text = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&key);
+    if let Err(err) = core.keys().set(ENTRY, &text) {
+        log::error!("The app's link key was not kept: {err}");
+        return None;
+    }
+    Some(key)
+}
+
+/// A chat notification's tap link (`ChatNotifications.kt`): the room of `account` at `seq`, signed with the app's link
+/// key; none for an id that is not one.
+pub(crate) fn room_link(dir: &Path, account: &str, room: &str, seq: i64) -> Option<String> {
+    let core = core_in(dir).ok()?;
+    calls::room_link(&link_key(&core)?, account, room, Some(seq))
+}
+
+/// The account, room and message of a room link this app made (its signature checks), for the app's `Opened` event.
+pub(crate) fn room_link_taken(core: &Client, url: &tauri::Url) -> Option<(String, String, Option<i64>)> {
+    calls::room_link_of(url, &link_key(core)?)
 }
 
 /// The chat send transition of the comms app at `root`, as WebrootChat.js posts it: `/qapps/BasicComms` →
@@ -446,26 +601,20 @@ pub(crate) fn push_registered(dir: &Path, account: &str) -> bool {
     PushRecord::load(dir).registered.contains_key(account)
 }
 
-/// Take the token back from `account`'s server before its key is revoked.
+/// Take the registration back from `account`'s server before its key is revoked (the post with no lock held), and
+/// forget the account's registration, push keys and endpoint here.
 pub(crate) fn unregister_push(core: &Client, dir: &Path, account: &Account, key: &str) {
-    if !network_ready() {
-        return;
+    let mut copy = load_record(dir);
+    if network_ready() && copy.registered.contains_key(&account.id) {
+        let asked = Asked {
+            account: account.clone(),
+            key: key.to_string(),
+            comms_root: String::new(),
+        };
+        copy.unregister(&asked, &ProxyPoster(core));
     }
-    let _one = moqui_lib::sync::lock(&PUSH);
-    let mut record = PushRecord::load(dir);
-    if record.token.is_none() && record.registered.is_empty() {
-        return;
-    }
-    let asked = Asked {
-        account: account.clone(),
-        key: key.to_string(),
-        comms_root: String::new(),
-    };
-    if record.unregister(&asked, &ProxyPoster(core)) {
-        if let Err(err) = record.save(dir) {
-            log::error!("Push: the registrations were not kept: {err}");
-        }
-    }
+    change_record(dir, |record| record.drop_account(&account.id));
+    crate::push::forget_keys(core.keys(), &account.id);
 }
 
 /// The app's host, for the pages of a background send ([`flush_background`]).
@@ -543,7 +692,7 @@ mod entries {
     use std::path::PathBuf;
 
     use jni::errors::LogErrorAndDefault;
-    use jni::objects::{JClass, JObject, JString};
+    use jni::objects::{JByteArray, JClass, JObject, JString};
     use jni::sys::{jboolean, jlong};
     use jni::EnvUnowned;
 
@@ -690,23 +839,99 @@ mod entries {
         .resolve::<LogErrorAndDefault>()
     }
 
-    /// `Native.pushTokenOf(dataDir, provider, token)`: a UnifiedPush distributor's endpoint (provider unifiedpush).
+    /// `Native.unifiedEndpoint(dataDir, account, endpoint)`: an account's UnifiedPush endpoint (empty: unregistered).
     #[no_mangle]
-    pub extern "system" fn Java_org_moqui_mobile_Native_pushTokenOf<'caller>(
+    pub extern "system" fn Java_org_moqui_mobile_Native_unifiedEndpoint<'caller>(
         mut env: EnvUnowned<'caller>,
         _class: JClass<'caller>,
         data_dir: JString<'caller>,
-        provider: JString<'caller>,
-        token: JString<'caller>,
+        account: JString<'caller>,
+        endpoint: JString<'caller>,
     ) {
         env.with_env(|env| -> Result<(), jni::errors::Error> {
             let dir = client_dir(&data_dir.try_to_string(env)?);
-            let provider = provider.try_to_string(env)?;
-            let token = token.try_to_string(env)?;
-            super::push_token_of(&dir, &provider, &token);
+            let account = account.try_to_string(env)?;
+            let endpoint = endpoint.try_to_string(env)?;
+            super::unified_endpoint(&dir, &account, Some(endpoint.as_str()).filter(|e| !e.is_empty()));
             Ok(())
         })
         .resolve::<LogErrorAndDefault>();
+    }
+
+    /// `Native.openFor(dataDir, account, body)`: a UnifiedPush body opened with the account's keys, or null.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_openFor<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+        account: JString<'caller>,
+        body: JByteArray<'caller>,
+    ) -> JByteArray<'caller> {
+        env.with_env(|env| -> Result<JByteArray<'caller>, jni::errors::Error> {
+            let dir = client_dir(&data_dir.try_to_string(env)?);
+            let account = account.try_to_string(env)?;
+            let body = env.convert_byte_array(&body)?;
+            match super::open_for(&dir, &account, &body) {
+                Some(plain) => env.byte_array_from_slice(&plain),
+                None => Ok(JByteArray::default()),
+            }
+        })
+        .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.pushPublic(dataDir, account, make)`: the account's `<public>.<auth>`, or null.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_pushPublic<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+        account: JString<'caller>,
+        make: jboolean,
+    ) -> JString<'caller> {
+        env.with_env(|env| -> Result<JString<'caller>, jni::errors::Error> {
+            let dir = client_dir(&data_dir.try_to_string(env)?);
+            let account = account.try_to_string(env)?;
+            match super::push_public(&dir, &account, make) {
+                Some(public) => env.new_string(public),
+                None => Ok(JString::default()),
+            }
+        })
+        .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.accountIds(dataDir)`: the accounts signed in here, one a line.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_accountIds<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+    ) -> JString<'caller> {
+        env.with_env(|env| -> Result<JString<'caller>, jni::errors::Error> {
+            let dir = client_dir(&data_dir.try_to_string(env)?);
+            env.new_string(super::account_ids(&dir))
+        })
+        .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.roomLink(dataDir, account, chatRoomId, eventSeq)`: a notification's signed tap link, or null.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_roomLink<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+        account: JString<'caller>,
+        room: JString<'caller>,
+        seq: jlong,
+    ) -> JString<'caller> {
+        env.with_env(|env| -> Result<JString<'caller>, jni::errors::Error> {
+            let dir = client_dir(&data_dir.try_to_string(env)?);
+            let (account, room) = (account.try_to_string(env)?, room.try_to_string(env)?);
+            match super::room_link(&dir, &account, &room, seq) {
+                Some(link) => env.new_string(link),
+                None => Ok(JString::default()),
+            }
+        })
+        .resolve::<LogErrorAndDefault>()
     }
 
     /// `Native.registerPending(dataDir)`: the token registered with every account signed in; whether that is done.
@@ -722,20 +947,22 @@ mod entries {
         .resolve::<LogErrorAndDefault>()
     }
 
-    /// `Native.openPush(dataDir, pushId, enc)`: the push opened (JSON with its `account`), or null.
+    /// `Native.openPush(dataDir, pushId, kind, enc)`: the push opened (JSON with its `account`), or null.
     #[no_mangle]
     pub extern "system" fn Java_org_moqui_mobile_Native_openPush<'caller>(
         mut env: EnvUnowned<'caller>,
         _class: JClass<'caller>,
         data_dir: JString<'caller>,
         push_id: JString<'caller>,
+        kind: JString<'caller>,
         enc: JString<'caller>,
     ) -> JString<'caller> {
         env.with_env(|env| -> Result<JString<'caller>, jni::errors::Error> {
             let dir = client_dir(&data_dir.try_to_string(env)?);
             let push_id = push_id.try_to_string(env)?;
             let enc = enc.try_to_string(env)?;
-            match super::open_push(&dir, &push_id, &enc) {
+            let kind = kind.try_to_string(env)?;
+            match super::open_push(&dir, &push_id, &kind, &enc) {
                 Some(opened) => env.new_string(opened),
                 None => Ok(JString::default()),
             }

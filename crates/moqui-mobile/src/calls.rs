@@ -16,8 +16,9 @@
 //! (`gen/android/.../CallManager.kt`) shows the ring and the WebView carries the media.
 //!
 //! - **Which account.** The server's push names the registration it went to (`pushId`, the `subscriptionId` its
-//!   `registerClientPush` answered), kept per account in [`PushRecord`]: a ring is that account's ([`ring_account`]),
-//!   and one that is no account's here is dropped.
+//!   `registerClientPush` answered), kept per account in [`PushRecord`]; two servers may give the same id, so a sealed
+//!   push is the account's whose own push keys open it (`native::open_push`), an unsealed ring only the one account
+//!   its id can be ([`ring_account`]), and one that is no account's here is dropped.
 //! - **Answer and Hang up** come back as the deep link `org.moqui.mobile:/call?callSessionId=...&nonce=...` (an intent
 //!   of the activity, `RunEvent::Opened`). The activity is exported, so any app could send such a link: only one whose
 //!   nonce the native code had made for that call ([`CallLinks`], once, within [`LINK_MS`]) is taken. An answered one
@@ -25,9 +26,9 @@
 //!   through WebrootCall.js once the host hands it the answer.
 //! - **Decline** is the server's `declineCall` transition, posted with the ring's account's device key without the
 //!   WebView ([`decline`]); only that account's server is told of the call.
-//! - **Push registration:** the FCM token, kept in `push.json` of the client's directory with each account's
-//!   registration, goes to each account's server once per token, at a sign-in, and is taken back before a sign-out or a
-//!   removal revokes the key.
+//! - **Push registration:** the FCM token (or an account's UnifiedPush endpoint), kept in `push.json` of the client's
+//!   directory with each account's registration and push keys, goes to each account's server once per token, at a
+//!   sign-in, and is taken back before a sign-out or a removal revokes the key.
 //!
 //! The requests go through a [`Poster`], which is the client's proxy in the app (`crate::native`), so this module runs
 //! in the tests with no network.
@@ -113,23 +114,86 @@ pub(crate) fn link_of(url: &tauri::Url) -> Option<(String, String)> {
 /// The deep link's path a chat notification's tap opens the app with (`ChatNotifications.kt`).
 pub(crate) const ROOM_LINK_PATH: &str = "/room";
 
-/// The account, room and message of an `org.moqui.mobile:/room?account=...&chatRoomId=...&eventSeq=...` link: none for
-/// any other link or an id that is not one. The activity is exported, so any app may send one: it only shows a room
-/// of an account signed in here, which the user may read, and does nothing in it.
-pub(crate) fn room_link_of(url: &tauri::Url) -> Option<(String, String, Option<i64>)> {
+/// The longest account id taken from a link or the native code.
+const ACCOUNT_MAX: usize = 300;
+
+/// An account id as `moqui_client::account::account_id` makes them: a host's letters, digits, `.` and `-`, a `-` and a
+/// hex digest (`chat.example.com-0123456789ab`). The native code's account is still looked up among the accounts.
+pub(crate) fn account_id(text: &str) -> Option<&str> {
+    let text = text.trim();
+    let plain = !text.is_empty()
+        && text.len() <= ACCOUNT_MAX
+        && !text.starts_with('.')
+        && !text.contains("..")
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.'));
+    plain.then_some(text)
+}
+
+/// The signature of a room link: an HMAC of what it opens with the app's own link key (`native::link_key`), base64url,
+/// so a link another app sends opens nothing.
+fn room_link_signature(key: &[u8], account: &str, room: &str, seq: Option<i64>) -> String {
+    use base64::Engine;
+    use hmac::{KeyInit as _, Mac as _};
+    let Ok(mut mac) = hmac::Hmac::<sha2::Sha256>::new_from_slice(key) else {
+        return String::new();
+    };
+    mac.update(format!("room\n{account}\n{room}\n{}", seq.unwrap_or(0)).as_bytes());
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&mac.finalize().into_bytes()[..18])
+}
+
+/// The link a chat notification's tap opens the app with, signed with the app's link `key`: none for an id that is not
+/// one.
+pub(crate) fn room_link(key: &[u8], account: &str, room: &str, seq: Option<i64>) -> Option<String> {
+    let account = account_id(account)?;
+    let room = call_id(room)?;
+    let seq = seq.filter(|seq| *seq > 0);
+    let mut link = format!("org.moqui.mobile:/room?account={account}&chatRoomId={room}");
+    if let Some(seq) = seq {
+        link.push_str(&format!("&eventSeq={seq}"));
+    }
+    link.push_str("&sig=");
+    link.push_str(&room_link_signature(key, account, room, seq));
+    Some(link)
+}
+
+/// The account, room and message of an `org.moqui.mobile:/room?account=...&chatRoomId=...&eventSeq=...&sig=...` link
+/// the app made (its signature checks with the app's link `key`): none for any other link, an id that is not one, or a
+/// link not signed by this app. The activity is exported, so any app may send one; only the app's own open a room.
+pub(crate) fn room_link_of(url: &tauri::Url, key: &[u8]) -> Option<(String, String, Option<i64>)> {
     if url.scheme() != "org.moqui.mobile" || url.path() != ROOM_LINK_PATH {
         return None;
     }
-    let (mut account, mut room, mut seq) = (None, None, None);
+    let (mut account, mut room, mut seq, mut sig) = (None, None, None, None);
     for (name, value) in url.query_pairs() {
         match name.as_ref() {
-            "account" => account = call_id(&value).map(str::to_string),
+            "account" => account = account_id(&value).map(str::to_string),
             "chatRoomId" => room = call_id(&value).map(str::to_string),
             "eventSeq" => seq = value.parse::<i64>().ok().filter(|seq| *seq > 0),
+            "sig" => sig = Some(value.into_owned()),
             _ => {}
         }
     }
-    Some((account?, room?, seq))
+    let (account, room, sig) = (account?, room?, sig?);
+    let expected = room_link_signature(key, &account, &room, seq);
+    let same = !expected.is_empty()
+        && expected.len() == sig.len()
+        && expected
+            .bytes()
+            .zip(sig.bytes())
+            .fold(0_u8, |diff, (a, b)| diff | (a ^ b))
+            == 0;
+    if !same {
+        log::warn!("A room link not made by this app was refused");
+        return None;
+    }
+    Some((account, room, seq))
+}
+
+/// Whether `url` is a room link at all (taken or refused).
+pub(crate) fn is_room_link(url: &tauri::Url) -> bool {
+    url.scheme() == "org.moqui.mobile" && url.path() == ROOM_LINK_PATH
 }
 
 /// Whether `url` is a call link at all (taken or refused, never another kind of link).
@@ -202,20 +266,30 @@ pub(crate) fn decline(asked: &Asked, id: &str, poster: &dyn Poster) -> Declined 
 }
 
 /// The push token and each account's registration of it (account id → `subscriptionId`), in `push.json` of the
-/// client's directory.
-#[derive(Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// client's directory. An account registers with its own push keys ([`Self::keys`], `crate::push`), and with its own
+/// UnifiedPush distributor endpoint where it has one ([`Self::endpoints`]), else with the app's FCM token.
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct PushRecord {
+    /// The app's FCM token.
     #[serde(default)]
     pub(crate) token: Option<String>,
     #[serde(default)]
     pub(crate) registered: BTreeMap<String, String>,
-    /// The provider of the token: `fcm` (none: fcm), or `unifiedpush` (the token is a distributor's endpoint).
+    /// Each account's push public key and auth secret its registration was made with: other ones register again.
     #[serde(default)]
-    pub(crate) provider: Option<String>,
-    /// The app's push public key and auth secret the registrations were made with (`crate::push`): new keys register
-    /// again, so every server encrypts to them.
+    pub(crate) keys: BTreeMap<String, (String, String)>,
+    /// Each account's UnifiedPush distributor endpoint (the connector's instance is the account): it registers with it
+    /// in place of the FCM token.
     #[serde(default)]
-    pub(crate) keys: Option<(String, String)>,
+    pub(crate) endpoints: BTreeMap<String, String>,
+}
+
+/// What an account registers with: the provider and its token.
+fn registration_of<'a>(record: &'a PushRecord, account: &str) -> Option<(&'static str, &'a str)> {
+    match record.endpoints.get(account) {
+        Some(endpoint) => Some(("unifiedpush", endpoint.as_str())),
+        None => record.token.as_deref().map(|token| ("fcm", token)),
+    }
 }
 
 impl PushRecord {
@@ -246,98 +320,144 @@ impl PushRecord {
         std::fs::rename(&temp, &path).map_err(|err| format!("{}: {err}", path.display()))
     }
 
-    /// A token of `provider` (`fcm`, or `unifiedpush` with a distributor's endpoint): a new one, or another provider's,
-    /// is registered with no account yet. Whether it changed.
-    pub(crate) fn set_token_of(&mut self, provider: &str, token: &str) -> bool {
-        let same_provider = self.provider.as_deref().unwrap_or("fcm") == provider;
-        if self.token.as_deref() == Some(token) && same_provider {
+    /// A token from Firebase: a new one is registered again by every account that registers with it (not one with a
+    /// UnifiedPush endpoint). Whether it changed.
+    pub(crate) fn set_token(&mut self, token: &str) -> bool {
+        if self.token.as_deref() == Some(token) {
             return false;
         }
         self.token = Some(token.to_string());
-        self.provider = (provider != "fcm").then(|| provider.to_string());
-        self.registered.clear();
+        let endpoints = &self.endpoints;
+        self.registered.retain(|account, _| endpoints.contains_key(account));
         true
     }
 
-    /// The app's push keys (public key, auth secret): other ones than the registrations were made with register again
-    /// with every account. Whether they changed.
-    pub(crate) fn set_keys(&mut self, public: &str, auth: &str) -> bool {
+    /// `account`'s UnifiedPush endpoint (none: it goes back to FCM): another one registers it again. Whether it
+    /// changed.
+    pub(crate) fn set_endpoint(&mut self, account: &str, endpoint: Option<&str>) -> bool {
+        let endpoint = endpoint.map(str::trim).filter(|endpoint| !endpoint.is_empty());
+        if self.endpoints.get(account).map(String::as_str) == endpoint {
+            return false;
+        }
+        match endpoint {
+            Some(endpoint) => self.endpoints.insert(account.to_string(), endpoint.to_string()),
+            None => self.endpoints.remove(account),
+        };
+        self.registered.remove(account);
+        true
+    }
+
+    /// `account`'s push keys (public key, auth secret): other ones than its registration was made with register it
+    /// again. Whether they changed.
+    pub(crate) fn set_keys(&mut self, account: &str, public: &str, auth: &str) -> bool {
         if self
             .keys
-            .as_ref()
+            .get(account)
             .is_some_and(|(kept_public, kept_auth)| kept_public == public && kept_auth == auth)
         {
             return false;
         }
-        self.keys = Some((public.to_string(), auth.to_string()));
-        self.registered.clear();
+        self.keys
+            .insert(account.to_string(), (public.to_string(), auth.to_string()));
+        self.registered.remove(account);
         true
     }
 
-    /// Whether an account of `accounts` has no registration of the token yet (one to try again).
+    /// Whether an account of `accounts` has something to register with and is not registered yet (one to try again).
     pub(crate) fn pending(&self, accounts: &[Asked]) -> bool {
-        self.token.is_some()
-            && accounts
-                .iter()
-                .any(|asked| !self.registered.contains_key(&asked.account.id))
+        accounts.iter().any(|asked| {
+            !self.registered.contains_key(&asked.account.id) && registration_of(self, &asked.account.id).is_some()
+        })
     }
 
-    /// Register the token with each of `accounts` it is not registered with yet; one that fails is logged and tried
-    /// again at the next start, sign-in or token. A registration the server answers with no `subscriptionId` is not
-    /// kept, as no push could be told apart for it. Whether the record changed.
+    /// Register each of `accounts` not registered yet, with its endpoint or the FCM token and its own keys; one that
+    /// fails is logged and tried again (`RegisterWorker.kt`). A registration the server answers with no
+    /// `subscriptionId` is not kept, as no push could be told apart for it. Whether the record changed. The native
+    /// code makes it on a copy with no lock held (the posts take time), and [`Self::merge`] takes the outcome.
     pub(crate) fn register(&mut self, accounts: &[Asked], poster: &dyn Poster) -> bool {
-        let Some(token) = self.token.clone() else {
-            return false;
-        };
         let mut changed = false;
         for asked in accounts {
-            if self.registered.contains_key(&asked.account.id) {
+            let id = &asked.account.id;
+            if self.registered.contains_key(id) {
                 continue;
             }
+            let Some((provider, token)) = registration_of(self, id) else {
+                continue;
+            };
+            let token = token.to_string();
             let mut form = vec![
-                ("provider", self.provider.as_deref().unwrap_or("fcm")),
+                ("provider", provider),
                 ("token", token.as_str()),
                 ("appId", "org.moqui.mobile"),
                 ("platform", "android"),
             ];
-            if let Some((public, auth)) = &self.keys {
+            if let Some((public, auth)) = self.keys.get(id) {
                 form.push(("p256dhKey", public.as_str()));
                 form.push(("authSecret", auth.as_str()));
             }
             match poster.post(&asked.account, &asked.key, "/qapps/registerClientPush", &form) {
                 Ok((status, json)) if status < 400 && json["registered"].as_bool() == Some(true) => {
                     let Some(push_id) = json["subscriptionId"].as_str().filter(|id| !id.is_empty()) else {
-                        log::warn!("Push: {} registered this device with no id", asked.account.id);
+                        log::warn!("Push: {id} registered this device with no id");
                         continue;
                     };
-                    // the server keeps one user per token: another account of this server registered it before, and
-                    // its pushes are no longer
-                    let server = &asked.account.server;
-                    let moved: Vec<String> = self
-                        .registered
-                        .iter()
-                        .filter(|(id, registered)| {
-                            *registered == push_id
-                                && accounts
-                                    .iter()
-                                    .any(|other| &other.account.id == *id && &other.account.server == server)
-                        })
-                        .map(|(id, _)| id.clone())
-                        .collect();
-                    for id in moved {
-                        self.registered.remove(&id);
+                    // the server keeps one user per FCM token: another account of this server registered it before,
+                    // and its pushes are no longer
+                    if provider == "fcm" {
+                        let server = &asked.account.server;
+                        let endpoints = &self.endpoints;
+                        let moved: Vec<String> = self
+                            .registered
+                            .iter()
+                            .filter(|(other_id, registered)| {
+                                *registered == push_id
+                                    && !endpoints.contains_key(*other_id)
+                                    && accounts
+                                        .iter()
+                                        .any(|other| &other.account.id == *other_id && &other.account.server == server)
+                            })
+                            .map(|(other_id, _)| other_id.clone())
+                            .collect();
+                        for other_id in moved {
+                            self.registered.remove(&other_id);
+                        }
                     }
-                    self.registered.insert(asked.account.id.clone(), push_id.to_string());
+                    self.registered.insert(id.clone(), push_id.to_string());
                     changed = true;
-                    log::info!("Push: registered with {}", asked.account.id);
+                    log::info!("Push: registered with {id} ({provider})");
                 }
                 // the token is a capability: never logged
                 Ok((status, json)) => log::warn!(
-                    "Push: {} did not register this device: HTTP {status} {}",
-                    asked.account.id,
+                    "Push: {id} did not register this device: HTTP {status} {}",
                     json["errors"].as_str().unwrap_or("")
                 ),
-                Err(err) => log::warn!("Push: {} was not reached to register: {err}", asked.account.id),
+                Err(err) => log::warn!("Push: {id} was not reached to register: {err}"),
+            }
+        }
+        changed
+    }
+
+    /// Take what `done` (a copy of `before` that [`Self::register`]ed) registered and let go, for each account whose
+    /// token, endpoint and keys did not change here in the meantime. Whether the record changed.
+    pub(crate) fn merge(&mut self, before: &PushRecord, done: &PushRecord) -> bool {
+        let mut changed = false;
+        for (account, push_id) in &done.registered {
+            if before.registered.get(account) == Some(push_id) || self.registered.get(account) == Some(push_id) {
+                continue;
+            }
+            let same = registration_of(self, account) == registration_of(before, account)
+                && self.keys.get(account) == before.keys.get(account);
+            if same {
+                self.registered.insert(account.clone(), push_id.clone());
+                changed = true;
+            }
+        }
+        // the registrations `done` let go (another account of the server took the token)
+        for account in before.registered.keys() {
+            if !done.registered.contains_key(account) && self.registered.get(account) == before.registered.get(account)
+            {
+                self.registered.remove(account);
+                changed = true;
             }
         }
         changed
@@ -348,12 +468,21 @@ impl PushRecord {
         self.registered.remove(account).is_some()
     }
 
-    /// Take the token back from `asked`'s server before its key is revoked (which would delete it there too); a failure
-    /// is logged. Whether the record changed.
+    /// The account is gone here (signed out): its registration, keys and endpoint. Whether the record changed.
+    pub(crate) fn drop_account(&mut self, account: &str) -> bool {
+        let registered = self.registered.remove(account).is_some();
+        let keys = self.keys.remove(account).is_some();
+        let endpoint = self.endpoints.remove(account).is_some();
+        registered || keys || endpoint
+    }
+
+    /// Take the registration back from `asked`'s server before its key is revoked (which would delete it there too); a
+    /// failure is logged. Whether the record changed. The account's keys and endpoint go with it.
     pub(crate) fn unregister(&mut self, asked: &Asked, poster: &dyn Poster) -> bool {
-        let Some(token) = self.token.clone() else {
-            return self.forget(&asked.account.id);
+        let Some((_, token)) = registration_of(self, &asked.account.id) else {
+            return self.drop_account(&asked.account.id);
         };
+        let token = token.to_string();
         match poster.post(
             &asked.account,
             &asked.key,
@@ -367,29 +496,34 @@ impl PushRecord {
             ),
             Err(err) => log::warn!("Push: {} was not reached to unregister: {err}", asked.account.id),
         }
-        self.forget(&asked.account.id)
+        self.drop_account(&asked.account.id)
     }
 }
 
-/// The account a push with `push_id` is for: one registered here with it and signed in (in `keyed`), the current one
-/// first should two servers have given the same id. None for a push that is no account's here.
-pub(crate) fn ring_account(
-    record: &PushRecord,
-    push_id: &str,
-    keyed: &[String],
-    current: Option<&str>,
-) -> Option<String> {
+/// The accounts a push with `push_id` may be for: those registered here with it by the FCM token and signed in (in
+/// `keyed`). Two servers may give the same id, so a sealed push is the one account's whose keys open it
+/// (`native::open_push`), never the current account's by default.
+pub(crate) fn push_accounts(record: &PushRecord, push_id: &str, keyed: &[String]) -> Vec<String> {
     if push_id.is_empty() {
-        return None;
+        return Vec::new();
     }
-    let mut matching: Vec<&String> = record
+    record
         .registered
         .iter()
-        .filter(|(account, registered)| *registered == push_id && keyed.contains(account))
-        .map(|(account, _)| account)
-        .collect();
-    matching.sort_by_key(|account| Some(account.as_str()) != current);
-    matching.first().map(|account| (*account).clone())
+        .filter(|(account, registered)| {
+            *registered == push_id && keyed.contains(account) && !record.endpoints.contains_key(*account)
+        })
+        .map(|(account, _)| account.clone())
+        .collect()
+}
+
+/// The account an unsealed ring (from a device registered before it had keys) is for: the one account `push_id` can be,
+/// none when two could.
+pub(crate) fn ring_account(record: &PushRecord, push_id: &str, keyed: &[String]) -> Option<String> {
+    match push_accounts(record, push_id, keyed).as_slice() {
+        [one] => Some(one.clone()),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

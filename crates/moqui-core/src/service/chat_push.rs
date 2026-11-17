@@ -1733,6 +1733,8 @@ fn ack_push(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Resu
 // the tests read the pushes back with the device's key, which needs the web-push feature's crypto
 /// The room a test push is of (none: no read marker, no clear).
 const TEST_ROOM: &str = "_test";
+/// The least time between two test pushes to a device (`send#TestPush`), in milliseconds.
+const TEST_EVERY_MS: i64 = 10_000;
 
 /// Queue a test notification to each of `subscriptions` of `user` (plans/Comms-Messaging.md §7.6, the check screen):
 /// the same outbox, encryption and send as a message, with the payload `{kind: test, title, sentDate}`. Out: each
@@ -1772,6 +1774,25 @@ pub(crate) fn queue_test(
 /// service): the registrations of this request's device key (the app), else the current user's browser with
 /// `endpoint`. Out: `ackIdList` (empty when the request is no device of the user's: `reasonCode` noDevice),
 /// `queuedDate` (Unix milliseconds); the worker is woken after the commit.
+/// Whether one of `subscriptions` had a test push queued in the last [`TEST_EVERY_MS`]: one a device in that time (the
+/// check screen's button, not a way to flood a phone).
+pub(crate) fn test_too_soon(facade: &EntityFacade, subscriptions: &[String], now: i64) -> Result<bool, LibError> {
+    if subscriptions.is_empty() {
+        return Ok(false);
+    }
+    Ok(facade
+        .find(OUTBOX)?
+        .condition(Condition::is_in(
+            "subscriptionId",
+            subscriptions.iter().map(Value::string).collect(),
+        ))
+        .eq("chatRoomId", Value::string(TEST_ROOM))
+        .condition(Condition::greater("createdDate", stamp(now - TEST_EVERY_MS)))
+        .disable_authz()
+        .count()?
+        > 0)
+}
+
 fn send_test_push(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -1816,6 +1837,15 @@ fn send_test_push(
         .iter()
         .filter_map(|row| text_of(row, "subscriptionId"))
         .collect();
+    if test_too_soon(facade, &subscriptions, now)? {
+        let mut out = BTreeMap::from([
+            ("ackIdList".to_string(), Value::List(Vec::new())),
+            ("queuedDate".to_string(), Value::I64(now)),
+            ("reasonCode".to_string(), Value::string("tooSoon")),
+        ]);
+        out.insert("retryAfterSeconds".to_string(), Value::I64(TEST_EVERY_MS / 1000));
+        return Ok(out);
+    }
     let ids = queue_test(facade, &user, &subscriptions, now)?;
     if !ids.is_empty() {
         wake_after_commit(facade);

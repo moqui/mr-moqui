@@ -310,12 +310,28 @@ impl MobileHost {
         }
     }
 
-    /// A chat notification's tap (`org.moqui.mobile:/room`, [`crate::room_link_of`]): the room of `account` at the
-    /// message, in the shell; the account becomes the current one first.
+    /// A room link (`org.moqui.mobile:/room`): opened when this app signed it ([`crate::native::room_link_taken`]), else
+    /// refused (logged).
+    pub(crate) fn open_room_link(&self, url: &tauri::Url) {
+        let Ok(state) = moqui_client_tauri::state(&self.app) else {
+            return;
+        };
+        match crate::native::room_link_taken(&state.core, url) {
+            Some((account, room, seq)) => self.open_room(&account, &room, seq),
+            None => log::warn!("moqui-mobile: a room link this app did not make is refused"),
+        }
+    }
+
+    /// A chat notification's tap (a room link this app signed): the room of `account` at the message, in the shell; the
+    /// account, which must be one signed in here, becomes the current one first.
     pub(crate) fn open_room(&self, account: &str, room: &str, seq: Option<i64>) {
         let Ok(state) = moqui_client_tauri::state(&self.app) else {
             return;
         };
+        if state.core.keys().get(account).is_none() {
+            log::warn!("moqui-mobile: the room {room} is not opened: its account is not signed in here");
+            return;
+        }
         let switched = self.signed_in().as_deref() != Some(account);
         if switched {
             if let Err(err) = moqui_client_tauri::commands::switch_account(&state, account) {
@@ -497,7 +513,10 @@ impl ShellHost for MobileHost {
         let (dir, account) = (self.dir.clone(), account.to_string());
         let started = std::thread::Builder::new()
             .name("push-register".to_string())
-            .spawn(move || crate::native::register_push(&core, &dir, Some(&account)));
+            .spawn(move || {
+                crate::native::register_or_retry(&core, &dir, Some(&account));
+                unified_register_all();
+            });
         if let Err(err) = started {
             log::warn!("Push: the registration did not start: {err}");
         }
@@ -507,6 +526,16 @@ impl ShellHost for MobileHost {
         if let Some(core) = self.core() {
             crate::native::unregister_push(&core, &self.dir, account, key);
         }
+        unified_register_all();
+    }
+}
+
+/// The UnifiedPush instances follow the accounts signed in here (`UnifiedPushes.registerAll`): one for an account that
+/// signed in, none for one that signed out.
+fn unified_register_all() {
+    #[cfg(target_os = "android")]
+    if let Err(err) = crate::android::unified_register_all() {
+        log::warn!("Push: UnifiedPush was not told of the accounts: {err}");
     }
 }
 

@@ -32,6 +32,9 @@
 -keep class org.moqui.mobile.ActivityEnd { *; }
 # Rust calls the notification check by name (src/android.rs push_check_state, push_check_fix)
 -keep class org.moqui.mobile.PushCheck { *; }
+# ... and the chat notifications' clear and room shown, and UnifiedPush's registration (src/android.rs)
+-keep class org.moqui.mobile.ChatNotifications { *; }
+-keep class org.moqui.mobile.UnifiedPushes { *; }
 # Asked for by name (Push.kt) in a build with Firebase.
 -keep class org.moqui.mobile.FcmPush { *; }
 
@@ -41,4 +44,7 @@
 # its (Context, WorkerParameters) constructor.
 -keep class * extends androidx.room.RoomDatabase { <init>(); }
 -keep class org.moqui.mobile.FlushWorker { public <init>(android.content.Context, androidx.work.WorkerParameters); }
--keep class org.moqui.mobile.RegisterWorker { public <init>(android.content.Context, androidx.work.WorkerParameters); }
+-keep class org.moqui.mobile.RegisterWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+    public static void start(android.content.Context);
+}

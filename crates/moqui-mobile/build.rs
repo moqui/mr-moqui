@@ -56,6 +56,7 @@ const COMMANDS: &[&str] = &[
     "open_in_shell",
     "notify",
     "notify_clear",
+    "chat_room_shown",
     "push_check",
     "push_check_fix",
     "push_test",

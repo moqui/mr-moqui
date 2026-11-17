@@ -44,16 +44,31 @@ fn a_push_for_other_keys_or_not_json_is_refused() {
     assert!(rfc_keys().open(b"short").is_err());
 }
 
+/// A real account id: a host with dots and a hex digest (`moqui_client::account::account_id`).
+const ACCOUNT_A: &str = "chat.example.com-0123456789ab";
+const ACCOUNT_B: &str = "chat.example.org-ba9876543210";
+
+/// plans/Comms-Messaging.md §7.4, Device key: each account has its own keys, made once and kept; opening never makes
+/// keys, and keys that were registered and cannot be read now are an error, not replaced.
 #[test]
-fn the_keys_are_made_once_and_kept() {
+fn each_account_has_its_own_keys_made_once_and_never_replaced() {
     let dir = std::env::temp_dir().join(format!("moqui-mobile-push-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let keys = moqui_client::keys::Keys::new(Box::new(moqui_client::keys::FileKeyStore::new(&dir)), "file");
-    let first = keys_of(&keys).unwrap();
-    let again = keys_of(&keys).unwrap();
+    assert!(kept_keys(&keys, ACCOUNT_A).is_none(), "reading makes none");
+    let first = keys_for(&keys, ACCOUNT_A, None).unwrap();
+    let again = keys_for(&keys, ACCOUNT_A, Some(&first.public_b64())).unwrap();
     assert_eq!(first.public_b64(), again.public_b64());
     assert_eq!(first.auth_b64(), again.auth_b64());
     assert_eq!(unb64(&first.public_b64()).unwrap().len(), 65);
+    let other = keys_for(&keys, ACCOUNT_B, None).unwrap();
+    assert_ne!(first.public_b64(), other.public_b64(), "another account, other keys");
+    assert_ne!(first.auth_b64(), other.auth_b64());
+    assert_eq!(key_entry(ACCOUNT_A), "chat.example.com-0123456789ab.push-keys");
+    // registered keys that cannot be read: an error, never new keys
+    forget_keys(&keys, ACCOUNT_A);
+    assert!(keys_for(&keys, ACCOUNT_A, Some(&first.public_b64())).is_err());
+    assert!(kept_keys(&keys, ACCOUNT_A).is_none());
     assert!(PushKeys::from_text("not.keys").is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }

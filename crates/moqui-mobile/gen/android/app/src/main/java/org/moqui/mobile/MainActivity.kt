@@ -86,7 +86,47 @@ class MainActivity : TauriActivity() {
 
   override fun onResume() {
     super.onResume()
+    ChatNotifications.foreground = true
     askForCallsOnce()
+    tellForceStopOnce()
+  }
+
+  override fun onPause() {
+    ChatNotifications.foreground = false
+    super.onPause()
+  }
+
+  /** The system's permission dialog has gone: the full-screen intent's question may come now. */
+  override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+    super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    if (requestCode == ASK_CALLS) askForFullScreenOnce()
+  }
+
+  private companion object {
+    /** The request code of what calls and notifications need ([askForCallsOnce]). */
+    const val ASK_CALLS = 2
+  }
+
+  /**
+   * The user force-stopped the app since it last said so (Android 11+): no push reached it until now, which it says once
+   * (plans/Comms-Messaging.md §7.4, After reboot and update).
+   */
+  private fun tellForceStopOnce() {
+    val stopped = PushCheck.forceStoppedDate(this)
+    if (stopped <= 0) return
+    val prefs = getSharedPreferences("moqui-push", MODE_PRIVATE)
+    if (prefs.getLong("forceStopTold", 0L) >= stopped) return
+    prefs.edit().putLong("forceStopTold", stopped).apply()
+    if (prefs.getLong("forceStopSeen", 0L) == 0L) {
+      // the first look: an earlier stop is not news to tell
+      prefs.edit().putLong("forceStopSeen", stopped).apply()
+      return
+    }
+    android.app.AlertDialog.Builder(this)
+      .setTitle(R.string.force_stopped_title)
+      .setMessage(R.string.force_stopped_reason)
+      .setPositiveButton(R.string.ask_continue, null)
+      .show()
   }
 
   override fun onStop() {
@@ -182,18 +222,27 @@ class MainActivity : TauriActivity() {
           if (isFinishing || isDestroyed) return@post
           prefs.edit().putBoolean("askedForCalls", true).apply()
           Log.i(CallManager.TAG, "Asking for what calls need: $missing")
-          // the reason first (plans/Comms-Messaging.md §7.4, Permissions), then the system's question
+          // the reason first (plans/Comms-Messaging.md §7.4, Permissions), then the system's question; "Not now" leaves
+          // out only the notifications. The full-screen intent's question comes after the system's dialog has gone
+          // (onRequestPermissionsResult), never over it.
           if (Manifest.permission.POST_NOTIFICATIONS in missing) {
+            val others = missing - Manifest.permission.POST_NOTIFICATIONS
+            var asked = false
             android.app.AlertDialog.Builder(this)
               .setTitle(R.string.ask_notifications_title)
               .setMessage(R.string.ask_notifications_reason)
-              .setPositiveButton(R.string.ask_continue) { _, _ -> requestPermissions(missing.toTypedArray(), 2) }
-              .setNegativeButton(R.string.ask_not_now, null)
-              .setOnDismissListener { askForFullScreenOnce() }
+              .setPositiveButton(R.string.ask_continue) { _, _ ->
+                asked = true
+                requestPermissions(missing.toTypedArray(), ASK_CALLS)
+              }
+              .setNegativeButton(R.string.ask_not_now) { _, _ ->
+                asked = true
+                if (others.isNotEmpty()) requestPermissions(others.toTypedArray(), ASK_CALLS) else askForFullScreenOnce()
+              }
+              .setOnDismissListener { if (!asked && others.isNotEmpty()) requestPermissions(others.toTypedArray(), ASK_CALLS) }
               .show()
           } else {
-            requestPermissions(missing.toTypedArray(), 2)
-            askForFullScreenOnce()
+            requestPermissions(missing.toTypedArray(), ASK_CALLS)
           }
         }
       }

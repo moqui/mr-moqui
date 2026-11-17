@@ -23,14 +23,16 @@ import org.json.JSONObject
 
 /**
  * The chat notifications, shown by the native code with no WebView (plans/Comms-Messaging.md §7.4): the server pushes
- * each message encrypted to the app ([Push.onMessage]: `{kind: chat | clear | test | notification, pushId, enc}`),
- * Rust opens it with the app's push keys (`Native.openPush`, src/push.rs), and this shows it: one notification per
- * room ([ChatRules.tag], the server's), in the channel of its kind ([ChatRules.channel]), a `MessagingStyle` with the
- * sender, grouped under a summary per account, with a conversation shortcut; Reply (inline), Mark read and Mute 1 hour
- * ([ChatActionReceiver]); a tap opens the room at the message (`org.moqui.mobile:/room`, src/lib.rs). An encrypted
- * room's push has the room and the sender only, and its Reply opens the app (the page encrypts). A `clear` (the room
- * read on another device) removes the room's notification. Each push shown is acknowledged (`Native.ackPush`, System,
- * Push Health) and kept as the last one received ([PushCheck]).
+ * each message encrypted to the account's own push keys ([Push.onMessage]: `{kind: chat | clear | test | notification,
+ * pushId, enc}` by FCM, or the whole payload by UnifiedPush, [UnifiedPushService]); Rust opens it, and only the account
+ * whose keys open it is its (`Native.openPush`, src/push.rs); this shows it: one notification per room of an account
+ * ([ChatRules.tag]), in the channel of its kind ([ChatRules.channel]), a `MessagingStyle` with the sender, grouped under a
+ * summary per account, with a conversation shortcut; Reply (inline), Mark read and Mute 1 hour ([ChatActionReceiver]); a
+ * tap opens the room at the message (a room link this app signed, `Native.roomLink`, src/lib.rs). An encrypted room's
+ * push has the room and the sender only, and its Reply opens the app (the page encrypts). A `clear` (the room read on
+ * another device) or a read in the app ([clearRoom]) removes the room's notification, and a room the app shows in front
+ * ([roomShown]) shows none. Each push shown is acknowledged (`Native.ackPush`, System, Push Health) and noted for the
+ * notification check ([PushCheck]).
  */
 object ChatNotifications {
     const val TAG = "moqui-push"
@@ -38,6 +40,12 @@ object ChatNotifications {
     private const val ROOM_ID = 1
     private const val SUMMARY_ID = 2
     private val main = Handler(Looper.getMainLooper())
+
+    /** Whether the app's activity is in front (MainActivity's onResume and onPause). */
+    @Volatile var foreground = false
+
+    /** The room the shell shows now, `<account>/<room>` (the page tells: `chat_room_shown`), or null. */
+    @Volatile private var shownRoom: String? = null
 
     /** The app's channels, made once (idempotent): Messages, Mentions, Texts, Missed calls, Other. */
     fun ensureChannels(context: Context) {
@@ -60,54 +68,82 @@ object ChatNotifications {
         }
     }
 
-    /** A push that is not a call's: opened by Rust off the main thread, then shown. */
+    /**
+     * An FCM push that is not a call's: opened by Rust on the opener's thread, then shown. One with no `enc` (a device
+     * registered before it had keys) says only that something came; one whose `enc` does not open with any account's
+     * keys here is dropped (logged): it is no account's here, or not this app's.
+     */
     fun onPush(context: Context, data: Map<String, String>) {
         val app = context.applicationContext
-        val pushId = data["pushId"] ?: ""
+        val kind = data["kind"] ?: ""
+        PushCheck.arrived(app, kind)
         val enc = data["enc"]
-        Native.work {
+        if (enc == null) {
+            if (kind == "chat") main.post { showBare(app) }
+            else Log.i(TAG, "A push of kind $kind with nothing sealed is not shown")
+            return
+        }
+        Native.open {
             if (!Native.ensure(app)) {
                 Log.w(TAG, "The app's library is not ready: a push is not shown")
-                return@work
+                return@open
             }
-            val opened = if (enc != null) Native.openPush(Native.dataDir(app), pushId, enc) else null
+            val opened = Native.openPush(Native.dataDir(app), data["pushId"] ?: "", kind, enc)
             val payload = try {
                 opened?.let { JSONObject(it) }
             } catch (err: Exception) {
                 null
             }
-            main.post {
-                when {
-                    payload != null -> show(app, payload)
-                    // a device registered before its keys: a push with no text, which says only that something came
-                    data["kind"] == "chat" -> showBare(app)
-                    else -> Log.i(TAG, "A push of kind ${data["kind"]} that does not open is not shown")
-                }
+            if (payload == null) {
+                Log.w(TAG, "A push of kind $kind that does not open is dropped")
+                return@open
             }
+            main.post { show(app, payload) }
         }
     }
 
-    /** Show an opened push (its JSON, with `account`), on the main thread. */
+    /** Show an opened push (its JSON, with the `account` whose keys opened it), on the main thread. */
     fun show(context: Context, payload: JSONObject) {
         ensureChannels(context)
-        val account = payload.optString("account", "")
+        val account = ChatRules.accountId(payload.optString("account", "")) ?: run {
+            Log.w(TAG, "A push of no account is not shown")
+            return
+        }
         val kind = payload.optString("kind", "")
         when (kind) {
             "clear" -> clear(context, account, payload.optString("chatRoomId", ""))
-            // a test shows as a message does, so it checks the channel that matters
-            "test" -> showOther(context, payload, context.getString(R.string.push_test_title), context.getString(R.string.push_test_body), ChatRules.MESSAGES)
-            "notification" -> showOther(context, payload, payload.optString("title", context.getString(R.string.chat_new_message)), null, ChatRules.OTHER)
+            "test" -> showOther(context, payload, context.getString(R.string.push_test_title),
+                context.getString(R.string.push_test_body), ChatRules.channel(kind, false, null, false))
+            "notification" -> showOther(context, payload, payload.optString("title", context.getString(R.string.chat_new_message)),
+                null, ChatRules.OTHER)
             "message" -> showRoom(context, account, payload)
             else -> Log.i(TAG, "A push of kind $kind is not shown")
         }
         if (kind != "clear") {
-            PushCheck.received(context, kind, payload.optString("ackId", ""))
             val ackId = payload.optString("ackId", "")
-            if (account.isNotEmpty() && ackId.isNotEmpty()) {
+            PushCheck.received(context, kind, ackId)
+            if (ackId.isNotEmpty()) {
                 val app = context.applicationContext
                 Native.work { Native.ackPush(Native.dataDir(app), account, ackId) }
             }
         }
+    }
+
+    /**
+     * A ring whose sealed call does not open: a missed-call notification that says a call came, rather than nothing
+     * (the call itself is not shown, as its caller and id could not be read).
+     */
+    fun ringNotOpened(context: Context) {
+        ensureChannels(context)
+        if (!allowed(context)) return
+        val builder = NotificationCompat.Builder(context, ChatRules.MISSED)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(context.getString(R.string.chat_missed_call))
+            .setContentText(context.getString(R.string.ring_not_opened))
+            .setCategory(NotificationCompat.CATEGORY_MISSED_CALL)
+            .setContentIntent(openApp(context, null))
+            .setAutoCancel(true)
+        notify(context, "ring-not-opened", ROOM_ID, builder)
     }
 
     private fun manager(context: Context) = NotificationManagerCompat.from(context)
@@ -133,11 +169,15 @@ object ChatNotifications {
             .setContentIntent(openApp(context, null))
             .setAutoCancel(true)
         if (body != null) builder.setContentText(body)
-        notify(context, payload.optString("tag", "moqui-other"), ROOM_ID, builder)
+        notify(context, payload.optString("tag", "moqui-other").ifEmpty { "moqui-other" }, ROOM_ID, builder)
     }
 
     private fun showRoom(context: Context, account: String, payload: JSONObject) {
         val room = ChatRules.plainId(payload.optString("chatRoomId", "")) ?: return
+        if (foreground && shownRoom == "$account/$room") {
+            Log.i(TAG, "The room $room shows in the app: its push is not shown")
+            return
+        }
         val prefs = context.getSharedPreferences("moqui-chat", Context.MODE_PRIVATE)
         if (ChatRules.muted(prefs.getLong("mute.$account.$room", 0L), System.currentTimeMillis())) {
             Log.i(TAG, "The room $room is muted on this phone: its push is not shown")
@@ -168,7 +208,7 @@ object ChatNotifications {
             .setConversationTitle(if (direct) null else roomName)
             .setGroupConversation(!direct)
             .addMessage(shown, payload.optLong("sentDate", System.currentTimeMillis()), from)
-        val link = ChatRules.roomLink(account, room, eventSeq)
+        val link = roomLink(context, account, room, eventSeq)
         val shortcutId = "chat-$account-$room"
         pushShortcut(context, shortcutId, roomName ?: sender, link)
         val builder = NotificationCompat.Builder(context, channel)
@@ -203,7 +243,7 @@ object ChatNotifications {
                 .build()
         )
         builder.addAction(0, context.getString(R.string.chat_mute_hour), action(context, ChatActionReceiver.MUTE, room0, false))
-        notify(context, ChatRules.tag(room), ROOM_ID, builder)
+        notify(context, ChatRules.tag(account, room), ROOM_ID, builder)
         summary(context, account)
     }
 
@@ -226,16 +266,38 @@ object ChatNotifications {
     private fun roomTags(context: Context, account: String): Int {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return 0
         val manager = context.getSystemService(NotificationManager::class.java) ?: return 0
-        return manager.activeNotifications.count {
-            it.id == ROOM_ID && it.tag?.startsWith("chat-") == true && it.notification.group == ChatRules.group(account)
-        }
+        val prefix = ChatRules.tag(account, "")
+        return manager.activeNotifications.count { it.id == ROOM_ID && it.tag?.startsWith(prefix) == true }
     }
 
-    /** A room read here or on another device: its notification goes, and the summary with the last one. */
+    /** A room of `account` read here or on another device: its notification goes, and the summary with the last one. */
     fun clear(context: Context, account: String, room: String) {
         val plain = ChatRules.plainId(room) ?: return
-        manager(context).cancel(ChatRules.tag(plain), ROOM_ID)
-        if (roomTags(context, account) == 0) manager(context).cancel(ChatRules.summaryTag(account), SUMMARY_ID)
+        manager(context).cancel(ChatRules.tag(account, plain), ROOM_ID)
+        if (roomTags(context, account) <= 1) manager(context).cancel(ChatRules.summaryTag(account), SUMMARY_ID)
+    }
+
+    /** The page read a room of `account` (`notify_clear`, src/commands.rs): its notification goes. */
+    @JvmStatic
+    fun clearRoom(context: Context, account: String, room: String) {
+        val plainAccount = ChatRules.accountId(account) ?: return
+        clear(context.applicationContext, plainAccount, room)
+    }
+
+    /**
+     * The room of `account` the shell shows now (empty: none; `chat_room_shown`, src/commands.rs): its pushes show no
+     * notification while the app is in front, and the one it had goes.
+     */
+    @JvmStatic
+    fun roomShown(context: Context, account: String, room: String) {
+        val plainAccount = ChatRules.accountId(account)
+        val plainRoom = ChatRules.plainId(room)
+        if (plainAccount == null || plainRoom == null) {
+            shownRoom = null
+            return
+        }
+        shownRoom = "$plainAccount/$plainRoom"
+        clear(context.applicationContext, plainAccount, plainRoom)
     }
 
     /** Mute the room on this phone for an hour ([ChatRules.MUTE_MS]). */
@@ -255,10 +317,16 @@ object ChatNotifications {
             .setContentTitle(context.getString(R.string.chat_reply_failed))
             .setContentText(text)
             .setGroup(ChatRules.group(account))
-            .setContentIntent(openApp(context, ChatRules.roomLink(account, plain, 0L)))
+            .setContentIntent(openApp(context, roomLink(context, account, plain, 0L)))
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
-        notify(context, ChatRules.tag(plain), ROOM_ID, builder)
+        notify(context, ChatRules.tag(account, plain), ROOM_ID, builder)
+    }
+
+    /** A room's tap link, signed by Rust so no other app can send one (`Native.roomLink`); null without the library. */
+    private fun roomLink(context: Context, account: String, room: String, eventSeq: Long): String? {
+        if (!Native.ensure(context)) return null
+        return Native.roomLink(Native.dataDir(context), account, room, eventSeq)
     }
 
     private fun notify(context: Context, tag: String, id: Int, builder: NotificationCompat.Builder) {
@@ -271,13 +339,17 @@ object ChatNotifications {
 
     /** The conversation shortcut of a room, so Android shows its notification as a conversation. */
     private fun pushShortcut(context: Context, id: String, name: String, link: String?) {
-        if (link == null) return
+        val intent = if (link != null) {
+            Intent(Intent.ACTION_VIEW, Uri.parse(link)).setPackage(context.packageName)
+        } else {
+            context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return
+        }
         try {
             val shortcut = ShortcutInfoCompat.Builder(context, id)
                 .setShortLabel(name.take(40))
                 .setLongLived(true)
                 .setIcon(IconCompat.createWithResource(context, R.mipmap.ic_launcher))
-                .setIntent(Intent(Intent.ACTION_VIEW, Uri.parse(link)).setPackage(context.packageName))
+                .setIntent(intent)
                 .build()
             ShortcutManagerCompat.pushDynamicShortcut(context, shortcut)
         } catch (err: Exception) {
@@ -285,7 +357,7 @@ object ChatNotifications {
         }
     }
 
-    /** What a tap opens: the room at the message (a link the app takes, src/lib.rs), or the app. */
+    /** What a tap opens: the room at the message (a link the app signed and takes, src/lib.rs), or the app. */
     private fun openApp(context: Context, link: String?): PendingIntent {
         val intent = if (link != null) {
             Intent(Intent.ACTION_VIEW, Uri.parse(link)).setPackage(context.packageName)
@@ -297,19 +369,21 @@ object ChatNotifications {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
 
-    /** A room's action, to [ChatActionReceiver]; a Reply's intent is mutable, for the text Android fills in. */
+    /**
+     * A room's action, to [ChatActionReceiver]. The account, room and message are in the intent's data
+     * ([ChatActionReceiver.actionUri]), which a mutable PendingIntent's fill-in cannot change (no `FILL_IN_DATA`); a
+     * Reply's intent is mutable only for the text Android fills in.
+     */
     private fun action(context: Context, what: String, room: RoomAction, mutable: Boolean): PendingIntent {
         val intent = Intent(context, ChatActionReceiver::class.java)
             .setAction(what)
-            .putExtra(ChatActionReceiver.ACCOUNT, room.account)
-            .putExtra(ChatActionReceiver.ROOM, room.room)
-            .putExtra(ChatActionReceiver.EVENT_SEQ, room.eventSeq)
+            .setData(ChatActionReceiver.actionUri(room.account, room.room, room.eventSeq))
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or when {
             !mutable -> PendingIntent.FLAG_IMMUTABLE
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> PendingIntent.FLAG_MUTABLE
             else -> 0
         }
-        return PendingIntent.getBroadcast(context, "$what:${room.account}:${room.room}".hashCode(), intent, flags)
+        return PendingIntent.getBroadcast(context, 0, intent, flags)
     }
 
     private data class RoomAction(val account: String, val room: String, val eventSeq: Long)

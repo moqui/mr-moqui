@@ -93,6 +93,15 @@
         <receiver
             android:name=".ChatActionReceiver"
             android:exported="false" />
+        <!-- UnifiedPush's events: an account's endpoint and its messages (UnifiedPushService.kt; the connector's own
+            receiver, exported, hands them over to this, which is not) -->
+        <service
+            android:name=".UnifiedPushService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.PUSH_EVENT" />
+            </intent-filter>
+        </service>
 
         <provider
           android:name="androidx.core.content.FileProvider"

@@ -49,7 +49,8 @@ android {
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
         buildConfigField("boolean", "FCM", fcm.toString())
-        // the instrumented tests (src/androidTest: the chat notifications on a device, ./moq android test)
+        // the instrumented tests (src/androidTest: the chat notifications on a device; how to run them on the emulator:
+        // docs/ui/Mobile-Client.md#tests)
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     if (fcm) {
@@ -121,6 +122,9 @@ dependencies {
     implementation("androidx.work:work-runtime:2.10.1")
     // the ring's CallStyle notification and the full-screen intent check (CallService.kt)
     implementation("androidx.core:core:1.13.1")
+    // UnifiedPush on a phone without Google Play (plans/Comms-Messaging.md §7.4): a distributor's endpoint per account,
+    // its pushes opened with the account's own push keys in Rust (RustKeyManager.kt)
+    implementation("org.unifiedpush.android:connector:3.3.5")
     if (fcm) {
         implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
         implementation("com.google.firebase:firebase-messaging")

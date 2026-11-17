@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use super::{clip, external_url, tag_id, under};
+use super::{chat_room_of, clip, external_url, tag_id, under};
 
 #[test]
 fn only_the_webs_and_the_handlers_links_open_outside_the_app() {
@@ -48,13 +48,20 @@ fn a_notification_is_plain_text_within_its_limit() {
     assert_eq!(clip("abcdef", 3), "abc");
 }
 
-/// A tag is one notification id, the same each time and clear of the app's own ids; no tag, none.
+/// A tag of an account is one notification id, the same each time and clear of the app's own ids; another account's
+/// room of the same id is another notification; no tag, none.
 #[test]
-fn a_tag_is_one_notification_id() {
-    let room = tag_id(Some("chat-100")).unwrap();
-    assert_eq!(tag_id(Some("chat-100")), Some(room));
-    assert_ne!(tag_id(Some("chat-101")), Some(room));
+fn a_tag_is_one_notification_id_per_account() {
+    let a = Some("chat.example.com-0123456789ab");
+    let b = Some("chat.example.org-ba9876543210");
+    let room = tag_id(a, Some("chat-100")).unwrap();
+    assert_eq!(tag_id(a, Some(" chat-100 ")), Some(room));
+    assert_ne!(tag_id(a, Some("chat-101")), Some(room));
+    assert_ne!(tag_id(b, Some("chat-100")), Some(room), "another account's room 100");
     assert!(room >= 1000);
-    assert_eq!(tag_id(Some(" ")), None);
-    assert_eq!(tag_id(None), None);
+    assert_eq!(tag_id(a, Some(" ")), None);
+    assert_eq!(tag_id(a, None), None);
+    assert_eq!(chat_room_of("chat-100"), Some("100"));
+    assert_eq!(chat_room_of("call-100"), None);
+    assert_eq!(chat_room_of("chat-a/b"), None);
 }

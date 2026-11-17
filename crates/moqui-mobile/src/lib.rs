@@ -121,6 +121,7 @@ pub fn run() {
             commands::open_in_shell,
             commands::notify,
             commands::notify_clear,
+            commands::chat_room_shown,
             commands::push_check,
             commands::push_check_fix,
             commands::push_test,
@@ -206,7 +207,7 @@ fn start(app: &AppHandle, files: Box<dyn tauri::Assets<tauri::DynRuntime>>) -> R
         let (push_core, push_dir) = (Arc::clone(&core), dir.clone());
         if let Err(err) = std::thread::Builder::new()
             .name("push-register".to_string())
-            .spawn(move || native::register_push(&push_core, &push_dir, None))
+            .spawn(move || native::register_or_retry(&push_core, &push_dir, None))
         {
             log::warn!("Push: the registration did not start: {err}");
         }
@@ -320,16 +321,15 @@ fn on_event(app: &AppHandle, event: RunEvent) {
             for url in urls {
                 if url.scheme() == "org.moqui.mobile" && url.path() == "/sso" {
                     moqui_client_tauri::commands::sso_returned(app, &url);
-                } else if url.scheme() == "org.moqui.mobile" && url.path() == calls::ROOM_LINK_PATH {
-                    match (calls::room_link_of(&url), app.try_state::<Arc<MobileHost>>()) {
-                        (Some((account, room, seq)), Some(host)) => {
+                } else if calls::is_room_link(&url) {
+                    // the activity is exported, so any app may send a room link: only one this app signed (a
+                    // notification's) opens a room
+                    match app.try_state::<Arc<MobileHost>>() {
+                        Some(host) => {
                             let host = Arc::clone(&host);
-                            std::thread::spawn(move || host.open_room(&account, &room, seq));
+                            std::thread::spawn(move || host.open_room_link(&url));
                         }
-                        (None, _) => log::warn!("A room link that is not one is refused"),
-                        (Some(_), None) => {
-                            log::info!("A room link before the app was set up: the shell opens as it is")
-                        }
+                        None => log::info!("A room link before the app was set up: the shell opens as it is"),
                     }
                 } else if calls::is_call_link(&url) {
                     // the activity is exported, so any app may send a call link: only one the native code made for

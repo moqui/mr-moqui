@@ -14,11 +14,13 @@
 
 //! The app's push keys and what the server pushes, opened (plans/Comms-Messaging.md §7.2 rule 5, §7.4 "Device key"):
 //! the server encrypts every push to the app (RFC 8291, the `aes128gcm` content coding of RFC 8188) for FCM as for
-//! UnifiedPush, so Google sees only that a push came. The app's P-256 key pair and 16-byte auth secret are made once
-//! and kept as the device keys are, sealed by the Android Keystore (`crate::keystore`, `KeyVault.kt`), under
-//! [`KEY_ENTRY`]; their public half goes with the token to each account's server (`registerClientPush`, `p256dhKey`
-//! and `authSecret`). [`PushKeys::open`] is the receiving side of RFC 8291 §3.4, which the native code calls
-//! (`Native.openPush`) before it shows a notification or rings.
+//! UnifiedPush, so Google sees only that a push came. Each account has a P-256 key pair and 16-byte auth secret of its
+//! own, made at its first registration and kept as the device keys are, sealed by the Android Keystore
+//! (`crate::keystore`, `KeyVault.kt`), under [`key_entry`]; their public half goes with the token to that account's
+//! server (`registerClientPush`, `p256dhKey` and `authSecret`). So a push that opens with an account's keys is that
+//! account's server's: two servers' registration ids may be the same, and a server cannot make a push that opens as
+//! another account's. [`PushKeys::open`] is the receiving side of RFC 8291 §3.4, which the native code calls
+//! (`Native.openPush`, and the UnifiedPush connector's key manager) before it shows a notification or rings.
 
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes128Gcm, Nonce};
@@ -27,8 +29,9 @@ use hkdf::Hkdf;
 use p256::{PublicKey, SecretKey};
 use sha2::Sha256;
 
-/// The key store's entry of the push keys (beside the accounts' `<account>` and `<account>.chat-store`).
-pub(crate) const KEY_ENTRY: &str = "app.push-keys";
+/// The suffix of an account's push keys entry in the key store (`<account>.push-keys`, beside `<account>` and
+/// `<account>.chat-store`).
+pub(crate) const KEY_SUFFIX: &str = "push-keys";
 
 /// The longest push body taken (a push service takes 4096 bytes).
 const MAX_BODY: usize = 4096;
@@ -151,16 +154,77 @@ impl PushKeys {
     }
 }
 
-/// The app's push keys from `keys` (sealed by the Keystore on Android), made and kept on first use.
-pub(crate) fn keys_of(keys: &moqui_client::keys::Keys) -> Result<PushKeys, String> {
-    if let Some(kept) = keys.get(KEY_ENTRY).as_deref().and_then(PushKeys::from_text) {
+/// The sending side of RFC 8291, as a server seals to these keys (the tests' server): one `aes128gcm` record.
+#[cfg(test)]
+pub(crate) fn seal(to: &PushKeys, plain: &[u8]) -> Vec<u8> {
+    let sender = PushKeys::generate().unwrap();
+    let ua_public = to.secret.public_key().to_sec1_bytes();
+    let as_public = sender.secret.public_key().to_sec1_bytes();
+    let shared = p256::ecdh::diffie_hellman(sender.secret.to_nonzero_scalar(), to.secret.public_key().as_affine());
+    let mut key_info = b"WebPush: info\0".to_vec();
+    key_info.extend_from_slice(&ua_public);
+    key_info.extend_from_slice(&as_public);
+    let mut ikm = [0_u8; 32];
+    Hkdf::<Sha256>::new(Some(&to.auth), shared.raw_secret_bytes())
+        .expand(&key_info, &mut ikm)
+        .unwrap();
+    let salt = [9_u8; 16];
+    let prk = Hkdf::<Sha256>::new(Some(&salt), &ikm);
+    let (mut cek, mut nonce) = ([0_u8; 16], [0_u8; 12]);
+    prk.expand(b"Content-Encoding: aes128gcm\0", &mut cek).unwrap();
+    prk.expand(b"Content-Encoding: nonce\0", &mut nonce).unwrap();
+    let mut padded = plain.to_vec();
+    padded.push(2);
+    let cipher = Aes128Gcm::new_from_slice(&cek).unwrap();
+    let sealed = cipher
+        .encrypt(&Nonce::try_from(&nonce[..]).unwrap(), padded.as_slice())
+        .unwrap();
+    let mut body = salt.to_vec();
+    body.extend_from_slice(&4096_u32.to_be_bytes());
+    body.push(u8::try_from(as_public.len()).unwrap());
+    body.extend_from_slice(&as_public);
+    body.extend_from_slice(&sealed);
+    body
+}
+
+/// The key store entry of `account`'s push keys: an account id is a host and a hex digest, so this never names another
+/// account's device key (as `<account>.chat-store`).
+pub(crate) fn key_entry(account: &str) -> String {
+    format!("{account}.{KEY_SUFFIX}")
+}
+
+/// `account`'s push keys, read only: none when it has none or they cannot be read now. Opening a push never makes keys,
+/// so a store that fails for a moment never replaces the keys a server encrypts to.
+pub(crate) fn kept_keys(keys: &moqui_client::keys::Keys, account: &str) -> Option<PushKeys> {
+    keys.get(&key_entry(account)).as_deref().and_then(PushKeys::from_text)
+}
+
+/// `account`'s push keys for its registration: the kept ones, else new ones made and kept, but only when none were
+/// registered (`registered_public`, the public key its registration was made with): keys that were registered and
+/// cannot be read now are an error, tried again later, never replaced.
+pub(crate) fn keys_for(
+    keys: &moqui_client::keys::Keys,
+    account: &str,
+    registered_public: Option<&str>,
+) -> Result<PushKeys, String> {
+    if let Some(kept) = kept_keys(keys, account) {
         return Ok(kept);
     }
+    if registered_public.is_some() {
+        return Err(format!("the push keys of {account} cannot be read now"));
+    }
     let made = PushKeys::generate()?;
-    keys.set(KEY_ENTRY, &made.to_text())
-        .map_err(|err| format!("the push keys were not kept: {err}"))?;
-    log::info!("Push: the app's push keys were made");
+    keys.set(&key_entry(account), &made.to_text())
+        .map_err(|err| format!("the push keys of {account} were not kept: {err}"))?;
+    log::info!("Push: push keys were made for {account}");
     Ok(made)
+}
+
+/// Forget `account`'s push keys (it signed out here); a failure is logged.
+pub(crate) fn forget_keys(keys: &moqui_client::keys::Keys, account: &str) {
+    if let Err(err) = keys.delete(&key_entry(account)) {
+        log::warn!("Push: the push keys of {account} were not deleted: {err}");
+    }
 }
 
 #[cfg(test)]

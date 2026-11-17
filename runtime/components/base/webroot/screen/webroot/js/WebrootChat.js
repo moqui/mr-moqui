@@ -344,6 +344,10 @@
                 }
                 if (message.kind === "room") {
                     if (message.action === "left") delete state.unread[message.chatRoomId];
+                    // the user's own settings of the room changed (here or on another device): its notifications follow
+                    if (message.action === "settings" && message.chatRoomId && state.levels) {
+                        state.levels[message.chatRoomId] = chat.levelOf(message.notificationLevelEnumId, !!message.isMuted);
+                    }
                     return { kind: "room", chatRoomId: message.chatRoomId, action: message.action };
                 }
             }
@@ -360,7 +364,7 @@
 
         // ---- the store of the page ----
 
-        state: reactive({ me: null, presence: {}, unread: {}, levels: {}, typing: {}, reads: {}, openRooms: {}, statusDialog: false, outbox: [], sending: {},
+        state: reactive({ me: null, presence: {}, unread: {}, levels: {}, roomNames: {}, typing: {}, reads: {}, openRooms: {}, statusDialog: false, outbox: [], sending: {},
             online: true, connected: null, changes: [], hostKinds: [] }),
         listeners: {},
         vm: null,
@@ -385,14 +389,17 @@
             }
             const prefs = (moqui.config && moqui.config.preferences) || {};
             chat.autoAwayMinutes = Number(prefs.CHAT_AUTO_AWAY_MINUTES) || 10;
-            chat.request("/userStatus").then((json) => { if (json && json.myStatus) chat.setMe(json.myStatus); });
-            const readCounts = () => chat.request("/chatUnread").then((json) => {
+            // the user's own status first: the catch-up below decides on do not disturb by it
+            const meLoaded = chat.request("/userStatus").then((json) => { if (json && json.myStatus) chat.setMe(json.myStatus); });
+            const readCounts = () => Promise.all([chat.request("/chatUnread"), meLoaded]).then(([json]) => {
                 const counts = json && moqui.isPlainObject(json.roomCounts) ? json.roomCounts : {};
                 Object.keys(counts).forEach((roomId) => { chat.state.unread[roomId] = { unread: counts[roomId].unread || 0, mentions: counts[roomId].mentions || 0 }; });
-                if (json && moqui.isPlainObject(json.levelMap)) chat.state.levels = json.levelMap;
+                if (json && moqui.isPlainObject(json.levelMap)) chat.state.levels = Object.assign({}, json.levelMap);
+                if (json && moqui.isPlainObject(json.roomNameMap)) chat.state.roomNames = Object.assign({}, json.roomNameMap);
                 // in an app: what was missed while it was closed or offline (§7.5)
                 if (json) chat.notifyMissed(counts);
             });
+            chat.readCounts = readCounts;
             readCounts();
             if (client && client.onState) {
                 let closed = false;
@@ -579,46 +586,90 @@
             if (!done) return;
             // my message arrived: it waits no more (it was sent from another tab, or its answer was lost)
             if (done.kind === "event" && done.event.clientRef && done.event.senderUserId === chat.me) chat.dropOutbox(done.event.clientRef);
-            if (done.kind === "presence" && done.userId === chat.me) chat.applyQuiet();
+            if (done.kind === "presence" && done.userId === chat.me) {
+                // do not disturb ended: a summary of what came meanwhile, as the server's pushes have (rule 4)
+                const quiet = chat.quiet();
+                if (chat.wasQuiet && !quiet && chat.readCounts) chat.readCounts();
+                chat.wasQuiet = quiet;
+                chat.applyQuiet();
+            }
+            // a room joined: its level and name (a room of the session takes the user's default until then)
+            if (done.kind === "room" && (done.action === "joined" || done.action === "added") && chat.readCounts) chat.readCounts();
             chat.notifyApp(done);
             chat.emit(done.kind, done);
         },
 
         // ---- the app's own notifications (plans/Comms-Messaging.md §7.5) ----
 
-        // What the desktop or mobile app (window.moquiDesktop.notify) shows of a socket event, by the rules of the server's
-        // pushes (§7.2): a message from someone else, by the room's level (levels: chatRoomId to all, mentions or none, a
-        // muted room is mentions; /chatUnread levelMap), not on do not disturb (quiet), not while its room shows in a
-        // window the user sees (seen); no text for an encrypted room or with previews off. {title, body, tag, link}, or null.
+        // A room's notification level as the server keeps it (CnlAll, CnlMentions, CnlNone, or their codes), muted: all,
+        // mentions (a muted room) or none.
+        levelOf(level, muted) {
+            const code = { CnlAll: "all", CnlMentions: "mentions", CnlNone: "none" }[level] || level || "all";
+            if (code === "none") return "none";
+            return muted ? "mentions" : (code === "mentions" ? "mentions" : "all");
+        },
+        // What the desktop app (window.moquiDesktop.notify) shows of a socket event, by the rules of the server's pushes
+        // (§7.2): a message from someone else, by the room's level (levels: chatRoomId to all, mentions or none, a muted
+        // room is mentions; /chatUnread levelMap; a room not in it, joined since, at the user's default, defaultLevel),
+        // where a mention, a reply to the user and a reply in the user's thread count at the mentions level; a missed call
+        // to the user and a voicemail as messages unless the level is none (rule 6); not on do not disturb (quiet), not
+        // while its room shows in a window the user sees (seen); no text for an encrypted room or with previews off; a
+        // group room's name (roomNames) is its title, with the sender before the text. {title, body, tag, link}, or null.
         notification(event, roomId, options) {
             const given = options || {};
-            if (!event || event.type !== "message" || !event.senderUserId && !event.senderActorId) return null;
-            if (event.senderUserId && event.senderUserId === given.me) return null;
-            if (given.quiet || given.seen) return null;
-            const level = (given.levels || {})[roomId] || "all";
-            const mention = (event.mentions || []).indexOf(given.me) >= 0;
-            if (level === "none" || (level === "mentions" && !mention)) return null;
+            if (!event || given.quiet || given.seen) return null;
+            const level = (given.levels || {})[roomId] || given.defaultLevel || "all";
+            if (level === "none") return null;
             const tr = given.localize || ((text) => text);
+            const appRoot = given.appRoot || "/qapps/BasicComms";
+            const link = appRoot + "/Chat?chatRoomId=" + encodeURIComponent(roomId) + (event.eventSeq ? "&eventSeq=" + event.eventSeq : "");
+            const roomName = (given.roomNames || {})[roomId] || null;
+            if (event.type === "call") {
+                const content = moqui.isPlainObject(event.content) ? event.content : {};
+                const missed = content.action === "ended" && (content.missedUserIdList || []).indexOf(given.me) >= 0;
+                const voicemail = content.action === "voicemail" && event.senderUserId !== given.me;
+                if (!missed && !voicemail) return null;
+                return { title: String(roomName || event.senderName || tr("Missed call")), body: missed ? tr("Missed call") : tr("Voicemail"),
+                    tag: "chat-" + roomId, link };
+            }
+            if (event.type !== "message" || !event.senderUserId && !event.senderActorId) return null;
+            if (event.senderUserId && event.senderUserId === given.me) return null;
+            const replyTo = moqui.isPlainObject(event.replyTo) ? event.replyTo : {};
+            const mention = (event.mentions || []).indexOf(given.me) >= 0 || replyTo.senderUserId === given.me
+                || (event.threadRootEventSeq != null && event.threadRootSenderUserId === given.me);
+            if (level === "mentions" && !mention) return null;
             const text = event.encrypted ? null : String(event.bodyText || "").replace(/\s+/g, " ").trim();
             const body = event.encrypted ? tr("New message") : given.preview === false ? null : (text ? text.slice(0, 140) : null);
-            return { title: String(event.senderName || tr("New message")), body, tag: "chat-" + roomId,
-                link: (given.appRoot || "/qapps/BasicComms") + "/Chat?chatRoomId=" + encodeURIComponent(roomId) + (event.eventSeq ? "&eventSeq=" + event.eventSeq : "") };
+            const sender = String(event.senderName || tr("New message"));
+            if (roomName) return { title: roomName, body: body ? sender + ": " + body : sender, tag: "chat-" + roomId, link };
+            return { title: sender, body, tag: "chat-" + roomId, link };
         },
-        // The rooms whose unread messages the app missed while it was closed or offline (counted, the server's count by
-        // level) and has not shown yet (shown: chatRoomId to the count shown), as one notification each: [{chatRoomId,
-        // count}].
+        // The rooms whose unread messages the app missed while it was closed, offline or on do not disturb (counted, the
+        // server's count by level) beyond what it showed (shown: chatRoomId to the count shown or seen): [{chatRoomId,
+        // count}], the most first. Only a count that went up shows again.
         missed(roomCounts, shown) {
             const out = [];
             Object.keys(roomCounts || {}).forEach((roomId) => {
                 const counted = Number((roomCounts[roomId] || {}).counted) || 0;
-                if (counted > 0 && counted !== Number((shown || {})[roomId] || 0)) out.push({ chatRoomId: roomId, count: counted });
+                if (counted > 0 && counted > Number((shown || {})[roomId] || 0)) out.push({ chatRoomId: roomId, count: counted });
             });
-            return out;
+            return out.sort((a, b) => b.count - a.count);
         },
+        // At most this many missed rooms are shown one by one; more are one summary.
+        MISSED_MAX: 5,
         // the app's notify and clear, when the page runs in one
         notifyHost() {
             const host = root.moquiDesktop;
             return host && host.notify ? host : null;
+        },
+        // What this user's app has shown of each room (chatRoomId to the unread count then), per account (its storage
+        // scope) and user, in local storage: the catch-up shows only what went up since.
+        shownKey(host) { return "moqui.chat.notified." + String((host && host.storageScope) || "") + "." + chat.me; },
+        readShown(host) {
+            try { return JSON.parse(root.localStorage.getItem(chat.shownKey(host)) || "{}") || {}; } catch (err) { return {}; }
+        },
+        writeShown(host, shown) {
+            try { root.localStorage.setItem(chat.shownKey(host), JSON.stringify(shown)); } catch (err) { /* no storage: shown again next time */ }
         },
         notifyApp(done) {
             const host = chat.notifyHost();
@@ -626,10 +677,13 @@
             if (done.kind === "read" && done.userId === chat.me) {
                 // read here or on another device: the room's notification goes (rule 3)
                 const rooms = done.all ? Object.keys(chat.notifiedRooms) : done.chatRoomId ? [done.chatRoomId] : [];
+                const shown = chat.readShown(host);
                 rooms.forEach((roomId) => {
                     delete chat.notifiedRooms[roomId];
+                    delete shown[roomId];
                     if (host.notifyClear) Promise.resolve(host.notifyClear("chat-" + roomId)).catch(() => null);
                 });
+                chat.writeShown(host, shown);
                 return;
             }
             // a phone's chat notifications come by its pushes (pushDelivers, §7.2 rule 7), the desktop's from the socket
@@ -637,32 +691,48 @@
             const prefs = (moqui.config && moqui.config.preferences) || {};
             const seen = !!chat.state.openRooms[done.chatRoomId] && (host.windowSeen ? host.windowSeen() : !(root.document && root.document.hidden));
             const shown = chat.notification(done.event, done.chatRoomId, { me: chat.me, levels: chat.state.levels, quiet: chat.quiet(), seen,
+                defaultLevel: chat.levelOf(prefs.CHAT_NOTIFY_DEFAULT, false), roomNames: chat.state.roomNames,
                 preview: prefs.CHAT_NOTIFY_PREVIEW !== "N", appRoot: moqui.call && moqui.call.appRoot ? moqui.call.appRoot() : null,
                 localize: (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text) });
             if (!shown) return;
             chat.notifiedRooms[done.chatRoomId] = true;
+            // the catch-up after a restart counts this one as shown
+            const kept = chat.readShown(host);
+            kept[done.chatRoomId] = Math.max(Number(kept[done.chatRoomId]) || 0, (chat.state.unread[done.chatRoomId] || {}).unread || 1);
+            chat.writeShown(host, kept);
             Promise.resolve(host.notify(shown)).catch((err) => console.info("The app's notification was not shown", err));
         },
         // the rooms this page notified, which a read of all rooms clears
         notifiedRooms: {},
-        // On start and when the socket comes back: the rooms with unread messages the app missed, one notification each.
+        // On start, when the socket comes back and when do not disturb ends: the rooms with unread messages the app
+        // missed (their counts went up since it last showed them), one notification each, at most MISSED_MAX, else one
+        // summary. Not on a phone (its pushes do it) and not while do not disturb.
         notifyMissed(roomCounts) {
             const host = chat.notifyHost();
             if (!host || host.pushDelivers || chat.quiet()) return;
-            let shown = {};
-            const key = "moqui.chat.notified." + chat.me;
-            try { shown = JSON.parse(root.localStorage.getItem(key) || "{}") || {}; } catch (err) { shown = {}; }
+            const shown = chat.readShown(host);
             const tr = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
             const appRoot = moqui.call && moqui.call.appRoot ? moqui.call.appRoot() : "/qapps/BasicComms";
-            chat.missed(roomCounts, shown).forEach((room) => {
-                const title = room.count === 1 ? tr("1 new message") : tr("${count} new messages").replace("${count}", String(room.count));
-                Promise.resolve(host.notify({ title, tag: "chat-" + room.chatRoomId, link: appRoot + "/Chat?chatRoomId=" + encodeURIComponent(room.chatRoomId) }))
-                    .catch(() => null);
-                shown[room.chatRoomId] = room.count;
+            const missed = chat.missed(roomCounts, shown);
+            const names = chat.state.roomNames || {};
+            const one = (room) => {
+                const count = room.count === 1 ? tr("1 new message") : tr("${count} new messages").replace("${count}", String(room.count));
+                const title = names[room.chatRoomId] ? names[room.chatRoomId] : count;
+                Promise.resolve(host.notify({ title, body: names[room.chatRoomId] ? count : null, tag: "chat-" + room.chatRoomId,
+                    link: appRoot + "/Chat?chatRoomId=" + encodeURIComponent(room.chatRoomId) })).catch(() => null);
                 chat.notifiedRooms[room.chatRoomId] = true;
-            });
+            };
+            if (missed.length > chat.MISSED_MAX) {
+                const total = missed.reduce((sum, room) => sum + room.count, 0);
+                Promise.resolve(host.notify({ title: tr("${count} new messages").replace("${count}", String(total)),
+                    body: tr("in ${rooms} rooms").replace("${rooms}", String(missed.length)), tag: "chat-missed", link: appRoot + "/Chat" }))
+                    .catch(() => null);
+            } else {
+                missed.forEach(one);
+            }
+            missed.forEach((room) => { shown[room.chatRoomId] = room.count; });
             Object.keys(shown).forEach((roomId) => { if (!roomCounts[roomId]) delete shown[roomId]; });
-            try { root.localStorage.setItem(key, JSON.stringify(shown)); } catch (err) { /* no storage: shown again next time */ }
+            chat.writeShown(host, shown);
         },
         // listeners of the screens: kind is event, update, typing, read, room or presence; outbox (the outbox changed), sent
         // ({clientRef, chatRoomId, threadRootEventSeq, json}: a message of the outbox was answered), changed ({kind, clientRef,
@@ -691,12 +761,17 @@
             chat.state.openRooms[roomId] = (chat.state.openRooms[roomId] || 0) + 1;
             chat.state.unread[roomId] = { unread: 0, mentions: 0 };
             if (chat.vm && chat.vm.notificationClient) chat.vm.notificationClient.registerListener("chatRoom:" + roomId, chat.noop);
+            // the phone's pushes of the room show nothing while it is in front (§7.5)
+            const host = root.moquiDesktop;
+            if (host && host.roomShown) host.roomShown(roomId);
         },
         closeRoom(roomId) {
             if (!chat.state.openRooms[roomId]) return;
             if (--chat.state.openRooms[roomId] <= 0) {
                 delete chat.state.openRooms[roomId];
                 chat.releaseFiles(roomId);
+                const host = root.moquiDesktop;
+                if (host && host.roomShown) host.roomShown(Object.keys(chat.state.openRooms)[0] || null);
             }
         },
         // typing in a room's composer: told at most every 3 seconds, and once when it stops

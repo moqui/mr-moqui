@@ -1240,15 +1240,22 @@ test("the shell's history: a link forward to a place on the stack is a new entry
 test("the notification check shows the device's state, a fix for each item that is off, and a test's time to arrive", async () => {
     await open("/qapps/BasicComms/Chat?chatRoomId=R1", "chat");
     let state = { permission: true, channels: { "chat-messages": true, "chat-mentions": false }, batteryOptimized: true, fullScreen: true,
-        fcm: true, registered: true, lastPushDate: null, lastAckId: null };
+        fcm: false, distributor: null, distributors: 1, registered: true, lastPushDate: null, lastAckId: null, recentAcks: {} };
     const fixes = [];
     const desktop = window.moquiDesktop;
+    let tests = 0;
     Object.assign(desktop, {
         pushCheck: () => Promise.resolve(state),
         pushCheckFix: (what) => { fixes.push(what); return Promise.resolve(); },
-        // the server queues one; it arrives a little later, as the phone's check then says
+        // the server queues one; another push comes first (its id is not the test's), then the test's, as the phone's
+        // check then says; a second test at once is too soon
         pushTest: () => {
-            setTimeout(() => { state = Object.assign({}, state, { lastPushDate: Date.now(), lastAckId: "P1" }); }, 300);
+            tests++;
+            if (tests > 1) return Promise.resolve({ ackIdList: [], queuedDate: Date.now(), reasonCode: "tooSoon" });
+            const started = Date.now();
+            setTimeout(() => { state = Object.assign({}, state, { lastPushDate: Date.now(), lastAckId: "P0", recentAcks: { P0: Date.now() } }); }, 100);
+            setTimeout(() => { state = Object.assign({}, state, { lastPushDate: started + 400, lastAckId: "P2",
+                recentAcks: { P0: started + 100, P1: started + 400, P2: started + 450 } }); }, 400);
             return Promise.resolve({ ackIdList: ["P1"], queuedDate: Date.now() });
         }
     });
@@ -1261,10 +1268,19 @@ test("the notification check shows the device's state, a fix for each item that 
         assert.ok(row("channels").textContent.includes("chat-mentions"), "the channel that is off is named");
         assert.ok(row("registered") && row("lastPush").textContent.includes("None yet"));
         row("battery").querySelector("button").click();
-        assert.deepEqual(fixes, ["battery"]);
-        [...document.querySelectorAll(".m-shell-push-check button")].find((button) => button.textContent.includes("Send a test notification")).click();
-        await until(() => (document.querySelector(".m-shell-push-result") || {}).textContent?.includes("Arrived in"), "the test's time");
+        // no Firebase: a UnifiedPush distributor to pick
+        assert.ok(row("service").textContent.includes("Pick a UnifiedPush distributor"));
+        row("service").querySelector("button").click();
+        assert.deepEqual(fixes, ["battery", "distributor"]);
+        const testButton = () => [...document.querySelectorAll(".m-shell-push-check button")].find((button) => button.textContent.includes("Send a test notification"));
+        const result = () => (document.querySelector(".m-shell-push-result") || {}).textContent || "";
+        testButton().click();
+        await until(() => result().includes("Arrived in"), "the test's time");
+        // its own push's time (P1, 0.4 s), not another's that came first or after
+        assert.ok(/Arrived in 0\.[34] s/.test(result()), result());
         assert.ok(row("lastPush").textContent.trim().length > "Last notification received".length, "the last push shows when");
+        testButton().click();
+        await until(() => result().includes("try again"), "a test too soon");
     } finally {
         root.pushBox.open = false;
         delete desktop.pushCheck;

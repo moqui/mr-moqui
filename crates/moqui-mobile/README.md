@@ -27,9 +27,10 @@ sent when the server can be reached. How it works on Android is [docs/ui/Mobile-
   the page first in `MainActivity.kt`, the ProGuard rules); its `.gitignore` files leave out what the Tauri CLI writes
   on each build.
 - **Firebase** (native push) is in the build only with `gen/android/app/google-services.json`, the Firebase
-  project's, which git ignores; without it push is off and the app still builds. Debug builds take a ring from adb
+  project's, which git ignores; without it FCM is off and the app still builds. Debug builds take a ring from adb
   (`DebugRingReceiver`, [Mobile-Client](../../docs/ui/Mobile-Client.md#the-incoming-call-mt2)). The chat's pushes are
-  sealed to the app's push key and shown by Kotlin with no WebView ([Chat
+  sealed to each account's own push keys and shown by Kotlin with no WebView; UnifiedPush (a phone without Google Play)
+  is always in ([Chat
   notifications](../../docs/ui/Mobile-Client.md#chat-notifications)).
 - **`patches/wry`**: wry with Tauri's scripts and IPC for the main frame of the app's own origins only, through
   `[patch.crates-io]` ([patches/README.md](patches/README.md)).

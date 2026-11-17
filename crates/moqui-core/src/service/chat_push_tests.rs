@@ -1366,6 +1366,11 @@ fn a_test_push_goes_the_full_path_to_the_device() {
     // a request that is no device of the user's queues nothing
     let out = ok("org.moqui.ui.NotificationServices.send#TestPush", &[]);
     assert_eq!(field_of(&out, "reasonCode"), "noDevice");
+    // review finding: one test a device in ten seconds
+    let phone = ["BOB-PHONE".to_string()];
+    assert!(test_too_soon(&bed.facade, &phone, bed.now + 5_000).unwrap());
+    assert!(!test_too_soon(&bed.facade, &phone, bed.now + 11_000).unwrap());
+    assert!(!test_too_soon(&bed.facade, &["OTHER".to_string()], bed.now + 5_000).unwrap());
 }
 
 /// A ring to a device with keys has its caller and call sealed: only its kind and registration in clear text.

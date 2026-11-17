@@ -1134,12 +1134,23 @@ module.exports = {
             if (state.batteryOptimized !== undefined) rows.push({ key: 'battery', ok: state.batteryOptimized === false,
                 label: t('The app may run in the background'), caption: state.batteryOptimized ? t('Battery optimization can hold notifications back') : '', fix: 'battery' });
             if (state.fullScreen !== undefined) rows.push({ key: 'fullScreen', ok: state.fullScreen === true, label: t('Calls show on the lock screen'), fix: 'fullScreen' });
-            if (state.fcm !== undefined) rows.push({ key: 'service', ok: state.fcm === true, label: t('The push service is in this app'),
-                caption: state.fcm === true ? '' : t('This build has no push service: notifications come only while the app is open') });
+            // a push service: Firebase in the build, or a UnifiedPush distributor (a phone without Google Play), which the
+            // user may pick when the phone has one
+            if (state.fcm !== undefined) {
+                const distributors = Number(state.distributors) || 0;
+                rows.push({ key: 'service', ok: state.fcm === true || !!state.distributor, label: t('A push service reaches this app'),
+                    caption: state.distributor ? t('UnifiedPush') + ': ' + state.distributor
+                        : state.fcm === true ? '' : distributors ? t('Pick a UnifiedPush distributor')
+                        : t('No push service: notifications come only while the app is open'),
+                    fix: distributors ? 'distributor' : null });
+            }
             if (state.registered !== undefined) rows.push({ key: 'registered', ok: state.registered === true, label: t('This device is registered for push with the server') });
             if (state.socket) rows.push({ key: 'socket', ok: true, label: t('Messages arrive while the app runs') });
             if (state.lastPushDate !== undefined) rows.push({ key: 'lastPush', ok: !!state.lastPushDate, label: t('Last notification received'),
                 caption: state.lastPushDate ? this.when(state.lastPushDate) : t('None yet') });
+            // a force-stopped app gets no push until it is opened again
+            if (state.forceStoppedDate) rows.push({ key: 'forceStopped', ok: Date.now() - Number(state.forceStoppedDate) > 86400000,
+                label: t('The app was force-stopped'), caption: this.when(state.forceStoppedDate) + ': ' + t('no notifications came until it was opened again') });
             return rows;
         },
         // the sign-out leaves something unsent, or could not tell
@@ -1376,9 +1387,17 @@ module.exports = {
                     done(t('Shown in') + ' ' + seconds(Date.now() - started) + ' s');
                     return;
                 }
+                if (answer.reasonCode === 'tooSoon') { done(t('A test was sent a moment ago: try again in a few seconds')); return; }
                 if (!queued.length) { done(t('The server has no push registration of this device')); return; }
+                // the test's own push (its ack id among the recent ones the phone kept), not whichever came last
+                const arrived = (state) => {
+                    const recent = state && moqui.isPlainObject(state.recentAcks) ? state.recentAcks : {};
+                    const id = queued.find((ackId) => recent[ackId]);
+                    return id ? Number(recent[id]) : null;
+                };
                 const poll = () => this.readPushCheck().then((state) => {
-                    if (state && queued.indexOf(state.lastAckId) >= 0) done(t('Arrived in') + ' ' + seconds(Number(state.lastPushDate) - started) + ' s');
+                    const at = arrived(state);
+                    if (at) done(t('Arrived in') + ' ' + seconds(at - started) + ' s');
                     else if (Date.now() - started > 30000) done(t('Not arrived after 30 s'));
                     else setTimeout(poll, 500);
                 });

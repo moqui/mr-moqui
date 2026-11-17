@@ -3310,9 +3310,11 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="levelMap" type="Map"><description>chatRoomId to the level the room notifies at: all, mentions (also
                 a muted room) or none, for each room the user is in; an app's socket notifications follow it
                 (plans/Comms-Messaging.md §7.5)</description></parameter>
+            <parameter name="roomNameMap" type="Map"><description>chatRoomId to the name of each room the user is in that has one
+                and is not a direct room: the title of an app's notification of it</description></parameter>
         </out-parameters>
         <actions><script><![CDATA[
-            total = 0; unread = 0; mentions = 0; unreadRoomCount = 0; roomCounts = {}; levelMap = {}
+            total = 0; unread = 0; mentions = 0; unreadRoomCount = 0; roomCounts = {}; levelMap = {}; roomNameMap = {}
             const currentUserId = ec.user.userId
             if (!userId) userId = currentUserId
             if (!userId) return
@@ -3326,9 +3328,10 @@ along with this software (see the LICENSE.md file). If not, see
             const rooms = new Set()
             for (const room of ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', 'in', rows.map((row) => row.chatRoomId))
                     .condition('archivedDate', null).selectField('chatRoomId').selectField('roomTypeEnumId').selectField('visibilityEnumId')
-                    .selectField('recordEntityName').list()) {
+                    .selectField('recordEntityName').selectField('roomName').list()) {
                 if (external && (room.roomTypeEnumId === 'CrtRecord' || room.visibilityEnumId === 'CrvRecord' || room.recordEntityName)) continue
                 rooms.add(room.chatRoomId)
+                if (room.roomName && room.roomTypeEnumId !== 'CrtDirect') roomNameMap[room.chatRoomId] = String(room.roomName)
             }
             // the unread messages and the mentions of every room in one query each (ChatMemberUnread, ChatMemberMentions)
             const unreadOf = {}, mentionsOf = {}

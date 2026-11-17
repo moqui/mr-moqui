@@ -780,27 +780,63 @@ test("the app notifies a message by the room's level, not its own, not on do not
     assert.equal(chat.notification(message, "R1", Object.assign({}, base, { quiet: true })), null, "do not disturb");
     assert.equal(chat.notification(message, "R1", Object.assign({}, base, { seen: true })), null, "the room shows");
     assert.equal(chat.notification(message, "R1", Object.assign({}, base, { levels: { R1: "none" } })), null, "nothing");
-    assert.equal(chat.notification(message, "R1", Object.assign({}, base, { levels: { R1: "mentions" } })), null, "mentions only, not mentioned");
-    assert.ok(chat.notification(event({ mentions: ["ann"] }), "R1", Object.assign({}, base, { levels: { R1: "mentions" } })));
+    const mentionsOnly = Object.assign({}, base, { levels: { R1: "mentions" } });
+    assert.equal(chat.notification(message, "R1", mentionsOnly), null, "mentions only, not mentioned");
+    assert.ok(chat.notification(event({ mentions: ["ann"] }), "R1", mentionsOnly));
+    // review gaps: a reply to me and a reply in my thread count as mentions, as the server's activity does
+    assert.ok(chat.notification(event({ replyTo: { eventSeq: 3, senderUserId: "ann" } }), "R1", mentionsOnly), "a reply to me");
+    assert.ok(chat.notification(event({ threadRootEventSeq: 3, threadRootSenderUserId: "ann" }), "R1", mentionsOnly), "in my thread");
     assert.equal(chat.notification(message, "R1", Object.assign({}, base, { preview: false })).body, null, "previews off");
     assert.equal(chat.notification(event({ encrypted: true, bodyText: "x" }), "R1", base).body, "New message", "encrypted: no text");
     assert.equal(chat.notification(event({ type: "reaction" }), "R1", base), null, "only messages");
-    // what was missed while closed: each room with a count not shown yet
-    assert.deepEqual(chat.missed({ R1: { counted: 2 }, R2: { counted: 0 }, R3: { counted: 1 } }, { R3: 1 }), [{ chatRoomId: "R1", count: 2 }]);
+    // a room joined since the levels were read: the user's default level
+    assert.equal(chat.notification(message, "R9", Object.assign({}, base, { defaultLevel: "none" })), null);
+    assert.ok(chat.notification(message, "R9", base), "no default: all");
+    // a group room's name is the title, the sender before the text
+    assert.deepEqual(chat.notification(message, "R1", Object.assign({}, base, { roomNames: { R1: "Team" } })),
+        { title: "Team", body: "Bob: Lunch at noon?", tag: "chat-R1", link: "/qapps/Comms/Chat?chatRoomId=R1&eventSeq=9" });
+    // a missed call to me and a voicemail notify unless the level is none (rule 6); a call I made, or missed by others, not
+    const call = (content, fields) => event(Object.assign({ type: "call", content }, fields || {}));
+    assert.equal(chat.notification(call({ action: "ended", missedUserIdList: ["ann"] }), "R1", mentionsOnly).body, "Missed call");
+    assert.equal(chat.notification(call({ action: "voicemail" }), "R1", base).body, "Voicemail");
+    assert.equal(chat.notification(call({ action: "ended", missedUserIdList: ["cy"] }), "R1", base), null);
+    assert.equal(chat.notification(call({ action: "ended", missedUserIdList: ["ann"] }), "R1", Object.assign({}, base, { levels: { R1: "none" } })), null);
+    // the room's settings: a muted room is mentions, none stays none
+    assert.equal(chat.levelOf("CnlAll", true), "mentions");
+    assert.equal(chat.levelOf("CnlNone", true), "none");
+    assert.equal(chat.levelOf("mentions", false), "mentions");
+    assert.equal(chat.levelOf(null, false), "all");
+    // what was missed while closed: each room whose count went up since it was shown, the most first
+    assert.deepEqual(chat.missed({ R1: { counted: 2 }, R2: { counted: 0 }, R3: { counted: 1 }, R4: { counted: 5 } }, { R3: 1, R4: 7 }),
+        [{ chatRoomId: "R1", count: 2 }]);
+    assert.deepEqual(chat.missed({ R1: { counted: 2 }, R3: { counted: 4 } }, { R3: 1 }),
+        [{ chatRoomId: "R3", count: 4 }, { chatRoomId: "R1", count: 2 }]);
+    // the user's settings change on another device: the room's level follows
+    const state = Object.assign(freshState(), { levels: { R1: "all" } });
+    chat.reduce(state, push("chatUser:ann", { kind: "room", action: "settings", chatRoomId: "R1", notificationLevelEnumId: "CnlAll", isMuted: true }), "ann", 1);
+    assert.equal(state.levels.R1, "mentions");
     // the app's host: a socket message notifies with the room's tag, a read of the room clears it; a phone's host
-    // (pushDelivers) leaves its notifications to its pushes
+    // (pushDelivers) leaves its notifications to its pushes; the catch-up then counts what was shown
     const calls = [];
     const before = { me: chat.me, host: window.moquiDesktop };
     chat.me = "ann";
-    window.moquiDesktop = { notify: (shown) => { calls.push(["notify", shown.tag]); return Promise.resolve(); },
+    window.moquiDesktop = { storageScope: "acct1", notify: (shown) => { calls.push(["notify", shown.tag]); return Promise.resolve(); },
         notifyClear: (tag) => { calls.push(["clear", tag]); return Promise.resolve(); } };
     try {
+        try { localStorage.removeItem(chat.shownKey(window.moquiDesktop)); } catch (err) { /* no storage */ }
         chat.notifyApp({ kind: "event", chatRoomId: "R7", event: event({ chatRoomId: "R7", senderName: "Bob", bodyText: "hi" }) });
+        assert.equal(chat.readShown(window.moquiDesktop).R7, 1, "a live notification counts as shown");
+        chat.notifyMissed({ R7: { counted: 1 } });
+        assert.equal(calls.length, 1, "not shown again by the catch-up");
         chat.notifyApp({ kind: "read", chatRoomId: null, userId: "ann", all: true });
+        assert.deepEqual(chat.readShown(window.moquiDesktop), {});
+        // more than five rooms missed: one summary
+        chat.notifyMissed({ A: { counted: 1 }, B: { counted: 2 }, C: { counted: 1 }, D: { counted: 1 }, E: { counted: 1 }, F: { counted: 3 } });
         window.moquiDesktop.pushDelivers = true;
         chat.notifyApp({ kind: "event", chatRoomId: "R8", event: event({ chatRoomId: "R8", bodyText: "hi" }) });
-        assert.deepEqual(calls, [["notify", "chat-R7"], ["clear", "chat-R7"]]);
+        assert.deepEqual(calls, [["notify", "chat-R7"], ["clear", "chat-R7"], ["notify", "chat-missed"]]);
     } finally {
+        try { localStorage.removeItem(chat.shownKey(window.moquiDesktop)); } catch (err) { /* no storage */ }
         chat.me = before.me;
         window.moquiDesktop = before.host;
     }

@@ -57,6 +57,8 @@ class ChatNotificationsTest {
     @After
     fun tearDown() {
         ChatActionReceiver.outbox = ChatActionReceiver.RustOutbox
+        ChatNotifications.foreground = false
+        ChatNotifications.roomShown(context, "", "")
         manager().cancelAll()
         context.getSharedPreferences("moqui-chat", Context.MODE_PRIVATE).edit().clear().commit()
     }
@@ -70,9 +72,14 @@ class ChatNotificationsTest {
 
     private fun gone(tag: String) = waitFor { shownNow(tag) == null }.let { shownNow(tag) }
 
-    private fun payload(kind: String = "message") = JSONObject()
-        .put("kind", kind).put("account", "a1").put("chatRoomId", "100").put("eventSeq", 5)
+    private fun payload(kind: String = "message", account: String = A) = JSONObject()
+        .put("kind", kind).put("account", account).put("chatRoomId", "100").put("eventSeq", 5)
         .put("roomName", "Team").put("senderName", "Ann").put("snippet", "Lunch at noon?").put("count", 1)
+
+    /** An action's intent as the notification makes it: the ids in its data, never its extras. */
+    private fun actionIntent(what: String, account: String = A) = Intent(context, ChatActionReceiver::class.java)
+        .setAction(what)
+        .setData(ChatActionReceiver.actionUri(account, "100", 5L))
 
     private fun waitFor(what: () -> Boolean) {
         val until = System.currentTimeMillis() + 5_000
@@ -82,23 +89,39 @@ class ChatNotificationsTest {
     @Test
     fun aMessageShowsTheRoomsNotificationAndAClearRemovesIt() {
         ChatNotifications.show(context, payload())
-        val room = shown("chat-100")
+        val room = shown(TAG_A)
         assertNotNull("the room's notification shows", room)
         assertEquals(ChatRules.MESSAGES, room!!.notification.channelId)
         val titles = room.notification.actions.map { it.title.toString() }
         assertEquals(listOf("Reply", "Mark read", "Mute 1 hour"), titles)
-        ChatNotifications.show(context, JSONObject().put("kind", "clear").put("account", "a1").put("chatRoomId", "100"))
-        assertNull("a clear removes it", gone("chat-100"))
+        // a real account id (with dots) has its room link and its conversation shortcut
+        assertNotNull("a tap opens the room", room.notification.contentIntent)
+        assertEquals("chat-$A-100", room.notification.shortcutId)
+        ChatNotifications.show(context, JSONObject().put("kind", "clear").put("account", A).put("chatRoomId", "100"))
+        assertNull("a clear removes it", gone(TAG_A))
+    }
+
+    /** Review finding: another account's room 100 (another server's) is another notification, cleared on its own. */
+    @Test
+    fun aRoomOfAnotherAccountIsAnotherNotification() {
+        ChatNotifications.show(context, payload())
+        ChatNotifications.show(context, payload(account = B))
+        assertNotNull(shown(TAG_A))
+        assertNotNull(shown(TAG_B))
+        // the page read B's room (notify_clear): only B's goes
+        ChatNotifications.clearRoom(context, B, "100")
+        assertNull(gone(TAG_B))
+        assertNotNull(shownNow(TAG_A))
     }
 
     @Test
     fun aMentionGoesToMentionsAndAnEncryptedRoomShowsNoText() {
         ChatNotifications.show(context, payload().put("mention", true))
-        assertEquals(ChatRules.MENTIONS, shown("chat-100")!!.notification.channelId)
+        assertEquals(ChatRules.MENTIONS, shown(TAG_A)!!.notification.channelId)
         val encrypted = payload().put("chatRoomId", "101").put("encrypted", true)
         encrypted.remove("snippet")
         ChatNotifications.show(context, encrypted)
-        val sealed = shown("chat-101")!!.notification
+        val sealed = shown(ChatRules.tag(A, "101"))!!.notification
         val text = sealed.extras.getCharSequence("android.text").toString()
         assertTrue(text, text.contains("open the app"))
     }
@@ -106,22 +129,27 @@ class ChatNotificationsTest {
     @Test
     fun replyGoesThroughTheOutbox() {
         ChatNotifications.show(context, payload())
-        val intent = Intent(context, ChatActionReceiver::class.java)
-            .setAction(ChatActionReceiver.REPLY)
-            .putExtra(ChatActionReceiver.ACCOUNT, "a1")
-            .putExtra(ChatActionReceiver.ROOM, "100")
-            .putExtra(ChatActionReceiver.EVENT_SEQ, 5L)
+        val intent = actionIntent(ChatActionReceiver.REPLY)
         val input = RemoteInput.Builder(ChatActionReceiver.REPLY_TEXT).build()
         RemoteInput.addResultsToIntent(arrayOf(input), intent, Bundle().apply { putCharSequence(ChatActionReceiver.REPLY_TEXT, "Yes") })
         context.sendBroadcast(intent)
         waitFor { synchronized(replies) { replies.isNotEmpty() } }
-        assertEquals(listOf("a1/100: Yes"), synchronized(replies) { replies.toList() })
-        assertNull("the room's notification goes after the reply", gone("chat-100"))
+        assertEquals(listOf("$A/100: Yes"), synchronized(replies) { replies.toList() })
+        assertNull("the room's notification goes after the reply", gone(TAG_A))
         ChatNotifications.show(context, payload())
-        context.sendBroadcast(Intent(context, ChatActionReceiver::class.java).setAction(ChatActionReceiver.READ)
-            .putExtra(ChatActionReceiver.ACCOUNT, "a1").putExtra(ChatActionReceiver.ROOM, "100").putExtra(ChatActionReceiver.EVENT_SEQ, 5L))
+        context.sendBroadcast(actionIntent(ChatActionReceiver.READ))
         waitFor { synchronized(reads) { reads.isNotEmpty() } }
         assertEquals(listOf(5L), synchronized(reads) { reads.toList() })
+    }
+
+    /** Review finding: the ids are the intent's data; extras (which a mutable intent's fill-in could add) are not read. */
+    @Test
+    fun anActionTakesItsRoomFromItsDataNotItsExtras() {
+        val forged = Intent(context, ChatActionReceiver::class.java).setAction(ChatActionReceiver.READ)
+            .putExtra("account", A).putExtra("chatRoomId", "100").putExtra("eventSeq", 5L)
+        context.sendBroadcast(forged)
+        Thread.sleep(500)
+        assertTrue(synchronized(reads) { reads.isEmpty() })
     }
 
     @Test
@@ -131,24 +159,54 @@ class ChatNotificationsTest {
             override fun read(context: Context, account: String, room: String, eventSeq: Long): String? = "not signed in"
         }
         ChatNotifications.show(context, payload())
-        val intent = Intent(context, ChatActionReceiver::class.java).setAction(ChatActionReceiver.REPLY)
-            .putExtra(ChatActionReceiver.ACCOUNT, "a1").putExtra(ChatActionReceiver.ROOM, "100").putExtra(ChatActionReceiver.EVENT_SEQ, 5L)
+        val intent = actionIntent(ChatActionReceiver.REPLY)
         RemoteInput.addResultsToIntent(arrayOf(RemoteInput.Builder(ChatActionReceiver.REPLY_TEXT).build()), intent,
             Bundle().apply { putCharSequence(ChatActionReceiver.REPLY_TEXT, "Kept") })
         // the notification service sheds a package's updates over about 5 a second (the tests before posted many)
         Thread.sleep(1_500)
         context.sendBroadcast(intent)
-        waitFor { shownNow("chat-100")?.notification?.extras?.getCharSequence("android.text")?.toString() == "Kept" }
-        val failed = shownNow("chat-100")!!.notification
+        waitFor { shownNow(TAG_A)?.notification?.extras?.getCharSequence("android.text")?.toString() == "Kept" }
+        val failed = shownNow(TAG_A)!!.notification
         assertEquals("Kept", failed.extras.getCharSequence("android.text").toString())
         assertTrue(failed.extras.getCharSequence("android.title").toString().contains("not sent"))
     }
 
     @Test
     fun aMutedRoomShowsNothingForAnHour() {
-        ChatNotifications.mute(context, "a1", "100")
+        ChatNotifications.mute(context, A, "100")
         ChatNotifications.show(context, payload())
         Thread.sleep(300)
-        assertNull(shownNow("chat-100"))
+        assertNull(shownNow(TAG_A))
+    }
+
+    /** The room the app shows in front shows no notification; another room does. */
+    @Test
+    fun theRoomInViewShowsNoNotification() {
+        ChatNotifications.foreground = true
+        ChatNotifications.roomShown(context, A, "100")
+        ChatNotifications.show(context, payload())
+        ChatNotifications.show(context, payload().put("chatRoomId", "101"))
+        assertNotNull(shown(ChatRules.tag(A, "101")))
+        assertNull(shownNow(TAG_A))
+    }
+
+    /**
+     * Review findings: a sealed push that opens with no account's keys here is dropped, not shown as a bare "New
+     * message"; a sealed ring that does not open shows a missed call rather than nothing.
+     */
+    @Test
+    fun aPushThatDoesNotOpenIsDroppedAndARingShowsAMissedCall() {
+        Push.onMessage(context, mapOf("kind" to "chat", "pushId" to "100050", "enc" to "bm90IGEgcHVzaA"))
+        Push.onMessage(context, mapOf("kind" to "ring", "pushId" to "100050", "enc" to "bm90IGEgcHVzaA"))
+        assertNotNull("a ring that does not open: a missed call", shown("ring-not-opened"))
+        assertNull("a push that does not open: nothing", shownNow("chat-bare"))
+    }
+
+    private companion object {
+        /** Real account ids: a host with dots, a `-` and a hex digest. */
+        const val A = "chat.example.com-0123456789ab"
+        const val B = "chat.example.org-ba9876543210"
+        val TAG_A = ChatRules.tag(A, "100")
+        val TAG_B = ChatRules.tag(B, "100")
     }
 }

@@ -23,6 +23,8 @@ class RegisterWorker(context: Context, params: WorkerParameters) : Worker(contex
     override fun doWork(): Result {
         val app = applicationContext
         if (!Native.ensure(app)) return Result.retry()
+        // the UnifiedPush instances of the accounts here (one signed in or out since)
+        UnifiedPushes.registerAll(app)
         return if (Native.registerPending(Native.dataDir(app))) {
             Result.success()
         } else {
@@ -34,6 +36,8 @@ class RegisterWorker(context: Context, params: WorkerParameters) : Worker(contex
     companion object {
         private const val NAME = "moqui-push-register"
 
+        /** Try again later (a registration failed): with the network, backing off from 30 seconds. */
+        @JvmStatic
         fun start(context: Context) {
             try {
                 val work = OneTimeWorkRequestBuilder<RegisterWorker>()

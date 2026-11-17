@@ -17,17 +17,25 @@ class ChatRulesTest {
         assertEquals(ChatRules.MISSED, ChatRules.channel("message", true, "missed", false))
         assertEquals(ChatRules.MISSED, ChatRules.channel("message", false, "voicemail", false))
         assertEquals(ChatRules.TEXTS, ChatRules.channel("message", false, null, true))
-        assertEquals(ChatRules.OTHER, ChatRules.channel("test", false, null, false))
+        assertEquals(ChatRules.MESSAGES, ChatRules.channel("test", false, null, false))
         assertEquals(ChatRules.OTHER, ChatRules.channel("notification", false, null, false))
     }
 
+    /** Review findings: a real account id has dots; a room's tag is per account, so another server's room 100 is another. */
     @Test
-    fun aRoomsTagIsTheServersAndItsLinkOnlyPlainIds() {
-        assertEquals("chat-100", ChatRules.tag("100"))
-        assertEquals("org.moqui.mobile:/room?account=a1&chatRoomId=100&eventSeq=7", ChatRules.roomLink("a1", "100", 7))
-        assertEquals("org.moqui.mobile:/room?account=a1&chatRoomId=100", ChatRules.roomLink("a1", "100", 0))
-        assertNull(ChatRules.roomLink("a1", "../x", 7))
-        assertNull(ChatRules.roomLink("a b", "100", 7))
+    fun aRoomsTagIsPerAccountAndARealAccountIdIsOne() {
+        val a = "chat.example.com-0123456789ab"
+        val b = "chat.example.org-ba9876543210"
+        assertEquals("chat-$a/100", ChatRules.tag(a, "100"))
+        assertTrue(ChatRules.tag(a, "100") != ChatRules.tag(b, "100"))
+        assertEquals("chat-summary-$a", ChatRules.summaryTag(a))
+        assertEquals(a, ChatRules.accountId(" $a "))
+        assertNull(ChatRules.accountId("a..b"))
+        assertNull(ChatRules.accountId(".a"))
+        assertNull(ChatRules.accountId("a/b"))
+        assertEquals("100", ChatRules.plainId("100"))
+        assertNull(ChatRules.plainId("../x"))
+        assertNull("a room id has no dots", ChatRules.plainId(a))
     }
 
     @Test

@@ -84,12 +84,16 @@ object CallManager {
         if (Looper.myLooper() == Looper.getMainLooper()) task() else main.post(task)
     }
 
-    /** A push's data (FCM's, or the debug injection's). */
-    fun onPush(context: Context, data: Map<String, String>) {
+    /**
+     * A push's data (FCM's, UnifiedPush's, or the debug injection's). `account` is the one whose push keys opened it
+     * (never a field of the push itself); `received` is when it arrived, before it was opened, so the ring's time is
+     * counted from then.
+     */
+    fun onPush(context: Context, data: Map<String, String>, account: String? = null, received: Long = System.currentTimeMillis()) {
         val app = context.applicationContext
         know(app)
         when (data["kind"]) {
-            "ring" -> ring(app, data)
+            "ring" -> ring(app, data, account, received)
             "ringEnded" -> onMain { ringEnded(app, data["callSessionId"] ?: "", data["reason"] ?: "ended") }
             else -> Log.i(TAG, "A push of kind ${data["kind"]} is not shown by the native code yet")
         }
@@ -102,18 +106,24 @@ object CallManager {
 
     fun ringing(): Call? = calls.values.firstOrNull { it.state == State.RINGING }
 
-    /** A ring: its account found by Rust (off the main thread), then shown. */
-    private fun ring(context: Context, data: Map<String, String>) {
-        val received = System.currentTimeMillis()
+    /**
+     * A ring: its account, the one whose keys opened it, or for an unsealed ring the one account its push id can be
+     * (found by Rust on the opener's thread, which does no network work), then shown.
+     */
+    private fun ring(context: Context, data: Map<String, String>, opened: String?, received: Long) {
         val id = data["callSessionId"]?.takeIf { ID.matches(it) } ?: run {
             Log.w(TAG, "A ring with no call id")
             return
         }
+        if (opened != null) {
+            onMain { rang(context, data, id, opened, received) }
+            return
+        }
         val pushId = data["pushId"] ?: ""
-        Native.work {
+        Native.open {
             val account = if (Native.ensure(context)) Native.ringAccount(Native.dataDir(context), pushId) else null
             onMain {
-                if (account == null) Log.w(TAG, "A ring of $id that is no account's here (push $pushId): dropped")
+                if (account == null) Log.w(TAG, "A ring of $id that is no one account's here (push $pushId): dropped")
                 else rang(context, data, id, account, received)
             }
         }

@@ -198,6 +198,65 @@ pub(crate) fn push_check_fix(what: &str) -> Result<(), String> {
     })
 }
 
+/// A room of `account` read in the app: its notification from a push goes (`ChatNotifications.clearRoom`).
+pub(crate) fn chat_clear(account: &str, room: &str) -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.ChatNotifications"))?;
+        let (account, room) = (env.new_string(account)?, env.new_string(room)?);
+        env.call_static_method(
+            &class,
+            jni_str!("clearRoom"),
+            jni_sig!("(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V"),
+            &[JValue::Object(app), JValue::Object(&account), JValue::Object(&room)],
+        )?;
+        Ok(())
+    })
+}
+
+/// The room of `account` the shell shows now (empty: none): its pushes show nothing while the app is in front
+/// (`ChatNotifications.roomShown`).
+pub(crate) fn chat_room_shown(account: &str, room: &str) -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.ChatNotifications"))?;
+        let (account, room) = (env.new_string(account)?, env.new_string(room)?);
+        env.call_static_method(
+            &class,
+            jni_str!("roomShown"),
+            jni_sig!("(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V"),
+            &[JValue::Object(app), JValue::Object(&account), JValue::Object(&room)],
+        )?;
+        Ok(())
+    })
+}
+
+/// A push registration failed: the native code's worker tries again (`RegisterWorker.start`).
+pub(crate) fn register_worker_start() -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.RegisterWorker"))?;
+        env.call_static_method(
+            &class,
+            jni_str!("start"),
+            jni_sig!("(Landroid/content/Context;)V"),
+            &[JValue::Object(app)],
+        )?;
+        Ok(())
+    })
+}
+
+/// The UnifiedPush instances registered for the accounts signed in here (`UnifiedPushes.registerAll`).
+pub(crate) fn unified_register_all() -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.UnifiedPushes"))?;
+        env.call_static_method(
+            &class,
+            jni_str!("registerAll"),
+            jni_sig!("(Landroid/content/Context;)V"),
+            &[JValue::Object(app)],
+        )?;
+        Ok(())
+    })
+}
+
 /// The phone's model (`android.os.Build.MODEL`), for its name in the user's device list.
 pub(crate) fn device_model() -> Result<String, String> {
     with_context(|env, _| {

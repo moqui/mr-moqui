@@ -68,22 +68,34 @@ pub(crate) fn under(path: &str, root: &str) -> bool {
     !root.is_empty() && bare.strip_prefix(root).is_some_and(|rest| rest.starts_with('/'))
 }
 
-/// The notification id of a page's `tag` (a room's `chat-<id>`, a call's `call-<id>`): the same tag replaces and removes
-/// the same notification (plans/Comms-Messaging.md §7.5). None for no tag: a notification of its own.
-pub(crate) fn tag_id(tag: Option<&str>) -> Option<i32> {
+/// The notification id of a page's `tag` (a room's `chat-<id>`, a call's `call-<id>`) for `account`: the same tag of
+/// the same account replaces and removes the same notification, and another account's room of the same id is another
+/// notification (plans/Comms-Messaging.md §7.5). None for no tag: a notification of its own.
+pub(crate) fn tag_id(account: Option<&str>, tag: Option<&str>) -> Option<i32> {
     let tag = tag.map(str::trim).filter(|tag| !tag.is_empty())?;
     // FNV-1a, kept positive and clear of the ids Android's own notifications of the app use (below 1000)
     let mut hash: u32 = 0x811c_9dc5;
-    for byte in tag.bytes() {
+    for byte in account
+        .unwrap_or("")
+        .bytes()
+        .chain(std::iter::once(b'\n'))
+        .chain(tag.bytes())
+    {
         hash ^= u32::from(byte);
         hash = hash.wrapping_mul(0x0100_0193);
     }
     Some(i32::try_from(hash % 0x7fff_0000).unwrap_or(0) + 1000)
 }
 
-/// A native notification: `title`, and `body`, replacing the one of the same `tag`; a tap shows the app at `link`
-/// when it is a path of the account's server (`notification_opened`). Android 13 and later ask the user the first time
-/// (off the main thread: the plugin waits for the answer).
+/// The room of a chat tag (`chat-<room>`): none for another tag.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub(crate) fn chat_room_of(tag: &str) -> Option<&str> {
+    tag.trim().strip_prefix("chat-").and_then(crate::calls::call_id)
+}
+
+/// A native notification: `title`, and `body`, replacing the one of the same `tag` of the account signed in; a tap
+/// shows the app at `link` when it is a path of the account's server (`notification_opened`). Android 13 and later ask
+/// the user the first time (off the main thread: the plugin waits for the answer).
 #[tauri::command(async)]
 pub(crate) fn notify(
     app: AppHandle,
@@ -96,6 +108,7 @@ pub(crate) fn notify(
     if title.is_empty() {
         return Err("A notification needs a title".to_string());
     }
+    let account = host(&app).ok().and_then(|host| host.signed_in());
     let notification = app.notification();
     if notification
         .permission_state()
@@ -111,7 +124,7 @@ pub(crate) fn notify(
     if let Some(body) = body.map(|body| clip(&body, BODY_MAX)).filter(|body| !body.is_empty()) {
         builder = builder.body(body);
     }
-    if let Some(id) = tag_id(tag.as_deref()) {
+    if let Some(id) = tag_id(account.as_deref(), tag.as_deref()) {
         builder = builder.id(id);
     }
     if let Some(path) = link.as_deref().and_then(|link| server_path(link).ok()) {
@@ -120,15 +133,38 @@ pub(crate) fn notify(
     builder.show().map_err(|err| err.to_string())
 }
 
-/// Remove the notification of `tag` (a room read here: its notification goes, §7.2 rule 3).
+/// Remove the notification of `tag` of the account signed in (a room read here: its notification goes, §7.2 rule 3):
+/// the page's own, and a room's the native code shows from a push (`ChatNotifications.clear`; the server sends no
+/// clear to the device that read).
 #[tauri::command(async)]
 pub(crate) fn notify_clear(app: AppHandle, tag: String) -> Result<(), String> {
-    let Some(id) = tag_id(Some(&tag)) else {
+    let account = host(&app).ok().and_then(|host| host.signed_in());
+    #[cfg(target_os = "android")]
+    if let (Some(account), Some(room)) = (account.as_deref(), chat_room_of(&tag)) {
+        crate::android::chat_clear(account, room)?;
+    }
+    let Some(id) = tag_id(account.as_deref(), Some(&tag)) else {
         return Ok(());
     };
     app.notification()
         .remove_active(vec![id])
         .map_err(|err| err.to_string())
+}
+
+/// The room the shell shows now (none: no room, or the app left it): its pushes show no notification while the app is
+/// in front, as the server sends none to a room read (plans/Comms-Messaging.md §7.5).
+#[tauri::command(async)]
+pub(crate) fn chat_room_shown(app: AppHandle, room: Option<String>) -> Result<(), String> {
+    let host = host(&app)?;
+    let account = host.signed_in().unwrap_or_default();
+    let room = room.as_deref().and_then(crate::calls::call_id).unwrap_or("");
+    #[cfg(target_os = "android")]
+    return crate::android::chat_room_shown(&account, room);
+    #[cfg(not(target_os = "android"))]
+    {
+        log::info!("The room shown: {account}/{room}");
+        Ok(())
+    }
 }
 
 /// A tap on a notification of `notify`: the app shows its link (a path of the account's server) in the shell.
@@ -162,7 +198,10 @@ pub(crate) fn push_check(app: AppHandle) -> Result<serde_json::Value, String> {
 pub(crate) fn push_check_fix(app: AppHandle, what: String) -> Result<(), String> {
     let host = host(&app)?;
     shell_only(&host)?;
-    if !matches!(what.as_str(), "notifications" | "channels" | "battery" | "fullScreen") {
+    if !matches!(
+        what.as_str(),
+        "notifications" | "channels" | "battery" | "fullScreen" | "distributor"
+    ) {
         return Err(format!("Nothing to fix: {what}"));
     }
     #[cfg(target_os = "android")]
