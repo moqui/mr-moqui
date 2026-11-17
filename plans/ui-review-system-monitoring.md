@@ -1,6 +1,8 @@
 # MR Moqui — UI review: System monitoring and recovery
 
-**Status — 2026-11-16:** planned; every activity pending. Source inspection only; no review or test results claimed.
+**Status — 2026-11-16:** review pass started. MON-B01 exercised the initial diagnostic navigation and error-recovery
+branches, recorded two open findings and cross-linked one System finding. Every activity remains incomplete;
+unrecorded branches and modes are pending. No refinement or automated test results are claimed.
 
 Contents: [scope](#1-purpose-scope-and-sources) · [method](#2-review-method-and-refinement-criteria) ·
 [inventory](#3-screen-and-surface-inventory) · [activities](#4-end-to-end-activities) ·
@@ -338,13 +340,13 @@ execution records it; “exercised” never implies that all modes and recovery 
 
 | Activity | Status | Outcome / remaining branches | Evidence / findings |
 | --- | --- | --- | --- |
-| MON-01 — Start from a symptom and retain its investigation range | pending | All steps, modes and recovery branches pending. | — |
-| MON-02 — Follow a log to its trace and surrounding context | pending | All steps, modes and recovery branches pending. | — |
-| MON-03 — Explain an error group and its affected work | pending | All steps, modes and recovery branches pending. | — |
+| MON-01 — Start from a symptom and retain its investigation range | exercised — partial | Overview range/panel notices, populated error groups and System Health → Sources entry inspected. Known latency fixture, instance/range changes, chart drill/export, failed-panel recovery, dark/narrow/TUI/Standard remain pending. | MON-B01; MON-UI-002; SYS-UI-001 handoff |
+| MON-02 — Follow a log to its trace and surrounding context | exercised — partial | Logs invalid-query recovery → real local log/context → trace selection/raw span → filtered logs, then invalid-duration/recovery in Traces. Trace/range retained. Split, controlled multi-service fixture, retention/missing-span/refusal/fetch-failure and alternate modes pending. | MON-B01; MON-UI-001; evidence 02–08 |
+| MON-03 — Explain an error group and its affected work | inspected — partial | Overview Top error groups inspected, including an unnamed group. Dedicated Errors/ErrorDetail, controlled repeated/unrelated errors, occurrence/stack/release handoffs and recovery/mode branches pending. | MON-B01; MON-UI-002; 01-overview |
 | MON-04 — Compare a metric over meaningful ranges | pending | All steps, modes and recovery branches pending. | — |
 | MON-05 — Move from service pressure to a specific operation | pending | All steps, modes and recovery branches pending. | — |
 | MON-06 — Replay a captured browser failure safely | pending | All steps, modes and recovery branches pending. | — |
-| MON-07 — Admit a telemetry source and revoke its key | pending | All steps, modes and recovery branches pending. | — |
+| MON-07 — Admit a telemetry source and revoke its key | inspected — partial | Sources counters and active/stale local instances inspected; Health Fix reached Sources. No key issued/revoked, ingestion fixture or authorization comparison. All source-admission/key/rotation/error/mode branches pending. | MON-B01; 09-sources, 10-health-fix-sources; SYS-UI-001 |
 | MON-08 — Run a synthetic check and follow its result | pending | All steps, modes and recovery branches pending. | — |
 | MON-09 — Review a release regression and open an evidence-based incident | pending | All steps, modes and recovery branches pending. | — |
 | MON-10 — Apply an expiring diagnostic setting and restore the baseline | pending | All steps, modes and recovery branches pending. | — |
@@ -358,7 +360,8 @@ presentation; P3 is a localized refinement. Label evidence as observed behavior,
 
 | ID / severity | Actor, activity step, route, mode / viewport | Reproduction and impact | Evidence / owning layer | State / correction / retest |
 | --- | --- | --- | --- | --- |
-| — | — | No findings recorded. | — | — |
+| MON-UI-001 / P2 | Observed; john.doe; MON-02; `/qapps/system/Monitor/Logs`; Material light/comfortable, 1920×1080 | On the fresh runtime, search `otel_logs` over `now-7d` → `now`. Documents over time says “No data in this time range” while the same page lists `1-20 / 2648`. Logs for a real trace similarly returned six rows with an empty chart. No partial-bucket or histogram-specific explanation is present in the full AX capture. The operator cannot distinguish an empty chart aggregation from absent log evidence. | `03-logs-recovered-message.txt`, `06-trace-logs.txt`. Candidate shared owner: [Explore.xml](../runtime/components/base/tools/screen/Dashboards/Explore.xml) lines 202–206 consumes histogram frames but does not append successful query notices; actual exclusion cause was not established. Generic report behavior hands off to [Dashboards](ui-review-dashboards.md). | Open; provisional priority. No correction/retest. Known completed-bucket fixture and range comparison still needed; no data-loss claim. |
+| MON-UI-002 / P3 | Observed in screenshot/AX; john.doe; MON-01/03; `/qapps/system/Monitor/Overview`; Material light/comfortable, 1920×1080 | In Top error groups, the third row has no visible Error text despite Type `error`, Service `moqui`, Occurrences `1` and Last seen. The underlying detail link has only its URL as its accessible name. The group cannot be identified by its visible error label. Reproduce with a group whose message is empty; observed fingerprint begins `5c58f00d`. | `01-overview.jpg` and `01-overview.txt`; [monitor-overview.json](../runtime/components/base/tools/report/monitor-overview.json) uses the message field as the detail link text without a visible fallback. | Open; provisional priority. No correction/retest. Detail was not opened; telemetry's reason for the empty message remains unverified. |
 
 ### Bounded batch record
 
@@ -370,7 +373,61 @@ For each later batch record:
 - In refinement only: decisions, owning files/components, correction, focused verification commands/results and retest.
 - Temporary settings/grants/files/jobs restored, remaining cleanup and companion handoffs.
 
-No execution batches have been started.
+### MON-B01 — Initial diagnostic chain, 2026-11-16
+
+**Scope and ownership.** First bounded review batch: System/Monitor Overview, Logs search recovery and surrounding
+context, a real trace/span/raw-data/log round trip, Traces duration validation, and Sources as the System Health
+handoff. The System review agent performed the browser walk; the monitoring reviewer inspected its saved screenshots
+and full AX captures and owns this record. The monitoring child could not create an IAB tab, so its source preflight
+alone did not advance coverage. No application fixes, key issuance, diagnostic setting changes, recovery actions,
+service/job runs or automated tests were performed by this review. The full review pass remains open.
+
+**Runtime and actor.** Current source `83cf05b3b6b069812a6ac2802d95f918db6a9802`; root prepared the current debug
+binary after the pulled Rust changes, `target/debug/moqui`, reporting `moqui 0.1.0 (debug)` with telemetry and dev
+features. SHA-256 `f799a82c681a7c3c9a7973cf5e030a5d1ebf41fa8935280f0d527dbf61bb2004`. Fresh disposable runtime
+`/tmp/mr-ui-four-apps-zf5098dh`, embedded PostgreSQL, six individually linked components (framework, webroot, tools,
+basic-comms, dev-aide, example), no addons. Copied `conf/UiReviewConf.xml`, explicit telemetry enabled and sample ratio
+1 set before startup, scheduled jobs disabled. Full-sampling setup is a fixture prerequisite, not completion of
+MON-10. Browser origin `http://127.0.0.1:18872`, distinct from root's `localhost` browser identity. Actor `john.doe`
+(`EX_JOHN_DOE`, ADMIN + ADMIN_ADV); no least-privilege evidence. One shared runtime, lifecycle owned by root.
+
+Live observations approximately 23:53–23:55 UTC / 17:53–17:55 America/Chicago on 2026-11-16, after startup at
+23:49:20 UTC. Material light/default color scheme, comfortable density, 1920×1080. No dark/narrow/Standard/TUI or
+complete keyboard/contrast walk. Telemetry consists of startup and local review requests, including a natural
+new-device sign-in notification failure (`ACCOUNT_SIGN_IN` From address unset). No controlled incident, multi-service
+causal fixture, known-rate comparison, captured-mail fixture or external provider was configured. Failure of that
+automatic demo notice is context, not successful delivery or a new monitoring defect.
+
+**Evidence.** Ignored local artifacts in `plans/ui-refinement-evidence/system-monitoring/batch-01/`:
+`runtime-metadata.json`, `UiReviewConf.xml`, `preflight.md`, and files 01–10 below. Full AX captures provide actual
+routes and values; screenshots were visually inspected. These are review evidence, not test baselines.
+
+| Branch | Observed actions and result | Evidence / limit |
+| --- | --- | --- |
+| MON-01 Overview | Monitor defaulted to Overview with Last 7 days, refresh Off. HTTP request/duration panels explicitly reported exclusion of partial buckets and no matching completed bucket; their empty chart is not taken as zero traffic. Top error groups contained local sign-in/mail errors, Job runs showed a success row, and telemetry lost displayed 0. One error label was blank (MON-UI-002). | `01-overview.{jpg,txt}`. No range/instance change, point drill, export or independence-of-failed-panels check. Counts were current observations, not known expected fixture totals. |
+| MON-02 Logs validation/recovery | Logs showed roughly 2,640 records initially. Query `(` returned `a group is missing ')' at position 1` and “The search could not run. Correct the query and search again.” Input and `now-7d`/`now` were retained, with results withheld. Clearing the query restored `1-20 / 2648` and Full message exposed the local sign-in notice failure. Documents over time remained unexplained empty beside the rows (MON-UI-001). | `02-logs-invalid.{jpg,txt}`, `03-logs-recovered-message.txt`. No query permission/refusal proof and no complete network/console trace. |
+| MON-02 Context → trace → logs | Opened surrounding entries for document `001a1e6c8295698daac53c571`, anchor `2026-11-16T23:53:59.884Z`, then trace `c21330db041c4be8d6fe72d94c83ab09`. Selected `org.moqui.admin.IdentityServices.notify#NewDeviceSignIn`, ERROR, 12.30 ms, then expanded Raw span data. Waterfall also showed the failed EmailServices child. Logs for this trace returned six rows with `queryString=trace_id:c21330db041c4be8d6fe72d94c83ab09`; the range stayed `now-7d`/`now` throughout. | `04-log-context.{jpg,txt}`, `05-trace-selected.{jpg,txt}`, `06-trace-logs.txt`. Concrete trace continuity passed; this is one local request, not the planned multi-service fixture or complete causal investigation. Split and retention/fetch-failure branches pending. |
+| MON-02 Traces validation/recovery | Monitor menu → Traces retained the trace query and range. Minimum duration `-1` remained visible with “Minimum duration is not a number of milliseconds and is ignored.” Results still showed the single POST request, 28.85 ms. Clearing and resubmitting removed the warning. | `07-traces-invalid-duration.{jpg,txt}`, `08-traces-recovered.txt`. Negative duration was explained as ignored; no boundary/invalid maximum or interrupted-query exercise. |
+| MON-07 source inspection / System handoff | Sources showed queued 14,689, exported 14,686, dropped 0 and failed 0; the active `moqui` instance `1fc09a59-9b58-4949-8fa3-1054f6a6b96c` was recently seen at 23:54:51.798 UTC beside a stale startup/loading instance. System Health Fix reached this same Sources surface. | `09-sources.{jpg,txt}`, `10-health-fix-sources.txt`. Cumulative queued/exported difference is not asserted lost data. No ingestion/key mutation. System's misleading “Telemetry is off or not searchable” readiness message is owned once as [SYS-UI-001](ui-review-system.md#findings-register), not duplicated here. |
+
+**Pending follow-ups.** Dedicated Errors/ErrorDetail, Metrics, Services, Operations, Artifacts, Split, all replay,
+source admission/key, check, release/incident/recovery and diagnostic-setting workflows remain unexecuted. So do
+restricted-user comparisons and alternate modes. Prepare controlled correlated errors and completed metric buckets
+before asserting causal/rate/zero-versus-unknown outcomes. `preflight.md` separately records source-only candidates:
+Last value aggregation semantics for a decreasing gauge, error-chart versus group-query scope, and the Overview
+error link's first-seen→now range expansion. None is counted as a live finding or resolved activity.
+
+**Cleanup and handoff.** No telemetry settings, grants, providers, keys or business records changed by this batch;
+search URLs and local query history are disposable. Browser review finished and its viewport override was reset.
+Root owns final shutdown of the shared runtime and its cleanup evidence; this batch did not stop it while the other
+reviews were still using it. Keep the two findings open for consolidated triage after the review pass.
+
+
+**Coordinated shutdown.** After the four browser batches, root stopped the shared server with SIGINT at
+2026-11-17 00:02:38 UTC (Nov 16 locally), exit 0. Server/HTTP listener and runtime PostgreSQL processes/PID file
+were absent; curl cookie file removed. Browser viewport overrides were reset. Session logout was not established;
+server shutdown ended availability. Scratch runtime/database and ignored local evidence are retained. See
+`runtime-cleanup.json` in this batch's evidence directory.
 
 ## 7. Decisions
 
