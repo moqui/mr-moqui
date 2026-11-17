@@ -369,6 +369,16 @@ files' address (`/v1/Services/{IS}/Media/{ME}/Content` on the Media Content Serv
   receipt, one failed not failing the delivery, all failed failing it; a STOP from one member refusing the whole send
   before the provider; twelve recipients keeping the sender and seven others, two of our numbers both ours, a short
   code in a room of its own, and a sixth new group of a day from one number kept in its pair room.
+- `crates/moqui-channels/src/providers/twilio_tests.rs`, against a fake Twilio on the same bed: the bridge's required
+  settings; a reply out (form, Basic auth, `StatusCallback`) and its status callbacks out of order; a Messaging
+  Service's send; 21211, 20429 and 429, a lost answer, and 21610 marking the pair; a STOP taken once; files fetched
+  with Basic auth, kept on a same-host redirect and never sent to another host; the signature (good, wrong token,
+  changed parameter, missing, another URL, a replay, a query string, the default port either way, a fragment, a JSON
+  body's `bodySHA256`, the bridge's `webhookUrl`); the edge node's event keys; a queued request verified on the local
+  node, a forged one refused and kept, and one waiting without an `authToken`; and group texts through a fake
+  Conversations API (made once with its participants and webhook, then only posts; each recipient's receipt; a reply
+  into the room; files refused; a lost post uncertain; a lost create found by its unique name; a Conversation Twilio
+  made, its participants read and its files fetched; Twilio's 50438 taking the one it has).
 - `basic-comms/test/BasicCommsTexts.spec.js` also has a group text opened in any order and with our own number left
   out, more than 8 refused, and `phoneNames` from a `call-context` provider of the component's own test app root
   (`test/screen/TextNamesApp.xml`) for the user's own phone rooms only.
@@ -377,5 +387,6 @@ files' address (`/v1/Services/{IS}/Media/{ME}/Content` on the Media Content Serv
 - `basic-comms/test/BasicCommsTexts.spec.js`: Text a number in the browser and the terminal, the room it opens, the same
   post from a stranger, an international number.
 
-**Not checked live:** Telnyx itself (its signature and webhook shapes are from its documentation), carrier delivery,
+**Not checked live:** Telnyx and Twilio themselves (their signatures, APIs and webhook shapes are from their
+documentation; Twilio's Conversations group texts too), carrier delivery,
 group MMS between real phones, and 10DLC registration.
