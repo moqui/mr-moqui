@@ -212,15 +212,19 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Send an artifact (a tar.gz) or a report of a run as this request's response, streamed from its
             content blob a window at a time with Range, ETag and If-Range, as ec.web.sendResourceResponse sends a
             file: for a screen's download transition, with nothing copied to a file. Read as get#RunArtifact is; a
-            cache is not found. inline shows a passive file (an image, a PDF, plain text, JSON) instead of sending it as
+            cache is not found. Its type is its name's only when inert (an image, a font, audio or video, a PDF, plain
+            text or CSV, an archive), else application/octet-stream, with Content-Security-Policy: default-src 'none';
+            sandbox (an inline PDF aside), so no page of the origin loads it as a script or style sheet (SEC-PSF-08).
+            inline shows an inert file (an image, a PDF, plain text) instead of sending it as
             an attachment; an active one (HTML, SVG, XML, JavaScript) is still an attachment unless inlineActive is set
-            too. Shown inline it is sandboxed (Content-Security-Policy: sandbox, X-Content-Type-Options: nosniff).</description>
+            too. Never sniffed (X-Content-Type-Options: nosniff).</description>
         <in-parameters>
             <parameter name="artifactId" required="true"/>
             <parameter name="inline" type="Boolean" default-value="false"/>
             <parameter name="inlineActive" type="Boolean" default-value="false"><description>With inline, show an
-                HTML, SVG, XML or JavaScript file too. A job's output is whatever its commit's scripts wrote, so set
-                this only for a run whose commits the application trusts: it is shown on the application's host
+                HTML, SVG or XML file too, by its own type with Content-Security-Policy: sandbox (JavaScript never).
+                A job's output is whatever its commit's scripts wrote, so set this only for a run whose commits the
+                application trusts: it is shown on the application's host
                 (sandboxed, so no script runs, but it can look like one of the application's pages).</description></parameter>
             <parameter name="includeHidden" type="Boolean"/>
         </in-parameters>

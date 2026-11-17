@@ -188,6 +188,53 @@ fn pass_upload(host_call: &mut Call<'_>) -> Result<Ret, HostError> {
     reply_value(&reply)
 }
 
+/// The headers a download from the authority is forwarded with, as every transport sends a user's file
+/// (`web::user_download_headers`): its type when inert, else `application/octet-stream`, so a file named `x.js` is no
+/// script the site's pages could load (SEC-PSF-08); never sniffed; a type that can run script never shown inline; and
+/// `default-src 'none'; sandbox` (an inline PDF aside, which browsers will not show in a sandbox).
+pub(crate) fn download_headers(meta: &pass_authority::DownloadMeta, operation: &str) -> Vec<(String, String)> {
+    let filename = meta.filename.replace(['"', '\\', '\r', '\n'], "_");
+    let content_type = if meta.content_type.contains(['\r', '\n']) {
+        "application/octet-stream"
+    } else {
+        crate::web::inert_content_type(&meta.content_type)
+    };
+    // only a public product image (Shop F118) or a theme asset by digest (F55) may be kept by a shared cache; the
+    // sender passes no other value
+    let cache_control = meta
+        .cache_control
+        .as_deref()
+        .and_then(|value| pass_authority::download_cache_control(operation, value))
+        .unwrap_or("no-store");
+    let (inline, sandboxed) = crate::web::user_file_inline(content_type, meta.disposition == "inline");
+    let mut headers = vec![
+        ("Content-Type".to_string(), content_type.to_string()),
+        ("Cache-Control".to_string(), cache_control.to_string()),
+        ("X-Content-Type-Options".to_string(), "nosniff".to_string()),
+        (
+            "Content-Disposition".to_string(),
+            format!(
+                "{}; filename=\"{filename}\"",
+                if inline { "inline" } else { "attachment" }
+            ),
+        ),
+    ];
+    if sandboxed || !inline {
+        headers.push((
+            "Content-Security-Policy".to_string(),
+            crate::web::USER_FILE_SANDBOX.to_string(),
+        ));
+    }
+    // a file that takes byte ranges answers its range as a static file does (Shop F88)
+    if let Some(ranged) = meta.ranged {
+        headers.push(("Accept-Ranges".to_string(), "bytes".to_string()));
+        if let Some(range) = ranged.content_range() {
+            headers.push(("Content-Range".to_string(), range));
+        }
+    }
+    headers
+}
+
 /// A download: `{status, headers, bodyId, length}` with the body left on the server, or `{error}`.
 fn pass_open(host_call: &mut Call<'_>) -> Result<Ret, HostError> {
     let endpoint = host_call.text_or_empty(0);
@@ -202,44 +249,7 @@ fn pass_open(host_call: &mut Call<'_>) -> Result<Ret, HostError> {
     match opened {
         Ok(download) => {
             let meta = &download.meta;
-            let filename = meta.filename.replace(['"', '\\', '\r', '\n'], "_");
-            let content_type = if meta.content_type.contains(['\r', '\n']) {
-                "application/octet-stream".to_string()
-            } else {
-                meta.content_type.clone()
-            };
-            // only a public product image (Shop F118) or a theme asset by digest (F55) may be kept by a shared cache;
-            // the sender passes no other value
-            let cache_control = meta
-                .cache_control
-                .as_deref()
-                .and_then(|value| pass_authority::download_cache_control(&call.operation, value))
-                .unwrap_or("no-store");
-            // sent as every transport sends a user's file (web::file_headers): never sniffed, a type that can run
-            // script (HTML, SVG, XML, JavaScript) never shown inline, and one shown inline sandboxed (a PDF aside)
-            let (inline, sandboxed) = crate::web::user_file_inline(&content_type, meta.disposition == "inline");
-            let mut headers = vec![
-                ("Content-Type".to_string(), content_type),
-                ("Cache-Control".to_string(), cache_control.to_string()),
-                ("X-Content-Type-Options".to_string(), "nosniff".to_string()),
-                (
-                    "Content-Disposition".to_string(),
-                    format!(
-                        "{}; filename=\"{filename}\"",
-                        if inline { "inline" } else { "attachment" }
-                    ),
-                ),
-            ];
-            if sandboxed {
-                headers.push(("Content-Security-Policy".to_string(), "sandbox".to_string()));
-            }
-            // a file that takes byte ranges answers its range as a static file does (Shop F88)
-            if let Some(ranged) = meta.ranged {
-                headers.push(("Accept-Ranges".to_string(), "bytes".to_string()));
-                if let Some(range) = ranged.content_range() {
-                    headers.push(("Content-Range".to_string(), range));
-                }
-            }
+            let headers = download_headers(meta, &call.operation);
             map.insert(
                 "status".to_string(),
                 Value::I64(i64::from(meta.ranged.map_or(200, pass_authority::Ranged::status))),

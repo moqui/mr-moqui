@@ -56,3 +56,42 @@ fn every_method_lists_required_arguments_first() {
     }
     assert!(!all_paths().is_empty());
 }
+
+/// SEC-PSF-08: a download forwarded from the PASS authority over gRPC is answered by its type only when inert, else as
+/// bytes, with `default-src 'none'; sandbox` (an inline PDF aside), as the authority's local answer is.
+#[test]
+fn a_forwarded_pass_download_has_an_inert_type_and_the_sandbox() {
+    use crate::pass_authority::DownloadMeta;
+    let headers = |content_type: &str, disposition: &str| {
+        let meta = DownloadMeta {
+            content_type: content_type.to_string(),
+            filename: "x.js".to_string(),
+            disposition: disposition.to_string(),
+            ..DownloadMeta::default()
+        };
+        let headers = super::pass::download_headers(&meta, "getReleaseAsset");
+        let header = |wanted: &str| {
+            headers
+                .iter()
+                .find(|(name, _)| name == wanted)
+                .map(|(_, value)| value.clone())
+                .unwrap_or_default()
+        };
+        (
+            header("Content-Type"),
+            header("Content-Security-Policy"),
+            header("Content-Disposition"),
+        )
+    };
+    let sandbox = crate::web::USER_FILE_SANDBOX.to_string();
+    let (kind, policy, disposition) = headers("application/javascript", "attachment");
+    assert_eq!((kind.as_str(), policy), ("application/octet-stream", sandbox.clone()));
+    assert!(disposition.starts_with("attachment"));
+    assert_eq!(
+        headers("image/png", "inline"),
+        ("image/png".into(), sandbox.clone(), "inline; filename=\"x.js\"".into())
+    );
+    assert_eq!(headers("application/pdf", "inline").1, "");
+    assert_eq!(headers("text/html", "inline").0, "application/octet-stream");
+    assert_eq!(headers("text/html", "inline").1, sandbox);
+}
