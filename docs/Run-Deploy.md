@@ -67,6 +67,7 @@ On the server:
    unzip mr-moqui-20261029.zip
    sudo install -d -o moqui -g moqui /opt/moqui
    sudo cp -a mr-moqui-20261029/. /opt/moqui/ && sudo chown -R moqui:moqui /opt/moqui
+   sudo chown -R root:root /opt/moqui/moqui /opt/moqui/MoquiConf.xml /opt/moqui/conf   # read-only to the server
    ```
 
 2. Put the certificate for your host in `/opt/moqui/cert/`, for example certbot's `cert/erp.example.com/fullchain.pem`
@@ -114,7 +115,7 @@ server, as in [Run one production server](#run-one-production-server) with the b
 
 ```sh
 sudo install -d -o moqui -g moqui /opt/moqui /etc/moqui
-gunzip -c moqui-20261114.gz | sudo install -o moqui -g moqui -m 755 /dev/stdin /opt/moqui/moqui
+gunzip -c moqui-20261114.gz | sudo install -o root -g root -m 755 /dev/stdin /opt/moqui/moqui
 sudo install -o moqui -g moqui -m 644 moqui-20261114.sha256 /opt/moqui/embedded.sha256
 sudo tee /etc/moqui/environment > /dev/null <<'EOF'
 MOQUI_RUNTIME=/opt/moqui
@@ -216,7 +217,8 @@ what is not built ([Edge-Node2 §3](../plans/Edge-Node2.md#3-topologies)).
 - **Disk and memory**: the thresholds at which the System home warns are `resource-watch`'s; copy the disk, memory
   and CPU alert rules so someone is told ([resource watch](#resource-watch)).
 - **Listeners**: SSH, inbound SMTP, A2A, MCP and the LLM gateway are off by default. Turn on only the ones that are used.
-- **CORS**: leave `webapp_allow_origins` empty. The dev conf sets `*`.
+- **CORS**: leave `webapp_allow_origins` empty. The dev conf names `localhost,127.0.0.1` (this machine on any port);
+  `*` is never sent with credentials.
 - **Lock-down**: the full list is in [Attack-Surface.md, Heavy lock-down](security/Attack-Surface.md#heavy-lock-down).
 
 ---
@@ -357,7 +359,7 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `webapp_https_listen_port` | empty: 8443 | The HTTPS listen port (`--https-port`), or `off` |
 | `webapp_https_port` | empty: 443 | The HTTPS port in generated URLs and redirects |
 | `webapp_https_enabled` | `false` | `true` makes generated URLs https |
-| `webapp_allow_origins` | empty (`*` in the dev conf) | Other origins allowed for CORS |
+| `webapp_allow_origins` | empty (`localhost,127.0.0.1` in the dev conf) | Other origins allowed for CORS; `*` allows any origin without credentials |
 | `webapp_trusted_proxies` | empty | Address ranges of the proxies in front ([proxies](#behind-a-proxy-or-load-balancer)) |
 | `webapp_client_ip_header` | empty | The header those proxies put the client address in |
 | `webapp_status_ips` | `127.0.0.1` | Addresses, besides loopback, that `/health` answers |
@@ -865,6 +867,12 @@ with the binary in it.
 
 `systemd/moqui.service` runs `/opt/moqui/moqui` as the `moqui` user.
 
+- The file system is read-only to it (`ProtectSystem=strict`) but `/opt/moqui` and `/opt/moqui/components`
+  (`ReadWritePaths`): the database, logs, certificates, `.env` and deployed components. The binary, `MoquiConf.xml`
+  and `conf/` are read-only inside it as well (`ReadOnlyPaths`), so a compromised server cannot change what runs at
+  its next start, and root owns them. A conf edit is made as root and reloaded with `systemctl reload moqui`; a
+  server that writes elsewhere under `/opt/moqui` needs a drop-in that adds the path to `ReadWritePaths`.
+
 - It is `Type=notify`: the server reports when the listener is bound and when it stops. An in-app restart runs the
   binary again in the same process and reports a reload, so the unit stays up.
 - `/etc/moqui/environment` is optional, for variables that must exist before the process starts (`MOQUI_CONF`,
@@ -897,6 +905,7 @@ OpenSearch, and `podman/quadlet/` runs the single container as a systemd service
    ```sh
    sudo rm -rf /opt/moqui/moqui /opt/moqui/components
    sudo cp -a mr-moqui-20261105/. /opt/moqui/ && sudo chown -R moqui:moqui /opt/moqui
+   sudo chown -R root:root /opt/moqui/moqui /opt/moqui/MoquiConf.xml /opt/moqui/conf
    ```
 
    `db/`, `.env`, `cert/` and `log/` are not in the archive, so they stay. `MoquiConf.xml` is replaced, which is why
@@ -950,7 +959,9 @@ every host gets `webroot.xml`, the apps on paths under it, until a `root-screen`
   `root-screen` pattern names counts, as a plain host name, never another `Host` header. On a `refuse` host it is
   `webapp_http_host`'s, as a link made outside a request (mail, a report, a job) always is: such links are often to the
   apps, which that host does not serve.
-- **Sessions.** The session cookie is tied to its host, with no cookie domain: a person signs in to each host. A
+- **Sessions.** The session cookie is tied to its host, with no cookie domain: a person signs in to each host. Over
+  https it is `__Host-moqui.session`, which no other host of the domain and no plain-http page can set or shadow; a
+  browser that still holds a `moqui.session` cookie from an older server signs in once again. A
   deployment's own sites share accounts through SSO; mr-pass's Account does that for PASS sites. A server that is the
   sign-in provider for its own other hosts is later work.
 - **Per origin.** Each host is its own origin: CORS, the service worker, the PWA manifest and Web Push subscriptions
@@ -1211,7 +1222,7 @@ The cluster itself is as in [Cluster](#cluster): one external database, the same
 
 | Traffic | To the member |
 |---|---|
-| A terminate host's requests | Of the session cookie (`moqui.session`, or the host's own, set on Edge Clients › Domains), by rendezvous hashing over the live members, so a browser stays on one member and every edge node picks the same; with no cookie, in turn. A WebSocket as its opening request |
+| A terminate host's requests | Of the session cookie (`__Host-moqui.session` over https, else `moqui.session`, or the host's own, set on Edge Clients › Domains), by rendezvous hashing over the live members, so a browser stays on one member and every edge node picks the same; with no cookie, in turn. A WebSocket as its opening request |
 | A passthrough host's connections, SSH and XMPP tunnels | Of the client's address, an IPv6 address by its /64 |
 | PASS authority calls | Of the session handle while a sign-in is in progress, else the one with the fewest calls in flight |
 | Delegated calls | Of the call's conversation (its call session, else its phone call), so one call's events reach one member |

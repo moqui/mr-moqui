@@ -212,7 +212,10 @@ fn a_bad_mac_is_an_unknown_session() {
     assert!(header.contains("Path=/"));
     assert!(!header.contains("Secure"));
     let secure = format_session_cookie(&id, true).unwrap();
-    assert!(secure.contains("Secure"));
+    // over https the cookie a browser keeps only as Secure, Path=/ and with no Domain (SEC-WEB-05)
+    assert!(secure.starts_with("__Host-moqui.session="), "{secure}");
+    assert!(secure.contains("; Secure") && secure.contains("; Path=/"), "{secure}");
+    assert!(!secure.to_ascii_lowercase().contains("domain="), "{secure}");
     let visitor = format_visitor_cookie("visitor-1", false);
     assert!(visitor.starts_with("moqui.visitor=visitor-1;"));
     assert!(visitor.contains("Max-Age=31536000"));

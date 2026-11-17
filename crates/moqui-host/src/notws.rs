@@ -33,9 +33,9 @@ use axum::http::HeaderMap;
 use axum::response::Response;
 use moqui_core::context::{ErrorKind, ExecutionContext, ExecutionContextFactory};
 use moqui_core::notify::{TopicMessage, NOTIFICATION_MESSAGE};
-use moqui_core::user::{verify_session_cookie, SESSION_COOKIE_NAME};
+use moqui_core::user::{session_cookie_name, verify_session_cookie};
 use moqui_core::web::cookie_value;
-use moqui_core::web::origin::{origin_allowed_by, own_origins, request_site, SiteOrigin};
+use moqui_core::web::origin::{origin_credentialed_by, own_origins, request_site, SiteOrigin};
 use moqui_lib::object::Value;
 use moqui_lib::sync::lock;
 
@@ -111,6 +111,9 @@ fn sockets() -> &'static Mutex<Registry> {
 const SOCKET_QUEUE: usize = 256;
 /// A ping goes out this often, so a dead peer is noticed and proxies keep the connection.
 const PING_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+/// While the socket carries a call, this often instead: a mobile network's NAT that drops a quiet TCP mapping sooner
+/// keeps it, and a dead socket is noticed in time for the leg's reconnect (plans/Comms-Messaging.md §8.3 item 13).
+const PING_IN_CALL: std::time::Duration = std::time::Duration::from_secs(10);
 const SESSION_CHECK: std::time::Duration = std::time::Duration::from_secs(60);
 /// A send to a socket whose client takes nothing for this long fails, and the socket closes, so a blocked write does
 /// not hold up the loop's own timeouts (`plans/archive/High-Level-Review.md` HL-027). The connection's write timeout does the
@@ -206,7 +209,7 @@ pub(crate) async fn upgrade(
     }
     // A browser has its session cookie; the terminal client (`moqui tui --server`) has its login key, and no session.
     let factory = Arc::clone(&state.factory);
-    let (session_id, credential, loaded) = match session_cookie(&headers) {
+    let (session_id, credential, loaded) = match session_cookie(&headers, site.https()) {
         Some(cookie) => {
             let session_id = match verify_session_cookie(&cookie) {
                 Ok(Some(id)) if !id.is_empty() => id,
@@ -266,9 +269,15 @@ pub(crate) async fn upgrade(
 /// The origin a request was made to (scheme, host and port), as the screens' CORS check works it out
 /// (`web::origin::request_site`): https over this listener's TLS or a believed proxy's `X-Forwarded-Proto`, and the
 /// host and port of a believed proxy's `X-Forwarded-Host` and `X-Forwarded-Port`, else of `Host`.
-pub(crate) struct RequestSite(Option<SiteOrigin>, Option<std::net::IpAddr>);
+pub(crate) struct RequestSite(Option<SiteOrigin>, Option<std::net::IpAddr>, bool);
 
 impl RequestSite {
+    /// Whether the request is https (this listener's TLS, or a believed proxy's `X-Forwarded-Proto`): its session
+    /// cookie's name ([`moqui_core::user::session_cookie_name`]).
+    pub(crate) fn https(&self) -> bool {
+        self.2
+    }
+
     /// The client's address as web protection sees it (a believed proxy's client header, else the peer).
     pub(crate) fn client(&self) -> Option<std::net::IpAddr> {
         self.1
@@ -302,13 +311,15 @@ impl FromRequestParts<Arc<HttpState>> for RequestSite {
                 header("x-forwarded-port"),
             ),
             peer.map(|peer| state.guard.client_of(peer, &parts.headers)),
+            https,
         ))
     }
 }
 
 /// A page of another site cannot open a socket that carries this site's cookie, as Java's modifyHandshake, but with
 /// the whole origin compared (scheme, host and port; Java compares the host): the request's own origin, the conf
-/// webapp's URLs or the webroot's `allow-origins`. `what` names the socket in the warning.
+/// webapp's URLs or the webroot's `allow-origins`. An `allow-origins` of `*` does not count: a browser opens the socket
+/// with the session cookie, and `*` never comes with credentials (SEC-WEB-10). `what` names the socket in the warning.
 pub(crate) fn origin_allowed(
     factory: &ExecutionContextFactory,
     headers: &HeaderMap,
@@ -317,20 +328,21 @@ pub(crate) fn origin_allowed(
 ) -> bool {
     let header = |name: axum::http::header::HeaderName| headers.get(name).and_then(|value| value.to_str().ok());
     let own = own_origins(factory, site.0.clone());
-    let allowed = origin_allowed_by(Some(factory), header(axum::http::header::ORIGIN), &own);
+    let allowed = origin_credentialed_by(Some(factory), header(axum::http::header::ORIGIN), &own);
     if !allowed {
         tracing::warn!(origin = ?header(axum::http::header::ORIGIN), "{what} socket refused for its origin");
     }
     allowed
 }
 
-pub(crate) fn session_cookie(headers: &HeaderMap) -> Option<String> {
+/// The session cookie of a request, by the name of its scheme: over https only `__Host-moqui.session` (SEC-WEB-05).
+pub(crate) fn session_cookie(headers: &HeaderMap, https: bool) -> Option<String> {
     let cookies: Vec<&str> = headers
         .get_all(axum::http::header::COOKIE)
         .iter()
         .filter_map(|value| value.to_str().ok())
         .collect();
-    cookie_value(&cookies.join("; "), SESSION_COOKIE_NAME).filter(|value| !value.is_empty())
+    cookie_value(&cookies.join("; "), session_cookie_name(https)).filter(|value| !value.is_empty())
 }
 
 /// The userId of an HTTP session, or none when no one is logged in to it. Blocks on the request pool.
@@ -422,8 +434,9 @@ async fn run_socket(
     }
     let idle = idle_timeout(&factory);
     let mut last_heard = tokio::time::Instant::now();
-    let mut ping = tokio::time::interval(PING_EVERY);
+    let mut ping = tokio::time::interval(PING_IN_CALL);
     ping.tick().await;
+    let mut pinged = tokio::time::Instant::now();
     let mut check = tokio::time::interval(SESSION_CHECK);
     loop {
         tokio::select! {
@@ -475,6 +488,10 @@ async fn run_socket(
                     tracing::debug!(session_id = %slot.session_id, "notification socket idle, closed");
                     break;
                 }
+                if pinged.elapsed() + PING_IN_CALL / 2 < PING_EVERY && !rtc::in_call(id) {
+                    continue;
+                }
+                pinged = tokio::time::Instant::now();
                 if !send_within(&mut socket, Message::Ping(Vec::new().into())).await {
                     break;
                 }

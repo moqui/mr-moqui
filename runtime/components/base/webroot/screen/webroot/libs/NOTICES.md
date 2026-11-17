@@ -1351,6 +1351,39 @@ TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
 THIS SOFTWARE.
 ```
 
+## unicode-emoji-json 0.9.0
+
+License: MIT AND Unicode-3.0. Source: npm `unicode-emoji-json@0.9.0`.
+The package is MIT; the emoji data in it is from unicode.org, under the Unicode License v3.
+
+```text
+The emoji and their names are Unicode's data (emoji-test.txt), under the Unicode License v3: the full text is in
+licenses/Unicode-3.0.txt, from https://www.unicode.org/license.txt.
+
+--- LICENSE ---
+The MIT License (MIT)
+
+Copyright (c) 2019 Mu-An Chiou
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## Mermaid 11.17.2
 
 License: MIT. Source: npm `mermaid@11.17.2`.

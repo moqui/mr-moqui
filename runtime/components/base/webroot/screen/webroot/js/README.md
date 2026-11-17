@@ -70,6 +70,7 @@ instead; the two never share a page (both define `window.moqui`). The full refer
 | `WebrootChat.js` | `moqui.chat`: the chat store and presence, and the account menu's status components |
 | `WebrootCalc.js` | `moqui.calc`: the sheet view of a CalcGrid document (`moqui.calc.sheet`, a Tabulator table with a placeholder row for each sheet row, drawn from the cells the server answers a viewport at a time, with sheet tabs and the document's charts, the editing toolbar and formula bar, and in a saved document's room the others' places and edits over the notification socket), loaded by Tools › Data › Grid for its Calc mode and by Dashboards › CalcGrid; its pure helpers are tested by `test/client/WebrootCalc.spec.js` ([IronCalc-DB](../../../../../../../plans/IronCalc-DB.md)) |
 | `WebrootExt.js` | `moqui.ext`: the declared actions and panels of a screen (`/extItems`), and `m-ext-actions` and `m-ext-panel`, which a `.qvue` screen puts in its menus and panes ([Qvt-Client](../../../../../../../docs/ui/Qvt-Client.md#declared-actions-and-panels)) |
+| `WebrootEmoji.js` | `moqui.emoji` and `m-emoji-picker`: the searchable emoji picker with groups and the user's recent emoji, over `../libs/emoji/emoji.json` ([Qvt-Client](../../../../../../../docs/ui/Qvt-Client.md#emoji-picker)) |
 | `WebrootPush.js` | `moqui.push`: registers the service worker `/sw.js`, the account menu's Notifications on this device (`m-push-item`), and the Web Push subscription kept to the signed-in user ([Qvt-Client](../../../../../../../docs/ui/Qvt-Client.md#install-and-web-push)) |
 | `WebrootCrypto.js` | `moqui.crypto`: this browser's crypto device (matrix-sdk-crypto's OlmMachine, loaded only when needed), its keys and Olm-encrypted to-device messages ([Chat keys](../../../../../../../docs/interfaces/Chat-Keys.md)) |
 | `WebrootReAuth.js` | `moqui.reauth`: the recent sign-in check of sensitive actions, asking for the password and the second factor (or a fresh SSO sign-in) in a dialog ([Recent sign-in](../../../../../../../docs/security/Recent-Auth.md)) |
@@ -98,5 +99,5 @@ needs a real browser is the Gate 3 Chromium smoke (`crates/moqui-host/tests/gate
 
 Sections of the reference: Page shell and settings · Loading a screen · The components the macros write · Shell data
 and providers · Floats · Preferences (and a screen's handheld density) · Appearance · Record panels, rich text, avatars and record
-cards · List views: board, calendar and tree · Scan input · Layout panels: split, wizard and stack · Chat store and presence · Notification listeners ·
+cards · List views: board, calendar and tree · Scan input · Layout panels: split, wizard and stack · Chat store and presence · Emoji picker · Notification listeners ·
 In the desktop app · Collaborative editing · Mail sign-in popup · Server-static screens · The tui screen model · Not here.

@@ -125,6 +125,8 @@ module.exports = {
         },
         // the type icon (a phone number's room too), counts and snippet as Chat shows them (moqui.chat)
         roomIcon(room) { return moqui.chat.roomIcon(room); },
+        // the room's E2EE label (moqui.chat.e2eeLabel): a row shows its lock when it is end to end only (COM-UI-001)
+        labelOf(room) { return moqui.chat.e2eeLabel(room); },
         countsOf(room) { return moqui.chat.countsOf(room); },
         snippetOf(room) { return moqui.chat.roomSnippet(room, this.me.userId); },
         // the rooms, few and light: the panel is a glance (Open in Comms has them all)
@@ -552,9 +554,19 @@ module.exports = {
                                                       _createElementVNode("span", {
                                                         class: _normalizeClass(["ellipsis", _ctx.countsOf(room).unread || _ctx.countsOf(room).mentions ? 'text-weight-bold' : ''])
                                                       }, _toDisplayString(room.displayName), 3),
-                                                      (room.isMuted)
+                                                      (_ctx.labelOf(room).lock)
                                                         ? (_openBlock(), _createBlock(_component_q_icon, {
                                                             key: 0,
+                                                            name: "sym_o_lock",
+                                                            size: "14px",
+                                                            class: "text-positive q-ml-xs m-chat-e2ee-lock",
+                                                            "data-e2ee": room.chatRoomId,
+                                                            "aria-label": _ctx.labelOf(room).text
+                                                          }, null, 8, ["data-e2ee", "aria-label"]))
+                                                        : _createCommentVNode("", true),
+                                                      (room.isMuted)
+                                                        ? (_openBlock(), _createBlock(_component_q_icon, {
+                                                            key: 1,
                                                             name: "sym_o_notifications_off",
                                                             size: "14px",
                                                             class: "m-muted q-ml-xs",
@@ -563,7 +575,7 @@ module.exports = {
                                                         : _createCommentVNode("", true),
                                                       (room.isPinned && _ctx.home)
                                                         ? (_openBlock(), _createBlock(_component_q_icon, {
-                                                            key: 1,
+                                                            key: 2,
                                                             name: "sym_o_keep",
                                                             size: "14px",
                                                             class: "m-muted q-ml-xs",
@@ -2849,8 +2861,8 @@ const GROUP_MILLIS = 5 * 60000;
 const SWIPE_REPLY_PX = 64;
 const EDIT_WINDOW = 24 * 3600000;
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '🎉', '👀', '✅'];
-const EMOJI = ['😀', '😃', '😄', '😁', '😅', '😂', '🙂', '😉', '😊', '😍', '🤔', '😐', '😴', '😎', '🥳', '😢', '😮', '😬', '🙃', '🤝',
-    '👍', '👎', '👏', '🙌', '🙏', '💪', '👀', '🎉', '🔥', '✅', '❌', '⚠️', '❤️', '💡', '📌', '📎', '🚀', '☕', '🍕', '💬'];
+// how long a press on a reaction chip or a poll option is held to show who reacted or voted (the message's own long press too)
+const HOLD_MS = 450;
 const CLEAR_LABELS = { '0': "Don't clear", '30': 'Clears in 30 minutes', '60': 'Clears in an hour', '240': 'Clears in 4 hours', today: 'Clears today', week: 'Clears this week' };
 const LEVELS = [{ value: 'CnlAll', label: 'All messages', icon: 'sym_o_notifications_active' }, { value: 'CnlMentions', label: 'Mentions only', icon: 'sym_o_alternate_email' },
     { value: 'CnlNone', label: 'Nothing', icon: 'sym_o_notifications_off' }];
@@ -2965,7 +2977,7 @@ const messageTemplate = `
         @focusin="actionFocus = true" @focusout="actionFocus = $event.currentTarget.contains($event.relatedTarget)"
         @mouseenter="room.hover(item, inThread)" @mouseleave="room.unhover(item, inThread)" @click="room.tap(item, inThread)"
         @touchstart.passive="room.holdStart(item, inThread, $event)" @touchmove.passive="room.holdMove($event)" @touchend="room.holdEnd($event)"
-        @touchcancel="room.holdEnd($event)" @contextmenu="room.contextMenu(item, inThread, $event)" :style="room.swipeStyle(item, inThread)">
+        @touchcancel="room.holdEnd($event)" @contextmenu="contextMenu($event)" :style="room.swipeStyle(item, inThread)">
     <div class="self-stretch" :class="item.highlight ? 'bg-primary' : ''" style="width:3px;margin-right:3px;border-radius:2px"></div>
     <div style="width:40px;min-width:40px" class="q-pr-sm m-chat-avatar">
         <m-avatar v-if="!item.grouped" :name="item.senderName" :user-id="item.senderUserId || undefined" size="32px" class="q-mt-xs"></m-avatar>
@@ -2974,6 +2986,10 @@ const messageTemplate = `
     <div class="col m-chat-body" style="min-width:0">
         <div v-if="!item.grouped" class="row items-baseline no-wrap m-chat-head">
             <span class="text-weight-medium ellipsis m-chat-name">{{item.senderName}}</span>
+            <!-- the check only for a verified person's message from a verified device of theirs; else from a verified person, a warning -->
+            <q-icon v-if="room.personVerified(item.senderUserId) && item.verifiedSender !== false" name="sym_o_verified" size="14px" class="text-positive q-ml-xs m-chat-person-verified" :aria-label="room.t('Verified')"></q-icon>
+            <q-icon v-else-if="room.personVerified(item.senderUserId) && item.verifiedSender === false" name="sym_o_gpp_maybe" size="14px" class="text-warning q-ml-xs m-chat-sender-unverified"
+                    :aria-label="room.t('Sent from a device of theirs that is not verified')"><q-tooltip>{{room.t('Sent from a device of theirs that is not verified')}}</q-tooltip></q-icon>
             <q-chip v-if="item.event.senderExternal" dense square size="sm" icon="sym_o_hub" class="m-tonal text-info q-my-none q-ml-xs m-chat-external">
                 {{item.event.senderExternal.networkName || room.t('Outside')}}</q-chip>
             <span class="text-caption m-muted text-no-wrap q-ml-sm">{{item.timeText}}<q-tooltip>{{item.fullTime}}</q-tooltip></span>
@@ -2986,7 +3002,7 @@ const messageTemplate = `
             </div>
         </div>
         <div v-if="item.redacted" class="text-body2 m-muted text-italic">{{item.removedLabel || room.t('Message removed')}}</div>
-        <div v-else-if="item.undecryptable" class="text-body2 m-muted text-italic m-chat-undecryptable"><q-icon name="sym_o_lock" size="16px" class="q-mr-xs"></q-icon>{{room.t('Encrypted message: this device has no key for it yet. Restore your key backup in Settings, My devices, or keep this page open while another of your devices shares it.')}}</div>
+        <div v-else-if="item.undecryptable" class="text-body2 m-muted text-italic m-chat-undecryptable" :data-withheld="item.withheld || undefined"><q-icon name="sym_o_lock" size="16px" class="q-mr-xs"></q-icon>{{room.undecryptableText(item)}}</div>
         <template v-else>
             <chat-edit v-if="room.isEditing(item)" :room="room" :item="item"></chat-edit>
             <div v-else-if="item.bodyHtml && !item.poll" class="m-rich-text-content text-body2" style="padding:0;cursor:auto;max-height:none;overflow:visible;overflow-wrap:anywhere"
@@ -3003,14 +3019,20 @@ const messageTemplate = `
             <q-card v-if="item.poll" flat bordered class="q-mt-xs q-pa-sm m-chat-poll" style="max-width:440px">
                 <div class="row no-wrap items-start text-weight-medium q-mb-xs"><q-icon name="sym_o_ballot" size="18px" class="q-mr-xs text-primary"></q-icon>
                     <span style="overflow-wrap:anywhere">{{item.poll.question}}</span></div>
+                <!-- a tap votes; a long press, its own context menu (Android's long press, the menu key) or Shift+Enter shows who
+                     voted (a hover on the count, with a pointer) -->
                 <q-item v-for="option in item.poll.options" :key="option.id" dense clickable class="rounded-borders q-px-xs" :disable="!room.canVote(item)"
-                        :data-option="option.id" @click.stop="room.vote(item, option)">
+                        :data-option="option.id" :aria-keyshortcuts="option.voterIds && option.voterIds.length ? 'Shift+Enter' : undefined"
+                        @click.stop="room.pressed() || room.vote(item, option)"
+                        @touchstart.passive="room.pressStart({ kind: 'voters', item, option }, $event)" @touchmove.passive="room.pressCancel()"
+                        @touchend="room.pressEnd($event)" @touchcancel="room.pressEnd($event)"
+                        @contextmenu.prevent.stop="room.pressMenu({ kind: 'voters', item, option })" @keydown.enter.shift.prevent.stop="room.pressMenu({ kind: 'voters', item, option })">
                     <q-item-section avatar style="min-width:28px"><q-icon :name="room.optionIcon(item, option)" :color="option.mine ? 'primary' : undefined" size="20px"></q-icon></q-item-section>
                     <q-item-section>
                         <q-item-label style="overflow-wrap:anywhere">{{option.text}}</q-item-label>
                         <q-linear-progress :value="room.optionShare(item, option)" rounded size="6px" :color="option.mine ? 'primary' : 'grey-5'" class="q-mt-xs"></q-linear-progress>
                     </q-item-section>
-                    <q-item-section side class="text-caption">{{option.voteCount}}<q-tooltip v-if="option.voterIds && option.voterIds.length">{{room.votersText(option)}}</q-tooltip></q-item-section>
+                    <q-item-section side class="text-caption">{{option.voteCount}}<q-tooltip v-if="!room.mobile && option.voterIds && option.voterIds.length">{{room.votersText(option)}}</q-tooltip></q-item-section>
                 </q-item>
                 <div class="row items-center no-wrap text-caption m-muted q-mt-xs">
                     <span class="ellipsis">{{room.pollFooter(item.poll)}}</span><q-space></q-space>
@@ -3042,14 +3064,26 @@ const messageTemplate = `
                 <m-record-card v-for="record in item.records" :key="record.entity + '|' + record.id" :record-entity="record.entity" :record-id="record.id"
                         :card-url="room.url('recordCard')" dense class="q-mb-xs"></m-record-card>
             </div>
+            <!-- a tap adds or takes back my reaction; a long press, its own context menu (Android's long press, the menu key) or
+                 Shift+Enter shows who reacted (a hover, with a pointer) -->
             <div v-if="item.reactions.length" class="row items-center q-mt-xs">
                 <q-chip v-for="reaction in item.reactions" :key="reaction.key" dense clickable :outline="!reaction.mine" :color="reaction.mine ? 'primary' : undefined"
-                        :text-color="reaction.mine ? 'white' : undefined" class="q-ml-none q-mr-xs" :disable="!room.canPost || !room.bridgeCaps.reaction" @click.stop="room.react(item, reaction.key)">
-                    {{reaction.key}} {{reaction.count}}<q-tooltip>{{room.reactorsText(reaction)}}</q-tooltip></q-chip>
+                        :text-color="reaction.mine ? 'white' : undefined" class="q-ml-none q-mr-xs m-chat-reaction" :data-reaction="reaction.key"
+                        :aria-label="room.reactionLabel(reaction)" aria-keyshortcuts="Shift+Enter"
+                        :disable="!room.canPost || !room.bridgeCaps.reaction" @click.stop="room.pressed() || room.react(item, reaction.key)"
+                        @touchstart.passive="room.pressStart({ kind: 'reactors', item, reaction }, $event)" @touchmove.passive="room.pressCancel()"
+                        @touchend="room.pressEnd($event)" @touchcancel="room.pressEnd($event)"
+                        @contextmenu.prevent.stop="room.pressMenu({ kind: 'reactors', item, reaction })" @keydown.enter.shift.prevent.stop="room.pressMenu({ kind: 'reactors', item, reaction })">
+                    {{reaction.key}} {{reaction.count}}<q-tooltip v-if="!room.mobile">{{room.reactorsText(reaction)}}</q-tooltip></q-chip>
             </div>
             <div v-if="!inThread && item.threadReplyCount" class="q-mt-xs">
                 <a href="#" class="text-primary text-caption text-weight-medium" @click.prevent.stop="room.openThread(item.eventSeq)">{{room.repliesText(item.threadReplyCount)}}</a>
                 <span class="text-caption m-muted"> · {{room.t('last reply')}} {{room.shortWhen(item.threadLastDate)}}</span>
+            </div>
+            <!-- my message in an encrypted room with only verified devices on: who cannot read it, and Verify (COM-UI-013) -->
+            <div v-if="item.mine && room.leftOutBySeq[item.eventSeq]" class="row items-center no-wrap q-mt-xs text-caption text-warning m-chat-left-out">
+                <q-icon name="sym_o_visibility_off" size="14px" class="q-mr-xs"></q-icon><span class="ellipsis">{{room.leftOutBySeq[item.eventSeq]}}</span>
+                <q-btn flat dense no-caps size="sm" color="primary" class="q-ml-xs m-chat-left-out-verify" :label="room.t('Verify')" @click.stop="room.verifySomeone()"></q-btn>
             </div>
             <!-- its delivery to the room's bridges: sending, delivered, not delivered (with Send again) or uncertain -->
             <div v-if="item.event.delivery" class="row items-center no-wrap q-mt-xs text-caption m-chat-delivery" :class="room.deliveryClass(item)"
@@ -3084,9 +3118,9 @@ const messageTemplate = `
                     <q-btn v-for="key in room.quickReactions.slice(0, room.compact ? 2 : 3)" :key="key" flat dense size="sm" class="q-px-xs" :label="key"
                             :aria-label="room.t('React with') + ' ' + key" @click="room.react(item, key)"></q-btn>
                     <q-btn flat round dense size="sm" icon="sym_o_add_reaction" :aria-label="room.t('React')"><q-tooltip>{{room.t('React')}}</q-tooltip>
-                        <q-menu anchor="bottom right" self="top right" @before-show="reactionMenu = true" @hide="reactionMenu = false"><div class="q-pa-xs row" style="width:236px">
-                            <q-btn v-for="key in room.emoji" :key="key" flat dense size="sm" class="q-px-xs" :label="key" v-close-popup @click="room.react(item, key)"></q-btn>
-                        </div></q-menu>
+                        <q-menu ref="reactMenu" anchor="bottom right" self="top right" @before-show="reactionMenu = true" @hide="reactionMenu = false">
+                            <m-emoji-picker :user-id="room.me.userId || ''" :autofocus="!room.mobile" @pick="picked"></m-emoji-picker>
+                        </q-menu>
                     </q-btn>
                 </template>
                 <q-btn v-if="!inThread" flat round dense size="sm" icon="sym_o_reply" :aria-label="room.t('Reply')" @click="room.startReply(item)"><q-tooltip>{{room.t('Reply')}}</q-tooltip></q-btn>
@@ -3094,35 +3128,17 @@ const messageTemplate = `
                     <q-tooltip>{{room.t('Reply in thread')}}</q-tooltip></q-btn>
             </template>
             <q-btn flat round dense size="sm" icon="sym_o_more_vert" :aria-label="room.t('More')"><q-tooltip>{{room.t('More')}}</q-tooltip>
-                <q-menu anchor="bottom right" self="top right" @before-show="moreMenu = true" @hide="moreMenu = false"><q-list dense style="min-width:230px">
-                    <q-item v-if="room.canEdit(item)" clickable v-close-popup @click="room.startEdit(item)">
-                        <q-item-section avatar><q-icon name="sym_o_edit"></q-icon></q-item-section><q-item-section>{{room.t('Edit')}}</q-item-section></q-item>
-                    <q-item v-if="room.canPost" clickable v-close-popup @click="room.pin(item, !item.pinned)">
-                        <q-item-section avatar><q-icon name="sym_o_keep"></q-icon></q-item-section>
-                        <q-item-section>{{item.pinned ? room.t('Unpin') : room.t('Pin to the room')}}</q-item-section></q-item>
-                    <q-item clickable v-close-popup @click="room.copyLink(item)">
-                        <q-item-section avatar><q-icon name="sym_o_link"></q-icon></q-item-section><q-item-section>{{room.t('Copy link')}}</q-item-section></q-item>
-                    <q-item clickable v-close-popup @click="room.copyText(item)">
-                        <q-item-section avatar><q-icon name="sym_o_content_copy"></q-icon></q-item-section><q-item-section>{{room.t('Copy text')}}</q-item-section></q-item>
-                    <q-item v-if="room.isMember && !room.sealed" clickable v-close-popup @click="room.openForward(item)">
-                        <q-item-section avatar><q-icon name="sym_o_forward"></q-icon></q-item-section><q-item-section>{{room.t('Forward…')}}</q-item-section></q-item>
-                    <q-item v-if="room.isMember && !inThread" clickable v-close-popup @click="room.markUnreadFrom(item)">
-                        <q-item-section avatar><q-icon name="sym_o_mark_chat_unread"></q-icon></q-item-section><q-item-section>{{room.t('Mark unread from here')}}</q-item-section></q-item>
-                    <q-separator></q-separator>
-                    <!-- what an app adds to a message (ext-action slot chat-message-actions; IronStone: create a task, request or event) -->
-                    <m-ext-actions v-if="!room.sealed" slot="chat-message-actions" :item="{ chatRoomId: room.roomId, eventSeq: item.eventSeq }"></m-ext-actions>
-                    <q-item v-if="room.prefs.recordLink && !room.sealed" clickable v-close-popup @click="room.openFileOn(item)">
-                        <q-item-section avatar><q-icon name="sym_o_link"></q-icon></q-item-section><q-item-section>{{room.t('File on a record…')}}</q-item-section></q-item>
-                    <template v-if="room.canRedact(item)">
-                        <q-separator></q-separator>
-                        <q-item clickable v-close-popup @click="room.redact(item)">
-                            <q-item-section avatar><q-icon name="sym_o_delete" color="negative"></q-icon></q-item-section>
-                            <q-item-section class="text-negative">{{room.t('Delete message')}}</q-item-section></q-item>
-                    </template>
-                </q-list></q-menu>
+                <q-menu ref="moreMenu" anchor="bottom right" self="top right" @before-show="moreMenu = true" @hide="moreMenu = false">
+                    <chat-message-menu :room="room" :item="item" :in-thread="inThread" dense style="min-width:230px" @done="hide('moreMenu')"></chat-message-menu>
+                </q-menu>
             </q-btn>
         </q-card>
     </div>
+    <!-- a right click on a row (no bubbles): the same menu at the pointer, with the quick reactions; on a link, an editor or
+         selected text the browser's own -->
+    <q-menu v-if="contextOpen" ref="contextMenu" touch-position no-parent-event class="m-chat-context-menu" @hide="contextOpen = false">
+        <chat-message-menu :room="room" :item="item" :in-thread="inThread" reactions dense style="min-width:240px;max-width:360px" @done="hide('contextMenu')"></chat-message-menu>
+    </q-menu>
 </div>`;
 
 // ---- a message of the outbox, not yet answered: Sending, Waiting, or Not sent with Retry and Delete ----
@@ -3185,9 +3201,9 @@ const composerTemplate = `
                     <q-item-section>{{room.t('File')}}</q-item-section></q-item>
             </q-list></q-menu></q-btn>
         <q-btn flat round dense size="sm" icon="sym_o_mood" :aria-label="room.t('Emoji')"><q-tooltip>{{room.t('Emoji')}}</q-tooltip>
-            <q-menu anchor="top left" self="bottom left"><div class="q-pa-xs row" style="width:236px">
-                <q-btn v-for="key in room.emoji" :key="key" flat dense size="sm" class="q-px-xs" :label="key" v-close-popup @click="insert(key)"></q-btn>
-            </div></q-menu>
+            <q-menu ref="emojiMenu" anchor="top left" self="bottom left" class="m-chat-emoji-menu">
+                <m-emoji-picker :user-id="room.me.userId || ''" :autofocus="!room.mobile" @pick="(key) => { $refs.emojiMenu.hide(); insert(key); }"></m-emoji-picker>
+            </q-menu>
         </q-btn>
         <q-btn flat round dense size="sm" icon="sym_o_alternate_email" class="m-chat-mention-btn" :aria-label="room.t('Mention someone')" @click="insert('@')"><q-tooltip>{{room.t('Mention someone')}}</q-tooltip></q-btn>
         <q-btn v-if="!room.sealed" flat round dense size="sm" icon="sym_o_ballot" :aria-label="room.t('Make a poll')" :disable="room.offline" @click="room.openPoll(threadRoot || null, '')">
@@ -3377,16 +3393,70 @@ const chatEdit = {
     template: editTemplate
 };
 
+// ---- a message's actions, one list (Comms-Messaging §4, COM-UI-035): the phone's sheet, the More menu of the hover toolbar
+// and the right-click menu. With reactions, the quick reactions and "+" first, which opens the emoji picker in their place.
+// done: an action was taken, so the sheet or menu closes ----
+const menuTemplate = `
+<div class="m-chat-actions" :data-seq="item.eventSeq">
+    <div v-if="reactions && !picking && room.canPost && room.bridgeCaps.reaction" class="row no-wrap items-center justify-between q-px-sm q-pt-sm m-chat-quick">
+        <q-btn v-for="key in room.quickReactions" :key="key" flat dense class="m-chat-sheet-emoji" :style="dense ? 'flex:1 1 0;min-width:0;font-size:18px;padding:2px 0' : 'flex:1 1 0;min-width:0;font-size:22px;padding:6px 0'"
+                :label="key" :aria-label="room.t('React with') + ' ' + key" @click="act(() => room.react(item, key))"></q-btn>
+        <q-btn flat dense icon="sym_o_add_reaction" style="flex:1 1 0;min-width:0" :aria-label="room.t('More reactions')" class="m-chat-more-reactions" @click="picking = true"></q-btn>
+    </div>
+    <!-- on a phone the search line waits for a tap, so the keyboard does not cover the sheet -->
+    <m-emoji-picker v-if="picking" :user-id="room.me.userId || ''" :autofocus="!room.mobile" class="q-mx-auto" @pick="(key) => act(() => room.react(item, key))"></m-emoji-picker>
+    <q-list v-else :dense="dense" :class="dense ? '' : 'q-pb-sm'">
+        <template v-for="action in room.messageActions(item, inThread)" :key="action.key">
+            <q-separator v-if="action.separator"></q-separator>
+            <!-- what an app adds to a message (ext-action slot chat-message-actions; IronStone: create a task, request or event) -->
+            <m-ext-actions v-else-if="action.key === 'apps'" slot="chat-message-actions" :item="{ chatRoomId: room.roomId, eventSeq: item.eventSeq }" @done="$emit('done')"></m-ext-actions>
+            <q-item v-else clickable :data-action="action.key" @click="act(action.run)">
+                <q-item-section avatar><q-icon :name="action.icon" :color="action.negative ? 'negative' : undefined"></q-icon></q-item-section>
+                <q-item-section :class="action.negative ? 'text-negative' : ''">{{action.label}}</q-item-section></q-item>
+        </template>
+    </q-list>
+</div>`;
+const chatMessageMenu = {
+    name: 'ChatMessageMenu',
+    props: { item: Object, room: Object, inThread: Boolean, reactions: Boolean, dense: Boolean },
+    emits: ['done'],
+    data: () => ({ picking: false }),
+    methods: {
+        act(run) { this.$emit('done'); run(); }
+    },
+    template: menuTemplate
+};
+
 const chatMessage = {
     name: 'ChatMessage',
     props: { item: Object, room: Object, inThread: Boolean },
-    components: { 'chat-edit': chatEdit },
-    data: () => ({ actionFocus: false, reactionMenu: false, moreMenu: false }),
+    components: { 'chat-edit': chatEdit, 'chat-message-menu': chatMessageMenu },
+    data: () => ({ actionFocus: false, reactionMenu: false, moreMenu: false, contextOpen: false }),
     watch: {
         actionsAvailable(value) {
             // Editing or redaction removes the toolbar and can unmount a menu before it emits hide.
-            if (!value) { this.actionFocus = false; this.reactionMenu = false; this.moreMenu = false; }
+            if (!value) { this.actionFocus = false; this.reactionMenu = false; this.moreMenu = false; this.contextOpen = false; }
         }
+    },
+    methods: {
+        // a right click: with bubbles (a phone) the sheet; on a row the menu at the pointer, but the browser's own menu on a
+        // link, a picture, a video or a sound, in an editor or on text selected in this message, so their Copy, Save and
+        // Open stay. A reaction chip's or poll option's (Android's long press there) is theirs: who reacted or voted.
+        contextMenu(event) {
+            if (this.room.pressGuard(event)) return;
+            if (this.room.useBubbles) { this.room.contextMenu(this.item, this.inThread, event); return; }
+            if (!this.actionsAvailable) return;
+            const target = event.target;
+            if (target && target.closest && target.closest('a[href], img, video, audio, input, textarea, [contenteditable="true"], [contenteditable=""], .q-menu')) return;
+            const selection = window.getSelection ? window.getSelection() : null;
+            if (selection && String(selection).trim() && ((selection.anchorNode && this.$el.contains(selection.anchorNode))
+                || (selection.focusNode && this.$el.contains(selection.focusNode)))) return;
+            event.preventDefault();
+            this.contextOpen = true;
+            this.$nextTick(() => { if (this.$refs.contextMenu) this.$refs.contextMenu.show(event); });
+        },
+        picked(key) { this.hide('reactMenu'); this.room.react(this.item, key); },
+        hide(ref) { const menu = this.$refs[ref]; if (menu && menu.hide) menu.hide(); }
     },
     computed: {
         actionsAvailable() { return !this.item.redacted && !this.room.isEditing(this.item) && this.room.state === 'ready'; },
@@ -3413,8 +3483,12 @@ const roomTemplate = `
                     <q-icon v-if="member && (member.isMuted || member.notificationLevelEnumId === 'CnlNone')" name="sym_o_notifications_off" size="14px" class="q-ml-xs m-muted">
                         <q-tooltip>{{t('Muted')}}</q-tooltip></q-icon>
                     <q-chip v-if="room.archivedDate" dense square class="m-tonal text-warning q-ml-xs">{{t('Archived')}}</q-chip>
-                    <q-chip v-if="sealed" dense square icon="sym_o_lock" class="m-tonal text-positive q-ml-xs m-chat-encrypted">{{t('Encrypted')}}
-                        <q-tooltip>{{t('End-to-end encrypted: only the devices of its members read it. Search, link previews, agents, polls, bridges, forwards and filing on records are off here.')}}</q-tooltip></q-chip>
+                    <!-- the room's E2EE label (moqui.chat.e2eeLabel): the lock for end to end only, else the open lock (COM-UI-001) -->
+                    <q-chip v-if="label.lock" dense square icon="sym_o_lock" class="m-tonal text-positive q-ml-xs m-chat-encrypted" :data-e2ee="label.state">{{t('Encrypted')}}
+                        <q-icon v-if="label.verified" name="sym_o_check" size="14px" class="q-ml-xs m-chat-verified"></q-icon>
+                        <q-tooltip>{{label.text}}. {{t('Search, link previews, agents, polls, bridges, forwards and filing on records are off here.')}}</q-tooltip></q-chip>
+                    <q-icon v-else name="sym_o_lock_open" size="16px" class="q-ml-xs m-muted m-chat-not-e2ee" :data-e2ee="label.state" :aria-label="label.text">
+                        <q-tooltip>{{label.text}}</q-tooltip></q-icon>
                     <q-chip v-if="room.bridged" dense square icon="sym_o_hub" class="m-tonal text-info q-ml-xs m-chat-bridged">{{bridgeNames}}
                         <q-tooltip>{{bridgeTooltip}}</q-tooltip></q-chip>
                     <q-chip v-if="room.notConnected" dense square icon="sym_o_link_off" class="m-tonal text-warning q-ml-xs m-chat-not-connected">{{t('Not connected')}}
@@ -3481,6 +3555,14 @@ const roomTemplate = `
         </template>
     </div>
     <q-separator></q-separator>
+    <!-- the room's E2EE banner (Comms-Messaging §6.2): what reads its messages, with Verify in an encrypted room not all verified -->
+    <div v-if="room && label.banner && !bannerHidden" class="row no-wrap items-center q-px-sm q-py-xs text-caption m-tonal m-chat-e2ee-banner" :data-e2ee="label.state">
+        <q-icon :name="label.icon" size="16px" :class="label.lock ? 'text-positive' : 'm-muted'"></q-icon>
+        <q-icon v-if="label.verified" name="sym_o_check" size="12px" class="text-positive"></q-icon>
+        <span class="col q-ml-xs m-chat-e2ee-banner-text">{{label.banner}}</span>
+        <q-btn v-if="label.verify" flat dense no-caps size="sm" color="primary" class="q-ml-xs m-chat-verify" :label="t('Verify')" @click="verifySomeone()"></q-btn>
+        <q-btn flat round dense size="xs" icon="sym_o_close" class="q-ml-xs" :aria-label="t('Close the note')" @click="closeBanner"></q-btn>
+    </div>
 
     <div class="col row no-wrap" style="min-height:0">
         <!-- the timeline and the composer -->
@@ -3497,7 +3579,7 @@ const roomTemplate = `
                 <div class="text-caption">{{t('It opens when the server can be reached.')}}</div>
             </div>
             <div v-else-if="state === 'missing'" class="col column items-center justify-center q-pa-lg text-center m-muted">
-                <q-icon name="sym_o_lock" size="48px"></q-icon>
+                <q-icon name="sym_o_block" size="48px"></q-icon>
                 <div class="text-subtitle2 q-mt-sm">{{t('This conversation is not available')}}</div>
                 <div class="text-caption">{{t('It does not exist, or you are not in it.')}}</div>
             </div>
@@ -3519,6 +3601,7 @@ const roomTemplate = `
                             <q-avatar v-else size="48px" rounded class="m-tonal text-primary" :icon="roomIcon"></q-avatar>
                             <div class="text-subtitle1 text-weight-medium q-mt-sm">{{displayName}}</div>
                             <div class="text-caption m-muted">{{startText}}</div>
+                            <div v-if="label.banner" class="text-caption m-muted q-mt-xs m-chat-e2ee-intro"><q-icon :name="label.icon" size="14px" class="q-mr-xs"></q-icon><span class="m-chat-e2ee-intro-text">{{label.banner}}</span></div>
                         </div>
                         <template v-for="item in items" :key="item.key">
                             <div v-if="item.kind === 'day'" class="row items-center no-wrap q-my-sm q-px-sm">
@@ -3641,6 +3724,9 @@ const roomTemplate = `
             </div>
 
             <div v-else-if="side === 'members'" class="col scroll" style="min-height:0">
+                <!-- the room's E2EE label, for every room (§6.1 rule 1) -->
+                <div class="q-pa-sm text-caption row no-wrap items-start m-chat-room-label" :data-e2ee="label.state">
+                    <q-icon :name="label.icon" size="16px" class="q-mr-xs" :class="label.lock ? 'text-positive' : 'm-muted'"></q-icon><span class="col">{{label.banner || label.text}}</span></div>
                 <div v-if="isMember && !isDirect && !access.isArchived" class="q-pa-sm row no-wrap items-end q-gutter-x-xs">
                     <div class="col"><m-drop-down v-model="addPeople.userIds" name="addUserIds" multiple server-search :options-url="url('searchUsers')" :label="t('Add people')"></m-drop-down></div>
                     <q-btn dense unelevated no-caps color="primary" :label="t('Add')" :loading="addPeople.busy" :disable="!(addPeople.userIds || []).length" @click="addMembers"></q-btn>
@@ -3648,9 +3734,13 @@ const roomTemplate = `
                 <q-list dense>
                     <q-item v-for="person in members" :key="person.userId || person.chatActorId">
                         <q-item-section avatar><m-avatar :name="person.name" :user-id="person.userId || undefined" size="32px"></m-avatar></q-item-section>
-                        <q-item-section><q-item-label>{{person.name}}<span v-if="person.userId && person.userId === me.userId" class="m-muted"> ({{t('you')}})</span></q-item-label>
-                            <q-item-label caption>{{person.external ? externalText(person) : presenceText(person.userId)}}</q-item-label></q-item-section>
+                        <q-item-section><q-item-label>{{person.name}}<span v-if="person.userId && person.userId === me.userId" class="m-muted"> ({{t('you')}})</span>
+                                <q-icon v-if="personVerified(person.userId)" name="sym_o_verified" size="14px" class="text-positive q-ml-xs m-chat-person-verified" :aria-label="t('Verified')"></q-icon></q-item-label>
+                            <q-item-label caption>{{person.external ? externalText(person) : presenceText(person.userId)}}<span v-if="personChanged(person.userId)" class="text-warning"> · {{t('new identity: verify them again')}}</span></q-item-label></q-item-section>
                         <q-item-section side class="row no-wrap items-center">
+                            <!-- an encrypted room: verify another person by emoji (§6.1 rule 3, COM-UI-013) -->
+                            <q-btn v-if="canVerify(person)" flat dense no-caps size="sm" color="primary" icon="sym_o_verified_user" :label="t('Verify')" class="m-chat-member-verify"
+                                    :data-user="person.userId" @click="openVerify(person.userId)"></q-btn>
                             <q-chip v-if="person.external" dense square icon="sym_o_hub" class="m-tonal text-info m-chat-external">{{person.networkName || t('Outside')}}</q-chip>
                             <q-chip v-if="person.roleEnumId === 'CmrOwner' && !isDirect" dense square class="m-tonal">{{t('Owner')}}</q-chip>
                             <q-chip v-else-if="person.roleEnumId === 'CmrModerator'" dense square class="m-tonal text-info">{{t('Moderator')}}</q-chip>
@@ -3715,6 +3805,8 @@ const roomTemplate = `
 
     <!-- RoomSettings: name and topic (moderators), who may join and the archive (owners) -->
     <m-dialog v-model="settings.open" :title="t('Room settings')" width="560">
+        <div class="q-mb-sm text-caption row no-wrap items-start m-chat-room-label" :data-e2ee="label.state">
+            <q-icon :name="label.icon" size="16px" class="q-mr-xs" :class="label.lock ? 'text-positive' : 'm-muted'"></q-icon><span class="col">{{label.banner || label.text}}</span></div>
         <m-text-line v-model="settings.roomName" :name="'settingsName' + uid" :label="t('Name')"></m-text-line>
         <m-text-area v-model="settings.topic" :name="'settingsTopic' + uid" rows="2" :label="t('Topic')" class="q-mt-xs"></m-text-area>
         <template v-if="isOwner">
@@ -3733,6 +3825,7 @@ const roomTemplate = `
                     <q-item-section>
                         <q-item-label>{{bridge.networkName || bridge.name}}<span v-if="bridge.externalRoomName"> · <a v-if="bridge.externalRoomUrl" :href="bridge.externalRoomUrl" target="_blank" rel="noopener noreferrer">{{bridge.externalRoomName}}</a><template v-else>{{bridge.externalRoomName}}</template></span></q-item-label>
                         <q-item-label caption>{{directionText(bridge.directionEnumId)}} · <span :class="bridge.connected ? 'text-positive' : 'text-warning'">{{bridge.connected ? t('connected') : t('not connected')}}</span></q-item-label>
+                        <q-item-label caption class="m-chat-bridge-encryption" :data-encryption="bridge.encryption">{{bridgeEncryptionText(bridge.encryption)}}</q-item-label>
                     </q-item-section>
                     <q-item-section v-if="me && me.bridgeAdmin" side class="row no-wrap">
                         <div class="row no-wrap">
@@ -3759,14 +3852,55 @@ const roomTemplate = `
                 </div>
             </template>
         </template>
-        <q-toggle v-model="settings.callE2ee" :label="t('Calls in this room are end-to-end encrypted')" class="q-mt-sm"></q-toggle>
-        <div class="text-caption m-muted">{{t('Only the people in a call hear and see it: no recording, captions, phones or guests. This is apart from the encryption of the messages.')}}</div>
+        <!-- an encrypted room's calls are encrypted, and that is not a setting (Comms-Messaging §6.1 rule 4) -->
+        <q-toggle :model-value="sealed || settings.callE2ee" :disable="sealed" :label="t('Calls in this room are end-to-end encrypted')" class="q-mt-sm m-chat-room-call-e2ee"
+                @update:model-value="(value) => { settings.callE2ee = value; }"></q-toggle>
+        <div v-if="sealed" class="text-caption m-muted">{{t('Every call in an encrypted room is end-to-end encrypted: no recording, captions, phones or guests.')}}</div>
+        <div v-else class="text-caption m-muted">{{t('Only the people in a call hear and see it: no recording, captions, phones or guests. This is apart from the encryption of the messages.')}}</div>
         <div class="row q-gutter-sm q-mt-md items-center">
             <q-btn unelevated no-caps color="primary" :label="t('Save')" :loading="settings.busy" @click="saveSettings"></q-btn>
             <q-btn flat no-caps :label="t('Cancel')" v-close-popup></q-btn>
             <q-space></q-space>
             <q-btn v-if="isOwner" unelevated no-caps class="m-btn-tonal text-negative" :icon="room && room.archivedDate ? 'sym_o_unarchive' : 'sym_o_archive'"
                     :label="room && room.archivedDate ? t('Take out of the archive') : t('Archive the room')" @click="setArchived(!(room && room.archivedDate))"></q-btn>
+        </div>
+    </m-dialog>
+
+    <!-- Verify a person (COM-UI-013): their devices as this browser knows them, each with Verify, and the verifications with them -->
+    <m-dialog v-model="verifyBox.open" :title="verifyTitle" width="520">
+        <div class="text-caption m-muted q-mb-sm">{{t('Compare emoji with them, on a call or side by side: when they match, their device is verified, and with cross-signing every device they signed.')}}</div>
+        <q-list dense bordered separator class="rounded-borders q-mb-sm m-chat-verify-devices">
+            <q-item v-for="device in verifyDevices" :key="device.deviceId" :data-device="device.deviceId">
+                <q-item-section><q-item-label>{{device.displayName || device.deviceId}}</q-item-label><q-item-label caption>{{device.deviceId}}</q-item-label></q-item-section>
+                <q-item-section side>
+                    <q-badge v-if="device.verified" color="positive">{{t('Verified')}}</q-badge>
+                    <q-btn v-else flat dense no-caps color="primary" icon="sym_o_verified_user" :label="t('Verify')" class="m-chat-verify-device" @click="verifyDevice(device)"></q-btn>
+                </q-item-section>
+            </q-item>
+            <q-item v-if="!verifyDevices.length"><q-item-section class="text-caption m-muted">{{t('This browser knows no device of theirs yet.')}}</q-item-section></q-item>
+        </q-list>
+        <m-chat-verification v-for="flow in verifyFlows" :key="flow.flowId" :flow="flow" :who="nameOf(flow.otherUserId)" can-retry class="q-mb-sm"
+                @retry="retryVerify" @step="verifyStepped"></m-chat-verification>
+    </m-dialog>
+    <!-- another person asks to verify with this device: shown in the room, as on My devices -->
+    <m-dialog :model-value="incomingFlows.length > 0 && !verifyBox.open" :title="t('Verify')" width="520" @update:model-value="(open) => { if (!open) dismissIncoming(); }">
+        <m-chat-verification v-for="flow in incomingFlows" :key="flow.flowId" :flow="flow" :who="incomingWho(flow)" class="q-mb-sm m-chat-incoming"
+                @step="verifyStepped"></m-chat-verification>
+    </m-dialog>
+    <!-- before a send (§6.1 rule 3): a verified person's new device or new identity; Verify, or Send anyway -->
+    <m-dialog v-model="problemBox.open" :title="t('Check before you send')" width="520">
+        <div class="text-body2 q-mb-sm">{{t('Someone you verified has changed. Verify them before you send, or send anyway.')}}</div>
+        <q-list dense class="q-my-sm m-chat-problems">
+            <q-item v-for="(problem, index) in problemBox.problems" :key="index" class="q-px-none">
+                <q-item-section>{{problemLines[index]}}</q-item-section>
+                <q-item-section side><q-btn flat dense no-caps color="primary" icon="sym_o_verified_user" :label="t('Verify')" class="m-chat-problem-verify"
+                        :data-user="problem.userId" @click="verifyProblem(problem)"></q-btn></q-item-section>
+            </q-item>
+        </q-list>
+        <div class="text-caption m-muted">{{t('Send anyway: each new device listed gets the keys of this room from this message on, and each new identity is used here; they stay not verified, and you are asked again for any other change.')}}</div>
+        <div class="row q-gutter-sm q-mt-md">
+            <q-btn unelevated no-caps color="primary" :label="t('Send anyway')" :loading="problemBox.busy" class="m-chat-problem-send" @click="sendAnyway"></q-btn>
+            <q-btn flat no-caps :label="t('Cancel')" v-close-popup></q-btn>
         </div>
     </m-dialog>
 
@@ -3822,33 +3956,47 @@ const roomTemplate = `
             <q-btn flat no-caps :label="t('Cancel')" v-close-popup></q-btn>
         </div>
     </m-dialog>
-    <!-- a message's actions on a phone: a long press (or a right click) opens them as a sheet from the bottom -->
+    <!-- a message's actions on a phone: a long press (or a right click) opens them as a sheet from the bottom, the same list
+         as the desktop's menu (chat-message-menu) -->
     <q-dialog v-model="sheet.open" position="bottom" @hide="sheet.item = null">
         <q-card v-if="sheet.item" class="m-chat-sheet" style="width:100%;max-width:560px;border-radius:16px 16px 0 0">
-            <div v-if="canPost && bridgeCaps.reaction" class="row no-wrap items-center justify-between q-px-sm q-pt-sm">
-                <q-btn v-for="key in (sheet.allEmoji ? [] : quickReactions)" :key="key" flat dense class="m-chat-sheet-emoji" style="flex:1 1 0;min-width:0;font-size:22px;padding:6px 0" :label="key"
-                        :aria-label="t('React with') + ' ' + key" @click="sheetDo(() => react(sheet.item, key))"></q-btn>
-                <q-btn v-if="!sheet.allEmoji" flat dense icon="sym_o_add_reaction" style="flex:1 1 0;min-width:0;padding:6px 0" :aria-label="t('More reactions')" @click="sheet.allEmoji = true"></q-btn>
-            </div>
-            <div v-if="sheet.allEmoji" class="row q-pa-sm justify-center">
-                <q-btn v-for="key in emoji" :key="key" flat dense size="md" class="q-px-xs" :label="key" :aria-label="t('React with') + ' ' + key"
-                        @click="sheetDo(() => react(sheet.item, key))"></q-btn>
-            </div>
-            <q-list v-else class="q-pb-sm">
-                <template v-if="canPost && !sheet.inThread">
-                    <q-item clickable @click="sheetDo(() => startReply(sheet.item))"><q-item-section avatar><q-icon name="sym_o_reply"></q-icon></q-item-section><q-item-section>{{t('Reply')}}</q-item-section></q-item>
-                    <q-item clickable @click="sheetDo(() => openThread(sheet.item.eventSeq))"><q-item-section avatar><q-icon name="sym_o_forum"></q-icon></q-item-section><q-item-section>{{t('Reply in thread')}}</q-item-section></q-item>
-                </template>
-                <q-item clickable @click="sheetDo(() => copyText(sheet.item))"><q-item-section avatar><q-icon name="sym_o_content_copy"></q-icon></q-item-section><q-item-section>{{t('Copy text')}}</q-item-section></q-item>
-                <q-item v-if="isMember && !sealed" clickable @click="sheetDo(() => openForward(sheet.item))"><q-item-section avatar><q-icon name="sym_o_forward"></q-icon></q-item-section><q-item-section>{{t('Forward…')}}</q-item-section></q-item>
-                <q-item v-if="canEdit(sheet.item)" clickable @click="sheetDo(() => startEdit(sheet.item))"><q-item-section avatar><q-icon name="sym_o_edit"></q-icon></q-item-section><q-item-section>{{t('Edit')}}</q-item-section></q-item>
-                <q-item v-if="canPost" clickable @click="sheetDo(() => pin(sheet.item, !sheet.item.pinned))"><q-item-section avatar><q-icon name="sym_o_keep"></q-icon></q-item-section>
-                    <q-item-section>{{sheet.item.pinned ? t('Unpin') : t('Pin to the room')}}</q-item-section></q-item>
-                <q-item v-if="isMember && !sheet.inThread" clickable @click="sheetDo(() => markUnreadFrom(sheet.item))"><q-item-section avatar><q-icon name="sym_o_mark_chat_unread"></q-icon></q-item-section><q-item-section>{{t('Mark unread from here')}}</q-item-section></q-item>
-                <q-item clickable @click="sheetDo(() => copyLink(sheet.item))"><q-item-section avatar><q-icon name="sym_o_link"></q-icon></q-item-section><q-item-section>{{t('Copy link')}}</q-item-section></q-item>
-                <q-item v-if="canRedact(sheet.item)" clickable @click="sheetDo(() => redact(sheet.item))"><q-item-section avatar><q-icon name="sym_o_delete" color="negative"></q-icon></q-item-section>
-                    <q-item-section class="text-negative">{{t('Delete message')}}</q-item-section></q-item>
+            <chat-message-menu :room="self" :item="sheet.item" :in-thread="sheet.inThread" reactions @done="sheet.open = false"></chat-message-menu>
+        </q-card>
+    </q-dialog>
+    <!-- who reacted with an emoji, or voted for an option: a long press on its chip or option (a hover shows it too) -->
+    <q-dialog v-model="peopleBox.open" :position="useBubbles ? 'bottom' : 'standard'">
+        <q-card class="m-chat-people" :style="useBubbles ? 'width:100%;max-width:560px;border-radius:16px 16px 0 0' : 'width:100%;max-width:400px'">
+            <q-card-section class="row items-center no-wrap q-pb-xs">
+                <div class="col text-subtitle1 ellipsis">{{peopleBox.title}}</div>
+                <q-btn flat round dense icon="sym_o_close" :aria-label="t('Close')" v-close-popup></q-btn>
+            </q-card-section>
+            <q-list class="q-pb-sm scroll" style="max-height:50vh">
+                <q-item v-for="person in peopleBox.people" :key="person.userId" :data-person="person.userId">
+                    <q-item-section avatar><m-avatar :name="person.name" :user-id="person.userId" size="32px"></m-avatar></q-item-section>
+                    <q-item-section>{{person.name}}</q-item-section>
+                    <q-item-section v-if="person.detail" side class="text-body1">{{person.detail}}</q-item-section>
+                </q-item>
             </q-list>
+        </q-card>
+    </q-dialog>
+    <!-- Info (Comms-Messaging §4, COM-UI-008): only what the server knows: sent, the delivery of a bridged message per
+         network, and who has read up to it (not in a thread; none where either side has receipts off) -->
+    <q-dialog v-model="infoBox.open" :position="useBubbles ? 'bottom' : 'standard'" @hide="infoBox.item = null">
+        <q-card v-if="infoBox.item" class="m-chat-info" :style="useBubbles ? 'width:100%;max-width:560px;border-radius:16px 16px 0 0' : 'width:100%;max-width:480px'">
+            <q-card-section class="row items-center no-wrap q-pb-xs">
+                <div class="col text-subtitle1">{{t('Message info')}}</div>
+                <q-btn flat round dense icon="sym_o_close" :aria-label="t('Close')" v-close-popup></q-btn>
+            </q-card-section>
+            <q-card-section class="q-pt-none relative-position">
+                <div class="text-caption m-muted ellipsis-2-lines q-mb-xs">{{infoBox.item.senderName}}: {{snippetOf(infoBox.item.event)}}</div>
+                <q-list dense>
+                    <q-item v-for="(line, index) in infoLines" :key="index" class="q-px-none" :data-info="line.key" :data-state="line.state || undefined">
+                        <q-item-section v-if="line.label" side top class="text-weight-medium text-body2" style="min-width:96px;max-width:40%">{{line.label}}</q-item-section>
+                        <q-item-section :class="line.key === 'note' ? 'text-caption m-muted' : 'text-body2'">{{line.text}}</q-item-section>
+                    </q-item>
+                </q-list>
+                <q-inner-loading :showing="infoBox.loading"></q-inner-loading>
+            </q-card-section>
         </q-card>
     </q-dialog>
 </div>`;
@@ -3859,14 +4007,14 @@ const chatRoom = {
     props: { base: String, roomId: String, me: Object, prefs: { type: Object, default: () => ({}) }, seq: [Number, String], thread: [Number, String],
         compact: Boolean, canGoBack: Boolean, bubbles: Boolean, linkBase: { type: String, default: '/qapps/BasicComms/Chat' } },
     emits: ['back', 'thread', 'changed', 'left', 'read'],
-    components: { 'chat-message': chatMessage, 'chat-composer': chatComposer, 'chat-pending': chatPending },
+    components: { 'chat-message': chatMessage, 'chat-composer': chatComposer, 'chat-pending': chatPending, 'chat-message-menu': chatMessageMenu },
     data() {
         roomCount += 1;
         return {
             uid: roomCount, state: 'loading', room: null, member: null, access: {}, members: [], names: {},
             events: [], hasMoreBefore: false, hasMoreAfter: false, gapBefore: false, gapAfter: false, loadingOlder: false, loadingNewer: false,
             myLastRead: 0, dividerSeq: null, highlightSeq: null, atBottom: true, newBelow: 0, holdRead: false,
-            hoverKey: null, tapKey: null, sheet: { open: false, item: null, inThread: false, allEmoji: false }, editing: null, replyTo: null, side: null,
+            hoverKey: null, tapKey: null, sheet: { open: false, item: null, inThread: false }, editing: null, replyTo: null, side: null,
             swipeKey: null, swipeDx: 0,
             threadView: { rootSeq: null, events: [], loading: false }, pinned: { list: [], loading: false },
             threadsPane: { list: [], loading: false, hasMore: false, mine: false, next: null }, filesPane: { list: [], loading: false, next: null, kind: 'all' },
@@ -3876,9 +4024,12 @@ const chatRoom = {
             settings: { open: false, roomName: '', topic: '', visibility: '', busy: false },
             bridgeForm: { open: false, chatRoomBridgeId: null, chatBridgeId: null, externalRoomId: '', externalRoomName: '', externalRoomUrl: '', directionEnumId: 'CrbBoth', busy: false },
             bridgeChoices: [], previewBox: { open: false, src: '', name: '', download: '', file: null },
-            tick: Date.now(), width: 0, dragOver: false, anchor: null,
+            tick: Date.now(), width: 0, dragOver: false, anchor: null, trust: null, bannerTick: 0, leftOutTick: 0,
+            verifyBox: { open: false, userId: null }, problemBox: { open: false, problems: [], retry: null, busy: false }, dismissedFlows: {},
+            lingering: {}, seenIncoming: {},
             fileOn: { open: false, item: null, value: null, busy: false },
-            quickReactions: QUICK_REACTIONS, emoji: EMOJI, levels: LEVELS
+            peopleBox: { open: false, title: '', people: [] }, infoBox: { open: false, item: null, inThread: false, event: null, members: [], loading: false },
+            quickReactions: QUICK_REACTIONS, levels: LEVELS
         };
     },
     computed: {
@@ -3912,6 +4063,26 @@ const chatRoom = {
         bridgeTooltip() { return fill(t('Messages here also go to {names}'), { names: this.bridgeNames }); },
         displayName() { return this.room ? (this.room.displayName || this.room.roomName || this.room.chatRoomId) : ''; },
         roomIcon() { return moqui.chat.roomIcon(this.room); },
+        // the room's E2EE label (Comms-Messaging §6.2): its state, icon, banner and composer hint, from the room, its bridges
+        // and, in an encrypted room, its devices' trust
+        label() { return moqui.chat.e2eeLabel(this.room, this.trust); },
+        bannerHidden() { void this.bannerTick; return !!this.room && moqui.chat.bannerClosed(this.roomId, this.label.state); },
+        // who could not read my messages (COM-UI-013), as this browser keeps it for the account: {eventSeq: text}
+        leftOutBySeq() { void this.leftOutTick; return this.sealed ? moqui.chat.leftOutOf(this.roomId) : {}; },
+        verifications() { return (moqui.crypto && moqui.crypto.state && moqui.crypto.state.verifications) || []; },
+        verifyTitle() { return fill(t('Verify {name}'), { name: this.verifyBox.userId ? this.nameOf(this.verifyBox.userId) : '' }); },
+        verifyDevices() {
+            const person = this.trust && this.trust.people && this.verifyBox.userId ? this.trust.people[this.verifyBox.userId] : null;
+            return (person && person.devices) || [];
+        },
+        verifyFlows() { return this.verifications.filter((flow) => flow.otherUserId === this.verifyBox.userId && !this.dismissedFlows[flow.flowId]); },
+        // another person's request to verify, not yet answered here; one that ended stays a moment, its end shown
+        incomingFlows() {
+            const me = this.me && this.me.userId;
+            return this.sealed ? this.verifications.filter((flow) => !flow.weStarted && flow.otherUserId && flow.otherUserId !== me && !this.dismissedFlows[flow.flowId]
+                && ((!flow.done && !flow.cancelled) || this.lingering[flow.flowId])) : [];
+        },
+        problemLines() { return moqui.chat.problemsText(this.problemBox.problems, (id) => this.nameOf(id)); },
         recordLabel() { const record = this.room && this.room.record; return record ? [record.typeLabel, record.title].filter((part) => part).join(' · ') : ''; },
         roomKindText() {
             if (!this.room) return '';
@@ -3944,6 +4115,8 @@ const chatRoom = {
         noConnection() { return noConnection(); },
         // an encrypted room in a desktop client's app window, whose shell owns the crypto device: it opens in Chat there
         cryptoElsewhere() { return this.sealed && !!(moqui.crypto && moqui.crypto.elsewhere && moqui.crypto.elsewhere()); },
+        // this page's crypto device is open: an encrypted room's trust can be asked of it
+        cryptoReady() { return !!(moqui.crypto && moqui.crypto.state && moqui.crypto.state.status === 'ready'); },
         // the outbox's messages of this room and of the open thread (the chat store's state, so they follow other tabs)
         pendingMain() { void (moqui.chat && moqui.chat.state.outbox && moqui.chat.state.sending); return moqui.chat && moqui.chat.pendingIn ? moqui.chat.pendingIn(this.roomId, null) : []; },
         pendingThread() {
@@ -3956,7 +4129,8 @@ const chatRoom = {
             const options = this.pollBox.options.map((text) => String(text || '').trim()).filter((text) => text);
             return !!String(this.pollBox.question || '').trim() && options.length >= 2 && !this.pollBox.busy;
         },
-        composerPlaceholder() { return fill(this.isDirect ? t('Message {name}') : t('Message {name}… @ to mention'), { name: this.displayName }); },
+        // a text or a bridged network's message says so (Comms-Messaging §6.2)
+        composerPlaceholder() { return this.label.hint || fill(this.isDirect ? t('Message {name}') : t('Message {name}… @ to mention'), { name: this.displayName }); },
         visibilityOptions() {
             if (this.room && this.room.roomTypeEnumId === 'CrtRecord')
                 return [{ value: 'CrvRecord', label: t('Anyone who can see the record') }, { value: 'CrvMembers', label: t('Members only: added by a member') }];
@@ -3978,6 +4152,16 @@ const chatRoom = {
             }
             return out;
         },
+        // a phone or tablet (Quasar's platform): who reacted or voted shows on a long press, not in a tooltip
+        mobile() { return !!(this.$q.platform && this.$q.platform.is && this.$q.platform.is.mobile); },
+        // the lines of the open Info (moqui.chat.messageInfo, Comms-Messaging §4)
+        infoLines() {
+            const box = this.infoBox;
+            if (!box.item || !moqui.chat || !moqui.chat.messageInfo) return [];
+            const info = moqui.chat.messageInfo(box.event || box.item.event, box.members, { me: this.me.userId, receipts: this.prefs.readReceipts !== false,
+                inThread: box.inThread });
+            return moqui.chat.messageInfoLines(info, fullTime);
+        },
         items() { return this.buildItems(this.events, { divider: true, readers: true }); },
         threadItems() { return this.buildItems(this.threadView.events, { divider: false, readers: false }); },
         typingText() {
@@ -3993,6 +4177,13 @@ const chatRoom = {
     },
     watch: {
         seq(value) { if (value && this.state === 'ready') this.jumpTo(Number(value)); },
+        cryptoReady(value) { if (value) this.loadTrust(); },
+        // a verification with someone of this room done: their check, and the room's
+        verifications(list) {
+            if (!this.sealed) return;
+            this.noteIncoming(list);
+            if (list.some((flow) => flow.done && !this.dismissedFlows['done:' + flow.flowId])) this.verificationsDone(list);
+        },
         thread(value) {
             if (this.state !== 'ready') return;
             if (value && Number(value) !== this.threadView.rootSeq) this.openThread(Number(value), true);
@@ -4041,6 +4232,110 @@ const chatRoom = {
         needsConnection() { return needsConnection(); },
         // the members' userIds, who get an encrypted room's keys
         memberIds() { return this.members.filter((person) => person.userId).map((person) => person.userId); },
+        // ---- the room's E2EE label (Comms-Messaging §6.2) ----
+        // an encrypted room's devices: verified or not (the lock's check, Verify), and who the next message leaves out. Asked
+        // only of a crypto device that is open (the room's messages open it), never to open one for the label.
+        loadTrust() {
+            const crypto = moqui.crypto;
+            if (!this.sealed || this.cryptoElsewhere || !crypto || !crypto.roomTrust || !crypto.state || crypto.state.status !== 'ready') return;
+            const roomId = this.roomId;
+            crypto.roomTrust(roomId, this.memberIds()).then((answer) => {
+                if (roomId === this.roomId) this.trust = moqui.chat.trustOf(answer, this.me.userId);
+            }, () => { if (roomId === this.roomId) this.trust = null; });
+        },
+        verificationsDone(list) {
+            const dismissed = Object.assign({}, this.dismissedFlows);
+            list.filter((flow) => flow.done).forEach((flow) => { dismissed['done:' + flow.flowId] = true; });
+            this.dismissedFlows = dismissed;
+            setTimeout(() => this.loadTrust(), 500);
+        },
+        closeBanner() { moqui.chat.closeBanner(this.roomId, this.label.state); this.bannerTick += 1; },
+        // Verify: My devices, where this user's own devices are verified by emoji or QR code
+        openDevices() { this.go(this.linkBase.replace(/\/Chat$/, '/Settings/Devices')); },
+        // ---- verifying people (COM-UI-013, §6.1 rule 3) ----
+        personVerified(userId) { return !!(this.sealed && userId && this.trust && this.trust.people && this.trust.people[userId] && this.trust.people[userId].verified); },
+        personChanged(userId) { return !!(this.sealed && userId && this.trust && this.trust.people && this.trust.people[userId] && this.trust.people[userId].changed); },
+        canVerify(person) {
+            return this.sealed && this.cryptoReady && !this.cryptoElsewhere && !!person.userId && person.userId !== this.me.userId && !person.external
+                && !this.personVerified(person.userId);
+        },
+        openVerify(userId) {
+            this.verifyBox = { open: true, userId };
+            this.loadTrust();
+        },
+        // Verify from the banner or a message: the first other person with a device not verified, else My devices (my own)
+        verifySomeone(userId) {
+            const target = userId || moqui.chat.verifyTarget(this.trust, this.me.userId);
+            if (target) this.openVerify(target); else this.openDevices();
+        },
+        verifyDevice(device) {
+            const userId = this.verifyBox.userId;
+            moqui.crypto.verifyDevice(userId, device.deviceId).catch((err) => moqui.notifyMessages([], (err && err.errors) || t('The verification did not start')));
+        },
+        retryVerify(flow) {
+            const device = this.verifyDevices.find((one) => one.deviceId === flow.otherDeviceId) || this.verifyDevices.find((one) => !one.verified);
+            if (device) this.verifyDevice(device);
+        },
+        // a match confirmed: the room's trust read again once the other side is done
+        verifyStepped(action) { if (action === 'confirm' || action === 'qrConfirm') setTimeout(() => this.loadTrust(), 1500); },
+        // closed: an open request is cancelled (the other person sees it end), not only hidden
+        dismissIncoming() {
+            const dismissed = Object.assign({}, this.dismissedFlows);
+            this.incomingFlows.forEach((flow) => {
+                dismissed[flow.flowId] = true;
+                if (!flow.done && !flow.cancelled && moqui.crypto) moqui.crypto.verification(flow.flowId, 'cancel').catch(() => null);
+            });
+            this.dismissedFlows = dismissed;
+        },
+        // who asks: a member by name; someone else by name when known, said not to be in this room
+        incomingWho(flow) {
+            const id = flow.otherUserId;
+            if (this.members.some((person) => person.userId === id)) return this.nameOf(id);
+            return this.names[id] ? fill(t('{name}, not in this room'), { name: this.names[id] }) : t('someone outside this room');
+        },
+        // an incoming request that ended shows Verified or Cancelled for a moment, then goes
+        noteIncoming(list) {
+            const me = this.me && this.me.userId;
+            const seen = Object.assign({}, this.seenIncoming);
+            for (const flow of list) {
+                if (flow.weStarted || !flow.otherUserId || flow.otherUserId === me || this.dismissedFlows[flow.flowId]) continue;
+                if (!flow.done && !flow.cancelled) { seen[flow.flowId] = true; continue; }
+                if (seen[flow.flowId] && !this.lingering[flow.flowId]) {
+                    this.lingering = Object.assign({}, this.lingering, { [flow.flowId]: true });
+                    setTimeout(() => { this.dismissedFlows = Object.assign({}, this.dismissedFlows, { [flow.flowId]: true }); }, 2500);
+                }
+            }
+            this.seenIncoming = seen;
+        },
+        // a send refused for a verified person's change: say it, with Verify and Send anyway (retry sends it again)
+        askProblems(problems, retry) { this.problemBox = { open: true, problems: problems || [], retry, busy: false }; },
+        // Verify the person of one problem (my own new device: My devices); the send waits for the next Send
+        verifyProblem(problem) {
+            this.problemBox = Object.assign({}, this.problemBox, { open: false });
+            if (problem && problem.userId !== this.me.userId) this.openVerify(problem.userId); else this.openDevices();
+        },
+        sendAnyway() {
+            const box = this.problemBox;
+            box.busy = true;
+            moqui.crypto.acceptProblems(this.roomId, box.problems).then(() => {
+                this.problemBox = { open: false, problems: [], retry: null, busy: false };
+                this.loadTrust();
+                // the retry says its own refusal (or asks again): nothing more here
+                if (box.retry) Promise.resolve().then(box.retry).catch(() => null);
+            }, (err) => { box.busy = false; moqui.notifyMessages([], (err && err.errors) || t('This message could not be encrypted')); });
+        },
+        // a sealed change refused for a verified person's change (§6.1 rule 3): the same question, then retry; else said
+        sealRefused(err, retry) {
+            if (err && err.reasonCode === 'verifiedUserProblem') this.askProblems(err.problems, retry);
+            else moqui.notifyMessages([{ type: 'warning', message: (err && (err.errors || err.message)) || t('This message could not be encrypted') }]);
+        },
+        undecryptableText(item) { return moqui.chat.undecryptableText(item.withheld, item.senderName); },
+        bridgeEncryptionText(encryption) {
+            if (encryption === 'EndToEnd') return t('End-to-end encrypted through the bridge');
+            if (encryption === 'BridgeDecrypted') return t('End-to-end encrypted on that network; the bridge here decrypts it');
+            if (encryption === 'Transport') return t('Encrypted in transit only: the network can read it');
+            return t('Not encrypted: the network and its providers can read it');
+        },
         // new room keys came (from a member, or the key backup): the messages that could not be read are tried again
         onRoomKeys() {
             if (!this.sealed || this.state !== 'ready') return;
@@ -4050,7 +4345,8 @@ const chatRoom = {
         // the room's call: a new one rings its members; one going on is joined (the page's call store, WebrootCall.js)
         startCall() {
             if (needsConnection()) return;
-            if (moqui.call) moqui.call.startCall({ chatRoomId: this.roomId, video: true });
+            // an encrypted room's call is end to end (§6.1 rule 4): asked so, a browser that cannot is refused before anyone rings
+            if (moqui.call) moqui.call.startCall(Object.assign({ chatRoomId: this.roomId, video: true }, this.sealed ? { requireE2ee: true } : {}));
         },
         go(target) { if (target) this.$root.setUrl(target); },
         domId(seq, inThread) { return 'chat-' + this.uid + (inThread ? '-t-' : '-m-') + seq; },
@@ -4099,7 +4395,7 @@ const chatRoom = {
                 const item = { kind: 'message', key: 'e' + event.eventSeq, eventSeq: Number(event.eventSeq), event, senderUserId: event.senderUserId,
                     senderName: this.nameOf(event.senderUserId, event.senderName), sentDate: sent, timeText: timeText(sent), timeShort: timeText(sent), fullTime: fullTime(sent),
                     bodyHtml: event.redacted ? null : (event.body ? decorateBody(event.body, me) : null), redacted: !!event.redacted, removedLabel: event.removedLabel,
-                    undecryptable: !event.redacted && !!event.undecryptable,
+                    undecryptable: !event.redacted && !!event.undecryptable, withheld: event.withheld || null, verifiedSender: event.verifiedSender,
                     edited: !!event.edited, editedText: event.editedDate ? fill(t('Edited {when}'), { when: fullTime(event.editedDate) }) : t('Edited'),
                     attachments: event.attachments || [], records: event.records || [], reactions: event.reactions || [],
                     forwardOf: event.forwardOf ? Object.assign({}, event.forwardOf, { body: event.forwardOf.body && moqui.chat && moqui.chat.ownImages ? moqui.chat.ownImages(event.forwardOf.body) : event.forwardOf.body }) : null, poll: event.poll || null, linkPreviews: event.linkPreviews || [],
@@ -4161,6 +4457,7 @@ const chatRoom = {
             this.members = json.memberList || [];
             this.members.forEach((person) => { if (person.name) this.names[person.userId] = person.name; });
             if (moqui.chat) moqui.chat.watchUsers(this.members.map((person) => person.userId));
+            this.loadTrust();
         },
         reloadMeta() {
             return this.get('room', { chatRoomId: this.roomId }).then((json) => { if (json.room) this.applyMeta(json); }, () => {});
@@ -4400,13 +4697,23 @@ const chatRoom = {
                     moqui.chat.sealedTexts[clientRef] = plainOf(html) || t('Files');
                     const sealedParams = { encryptedJson: sealed.encryptedJson, mentionUserIds: sealed.mentionUserIds, replyToEventSeq: params.replyToEventSeq,
                         threadRootEventSeq: params.threadRootEventSeq, chatAttachmentIds: params.chatAttachmentIds };
-                    return moqui.chat.send({ clientRef, chatRoomId: this.roomId, url: this.url('send'), params: sealedParams, text: '', sealed: true,
-                        threadRootEventSeq: threadRoot, hasFiles: !!(message.attachmentIds || []).length });
+                    // who cannot read it: the devices only verified devices left out (COM-UI-013), shown under it once it is sent
+                    const leftOut = moqui.crypto && moqui.crypto.leftOut ? moqui.crypto.leftOut(this.roomId).catch(() => []) : Promise.resolve([]);
+                    return leftOut.then((devices) => {
+                        if (devices && devices.length) moqui.chat.noteLeftOut(clientRef, this.roomId, moqui.chat.leftOutText(devices, this.me.userId, (id) => this.nameOf(id)));
+                        return moqui.chat.send({ clientRef, chatRoomId: this.roomId, url: this.url('send'), params: sealedParams, text: '', sealed: true,
+                            threadRootEventSeq: threadRoot, hasFiles: !!(message.attachmentIds || []).length });
+                    });
                 }).then((outcome) => {
                     if (outcome && outcome.failed && outcome.error) moqui.notifyMessages([{ type: 'warning', message: outcome.error }]);
                     return outcome;
                 }, (err) => {
-                    moqui.notifyMessages([{ type: 'warning', message: (err && (err.errors || err.message)) || t('This message could not be encrypted') }]);
+                    // a verified person's new device or identity (§6.1 rule 3): asked first, then sent again
+                    this.sealRefused(err, () => this.sendMessage(message).then(() => {
+                        // sent after all: the composer that kept its text is cleared
+                        const vm = this.composers && this.composers[threadRoot ? 'thread' : 'main'];
+                        if (vm) vm.clear();
+                    }));
                     return restore(err);
                 });
             }
@@ -4560,11 +4867,11 @@ const chatRoom = {
             this.holdCancel();
             this.touchFrom = null;
             if (!this.useBubbles || (event.touches && event.touches.length > 1)) return;
-            if (event.target && event.target.closest && event.target.closest('input, textarea, [contenteditable="true"], .q-btn')) return;
+            if (event.target && event.target.closest && event.target.closest('input, textarea, [contenteditable="true"], .q-btn, .m-chat-reaction, .m-chat-poll .q-item')) return;
             const touch = event.touches && event.touches[0];
             // a touch in what scrolls sideways (a wide code block or table) is that scroll, never a swipe
             if (touch && !this.scrollsSideways(event.target, event.currentTarget)) this.touchFrom = { x: touch.clientX, y: touch.clientY, item, inThread: !!inThread };
-            this.holdTimer = setTimeout(() => { this.holdTimer = null; this.held = true; this.openSheet(item, inThread); }, 450);
+            this.holdTimer = setTimeout(() => { this.holdTimer = null; this.held = true; this.openSheet(item, inThread); }, HOLD_MS);
         },
         holdCancel() { if (this.holdTimer) { clearTimeout(this.holdTimer); this.holdTimer = null; } },
         // whether target, up to the message's row, is in a code block or table, or in an element that scrolls sideways
@@ -4612,6 +4919,7 @@ const chatRoom = {
             return !inThread && this.swipeKey === 'm' + item.eventSeq && this.swipeDx ? { transform: 'translateX(' + this.swipeDx + 'px)' } : null;
         },
         contextMenu(item, inThread, event) {
+            if (this.pressGuard(event)) return;
             if (!this.useBubbles) return;
             event.preventDefault();
             if (!this.sheet.open) this.openSheet(item, inThread);
@@ -4619,10 +4927,132 @@ const chatRoom = {
         openSheet(item, inThread) {
             if (item.redacted || this.isEditing(item) || this.state !== 'ready') return;
             this.tapKey = null;
-            this.sheet = { open: true, item, inThread: !!inThread, allEmoji: false };
+            this.sheet = { open: true, item, inThread: !!inThread };
             if (navigator.vibrate) { try { navigator.vibrate(10); } catch (e) { /* no vibration here */ } }
         },
         sheetDo(action) { this.sheet.open = false; action(); },
+        // a message's actions, in the order of every menu of it (chat-message-menu): {key, icon, label, run, negative}, a
+        // separator ({separator: true}) and the apps' actions (key apps: m-ext-actions)
+        messageActions(item, inThread) {
+            const list = [];
+            const add = (key, icon, label, run, more) => list.push(Object.assign({ key, icon, label, run }, more || {}));
+            if (this.canPost && !inThread) {
+                add('reply', 'sym_o_reply', t('Reply'), () => this.startReply(item));
+                add('thread', 'sym_o_forum', t('Reply in thread'), () => this.openThread(item.eventSeq));
+            }
+            add('copy', 'sym_o_content_copy', t('Copy text'), () => this.copyText(item));
+            add('link', 'sym_o_link', t('Copy link'), () => this.copyLink(item));
+            if (this.isMember && !this.sealed) add('forward', 'sym_o_forward', t('Forward…'), () => this.openForward(item));
+            if (this.canEdit(item)) add('edit', 'sym_o_edit', t('Edit'), () => this.startEdit(item));
+            if (this.canPost) add('pin', 'sym_o_keep', item.pinned ? t('Unpin') : t('Pin to the room'), () => this.pin(item, !item.pinned));
+            if (this.isMember && !inThread) add('unread', 'sym_o_mark_chat_unread', t('Mark unread from here'), () => this.markUnreadFrom(item));
+            list.push({ key: 'sep-apps', separator: true });
+            if (!this.sealed) list.push({ key: 'apps' });
+            if (this.prefs.recordLink && !this.sealed) add('file', 'sym_o_add_link', t('File on a record…'), () => this.openFileOn(item));
+            add('info', 'sym_o_info', t('Info'), () => this.openInfo(item, inThread));
+            if ((item.reactions || []).length) add('reactions', 'sym_o_add_reaction', t('Who reacted'), () => this.showReactions(item));
+            if (this.canRedact(item)) {
+                list.push({ key: 'sep-delete', separator: true });
+                add('delete', 'sym_o_delete', t('Delete message'), () => this.redact(item), { negative: true });
+            }
+            return list;
+        },
+        // ---- who reacted and who voted, by touch: a long press on a chip or an option; a tap still reacts or votes ----
+        pressStart(what, event) {
+            this.pressCancel();
+            this.pressHeld = false;
+            if (event.touches && event.touches.length > 1) return;
+            this.pressTimer = setTimeout(() => {
+                this.pressTimer = null;
+                this.pressHeld = true;
+                this.showPeople(what);
+                if (navigator.vibrate) { try { navigator.vibrate(10); } catch (e) { /* no vibration here */ } }
+            }, HOLD_MS);
+        },
+        pressCancel() { if (this.pressTimer) { clearTimeout(this.pressTimer); this.pressTimer = null; } },
+        pressEnd(event) {
+            this.pressCancel();
+            if (!this.pressHeld) return;
+            // the press that showed the people is not also a tap on the chip; a click that comes later is one
+            if (event && event.cancelable) event.preventDefault();
+            this.pressRelease();
+        },
+        // a press held long enough: the click that may follow it does nothing, for a moment
+        pressRelease() {
+            clearTimeout(this.pressReset);
+            this.pressReset = setTimeout(() => { this.pressHeld = false; }, 400);
+        },
+        // a chip's or an option's own context menu (Android's long press, the menu key) or Shift+Enter: who reacted or voted,
+        // once (a long press may have shown them already), and the click its key or touch may send is not a tap
+        pressMenu(what) {
+            if (this.pressHeld) return;
+            this.pressCancel();
+            this.pressHeld = true;
+            this.pressRelease();
+            this.showPeople(what);
+        },
+        // a context menu that belongs to a chip or option, or comes while one is pressed, is not the message's
+        pressGuard(event) {
+            const target = event && event.target;
+            const own = !!(target && target.closest && target.closest('.m-chat-reaction, .m-chat-poll .q-item'));
+            if (!own && !this.pressTimer && !this.pressHeld) return false;
+            if (event && event.cancelable) event.preventDefault();
+            return true;
+        },
+        // whether a long press just showed the people: the click that may follow it does nothing
+        pressed() {
+            const held = !!this.pressHeld;
+            this.pressHeld = false;
+            clearTimeout(this.pressReset);
+            return held;
+        },
+        // a reaction chip's name: the emoji, how many, who, and the key that lists them
+        reactionLabel(reaction) {
+            return fill(t('{emoji} {count}: {names}. Shift+Enter shows who reacted'), { emoji: reaction.key, count: reaction.count, names: this.reactorsText(reaction) });
+        },
+        // Who reacted, from the message's menu: everyone with their emoji
+        showReactions(item) {
+            const byUser = {};
+            const order = [];
+            for (const reaction of item.reactions || []) for (const id of reaction.userIds || []) {
+                if (!byUser[id]) { byUser[id] = []; order.push(id); }
+                byUser[id].push(reaction.key);
+            }
+            if (!order.length) return;
+            this.peopleBox = { open: true, title: t('Who reacted'),
+                people: order.map((id) => ({ userId: id, name: id === this.me.userId ? t('You') : this.nameOf(id), detail: byUser[id].join(' ') })) };
+        },
+        showPeople(what) {
+            const ids = what.kind === 'voters' ? (what.option.voterIds || []) : (what.reaction.userIds || []);
+            const people = ids.map((id) => ({ userId: id, name: id === this.me.userId ? t('You') : this.nameOf(id) }));
+            const title = what.kind === 'voters' ? fill(t('Voted for {option}'), { option: what.option.text || '' })
+                : fill(t('Reacted with {emoji}'), { emoji: what.reaction.key });
+            if (!people.length) {
+                // an anonymous poll names no one
+                if (what.kind === 'voters') moqui.notifyMessages([{ type: 'info', message: what.item.poll && what.item.poll.anonymous ? t('This poll is anonymous') : t('No votes yet') }]);
+                return;
+            }
+            this.peopleBox = { open: true, title, people };
+        },
+        // ---- Info: the message read again (its delivery and the members' read markers as the server has them now) ----
+        openInfo(item, inThread) {
+            this.tapKey = null;
+            const offline = noConnection();
+            this.infoBox = { open: true, item, inThread: !!inThread || item.event.threadRootEventSeq != null, event: item.event, members: this.members, loading: !offline };
+            if (offline) return;
+            // the answer of the last Info asked (the box holds a reactive copy of the item, so it is not compared)
+            const asked = this.infoAsked = (this.infoAsked || 0) + 1;
+            moqui.request(this.url('timeline'), { params: { chatRoomId: this.roomId, eventSeq: item.eventSeq, limit: 1 } }).then((result) => {
+                const json = (result && result.json) || {};
+                if (this.infoAsked !== asked || !this.infoBox.item) return;
+                const fresh = (json.eventList || []).find((event) => Number(event.eventSeq) === Number(item.eventSeq));
+                // only what Info shows: an encrypted room's event comes back sealed, and the item keeps its decrypted text
+                if (fresh) this.infoBox.event = Object.assign({}, item.event, { sentDate: fresh.sentDate != null ? fresh.sentDate : item.event.sentDate,
+                    delivery: fresh.delivery || null, threadRootEventSeq: fresh.threadRootEventSeq != null ? fresh.threadRootEventSeq : item.event.threadRootEventSeq });
+                if (Array.isArray(json.memberList)) this.infoBox.members = json.memberList;
+                this.infoBox.loading = false;
+            }, () => { if (this.infoAsked === asked) this.infoBox.loading = false; });
+        },
         isTouch() { return !!(this.$q.platform && this.$q.platform.has && this.$q.platform.has.touch) && this.$q.screen.lt.md; },
         showActions(item, inThread) {
             if (item.redacted || this.isEditing(item) || this.state !== 'ready') return false;
@@ -4684,7 +5114,11 @@ const chatRoom = {
         },
         saveEdit(item, body) {
             const sent = this.sealed ? moqui.chat.sealMessage(this.roomId, this.memberIds(), body, []).then((sealed) => this.change('chat-edit', 'edit', { chatRoomId: this.roomId,
-                eventSeq: item.eventSeq, encryptedJson: sealed.encryptedJson, mentionUserIds: sealed.mentionUserIds }))
+                eventSeq: item.eventSeq, encryptedJson: sealed.encryptedJson, mentionUserIds: sealed.mentionUserIds }), (err) => {
+                // the edit stays open; asked, then saved again (§6.1 rule 3)
+                this.sealRefused(err, () => this.saveEdit(item, body));
+                throw err;
+            })
                 : this.change('chat-edit', 'edit', { chatRoomId: this.roomId, eventSeq: item.eventSeq, body });
             return sent.then((json) => (json.event && this.sealed ? moqui.chat.openEvent(this.roomId, json.event).then(() => json) : json)).then((json) => {
                 if (json.event) {
@@ -4731,7 +5165,17 @@ const chatRoom = {
                 const taken = mine ? moqui.chat.myReaction(this.roomId, item.eventSeq, key, me) : null;
                 if (mine && taken != null) this.change('chat-react', 'react', { chatRoomId: this.roomId, eventSeq: item.eventSeq, reactionEventSeq: taken }, note).catch(() => {});
                 else if (!mine) moqui.chat.sealReaction(this.roomId, this.memberIds(), key).then((encryptedJson) => this.change('chat-react', 'react', { chatRoomId: this.roomId,
-                    eventSeq: item.eventSeq, encryptedJson }, note)).catch(() => {});
+                    eventSeq: item.eventSeq, encryptedJson }, note), (err) => {
+                    // not sent: taken off again, then asked (§6.1 rule 3) or said, never dropped silently
+                    const shown = reactions.find((reaction) => reaction.key === key);
+                    if (shown) {
+                        shown.userIds = shown.userIds.filter((id) => id !== me);
+                        shown.count = Math.max(0, shown.count - 1);
+                        shown.mine = false;
+                        if (shown.count <= 0) reactions.splice(reactions.indexOf(shown), 1);
+                    }
+                    this.sealRefused(err, () => this.react(item, key));
+                }).catch(() => {});
                 return;
             }
             this.change('chat-react', 'react', { chatRoomId: this.roomId, eventSeq: item.eventSeq, key }, note).catch(() => {});
@@ -5199,7 +5643,7 @@ const chatRoom = {
             if (this.isOwner && this.settings.visibility && this.settings.visibility !== this.room.visibilityEnumId) params.visibilityEnumId = this.settings.visibility;
             this.settings.busy = true;
             // the calls' encryption (W8) is its own setting, saved first
-            const e2ee = !!this.settings.callE2ee !== !!this.room.callE2eeRequired
+            const e2ee = !this.sealed && !!this.settings.callE2ee !== !!this.room.callE2eeRequired
                 ? this.post('setCallEncryption', { chatRoomId: this.roomId, required: this.settings.callE2ee ? 'true' : 'false' }).then((json) => {
                     if (json.errors) { moqui.notifyMessages([], json.errors); throw json; }
                 }) : Promise.resolve();
@@ -5260,6 +5704,8 @@ const chatRoom = {
             this.unsubscribe.push(moqui.back.track(this, () => this.side, () => this.closeSide()));
             this.unsubscribe.push(moqui.back.track(this, () => this.editing, () => this.cancelEdit()));
             this.unsubscribe.push(moqui.back.track(this, () => this.sheet.open, () => { this.sheet.open = false; }));
+            this.unsubscribe.push(moqui.back.track(this, () => this.peopleBox.open, () => { this.peopleBox.open = false; }));
+            this.unsubscribe.push(moqui.back.track(this, () => this.infoBox.open, () => { this.infoBox.open = false; }));
         }
         if (moqui.chat) {
             this.unsubscribe.push(moqui.chat.on('event', (payload) => this.onEvent(payload)));
@@ -5271,6 +5717,11 @@ const chatRoom = {
             this.unsubscribe.push(moqui.chat.on('changed', (payload) => this.onChangeAnswered(payload)));
             this.unsubscribe.push(moqui.chat.on('rooms', (payload) => this.onRoomsChanged(payload)));
             this.unsubscribe.push(moqui.chat.on('connection', (payload) => this.onConnection(payload)));
+            this.unsubscribe.push(moqui.chat.on('leftOut', () => { this.leftOutTick += 1; }));
+            // a member's devices or identity changed (a new device, a verification): the room's trust again (§6.1 rule 3)
+            if (moqui.crypto && moqui.crypto.onTrust) this.unsubscribe.push(moqui.crypto.onTrust((userIds) => {
+                if ((userIds || []).some((id) => id === this.me.userId || this.members.some((person) => person.userId === id))) this.loadTrust();
+            }));
         }
         this.onVisibleBound = () => this.onVisible();
         document.addEventListener('visibilitychange', this.onVisibleBound);
@@ -5405,6 +5856,8 @@ module.exports = {
             });
         },
         roomIcon(room) { return moqui.chat.roomIcon(room); },
+        // the room's E2EE label (moqui.chat.e2eeLabel): a row shows its lock when it is end to end only
+        labelOf(room) { return moqui.chat.e2eeLabel(room); },
         bridgeText(room) {
             const names = (room.bridgeNetworkNames || []).join(', ');
             return room.notConnected ? fill(t('Not connected to {names}: messages wait here'), { names }) : fill(t('Also on {names}'), { names });
@@ -6152,9 +6605,29 @@ module.exports = {
                                                           class: "m-muted q-ml-xs"
                                                         }))
                                                       : _createCommentVNode("", true),
-                                                    (room.bridged)
+                                                    (_ctx.labelOf(room).lock)
                                                       ? (_openBlock(), _createBlock(_component_q_icon, {
                                                           key: 1,
+                                                          name: "sym_o_lock",
+                                                          size: "12px",
+                                                          class: "q-ml-xs text-positive m-chat-e2ee-lock",
+                                                          "data-e2ee": room.chatRoomId,
+                                                          "aria-label": _ctx.labelOf(room).text
+                                                        }, {
+                                                          default: _withCtx(() => [
+                                                            _createVNode(_component_q_tooltip, null, {
+                                                              default: _withCtx(() => [
+                                                                _createTextVNode(_toDisplayString(_ctx.labelOf(room).text), 1)
+                                                              ]),
+                                                              _: 2
+                                                            }, 1024)
+                                                          ]),
+                                                          _: 2
+                                                        }, 1032, ["data-e2ee", "aria-label"]))
+                                                      : _createCommentVNode("", true),
+                                                    (room.bridged)
+                                                      ? (_openBlock(), _createBlock(_component_q_icon, {
+                                                          key: 2,
                                                           name: room.notConnected ? 'sym_o_link_off' : 'sym_o_hub',
                                                           size: "12px",
                                                           class: _normalizeClass(["q-ml-xs", room.notConnected ? 'text-warning' : 'm-muted']),
@@ -6434,7 +6907,7 @@ module.exports = {
                           unelevated: "",
                           "toggle-color": "primary",
                           class: "q-mb-xs",
-                          options: [{label: _ctx.t('Private'), value: 'private', icon: 'sym_o_lock'}, {label: _ctx.t('Public'), value: 'public', icon: 'sym_o_tag'}]
+                          options: [{label: _ctx.t('Private'), value: 'private', icon: 'sym_o_groups'}, {label: _ctx.t('Public'), value: 'public', icon: 'sym_o_tag'}]
                         }, null, 8, ["modelValue", "onUpdate:modelValue", "options"]),
                         _createElementVNode("div", { class: "text-caption m-muted q-mb-sm" }, _toDisplayString(_ctx.newRoom.type === 'public' ? _ctx.t('Anyone can find this room, read it and join.') : _ctx.t('Only the people in it see it; members add others.')), 1),
                         (_ctx.newRoom.type !== 'public')
@@ -6660,9 +7133,13 @@ module.exports = {
                   const _component_q_toggle = _resolveComponent("q-toggle")
                   const _component_q_space = _resolveComponent("q-space")
                   const _component_m_dialog = _resolveComponent("m-dialog")
+                  const _component_m_chat_verification = _resolveComponent("m-chat-verification")
                   const _component_m_check = _resolveComponent("m-check")
                   const _component_m_date_time = _resolveComponent("m-date-time")
+                  const _component_chat_message_menu = _resolveComponent("chat-message-menu")
                   const _component_q_dialog = _resolveComponent("q-dialog")
+                  const _component_q_card_section = _resolveComponent("q-card-section")
+                  const _component_q_inner_loading = _resolveComponent("q-inner-loading")
                   const _directive_close_popup = _resolveDirective("close-popup")
 
                   return (_openBlock(), _createElementBlock("div", {
@@ -6772,29 +7249,55 @@ module.exports = {
                                       _: 1
                                     }))
                                   : _createCommentVNode("", true),
-                                (_ctx.sealed)
+                                (_ctx.label.lock)
                                   ? (_openBlock(), _createBlock(_component_q_chip, {
                                       key: 3,
                                       dense: "",
                                       square: "",
                                       icon: "sym_o_lock",
-                                      class: "m-tonal text-positive q-ml-xs m-chat-encrypted"
+                                      class: "m-tonal text-positive q-ml-xs m-chat-encrypted",
+                                      "data-e2ee": _ctx.label.state
                                     }, {
                                       default: _withCtx(() => [
                                         _createTextVNode(_toDisplayString(_ctx.t('Encrypted')) + " ", 1),
+                                        (_ctx.label.verified)
+                                          ? (_openBlock(), _createBlock(_component_q_icon, {
+                                              key: 0,
+                                              name: "sym_o_check",
+                                              size: "14px",
+                                              class: "q-ml-xs m-chat-verified"
+                                            }))
+                                          : _createCommentVNode("", true),
                                         _createVNode(_component_q_tooltip, null, {
                                           default: _withCtx(() => [
-                                            _createTextVNode(_toDisplayString(_ctx.t('End-to-end encrypted: only the devices of its members read it. Search, link previews, agents, polls, bridges, forwards and filing on records are off here.')), 1)
+                                            _createTextVNode(_toDisplayString(_ctx.label.text) + ". " + _toDisplayString(_ctx.t('Search, link previews, agents, polls, bridges, forwards and filing on records are off here.')), 1)
                                           ]),
                                           _: 1
                                         })
                                       ]),
                                       _: 1
-                                    }))
-                                  : _createCommentVNode("", true),
+                                    }, 8, ["data-e2ee"]))
+                                  : (_openBlock(), _createBlock(_component_q_icon, {
+                                      key: 4,
+                                      name: "sym_o_lock_open",
+                                      size: "16px",
+                                      class: "q-ml-xs m-muted m-chat-not-e2ee",
+                                      "data-e2ee": _ctx.label.state,
+                                      "aria-label": _ctx.label.text
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_tooltip, null, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(_ctx.label.text), 1)
+                                          ]),
+                                          _: 1
+                                        })
+                                      ]),
+                                      _: 1
+                                    }, 8, ["data-e2ee", "aria-label"])),
                                 (_ctx.room.bridged)
                                   ? (_openBlock(), _createBlock(_component_q_chip, {
-                                      key: 4,
+                                      key: 5,
                                       dense: "",
                                       square: "",
                                       icon: "sym_o_hub",
@@ -6814,7 +7317,7 @@ module.exports = {
                                   : _createCommentVNode("", true),
                                 (_ctx.room.notConnected)
                                   ? (_openBlock(), _createBlock(_component_q_chip, {
-                                      key: 5,
+                                      key: 6,
                                       dense: "",
                                       square: "",
                                       icon: "sym_o_link_off",
@@ -7401,6 +7904,51 @@ module.exports = {
                         : _createCommentVNode("", true)
                     ]),
                     _createVNode(_component_q_separator),
+                    (_ctx.room && _ctx.label.banner && !_ctx.bannerHidden)
+                      ? (_openBlock(), _createElementBlock("div", {
+                          key: 0,
+                          class: "row no-wrap items-center q-px-sm q-py-xs text-caption m-tonal m-chat-e2ee-banner",
+                          "data-e2ee": _ctx.label.state
+                        }, [
+                          _createVNode(_component_q_icon, {
+                            name: _ctx.label.icon,
+                            size: "16px",
+                            class: _normalizeClass(_ctx.label.lock ? 'text-positive' : 'm-muted')
+                          }, null, 8, ["name", "class"]),
+                          (_ctx.label.verified)
+                            ? (_openBlock(), _createBlock(_component_q_icon, {
+                                key: 0,
+                                name: "sym_o_check",
+                                size: "12px",
+                                class: "text-positive"
+                              }))
+                            : _createCommentVNode("", true),
+                          _createElementVNode("span", { class: "col q-ml-xs m-chat-e2ee-banner-text" }, _toDisplayString(_ctx.label.banner), 1),
+                          (_ctx.label.verify)
+                            ? (_openBlock(), _createBlock(_component_q_btn, {
+                                key: 1,
+                                flat: "",
+                                dense: "",
+                                "no-caps": "",
+                                size: "sm",
+                                color: "primary",
+                                class: "q-ml-xs m-chat-verify",
+                                label: _ctx.t('Verify'),
+                                onClick: $event => (_ctx.verifySomeone())
+                              }, null, 8, ["label", "onClick"]))
+                            : _createCommentVNode("", true),
+                          _createVNode(_component_q_btn, {
+                            flat: "",
+                            round: "",
+                            dense: "",
+                            size: "xs",
+                            icon: "sym_o_close",
+                            class: "q-ml-xs",
+                            "aria-label": _ctx.t('Close the note'),
+                            onClick: _ctx.closeBanner
+                          }, null, 8, ["aria-label", "onClick"])
+                        ], 8, ["data-e2ee"]))
+                      : _createCommentVNode("", true),
                     _createElementVNode("div", {
                       class: "col row no-wrap",
                       style: {"min-height":"0"}
@@ -7451,7 +7999,7 @@ module.exports = {
                                   class: "col column items-center justify-center q-pa-lg text-center m-muted"
                                 }, [
                                   _createVNode(_component_q_icon, {
-                                    name: "sym_o_lock",
+                                    name: "sym_o_block",
                                     size: "48px"
                                   }),
                                   _createElementVNode("div", { class: "text-subtitle2 q-mt-sm" }, _toDisplayString(_ctx.t('This conversation is not available')), 1),
@@ -7538,7 +8086,20 @@ module.exports = {
                                                       icon: _ctx.roomIcon
                                                     }, null, 8, ["icon"])),
                                                 _createElementVNode("div", { class: "text-subtitle1 text-weight-medium q-mt-sm" }, _toDisplayString(_ctx.displayName), 1),
-                                                _createElementVNode("div", { class: "text-caption m-muted" }, _toDisplayString(_ctx.startText), 1)
+                                                _createElementVNode("div", { class: "text-caption m-muted" }, _toDisplayString(_ctx.startText), 1),
+                                                (_ctx.label.banner)
+                                                  ? (_openBlock(), _createElementBlock("div", {
+                                                      key: 2,
+                                                      class: "text-caption m-muted q-mt-xs m-chat-e2ee-intro"
+                                                    }, [
+                                                      _createVNode(_component_q_icon, {
+                                                        name: _ctx.label.icon,
+                                                        size: "14px",
+                                                        class: "q-mr-xs"
+                                                      }, null, 8, ["name"]),
+                                                      _createElementVNode("span", { class: "m-chat-e2ee-intro-text" }, _toDisplayString(_ctx.label.banner), 1)
+                                                    ]))
+                                                  : _createCommentVNode("", true)
                                               ])),
                                         (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.items, (item) => {
                                           return (_openBlock(), _createElementBlock(_Fragment, {
@@ -8212,6 +8773,17 @@ module.exports = {
                                         class: "col scroll",
                                         style: {"min-height":"0"}
                                       }, [
+                                        _createElementVNode("div", {
+                                          class: "q-pa-sm text-caption row no-wrap items-start m-chat-room-label",
+                                          "data-e2ee": _ctx.label.state
+                                        }, [
+                                          _createVNode(_component_q_icon, {
+                                            name: _ctx.label.icon,
+                                            size: "16px",
+                                            class: _normalizeClass(["q-mr-xs", _ctx.label.lock ? 'text-positive' : 'm-muted'])
+                                          }, null, 8, ["name", "class"]),
+                                          _createElementVNode("span", { class: "col" }, _toDisplayString(_ctx.label.banner || _ctx.label.text), 1)
+                                        ], 8, ["data-e2ee"]),
                                         (_ctx.isMember && !_ctx.isDirect && !_ctx.access.isArchived)
                                           ? (_openBlock(), _createElementBlock("div", {
                                               key: 0,
@@ -8267,13 +8839,28 @@ module.exports = {
                                                                 key: 0,
                                                                 class: "m-muted"
                                                               }, " (" + _toDisplayString(_ctx.t('you')) + ")", 1))
+                                                            : _createCommentVNode("", true),
+                                                          (_ctx.personVerified(person.userId))
+                                                            ? (_openBlock(), _createBlock(_component_q_icon, {
+                                                                key: 1,
+                                                                name: "sym_o_verified",
+                                                                size: "14px",
+                                                                class: "text-positive q-ml-xs m-chat-person-verified",
+                                                                "aria-label": _ctx.t('Verified')
+                                                              }, null, 8, ["aria-label"]))
                                                             : _createCommentVNode("", true)
                                                         ]),
                                                         _: 2
                                                       }, 1024),
                                                       _createVNode(_component_q_item_label, { caption: "" }, {
                                                         default: _withCtx(() => [
-                                                          _createTextVNode(_toDisplayString(person.external ? _ctx.externalText(person) : _ctx.presenceText(person.userId)), 1)
+                                                          _createTextVNode(_toDisplayString(person.external ? _ctx.externalText(person) : _ctx.presenceText(person.userId)), 1),
+                                                          (_ctx.personChanged(person.userId))
+                                                            ? (_openBlock(), _createElementBlock("span", {
+                                                                key: 0,
+                                                                class: "text-warning"
+                                                              }, " · " + _toDisplayString(_ctx.t('new identity: verify them again')), 1))
+                                                            : _createCommentVNode("", true)
                                                         ]),
                                                         _: 2
                                                       }, 1024)
@@ -8285,9 +8872,24 @@ module.exports = {
                                                     class: "row no-wrap items-center"
                                                   }, {
                                                     default: _withCtx(() => [
+                                                      (_ctx.canVerify(person))
+                                                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                            key: 0,
+                                                            flat: "",
+                                                            dense: "",
+                                                            "no-caps": "",
+                                                            size: "sm",
+                                                            color: "primary",
+                                                            icon: "sym_o_verified_user",
+                                                            label: _ctx.t('Verify'),
+                                                            class: "m-chat-member-verify",
+                                                            "data-user": person.userId,
+                                                            onClick: $event => (_ctx.openVerify(person.userId))
+                                                          }, null, 8, ["label", "data-user", "onClick"]))
+                                                        : _createCommentVNode("", true),
                                                       (person.external)
                                                         ? (_openBlock(), _createBlock(_component_q_chip, {
-                                                            key: 0,
+                                                            key: 1,
                                                             dense: "",
                                                             square: "",
                                                             icon: "sym_o_hub",
@@ -8301,7 +8903,7 @@ module.exports = {
                                                         : _createCommentVNode("", true),
                                                       (person.roleEnumId === 'CmrOwner' && !_ctx.isDirect)
                                                         ? (_openBlock(), _createBlock(_component_q_chip, {
-                                                            key: 1,
+                                                            key: 2,
                                                             dense: "",
                                                             square: "",
                                                             class: "m-tonal"
@@ -8313,7 +8915,7 @@ module.exports = {
                                                           }))
                                                         : (person.roleEnumId === 'CmrModerator')
                                                           ? (_openBlock(), _createBlock(_component_q_chip, {
-                                                              key: 2,
+                                                              key: 3,
                                                               dense: "",
                                                               square: "",
                                                               class: "m-tonal text-info"
@@ -8326,7 +8928,7 @@ module.exports = {
                                                           : _createCommentVNode("", true),
                                                       (_ctx.canModerate && person.userId !== _ctx.me.userId && (_ctx.isOwner || person.roleEnumId !== 'CmrOwner'))
                                                         ? (_openBlock(), _createBlock(_component_q_btn, {
-                                                            key: 3,
+                                                            key: 4,
                                                             flat: "",
                                                             round: "",
                                                             dense: "",
@@ -8698,6 +9300,17 @@ module.exports = {
                       width: "560"
                     }, {
                       default: _withCtx(() => [
+                        _createElementVNode("div", {
+                          class: "q-mb-sm text-caption row no-wrap items-start m-chat-room-label",
+                          "data-e2ee": _ctx.label.state
+                        }, [
+                          _createVNode(_component_q_icon, {
+                            name: _ctx.label.icon,
+                            size: "16px",
+                            class: _normalizeClass(["q-mr-xs", _ctx.label.lock ? 'text-positive' : 'm-muted'])
+                          }, null, 8, ["name", "class"]),
+                          _createElementVNode("span", { class: "col" }, _toDisplayString(_ctx.label.banner || _ctx.label.text), 1)
+                        ], 8, ["data-e2ee"]),
                         _createVNode(_component_m_text_line, {
                           modelValue: _ctx.settings.roomName,
                           "onUpdate:modelValue": $event => ((_ctx.settings.roomName) = $event),
@@ -8791,7 +9404,17 @@ module.exports = {
                                                 }, _toDisplayString(bridge.connected ? _ctx.t('connected') : _ctx.t('not connected')), 3)
                                               ]),
                                               _: 2
-                                            }, 1024)
+                                            }, 1024),
+                                            _createVNode(_component_q_item_label, {
+                                              caption: "",
+                                              class: "m-chat-bridge-encryption",
+                                              "data-encryption": bridge.encryption
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(_ctx.bridgeEncryptionText(bridge.encryption)), 1)
+                                              ]),
+                                              _: 2
+                                            }, 1032, ["data-encryption"])
                                           ]),
                                           _: 2
                                         }, 1024),
@@ -8947,12 +9570,21 @@ module.exports = {
                             ], 64))
                           : _createCommentVNode("", true),
                         _createVNode(_component_q_toggle, {
-                          modelValue: _ctx.settings.callE2ee,
-                          "onUpdate:modelValue": $event => ((_ctx.settings.callE2ee) = $event),
+                          "model-value": _ctx.sealed || _ctx.settings.callE2ee,
+                          disable: _ctx.sealed,
                           label: _ctx.t('Calls in this room are end-to-end encrypted'),
-                          class: "q-mt-sm"
-                        }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
-                        _createElementVNode("div", { class: "text-caption m-muted" }, _toDisplayString(_ctx.t('Only the people in a call hear and see it: no recording, captions, phones or guests. This is apart from the encryption of the messages.')), 1),
+                          class: "q-mt-sm m-chat-room-call-e2ee",
+                          "onUpdate:modelValue": (value) => { _ctx.settings.callE2ee = value; }
+                        }, null, 8, ["model-value", "disable", "label", "onUpdate:modelValue"]),
+                        (_ctx.sealed)
+                          ? (_openBlock(), _createElementBlock("div", {
+                              key: 4,
+                              class: "text-caption m-muted"
+                            }, _toDisplayString(_ctx.t('Every call in an encrypted room is end-to-end encrypted: no recording, captions, phones or guests.')), 1))
+                          : (_openBlock(), _createElementBlock("div", {
+                              key: 5,
+                              class: "text-caption m-muted"
+                            }, _toDisplayString(_ctx.t('Only the people in a call hear and see it: no recording, captions, phones or guests. This is apart from the encryption of the messages.')), 1)),
                         _createElementVNode("div", { class: "row q-gutter-sm q-mt-md items-center" }, [
                           _createVNode(_component_q_btn, {
                             unelevated: "",
@@ -8981,6 +9613,193 @@ module.exports = {
                                 onClick: $event => (_ctx.setArchived(!(_ctx.room && _ctx.room.archivedDate)))
                               }, null, 8, ["icon", "label", "onClick"]))
                             : _createCommentVNode("", true)
+                        ])
+                      ]),
+                      _: 1
+                    }, 8, ["modelValue", "onUpdate:modelValue", "title"]),
+                    _createVNode(_component_m_dialog, {
+                      modelValue: _ctx.verifyBox.open,
+                      "onUpdate:modelValue": $event => ((_ctx.verifyBox.open) = $event),
+                      title: _ctx.verifyTitle,
+                      width: "520"
+                    }, {
+                      default: _withCtx(() => [
+                        _createElementVNode("div", { class: "text-caption m-muted q-mb-sm" }, _toDisplayString(_ctx.t('Compare emoji with them, on a call or side by side: when they match, their device is verified, and with cross-signing every device they signed.')), 1),
+                        _createVNode(_component_q_list, {
+                          dense: "",
+                          bordered: "",
+                          separator: "",
+                          class: "rounded-borders q-mb-sm m-chat-verify-devices"
+                        }, {
+                          default: _withCtx(() => [
+                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.verifyDevices, (device) => {
+                              return (_openBlock(), _createBlock(_component_q_item, {
+                                key: device.deviceId,
+                                "data-device": device.deviceId
+                              }, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_item_section, null, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_item_label, null, {
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(device.displayName || device.deviceId), 1)
+                                        ]),
+                                        _: 2
+                                      }, 1024),
+                                      _createVNode(_component_q_item_label, { caption: "" }, {
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(device.deviceId), 1)
+                                        ]),
+                                        _: 2
+                                      }, 1024)
+                                    ]),
+                                    _: 2
+                                  }, 1024),
+                                  _createVNode(_component_q_item_section, { side: "" }, {
+                                    default: _withCtx(() => [
+                                      (device.verified)
+                                        ? (_openBlock(), _createBlock(_component_q_badge, {
+                                            key: 0,
+                                            color: "positive"
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(_ctx.t('Verified')), 1)
+                                            ]),
+                                            _: 1
+                                          }))
+                                        : (_openBlock(), _createBlock(_component_q_btn, {
+                                            key: 1,
+                                            flat: "",
+                                            dense: "",
+                                            "no-caps": "",
+                                            color: "primary",
+                                            icon: "sym_o_verified_user",
+                                            label: _ctx.t('Verify'),
+                                            class: "m-chat-verify-device",
+                                            onClick: $event => (_ctx.verifyDevice(device))
+                                          }, null, 8, ["label", "onClick"]))
+                                    ]),
+                                    _: 2
+                                  }, 1024)
+                                ]),
+                                _: 2
+                              }, 1032, ["data-device"]))
+                            }), 128)),
+                            (!_ctx.verifyDevices.length)
+                              ? (_openBlock(), _createBlock(_component_q_item, { key: 0 }, {
+                                  default: _withCtx(() => [
+                                    _createVNode(_component_q_item_section, { class: "text-caption m-muted" }, {
+                                      default: _withCtx(() => [
+                                        _createTextVNode(_toDisplayString(_ctx.t('This browser knows no device of theirs yet.')), 1)
+                                      ]),
+                                      _: 1
+                                    })
+                                  ]),
+                                  _: 1
+                                }))
+                              : _createCommentVNode("", true)
+                          ]),
+                          _: 1
+                        }),
+                        (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.verifyFlows, (flow) => {
+                          return (_openBlock(), _createBlock(_component_m_chat_verification, {
+                            key: flow.flowId,
+                            flow: flow,
+                            who: _ctx.nameOf(flow.otherUserId),
+                            "can-retry": "",
+                            class: "q-mb-sm",
+                            onRetry: _ctx.retryVerify,
+                            onStep: _ctx.verifyStepped
+                          }, null, 8, ["flow", "who", "onRetry", "onStep"]))
+                        }), 128))
+                      ]),
+                      _: 1
+                    }, 8, ["modelValue", "onUpdate:modelValue", "title"]),
+                    _createVNode(_component_m_dialog, {
+                      "model-value": _ctx.incomingFlows.length > 0 && !_ctx.verifyBox.open,
+                      title: _ctx.t('Verify'),
+                      width: "520",
+                      "onUpdate:modelValue": (open) => { if (!open) _ctx.dismissIncoming(); }
+                    }, {
+                      default: _withCtx(() => [
+                        (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.incomingFlows, (flow) => {
+                          return (_openBlock(), _createBlock(_component_m_chat_verification, {
+                            key: flow.flowId,
+                            flow: flow,
+                            who: _ctx.incomingWho(flow),
+                            class: "q-mb-sm m-chat-incoming",
+                            onStep: _ctx.verifyStepped
+                          }, null, 8, ["flow", "who", "onStep"]))
+                        }), 128))
+                      ]),
+                      _: 1
+                    }, 8, ["model-value", "title", "onUpdate:modelValue"]),
+                    _createVNode(_component_m_dialog, {
+                      modelValue: _ctx.problemBox.open,
+                      "onUpdate:modelValue": $event => ((_ctx.problemBox.open) = $event),
+                      title: _ctx.t('Check before you send'),
+                      width: "520"
+                    }, {
+                      default: _withCtx(() => [
+                        _createElementVNode("div", { class: "text-body2 q-mb-sm" }, _toDisplayString(_ctx.t('Someone you verified has changed. Verify them before you send, or send anyway.')), 1),
+                        _createVNode(_component_q_list, {
+                          dense: "",
+                          class: "q-my-sm m-chat-problems"
+                        }, {
+                          default: _withCtx(() => [
+                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.problemBox.problems, (problem, index) => {
+                              return (_openBlock(), _createBlock(_component_q_item, {
+                                key: index,
+                                class: "q-px-none"
+                              }, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_item_section, null, {
+                                    default: _withCtx(() => [
+                                      _createTextVNode(_toDisplayString(_ctx.problemLines[index]), 1)
+                                    ]),
+                                    _: 2
+                                  }, 1024),
+                                  _createVNode(_component_q_item_section, { side: "" }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_btn, {
+                                        flat: "",
+                                        dense: "",
+                                        "no-caps": "",
+                                        color: "primary",
+                                        icon: "sym_o_verified_user",
+                                        label: _ctx.t('Verify'),
+                                        class: "m-chat-problem-verify",
+                                        "data-user": problem.userId,
+                                        onClick: $event => (_ctx.verifyProblem(problem))
+                                      }, null, 8, ["label", "data-user", "onClick"])
+                                    ]),
+                                    _: 2
+                                  }, 1024)
+                                ]),
+                                _: 2
+                              }, 1024))
+                            }), 128))
+                          ]),
+                          _: 1
+                        }),
+                        _createElementVNode("div", { class: "text-caption m-muted" }, _toDisplayString(_ctx.t('Send anyway: each new device listed gets the keys of this room from this message on, and each new identity is used here; they stay not verified, and you are asked again for any other change.')), 1),
+                        _createElementVNode("div", { class: "row q-gutter-sm q-mt-md" }, [
+                          _createVNode(_component_q_btn, {
+                            unelevated: "",
+                            "no-caps": "",
+                            color: "primary",
+                            label: _ctx.t('Send anyway'),
+                            loading: _ctx.problemBox.busy,
+                            class: "m-chat-problem-send",
+                            onClick: _ctx.sendAnyway
+                          }, null, 8, ["label", "loading", "onClick"]),
+                          _withDirectives(_createVNode(_component_q_btn, {
+                            flat: "",
+                            "no-caps": "",
+                            label: _ctx.t('Cancel')
+                          }, null, 8, ["label"]), [
+                            [_directive_close_popup]
+                          ])
                         ])
                       ]),
                       _: 1
@@ -9251,271 +10070,182 @@ module.exports = {
                               style: {"width":"100%","max-width":"560px","border-radius":"16px 16px 0 0"}
                             }, {
                               default: _withCtx(() => [
-                                (_ctx.canPost && _ctx.bridgeCaps.reaction)
-                                  ? (_openBlock(), _createElementBlock("div", {
-                                      key: 0,
-                                      class: "row no-wrap items-center justify-between q-px-sm q-pt-sm"
-                                    }, [
-                                      (_openBlock(true), _createElementBlock(_Fragment, null, _renderList((_ctx.sheet.allEmoji ? [] : _ctx.quickReactions), (key) => {
-                                        return (_openBlock(), _createBlock(_component_q_btn, {
-                                          key: key,
-                                          flat: "",
-                                          dense: "",
-                                          class: "m-chat-sheet-emoji",
-                                          style: {"flex":"1 1 0","min-width":"0","font-size":"22px","padding":"6px 0"},
-                                          label: key,
-                                          "aria-label": _ctx.t('React with') + ' ' + key,
-                                          onClick: $event => (_ctx.sheetDo(() => _ctx.react(_ctx.sheet.item, key)))
-                                        }, null, 8, ["label", "aria-label", "onClick"]))
-                                      }), 128)),
-                                      (!_ctx.sheet.allEmoji)
-                                        ? (_openBlock(), _createBlock(_component_q_btn, {
-                                            key: 0,
-                                            flat: "",
-                                            dense: "",
-                                            icon: "sym_o_add_reaction",
-                                            style: {"flex":"1 1 0","min-width":"0","padding":"6px 0"},
-                                            "aria-label": _ctx.t('More reactions'),
-                                            onClick: $event => (_ctx.sheet.allEmoji = true)
-                                          }, null, 8, ["aria-label", "onClick"]))
-                                        : _createCommentVNode("", true)
-                                    ]))
-                                  : _createCommentVNode("", true),
-                                (_ctx.sheet.allEmoji)
-                                  ? (_openBlock(), _createElementBlock("div", {
-                                      key: 1,
-                                      class: "row q-pa-sm justify-center"
-                                    }, [
-                                      (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.emoji, (key) => {
-                                        return (_openBlock(), _createBlock(_component_q_btn, {
-                                          key: key,
-                                          flat: "",
-                                          dense: "",
-                                          size: "md",
-                                          class: "q-px-xs",
-                                          label: key,
-                                          "aria-label": _ctx.t('React with') + ' ' + key,
-                                          onClick: $event => (_ctx.sheetDo(() => _ctx.react(_ctx.sheet.item, key)))
-                                        }, null, 8, ["label", "aria-label", "onClick"]))
-                                      }), 128))
-                                    ]))
-                                  : (_openBlock(), _createBlock(_component_q_list, {
-                                      key: 2,
-                                      class: "q-pb-sm"
-                                    }, {
-                                      default: _withCtx(() => [
-                                        (_ctx.canPost && !_ctx.sheet.inThread)
-                                          ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
-                                              _createVNode(_component_q_item, {
-                                                clickable: "",
-                                                onClick: $event => (_ctx.sheetDo(() => _ctx.startReply(_ctx.sheet.item)))
-                                              }, {
-                                                default: _withCtx(() => [
-                                                  _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                    default: _withCtx(() => [
-                                                      _createVNode(_component_q_icon, { name: "sym_o_reply" })
-                                                    ]),
-                                                    _: 1
-                                                  }),
-                                                  _createVNode(_component_q_item_section, null, {
-                                                    default: _withCtx(() => [
-                                                      _createTextVNode(_toDisplayString(_ctx.t('Reply')), 1)
-                                                    ]),
-                                                    _: 1
-                                                  })
-                                                ]),
-                                                _: 1
-                                              }, 8, ["onClick"]),
-                                              _createVNode(_component_q_item, {
-                                                clickable: "",
-                                                onClick: $event => (_ctx.sheetDo(() => _ctx.openThread(_ctx.sheet.item.eventSeq)))
-                                              }, {
-                                                default: _withCtx(() => [
-                                                  _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                    default: _withCtx(() => [
-                                                      _createVNode(_component_q_icon, { name: "sym_o_forum" })
-                                                    ]),
-                                                    _: 1
-                                                  }),
-                                                  _createVNode(_component_q_item_section, null, {
-                                                    default: _withCtx(() => [
-                                                      _createTextVNode(_toDisplayString(_ctx.t('Reply in thread')), 1)
-                                                    ]),
-                                                    _: 1
-                                                  })
-                                                ]),
-                                                _: 1
-                                              }, 8, ["onClick"])
-                                            ], 64))
-                                          : _createCommentVNode("", true),
-                                        _createVNode(_component_q_item, {
-                                          clickable: "",
-                                          onClick: $event => (_ctx.sheetDo(() => _ctx.copyText(_ctx.sheet.item)))
-                                        }, {
-                                          default: _withCtx(() => [
-                                            _createVNode(_component_q_item_section, { avatar: "" }, {
-                                              default: _withCtx(() => [
-                                                _createVNode(_component_q_icon, { name: "sym_o_content_copy" })
-                                              ]),
-                                              _: 1
-                                            }),
-                                            _createVNode(_component_q_item_section, null, {
-                                              default: _withCtx(() => [
-                                                _createTextVNode(_toDisplayString(_ctx.t('Copy text')), 1)
-                                              ]),
-                                              _: 1
-                                            })
-                                          ]),
-                                          _: 1
-                                        }, 8, ["onClick"]),
-                                        (_ctx.isMember && !_ctx.sealed)
-                                          ? (_openBlock(), _createBlock(_component_q_item, {
-                                              key: 1,
-                                              clickable: "",
-                                              onClick: $event => (_ctx.sheetDo(() => _ctx.openForward(_ctx.sheet.item)))
-                                            }, {
-                                              default: _withCtx(() => [
-                                                _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                  default: _withCtx(() => [
-                                                    _createVNode(_component_q_icon, { name: "sym_o_forward" })
-                                                  ]),
-                                                  _: 1
-                                                }),
-                                                _createVNode(_component_q_item_section, null, {
-                                                  default: _withCtx(() => [
-                                                    _createTextVNode(_toDisplayString(_ctx.t('Forward…')), 1)
-                                                  ]),
-                                                  _: 1
-                                                })
-                                              ]),
-                                              _: 1
-                                            }, 8, ["onClick"]))
-                                          : _createCommentVNode("", true),
-                                        (_ctx.canEdit(_ctx.sheet.item))
-                                          ? (_openBlock(), _createBlock(_component_q_item, {
-                                              key: 2,
-                                              clickable: "",
-                                              onClick: $event => (_ctx.sheetDo(() => _ctx.startEdit(_ctx.sheet.item)))
-                                            }, {
-                                              default: _withCtx(() => [
-                                                _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                  default: _withCtx(() => [
-                                                    _createVNode(_component_q_icon, { name: "sym_o_edit" })
-                                                  ]),
-                                                  _: 1
-                                                }),
-                                                _createVNode(_component_q_item_section, null, {
-                                                  default: _withCtx(() => [
-                                                    _createTextVNode(_toDisplayString(_ctx.t('Edit')), 1)
-                                                  ]),
-                                                  _: 1
-                                                })
-                                              ]),
-                                              _: 1
-                                            }, 8, ["onClick"]))
-                                          : _createCommentVNode("", true),
-                                        (_ctx.canPost)
-                                          ? (_openBlock(), _createBlock(_component_q_item, {
-                                              key: 3,
-                                              clickable: "",
-                                              onClick: $event => (_ctx.sheetDo(() => _ctx.pin(_ctx.sheet.item, !_ctx.sheet.item.pinned)))
-                                            }, {
-                                              default: _withCtx(() => [
-                                                _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                  default: _withCtx(() => [
-                                                    _createVNode(_component_q_icon, { name: "sym_o_keep" })
-                                                  ]),
-                                                  _: 1
-                                                }),
-                                                _createVNode(_component_q_item_section, null, {
-                                                  default: _withCtx(() => [
-                                                    _createTextVNode(_toDisplayString(_ctx.sheet.item.pinned ? _ctx.t('Unpin') : _ctx.t('Pin to the room')), 1)
-                                                  ]),
-                                                  _: 1
-                                                })
-                                              ]),
-                                              _: 1
-                                            }, 8, ["onClick"]))
-                                          : _createCommentVNode("", true),
-                                        (_ctx.isMember && !_ctx.sheet.inThread)
-                                          ? (_openBlock(), _createBlock(_component_q_item, {
-                                              key: 4,
-                                              clickable: "",
-                                              onClick: $event => (_ctx.sheetDo(() => _ctx.markUnreadFrom(_ctx.sheet.item)))
-                                            }, {
-                                              default: _withCtx(() => [
-                                                _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                  default: _withCtx(() => [
-                                                    _createVNode(_component_q_icon, { name: "sym_o_mark_chat_unread" })
-                                                  ]),
-                                                  _: 1
-                                                }),
-                                                _createVNode(_component_q_item_section, null, {
-                                                  default: _withCtx(() => [
-                                                    _createTextVNode(_toDisplayString(_ctx.t('Mark unread from here')), 1)
-                                                  ]),
-                                                  _: 1
-                                                })
-                                              ]),
-                                              _: 1
-                                            }, 8, ["onClick"]))
-                                          : _createCommentVNode("", true),
-                                        _createVNode(_component_q_item, {
-                                          clickable: "",
-                                          onClick: $event => (_ctx.sheetDo(() => _ctx.copyLink(_ctx.sheet.item)))
-                                        }, {
-                                          default: _withCtx(() => [
-                                            _createVNode(_component_q_item_section, { avatar: "" }, {
-                                              default: _withCtx(() => [
-                                                _createVNode(_component_q_icon, { name: "sym_o_link" })
-                                              ]),
-                                              _: 1
-                                            }),
-                                            _createVNode(_component_q_item_section, null, {
-                                              default: _withCtx(() => [
-                                                _createTextVNode(_toDisplayString(_ctx.t('Copy link')), 1)
-                                              ]),
-                                              _: 1
-                                            })
-                                          ]),
-                                          _: 1
-                                        }, 8, ["onClick"]),
-                                        (_ctx.canRedact(_ctx.sheet.item))
-                                          ? (_openBlock(), _createBlock(_component_q_item, {
-                                              key: 5,
-                                              clickable: "",
-                                              onClick: $event => (_ctx.sheetDo(() => _ctx.redact(_ctx.sheet.item)))
-                                            }, {
-                                              default: _withCtx(() => [
-                                                _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                  default: _withCtx(() => [
-                                                    _createVNode(_component_q_icon, {
-                                                      name: "sym_o_delete",
-                                                      color: "negative"
-                                                    })
-                                                  ]),
-                                                  _: 1
-                                                }),
-                                                _createVNode(_component_q_item_section, { class: "text-negative" }, {
-                                                  default: _withCtx(() => [
-                                                    _createTextVNode(_toDisplayString(_ctx.t('Delete message')), 1)
-                                                  ]),
-                                                  _: 1
-                                                })
-                                              ]),
-                                              _: 1
-                                            }, 8, ["onClick"]))
-                                          : _createCommentVNode("", true)
-                                      ]),
-                                      _: 1
-                                    }))
+                                _createVNode(_component_chat_message_menu, {
+                                  room: _ctx.self,
+                                  item: _ctx.sheet.item,
+                                  "in-thread": _ctx.sheet.inThread,
+                                  reactions: "",
+                                  onDone: $event => (_ctx.sheet.open = false)
+                                }, null, 8, ["room", "item", "in-thread", "onDone"])
                               ]),
                               _: 1
                             }))
                           : _createCommentVNode("", true)
                       ]),
                       _: 1
-                    }, 8, ["modelValue", "onUpdate:modelValue", "onHide"])
+                    }, 8, ["modelValue", "onUpdate:modelValue", "onHide"]),
+                    _createVNode(_component_q_dialog, {
+                      modelValue: _ctx.peopleBox.open,
+                      "onUpdate:modelValue": $event => ((_ctx.peopleBox.open) = $event),
+                      position: _ctx.useBubbles ? 'bottom' : 'standard'
+                    }, {
+                      default: _withCtx(() => [
+                        _createVNode(_component_q_card, {
+                          class: "m-chat-people",
+                          style: _normalizeStyle(_ctx.useBubbles ? 'width:100%;max-width:560px;border-radius:16px 16px 0 0' : 'width:100%;max-width:400px')
+                        }, {
+                          default: _withCtx(() => [
+                            _createVNode(_component_q_card_section, { class: "row items-center no-wrap q-pb-xs" }, {
+                              default: _withCtx(() => [
+                                _createElementVNode("div", { class: "col text-subtitle1 ellipsis" }, _toDisplayString(_ctx.peopleBox.title), 1),
+                                _withDirectives(_createVNode(_component_q_btn, {
+                                  flat: "",
+                                  round: "",
+                                  dense: "",
+                                  icon: "sym_o_close",
+                                  "aria-label": _ctx.t('Close')
+                                }, null, 8, ["aria-label"]), [
+                                  [_directive_close_popup]
+                                ])
+                              ]),
+                              _: 1
+                            }),
+                            _createVNode(_component_q_list, {
+                              class: "q-pb-sm scroll",
+                              style: {"max-height":"50vh"}
+                            }, {
+                              default: _withCtx(() => [
+                                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.peopleBox.people, (person) => {
+                                  return (_openBlock(), _createBlock(_component_q_item, {
+                                    key: person.userId,
+                                    "data-person": person.userId
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_item_section, { avatar: "" }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_m_avatar, {
+                                            name: person.name,
+                                            "user-id": person.userId,
+                                            size: "32px"
+                                          }, null, 8, ["name", "user-id"])
+                                        ]),
+                                        _: 2
+                                      }, 1024),
+                                      _createVNode(_component_q_item_section, null, {
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(person.name), 1)
+                                        ]),
+                                        _: 2
+                                      }, 1024),
+                                      (person.detail)
+                                        ? (_openBlock(), _createBlock(_component_q_item_section, {
+                                            key: 0,
+                                            side: "",
+                                            class: "text-body1"
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(person.detail), 1)
+                                            ]),
+                                            _: 2
+                                          }, 1024))
+                                        : _createCommentVNode("", true)
+                                    ]),
+                                    _: 2
+                                  }, 1032, ["data-person"]))
+                                }), 128))
+                              ]),
+                              _: 1
+                            })
+                          ]),
+                          _: 1
+                        }, 8, ["style"])
+                      ]),
+                      _: 1
+                    }, 8, ["modelValue", "onUpdate:modelValue", "position"]),
+                    _createVNode(_component_q_dialog, {
+                      modelValue: _ctx.infoBox.open,
+                      "onUpdate:modelValue": $event => ((_ctx.infoBox.open) = $event),
+                      position: _ctx.useBubbles ? 'bottom' : 'standard',
+                      onHide: $event => (_ctx.infoBox.item = null)
+                    }, {
+                      default: _withCtx(() => [
+                        (_ctx.infoBox.item)
+                          ? (_openBlock(), _createBlock(_component_q_card, {
+                              key: 0,
+                              class: "m-chat-info",
+                              style: _normalizeStyle(_ctx.useBubbles ? 'width:100%;max-width:560px;border-radius:16px 16px 0 0' : 'width:100%;max-width:480px')
+                            }, {
+                              default: _withCtx(() => [
+                                _createVNode(_component_q_card_section, { class: "row items-center no-wrap q-pb-xs" }, {
+                                  default: _withCtx(() => [
+                                    _createElementVNode("div", { class: "col text-subtitle1" }, _toDisplayString(_ctx.t('Message info')), 1),
+                                    _withDirectives(_createVNode(_component_q_btn, {
+                                      flat: "",
+                                      round: "",
+                                      dense: "",
+                                      icon: "sym_o_close",
+                                      "aria-label": _ctx.t('Close')
+                                    }, null, 8, ["aria-label"]), [
+                                      [_directive_close_popup]
+                                    ])
+                                  ]),
+                                  _: 1
+                                }),
+                                _createVNode(_component_q_card_section, { class: "q-pt-none relative-position" }, {
+                                  default: _withCtx(() => [
+                                    _createElementVNode("div", { class: "text-caption m-muted ellipsis-2-lines q-mb-xs" }, _toDisplayString(_ctx.infoBox.item.senderName) + ": " + _toDisplayString(_ctx.snippetOf(_ctx.infoBox.item.event)), 1),
+                                    _createVNode(_component_q_list, { dense: "" }, {
+                                      default: _withCtx(() => [
+                                        (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.infoLines, (line, index) => {
+                                          return (_openBlock(), _createBlock(_component_q_item, {
+                                            key: index,
+                                            class: "q-px-none",
+                                            "data-info": line.key,
+                                            "data-state": line.state || undefined
+                                          }, {
+                                            default: _withCtx(() => [
+                                              (line.label)
+                                                ? (_openBlock(), _createBlock(_component_q_item_section, {
+                                                    key: 0,
+                                                    side: "",
+                                                    top: "",
+                                                    class: "text-weight-medium text-body2",
+                                                    style: {"min-width":"96px","max-width":"40%"}
+                                                  }, {
+                                                    default: _withCtx(() => [
+                                                      _createTextVNode(_toDisplayString(line.label), 1)
+                                                    ]),
+                                                    _: 2
+                                                  }, 1024))
+                                                : _createCommentVNode("", true),
+                                              _createVNode(_component_q_item_section, {
+                                                class: _normalizeClass(line.key === 'note' ? 'text-caption m-muted' : 'text-body2')
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(line.text), 1)
+                                                ]),
+                                                _: 2
+                                              }, 1032, ["class"])
+                                            ]),
+                                            _: 2
+                                          }, 1032, ["data-info", "data-state"]))
+                                        }), 128))
+                                      ]),
+                                      _: 1
+                                    }),
+                                    _createVNode(_component_q_inner_loading, {
+                                      showing: _ctx.infoBox.loading
+                                    }, null, 8, ["showing"])
+                                  ]),
+                                  _: 1
+                                })
+                              ]),
+                              _: 1
+                            }, 8, ["style"]))
+                          : _createCommentVNode("", true)
+                      ]),
+                      _: 1
+                    }, 8, ["modelValue", "onUpdate:modelValue", "position", "onHide"])
                   ], 42, ["onDragover", "onDragleave", "onDrop"]))
                 }
             })();
@@ -9537,6 +10267,7 @@ module.exports = {
                   const _component_q_item = _resolveComponent("q-item")
                   const _component_q_list = _resolveComponent("q-list")
                   const _component_q_menu = _resolveComponent("q-menu")
+                  const _component_m_emoji_picker = _resolveComponent("m-emoji-picker")
                   const _component_q_space = _resolveComponent("q-space")
                   const _component_m_file = _resolveComponent("m-file")
                   const _directive_close_popup = _resolveDirective("close-popup")
@@ -9749,31 +10480,20 @@ module.exports = {
                             _: 1
                           }),
                           _createVNode(_component_q_menu, {
+                            ref: "emojiMenu",
                             anchor: "top left",
-                            self: "bottom left"
+                            self: "bottom left",
+                            class: "m-chat-emoji-menu"
                           }, {
                             default: _withCtx(() => [
-                              _createElementVNode("div", {
-                                class: "q-pa-xs row",
-                                style: {"width":"236px"}
-                              }, [
-                                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.room.emoji, (key) => {
-                                  return _withDirectives((_openBlock(), _createBlock(_component_q_btn, {
-                                    key: key,
-                                    flat: "",
-                                    dense: "",
-                                    size: "sm",
-                                    class: "q-px-xs",
-                                    label: key,
-                                    onClick: $event => (_ctx.insert(key))
-                                  }, null, 8, ["label", "onClick"])), [
-                                    [_directive_close_popup]
-                                  ])
-                                }), 128))
-                              ])
+                              _createVNode(_component_m_emoji_picker, {
+                                "user-id": _ctx.room.me.userId || '',
+                                autofocus: !_ctx.room.mobile,
+                                onPick: (key) => { _ctx.$refs.emojiMenu.hide(); _ctx.insert(key); }
+                              }, null, 8, ["user-id", "autofocus", "onPick"])
                             ]),
                             _: 1
-                          })
+                          }, 512)
                         ]),
                         _: 1
                       }, 8, ["aria-label"]),
@@ -9874,13 +10594,13 @@ module.exports = {
         {
             const target = component.components["chat-room"].components["chat-message"];
             target.render = (function () {
-                const { normalizeClass: _normalizeClass, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementBlock: _createElementBlock, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, withModifiers: _withModifiers, renderList: _renderList, Fragment: _Fragment, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeStyle: _normalizeStyle } = Vue
+                const { normalizeClass: _normalizeClass, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementBlock: _createElementBlock, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, withModifiers: _withModifiers, renderList: _renderList, Fragment: _Fragment, withKeys: _withKeys, normalizeStyle: _normalizeStyle } = Vue
 
                 return function render(_ctx, _cache) {
                   const _component_m_avatar = _resolveComponent("m-avatar")
-                  const _component_q_chip = _resolveComponent("q-chip")
-                  const _component_q_tooltip = _resolveComponent("q-tooltip")
                   const _component_q_icon = _resolveComponent("q-icon")
+                  const _component_q_tooltip = _resolveComponent("q-tooltip")
+                  const _component_q_chip = _resolveComponent("q-chip")
                   const _component_chat_edit = _resolveComponent("chat-edit")
                   const _component_q_item_section = _resolveComponent("q-item-section")
                   const _component_q_item_label = _resolveComponent("q-item-label")
@@ -9891,11 +10611,9 @@ module.exports = {
                   const _component_q_card = _resolveComponent("q-card")
                   const _component_m_record_card = _resolveComponent("m-record-card")
                   const _component_q_spinner = _resolveComponent("q-spinner")
+                  const _component_m_emoji_picker = _resolveComponent("m-emoji-picker")
                   const _component_q_menu = _resolveComponent("q-menu")
-                  const _component_q_separator = _resolveComponent("q-separator")
-                  const _component_m_ext_actions = _resolveComponent("m-ext-actions")
-                  const _component_q_list = _resolveComponent("q-list")
-                  const _directive_close_popup = _resolveDirective("close-popup")
+                  const _component_chat_message_menu = _resolveComponent("chat-message-menu")
 
                   return (_openBlock(), _createElementBlock("div", {
                     class: _normalizeClass(["row no-wrap relative-position q-pl-xs q-pr-sm m-chat-msg", [_ctx.item.grouped ? 'm-chat-grouped' : 'q-mt-sm', _ctx.room.useBubbles ? 'm-chat-bubble' : '',
@@ -9914,7 +10632,7 @@ module.exports = {
                     onTouchmovePassive: $event => (_ctx.room.holdMove($event)),
                     onTouchend: $event => (_ctx.room.holdEnd($event)),
                     onTouchcancel: $event => (_ctx.room.holdEnd($event)),
-                    onContextmenu: $event => (_ctx.room.contextMenu(_ctx.item, _ctx.inThread, $event)),
+                    onContextmenu: $event => (_ctx.contextMenu($event)),
                     style: _normalizeStyle(_ctx.room.swipeStyle(_ctx.item, _ctx.inThread))
                   }, [
                     _createElementVNode("div", {
@@ -9951,9 +10669,36 @@ module.exports = {
                             class: "row items-baseline no-wrap m-chat-head"
                           }, [
                             _createElementVNode("span", { class: "text-weight-medium ellipsis m-chat-name" }, _toDisplayString(_ctx.item.senderName), 1),
+                            (_ctx.room.personVerified(_ctx.item.senderUserId) && _ctx.item.verifiedSender !== false)
+                              ? (_openBlock(), _createBlock(_component_q_icon, {
+                                  key: 0,
+                                  name: "sym_o_verified",
+                                  size: "14px",
+                                  class: "text-positive q-ml-xs m-chat-person-verified",
+                                  "aria-label": _ctx.room.t('Verified')
+                                }, null, 8, ["aria-label"]))
+                              : (_ctx.room.personVerified(_ctx.item.senderUserId) && _ctx.item.verifiedSender === false)
+                                ? (_openBlock(), _createBlock(_component_q_icon, {
+                                    key: 1,
+                                    name: "sym_o_gpp_maybe",
+                                    size: "14px",
+                                    class: "text-warning q-ml-xs m-chat-sender-unverified",
+                                    "aria-label": _ctx.room.t('Sent from a device of theirs that is not verified')
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_tooltip, null, {
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(_ctx.room.t('Sent from a device of theirs that is not verified')), 1)
+                                        ]),
+                                        _: 1
+                                      })
+                                    ]),
+                                    _: 1
+                                  }, 8, ["aria-label"]))
+                                : _createCommentVNode("", true),
                             (_ctx.item.event.senderExternal)
                               ? (_openBlock(), _createBlock(_component_q_chip, {
-                                  key: 0,
+                                  key: 2,
                                   dense: "",
                                   square: "",
                                   size: "sm",
@@ -9977,7 +10722,7 @@ module.exports = {
                             ]),
                             (_ctx.item.pinned)
                               ? (_openBlock(), _createBlock(_component_q_icon, {
-                                  key: 1,
+                                  key: 3,
                                   name: "sym_o_keep",
                                   size: "14px",
                                   color: "primary",
@@ -10023,15 +10768,16 @@ module.exports = {
                         : (_ctx.item.undecryptable)
                           ? (_openBlock(), _createElementBlock("div", {
                               key: 3,
-                              class: "text-body2 m-muted text-italic m-chat-undecryptable"
+                              class: "text-body2 m-muted text-italic m-chat-undecryptable",
+                              "data-withheld": _ctx.item.withheld || undefined
                             }, [
                               _createVNode(_component_q_icon, {
                                 name: "sym_o_lock",
                                 size: "16px",
                                 class: "q-mr-xs"
                               }),
-                              _createTextVNode(_toDisplayString(_ctx.room.t('Encrypted message: this device has no key for it yet. Restore your key backup in Settings, My devices, or keep this page open while another of your devices shares it.')), 1)
-                            ]))
+                              _createTextVNode(_toDisplayString(_ctx.room.undecryptableText(_ctx.item)), 1)
+                            ], 8, ["data-withheld"]))
                           : (_openBlock(), _createElementBlock(_Fragment, { key: 4 }, [
                               (_ctx.room.isEditing(_ctx.item))
                                 ? (_openBlock(), _createBlock(_component_chat_edit, {
@@ -10121,7 +10867,14 @@ module.exports = {
                                           class: "rounded-borders q-px-xs",
                                           disable: !_ctx.room.canVote(_ctx.item),
                                           "data-option": option.id,
-                                          onClick: _withModifiers($event => (_ctx.room.vote(_ctx.item, option)), ["stop"])
+                                          "aria-keyshortcuts": option.voterIds && option.voterIds.length ? 'Shift+Enter' : undefined,
+                                          onClick: _withModifiers($event => (_ctx.room.pressed() || _ctx.room.vote(_ctx.item, option)), ["stop"]),
+                                          onTouchstartPassive: $event => (_ctx.room.pressStart({ kind: 'voters', item: _ctx.item, option }, $event)),
+                                          onTouchmovePassive: $event => (_ctx.room.pressCancel()),
+                                          onTouchend: $event => (_ctx.room.pressEnd($event)),
+                                          onTouchcancel: $event => (_ctx.room.pressEnd($event)),
+                                          onContextmenu: _withModifiers($event => (_ctx.room.pressMenu({ kind: 'voters', item: _ctx.item, option })), ["prevent","stop"]),
+                                          onKeydown: _withKeys(_withModifiers($event => (_ctx.room.pressMenu({ kind: 'voters', item: _ctx.item, option })), ["shift","prevent","stop"]), ["enter"])
                                         }, {
                                           default: _withCtx(() => [
                                             _createVNode(_component_q_item_section, {
@@ -10161,7 +10914,7 @@ module.exports = {
                                             }, {
                                               default: _withCtx(() => [
                                                 _createTextVNode(_toDisplayString(option.voteCount), 1),
-                                                (option.voterIds && option.voterIds.length)
+                                                (!_ctx.room.mobile && option.voterIds && option.voterIds.length)
                                                   ? (_openBlock(), _createBlock(_component_q_tooltip, { key: 0 }, {
                                                       default: _withCtx(() => [
                                                         _createTextVNode(_toDisplayString(_ctx.room.votersText(option)), 1)
@@ -10174,7 +10927,7 @@ module.exports = {
                                             }, 1024)
                                           ]),
                                           _: 2
-                                        }, 1032, ["disable", "data-option", "onClick"]))
+                                        }, 1032, ["disable", "data-option", "aria-keyshortcuts", "onClick", "onTouchstartPassive", "onTouchmovePassive", "onTouchend", "onTouchcancel", "onContextmenu", "onKeydown"]))
                                       }), 128)),
                                       _createElementVNode("div", { class: "row items-center no-wrap text-caption m-muted q-mt-xs" }, [
                                         _createElementVNode("span", { class: "ellipsis" }, _toDisplayString(_ctx.room.pollFooter(_ctx.item.poll)), 1),
@@ -10345,21 +11098,32 @@ module.exports = {
                                         outline: !reaction.mine,
                                         color: reaction.mine ? 'primary' : undefined,
                                         "text-color": reaction.mine ? 'white' : undefined,
-                                        class: "q-ml-none q-mr-xs",
+                                        class: "q-ml-none q-mr-xs m-chat-reaction",
+                                        "data-reaction": reaction.key,
+                                        "aria-label": _ctx.room.reactionLabel(reaction),
+                                        "aria-keyshortcuts": "Shift+Enter",
                                         disable: !_ctx.room.canPost || !_ctx.room.bridgeCaps.reaction,
-                                        onClick: _withModifiers($event => (_ctx.room.react(_ctx.item, reaction.key)), ["stop"])
+                                        onClick: _withModifiers($event => (_ctx.room.pressed() || _ctx.room.react(_ctx.item, reaction.key)), ["stop"]),
+                                        onTouchstartPassive: $event => (_ctx.room.pressStart({ kind: 'reactors', item: _ctx.item, reaction }, $event)),
+                                        onTouchmovePassive: $event => (_ctx.room.pressCancel()),
+                                        onTouchend: $event => (_ctx.room.pressEnd($event)),
+                                        onTouchcancel: $event => (_ctx.room.pressEnd($event)),
+                                        onContextmenu: _withModifiers($event => (_ctx.room.pressMenu({ kind: 'reactors', item: _ctx.item, reaction })), ["prevent","stop"]),
+                                        onKeydown: _withKeys(_withModifiers($event => (_ctx.room.pressMenu({ kind: 'reactors', item: _ctx.item, reaction })), ["shift","prevent","stop"]), ["enter"])
                                       }, {
                                         default: _withCtx(() => [
                                           _createTextVNode(_toDisplayString(reaction.key) + " " + _toDisplayString(reaction.count), 1),
-                                          _createVNode(_component_q_tooltip, null, {
-                                            default: _withCtx(() => [
-                                              _createTextVNode(_toDisplayString(_ctx.room.reactorsText(reaction)), 1)
-                                            ]),
-                                            _: 2
-                                          }, 1024)
+                                          (!_ctx.room.mobile)
+                                            ? (_openBlock(), _createBlock(_component_q_tooltip, { key: 0 }, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.room.reactorsText(reaction)), 1)
+                                                ]),
+                                                _: 2
+                                              }, 1024))
+                                            : _createCommentVNode("", true)
                                         ]),
                                         _: 2
-                                      }, 1032, ["outline", "color", "text-color", "disable", "onClick"]))
+                                      }, 1032, ["outline", "color", "text-color", "data-reaction", "aria-label", "disable", "onClick", "onTouchstartPassive", "onTouchmovePassive", "onTouchend", "onTouchcancel", "onContextmenu", "onKeydown"]))
                                     }), 128))
                                   ]))
                                 : _createCommentVNode("", true),
@@ -10376,9 +11140,32 @@ module.exports = {
                                     _createElementVNode("span", { class: "text-caption m-muted" }, " · " + _toDisplayString(_ctx.room.t('last reply')) + " " + _toDisplayString(_ctx.room.shortWhen(_ctx.item.threadLastDate)), 1)
                                   ]))
                                 : _createCommentVNode("", true),
-                              (_ctx.item.event.delivery)
+                              (_ctx.item.mine && _ctx.room.leftOutBySeq[_ctx.item.eventSeq])
                                 ? (_openBlock(), _createElementBlock("div", {
                                     key: 10,
+                                    class: "row items-center no-wrap q-mt-xs text-caption text-warning m-chat-left-out"
+                                  }, [
+                                    _createVNode(_component_q_icon, {
+                                      name: "sym_o_visibility_off",
+                                      size: "14px",
+                                      class: "q-mr-xs"
+                                    }),
+                                    _createElementVNode("span", { class: "ellipsis" }, _toDisplayString(_ctx.room.leftOutBySeq[_ctx.item.eventSeq]), 1),
+                                    _createVNode(_component_q_btn, {
+                                      flat: "",
+                                      dense: "",
+                                      "no-caps": "",
+                                      size: "sm",
+                                      color: "primary",
+                                      class: "q-ml-xs m-chat-left-out-verify",
+                                      label: _ctx.room.t('Verify'),
+                                      onClick: _withModifiers($event => (_ctx.room.verifySomeone()), ["stop"])
+                                    }, null, 8, ["label", "onClick"])
+                                  ]))
+                                : _createCommentVNode("", true),
+                              (_ctx.item.event.delivery)
+                                ? (_openBlock(), _createElementBlock("div", {
+                                    key: 11,
                                     class: _normalizeClass(["row items-center no-wrap q-mt-xs text-caption m-chat-delivery", _ctx.room.deliveryClass(_ctx.item)]),
                                     "data-delivery": _ctx.item.event.delivery.state
                                   }, [
@@ -10524,30 +11311,18 @@ module.exports = {
                                                 _: 1
                                               }),
                                               _createVNode(_component_q_menu, {
+                                                ref: "reactMenu",
                                                 anchor: "bottom right",
                                                 self: "top right",
                                                 onBeforeShow: $event => (_ctx.reactionMenu = true),
                                                 onHide: $event => (_ctx.reactionMenu = false)
                                               }, {
                                                 default: _withCtx(() => [
-                                                  _createElementVNode("div", {
-                                                    class: "q-pa-xs row",
-                                                    style: {"width":"236px"}
-                                                  }, [
-                                                    (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.room.emoji, (key) => {
-                                                      return _withDirectives((_openBlock(), _createBlock(_component_q_btn, {
-                                                        key: key,
-                                                        flat: "",
-                                                        dense: "",
-                                                        size: "sm",
-                                                        class: "q-px-xs",
-                                                        label: key,
-                                                        onClick: $event => (_ctx.room.react(_ctx.item, key))
-                                                      }, null, 8, ["label", "onClick"])), [
-                                                        [_directive_close_popup]
-                                                      ])
-                                                    }), 128))
-                                                  ])
+                                                  _createVNode(_component_m_emoji_picker, {
+                                                    "user-id": _ctx.room.me.userId || '',
+                                                    autofocus: !_ctx.room.mobile,
+                                                    onPick: _ctx.picked
+                                                  }, null, 8, ["user-id", "autofocus", "onPick"])
                                                 ]),
                                                 _: 1
                                               }, 8, ["onBeforeShow", "onHide"])
@@ -10618,227 +11393,21 @@ module.exports = {
                                     _: 1
                                   }),
                                   _createVNode(_component_q_menu, {
+                                    ref: "moreMenu",
                                     anchor: "bottom right",
                                     self: "top right",
                                     onBeforeShow: $event => (_ctx.moreMenu = true),
                                     onHide: $event => (_ctx.moreMenu = false)
                                   }, {
                                     default: _withCtx(() => [
-                                      _createVNode(_component_q_list, {
+                                      _createVNode(_component_chat_message_menu, {
+                                        room: _ctx.room,
+                                        item: _ctx.item,
+                                        "in-thread": _ctx.inThread,
                                         dense: "",
-                                        style: {"min-width":"230px"}
-                                      }, {
-                                        default: _withCtx(() => [
-                                          (_ctx.room.canEdit(_ctx.item))
-                                            ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                key: 0,
-                                                clickable: "",
-                                                onClick: $event => (_ctx.room.startEdit(_ctx.item))
-                                              }, {
-                                                default: _withCtx(() => [
-                                                  _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                    default: _withCtx(() => [
-                                                      _createVNode(_component_q_icon, { name: "sym_o_edit" })
-                                                    ]),
-                                                    _: 1
-                                                  }),
-                                                  _createVNode(_component_q_item_section, null, {
-                                                    default: _withCtx(() => [
-                                                      _createTextVNode(_toDisplayString(_ctx.room.t('Edit')), 1)
-                                                    ]),
-                                                    _: 1
-                                                  })
-                                                ]),
-                                                _: 1
-                                              }, 8, ["onClick"])), [
-                                                [_directive_close_popup]
-                                              ])
-                                            : _createCommentVNode("", true),
-                                          (_ctx.room.canPost)
-                                            ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                key: 1,
-                                                clickable: "",
-                                                onClick: $event => (_ctx.room.pin(_ctx.item, !_ctx.item.pinned))
-                                              }, {
-                                                default: _withCtx(() => [
-                                                  _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                    default: _withCtx(() => [
-                                                      _createVNode(_component_q_icon, { name: "sym_o_keep" })
-                                                    ]),
-                                                    _: 1
-                                                  }),
-                                                  _createVNode(_component_q_item_section, null, {
-                                                    default: _withCtx(() => [
-                                                      _createTextVNode(_toDisplayString(_ctx.item.pinned ? _ctx.room.t('Unpin') : _ctx.room.t('Pin to the room')), 1)
-                                                    ]),
-                                                    _: 1
-                                                  })
-                                                ]),
-                                                _: 1
-                                              }, 8, ["onClick"])), [
-                                                [_directive_close_popup]
-                                              ])
-                                            : _createCommentVNode("", true),
-                                          _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                            clickable: "",
-                                            onClick: $event => (_ctx.room.copyLink(_ctx.item))
-                                          }, {
-                                            default: _withCtx(() => [
-                                              _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                default: _withCtx(() => [
-                                                  _createVNode(_component_q_icon, { name: "sym_o_link" })
-                                                ]),
-                                                _: 1
-                                              }),
-                                              _createVNode(_component_q_item_section, null, {
-                                                default: _withCtx(() => [
-                                                  _createTextVNode(_toDisplayString(_ctx.room.t('Copy link')), 1)
-                                                ]),
-                                                _: 1
-                                              })
-                                            ]),
-                                            _: 1
-                                          }, 8, ["onClick"])), [
-                                            [_directive_close_popup]
-                                          ]),
-                                          _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                            clickable: "",
-                                            onClick: $event => (_ctx.room.copyText(_ctx.item))
-                                          }, {
-                                            default: _withCtx(() => [
-                                              _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                default: _withCtx(() => [
-                                                  _createVNode(_component_q_icon, { name: "sym_o_content_copy" })
-                                                ]),
-                                                _: 1
-                                              }),
-                                              _createVNode(_component_q_item_section, null, {
-                                                default: _withCtx(() => [
-                                                  _createTextVNode(_toDisplayString(_ctx.room.t('Copy text')), 1)
-                                                ]),
-                                                _: 1
-                                              })
-                                            ]),
-                                            _: 1
-                                          }, 8, ["onClick"])), [
-                                            [_directive_close_popup]
-                                          ]),
-                                          (_ctx.room.isMember && !_ctx.room.sealed)
-                                            ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                key: 2,
-                                                clickable: "",
-                                                onClick: $event => (_ctx.room.openForward(_ctx.item))
-                                              }, {
-                                                default: _withCtx(() => [
-                                                  _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                    default: _withCtx(() => [
-                                                      _createVNode(_component_q_icon, { name: "sym_o_forward" })
-                                                    ]),
-                                                    _: 1
-                                                  }),
-                                                  _createVNode(_component_q_item_section, null, {
-                                                    default: _withCtx(() => [
-                                                      _createTextVNode(_toDisplayString(_ctx.room.t('Forward…')), 1)
-                                                    ]),
-                                                    _: 1
-                                                  })
-                                                ]),
-                                                _: 1
-                                              }, 8, ["onClick"])), [
-                                                [_directive_close_popup]
-                                              ])
-                                            : _createCommentVNode("", true),
-                                          (_ctx.room.isMember && !_ctx.inThread)
-                                            ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                key: 3,
-                                                clickable: "",
-                                                onClick: $event => (_ctx.room.markUnreadFrom(_ctx.item))
-                                              }, {
-                                                default: _withCtx(() => [
-                                                  _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                    default: _withCtx(() => [
-                                                      _createVNode(_component_q_icon, { name: "sym_o_mark_chat_unread" })
-                                                    ]),
-                                                    _: 1
-                                                  }),
-                                                  _createVNode(_component_q_item_section, null, {
-                                                    default: _withCtx(() => [
-                                                      _createTextVNode(_toDisplayString(_ctx.room.t('Mark unread from here')), 1)
-                                                    ]),
-                                                    _: 1
-                                                  })
-                                                ]),
-                                                _: 1
-                                              }, 8, ["onClick"])), [
-                                                [_directive_close_popup]
-                                              ])
-                                            : _createCommentVNode("", true),
-                                          _createVNode(_component_q_separator),
-                                          (!_ctx.room.sealed)
-                                            ? (_openBlock(), _createBlock(_component_m_ext_actions, {
-                                                key: 4,
-                                                slot: "chat-message-actions",
-                                                item: { chatRoomId: _ctx.room.roomId, eventSeq: _ctx.item.eventSeq }
-                                              }, null, 8, ["item"]))
-                                            : _createCommentVNode("", true),
-                                          (_ctx.room.prefs.recordLink && !_ctx.room.sealed)
-                                            ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                key: 5,
-                                                clickable: "",
-                                                onClick: $event => (_ctx.room.openFileOn(_ctx.item))
-                                              }, {
-                                                default: _withCtx(() => [
-                                                  _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                    default: _withCtx(() => [
-                                                      _createVNode(_component_q_icon, { name: "sym_o_link" })
-                                                    ]),
-                                                    _: 1
-                                                  }),
-                                                  _createVNode(_component_q_item_section, null, {
-                                                    default: _withCtx(() => [
-                                                      _createTextVNode(_toDisplayString(_ctx.room.t('File on a record…')), 1)
-                                                    ]),
-                                                    _: 1
-                                                  })
-                                                ]),
-                                                _: 1
-                                              }, 8, ["onClick"])), [
-                                                [_directive_close_popup]
-                                              ])
-                                            : _createCommentVNode("", true),
-                                          (_ctx.room.canRedact(_ctx.item))
-                                            ? (_openBlock(), _createElementBlock(_Fragment, { key: 6 }, [
-                                                _createVNode(_component_q_separator),
-                                                _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                  clickable: "",
-                                                  onClick: $event => (_ctx.room.redact(_ctx.item))
-                                                }, {
-                                                  default: _withCtx(() => [
-                                                    _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                      default: _withCtx(() => [
-                                                        _createVNode(_component_q_icon, {
-                                                          name: "sym_o_delete",
-                                                          color: "negative"
-                                                        })
-                                                      ]),
-                                                      _: 1
-                                                    }),
-                                                    _createVNode(_component_q_item_section, { class: "text-negative" }, {
-                                                      default: _withCtx(() => [
-                                                        _createTextVNode(_toDisplayString(_ctx.room.t('Delete message')), 1)
-                                                      ]),
-                                                      _: 1
-                                                    })
-                                                  ]),
-                                                  _: 1
-                                                }, 8, ["onClick"])), [
-                                                  [_directive_close_popup]
-                                                ])
-                                              ], 64))
-                                            : _createCommentVNode("", true)
-                                        ]),
-                                        _: 1
-                                      })
+                                        style: {"min-width":"230px"},
+                                        onDone: $event => (_ctx.hide('moreMenu'))
+                                      }, null, 8, ["room", "item", "in-thread", "onDone"])
                                     ]),
                                     _: 1
                                   }, 8, ["onBeforeShow", "onHide"])
@@ -10849,6 +11418,29 @@ module.exports = {
                             _: 1
                           })
                         ], 8, ["onClick"]))
+                      : _createCommentVNode("", true),
+                    (_ctx.contextOpen)
+                      ? (_openBlock(), _createBlock(_component_q_menu, {
+                          key: 1,
+                          ref: "contextMenu",
+                          "touch-position": "",
+                          "no-parent-event": "",
+                          class: "m-chat-context-menu",
+                          onHide: $event => (_ctx.contextOpen = false)
+                        }, {
+                          default: _withCtx(() => [
+                            _createVNode(_component_chat_message_menu, {
+                              room: _ctx.room,
+                              item: _ctx.item,
+                              "in-thread": _ctx.inThread,
+                              reactions: "",
+                              dense: "",
+                              style: {"min-width":"240px","max-width":"360px"},
+                              onDone: $event => (_ctx.hide('contextMenu'))
+                            }, null, 8, ["room", "item", "in-thread", "onDone"])
+                          ]),
+                          _: 1
+                        }, 8, ["onHide"]))
                       : _createCommentVNode("", true)
                   ], 46, ["id", "data-seq", "tabindex", "aria-label", "onFocusin", "onFocusout", "onMouseenter", "onMouseleave", "onClick", "onTouchstartPassive", "onTouchmovePassive", "onTouchend", "onTouchcancel", "onContextmenu"]))
                 }
@@ -10904,6 +11496,117 @@ module.exports = {
                       _createElementVNode("span", { class: "text-caption m-muted" }, _toDisplayString(_ctx.room.t('Esc to cancel')), 1)
                     ])
                   ], 40, ["onKeydown"]))
+                }
+            })();
+            delete target.template;
+        }
+        {
+            const target = component.components["chat-room"].components["chat-message"].components["chat-message-menu"];
+            target.render = (function () {
+                const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, normalizeStyle: _normalizeStyle, createBlock: _createBlock, createVNode: _createVNode, createCommentVNode: _createCommentVNode, withCtx: _withCtx, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, normalizeClass: _normalizeClass } = Vue
+
+                return function render(_ctx, _cache) {
+                  const _component_q_btn = _resolveComponent("q-btn")
+                  const _component_m_emoji_picker = _resolveComponent("m-emoji-picker")
+                  const _component_q_separator = _resolveComponent("q-separator")
+                  const _component_m_ext_actions = _resolveComponent("m-ext-actions")
+                  const _component_q_icon = _resolveComponent("q-icon")
+                  const _component_q_item_section = _resolveComponent("q-item-section")
+                  const _component_q_item = _resolveComponent("q-item")
+                  const _component_q_list = _resolveComponent("q-list")
+
+                  return (_openBlock(), _createElementBlock("div", {
+                    class: "m-chat-actions",
+                    "data-seq": _ctx.item.eventSeq
+                  }, [
+                    (_ctx.reactions && !_ctx.picking && _ctx.room.canPost && _ctx.room.bridgeCaps.reaction)
+                      ? (_openBlock(), _createElementBlock("div", {
+                          key: 0,
+                          class: "row no-wrap items-center justify-between q-px-sm q-pt-sm m-chat-quick"
+                        }, [
+                          (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.room.quickReactions, (key) => {
+                            return (_openBlock(), _createBlock(_component_q_btn, {
+                              key: key,
+                              flat: "",
+                              dense: "",
+                              class: "m-chat-sheet-emoji",
+                              style: _normalizeStyle(_ctx.dense ? 'flex:1 1 0;min-width:0;font-size:18px;padding:2px 0' : 'flex:1 1 0;min-width:0;font-size:22px;padding:6px 0'),
+                              label: key,
+                              "aria-label": _ctx.room.t('React with') + ' ' + key,
+                              onClick: $event => (_ctx.act(() => _ctx.room.react(_ctx.item, key)))
+                            }, null, 8, ["style", "label", "aria-label", "onClick"]))
+                          }), 128)),
+                          _createVNode(_component_q_btn, {
+                            flat: "",
+                            dense: "",
+                            icon: "sym_o_add_reaction",
+                            style: {"flex":"1 1 0","min-width":"0"},
+                            "aria-label": _ctx.room.t('More reactions'),
+                            class: "m-chat-more-reactions",
+                            onClick: $event => (_ctx.picking = true)
+                          }, null, 8, ["aria-label", "onClick"])
+                        ]))
+                      : _createCommentVNode("", true),
+                    (_ctx.picking)
+                      ? (_openBlock(), _createBlock(_component_m_emoji_picker, {
+                          key: 1,
+                          "user-id": _ctx.room.me.userId || '',
+                          autofocus: !_ctx.room.mobile,
+                          class: "q-mx-auto",
+                          onPick: (key) => _ctx.act(() => _ctx.room.react(_ctx.item, key))
+                        }, null, 8, ["user-id", "autofocus", "onPick"]))
+                      : (_openBlock(), _createBlock(_component_q_list, {
+                          key: 2,
+                          dense: _ctx.dense,
+                          class: _normalizeClass(_ctx.dense ? '' : 'q-pb-sm')
+                        }, {
+                          default: _withCtx(() => [
+                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.room.messageActions(_ctx.item, _ctx.inThread), (action) => {
+                              return (_openBlock(), _createElementBlock(_Fragment, {
+                                key: action.key
+                              }, [
+                                (action.separator)
+                                  ? (_openBlock(), _createBlock(_component_q_separator, { key: 0 }))
+                                  : (action.key === 'apps')
+                                    ? (_openBlock(), _createBlock(_component_m_ext_actions, {
+                                        key: 1,
+                                        slot: "chat-message-actions",
+                                        item: { chatRoomId: _ctx.room.roomId, eventSeq: _ctx.item.eventSeq },
+                                        onDone: $event => (_ctx.$emit('done'))
+                                      }, null, 8, ["item", "onDone"]))
+                                    : (_openBlock(), _createBlock(_component_q_item, {
+                                        key: 2,
+                                        clickable: "",
+                                        "data-action": action.key,
+                                        onClick: $event => (_ctx.act(action.run))
+                                      }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item_section, { avatar: "" }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_icon, {
+                                                name: action.icon,
+                                                color: action.negative ? 'negative' : undefined
+                                              }, null, 8, ["name", "color"])
+                                            ]),
+                                            _: 2
+                                          }, 1024),
+                                          _createVNode(_component_q_item_section, {
+                                            class: _normalizeClass(action.negative ? 'text-negative' : '')
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(action.label), 1)
+                                            ]),
+                                            _: 2
+                                          }, 1032, ["class"])
+                                        ]),
+                                        _: 2
+                                      }, 1032, ["data-action", "onClick"]))
+                              ], 64))
+                            }), 128))
+                          ]),
+                          _: 1
+                        }, 8, ["dense", "class"]))
+                  ], 8, ["data-seq"]))
                 }
             })();
             delete target.template;
@@ -11713,7 +12416,7 @@ module.exports = {
             if (row.snoozedThruDate && Number(row.snoozedThruDate) > Date.now()) chips.push({ key: 'snooze', icon: 'sym_o_snooze', label: t('Until') + ' ' + this.shortWhen(row.snoozedThruDate), color: 'info' });
             if (row.statusId === 'ES_SCHEDULED' && row.scheduledSendDate) chips.push({ key: 'sched', icon: 'sym_o_schedule_send', label: t('Sends') + ' ' + this.shortWhen(row.scheduledSendDate), color: 'info' });
             if (row.sendError) chips.push({ key: 'error', icon: 'sym_o_error', label: t('Not sent'), color: 'negative' });
-            if (row.isClosed) chips.push({ key: 'closed', icon: 'sym_o_lock', label: t('Closed'), color: 'positive' });
+            if (row.isClosed) chips.push({ key: 'closed', icon: 'sym_o_comments_disabled', label: t('Closed'), color: 'positive' });
             if (row.contactListId && row.contactListId !== this.params.mailbox) chips.push({ key: 'box', icon: 'sym_o_forum', label: row.contactListName || t('Mailbox') });
             if (row.contactListId && row.replyCount) chips.push({ key: 'replies', icon: 'sym_o_forum', label: row.replyCount === 1 ? t('1 reply') : row.replyCount + ' ' + t('replies') });
             (row.labelList || []).slice(0, 3).forEach((label) => chips.push({ key: 'l' + label.emailLabelId, icon: 'sym_o_label', label: label.labelName }));
@@ -13242,7 +13945,7 @@ module.exports = {
                               }, [
                                 _createElementVNode("div", { class: "row items-center no-wrap q-gutter-x-sm" }, [
                                   _createVNode(_component_q_icon, {
-                                    name: _ctx.mailbox.isPublic ? 'sym_o_forum' : 'sym_o_lock',
+                                    name: _ctx.mailbox.isPublic ? 'sym_o_forum' : 'sym_o_group',
                                     size: "sm",
                                     class: "m-muted"
                                   }, null, 8, ["name"]),
@@ -14851,7 +15554,7 @@ module.exports = {
                                                     dense: "",
                                                     square: "",
                                                     class: "m-tonal text-positive q-ml-none",
-                                                    icon: "sym_o_lock"
+                                                    icon: "sym_o_comments_disabled"
                                                   }, {
                                                     default: _withCtx(() => [
                                                       _createTextVNode(_toDisplayString(_ctx.t('Closed')), 1)
@@ -14865,7 +15568,7 @@ module.exports = {
                                                     dense: "",
                                                     square: "",
                                                     class: "m-tonal q-ml-none",
-                                                    icon: "sym_o_lock_person"
+                                                    icon: "sym_o_visibility_off"
                                                   }, {
                                                     default: _withCtx(() => [
                                                       _createTextVNode(_toDisplayString(_ctx.t('Private conversation')), 1)
@@ -15297,7 +16000,7 @@ module.exports = {
                                                             default: _withCtx(() => [
                                                               _createVNode(_component_q_item_section, { avatar: "" }, {
                                                                 default: _withCtx(() => [
-                                                                  _createVNode(_component_q_icon, { name: "sym_o_lock" })
+                                                                  _createVNode(_component_q_icon, { name: "sym_o_comments_disabled" })
                                                                 ]),
                                                                 _: 1
                                                               }),
@@ -15322,7 +16025,7 @@ module.exports = {
                                                             default: _withCtx(() => [
                                                               _createVNode(_component_q_item_section, { avatar: "" }, {
                                                                 default: _withCtx(() => [
-                                                                  _createVNode(_component_q_icon, { name: "sym_o_lock_open" })
+                                                                  _createVNode(_component_q_icon, { name: "sym_o_add_comment" })
                                                                 ]),
                                                                 _: 1
                                                               }),
@@ -16302,7 +17005,7 @@ module.exports = {
                                             class: "q-mt-sm text-caption m-muted row items-center q-gutter-x-xs"
                                           }, [
                                             _createVNode(_component_q_icon, {
-                                              name: "sym_o_lock",
+                                              name: "sym_o_comments_disabled",
                                               size: "16px"
                                             }),
                                             _createElementVNode("span", null, _toDisplayString(_ctx.t('This thread is closed: no more replies in the mailbox.')), 1),
@@ -17136,7 +17839,7 @@ module.exports = {
                                   _createVNode(_component_q_item_section, { avatar: "" }, {
                                     default: _withCtx(() => [
                                       _createVNode(_component_q_icon, {
-                                        name: list.isPublic === 'Y' ? 'sym_o_forum' : 'sym_o_lock'
+                                        name: list.isPublic === 'Y' ? 'sym_o_forum' : 'sym_o_group'
                                       }, null, 8, ["name"])
                                     ]),
                                     _: 2

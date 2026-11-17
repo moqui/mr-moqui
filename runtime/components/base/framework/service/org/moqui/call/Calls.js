@@ -41,8 +41,11 @@ const LEG_TYPE_CODES = { CltWeb: 'web', CltGuest: 'guest', CltSipDevice: 'sipDev
 
 /** Seconds a call rings before it is missed. */
 const ringSeconds = () => Math.max(10, Number(System.getProperty('call_ring_seconds') || 45))
-/** A leg whose socket closed and did not come back in this long has left. */
-const RECONNECT_GRACE_MS = 30000
+/**
+ * A leg whose socket closed and did not come back in this long has left: a minute, so a phone that loses its network
+ * comes back to the call by itself without a new ring (plans/Comms-Messaging.md §8.3 item 11).
+ */
+const RECONNECT_GRACE_MS = 60000
 /** A connection with no heartbeat in this long is gone (the host refreshes every 20 seconds). */
 const HEARTBEAT_STALE_MS = 75000
 /** An answered leg that never connected its media in this long has left. */
@@ -96,6 +99,14 @@ const isE2ee = (session) => !!session && !!session.encryptionMode && session.enc
 const truthy = (value) => value === true || ['true', 'y', 'yes', '1'].includes(String(value == null ? '' : value).trim().toLowerCase())
 /** A sender's SFrame KID is its leg's keyIndex times this, plus its epoch (WebrootCallKeys.js). */
 const KID_SPAN = 65536
+
+/**
+ * The direct path (plans/Comms-Messaging.md §8.3 item 15, docs/interfaces/WebRTC.md "The direct path"): the user
+ * preference that keeps a user's calls on the media server, so the other side never sees their network address
+ * (Settings, Calls: Always relay my calls), and the property that turns the direct path off for the server.
+ */
+const ALWAYS_RELAY_PREF = 'CALL_ALWAYS_RELAY'
+const directPathOn = () => !['false', 'n', 'no', '0'].includes(String(System.getProperty('call_direct_path') || '').trim().toLowerCase())
 
 /** A refusal: an error for the user and a reason code for the caller. */
 function refuse(reasonCode, text) {
@@ -202,6 +213,33 @@ function linkOwner(session) {
   return one(LINK, { callLinkId: session.callLinkId })?.ownerUserId || null
 }
 
+/** Whether the user keeps their calls on the media server (Settings, Calls: Always relay my calls). */
+function alwaysRelays(userId) {
+  const pref = userId ? one('moqui.security.UserPreference', { userId, preferenceKey: ALWAYS_RELAY_PREF }) : null
+  return truthy(pref?.preferenceValue)
+}
+
+/**
+ * Whether the call's two people send their media to each other directly, peer to peer, before the media server
+ * (decided 2026-11-16, plans/Comms-Messaging.md §8.3 item 15): a direct call (a direct room's call of two), every
+ * answered leg a browser's, of two users of this server, neither of whom keeps their calls on the media server, with no
+ * recording or captions going on (the media server makes them). A guest, a phone, a third person, either one's Always
+ * relay, or call_direct_path=false keeps the call on the media server; the pages of a direct call move there when it
+ * stops being one. An encrypted call stays encrypted on either path: the SFrame keys are the same.
+ */
+function directPath(session, legs, participants) {
+  if (!directPathOn() || session.kindEnumId !== 'CskDirect' || session.statusId === 'CssEnded' || session.relayedDate) return false
+  const open = legs.filter((leg) => OPEN_LEG.includes(leg.statusId))
+  if (open.some((leg) => leg.statusId === 'ClsAnswered' && leg.legTypeEnumId !== 'CltWeb')) return false
+  const people = participants.filter((p) => open.some((leg) => leg.callParticipantId === p.callParticipantId))
+  if (people.length > 2 || people.some((p) => p.identityKindEnumId !== 'CikLocal' || !p.userId)) return false
+  if (people.some((p) => alwaysRelays(p.userId))) return false
+  if (find('moqui.call.CallRecording').condition('callSessionId', session.callSessionId)
+    .condition('statusId', 'in', ['CrsRecording', 'CrsPaused']).count() > 0) return false
+  const captions = one('moqui.call.CallCaptions', { callSessionId: session.callSessionId })
+  return !(captions && captions.captionsOn === 'Y')
+}
+
 /** The call as a client sees it. */
 function view(session, forUserId) {
   const participants = participantsOf(session.callSessionId)
@@ -262,6 +300,8 @@ function view(session, forUserId) {
     endReason: END_CODES[session.endReasonEnumId] || null,
     encryptionMode: session.encryptionMode || null,
     e2ee,
+    // the media path: direct, peer to peer, or through the media server (directPath)
+    direct: directPath(session, legs, participants),
     participants: list,
     myLegId: myLeg ? myLeg.callLegId : null,
     myLegStatus: myLeg ? LEG_CODES[myLeg.statusId] || null : null,
@@ -601,10 +641,14 @@ function setLegDevice(session, leg, deviceId) {
   leg.update()
 }
 
-/** Whether a room asks every call of it to be end-to-end encrypted (its owners' policy). */
+/**
+ * Whether every call of a room is end-to-end encrypted: an encrypted room's always, a direct one too (Comms-Messaging
+ * §6.1 rule 4), and another room's when its owners' policy asks. A plain direct room keeps the caller's choice.
+ */
 function roomRequiresE2ee(chatRoomId) {
   if (!chatRoomId) return false
-  return one('moqui.chat.ChatRoom', { chatRoomId })?.callE2eeRequired === 'Y'
+  const room = one('moqui.chat.ChatRoom', { chatRoomId })
+  return room?.encrypted === 'Y' || room?.callE2eeRequired === 'Y'
 }
 
 /**
@@ -641,6 +685,8 @@ function setRoomEncryption(p) {
   if (!access.canModerate && !access.isOwner) return refuse('notAllowed', 'Only a moderator or owner may change the room')
   const room = find('moqui.chat.ChatRoom').condition('chatRoomId', p.chatRoomId).forUpdate(true).one()
   const flag = truthy(p.required) ? 'Y' : 'N'
+  // an encrypted room's calls are encrypted, and that is not a setting (rule 4)
+  if (room.encrypted === 'Y' && flag === 'N') return refuse('notAllowed', 'Every call in an encrypted room is end-to-end encrypted')
   if ((room.callE2eeRequired || 'N') !== flag) {
     room.set('callE2eeRequired', flag)
     room.update()
@@ -1073,7 +1119,26 @@ function bind(p) {
   if (!leg || leg.callSessionId !== session.callSessionId || participant?.userId !== me) {
     return refuse('notFound', 'Call not found')
   }
-  return bindLeg(session, leg, participant, p.signalingNodeId, me)
+  // the direct path: the socket only carries the two pages' signaling to each other, through the call's media node
+  const direct = truthy(p.direct)
+  if (direct && (leg.legTypeEnumId !== 'CltWeb' || !directPath(session, legsOf(session.callSessionId), participantsOf(session.callSessionId)))) {
+    return refuse('notDirect', 'This call goes through the media server')
+  }
+  // a browser leg of a call on the direct path that joins the media server moves the call there for good: the other
+  // page's view flips and it follows, whatever this page's reason (a timeout, a reload, another device, an older page)
+  const moving = !direct && leg.legTypeEnumId === 'CltWeb' && !session.relayedDate &&
+    directPath(session, legsOf(session.callSessionId), participantsOf(session.callSessionId))
+  const bound = bindLeg(session, leg, participant, p.signalingNodeId, me, direct)
+  if (bound.reasonCode) return bound
+  if (direct) bound.direct = true
+  if (moving) {
+    session.set('relayedDate', ec.user.nowTimestamp)
+    bump(session)
+    session.update()
+    pushState(session, 'relayed', { callLegId: leg.callLegId })
+    bound.call = view(session, me)
+  }
+  return bound
 }
 
 /**
@@ -1093,15 +1158,18 @@ function bindNode(session, leg, signalingNodeId) {
   return live ? signalingNodeId : session.mediaNodeId
 }
 
-/** Binds a socket to an admitted leg that is in the call: the leg's next generation, the older connection fenced. */
-function bindLeg(session, leg, participant, signalingNodeId, forUserId) {
+/**
+ * Binds a socket to an admitted leg that is in the call: the leg's next generation, the older connection fenced. A
+ * `direct` leg's signaling goes through the call's media node, where the other page's does too.
+ */
+function bindLeg(session, leg, participant, signalingNodeId, forUserId, direct) {
   if (participant.admissionStatusId !== 'CasAdmitted') return refuse('notAdmitted', 'You are not in this call yet')
   if (leg.statusId !== 'ClsAnswered') return refuse('legClosed', 'You are not in this call')
   // W8: a browser's leg in an encrypted call has named its crypto device; no other leg (a guest's, a phone's) has media in it
   if (isE2ee(session) && (leg.legTypeEnumId !== 'CltWeb' || !leg.cryptoDeviceId)) {
     return refuse('noCryptoDevice', 'This call is end-to-end encrypted, and this browser has not named its encryption device')
   }
-  const node = bindNode(session, leg, signalingNodeId)
+  const node = direct ? session.mediaNodeId : bindNode(session, leg, signalingNodeId)
   if (leg.mediaNodeId !== node) {
     leg.set('mediaNodeId', node)
     leg.update()
@@ -2560,7 +2628,26 @@ function context(p) {
   return out
 }
 
+/** The current user's call preferences kept on the server: alwaysRelay (Settings, Calls). */
+function preferences() {
+  const me = currentUser()
+  if (!me) return refuse('notSignedIn', 'Sign in to see your call settings')
+  return { alwaysRelay: alwaysRelays(me), directPathEnabled: directPathOn() }
+}
+
+/**
+ * Sets the current user's call preferences: alwaysRelay keeps their calls on the media server, so the person they call
+ * never sees their network address. It holds from the next call or reconnect; a call on the direct path goes on there.
+ */
+function setPreferences(p) {
+  const me = currentUser()
+  if (!me) return refuse('notSignedIn', 'Sign in to change your call settings')
+  if (p.alwaysRelay != null && p.alwaysRelay !== '') ec.user.setPreference(ALWAYS_RELAY_PREF, truthy(p.alwaysRelay) ? 'Y' : 'N')
+  return preferences()
+}
+
 const operations = {
+  preferences, setPreferences,
   addPhoneLeg, offerUsers, closeUserLegs, closePhoneLeg, transferLeave, setHeld, setKind, mergeInto, context,
   startFromDevice, deviceCaller, ringStep, closeOffers, closeForward,
   refusedTargets: (p) => ({ refusedUserIdList: refusedTargets(Array.from(p.userIdList || [])) }),

@@ -469,6 +469,10 @@ fn job_request(
     }
 }
 
+/// What a claim tells a registered runner without `--step-user` in a pool that takes untrusted runs (SEC-GIT-19).
+const STEP_USER_NOTICE: &str = "this pool takes untrusted runs, which a registered runner is given only when it runs \
+                                its steps as another user: start it with --step-user";
+
 /// Serve one request of the runner REST, in an entered context. A refusal is its status with `{"error": ...}`.
 pub fn serve(request: &RunnerHttpRequest, body: &mut dyn Read, out: &mut dyn HttpResponder) {
     let mark = ExecutionContext::with_current(|ec| ec.message().error_mark());
@@ -524,8 +528,13 @@ pub fn serve(request: &RunnerHttpRequest, body: &mut dyn Read, out: &mut dyn Htt
                 }
                 // when the runner should rotate its token (POST rotate), halfway through the token's life
                 let rotate_after = super::registered::rotate_after(expires);
-                let mut answer = match super::registered::claim_for(&entity, &runner_id, &pool_id)? {
+                // whether the runner runs its steps as another user (ci-run poll --step-user), as it says
+                let step_user = read_json(request, body)?["stepUser"].as_bool() == Some(true);
+                let mut answer = match super::registered::claim_for(&entity, &runner_id, &pool_id, step_user)? {
                     Some(claimed) => json!({ "jobRunId": claimed.job_run_id, "token": claimed.job_token }),
+                    None if !step_user && super::registered::needs_step_user(&entity, &pool_id)? => json!({
+                        "notice": STEP_USER_NOTICE
+                    }),
                     None => json!({}),
                 };
                 if let Some(rotate_after) = rotate_after {

@@ -293,17 +293,36 @@ pub struct Claimed {
 }
 
 /// Give the runner of `runner_token` the oldest queued job of its pool, when the pool has room and the runner has no
-/// job. `Ok(None)` with nothing to run; an error for a token that is no active runner's.
-pub fn claim(entity: &EntityFacade, runner_token: &str) -> Result<Option<Claimed>, Error> {
+/// job. `step_user`: the runner runs its steps as another user (`ci-run poll --step-user`), which a pool that takes
+/// untrusted runs needs ([`claim_for`]). `Ok(None)` with nothing to run; an error for a token that is no active
+/// runner's.
+pub fn claim(entity: &EntityFacade, runner_token: &str, step_user: bool) -> Result<Option<Claimed>, Error> {
     let Some((runner_id, pool_id)) = token::runner_of(entity, runner_token)? else {
         return Err(Error::new("the runner token is not valid"));
     };
-    claim_for(entity, &runner_id, &pool_id)
+    claim_for(entity, &runner_id, &pool_id, step_user)
+}
+
+/// Whether a runner of pool `pool_id` is given jobs only when it runs its steps as another user: the pool is of
+/// registered runners and takes untrusted runs (plans/Security-Review-Low.md SEC-GIT-19).
+pub fn needs_step_user(entity: &EntityFacade, pool_id: &str) -> Result<bool, Error> {
+    let _rows = crate::rows_guard();
+    Ok(super::one(entity, RUNNER_POOL, "runnerPoolId", pool_id)?.is_some_and(|pool| {
+        field(&pool, "poolKind").as_deref() == Some("registered") && !super::is_yes(&pool, "trusted")
+    }))
 }
 
 /// [`claim`] for the active runner `runner_id` of pool `pool_id`, its token already looked up (the runner REST counts
-/// its requests by runner once the token is known good).
-pub fn claim_for(entity: &EntityFacade, runner_id: &str, pool_id: &str) -> Result<Option<Claimed>, Error> {
+/// its requests by runner once the token is known good). A pool that takes untrusted runs gives a job only to a runner
+/// that runs its steps as another user (`step_user`): an untrusted run is code from outside the repository, and a
+/// registered runner's machine is not cleaned between jobs, so without it the run waits for such a runner
+/// (SEC-GIT-19).
+pub fn claim_for(
+    entity: &EntityFacade,
+    runner_id: &str,
+    pool_id: &str,
+    step_user: bool,
+) -> Result<Option<Claimed>, Error> {
     let (runner_id, pool_id) = (runner_id.to_string(), pool_id.to_string());
     let _rows = crate::rows_guard();
     super::set_fields(
@@ -339,6 +358,9 @@ pub fn claim_for(entity: &EntityFacade, runner_id: &str, pool_id: &str) -> Resul
         return Ok(None);
     }
     let trusted = super::is_yes(&pool, "trusted");
+    if !trusted && !step_user {
+        return Ok(None);
+    }
     let pool_name = field(&pool, "poolName").unwrap_or_else(|| "default".to_string());
     let queued = entity
         .find(JOB_RUN)?

@@ -31,7 +31,7 @@ use crate::framing::Frame;
 use crate::registry::Inbound;
 use crate::scram::ClientExchange;
 use crate::{fast, ns, Config, Server};
-use fake::{Fake, JANE_PASSWORD, JOHN_PASSWORD};
+use fake::{Fake, FULL_JID, FULL_NODE, JANE_PASSWORD, JOHN_PASSWORD};
 
 const EXPORTER: [u8; 32] = [9; 32];
 
@@ -620,6 +620,27 @@ async fn pep_keeps_omemo_device_lists_in_both_namespaces_and_notifies_who_asked(
                <field var='pubsub#access_model'><value>whitelist</value></field></x></publish-options></pubsub></iq>")
         .await;
     assert!(text_of(&out).contains("precondition-not-met"), "{}", text_of(&out));
+}
+
+/// SEC-COM-20: a publish, a block or a push registration the services refuse past a cap is `resource-constraint`.
+#[tokio::test]
+async fn a_request_past_a_users_cap_is_a_resource_constraint() {
+    let (server, _) = server();
+    let (mut john, _) = sign_in(&server, "john.doe", JOHN_PASSWORD, "phone").await;
+    for request in [
+        format!(
+            "<iq type='set' id='full'><pubsub xmlns='http://jabber.org/protocol/pubsub'><publish node='{FULL_NODE}'>\
+             <item id='current'><data xmlns='urn:xmpp:test'/></item></publish></pubsub></iq>"
+        ),
+        format!("<iq type='set' id='full'><block xmlns='urn:xmpp:blocking'><item jid='{FULL_JID}'/></block></iq>"),
+        format!("<iq type='set' id='full'><enable xmlns='urn:xmpp:push:0' jid='{FULL_JID}' node='n'/></iq>"),
+    ] {
+        let out = text_of(&john.send(&request).await);
+        assert!(
+            out.contains("type='error'") && out.contains("resource-constraint") && out.contains("type='wait'"),
+            "{request}: {out}"
+        );
+    }
 }
 
 #[tokio::test]

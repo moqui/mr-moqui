@@ -28,7 +28,7 @@ podman/build.sh --only-build-image --nobuild --chromium --java
 
 `--chromium` adds Chromium (PDF and the browser tests) and `--java` a Java runtime (for an OpenSearch that `./moq opensearch-download` gets in the job). The image is tagged `localhost/moqui-build:latest` and with the binary's version. A job's container runs as uid 1000 with a read-only root, a volume at `/workspace` and a tmpfs at `/tmp`, so the image sets `HOME` and `CARGO_HOME` under `/workspace`.
 
-The container starts as root so it can chown a new data volume, then drops to uid 1000 before the binary. Embedded Postgres will not run as root. One volume, mounted at `/var/lib/moqui`, holds `db`, `log`, `cert`, `tmp`, `install`, `txlog`, and the generated secrets file. Those paths are symlinks into `/opt/moqui`, which is the runtime directory.
+The container starts as root so it can chown a new data volume, then drops to uid 1000 before the binary. The binary and the conf are root's and read-only to uid 1000; `/opt/moqui` is root's, group `moqui` and sticky, so the server adds files there but cannot replace the binary or the conf, and `components/` is uid 1000's. Embedded Postgres will not run as root. One volume, mounted at `/var/lib/moqui`, holds `db`, `log`, `cert`, `tmp`, `install`, `txlog`, and the generated secrets file. Those paths are symlinks into `/opt/moqui`, which is the runtime directory.
 
 ## Compose
 

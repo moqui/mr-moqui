@@ -1241,6 +1241,22 @@ function whoami() {
   return { user_id: matrixId(me), serverName: serverName() }
 }
 
+/**
+ * The names of the people of userIdList this user's devices reach (themselves, a room or a live call shared): {userId:
+ * name}. My devices names the other person of a verification by it; others are left out, as their devices are.
+ */
+function peerNames(p) {
+  const me = ec.user.userId
+  if (!me) return refuse('notSignedIn', 'Sign in first')
+  const asked = Array.from(new Set(Array.from(p.userIdList || []).map((id) => String(id || '').trim()).filter((id) => id))).slice(0, 50)
+  const names = {}
+  const reach = Array.from(reachable(me, asked))
+  if (!reach.length) return { nameMap: names }
+  for (const account of find('moqui.security.UserAccount').condition('userId', 'in', reach).selectField('userId')
+    .selectField('userFullName').selectField('username').disableAuthz().list()) names[account.userId] = account.userFullName || account.username || account.userId
+  return { nameMap: names }
+}
+
 /** Internal: Matrix user IDs of userIds, and back (for screens and other services). */
 function mapIds(p) {
   const out = {}
@@ -1283,7 +1299,7 @@ const operations = {
   createDevice, findDevices, renameDevice, revokeDevice, storeKey, uploadKeys, queryKeys, claimKeys, sendToDevice, syncToDevice,
   uploadCrossSigningKeys, uploadKeySignatures, createBackupVersion, getBackupVersion, updateBackupVersion,
   deleteBackupVersion, storeBackupKeys, getBackupKeys, deleteBackupKeys, clean, whoami, mapIds, web,
-  findBackupVersions, getKeySettings, storeKeySettings, setRoomVerifiedOnly,
+  findBackupVersions, getKeySettings, storeKeySettings, setRoomVerifiedOnly, peerNames,
 }
 
 function execute(op, parameters) {

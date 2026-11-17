@@ -273,6 +273,7 @@ feature("Create from, File on record and the terminal's send refuse an encrypted
         after == before
         page.indexOf("Encrypted message") >= 0
         page.indexOf("open it in a browser") >= 0
+        page.indexOf("End-to-end encrypted") >= 0
         page.indexOf(SECRET) < 0
         list.indexOf("Encrypted message") >= 0
     }

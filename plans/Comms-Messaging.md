@@ -28,7 +28,7 @@ Parts:
 |---|---|---|
 | §2: phone layout | Built (PR #203, phase 1) except voice notes (phase 7) and the checks on a real phone (§2.3) | 1, done |
 | §3: desktop gaps | Planned; the palette and its Rooms source are built for the web | 8 |
-| §4: reactions and the message menu | Partial: the long-press sheet and a fixed emoji grid are built | 6 |
+| §4: reactions and the message menu | Built (phase 6): one action list, the emoji picker, who reacted and voted by touch, Info; a real phone's feel left | 6, done |
 | §5: details tabs and new services | Partial: People, Pinned and Files (All, Pictures) panes are built; the services are planned | 7 |
 | §6: E2EE policy and labels | Planned; the call rule and what E2EE by default makes are decided (§19). First sign-in on a new phone still needs a design (§6.5) | 3 |
 | §7: notifications | Planned; payload encryption reuses the Web Push code | 2 |
@@ -181,11 +181,11 @@ acceptance client spec).
 
 | Item | Phone | Desktop | Status |
 |---|---|---|---|
-| Open the menu | Long-press a bubble (450 ms, with a short vibration) | Hover toolbar and right-click | Built on a phone. On the desktop rows a right-click shows the browser's menu (`Chat.qvue:1938` acts only with bubbles) |
-| Menu | Quick reaction bar with `QUICK_REACTIONS` and "+", then Reply, Reply in thread, Copy text, Copy link, Forward, Edit, Pin, Mark unread from here, the apps' actions, File on a record, Info, Delete | Same list | Partial: the sheet lacks the apps' actions and File on a record, which the hover menu has. One list for both. Info is planned |
-| Full picker | A searchable emoji picker with categories and recent emoji (kept in `storage`) | Same | Planned: an `m-emoji-picker` component with an emoji name data file (a vendored library through `libs/refresh.mjs`). Today a fixed grid of 40 |
-| Who reacted | Long-press a reaction chip: a list of people. A tap still adds or removes my own | Hover a chip | Partial: hover only, so no touch path. The same for who voted in a poll |
-| Info | See below | Same | Planned |
+| Open the menu | Long-press a bubble (450 ms, with a short vibration) | Hover toolbar and right-click | Built (phase 6): a right click on a desktop row opens the menu at the pointer; on a link, an editor or selected text the browser's menu stays |
+| Menu | Quick reaction bar with `QUICK_REACTIONS` and "+", then Reply, Reply in thread, Copy text, Copy link, Forward, Edit, Pin, Mark unread from here, the apps' actions, File on a record, Info, Delete | Same list | Built (phase 6): one list (`chat-message-menu`, `messageActions`) for the sheet, the hover toolbar's More (its quick reactions are on the toolbar) and the right-click menu |
+| Full picker | A searchable emoji picker with categories and recent emoji (kept in `storage`) | Same | Built (phase 6): `m-emoji-picker` (`WebrootEmoji.js`) over `libs/emoji/emoji.json` (unicode-emoji-json 0.9.0, MIT, Emoji 15.1 and earlier); recent emoji per user under the storage scope; also the composer's |
+| Who reacted | Long-press a reaction chip: a list of people. A tap still adds or removes my own | Hover a chip | Built (phase 6), and the same for who voted on a poll option; the tooltip is for a pointer only |
+| Info | See below | Same | Built (phase 6): `moqui.chat.messageInfo`, the message read again (`timeline?eventSeq=`); the terminal's per message (`ChatTui.xml`, `infoSeq`) |
 
 **Info** (COM-UI-008) shows only what the server knows:
 
@@ -296,17 +296,27 @@ and three reactions, on a phone and on a desktop (acceptance client spec).
 7. Mail is never shown with a lock or a chat E2EE label. Where a person's mail shows beside their chats, it says
    "Email is not end-to-end encrypted" (COM-UI-019).
 
-Server work for rule 4:
-- `roomRequiresE2ee` reads only the room's `callE2eeRequired` today (`Calls.js:599-602`). It also returns true for a
-  room with `encrypted`. The room's call setting then shows on and fixed in an encrypted room.
-- `set#RoomCallEncryption` refuses a direct room (`Calls.js:634`); a plain direct room keeps the per-call choice
-  ("start an encrypted call").
+Rules 1 to 4, 6 and 7 are built (phase 3, `fdd1ab597`, and its review, `1de64af65`): the labels of §6.2 in the room, its
+lists, its members pane and settings; rule 3's checks by a verified person (Members, their messages), verifying another
+person by emoji in Chat, and the warning before a send to a verified person's new device or new identity (Verify, or
+Send anyway); rule 4 on the server and in Chat's call. Rule 7: no lock in Mail; the "Email is not end-to-end encrypted"
+line waits for the place a person's mail shows beside their chats (phase 8, the `mail` state of the label). Rule 5 is
+phase 10.
+
+Server work for rule 4 (built):
+- `roomRequiresE2ee` read only the room's `callE2eeRequired`. It now also returns true for a room with `encrypted`.
+  The room's call setting shows on and fixed in an encrypted room, and `set#RoomCallEncryption` refuses to turn it off
+  there.
+- `set#RoomCallEncryption` refuses a direct room; a plain direct room keeps the per-call choice ("start an encrypted
+  call").
 - The refusals exist and stay: `callNotEncrypted`, `unsupportedClient`, `noCryptoDevice` (`Calls.js:717-722`,
   `749-754`).
 
 ### 6.2 Labels
 
-This is the one table of labels. §16.5 adds only the RCS rows.
+This is the one table of labels. §16.5 adds only the RCS rows. Built in phase 3 (`fdd1ab597`): `moqui.chat.e2eeLabel` in
+`WebrootChat.js` answers each state (the call states too, for the call screen of phase 4); the room's header, banner,
+start and composer, Chat's rail and the home list use it, and the terminal shows it as one line.
 
 | State | Icon | Banner at the top of the room | Composer hint |
 |---|---|---|---|
@@ -326,7 +336,7 @@ This is the one table of labels. §16.5 adds only the RCS rows.
 - A bridge's label comes from its adapter: `Capabilities` (`chat_bridge.rs:110-119`) gets an `encryption` field with
   the values `None`, `Transport`, `BridgeDecrypted` and `EndToEnd`, and `get#BridgeCapabilities` returns it.
 
-States the review found without a label today:
+States the review found without a label (both built: COM-UI-013 in phase 3, `fdd1ab597`; COM-UI-011 in phase 0):
 - **A recipient who cannot read a message.** With "verified devices only" on, a message goes out and looks sent, and
   a member with an unverified device gets "missing key" (COM-UI-013). The sender sees who cannot read it, with a
   Verify link. The recipient's text says the sender has not verified this device; it is not the "restore from backup"
@@ -381,7 +391,7 @@ The UI explains this when the user picks an encrypted room:
   hidden WebView and no crypto store in Rust is planned for it; revisit only if daily use asks for it.
 
 **Labels done when:** each state in §6.2 shows on a phone and on a desktop, and the SMS room shows the SMS banner
-(acceptance client spec). A regression spec covers rule 4: a call in an encrypted room is encrypted, a phone and a
+(acceptance client spec `ChatLabels`; the call states on the call screen come with phase 4). A regression spec covers rule 4: a call in an encrypted room is encrypted, a phone and a
 guest are refused, and an encrypted direct room's call is encrypted.
 
 ## 7. Notifications
@@ -522,12 +532,12 @@ and they keep going when the network gets bad or changes.
 | Part | What exists |
 |---|---|
 | Media server | `crates/moqui-rtc` on str0m: ICE-lite, DTLS-SRTP, three simulcast layers, TWCC bandwidth estimate, audio before video, audio only below a floor ([WebRTC](../docs/interfaces/WebRTC.md)) |
-| Codecs | Opus with in-band FEC; RED is off (`enable_opus(true, false)`, `sfu/mod.rs:542`) and DTX is not set. VP8 with RTX by str0m's default |
+| Codecs | Opus with in-band FEC; RED is off (`enable_opus(true, false)`, `sfu/mod.rs:542`) and DTX is not set. VP8 with RTX by str0m's default. Phase 5: RED on, DTX asked by the page (§8.3 item 8) |
 | E2EE | SFrame, per room or per call link, set at the start and never lowered |
 | Start from a chat | One call button in the room header; it rings everyone in the room and always starts with video (`Chat.qvue:807`, `1418`) |
 | Ring on Android | FCM high-priority `ring` to `CallManager`; self-managed Android Telecom call (`CallConnectionService`), incoming only; CallStyle notification; full-screen ring over the lock screen; Decline with no WebView ([Mobile-Client](../docs/ui/Mobile-Client.md)). This is MT2 of [Mobile-Desktop](Mobile-Desktop.md), built |
 | Media on Android | The WebView's WebRTC (`WebrootCall.js`). A native audio client is a later item (Mobile-Desktop, MT3's record) |
-| Reconnect | A closed socket keeps its leg for 30 s (`RECONNECT_GRACE_MS`, `Calls.js:45`). When the connection fails the page joins again (`WebrootCall.js:613`); it does not restart ICE. The media server takes a leg's new offer |
+| Reconnect | A closed socket keeps its leg for 30 s (`RECONNECT_GRACE_MS`, `Calls.js:45`). When the connection fails the page joins again (`WebrootCall.js:613`); it does not restart ICE. The media server takes a leg's new offer. Phase 5: 60 s, and an ICE restart before a join (§8.3 items 10, 11) |
 | TURN | Embedded TURN server over UDP, TCP, TLS, and TLS on 443 ([TURN](../docs/interfaces/TURN.md)). Built; not checked live |
 | Not checked on a real phone | Bluetooth and speaker routing, two-way audio, encrypted calls on the phone's WebView |
 
@@ -567,14 +577,14 @@ and they keep going when the network gets bad or changes.
 
 | # | Item | Status |
 |---|---|---|
-| 8 | Opus in-band FEC | Built. Check it in the tests |
-| 8 | RED (redundant audio) at low bandwidth, and DTX | Planned: RED is one setting on the media server, plus the client's offer |
-| 9 | NACK and RTX for video; the simulcast layer switch from the TWCC estimate | Built. Check that RTX is negotiated and that the switch reacts in under 2 s |
-| 10 | ICE restart on a network change: Android's `ConnectivityManager` callback tells the page, and the page restarts ICE | Planned. The server already takes a new offer; today the page joins again |
-| 11 | Keep the leg for 60 s. Media resumes on the new path without a new ring | Planned: 30 s today |
-| 12 | TURN over TCP and TLS on port 443 for networks that block UDP. The client tries UDP, then TCP, then TLS | Built on the server. Check the client's order and a live network that blocks UDP |
-| 13 | Keepalives tuned for mobile NATs (STUN consent and the socket's ping), so a quiet call does not lose its path | Planned |
-| 14 | A quality icon from `getStats` (loss, RTT, jitter), and "Your network is weak" when the uplink is the cause | Planned |
+| 8 | Opus in-band FEC | Built. Checked: the answer has `useinbandfec=1` (`network_tests.rs`); it stays in an encrypted call, inside each frame |
+| 8 | RED (redundant audio) at low bandwidth, and DTX | Built in phase 5: RED negotiated whenever the browser offers it (`SfuConfig::red`), both ways, with the SFU recovering on the way in; at 10% loss 99% of the audio arrives against 91%. Always on rather than at low bandwidth: the in-memory loss rows gain at every rate. Left out of an encrypted call's offers and answers (its transform sees the RED payload whole). DTX: the page asks `usedtx=1` of its Opus. Also from the results: the SFU's hold on a leg's audio for a lost packet, 300-500 ms, is now at most 120 ms (`audio_reorder_wait`) |
+| 9 | NACK and RTX for video; the simulcast layer switch from the TWCC estimate | Built. Checked: NACK and RTX are negotiated (`network_tests.rs`). The switch takes about 2.3 s in memory, with a freeze of about 1.8 s while the estimate falls; the 2 s and 1 s lines are not met yet (§8.4 results) |
+| 10 | ICE restart on a network change: Android's `ConnectivityManager` callback tells the page, and the page restarts ICE | Built in phase 5: the page restarts ICE on a disconnected or failed connection, on the browser's `online` and connection `change` events, on `moqui.call.networkChanged()` (Android's `NetworkWatch` in `MainActivity.kt`, not built on a device yet), and when nothing comes in for 4 s; a restart that does not reconnect in 8 s joins again. In memory a new interface with a restart loses 40 ms of audio |
+| 11 | Keep the leg for 60 s. Media resumes on the new path without a new ring | Built in phase 5: 60 s (`RECONNECT_GRACE_MS`); a guest's socket retries for as long |
+| 12 | TURN over TCP and TLS on port 443 for networks that block UDP. The client tries UDP, then TCP, then TLS | Built on the server. The client's order is the browser's ICE: every candidate is gathered at once and the pairs are checked by priority, UDP before TCP before TLS; the page adds nothing. The browser suite's UDP-blocked row checks ICE-TCP; TURN TLS on 443 live is not checked |
+| 13 | Keepalives tuned for mobile NATs (STUN consent and the socket's ping), so a quiet call does not lose its path | Built in phase 5: the notification socket is pinged every 10 s instead of 30 while it carries a call. The UDP path keeps itself: the browser's consent checks every few seconds and DTX's packets every 400 ms (the SFU, ICE-lite, drops a peer after 15 s without a binding request) |
+| 14 | A quality icon from `getStats` (loss, RTT, jitter), and "Your network is weak" when the uplink is the cause | Built in phase 5: `m-call-network` in the call's header, with "Reconnecting…" while the path is restarted or joined again |
 
 **Direct path for one-to-one calls** (decided, §19)
 
@@ -585,6 +595,11 @@ and they keep going when the network gets bad or changes.
     - When a third person joins, the call moves to the media server.
     - SFrame stays on in an encrypted call on either path, so a move keeps the call's keys and its label.
     - Built in phase 5, after the §8.4 tests. The browser suite of §8.4 runs each profile on both paths.
+    - Status: built in phase 5 ([WebRTC, The direct path](../docs/interfaces/WebRTC.md#the-direct-path)). The call's view
+      says `direct`; the pages signal through the call's media node (`peer` frames), with STUN from the call's TURN
+      servers, and move to the media server when they do not connect in 8 s, or a third person, a recording, captions
+      or a screen share comes. "Always relay my calls" is in Settings, Calls (`CALL_ALWAYS_RELAY`). Acceptance
+      `CallDirect` passes; the browser suite on both paths is written and not run yet (it needs root).
 
 ### 8.4 Network tests
 
@@ -616,6 +631,36 @@ layers, before the resilience work, so the results order that work:
 
 The browser suite is an acceptance test: it runs on request and before a release, and when one of its own tests is
 added or changed. It does not run because `moqui-rtc`, `WebrootCall.js` or the TURN server changed.
+
+**First results (phase 5, 2026-11-17).** In memory (`crates/moqui-rtc/src/sfu/network_tests.rs`;
+`cargo test -p moqui-rtc --lib network_profiles -- --ignored --nocapture` prints them): A and B in a call through the
+SFU, both sending audio and three video layers, B's link shaped both ways, a 10 s window. "Before" is the SFU as it was
+(no RED, str0m's audio hold of 15 packets), "now" with RED and the 120 ms hold. The share of audio frames that arrive
+(B hears A: B's downlink; A hears B: B's uplink), the longest gap in what A hears of B (the SFU's hold), and B's video
+of A. A client there has no adapting encoder and no browser jitter buffer, so an uplink's capacity is the browser
+suite's, and "gap" is arrival, before any buffer smooths it.
+
+| Profile | Before: B hears A / A hears B, gap | Now: B hears A / A hears B, gap | Video now | Pass in memory |
+|---|---|---|---|---|
+| Loss 5% | 96% / 96%, 400 ms | 99.8% / 100%, 40 ms | high layer, freeze 120 ms | Yes |
+| Loss 10% | 91% / 91%, 380 ms | 99% / 99%, 180-200 ms | high, 150-300 ms | Yes |
+| Loss 20% | 84% / 81%, 500 ms | 97% / 97%, 200-240 ms | mid or high, about 330 ms | Yes (understandable, up) |
+| Burst loss (about 8%, three in a row) | 89% / 89%, 440 ms | 97-98% / 97-98%, 180-220 ms | high, about 250 ms | Yes |
+| Jitter 200 ms, reordered | 100% / 100%, 140 ms | 100% / 97-99%, 170-180 ms | low layer, frozen 4.7-6.2 s | Audio yes; video no (the estimate reads jitter as congestion) |
+| 3G (1.5 Mbit/s, 300 ms, 1%) | 99% / 99%, 340 ms | 100% / 100%, 40 ms | mid layer | Yes; connects within 2 s |
+| EDGE (200 kbit/s, 400 ms) | 90% / 100% | 78% / 100% | low layer, then audio only about 5 s in | No: the estimate takes about 5 s to fall from 2.5 Mbit/s, and the audio is lost with the video meanwhile |
+| Satellite (600 ms RTT) | 100% / 100% | 100% / 100% | high | Yes; connects in about 2.4 s (ICE and DTLS's round trips) |
+| Outage 2 s and 10 s | | Back in 0.3 s; the peer is kept | | Yes |
+| Outage 30 s | | The SFU drops the peer at 15 s; the page's join brings the call back in 0.1 s | | Yes, with the join (and the 60 s leg) |
+| Bandwidth 5 Mbit/s to 300 kbit/s and back | | Low layer after 2.3 s, up after 2.7-6 s, longest freeze 1.8 s | | Partly: up yes; down and the freeze miss the 2 s and 1 s lines |
+| New interface (Wi-Fi to mobile) with an ICE restart | | 40 ms of audio lost | | Yes |
+| New NAT port, no restart | | B's downlink back after 13 s (str0m's test client does not nominate again; a browser nominates on each ping to an ICE-lite peer, every 2.5 s), and the page's restart after 4 s with nothing coming in | | Left to the browser suite |
+| Uplink 50 kbit/s, UDP blocked, Wi-Fi to mobile in a browser, chat socket outage | | | | Browser suite (UDP blocked: ICE-TCP passes in memory, `ice_tcp_reaches_a_client_without_udp`) |
+
+What the results changed: RED on, the 120 ms hold, 64 kbit/s kept per audio track. What they leave: the estimate's
+reaction to a sudden drop (EDGE, the bandwidth step), which a loss-based cut from the receivers' reports could speed;
+video under heavy jitter. The browser suite (`CallNetwork`, `sudo scripts/call-network.sh`) is written and runs every
+profile on both paths; it needs root, so it has not run yet: it skips without it.
 
 ### 8.5 Done when
 
@@ -1073,10 +1118,10 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 | 0 | Fixes from the UI review: done 2026-11-16 (`82affc535`) | §5.2 paging, §6.5 | Small |
 | 1 | Shared helpers and the rest of the phone layout: done 2026-11-17 (`c88df4a3f`) | §2 | Medium |
 | 2 | Notifications | §7 | Large |
-| 3 | E2EE labels and the call rule | §6.1–§6.4 | Medium |
+| 3 | E2EE labels and the call rule: done 2026-11-17 (`fdd1ab597`) | §6.1–§6.4 | Medium |
 | 4 | Calls: flow and screen | §8.3 items 1–7 | Large |
-| 5 | Calls: network tests, then resilience | §8.3 items 8–14, §8.4 | Large |
-| 6 | Message menu, reactions, Info | §4 | Medium |
+| 5 | Calls: network tests, then resilience: done 2026-11-17 (`64c002d20`; the browser suite under sudo and real phones left) | §8.3 items 8–15, §8.4 | Large |
+| 6 | Message menu, reactions, Info: done 2026-11-17 (`acc6d1b66`; a real phone's feel left) | §4 | Medium |
 | 7 | Details tabs and services, voice notes | §5 | Medium |
 | 8 | Desktop gaps | §3 | Medium |
 | 9 | The user's phone number | §9 | Medium, plus the user's steps |
@@ -1204,6 +1249,44 @@ distributor on a phone is not tried yet.
 
 #### Phase 3: E2EE labels and the call rule
 
+Done 2026-11-17 in `fdd1ab597` ([review](ui-review-basic-comms.md) COM-UI-001, 004, 013).
+
+| Work | Files |
+|---|---|
+| `moqui.chat.e2eeLabel` (state, icon, banner, hint, Verify, one line), `trustOf`, `leftOutText`, `undecryptableText`; `ROOM_ICONS.CrtPrivate` is people | `WebrootChat.js` |
+| The lock (with its check) in the header and the rail and the home list for E2EE only, the open lock otherwise; the banner under the header (closed per room) and at the room's start; the composer's Text message and network name; the bridges' encryption and the calls' setting (on and fixed in an encrypted room) in Room settings | `Chat.qvue`, `ChatPanel.qvue` |
+| `Capabilities.encryption` (`None`, `Transport`, `BridgeDecrypted`, `EndToEnd`); `get#BridgeCapabilities`, the room's `bridges` and `find#Rooms`' `bridgeNetworks`; Telnyx SMS says `None` | `chat_bridge.rs`, `telnyx.rs`, `ChatServices.xml` |
+| Rule 4: `roomRequiresE2ee` for an encrypted room; `set#RoomCallEncryption` refuses to turn it off there | `Calls.js`, `CallServices.xml` |
+| COM-UI-013: the devices a share left out (`moqui.crypto.leftOut`), a room's device trust (`roomTrust`, asked only of a device already open), the withheld code in `decryptRoom` | `WebrootCrypto.js`, `Chat.qvue` |
+| The terminal's one line | `ChatTui.xml` |
+| Bundled screens regenerated | `bundled-screens.js` |
+
+- SMS is `None`, not `Transport` (§6.3: "Never"): Telnyx is reached over TLS, but the provider, the carriers and the
+  phone network read every text.
+- Tests. Regression: the label's rules, the trust and the texts (`WebrootChat`); rule 4 (`CallEncryption`: an encrypted
+  room's call, a phone and a guest refused, the setting fixed, an encrypted direct room, a plain direct room's choice);
+  the terminal's line (`BasicCommsChat`, `BasicCommsEncrypted`, `BasicCommsBridges`); the bridges' encryption
+  (`BasicCommsBridges`, `chat_bridge_tests`, moqui-channels). Acceptance: `ChatLabels` (each room state at 390×844 and
+  1280×800 in the bundled shell, offline) and `EncryptedChatFlow`'s verified-only feature (who was left out, and
+  `m.unverified` to the reader).
+- Review (`1de64af65`): verifying another person (Members' Verify, the banner's and the "Not readable by" line's, over the
+  to-device SAS/QR flow, in the shared `m-chat-verification` card My devices uses too; a request from another person in
+  the open room); rule 3 (the checks, `verifiedUserProblem` with Verify or Send anyway, `onTrust` refreshes); the label in
+  the members pane and Room settings; no lock in New room's Private, the not-available state, Mail and Remove the PIN; the
+  "Not readable by" note kept per account; a members-only record room plain, SMS with another bridge, an inbound-only
+  bridge; the withheld code when the sync fails; `requireE2ee` on an encrypted room's call. Tests: `WebrootChat`;
+  acceptance `EncryptedChatFlow` (john.doe verifies b by emoji and the label has its check; b's new device stops the next
+  send until Send anyway) and `ChatLabels` (the members pane, Verify from the banner).
+- Second review (`b33d3213a`): Send anyway is kept in the browser per account and room (by device key or master key),
+  never as the SDK's trust, so "only verified devices" stays strict; the check before a send is the one gate and then
+  shares with all devices, so Verify then send works; a person verified by emoji only is covered; the sender's check
+  needs a verified device (`verifiedSender`); edits and reactions ask too; incoming requests named, cancelled on close.
+  Acceptance `EncryptedChatFlow` covers Verify then send and Send anyway under only verified devices.
+- Left: the call screen's label (phase 4, from `e2eeLabel`'s call states); the label in a notification (phase 2's
+  payload); Mail's line beside a person's chats (phase 8, the `mail` state); a request from another person when no
+  encrypted room is open shows only on My devices.
+
+Planned:
 - The label state function in `moqui.chat`; the lock and the room type icons; the banners and composer hints of §6.2
   in the header, room info, room list and home list.
 - `Capabilities.encryption` on the adapter trait, `get#BridgeCapabilities` and the Telnyx SMS adapter.
@@ -1234,8 +1317,45 @@ distributor on a phone is not tried yet.
    paths.
 - Files: `crates/moqui-rtc/src/sfu/`, `WebrootCall.js`, `Calls.js`, `MainActivity.kt`, a new acceptance suite.
 - Done when: §8.5.
+- Status (2026-11-17): built.
+  1. In memory: `sfu/testnet.rs` shapes each link (loss, bursts, jitter, capacity, delay, a cut) and moves a client
+     (a NAT's new port, a new interface, a rejoin); `sfu/network_tests.rs` holds the profiles as regression tests
+     (under a second) and prints them all (`network_profiles`). Results in §8.4. The browser suite is
+     `basic-comms/test/acceptance/client/CallNetwork.spec.js` with `scripts/call-network.sh` (namespaces, the server
+     and the shaper, `scripts/call-network-control.py`); it skips without root and has not run yet.
+  2. In the results' order: RED and the 120 ms audio hold, DTX; ICE restart (disconnected, failed, a network change,
+     nothing coming in) before a join, with Android's `NetworkWatch` in `MainActivity.kt` (not built on a device
+     here); the 60 s keep; the socket's ping every 10 s in a call; the quality icon (`m-call-network`). FEC, NACK and
+     RTX are negotiated; TURN's order is the browser's ICE.
+  3. The direct path with Always relay my calls (Settings, Calls) and SFrame on both paths; acceptance `CallDirect`
+     passes.
+  - Terminal: `Call.tui.json` (CallTui) shows none of it: no media, so no quality, Reconnecting or path; Settings, Calls'
+    twin says Always relay is set in the browser.
+  - Left: the browser suite's first run (root) and §8.5 on real phones; the estimate's reaction to a sudden drop (EDGE,
+    the bandwidth step: 2.3 s and a 1.8 s freeze against 2 s and 1 s); video under 200 ms of jitter; TURN over TLS on
+    443 live; a recorded cellular trace in the suite; the direct path's profiles with a page per namespace (the suite's
+    pages share one Chromium).
 
 #### Phase 6: message menu, reactions, Info
+
+Done 2026-11-17 in `acc6d1b66` ([review](ui-review-basic-comms.md) COM-UI-008, 034, 035). No server transition was
+needed: `timeline?eventSeq=` (get#Timeline, which checks the room) gives the one message with its delivery and the
+members' read markers.
+
+| Work | Files |
+|---|---|
+| One action list (`messageActions`, `chat-message-menu`) for the sheet, the hover toolbar's More and a desktop row's right click; who reacted and who voted by a long press (`pressStart`, `showPeople`); the Info dialog | `Chat.qvue` |
+| `messageInfo`, `messageInfoLines` | `WebrootChat.js` |
+| `moqui.emoji`, `m-emoji-picker`; its data file, license and notice | `WebrootEmoji.js`, `WebrootVue.qvt.css`, `libs/refresh.mjs`, `libs/emoji/`, `MANIFEST.json`, `NOTICES.md` |
+| The script in the pages and the shell, the precompiled client components, the staged library | `qapps.xml`, `index.html`, `libs.txt`, `qvt.rs`, `WebrootVue.qvt.render.js` |
+| Info per message in text | `ChatTui.xml`, `Chat.tui.json` |
+| Bundled screens regenerated | `bundled-screens.js` |
+
+- Tests. Regression: the Info rules (`WebrootChat`: read markers at or after, a member with receipts off not listed,
+  the viewer's receipts off, "and N more", each network's delivery, a thread, never "not read"); the picker
+  (`WebrootEmoji`: search, recent, groups); the one list in the sheet, More and the right click, and Info read again
+  (`ShellSync`); the terminal's Info (`BasicCommsBridges`). Acceptance: `PhoneReactions` (react, who reacted, take it
+  back, the picker and Info by made touch events at 390×844 in the bundled shell, offline).
 
 - One action list for the sheet and the hover menu; right-click on a desktop row.
 - `m-emoji-picker` in `webroot/js` with its data file; recent emoji in `storage`.

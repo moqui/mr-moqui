@@ -241,17 +241,72 @@ feature("a call that rings out is missed", {
     }
 })
 
-feature("a leg whose socket did not come back leaves, and the call ends", {
+// The direct path (plans/Comms-Messaging.md §8.3 item 15): a one-to-one call of two users goes peer to peer; either
+// one's Always relay my calls, or a third person rung in, keeps it on the media server, and a socket that asks for the
+// direct path then is refused.
+feature("a one-to-one call goes direct unless either person always relays or a third person is rung, and a media-server join moves it for good", {
+    when() {
+        endAll()
+        const started = as(A, "start#Call", {calleeUserIdList: [B]})
+        const id = started.callSessionId
+        const answered = as(B, "answer#Call", {callSessionId: id})
+        const before = as(A, "get#Call", {callSessionId: id}).call.direct
+        const bound = as(B, "bind#Connection", {callSessionId: id, callLegId: answered.callLegId, direct: true})
+        const relay = as(B, "set#CallPreferences", {alwaysRelay: true})
+        const relayed = as(A, "get#Call", {callSessionId: id}).call.direct
+        const refused = as(B, "bind#Connection", {callSessionId: id, callLegId: answered.callLegId, direct: true})
+        const plain = as(B, "bind#Connection", {callSessionId: id, callLegId: answered.callLegId})
+        const back = as(B, "set#CallPreferences", {alwaysRelay: false})
+        const prefs = as(A, "get#CallPreferences", {})
+        const again = as(A, "get#Call", {callSessionId: id}).call.direct
+        sys(() => call("org.moqui.call.CallTransferServices.add#CallParticipant", {callSessionId: id, userId: C}))
+        ec.user.internalLoginUser(A.toLowerCase().replace(/_/g, "."))
+        const third = sys(() => call("org.moqui.call.CallServices.get#Call", {callSessionId: id})).call
+        endAll()
+        // a page that joins a direct call through the media server moves it there for good, for both pages
+        const next = as(A, "start#Call", {calleeUserIdList: [B]})
+        const nextAnswer = as(B, "answer#Call", {callSessionId: next.callSessionId})
+        as(B, "bind#Connection", {callSessionId: next.callSessionId, callLegId: nextAnswer.callLegId, direct: true})
+        const moved = as(A, "bind#Connection", {callSessionId: next.callSessionId, callLegId: next.callLegId})
+        const movedView = as(B, "get#Call", {callSessionId: next.callSessionId}).call
+        const backDirect = as(B, "bind#Connection", {callSessionId: next.callSessionId, callLegId: nextAnswer.callLegId, direct: true})
+        const relayedDate = session(next.callSessionId).relayedDate
+        endAll()
+        return {before, bound, relay, relayed, refused, plain, back, prefs, again, third, moved, movedView, backDirect, relayedDate}
+    },
+    then({before, bound, relay, relayed, refused, plain, back, prefs, again, third, moved, movedView, backDirect, relayedDate}) {
+        moved.generation == 1 && moved.call.direct == false
+        movedView.direct == false
+        backDirect.reasonCode == "notDirect"
+        relayedDate != null
+        before == true
+        bound.direct == true && bound.generation == 1
+        relay.alwaysRelay == true
+        relayed == false
+        refused.reasonCode == "notDirect"
+        plain.generation == 2 && !plain.direct
+        back.alwaysRelay == false && prefs.alwaysRelay == false && prefs.directPathEnabled == true
+        again == true
+        third.direct == false
+    }
+})
+
+feature("a leg whose socket did not come back in a minute leaves, and the call ends", {
     when() {
         const started = as(A, "start#Call", {calleeUserIdList: [B]})
         const answered = as(B, "answer#Call", {callSessionId: started.callSessionId})
         const bound = as(B, "bind#Connection", {callSessionId: started.callSessionId, callLegId: answered.callLegId})
         sys(() => call("org.moqui.call.CallServices.release#Connection", {callLegId: answered.callLegId, generation: bound.generation}))
-        age("moqui.call.CallConnection", {callLegId: answered.callLegId}, "closedDate", 60000)
+        // gone 40 s (a phone's network back within the minute, Comms-Messaging §8.3 item 11): still in the call
+        age("moqui.call.CallConnection", {callLegId: answered.callLegId}, "closedDate", 40000)
+        expire()
+        const kept = session(started.callSessionId).statusId
+        age("moqui.call.CallConnection", {callLegId: answered.callLegId}, "closedDate", 61000)
         const expired = expire()
-        return {expired, row: session(started.callSessionId)}
+        return {kept, expired, row: session(started.callSessionId)}
     },
-    then({expired, row}) {
+    then({kept, expired, row}) {
+        kept != "CssEnded"
         expired.legCount >= 1
         row.statusId == "CssEnded"
         row.endReasonEnumId == "CerConnectionLost"

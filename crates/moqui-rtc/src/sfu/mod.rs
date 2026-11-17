@@ -201,12 +201,24 @@ pub struct SfuConfig {
     pub audio_only_below_kbps: u64,
     /// What each simulcast layer needs, low to high.
     pub layer_kbps: [u64; 3],
-    /// The estimate kept for each audio track before video is shared out.
+    /// The estimate kept for each audio track before video is shared out: Opus at 32 kbit/s with its headers, and RED's
+    /// copy of the frame before.
     pub audio_kbps: u64,
     /// The relay links one room may have to other media nodes (W7).
     pub max_relays_per_room: usize,
     /// The relay links this node may have, all rooms together.
     pub max_relays: usize,
+    /// Whether a leg's audio may carry RED (RFC 2198, plans/Comms-Messaging.md §8.3 item 8): when the leg's offer has
+    /// it, its browser sends each Opus frame again in the next packet, and the SFU does the same on what it forwards to
+    /// the leg, so a lost packet loses no audio. A frame lost on the way in is recovered here and goes out again. An
+    /// end-to-end encrypted call's page leaves RED out of its offers and answers (`WebrootCall.js`), since its
+    /// transform sees the RED payload whole.
+    pub red: bool,
+    /// How long a leg's peer holds its audio back, waiting for an earlier packet that is late, before it forwards what
+    /// it has. Audio is never sent again, so a packet lost on the way in held the leg's audio for everyone until 15
+    /// packets (300 ms) had come behind it, str0m's default; a packet later than this is dropped, as one lost, and the
+    /// subscribers' browsers conceal it (plans/Comms-Messaging.md §8.4, `network_tests.rs`).
+    pub audio_reorder_wait: Duration,
 }
 
 impl Default for SfuConfig {
@@ -219,9 +231,11 @@ impl Default for SfuConfig {
             initial_kbps: 600,
             audio_only_below_kbps: 120,
             layer_kbps: [150, 500, 1_500],
-            audio_kbps: 40,
+            audio_kbps: 64,
             max_relays_per_room: 8,
             max_relays: 64,
+            red: true,
+            audio_reorder_wait: Duration::from_millis(120),
         }
     }
 }
@@ -539,8 +553,9 @@ impl Sfu {
         let mut rtc = Rtc::builder()
             .set_ice_lite(true)
             .clear_codecs()
-            .enable_opus(true, false)
+            .enable_opus(true, self.config.red)
             .enable_vp8(true)
+            .set_reordering_timeout_audio(Some(self.config.audio_reorder_wait))
             .enable_bwe(Some(Bitrate::kbps(self.config.initial_kbps)))
             .build(now);
         for addr in &self.config.udp_candidates {
@@ -1142,3 +1157,6 @@ mod audio_tests;
 
 #[cfg(test)]
 mod relay_tests;
+
+#[cfg(test)]
+mod network_tests;

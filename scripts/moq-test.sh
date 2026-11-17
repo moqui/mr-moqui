@@ -1032,5 +1032,18 @@ else
     skipped="$skipped archive"
 fi
 
+# The deploy files (SEC-OUT-13): the unit leaves only the runtime and its components writable and keeps the binary and
+# the conf read-only in it; the image gives the moqui user neither the binary, the conf nor the runtime directory.
+unit=$SRC/systemd/moqui.service
+check "unit ProtectSystem strict" 0 '' -- grep -qx 'ProtectSystem=strict' "$unit"
+check "unit writes the runtime and its components" 0 '' -- grep -qx 'ReadWritePaths=/opt/moqui /opt/moqui/components' "$unit"
+check "unit keeps the binary and the conf read-only" 0 '' -- \
+    grep -qx 'ReadOnlyPaths=/opt/moqui/moqui -/opt/moqui/MoquiConf.xml -/opt/moqui/conf' "$unit"
+check "image runtime directory root's and sticky" 0 '' -- \
+    sh -c "grep -q 'chown root:moqui /opt/moqui ' '$SRC/podman/Containerfile' && grep -q 'chmod 1775 /opt/moqui\$' '$SRC/podman/Containerfile'"
+lacks "image gives moqui no binary or runtime directory" 'chown (-R )?moqui:moqui /opt/moqui( |$)|chown .*moqui:moqui .*/opt/moqui/moqui' -- \
+    cat "$SRC/podman/Containerfile"
+lacks "entrypoint leaves the runtime directory's owner" 'chown .*"\$runtime"' -- cat "$SRC/podman/entrypoint.sh"
+
 printf '%d passed, %d failed%s (bash %s)\n' "$pass" "$fail" "${skipped:+, skipped:$skipped}" "$BASH_VERSION"
 [ "$fail" -eq 0 ]

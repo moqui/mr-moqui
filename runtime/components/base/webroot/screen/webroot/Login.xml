@@ -189,10 +189,10 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="hasUserAccounts" from="!adminNeeded.needed"/>
         <!-- from another machine the first administrator takes the setup secret of the startup log (SEC-WEB-08) -->
         <set field="setupSecretRequired" from="adminNeeded.needed &amp;&amp; !ec.user.initialAdminLocal"/>
-        <!-- the test user's password is still 'moqui': verified, not compared to its seed SHA hash, since a login re-hashes it -->
-        <set field="testUserAccount" from="ec.entity.find('moqui.security.UserAccount').condition('userId', 'EX_JOHN_DOE').disableAuthz().one()"/>
-        <set field="hasTestLogin" from="testUserAccount != null &amp;&amp; ec.user.passwordsMatch('moqui', testUserAccount.get('currentPassword'),
-            testUserAccount.get('passwordHashType'), testUserAccount.get('passwordSalt'), testUserAccount.get('passwordBase64') == 'Y')"/>
+        <!-- the Test Login button: on a dev or test instance or a demo (demo_test_login), while the test user's password is
+            still 'moqui' (SEC-RTE-17; the check is cached a minute) -->
+        <service-call name="org.moqui.impl.UserServices.get#TestLoginOffered" out-map="testLoginOut"/>
+        <set field="hasTestLogin" from="testLoginOut.offered === true"/>
     </actions>
     <widgets>
         <!-- NOTE: this screen is not under the apps screen, but uses similar header/footer/etc -->
@@ -251,7 +251,7 @@ along with this software (see the LICENSE.md file). If not, see
 ]]]></text></render-mode>
             </fail-widgets></section>
 
-            <!-- TODO: very convenient for dev/testing and generally safe but adds some overhead in production, consider removing for large instances -->
+            <!-- only on a dev or test instance, or a demo that sets demo_test_login (get#TestLoginOffered) -->
             <section name="TestLoginSection">
                 <condition><expression>hasTestLogin</expression></condition>
                 <widgets><render-mode><text type="html"><![CDATA[

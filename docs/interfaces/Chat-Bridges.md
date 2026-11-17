@@ -42,7 +42,7 @@ A network adapter implements `ChatBridgeAdapter` (moqui-core `service/chat_bridg
 | Part | What it does |
 | --- | --- |
 | `name` | The name a `ChatBridge` row selects it by: its `adapterName`, else its network's enumeration code (`sms`, `whatsapp`, `xmpp` and so on). |
-| `capabilities` | `edit`, `delete`, `reaction`, `idempotent` (the network dedupes a send by its idempotency key), `sends_per_minute` (0: no limit). Each implementation narrows these to the API version it verified. |
+| `capabilities` | `edit`, `delete`, `reaction`, `idempotent` (the network dedupes a send by its idempotency key), `sends_per_minute` (0: no limit), `encryption` (below). Each implementation narrows these to the API version it verified. |
 | `start`, `stop` | Connect the bridge on this node, or disconnect it. An error marks the bridge not connected, with the error as its last error, and the next round tries again. |
 | `deliver` | Send one event (`DeliveryRequest`: the idempotency key, the external room, the kind, the text and HTML, the sender's name and local user, the message's files (`attachments`, its `ChatAttachment` rows in order), the network id of the message an edit, reaction or delete is about, the reaction key, the attempt) and answer `Accepted` (the network's id), `Retry` (with `not_connected`), `Failed` (a reason code) or `Uncertain`. A request with no room is a direct send (`send#BridgeDirect`, below). |
 | `webhook` | A request to the bridge's webhook route, `POST /channels/{chatBridgeId}/webhook` (C4-SMS): the raw body, read within its bound, and the headers. The adapter checks the network's signature over those bytes and its replay window before it parses anything, then hands what came to `ingest#Event`. The default answers as an unsigned request (`WebhookResponse::not_signed`). |
@@ -66,6 +66,16 @@ An operation the adapter does not carry is refused before the local change: `edi
 `react#Message` answer `reasonCode` `bridgeUnsupported` for a message that went to (or came from) such a bridge, and the
 screens leave the action out (`get#Room` `bridgeCapabilities`). An inbound edit relayed to such a network fails there
 with the same reason; it is never shown as synchronized.
+
+`encryption` is how far the network keeps a message from others: `None` (the network and its providers read it: SMS and
+MMS, the Telnyx adapter), `Transport` (TLS in transit only), `BridgeDecrypted` (end to end on the network, decrypted by
+the bridge here: WhatsApp through a bridge) or `EndToEnd` (end to end through the bridge; none yet). An adapter that says
+nothing says `None`, and so does a bridge with no adapter in the build. `get#BridgeCapabilities` returns it, each bridge
+of `get#RoomBridges` (and so `get#Room`'s `bridges`) has it, and `find#Rooms` gives each room's `bridgeNetworks`
+(`{network, networkName, encryption, outbound}`). A bridged room is never end-to-end encrypted on this server, whatever
+the network does: its label (`moqui.chat.e2eeLabel`, [Comms-Messaging §6.2](../../plans/Comms-Messaging.md#62-labels))
+is the SMS one for a text, else "the bridge reads messages to pass them on", and the room settings name each bridge's
+encryption.
 
 ## Input
 

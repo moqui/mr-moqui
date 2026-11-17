@@ -24,6 +24,10 @@
 //! the room's other nodes too (kind `roomFrame`), and the origin passes a leg node's on to the other leg nodes. A link
 //! that is lost puts the leg node's legs on the reconnect path (`mediaLost`); one the origin refused sends them back to
 //! the call's node (`note#MediaEvent` `relayRefused`) the same way; one the origin closed (the call ended) ends them.
+//!
+//! The direct path (plans/Comms-Messaging.md §8.3 item 15): a leg bound for it has a route here and no SFU peer; its
+//! `peer` frames go to the room's other direct leg only ([`peer_frame`]), and the room's frames (`mute`, notices) reach it
+//! as any leg's do. Its first `join` with an offer, when the call moves to the media server, makes its SFU peer.
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::ErrorKind;
@@ -58,6 +62,11 @@ const RELAY_BURST: f64 = 20.0;
 const RELAY_PER_SECOND: f64 = 5.0;
 /// The longest reaction (an emoji, with its joiners and modifiers) relayed, in bytes.
 const MAX_REACTION: usize = 64;
+/// A direct leg's `peer` frames at once, and how many a second it gets back.
+const PEER_BURST: f64 = 60.0;
+const PEER_PER_SECOND: f64 = 20.0;
+/// The longest ICE candidate line relayed, in bytes.
+const MAX_CANDIDATE: usize = 1_024;
 
 /// Where a leg's signaling socket is: its node and its socket id there.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,12 +80,20 @@ struct LegRoute {
     route: Route,
     /// The leg's frames relayed to the others ([`relayed_frame`]).
     relayed: RelayBucket,
+    /// A leg on the direct path (plans/Comms-Messaging.md §8.3 item 15): its media goes to the other page peer to peer,
+    /// so it has no SFU peer here, and its `peer` frames ([`peer_frame`]) go to the other direct leg of the room.
+    direct: bool,
+    peer: RelayBucket,
+    /// The direct leg's first `connected` was noted (`note#MediaEvent`); later ones of this generation are not.
+    noted: bool,
 }
 
 /// A leg's relayed frames: [`RELAY_BURST`] at once, refilled at [`RELAY_PER_SECOND`].
 pub(super) struct RelayBucket {
     tokens: f64,
     at: Instant,
+    burst: f64,
+    per_second: f64,
 }
 
 impl RelayBucket {
@@ -84,13 +101,26 @@ impl RelayBucket {
         Self {
             tokens: RELAY_BURST,
             at: now,
+            burst: RELAY_BURST,
+            per_second: RELAY_PER_SECOND,
+        }
+    }
+
+    /// A direct leg's `peer` frames: its offer, answer and ICE candidates come in a burst as the call connects or
+    /// restarts ICE.
+    pub(super) fn for_peer(now: Instant) -> Self {
+        Self {
+            tokens: PEER_BURST,
+            at: now,
+            burst: PEER_BURST,
+            per_second: PEER_PER_SECOND,
         }
     }
 
     /// Whether one more frame may be relayed now.
     pub(super) fn take(&mut self, now: Instant) -> bool {
-        let refill = now.saturating_duration_since(self.at).as_secs_f64() * RELAY_PER_SECOND;
-        self.tokens = (self.tokens + refill).min(RELAY_BURST);
+        let refill = now.saturating_duration_since(self.at).as_secs_f64() * self.per_second;
+        self.tokens = (self.tokens + refill).min(self.burst);
         self.at = now;
         if self.tokens < 1.0 {
             return false;
@@ -404,6 +434,37 @@ impl Driver<'_> {
             "join" if self.over_pairing_cap(&key) => Err(SfuError::Rtc(
                 "the edge node has the most call legs of this local node at once".to_string(),
             )),
+            // the direct path: the socket bound the leg for it (bind#Connection with direct), so its route is kept for
+            // the pages' signaling and the room's frames, with no SFU peer; a peer it had (an older generation) goes
+            "join" if frame.get("direct").and_then(Json::as_bool) == Some(true) => {
+                // as the SFU's join: an older or the same generation is refused, a newer one replaces
+                let held = self
+                    .sfu
+                    .generation(&key)
+                    .max(self.routes.get(&key).map(|r| r.generation));
+                if !newer_generation(held, generation) {
+                    Err(SfuError::StaleGeneration)
+                } else {
+                    if let Some(old) = self.sfu.generation(&key) {
+                        let _ = self.sfu.leave(now, &key, old);
+                    }
+                    self.routes.insert(
+                        key.clone(),
+                        LegRoute {
+                            generation,
+                            route: route.clone(),
+                            relayed: RelayBucket::new(now),
+                            direct: true,
+                            peer: RelayBucket::for_peer(now),
+                            noted: false,
+                        },
+                    );
+                    Ok(Some(
+                        json!({"rtc": "joined", "callLegId": leg, "generation": generation, "direct": true}),
+                    ))
+                }
+            }
+            "peer" => self.peer(&route, room, leg, generation, frame, now).map(|()| None),
             "join" => self
                 .sfu
                 .join(now, &key, generation, sdp())
@@ -425,6 +486,9 @@ impl Driver<'_> {
                             generation,
                             route: route.clone(),
                             relayed: RelayBucket::new(now),
+                            direct: false,
+                            peer: RelayBucket::for_peer(now),
+                            noted: false,
                         },
                     );
                     Some(json!({"rtc": "joined", "callLegId": leg, "generation": generation, "sdp": answer}))
@@ -464,11 +528,16 @@ impl Driver<'_> {
                     .map(|()| None)
             }
             "leave" => {
-                let left = self.sfu.leave(now, &key, generation).map(|()| None);
-                self.routes.remove(&key);
-                left
+                let direct = self
+                    .routes
+                    .remove(&key)
+                    .is_some_and(|r| r.direct && r.generation == generation);
+                match self.sfu.leave(now, &key, generation) {
+                    Err(SfuError::UnknownLeg) if direct => Ok(None),
+                    left => left.map(|()| None),
+                }
             }
-            "mute" | "hand" | "reaction" | "unpublish" => match self.sfu.generation(&key) {
+            "mute" | "hand" | "reaction" | "unpublish" => match self.leg_generation(&key) {
                 Some(g) if g == generation => {
                     if self.routes.get_mut(&key).is_some_and(|r| !r.relayed.take(now)) {
                         let refused = json!({"rtc": "error", "id": id, "callLegId": leg, "code": "rateLimited",
@@ -508,6 +577,81 @@ impl Driver<'_> {
                 self.to_leg(&key, generation, notice);
             }
         }
+    }
+
+    /// The generation of a leg here: its SFU peer's, or a direct leg's route's.
+    fn leg_generation(&self, key: &LegKey) -> Option<u64> {
+        self.sfu
+            .generation(key)
+            .or_else(|| self.routes.get(key).filter(|r| r.direct).map(|r| r.generation))
+    }
+
+    /// A direct leg's `peer` frame (its offer, answer, an ICE candidate, ...) to the other direct leg of the room it
+    /// names (`to`), and to no one else: both bound for the direct path, the sender at its current generation. A leg
+    /// that is not on the direct path, or not here yet, gets nothing; the sender learns of it from the other's `hello`.
+    fn peer(
+        &mut self,
+        route: &Route,
+        room: &str,
+        leg: &str,
+        generation: u64,
+        frame: &Json,
+        now: Instant,
+    ) -> Result<(), SfuError> {
+        let key = LegKey::new(room, leg);
+        let Some(own) = self.routes.get_mut(&key).filter(|r| r.direct) else {
+            return Err(SfuError::UnknownLeg);
+        };
+        if own.generation != generation {
+            return Err(SfuError::StaleGeneration);
+        }
+        if !own.peer.take(now) {
+            let refused = json!({"rtc": "error", "callLegId": leg, "code": "rateLimited",
+                "message": "too many frames for the other person: wait a moment"});
+            self.reply(route, room, refused);
+            return Ok(());
+        }
+        let to = frame.get("to").and_then(Json::as_str).unwrap_or_default();
+        let to_key = LegKey::new(room, to);
+        let other = match self.routes.get(&to_key) {
+            Some(other) if other.direct && to != leg => other,
+            // the other page is on the media server: this one is told to follow, as by the other's `relay`
+            Some(_) if to != leg => {
+                self.reply(
+                    route,
+                    room,
+                    json!({"rtc": "peer", "kind": "relay", "from": to, "callLegId": leg}),
+                );
+                return Ok(());
+            }
+            _ => return Ok(()),
+        };
+        let Some(relayed) = peer_frame(leg, frame) else {
+            return Err(SfuError::BadSdp(
+                "a peer frame names its kind, with an offer, answer or candidate that fits".to_string(),
+            ));
+        };
+        let other_generation = other.generation;
+        let first_connected = relayed.get("kind").and_then(Json::as_str) == Some("connected")
+            && self
+                .routes
+                .get_mut(&key)
+                .is_some_and(|own| !std::mem::replace(&mut own.noted, true));
+        if first_connected {
+            // the two pages' own connection is up: the leg is in the call's media, as an SFU peer's Connected says
+            super::note(
+                self.factory,
+                room,
+                "org.moqui.call.CallServices.note#MediaEvent",
+                vec![
+                    ("callLegId", Value::string(leg)),
+                    ("generation", Value::I64(i64::try_from(generation).unwrap_or(0))),
+                    ("event", Value::string("connected")),
+                ],
+            );
+        }
+        self.to_leg(&to_key, other_generation, relayed);
+        Ok(())
     }
 
     /// Whether a new leg `key` of a paired node's room (E12 keys) would pass that node's cap of legs at once (E16):
@@ -841,6 +985,45 @@ pub(super) fn relayed_frame(op: &str, leg: &str, frame: &Json) -> Option<Json> {
     o.insert("rtc".to_string(), Json::String(op.to_string()));
     o.insert("from".to_string(), Json::String(leg.to_string()));
     o.insert("callLegId".to_string(), Json::String(leg.to_string()));
+    Some(relay)
+}
+
+/// Whether a join with `generation` may replace what a leg holds here (its SFU peer's or its route's generation), as
+/// [`Sfu::join`] rules: only a newer one.
+pub(super) fn newer_generation(held: Option<u64>, generation: u64) -> bool {
+    held.is_none_or(|g| g < generation)
+}
+
+/// What of a direct leg's `peer` frame goes to the other page (plans/Comms-Messaging.md §8.3 item 15): its kind, with the
+/// SDP of an offer or answer and the line of a candidate, short, and `from` the sender. None for an unknown kind or one
+/// whose SDP or candidate is missing or too long.
+///
+/// The kinds: `hello` (here, on the direct path) and `ready` (the answer to one), `offer`, `answer` and `candidate`
+/// (the two pages' own negotiation and ICE), `connected` (their connection is up) and `relay` (this page moves the call
+/// to the media server; the other follows).
+pub(super) fn peer_frame(leg: &str, frame: &Json) -> Option<Json> {
+    let kind = frame.get("kind").and_then(Json::as_str)?;
+    let text = |name: &str, max: usize| {
+        frame
+            .get(name)
+            .and_then(Json::as_str)
+            .filter(|s| !s.is_empty() && s.len() <= max)
+            .map(str::to_string)
+    };
+    let mut relay = match kind {
+        "hello" | "ready" | "connected" | "relay" => json!({}),
+        "offer" | "answer" => json!({"sdp": text("sdp", MAX_SDP)?}),
+        "candidate" => json!({
+            "candidate": text("candidate", MAX_CANDIDATE)?,
+            "sdpMid": text("sdpMid", 32),
+            "sdpMLineIndex": frame.get("sdpMLineIndex").and_then(Json::as_u64).filter(|i| *i < 64),
+        }),
+        _ => return None,
+    };
+    let o = relay.as_object_mut()?;
+    o.insert("rtc".to_string(), Json::String("peer".to_string()));
+    o.insert("kind".to_string(), Json::String(kind.to_string()));
+    o.insert("from".to_string(), Json::String(leg.to_string()));
     Some(relay)
 }
 

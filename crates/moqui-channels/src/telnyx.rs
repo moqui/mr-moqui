@@ -32,6 +32,9 @@
 //! Each send carries the delivery's idempotency key in an `Idempotency-Key` header, but Telnyx does not dedupe on it,
 //! so the adapter says it is not idempotent: an attempt whose answer was lost (a timeout, a reset after the request
 //! went, a 5xx other than 503) is `Uncertain` and is not sent again unless someone asks (`retry#Delivery`).
+//!
+//! Its encryption is `None` (plans/Comms-Messaging.md §6.3): the API is reached over TLS, but Telnyx, the carriers and
+//! the phone network read every text, so the room's label is the SMS one, not "in transit".
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -39,7 +42,7 @@ use std::time::Duration;
 
 use moqui_core::service::chat_bridge::{
     media_urls, BridgeInfo, Capabilities, ChatBridgeAdapter, DeliveryKind, DeliveryOutcome, DeliveryRequest,
-    FetchedMedia, MediaUrls, WebhookEventKey, WebhookRequest, WebhookResponse, MEDIA_RETRY_MILLIS,
+    Encryption, FetchedMedia, MediaUrls, WebhookEventKey, WebhookRequest, WebhookResponse, MEDIA_RETRY_MILLIS,
 };
 use moqui_lib::http::RestClient;
 use moqui_lib::object::Value;
@@ -234,6 +237,8 @@ impl ChatBridgeAdapter for TelnyxSms {
             reaction: false,
             idempotent: false,
             sends_per_minute: Config::of(&bridge.config).sends_per_minute,
+            // not even Transport: a text crosses the phone network in the clear, whatever TLS reaches Telnyx (§6.3)
+            encryption: Encryption::None,
         }
     }
 

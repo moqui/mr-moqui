@@ -93,7 +93,7 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- a mailbox's header -->
             <div v-if="params.mailbox && mailbox" class="q-px-md q-pt-sm q-pb-xs">
                 <div class="row items-center no-wrap q-gutter-x-sm">
-                    <q-icon :name="mailbox.isPublic ? 'sym_o_forum' : 'sym_o_lock'" size="sm" class="m-muted"></q-icon>
+                    <q-icon :name="mailbox.isPublic ? 'sym_o_forum' : 'sym_o_group'" size="sm" class="m-muted"></q-icon>
                     <div class="col" style="min-width:0">
                         <div class="text-subtitle1 text-weight-medium ellipsis">{{mailbox.contactListName}}
                             <q-chip v-if="mailbox.isArchived" dense square class="m-tonal text-warning q-ml-xs">{{t('Archived')}}</q-chip></div>
@@ -360,8 +360,8 @@ along with this software (see the LICENSE.md file). If not, see
                                 <div class="row items-center q-gutter-xs q-mt-xs">
                                     <q-chip v-if="thread.contactListName" dense square class="m-tonal q-ml-none" icon="sym_o_forum" clickable
                                             @click="openView({mailbox: thread.contactListId})">{{thread.contactListName}}</q-chip>
-                                    <q-chip v-if="thread.isClosed" dense square class="m-tonal text-positive q-ml-none" icon="sym_o_lock">{{t('Closed')}}</q-chip>
-                                    <q-chip v-if="thread.forum && thread.forum.kind === 'private'" dense square class="m-tonal q-ml-none" icon="sym_o_lock_person">{{t('Private conversation')}}</q-chip>
+                                    <q-chip v-if="thread.isClosed" dense square class="m-tonal text-positive q-ml-none" icon="sym_o_comments_disabled">{{t('Closed')}}</q-chip>
+                                    <q-chip v-if="thread.forum && thread.forum.kind === 'private'" dense square class="m-tonal q-ml-none" icon="sym_o_visibility_off">{{t('Private conversation')}}</q-chip>
                                     <q-chip v-else-if="thread.forum" dense square class="m-tonal q-ml-none" icon="sym_o_public">{{t('Community topic')}}</q-chip>
                                     <q-chip v-if="thread.forum && thread.forum.acceptedAnswerId" dense square class="m-tonal text-positive q-ml-none" icon="sym_o_check_circle">{{t('Answered')}}</q-chip>
                                     <q-chip v-if="thread.forum && thread.forum.pinned" dense square class="m-tonal q-ml-none" icon="sym_o_keep">{{t('Pinned')}}</q-chip>
@@ -393,8 +393,8 @@ along with this software (see the LICENSE.md file). If not, see
                                         <q-item clickable v-close-popup @click="createFrom(lastMessage, 'event')"><q-item-section avatar><q-icon name="sym_o_event"></q-icon></q-item-section><q-item-section>{{t('Create an event')}}</q-item-section></q-item>
                                         <!-- what an app adds to a message (ext-action slot message-actions; the item: store, emailMessageId, communicationEventId) -->
                                         <m-ext-actions v-if="lastMessage" slot="message-actions" :item="{ store: lastMessage.store, emailMessageId: lastMessage.emailMessageId || null, communicationEventId: lastMessage.communicationEventId || null }" @done="reloadThread"></m-ext-actions>
-                                        <q-item v-if="thread.canModerate && !thread.isClosed" clickable v-close-popup @click="threadAction('close')"><q-item-section avatar><q-icon name="sym_o_lock"></q-icon></q-item-section><q-item-section>{{t('Close thread')}}</q-item-section></q-item>
-                                        <q-item v-if="thread.canModerate && thread.isClosed" clickable v-close-popup @click="threadAction('reopen')"><q-item-section avatar><q-icon name="sym_o_lock_open"></q-icon></q-item-section><q-item-section>{{t('Reopen thread')}}</q-item-section></q-item>
+                                        <q-item v-if="thread.canModerate && !thread.isClosed" clickable v-close-popup @click="threadAction('close')"><q-item-section avatar><q-icon name="sym_o_comments_disabled"></q-icon></q-item-section><q-item-section>{{t('Close thread')}}</q-item-section></q-item>
+                                        <q-item v-if="thread.canModerate && thread.isClosed" clickable v-close-popup @click="threadAction('reopen')"><q-item-section avatar><q-icon name="sym_o_add_comment"></q-icon></q-item-section><q-item-section>{{t('Reopen thread')}}</q-item-section></q-item>
                                         <q-item clickable v-close-popup @click="expandAll"><q-item-section avatar><q-icon name="sym_o_unfold_more"></q-icon></q-item-section><q-item-section>{{t('Expand all')}}</q-item-section></q-item>
                                         <q-item clickable v-close-popup @click="openDetail(lastMessage)"><q-item-section avatar><q-icon name="sym_o_print"></q-icon></q-item-section><q-item-section>{{t('Print or view source')}}</q-item-section></q-item>
                                     </q-list></q-menu>
@@ -550,7 +550,7 @@ along with this software (see the LICENSE.md file). If not, see
 
                         <!-- the reply bar -->
                         <div v-if="thread.isClosed && thread.contactListId" class="q-mt-sm text-caption m-muted row items-center q-gutter-x-xs">
-                            <q-icon name="sym_o_lock" size="16px"></q-icon><span>{{t('This thread is closed: no more replies in the mailbox.')}}</span>
+                            <q-icon name="sym_o_comments_disabled" size="16px"></q-icon><span>{{t('This thread is closed: no more replies in the mailbox.')}}</span>
                             <q-btn flat dense no-caps size="sm" color="primary" :label="t('Reply to sender')" @click="replyToSender(lastMessage)"></q-btn>
                         </div>
                         <div v-else-if="lastMessage" class="row q-gutter-sm q-mt-sm">
@@ -734,7 +734,7 @@ along with this software (see the LICENSE.md file). If not, see
         <div @keydown.enter.prevent="loadMailboxes"><m-text-line v-model="browse.search" name="mailboxSearch" :label="t('Find a mailbox')"></m-text-line></div>
         <q-list separator class="q-mt-sm">
             <q-item v-for="list in browse.list" :key="list.contactListId">
-                <q-item-section avatar><q-icon :name="list.isPublic === 'Y' ? 'sym_o_forum' : 'sym_o_lock'"></q-icon></q-item-section>
+                <q-item-section avatar><q-icon :name="list.isPublic === 'Y' ? 'sym_o_forum' : 'sym_o_group'"></q-icon></q-item-section>
                 <q-item-section>
                     <q-item-label>{{list.contactListName}}</q-item-label>
                     <q-item-label caption>{{[list.description, (list.memberCount || 0) + ' ' + t('members'), list.lastPostDate ? t('last post') + ' ' + shortDate(asMillis(list.lastPostDate)) : null].filter((part) => part).join(' · ')}}</q-item-label>
@@ -1560,7 +1560,7 @@ module.exports = {
             if (row.snoozedThruDate && Number(row.snoozedThruDate) > Date.now()) chips.push({ key: 'snooze', icon: 'sym_o_snooze', label: t('Until') + ' ' + this.shortWhen(row.snoozedThruDate), color: 'info' });
             if (row.statusId === 'ES_SCHEDULED' && row.scheduledSendDate) chips.push({ key: 'sched', icon: 'sym_o_schedule_send', label: t('Sends') + ' ' + this.shortWhen(row.scheduledSendDate), color: 'info' });
             if (row.sendError) chips.push({ key: 'error', icon: 'sym_o_error', label: t('Not sent'), color: 'negative' });
-            if (row.isClosed) chips.push({ key: 'closed', icon: 'sym_o_lock', label: t('Closed'), color: 'positive' });
+            if (row.isClosed) chips.push({ key: 'closed', icon: 'sym_o_comments_disabled', label: t('Closed'), color: 'positive' });
             if (row.contactListId && row.contactListId !== this.params.mailbox) chips.push({ key: 'box', icon: 'sym_o_forum', label: row.contactListName || t('Mailbox') });
             if (row.contactListId && row.replyCount) chips.push({ key: 'replies', icon: 'sym_o_forum', label: row.replyCount === 1 ? t('1 reply') : row.replyCount + ' ' + t('replies') });
             (row.labelList || []).slice(0, 3).forEach((label) => chips.push({ key: 'l' + label.emailLabelId, icon: 'sym_o_label', label: label.labelName }));

@@ -145,19 +145,39 @@ pub(crate) fn request_own_origins(factory: &ExecutionContextFactory, request: &s
 /// `allow-origins` entry with a scheme, matched the same way (`https://app.example:8443`, its port defaulted); or a
 /// bare `allow-origins` domain (`moqui.org`), which allows that host and any host under it on a dot boundary
 /// (`www.moqui.org`, not `foo-moqui.org`) on any scheme and port, as Java did (a bare `moqui.org:8443` on that port
-/// only). Case-insensitive. An Origin that is not
-/// an http or https origin, `null` included, is refused unless `*`. With no factory, the current context's conf.
+/// only; an IP address names itself, never hosts under it). Case-insensitive. An Origin that is not an http or https
+/// origin, `null` included, is refused unless `*`. With no factory, the current context's conf.
 pub fn origin_allowed_by(factory: Option<&ExecutionContextFactory>, origin: Option<&str>, own: &[SiteOrigin]) -> bool {
     let Some(origin) = origin.map(str::trim).filter(|text| !text.is_empty()) else {
         return true;
     };
-    let allow: Vec<String> = super::allow_origins(factory)
+    let allow = allowed_entries(factory);
+    allow.iter().any(|entry| entry == "*") || origin_named(&allow, origin, own)
+}
+
+/// [`origin_allowed_by`] without `*`: whether a request from `origin` may carry the caller's credentials, the CORS
+/// answer's `Access-Control-Allow-Credentials` or a socket that the browser opens with the session cookie. `*` lets
+/// any origin read what needs no credentials, never a signed-in user's answers (SEC-WEB-10).
+pub fn origin_credentialed_by(
+    factory: Option<&ExecutionContextFactory>,
+    origin: Option<&str>,
+    own: &[SiteOrigin],
+) -> bool {
+    let Some(origin) = origin.map(str::trim).filter(|text| !text.is_empty()) else {
+        return true;
+    };
+    origin_named(&allowed_entries(factory), origin, own)
+}
+
+fn allowed_entries(factory: Option<&ExecutionContextFactory>) -> Vec<String> {
+    super::allow_origins(factory)
         .iter()
         .map(|text| text.to_ascii_lowercase())
-        .collect();
-    if allow.iter().any(|entry| entry == "*") {
-        return true;
-    }
+        .collect()
+}
+
+/// Whether `origin` is one of `own` or named by an `allow-origins` entry other than `*`.
+fn origin_named(allow: &[String], origin: &str, own: &[SiteOrigin]) -> bool {
     let Some(origin) = SiteOrigin::parse(origin) else {
         return false;
     };
@@ -174,14 +194,16 @@ pub fn origin_allowed_by(factory: Option<&ExecutionContextFactory>, origin: Opti
         };
         let domain = bare.host.as_str();
         let port_named = entry.rsplit_once(':').is_some_and(|(_, port)| !port.contains(']'));
+        let address = domain.parse::<std::net::IpAddr>().is_ok();
         (!port_named || bare.port == origin.port)
-            && (origin.host == domain || (domain.contains('.') && origin.host.ends_with(&format!(".{domain}"))))
+            && (origin.host == domain
+                || (!address && domain.contains('.') && origin.host.ends_with(&format!(".{domain}"))))
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{origin_allowed_by, request_site, SiteOrigin};
+    use super::{origin_allowed_by, origin_credentialed_by, request_site, SiteOrigin};
 
     fn site(text: &str) -> SiteOrigin {
         SiteOrigin::parse(text).unwrap()
@@ -281,6 +303,44 @@ mod tests {
         assert!(!allowed(Some("file://site.test")));
         moqui_lib::env::set_property("webapp_allow_origins", "*");
         assert!(allowed(Some("null")));
+        moqui_lib::env::clear_property("webapp_allow_origins");
+    }
+
+    /// SEC-WEB-10: `*` allows any origin but never with credentials; the dev conf names only this machine, on any port
+    /// and either scheme, and an IP address entry names no host under it.
+    #[test]
+    fn a_wildcard_origin_carries_no_credentials_and_the_dev_conf_allows_only_this_machine() {
+        let _lock = crate::user::session::cookie_property_lock();
+        let own = [site("http://site.test:8080")];
+        moqui_lib::env::set_property("webapp_allow_origins", "*");
+        assert!(origin_allowed_by(None, Some("https://evil.test"), &own));
+        assert!(!origin_credentialed_by(None, Some("https://evil.test"), &own));
+        assert!(
+            origin_credentialed_by(None, Some("http://site.test:8080"), &own),
+            "its own origin"
+        );
+        assert!(origin_credentialed_by(None, None, &own), "no Origin: not a browser");
+
+        let conf = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../runtime/conf/MoquiDevConf.xml"
+        ))
+        .expect("the dev conf");
+        let value = conf
+            .split("name=\"webapp_allow_origins\" value=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .expect("the dev conf names webapp_allow_origins");
+        assert!(!value.split(',').any(|entry| entry.trim() == "*"), "{value}");
+        moqui_lib::env::set_property("webapp_allow_origins", value);
+        let credentialed = |origin: &str| origin_credentialed_by(None, Some(origin), &own);
+        assert!(credentialed("http://localhost:5173"));
+        assert!(credentialed("https://localhost:8443"));
+        assert!(credentialed("http://127.0.0.1:3000"));
+        assert!(!credentialed("https://evil.test"));
+        assert!(!credentialed("http://www.localhost:5173"));
+        assert!(!credentialed("http://evil.127.0.0.1:3000"));
+        assert!(!origin_allowed_by(None, Some("https://evil.test"), &own));
         moqui_lib::env::clear_property("webapp_allow_origins");
     }
 }

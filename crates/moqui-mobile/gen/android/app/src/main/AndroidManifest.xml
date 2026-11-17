@@ -16,6 +16,8 @@
     <!-- The notification check's one-tap fix (PushCheck.kt, plans/Comms-Messaging.md §7.4 Battery): a messaging app
         whose pushes must arrive asks to be left out of battery optimization, from the user's tap only. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- A network change during a call (Wi-Fi to mobile data, MainActivity's NetworkWatch): the page restarts ICE. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 

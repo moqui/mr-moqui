@@ -525,6 +525,16 @@ pub(super) fn change_value(change: &FileChange, diff: Option<&FileDiff>) -> Valu
     map(entries)
 }
 
+/// A per-repository cap of the conf's `git-server` (`max-webhooks`, `max-mirrors`): `default` when it is not a number,
+/// and no cap when it is 0.
+pub(super) fn max_per_repository(name: &str, default: i64) -> i64 {
+    match crate::setting(name).parse::<i64>() {
+        Ok(0) => i64::MAX,
+        Ok(most) if most > 0 => most,
+        _ => default,
+    }
+}
+
 pub(super) fn number(parameters: &BTreeMap<String, Value>, key: &str, default: usize) -> usize {
     text(parameters, key)
         .and_then(|text| text.parse().ok())

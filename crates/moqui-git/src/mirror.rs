@@ -209,6 +209,27 @@ impl GitProvider {
     /// it is asked for). A mirror another push holds is passed over: that push pushes again when it ends. (pushed,
     /// failed) ids; each failure is on its row.
     pub fn push_due_mirrors(&self, only: Option<&str>) -> Result<(Vec<String>, Vec<String>), Error> {
+        // a pass of the queue is bounded by time and starts no sooner than queue-pass-gap-seconds after the last
+        // (SEC-GIT-18); the one mirror asked for (a push's) is pushed whatever the time
+        if only.is_none() && !crate::queue_pass_may_start("mirrors") {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        let until = match only {
+            Some(_) => None,
+            None => crate::queue_pass_seconds()
+                .and_then(|seconds| i64::try_from(seconds.saturating_mul(1000)).ok())
+                .map(|millis| now_millis().saturating_add(millis)),
+        };
+        self.push_due_mirrors_until(only, until)
+    }
+
+    /// [`Self::push_due_mirrors`] that starts no push once `until` (milliseconds) has come; the mirrors left are still
+    /// due, for the next pass.
+    pub(crate) fn push_due_mirrors_until(
+        &self,
+        only: Option<&str>,
+        until: Option<i64>,
+    ) -> Result<(Vec<String>, Vec<String>), Error> {
         let rows: Vec<EntityValue> = {
             let _rows = rows_guard();
             let mut find = self
@@ -229,6 +250,10 @@ impl GitProvider {
         };
         let (mut pushed, mut failed) = (Vec::new(), Vec::new());
         for row in rows {
+            if until.is_some_and(|until| now_millis() >= until) {
+                tracing::info!("the push mirror queue ran its time (git-server queue-pass-seconds); the rest wait");
+                break;
+            }
             let Some(id) = text(row.get("mirrorId")) else {
                 continue;
             };

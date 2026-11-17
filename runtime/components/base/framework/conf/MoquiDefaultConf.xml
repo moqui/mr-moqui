@@ -372,7 +372,11 @@
         xmpp_upload_url is the HTTPS base of upload URLs (https://<domain> by default) and xmpp_upload_max_bytes their
         largest size; xmpp_upload_secret derives the URLs of chat files sent to XMPP clients. xmpp_resume_seconds is how
         long a dropped session waits for stream resumption, xmpp_fast_token_days how long a FAST token lasts.
-        xmpp_upload_seconds is the longest a PUT to an upload slot may take. xmpp_turn_enabled true lets external services
+        xmpp_upload_seconds is the longest a PUT to an upload slot may take; an upload no message was given is deleted
+        xmpp_upload_unattached_hours after it was put (by clean#Uploads, daily; 0 keeps it). A user's PEP items hold at
+        most xmpp_pep_max_bytes in all, the block list xmpp_block_max_jids JIDs and the push registrations
+        xmpp_push_max_registrations; past one the request is refused with resource-constraint (0: no cap).
+        xmpp_turn_enabled true lets external services
         (XEP-0215) hand a user's XMPP app a TURN credential (never an external user's, EXTERNAL_USER), at most
         xmpp_turn_per_hour a user an hour; off, the feature is not advertised. xmpp_scram_decoy_key derives the SCRAM salts
         of names that are no user's, so they stay the same across restarts and nodes (generated when unset).
@@ -395,6 +399,10 @@
     <default-property name="xmpp_resume_seconds" value="300"/>
     <default-property name="xmpp_fast_token_days" value="14"/>
     <default-property name="xmpp_upload_seconds" value="300"/>
+    <default-property name="xmpp_upload_unattached_hours" value="24"/>
+    <default-property name="xmpp_pep_max_bytes" value="20971520"/>
+    <default-property name="xmpp_block_max_jids" value="1000"/>
+    <default-property name="xmpp_push_max_registrations" value="50"/>
     <default-property name="xmpp_turn_enabled" value="false"/>
     <default-property name="xmpp_turn_per_hour" value="30"/>
     <default-property name="xmpp_scram_decoy_key" value="CHANGEME" is-secret="true"/>
@@ -707,6 +715,9 @@
         <cache name="moqui.security.hmac.replay" type="distributed" expire-time-live="300" max-elements="10000" value-type="Boolean"/>
         <!-- TURN credentials handed to XMPP apps (XmppServices.get#IceServers), counted by user and hour -->
         <cache name="moqui.xmpp.turn.issued" type="distributed" expire-time-live="3600" max-elements="10000" value-type="Long"/>
+        <!-- whether the Login screen's Test Login still holds (UserServices.get#TestLoginOffered), by a digest of the
+            test account's stored hash, so an anonymous render runs the password check at most once a minute -->
+        <cache name="webroot.login.test" type="local" expire-time-live="60" max-elements="10" value-type="Boolean"/>
     </cache-list>
     <telemetry enabled="${telemetry_enabled}" sample-ratio="${telemetry_sample_ratio}" interval-seconds="60"
             queue-records="8192" queue-bytes="33554432" tail-traces="1024" tail-trace-spans="512"
@@ -1313,7 +1324,12 @@
         pack; a pushed or fetched delta chain is at most max-delta-depth deep. Credentials over plain HTTP are refused unless allow-http. lfs-max-object-size: the largest Git LFS
         object, at /git/<repositoryId>.git/info/lfs. eca-max-commits: the most commits one change raises gitECA commit
         events for. Repository webhooks are not delivered to loopback, private or link-local addresses unless
-        webhook-private-network="true". lfs-upload-check-service: a service asked before Git LFS objects new to a
+        webhook-private-network="true". A repository has at most max-webhooks webhooks and max-mirrors push mirrors
+        (0: no cap); one pass of the webhook retries or of the mirror queue starts sends for queue-pass-seconds (0: no
+        bound), the rest waiting for the next run, and a pass starts at least queue-pass-gap-seconds after the last one on
+        the node started (0: no gap; a push's own mirror is pushed at once). The REST find#MergeRequests gives at most merge-requests-max-page a
+        page and, naming no repository, looks in the first merge-requests-max-repositories the caller may view, by id.
+        lfs-upload-check-service: a service asked before Git LFS objects new to a
         repository are accepted (the interface org.moqui.git.GitServices.check#GitLfsUpload), for an application's
         quota; its errors refuse the upload. None when empty. get#GitBlame reads a file of at most blame-max-bytes
         and blame-max-lines lines, at most blame-max-commits commits of history and blame-max-diffs comparisons of two
@@ -1368,7 +1384,8 @@
             fetch-max-lines="1000000" fetch-max-request-bytes="67108864"
             max-object-size="536870912" max-delta-depth="4095" idle-timeout="120" pack-threads="" allow-http="false"
             lfs-max-object-size="5368709120" lfs-upload-check-service="" outbound-check-service="" eca-max-commits="10000"
-            webhook-private-network="false" blame-max-bytes="1048576" blame-max-lines="50000"
+            webhook-private-network="false" max-webhooks="20" max-mirrors="10" queue-pass-seconds="300" queue-pass-gap-seconds="300"
+            merge-requests-max-page="100" merge-requests-max-repositories="500" blame-max-bytes="1048576" blame-max-lines="50000"
             blame-max-commits="10000" blame-max-diffs="2000" blame-max-seconds="10"
             blob-max-bytes="16777216" commit-max-diff-files="300" log-max-commits="10000"
             archive-max-bytes="268435456" archive-max-files="50000" archive-max-disk-bytes="2147483648"

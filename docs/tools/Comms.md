@@ -50,7 +50,21 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   chat) takes one person, several (with a name they become a private room), or, for a user with a number that texts, a
   phone number typed in its search, which opens that number's room as Calls' Text a number does. On a phone a swipe to
   the right on a message replies to it, Attach offers the camera, the gallery or a file, and Back closes a menu or sheet,
-  then a pane or thread, then the room. When the last owner leaves, the
+  then a pane or thread, then the room. A message's actions are one list wherever they show: a long press on a phone
+  opens them as a sheet, a right click on a desktop row (not on a link, an editor or selected text, which keep the
+  browser's menu) opens them at the pointer, and the hover toolbar's More has them too. The sheet and the right-click
+  menu start with the quick reactions and "+", which opens the emoji picker (a search by name, the groups, and your
+  recent emoji, kept in this browser); then Reply, Reply in thread, Copy text, Copy link, Forward, Edit, Pin, Mark
+  unread from here, the apps' actions, File on a record, Info, Who reacted (with reactions) and Delete. A tap on a
+  reaction adds or takes back yours; a long press on it (or a hover, or Shift+Enter or the menu key on it) lists who
+  reacted, and the same on a poll option lists who voted. On a phone the picker's search waits for a tap, so the
+  keyboard does not cover the sheet. **Info** says only
+  what the server knows: when the message was sent, for a message that went to another network (SMS, a bridge) its
+  delivery there per network (with the bridge's name when two share a network), and who has read up to it (the
+  members' read markers, "and N more"; not one who joined after it). A member with read
+  receipts off is not listed, and with your own off you see no names: Info says so, and never "not read". A thread has
+  no read markers, so its Info shows sent and delivery only; delivery to someone's devices is not known and is never
+  shown. The terminal's room has Info for each message, as text. When the last owner leaves, the
   longest-standing moderator (else member) becomes an owner: Leave names them, and the room says they became an owner
   when the owner left.
 - <a id="encrypted-rooms"></a>**Encrypted rooms** (C7). New room has Encrypted for a private room (and an encrypted direct
@@ -60,8 +74,28 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   records and Create from; the terminal lists it but cannot read or write it. Set up the key backup in Settings, My
   devices, and keep the recovery key it shows once: a new browser reads older messages only after Restore with it (or
   when another of your devices shares the keys). My devices also verifies your devices (compare emoji, or scan a QR
-  code), and says when it waits for the other device. Search says an encrypted room is not searched. Open the room in any tab: the tab that holds this browser's keys does the work for the others. See [Chat
+  code), and says when it waits for the other device. Search says an encrypted room is not searched. Open the room in any tab: the tab that holds this browser's keys does the work for the others. Every call in an
+  encrypted room is end-to-end encrypted, a direct one too: its Room settings show the calls' setting on, and a phone
+  or a guest cannot join. With only verified devices on, your message says who cannot read it, with Verify; and a
+  message you cannot read says when its sender has not verified your device. See [Chat
   keys](../interfaces/Chat-Keys.md#encrypted-rooms).
+- <a id="e2ee-labels"></a>**What a room's lock means.** A lock means end-to-end encrypted, and only that: an encrypted
+  room has it in its header and in the room list, with a check when every device in it is verified, else Verify in its
+  note. Every other room has the open lock, and a note under its header (close it with its x) says what can read its
+  messages: the server, for a plain private room or a direct chat; the phone network and the SMS provider, for a
+  phone number's texts (its composer says Text message); the bridge, for a room bridged to another network (its composer
+  names the network). A public room has the open lock and no note. A private room's own icon is people, not a lock. The
+  members pane and Room settings say the same for every room, and the terminal shows it as one line. Mail never has a
+  lock: a private mailbox or list shows people, a closed thread a crossed-out comment.
+- <a id="verify-people"></a>**Verifying people.** In an encrypted room, Members has Verify by each person who is not
+  verified (the room's note and a message that someone cannot read have it too): pick their device and compare emoji
+  with them; when the emoji match on both sides their device is verified, and with cross-signing every device they sign.
+  A verified person has a check by their name, in Members and on their messages. When someone you verified adds a device
+  you have not verified, or gets a new identity, your next message, edit or reaction waits: Verify them (by each name),
+  or Send anyway, which lets that device read this room's messages from then on, or uses that identity here, without
+  verifying them: "Send my room keys only to verified devices" still leaves such a device out. A request from another
+  person to verify shows in the room you have open (closing it says no) and on My devices. A message from a verified
+  person's device that is not verified has a warning mark instead of the check.
 - <a id="bridged-rooms"></a>**Bridged rooms** (C1). A room an administrator connected to another network (SMS, WhatsApp,
   XMPP, Matrix and others, as their adapters come) has the network's mark in the room list and its name in the room's
   header ("Messages here also go to ..."). People from that network are members with the network's badge, and their
@@ -101,8 +135,11 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   The link's address is shown once, when it is made; Open starts its meeting with you as host, and Revoke takes its
   guests out. Calls also lists your meetings of the next week from an app that has them (IronStone: your calendar),
   with Join. Settings, Calls has the microphone, camera and speaker, the ringtone, and whether calls start muted
-  or with the camera off, for this browser. Calls need a media server (`rtc_media_port`); the Calls screen says when
-  there is none. In the terminal a call is not live: its screen shows who is in it, with Answer, Decline and Leave.
+  or with the camera off, for this browser, and Always relay my calls, for all your devices: a call with one other
+  person here goes straight between your devices when it can, and relayed it goes through the server, so they never
+  see your network address ([WebRTC, The direct path](../interfaces/WebRTC.md#the-direct-path)). The call's header shows
+  the connection's quality, "Reconnecting…" while it comes back, and "Your network is weak" when your side is the cause.
+  Calls need a media server (`rtc_media_port`); the Calls screen says when there is none. In the terminal a call is not live: its screen shows who is in it, with Answer, Decline and Leave.
 - <a id="encrypted-calls"></a>**End-to-end encrypted calls.** New call and a call link have End-to-end encrypted, and a
   room's owner or moderator can make all of the room's calls so (Room settings, Calls in this room are end-to-end
   encrypted). In such a call only the people in it hear and see each other: each browser encrypts what it sends with a
@@ -317,8 +354,10 @@ the rules, schedules across a time zone, forward loops and permissions, do not d
 the strategies, the shared box, and the first answer winning. `./moq test framework --spec ChatKeys`: crypto devices,
 their keys and to-device messages; `./moq test-client basic-comms --serve --spec CryptoFlow`: two browsers exchanging an
 Olm-encrypted message ([Chat keys](../interfaces/Chat-Keys.md#tests)). `./moq test framework --spec CallEncryption`: the
-policy and every refusal of end-to-end encrypted calls; `./moq test-client basic-comms --serve --spec EncryptedCallFlow`:
-an encrypted call in three browsers ([WebRTC, Encrypted calls](../interfaces/WebRTC.md#encrypted-calls)). `cargo test -p moqui-xmpp` and
+policy and every refusal of end-to-end encrypted calls, an encrypted room's calls among them; `./moq test-client basic-comms --serve --spec EncryptedCallFlow`:
+an encrypted call in three browsers ([WebRTC, Encrypted calls](../interfaces/WebRTC.md#encrypted-calls)). The lock and
+the notes: `./moq test-client webroot --offline --spec WebrootChat` (the rules of `moqui.chat.e2eeLabel`), and the
+acceptance walk `./moq accept basic-comms --spec ChatLabels` (each room's label on a phone and a desktop). `cargo test -p moqui-xmpp` and
 `cargo test -p moqui-host --test it -- xmpp::`: XMPP clients against recorded stanzas and on a real server ([XMPP,
 Tests](../interfaces/XMPP.md#tests)). IronStone's own parts are in its specs (`Inbox`, `Compose`,
 `Chat`, `CommsHome`, `InboxMailboxes`, `MailAccounts`, `MailSettings`).

@@ -73,6 +73,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
     rust_service!(map, send_webhook_delivery)?;
     rust_service!(map, test_webhook)?;
     rust_service!(map, check_webhook_url)?;
+    rust_service!(map, get_webhook_limits)?;
     rust_service!(map, merge_merge_request)?;
     rust_service!(map, get_merge_request_approvals)?;
     Ok(())
@@ -1676,6 +1677,25 @@ pub(crate) fn signature(secret: &str, body: &[u8]) -> String {
 /// addresses and its signature, and a URL's credential would be kept in clear and answered by `find#GitWebhooks`.
 fn webhook_url_allowed(url: &str) -> Result<(), String> {
     crate::server::smart_http::check_url(url, crate::setting("webhook-private-network") == "true")
+}
+
+/// The most webhooks a repository has, when `git-server` `max-webhooks` does not say.
+const DEFAULT_MAX_WEBHOOKS: i64 = 20;
+
+/// `get#GitWebhookLimits`: for `store#GitWebhook` and `retry#GitWebhookDeliveries` (SEC-GIT-18): `maxWebhooks`, the
+/// most webhooks of a repository (`git-server` `max-webhooks`, 20; 0 none), and `passSeconds`, how long a pass of the
+/// retries starts sends (`queue-pass-seconds`, 300; 0 no bound). With `startPass`, `passMayStart`: whether a pass of
+/// the retries may start now, at least `queue-pass-gap-seconds` after the last (300; 0 no gap), recorded as started.
+fn get_webhook_limits(parameters: &Parameters, _facade: &EntityFacade) -> Out {
+    let most = super::max_per_repository("max-webhooks", DEFAULT_MAX_WEBHOOKS);
+    let pass = crate::queue_pass_seconds().and_then(|seconds| i64::try_from(seconds).ok());
+    let start = matches!(parameters.get("startPass"), Some(Value::Bool(true)))
+        || text(parameters, "startPass").as_deref() == Some("true");
+    Ok(out([
+        ("maxWebhooks", Value::I64(if most == i64::MAX { 0 } else { most })),
+        ("passSeconds", Value::I64(pass.unwrap_or(0))),
+        ("passMayStart", Value::Bool(!start || crate::queue_pass_may_start("webhooks"))),
+    ]))
 }
 
 /// `check#GitWebhookUrl`: [`webhook_url_allowed`] for `store#GitWebhook`; an error says why not.

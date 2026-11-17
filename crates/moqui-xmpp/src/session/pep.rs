@@ -133,6 +133,10 @@ impl Session {
         if backend::flag(&found, "preconditionFailed") {
             return self.pubsub_error(iq, "cancel", "conflict", "precondition-not-met");
         }
+        // the user's items are at their bytes in all (xmpp_pep_max_bytes, SEC-COM-20): the item was not kept
+        if backend::flag(&found, "resourceConstraint") {
+            return self.refuse(iq, "wait", "resource-constraint", None);
+        }
         let result = iq_result(iq)
             .c(
                 E::new("pubsub", ns::PUBSUB).c(E::new("publish", ns::PUBSUB).a("node", node).c(E::new(

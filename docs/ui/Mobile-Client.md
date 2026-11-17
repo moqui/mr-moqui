@@ -152,6 +152,10 @@ answered (plans/Mobile-Desktop.md MD6, MT2; a Rust native audio client is later)
   joins through WebrootCall.js only when the host hands it the answer, once (`moquiDesktop.takeAnswer`,
   `call_take_answer`), so a link to a call screen on the web or in a page never answers. A process that was dead
   starts the activity cold: the link waits for the host, the shell starts signed in from the store and then joins.
+- **A network change in a call.** `MainActivity`'s `NetworkWatch` (a `ConnectivityManager` default-network callback,
+  `ACCESS_NETWORK_STATE`) tells the call's page when the phone's network changes during a call (Wi-Fi to mobile data
+  and back): `moqui.call.networkChanged()` through the WebView, and the page restarts ICE on the same connection, with no
+  new join or ring ([WebRTC, On a bad network](../interfaces/WebRTC.md#on-a-bad-network)). Not yet checked on a device.
 - **The call in the app.** WebrootCall.js tells the host what the call does (`moquiDesktop.callState`, the shell's
   `call_state` command, then `CallManager.pageCallState` through JNI): `joined` once its media is up, `left` when it is
   left or could not be joined (an encrypted call this WebView cannot take, offline, not ringing for this account),

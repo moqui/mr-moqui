@@ -940,14 +940,14 @@
         // a decrypted message's content on an event or timeline item: body (cleaned), bodyText, files and mentions
         applyOpened(item, opened, attachmentUrl, roomId) {
             if (!opened || opened.error) {
-                Object.assign(item, { body: null, bodyText: null, undecryptable: true });
+                Object.assign(item, { body: null, bodyText: null, undecryptable: true, withheld: (opened && opened.withheld) || null });
                 return Promise.resolve(item);
             }
             const content = opened.content || {};
             const html = content.formatted_body ? chat.clean(content.formatted_body) : chat.escapeHtml(content.body);
             const files = Array.isArray(content["io.moqui.files"]) ? content["io.moqui.files"] : [];
             const stored = Array.isArray(item.attachments) ? item.attachments : [];
-            Object.assign(item, { body: html || null, bodyText: content.body || "", undecryptable: false, verifiedSender: !!opened.verified });
+            Object.assign(item, { body: html || null, bodyText: content.body || "", undecryptable: false, withheld: null, verifiedSender: !!opened.verified });
             if (files.length || stored.length) {
                 item.attachments = stored.map((file) => {
                     const sealed = files.find((one) => one.chatAttachmentId === file.chatAttachmentId) || {};
@@ -1271,9 +1271,11 @@
     // compare calendar days, so the boundaries hold through daylight saving changes (COM-UI-007; Comms-Messaging §2.2).
     const l10n = () => moqui.l10n;
     const tr = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+    const fillIn = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? "" : String(values[key])));
     Object.assign(chat, {
-        // a room's type icon; a record room shows its record's own
-        ROOM_ICONS: { CrtDirect: "sym_o_group", CrtPrivate: "sym_o_lock", CrtPublic: "sym_o_tag", CrtRecord: "sym_o_description", CrtExternal: "sym_o_sms" },
+        // a room's type icon (people for a private room: a lock means end-to-end encrypted only, COM-UI-001); a record room
+        // shows its record's own
+        ROOM_ICONS: { CrtDirect: "sym_o_group", CrtPrivate: "sym_o_groups", CrtPublic: "sym_o_tag", CrtRecord: "sym_o_description", CrtExternal: "sym_o_sms" },
         // the layout thresholds (Comms-Messaging §1): a room under NARROW_PX wide shows bubbles, under SIDE_OVERLAY_PX a
         // details pane over the timeline; a screen under Quasar's md (1024 px) is the stacked layout
         NARROW_PX: 640,
@@ -1349,9 +1351,233 @@
         // the user's numbers that text (Chat's textNumbers), as a picker's From options
         numberOptions(list) {
             return (list || []).map((number) => ({ value: number.phoneNumber, label: number.phoneNumber + (number.description ? " · " + number.description : "") }));
-        }
+        },
+        // ---- a message's Info (Comms-Messaging §4, COM-UI-008): only what the server knows ----
+        // event: as get#Timeline gives it (eventSeq, sentDate, senderUserId, senderExternal, delivery, threadRootEventSeq);
+        // members: the room's memberList, whose lastReadEventSeq is a position ("has read up to here or later") and is blank
+        // for another member with read receipts off (one who joined after the message, joinedDate, is not a reader of it); opts: {me, receipts (false: the viewer's read receipts are off), inThread,
+        // limit (the names shown, 8)}. Answers {sent (millis), from (the network a bridged message came from), delivered (per
+        // network, only for a message that went out on a bridge: [{name, state, receipt, error}]), readBy (null in a thread,
+        // which has no read markers; {off: true} when the viewer's receipts are off; else {people, more, count}), thread}.
+        // Delivery to a member's device is never in it: the server does not know it, and a push acknowledgement is not it.
+        messageInfo(event, members, opts) {
+            const it = event || {};
+            const options = opts || {};
+            const seq = Number(it.eventSeq);
+            const thread = !!options.inThread || (it.threadRootEventSeq != null && it.threadRootEventSeq !== "");
+            const destinations = (it.delivery && it.delivery.destinations) || [];
+            // two bridges of one network are told apart by their own names
+            const network = (one) => one.networkName || one.bridgeName || "";
+            const repeats = (name) => destinations.filter((one) => network(one) === name).length > 1;
+            const delivered = destinations.length ? destinations.map((one) => ({
+                name: repeats(network(one)) && one.bridgeName && one.bridgeName !== network(one) ? network(one) + " · " + one.bridgeName : network(one),
+                state: one.state || "pending", receipt: one.receipt || null, error: one.error || null })) : null;
+            let readBy = null;
+            if (!thread && options.receipts === false) readBy = { off: true };
+            else if (!thread) {
+                // a member who joined after the message has a marker past it (a join reads to the latest) but never read it
+                const sent = it.sentDate != null && it.sentDate !== "" ? Number(it.sentDate) : null;
+                const joinedBefore = (member) => member.joinedDate == null || member.joinedDate === "" || sent == null || Number(member.joinedDate) <= sent;
+                const people = (members || []).filter((member) => member && member.userId && member.userId !== options.me && member.userId !== it.senderUserId
+                    && !member.isAgent && member.lastReadEventSeq != null && member.lastReadEventSeq !== "" && Number(member.lastReadEventSeq) >= seq
+                    && joinedBefore(member))
+                    .map((member) => ({ userId: member.userId, name: member.name || member.userId }));
+                const limit = options.limit || 8;
+                readBy = { people: people.slice(0, limit), more: Math.max(0, people.length - limit), count: people.length };
+            }
+            return { sent: it.sentDate != null && it.sentDate !== "" ? Number(it.sentDate) : null,
+                from: it.senderExternal ? (it.senderExternal.networkName || it.senderExternal.network || tr("another network")) : null, delivered, readBy, thread };
+        },
+        // Info as lines [{key, label, text}] (the dialog's, and what a test reads): when is fullTime(millis). A read receipt is
+        // never said to be missing: an empty Read by says who is not listed, and receipts off say so.
+        messageInfoLines(info, when) {
+            const lines = [];
+            if (info.sent != null) lines.push({ key: "sent", label: tr("Sent"), text: when ? when(info.sent) : String(info.sent) });
+            if (info.from) lines.push({ key: "from", label: tr("Came from"), text: info.from });
+            const STATES = { pending: tr("Sending"), failed: tr("Not delivered"), uncertain: tr("May not have arrived") };
+            const RECEIPTS = { delivered: tr("Delivered: the network's receipt says so"), sent: tr("Sent on by the network"),
+                unconfirmed: tr("Taken by the network; it has not confirmed delivery") };
+            for (const one of info.delivered || []) {
+                const text = one.state === "accepted" ? (RECEIPTS[one.receipt] || tr("Taken by the network")) : (STATES[one.state] || one.state);
+                lines.push({ key: "delivered", label: one.name || tr("Bridge"), text: text + (one.error && one.state !== "accepted" ? ": " + one.error : ""), state: one.state });
+            }
+            if (info.readBy && info.readBy.off) lines.push({ key: "read", label: tr("Read by"), text: tr("Your read receipts are off, so you do not see who has read it") });
+            else if (info.readBy) {
+                const names = info.readBy.people.map((person) => person.name);
+                const text = !names.length ? tr("No one yet, of those with read receipts on")
+                    : names.join(", ") + (info.readBy.more ? " " + tr("and {count} more").replace("{count}", info.readBy.more) : "");
+                lines.push({ key: "read", label: tr("Read by"), text, count: info.readBy.count });
+            }
+            const notes = [];
+            if (info.thread) notes.push(tr("A thread has no read receipts."));
+            else if (info.readBy && !info.readBy.off) notes.push(tr("People with read receipts off are not listed. Read by means read up to here or later."));
+            notes.push(tr("Delivery to each person's devices is not known to the server."));
+            lines.push({ key: "note", label: "", text: notes.join(" ") });
+            return lines;
+        },
+        // ---- the E2EE label (Comms-Messaging §6.2, its one table; COM-UI-001) ----
+        // A lock means end-to-end encrypted and nothing else (§6.1 rule 6): an encrypted room has it, with a check when every
+        // device in it is verified; any other room has the open lock, and a public or record room no banner. A bridge says
+        // what its network does (encryption, from its adapter: None, Transport, BridgeDecrypted, EndToEnd), but a bridged
+        // room is never end to end on this server: the bridge reads its messages to pass them on. Mail never has a lock
+        // (rule 7). subject: a room as get#Room or find#Rooms gives it ({encrypted, roomTypeEnumId, visibilityEnumId, bridges
+        // or bridgeNetworks, bridged, bridgeNetworkNames}), a call ({call: {e2ee, phone}}) or mail ({mail: true}); trust: the
+        // room's devices when known (chat.trustOf). Answers {state, lock, verified, icon, banner, hint, verify, text}: state
+        // verified, encrypted, plain, public, sms, bridged, call-encrypted, call-phone, call or mail; lock true only for end
+        // to end; icon a Material symbol (none for mail); banner the text at the top of the room ('' for none); hint the
+        // composer's ('' for its own); verify whether the banner offers Verify; text the label as one line.
+        e2eeLabel(subject, trust) {
+            const it = subject || {};
+            const label = (state, lock, banner, more) => Object.assign({ state, lock, verified: false, icon: lock ? "sym_o_lock" : "sym_o_lock_open",
+                banner, hint: "", verify: false, text: banner }, more || {});
+            const sealedText = tr("Messages and calls are end-to-end encrypted. Only people in this chat can read them.");
+            if (it.mail) return label("mail", false, tr("Email is not end-to-end encrypted"), { icon: null });
+            if (it.call) {
+                if (it.call.phone) return label("call-phone", false, tr("Phone calls are not end-to-end encrypted."));
+                if (it.call.e2ee) return label("call-encrypted", true, tr("This call is end-to-end encrypted."));
+                return label("call", false, tr("This call is encrypted to the server, not end to end."));
+            }
+            if (it.encrypted) {
+                if (trust && trust.allVerified) return label("verified", true, sealedText, { verified: true, text: tr("End-to-end encrypted, every device verified") });
+                return label("encrypted", true, sealedText, { verify: true, text: tr("End-to-end encrypted") });
+            }
+            const bridges = (Array.isArray(it.bridges) ? it.bridges : Array.isArray(it.bridgeNetworks) ? it.bridgeNetworks : []).filter((bridge) => bridge);
+            // the composer names what a message goes to: only the bridges that send out (an inbound-only one takes none)
+            const outbound = bridges.filter((bridge) => bridge.outbound !== false);
+            const smsBridge = bridges.some((bridge) => bridge.network === "sms");
+            const others = bridges.filter((bridge) => bridge.network !== "sms");
+            const namesOf = (list) => Array.from(new Set(list.map((bridge) => bridge.networkName || bridge.name).filter((name) => name))).join(", ");
+            const otherNames = namesOf(outbound.filter((bridge) => bridge.network !== "sms")) || (!bridges.length ? (it.bridgeNetworkNames || []).join(", ") : "");
+            const hints = [];
+            if (it.roomTypeEnumId === "CrtExternal" || outbound.some((bridge) => bridge.network === "sms")) hints.push(tr("Text message"));
+            if (otherNames) hints.push(fillIn(tr("{network} message"), { network: otherNames }));
+            if (it.roomTypeEnumId === "CrtExternal" || smsBridge) {
+                // a text, and another network's bridge too: both are said
+                const banner = others.length ? tr("Not end-to-end encrypted. Texts go through the phone network and the SMS provider, and the bridge reads messages to pass them on.")
+                    : tr("Not end-to-end encrypted. Texts go through the phone network and the SMS provider.");
+                return label("sms", false, banner, { hint: hints.join(" · ") });
+            }
+            if (bridges.length || it.bridged) {
+                return label("bridged", false, tr("Not end-to-end encrypted on this server. The bridge reads messages to pass them on."), { hint: hints.join(" · ") });
+            }
+            // public: a public channel, a room any user may join, a record's room for those who see the record; a record room
+            // kept to its members is a plain private room
+            const visibility = it.visibilityEnumId;
+            if (it.roomTypeEnumId === "CrtPublic" || visibility === "CrvUsers" || visibility === "CrvRecord" || (it.roomTypeEnumId === "CrtRecord" && visibility !== "CrvMembers")) {
+                return label("public", false, "", { text: tr("Not end-to-end encrypted: the server can read this room") });
+            }
+            return label("plain", false, tr("Not end-to-end encrypted. The server can read these messages."));
+        },
+        // The trust of an encrypted room's devices, from moqui.crypto.roomTrust ({verifiedOnly, users: [{userId, identity:
+        // {known, verified, changed}, devices: [{deviceId, displayName, verified}]}]}, this device left out): allVerified when
+        // every other member has a device and every device is verified; unverified, the devices that are not; leftOut, those
+        // the next message does not reach (only verified devices is on); people, by userId {verified (their identity, or every
+        // device of theirs), changed (a new identity of someone verified)}: the check by a name (§6.1 rule 3). Unknown (null)
+        // is not verified.
+        trustOf(answer, me) {
+            if (!answer || !Array.isArray(answer.users)) return { known: false, allVerified: false, verifiedOnly: false, unverified: [], leftOut: [], people: {} };
+            const unverified = [];
+            const people = {};
+            let missing = false;
+            for (const user of answer.users) {
+                const devices = Array.isArray(user.devices) ? user.devices : [];
+                const identity = user.identity || {};
+                if (!devices.length && user.userId !== me) missing = true;
+                for (const device of devices) if (!device.verified) unverified.push({ userId: user.userId, deviceId: device.deviceId, displayName: device.displayName || null });
+                people[user.userId] = { verified: !identity.changed && (!!identity.verified || (devices.length > 0 && devices.every((device) => device.verified))),
+                    changed: !!identity.changed, devices };
+            }
+            const verifiedOnly = !!answer.verifiedOnly;
+            return { known: true, allVerified: !missing && !unverified.length && answer.users.length > 0, verifiedOnly, unverified,
+                leftOut: verifiedOnly ? unverified : [], people };
+        },
+        // whom a Verify asks first: the first other person with a device not verified, else null (only the user's own:
+        // My devices)
+        verifyTarget(trust, me) {
+            const device = ((trust && trust.unverified) || []).find((one) => one.userId !== me);
+            return device ? device.userId : null;
+        },
+        // Who cannot read what this user sends now (COM-UI-013): the people of devices (chat.trustOf's leftOut, or
+        // moqui.crypto.leftOut's), by name (nameOf(userId)), and "your other devices" for the user's own; '' for none.
+        leftOutText(devices, me, nameOf) {
+            const list = Array.isArray(devices) ? devices : [];
+            if (!list.length) return "";
+            const people = Array.from(new Set(list.filter((device) => device.userId !== me).map((device) => (nameOf ? nameOf(device.userId) : null) || device.userId)));
+            if (list.some((device) => device.userId === me)) people.push(tr("your other devices"));
+            return fillIn(tr("Not readable by {who}: their devices are not verified"), { who: people.join(", ") });
+        },
+        // An encrypted message this device cannot read: why, when the sender withheld its key from an unverified device
+        // (m.room_key.withheld m.unverified, "only verified devices"), else the key backup or another device's share
+        undecryptableText(withheld, senderName) {
+            if (withheld === "m.unverified") {
+                return fillIn(tr("{name} has not verified this device, so it cannot read this message. Verify each other in this chat (Members, Verify) and compare emoji; then {name}'s next messages can be read here."),
+                    { name: senderName || tr("The sender") });
+            }
+            return tr("Encrypted message: this device has no key for it yet. Restore your key backup in Settings, My devices, or keep this page open while another of your devices shares it.");
+        },
+        // Before a send (§6.1 rule 3): a verified person's new device or changed identity, as encryptRoom refuses with them
+        // (verifiedUserProblem), one line each, by name
+        problemsText(problems, nameOf) {
+            return (problems || []).map((problem) => {
+                const name = (nameOf ? nameOf(problem.userId) : null) || problem.userId;
+                if (problem.kind === "changedIdentity") return fillIn(tr("{name} has a new identity: verify them again"), { name });
+                return fillIn(tr("{name} has a new device that is not verified: {device}"), { name, device: problem.displayName || problem.deviceId });
+            });
+        },
+        // a room's banner closed by this user (until its state changes), in this browser only, per account
+        bannerKey(roomId) { return moqui.scopedKey("moqui.chat.banner." + (chat.me || "") + "." + roomId); },
+        bannerClosed(roomId, state) {
+            try { return !!root.localStorage && root.localStorage.getItem(chat.bannerKey(roomId)) === state; } catch (err) { return false; }
+        },
+        closeBanner(roomId, state) {
+            try { if (root.localStorage) root.localStorage.setItem(chat.bannerKey(roomId), state); } catch (err) { /* this page only */ }
+        },
+        // ---- who could not read my message (COM-UI-013), kept in this browser per account so a reload, another room or tab
+        // shows it: {rooms: {roomId: {eventSeq: text}}, refs: {clientRef: {roomId, text}}} until the send is answered ----
+        LEFT_OUT_MAX: 300,
+        leftOutKey() { return moqui.scopedKey("moqui.chat.leftOut." + (chat.me || "")); },
+        readLeftOut() {
+            let kept = null;
+            try { kept = root.localStorage ? JSON.parse(root.localStorage.getItem(chat.leftOutKey()) || "null") : null; } catch (err) { kept = null; }
+            return kept && typeof kept === "object" ? { rooms: kept.rooms || {}, refs: kept.refs || {} } : { rooms: {}, refs: {} };
+        },
+        writeLeftOut(kept) {
+            // the newest LEFT_OUT_MAX messages are kept
+            const all = [];
+            for (const roomId of Object.keys(kept.rooms)) for (const seq of Object.keys(kept.rooms[roomId])) all.push([roomId, seq]);
+            for (const [roomId, seq] of all.sort((a, b) => Number(b[1]) - Number(a[1])).slice(chat.LEFT_OUT_MAX)) delete kept.rooms[roomId][seq];
+            try { if (root.localStorage) root.localStorage.setItem(chat.leftOutKey(), JSON.stringify(kept)); } catch (err) { /* this page only */ }
+            chat.leftOutTick = (chat.leftOutTick || 0) + 1;
+            if (chat.emit) chat.emit("leftOut", {});
+        },
+        // a sealed message's clientRef, before it is sent: who it leaves out
+        noteLeftOut(clientRef, roomId, text) {
+            if (!clientRef || !text) return;
+            const kept = chat.readLeftOut();
+            kept.refs[clientRef] = { roomId, text };
+            chat.writeLeftOut(kept);
+        },
+        // a send answered: its note moves to its eventSeq
+        leftOutSent(payload) {
+            if (!payload || !payload.clientRef) return;
+            const kept = chat.readLeftOut();
+            const ref = kept.refs[payload.clientRef];
+            if (!ref) return;
+            const json = payload.json || {};
+            const seq = json.event && json.event.eventSeq != null ? json.event.eventSeq : json.eventSeq;
+            delete kept.refs[payload.clientRef];
+            if (seq != null) (kept.rooms[ref.roomId] = kept.rooms[ref.roomId] || {})[seq] = ref.text;
+            chat.writeLeftOut(kept);
+        },
+        // the notes of a room's messages: {eventSeq: text}
+        leftOutOf(roomId) { void chat.leftOutTick; return Object.assign({}, chat.readLeftOut().rooms[roomId] || {}); }
     });
     moqui.chat = chat;
+    // a sealed message's note follows its send, whichever page made it; another tab's notes show here too
+    chat.on("sent", (payload) => chat.leftOutSent(payload));
+    if (root.addEventListener) root.addEventListener("storage", (event) => {
+        if (event && event.key === chat.leftOutKey()) { chat.leftOutTick = (chat.leftOutTick || 0) + 1; chat.emit("leftOut", {}); }
+    });
 
     // ---- the components the shell writes (registered by WebrootVue.qvt.js) ----
 
@@ -1454,6 +1680,85 @@
                 '<div v-if="error" class="m-assist-card-error text-negative text-caption">{{error}}</div>' +
             '</div>' +
             '<div v-else-if="card && card.canViewRun" class="m-assist-card-run"><q-btn flat no-caps dense size="sm" :label="labels.assistViewRun" class="m-assist-view-run" @click="viewRun"></q-btn></div>'
+    };
+
+    // A verification going on (an item of moqui.crypto.state.verifications): with one of this user's own devices (My devices)
+    // or with another person (Chat's Verify, COM-UI-013): who, then waiting, the emoji to compare or a QR code, the steps
+    // (Accept, Compare emoji, Show a QR code, Scan their code, They match, They differ, Cancel), and how it ended, with
+    // Try again (the retry event, when the parent can ask again) and Dismiss. A completed emoji comparison with another
+    // person verifies their device, and with cross-signing their identity, so their signed devices too.
+    components["m-chat-verification"] = {
+        name: "mChatVerification",
+        props: { flow: { type: Object, required: true }, who: String, canRetry: Boolean },
+        emits: ["retry", "step"],
+        computed: {
+            v() { return this.flow; },
+            title() { return (this.v.weStarted ? tr("Verifying") : tr("Asked to verify")) + " " + (this.who || this.v.otherDeviceId || this.v.otherUserId); },
+            canScan() { return typeof root.BarcodeDetector === "function" && !!(root.navigator && root.navigator.mediaDevices && root.navigator.mediaDevices.getUserMedia); },
+            endedText() { return this.v.timedOut ? tr("The verification timed out: the other device did not answer in time.") : tr("Cancelled"); }
+        },
+        methods: {
+            t: tr,
+            timeLeft(ms) {
+                const seconds = Math.max(0, Math.round(Number(ms) / 1000));
+                return "(" + (seconds >= 60 ? Math.ceil(seconds / 60) + " " + tr("min left") : seconds + " " + tr("s left")) + ")";
+            },
+            step(action, arg) {
+                moqui.crypto.verification(this.v.flowId, action, arg).then(() => this.$emit("step", action),
+                    (err) => moqui.notifyMessages([], (err && err.errors) || tr("The verification step failed")));
+            },
+            dismiss() { if (moqui.crypto && moqui.crypto.dismissVerification) moqui.crypto.dismissVerification(this.v.flowId); },
+            retry() { this.dismiss(); this.$emit("retry", this.v); },
+            // the other device's QR code read with the camera (BarcodeDetector), its bytes handed to the verification
+            scan() {
+                const detector = new root.BarcodeDetector({ formats: ["qr_code"] });
+                root.navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).then((stream) => {
+                    const video = root.document.createElement("video");
+                    video.srcObject = stream;
+                    video.play();
+                    const stop = () => stream.getTracks().forEach((track) => track.stop());
+                    const started = Date.now();
+                    const look = () => detector.detect(video).then((codes) => {
+                        if (codes.length) { stop(); this.step("scanned", Array.from(codes[0].rawValue, (ch) => ch.charCodeAt(0) & 0xff)); }
+                        else if (Date.now() - started < 30000) setTimeout(look, 300);
+                        else stop();
+                    }, () => setTimeout(look, 300));
+                    look();
+                }, () => moqui.notifyMessages([], tr("The camera is not available")));
+            }
+        },
+        template:
+            '<q-card flat bordered class="q-pa-md m-chat-verification" :data-flow="v.flowId" :data-user="v.otherUserId">' +
+                '<div class="text-subtitle1">{{title}}</div>' +
+                '<div v-if="v.done" class="text-positive m-chat-verification-done">{{t(\'Verified\')}}</div>' +
+                '<template v-else-if="v.cancelled">' +
+                    '<div class="m-muted m-chat-verification-ended">{{endedText}} <span v-if="v.cancelReason && !v.timedOut">({{v.cancelReason}})</span></div>' +
+                    '<div class="row q-gutter-xs q-mt-xs">' +
+                        '<q-btn v-if="canRetry" unelevated no-caps color="primary" :label="t(\'Try again\')" class="m-chat-verification-retry" @click="retry"></q-btn>' +
+                        '<q-btn flat no-caps :label="t(\'Dismiss\')" @click="dismiss"></q-btn>' +
+                    '</div>' +
+                '</template>' +
+                '<template v-else>' +
+                    '<div v-if="v.started && !v.emojis && !v.qrImage && !v.scanned" class="m-muted q-my-sm m-chat-verification-waiting" role="status">' +
+                        '{{t(\'Waiting for the other device…\')}}<span v-if="v.remainingMs"> {{timeLeft(v.remainingMs)}}</span></div>' +
+                    '<div v-else-if="v.confirmed" class="m-muted q-my-sm m-chat-verification-waiting" role="status">{{t(\'Waiting for the other device to confirm\')}}</div>' +
+                    '<div v-if="v.emojis" class="row q-gutter-md q-my-sm m-chat-verification-emoji">' +
+                        '<div v-for="e in v.emojis" :key="e.description" class="column items-center"><span style="font-size:32px">{{e.symbol}}</span><span class="text-caption">{{t(e.description)}}</span></div>' +
+                    '</div>' +
+                    '<div v-if="v.emojis" class="text-caption m-muted">{{t(\'Do the same emoji show on the other device, in the same order?\')}}</div>' +
+                    '<img v-if="v.qrImage && !v.emojis" :src="v.qrImage" alt="QR" style="width:220px;height:220px" class="q-my-sm">' +
+                    '<div class="row q-gutter-xs q-mt-xs">' +
+                        '<q-btn v-if="!v.weStarted && v.phase === \'requested\'" unelevated no-caps color="primary" :label="t(\'Accept\')" class="m-chat-verification-accept" @click="step(\'accept\')"></q-btn>' +
+                        '<q-btn v-if="v.ready && !v.emojis" flat no-caps icon="sym_o_mood" :label="t(\'Compare emoji\')" class="m-chat-verification-sas" @click="step(\'sas\')"></q-btn>' +
+                        '<q-btn v-if="v.ready && !v.emojis && !v.qrImage" flat no-caps icon="sym_o_qr_code_2" :label="t(\'Show a QR code\')" @click="step(\'showQr\')"></q-btn>' +
+                        '<q-btn v-if="v.ready && !v.emojis && canScan" flat no-caps icon="sym_o_qr_code_scanner" :label="t(\'Scan their code\')" @click="scan"></q-btn>' +
+                        '<q-btn v-if="v.scanned" unelevated no-caps color="primary" :label="t(\'They scanned it\')" @click="step(\'qrConfirm\')"></q-btn>' +
+                        '<q-btn v-if="v.emojis && !v.confirmed" unelevated no-caps color="primary" :label="t(\'They match\')" class="m-chat-verification-match" @click="step(\'confirm\')"></q-btn>' +
+                        '<q-btn v-if="v.emojis && !v.confirmed" flat no-caps color="negative" :label="t(\'They differ\')" @click="step(\'mismatch\')"></q-btn>' +
+                        '<q-btn flat no-caps :label="t(\'Cancel\')" @click="step(\'cancel\')"></q-btn>' +
+                    '</div>' +
+                '</template>' +
+            '</q-card>'
     };
 
     // The status message dialog of the account menu, outside the menu so it outlives it.

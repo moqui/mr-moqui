@@ -62,7 +62,22 @@ pub(crate) struct TarpitCheck {
     pub(crate) tarpit_duration: i64,
 }
 
+/// The session cookie's name over plain http.
 pub const SESSION_COOKIE_NAME: &str = "moqui.session";
+/// The session cookie's name over https (SEC-WEB-05): a browser keeps a `__Host-` cookie only when it is `Secure`, has
+/// `Path=/` and names no `Domain`, so a page on another host of the domain (a sibling subdomain, a plain-http page of
+/// the same name) cannot plant or shadow it. A request over https reads only this name: one that brings the plain
+/// name has no session, so its user signs in again once after the rename.
+pub const SECURE_SESSION_COOKIE_NAME: &str = "__Host-moqui.session";
+
+/// The session cookie's name for a request over https or plain http.
+pub fn session_cookie_name(https: bool) -> &'static str {
+    if https {
+        SECURE_SESSION_COOKIE_NAME
+    } else {
+        SESSION_COOKIE_NAME
+    }
+}
 pub const VISITOR_COOKIE_NAME: &str = "moqui.visitor";
 
 const HTTP_SESSION: &str = "moqui.server.HttpSession";
@@ -465,11 +480,13 @@ pub(crate) fn start_deferred_visit() -> Result<(), Error> {
     }
 }
 
-/// `moqui.session={id}.{mac}; HttpOnly; SameSite=Lax; Path=/` and `; Secure` when `https`.
+/// `moqui.session={id}.{mac}; HttpOnly; SameSite=Lax; Path=/`, or over `https` `__Host-moqui.session=...` with
+/// `; Secure` ([`session_cookie_name`]); never a `Domain`.
 pub fn format_session_cookie(session_id: &str, https: bool) -> Result<String, Error> {
     let mac = sign_session(session_id)?;
     Ok(format!(
-        "{SESSION_COOKIE_NAME}={session_id}.{mac}{}",
+        "{}={session_id}.{mac}{}",
+        session_cookie_name(https),
         cookie_flags(https, None)
     ))
 }

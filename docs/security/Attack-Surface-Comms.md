@@ -20,6 +20,10 @@ BasicComms (`runtime/components/base/basic-comms`) is the framework's Comms app.
   - Voicemail audio and greetings: `Calls/Voicemail` `audio`, `Settings/Phone` `greeting` and `uploadGreeting` ([Voicemail](#voicemail)).
   - Prompts, hold music and ring group greetings: System › Voice, below.
   - Mail attachments: [Attack-Surface-Mail.md](Attack-Surface-Mail.md#message-display-and-files).
+- **My devices' names.** `Settings/Devices` `peerNames` (Comms-Messaging phase 3) calls `ChatKeyServices.get#PeerNames`
+  with up to 50 user ids: it answers the full name (or username) of those the caller's devices reach (the caller, and
+  those sharing a room or a live call, ChatKeys.js `reachable`, the same reach as key queries and to-device sends), and
+  leaves the others out with no error, so it names no one a verification could not come from.
 - **Chat apps and app passwords.** `Settings/ChatApps` has the transitions `createXmppPassword` and `revokeAppPassword`, which call `org.moqui.impl.UserServices.create#UserAppPassword` and `revoke#UserAppPassword` for the session's user. `create#UserAppPassword` takes a `name` and makes 20 characters from a 31-symbol alphabet. It stores the SHA-256 login key hash and the SCRAM-SHA-256 salt, iteration count, stored keys and server keys (`UserAppPassword.scram*`, fields not encrypted). It needs a sign-in in the last five minutes (`require#RecentAuth`; a refused form asks the user to confirm and sends again) and sets no expiry. The screen keeps the new password in the session attribute `newXmppPassword` until the screen is next rendered. The password is not bound to XMPP: the same row signs in to DAV, SSH and SFTP, git over HTTP, the LLM gateway and A2A (`login_app_password`; [login, lockout and passwords](Attack-Surface-Web.md#login-lockout-and-passwords)). mr-boss `Commons/Settings/Sync.xml` calls the same services.
 - **System › Voice.** `System/Voice` has eleven subscreens: `Status`, `Trunks`, `Numbers`, `CallerIds`, `Fraud`, `Emergency`, `Phones`, `RingGroups`, `Schedules`, `IvrMenus` and `Queues`. The screens are authorized by the System app's group (`SYSTEM_APP`, `ADMIN` always; [Attack-Surface-Admin.md](Attack-Surface-Admin.md)). Every service behind them refuses a caller without the `VoiceAdmin` permission with `notAllowed`; `VoiceSetupData.xml` gives the permission to `ADMIN`. The families are `VoiceServices` (trunks, phone numbers, caller ID grants, emergency locations, the voice policy, user settings, auth blocks, the status), `IvrServices` (menus, options, prompts, call target options), `CallQueueServices` (queues, their agents and audio) and `CallHandlingServices` (ring groups, their members, the shared schedules). A trunk's password is written only: `find#VoiceTrunks` answers `hasPassword`. Three transitions take an audio upload: `IvrMenus/uploadPrompt`, `Queues/uploadAudio` and `RingGroups/uploadGreeting`. Each file is at most 10 MB, is checked as WAV or Ogg Opus by its first 96 bytes, and is stored under `dbresource://moqui/call/prompt/menu/<ivrMenuId>/`, `dbresource://moqui/call/prompt/queue/<callQueueId>/` or `dbresource://moqui/call/voicemail/greeting/<voicemailBoxId>/`. No screen transition serves a prompt or hold music file (no screen names `get#IvrPromptAudio`). `RingGroups/greeting` serves a ring group's greeting to a voice administrator. The shared transitions `searchUsers` and `searchTargets` (`template/VoiceTransitions.xml`) read `UserAccount` with authorization disabled and check no permission of their own.
 - **System › ChatBridges.** `System/ChatBridges` is authorized by the System app's group too. It has two transitions, `setDisabled` (`ChatBridgeServices.store#Bridge`) and `retryDelivery`. The services check `ChatBridgeAdmin` themselves ([Chat bridges](#chat-bridges)).
@@ -384,8 +388,11 @@ for 600 seconds is closed, and a write the client does not take for 60 seconds e
   or nested over 32 deep, ends the stream; a session whose pushes back up (512) is closed. Stream management keeps at
   most 1,000 unacknowledged stanzas and 10 detached sessions a user; PEP 200 nodes a user and 256 items a node;
   uploads 60 slots a user an hour.
-  A PEP item is at most 262,144 characters. `block#Jids` takes 500 JIDs a call with no total, and `enable#Push` adds a
-  row for each `pushJid` and `node` with no total. There is no per-session stanza rate limit; a session's stanzas are
+  A PEP item is at most 262,144 characters, and `publish#PepItem` keeps one only while the user's PEP items stay within
+  `xmpp_pep_max_bytes` (20 MiB) of UTF-8 (`XmppPepItem.payloadBytes`, the replaced item not counted). `block#Jids` takes
+  500 JIDs a call and blocks none past `xmpp_block_max_jids` (1,000); `enable#Push` adds a row for each `pushJid` and
+  `node` and keeps none past `xmpp_push_max_registrations` (50, a replacement not counted). Past a cap the IQ is refused
+  with `resource-constraint` (type wait); 0 is no cap. There is no per-session stanza rate limit; a session's stanzas are
   worked one at a time.
 - **Authorization** is the user's: most stanzas become a service call as the signed-in user, through
   `XmppClientServices` (granted ALWAYS to `ALL_USERS`): those services check the room (`get#RoomAccess`) or work on the
@@ -426,11 +433,12 @@ for 600 seconds is closed, and a write the client does not take for 60 seconds e
   type is the one the uploader gave the slot. A type that starts with `image/`, `audio/` or `video/` is served inline,
   except the exact text `image/svg+xml` (a type with a parameter or another case, such as `image/svg+xml;
   charset=utf-8`, is inline). Every answer has `nosniff` and `Content-Security-Policy: sandbox; default-src 'none'`. A
-  user's slots are limited to 60 an hour and ten times `xmpp_upload_max_bytes` an hour; there is no total per user and
-  no drive quota. `attach#Upload` makes a `ChatAttachment` of the room on the same stored file, with the uploader's file
+  user's slots are limited to 60 an hour and ten times `xmpp_upload_max_bytes` an hour, and uploads count toward no
+  drive quota. `attach#Upload` makes a `ChatAttachment` of the room on the same stored file, with the uploader's file
   name and content type. It refuses an upload that is not the caller's own completed one, and the session then logs the
-  upload by its file name at WARN, never the URL whose token reads it. `clean_XmppUploads_daily` (`XmppServices.clean#Uploads`) removes only slots never
-  put within an hour, and expired FAST tokens. `ChatServices.clear#MessageContent` and `clean#PendingAttachments` remove each chat
+  upload by its file name at WARN, never the URL whose token reads it. `clean_XmppUploads_daily` (`XmppServices.clean#Uploads`) removes slots never
+  put within an hour, a completed upload no chat file has `xmpp_upload_unattached_hours` (24) after it was put (so a
+  file shared only inside an OMEMO message goes then), and expired FAST tokens. `ChatServices.clear#MessageContent` and `clean#PendingAttachments` remove each chat
   file through `ChatServices.remove#AttachmentFile`: a file under the upload root goes, with its `XmppUpload` rows, when
   no other `ChatAttachment` has its location, so a file put over XMPP goes with the last message that has it (deletion or
   retention); and the `XmppUpload` rows made to serve a chat file to XMPP clients (`get#AttachmentUrls`) always go with

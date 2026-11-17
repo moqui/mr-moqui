@@ -86,6 +86,56 @@ impl HttpResponder for Responder {
     }
 }
 
+/// An answer written in memory: a [`server::EarlyRefusal`]'s, given before the request takes a git worker.
+#[derive(Default)]
+struct Buffered {
+    status: u16,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+impl HttpResponder for Buffered {
+    fn head(&mut self, status: u16, headers: &[(&str, String)]) -> std::io::Result<()> {
+        self.status = status;
+        self.headers = headers
+            .iter()
+            .map(|(name, value)| ((*name).to_string(), value.clone()))
+            .collect();
+        Ok(())
+    }
+
+    fn body(&mut self) -> &mut dyn std::io::Write {
+        &mut self.body
+    }
+}
+
+/// The answer to a git or LFS request the git pool need not see (SEC-GIT-18): its credentials cannot be taken over
+/// its transport or are in no form this server takes, so it takes no worker; a refused credential counts as a failed
+/// sign-in, as the pool's answer counts it. None when the request goes to the pool.
+fn early_answer(
+    state: &HttpState,
+    client: std::net::IpAddr,
+    authorization: Option<&str>,
+    api_key: Option<&str>,
+    (secure, lfs, token_shaped): (bool, bool, bool),
+) -> Option<Response> {
+    let refusal = server::early_refusal(authorization, api_key, secure, lfs)?;
+    if refusal.auth_failure() {
+        state.guard.record(client, failure_event(token_shaped));
+    }
+    let mut answer = Buffered::default();
+    refusal.answer(&mut answer);
+    let mut response = Response::builder().status(answer.status);
+    for (name, value) in answer.headers {
+        response = response.header(name, value);
+    }
+    Some(
+        response
+            .body(axum::body::Body::from(answer.body))
+            .unwrap_or_else(|_| plain(500, "a git response header was not valid")),
+    )
+}
+
 /// The web protection event of a refused credential: a well-formed CI token counts toward the `ci-token-failure` ban,
 /// whose threshold allows for runners that share an address, anything else toward `auth-failure`'s (crate::guard).
 fn failure_event(ci_token: bool) -> Event {
@@ -231,14 +281,19 @@ pub(crate) async fn handle(
     }
     let secure = secure(&state, over_tls, &parts, peer);
     let token_shaped = crate::guard::ci_credential(parts.uri.path(), &parts.headers).is_some();
+    let (authorization, api_key) = (header("authorization"), header("api_key").or_else(|| header("login_key")));
+    let early = (secure, false, token_shaped);
+    if let Some(answer) = early_answer(&state, client, authorization.as_deref(), api_key.as_deref(), early) {
+        return answer;
+    }
     let git_request = GitHttpRequest {
         repository,
         service,
         advertise,
         git_protocol: header("git-protocol"),
         gzip: header("content-encoding").is_some_and(|encoding| encoding.eq_ignore_ascii_case("gzip")),
-        authorization: header("authorization"),
-        api_key: header("api_key").or_else(|| header("login_key")),
+        authorization,
+        api_key,
         secure,
         client_ip: client.to_string(),
     };
@@ -323,13 +378,18 @@ async fn handle_lfs(
     let Origin { peer, client, over_tls } = from;
     let secure = secure(&state, over_tls, &parts, peer);
     let token_shaped = crate::guard::ci_credential(parts.uri.path(), &parts.headers).is_some();
+    let (authorization, api_key) = (header("authorization"), header("api_key").or_else(|| header("login_key")));
+    let early = (secure, true, token_shaped);
+    if let Some(answer) = early_answer(&state, client, authorization.as_deref(), api_key.as_deref(), early) {
+        return answer;
+    }
     let request = lfs::LfsHttpRequest {
         repository,
         method: parts.method.as_str().to_string(),
         path,
         query,
-        authorization: header("authorization"),
-        api_key: header("api_key").or_else(|| header("login_key")),
+        authorization,
+        api_key,
         range: header("range"),
         content_length,
         secure,

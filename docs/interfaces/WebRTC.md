@@ -1,7 +1,9 @@
 # WebRTC calls
 
-Calls in the Comms app go through an SFU (selective forwarding unit) inside the moqui binary, a two-person call too.
-There is no peer-to-peer mode. The design is [plans/archive/Comms-Framework.md](../../plans/archive/Comms-Framework.md) §5.4 and §6. The
+Calls in the Comms app go through an SFU (selective forwarding unit) inside the moqui binary. A one-to-one call of two
+users of this server goes peer to peer first, unless either of them keeps their calls on the server
+([The direct path](#the-direct-path)). The design is [plans/archive/Comms-Framework.md](../../plans/archive/Comms-Framework.md)
+§5.4 and §6, and for bad networks and the direct path [plans/Comms-Messaging.md](../../plans/Comms-Messaging.md) §8. The
 user guide is [Comms](../tools/Comms.md#calls).
 
 - **Media:** `crates/moqui-rtc`, on [str0m](https://github.com/algesten/str0m) (sans-IO: ICE-lite, DTLS-SRTP, simulcast,
@@ -24,6 +26,7 @@ port:
 | `call_ring_seconds` | `45` | How long a call rings before it is missed |
 | `call_guest_joins_per_minute` | `20` | The most guests who join by one call link in a minute, whatever their client |
 | `rtc_cascade_enabled` | `false` | Cascading media nodes ([Cluster](#cluster)): a leg's media goes to the node of its own socket, which relays to the call's node |
+| `call_direct_path` | `true` | One-to-one calls of two users go peer to peer first ([The direct path](#the-direct-path)); `false` keeps every call on the media server |
 
 On a single server reachable at its own address, `rtc_media_port=10000` with `rtc_media_host` set to that address is
 enough. Behind 1:1 NAT, bind the private address and set `rtc_public_address` to the public one, then forward UDP 10000.
@@ -52,8 +55,74 @@ The Calls screen says when calls are unavailable (`get#Capabilities`): supported
    goes in three simulcast layers (rids `l`, `m`, `h`), and each subscriber gets the one that fits its bandwidth
    estimate.
 5. Leaving (`leave#Call`, or the socket's `leave`) closes the leg. A direct call ends with either side, and a group call
-   with its last leg. A socket that closes keeps its leg for 30 seconds. A reconnect joins again with the next
-   generation, and the media node refuses the old connection's frames.
+   with its last leg. A socket that closes keeps its leg for a minute, so a phone that loses its network comes back to
+   the call with no new ring. A reconnect joins again with the next generation, and the media node refuses the old
+   connection's frames.
+
+## On a bad network
+
+What keeps a call going on a mobile network (plans/Comms-Messaging.md §8.3 items 8 to 14). The in-memory tests that
+measured each part, and the browser suite, are under [Tests](#tests).
+
+- **Audio.** Opus carries in-band FEC. RED (RFC 2198) is negotiated when the browser offers it, as current browsers do
+  (`SfuConfig::red`): each frame goes again in the next packet, both ways, and the SFU recovers a frame lost on the way
+  in before it forwards. At 10% loss 99% of the audio arrives, against 91% without. The page asks DTX of its Opus
+  (`usedtx=1`), so silence goes as a packet every 400 ms. An end-to-end encrypted call leaves RED out of its offers and
+  answers: its SFrame transform sees the RED payload whole, which neither the SFU nor the other page could take apart.
+  Its FEC stays, inside each Opus frame.
+- **No long hold on a lost packet.** The SFU forwards a leg's audio in order and waits at most 120 ms for a packet that
+  is late (`SfuConfig::audio_reorder_wait`); before, a lost packet held the leg's audio for everyone for 15 packets
+  (300 ms and more). A packet later than that is dropped, and the subscribers' browsers conceal it.
+- **Video.** VP8 with NACK and RTX, and the simulcast layer from the TWCC estimate. Each audio track keeps 64 kbit/s of
+  the estimate before video is shared out (Opus with its headers and RED's copy).
+- **A lost path.** The page restarts ICE on the same connection, with no new join and no new ring: when the connection
+  is disconnected for 1.5 s or fails, when the network changes (the browser's `online` and connection `change` events,
+  and the Android app's `ConnectivityManager` callback, `moqui.call.networkChanged()`), and when nothing has come in for
+  4 s on a connected path (a NAT that gave the page a new port; at most every 20 s). A restart that does not reconnect
+  within 8 s joins again with the next generation. The SFU (ICE-lite) drops a peer that sends no binding request for
+  15 s; the page's join after the network is back brings it back, within the leg's minute.
+- **Keepalives.** The browser's ICE consent checks (every few seconds) and DTX's packets keep the UDP path; the
+  notification socket is pinged every 10 s instead of 30 while it carries a call, so a mobile NAT keeps it.
+- **What the user sees.** A quality icon in the call's header (`m-call-network`), from `getStats` every 2 s: the loss of
+  what comes in, the round trip and the audio jitter give good, fair or poor. "Your network is weak" when the uplink is
+  the cause (the other side reports losing what this page sends, or the browser holds its video down for bandwidth);
+  "Reconnecting…" while the path is restarted or joined again. The tooltip has the numbers, the SFU's estimate and the
+  path.
+
+## The direct path
+
+A one-to-one call of two users of this server goes peer to peer when it can (decided 2026-11-16, plans/Comms-Messaging.md
+§8.3 item 15). The call's view says so (`direct`, `Calls.js` `directPath`): a direct call (a direct room's call of two),
+every answered leg a browser's, two users of this server, neither of whom has **Always relay my calls** on (Settings,
+Calls; the user preference `CALL_ALWAYS_RELAY`, `get#CallPreferences` and `set#CallPreferences`), no recording or
+captions going on, and `call_direct_path` not `false`. A guest, a phone, a desk phone that answers, or a third person
+rung in keeps the call on the media server.
+
+1. The page sends `{rtc: 'join', direct: true}` (no offer). `bind#Connection` with `direct` claims the leg's generation
+   as for any join, or refuses (`notDirect`) when the call is not on the direct path; the binding's media node is the
+   call's, so both pages' signaling meets there. The media node keeps the leg's route and makes no SFU peer.
+2. Each page says `hello` to the other's leg (`{rtc: 'peer', to, kind}`); only a direct binding sends `peer` frames, and
+   the media node passes each to the other direct leg of the room only, with just what its kind carries (`hello`,
+   `ready`, `offer` and `answer` with their SDP, `candidate`, `connected`, `relay`), 60 at once and 20 a second. The page
+   with the lower leg id offers; the two negotiate as perfect negotiation does. ICE uses the STUN of the call's TURN
+   servers (the TURN servers relay only to media servers), so each page has its public address.
+3. When they do not connect within 8 s of the other page being in the call (it answered, or said hello), the connection
+   fails after a restart, or a third person, a recording, captions or a screen share comes, the page moves the call to
+   the media server (a `join` with its offer, the next generation) and tells the other (`relay`), which follows. A
+   browser leg of a direct call that binds through the media server, for whatever reason (a timeout, a reload, another
+   device, an older page), moves the call for good: `CallSession.relayedDate`, and a pushed view with `direct` false, so
+   the other page follows and a page that joins again goes to the media server. A `peer` frame to a leg on the media
+   server is answered with a `relay` for it.
+4. `mute`, `hand` and `reaction` reach the other page through the media node as on the SFU path; recording and
+   captions notices reach a direct leg too, which is how its page learns to move.
+
+**Encryption.** An encrypted call stays encrypted on either path: the same SFrame transforms and keys
+([Encrypted calls](#encrypted-calls)), each track decrypted with the keys of the other leg. A move to the media server is
+a new connection generation, so the keys rotate as for any reconnect, and the label stays.
+
+**What the other side sees.** On the direct path each page learns the other's network addresses (its local and public
+ones) from the ICE candidates. Always relay my calls keeps the user's calls off it, for all their devices, from their
+next call.
 
 ## Guests by link
 
@@ -150,9 +219,12 @@ still fails closed rather than joining without keys.
 through the SFU (every call before W8, and any call not asked to be more), or `e2ee-sframe`. Any other value is treated
 as end to end, never as plain.
 
-- **Asking for it.** `start#Call` with `requireE2ee` (New call, End-to-end encrypted); a room whose owner or moderator
-  set `ChatRoom.callE2eeRequired` (`set#RoomCallEncryption`; Room settings in Chat), for every call of the room and the
-  links made for it; a call link with `requireE2ee` (`CallLink.e2eeRequired`), for its meetings. Call back from History
+- **Asking for it.** `start#Call` with `requireE2ee` (New call, End-to-end encrypted); an encrypted room
+  (`ChatRoom.encrypted`, a direct one too), for every call of the room and the links made for it, with nothing to ask
+  ([Comms-Messaging §6.1](../../plans/Comms-Messaging.md#61-rules) rule 4); a room whose owner or moderator set
+  `ChatRoom.callE2eeRequired` (`set#RoomCallEncryption`; Room settings in Chat), for every call of the room and the
+  links made for it. In an encrypted room the setting shows on and fixed, and `set#RoomCallEncryption` refuses to turn
+  it off (`notAllowed`); it refuses a direct room too, whose caller chooses per call in a plain one; a call link with `requireE2ee` (`CallLink.e2eeRequired`), for its meetings. Call back from History
   of an encrypted call (`find#Calls` `e2ee`) asks for it again.
 - **No downgrade.** The mode is set at the start and nothing lowers it. A room's call going on that is not encrypted is
   refused to a start that asks for encryption, or in a room whose policy asks for it (`callNotEncrypted`), never
@@ -382,3 +454,33 @@ between the edge node and a local media node is later work.
   is Moqui's own over Olm), and Firefox and Safari (the client spec runs Chromium).
 - `./moq test-client basic-comms --serve`: a call in two Chromium pages with fake media (`CallFlow`), and a guest by
   link let in from the lobby (`CallGuestFlow`). It needs `rtc` in the binary.
+- `./moq test framework --spec Calls`: the direct path's rule (a call of two, refused for Always relay and once a third
+  person is rung) and the minute a leg is kept. `cargo test -p moqui-host --lib rtc::tests`: what a `peer` frame carries
+  to the other page. `./moq accept basic-comms --spec CallDirect` (acceptance): a one-to-one call peer to peer in two
+  pages, moved to the media server when a third person is rung; one page's move taking the other along and a page that
+  joins again after it going to the media server; an encrypted call SFrame-decrypted on the direct path and again after
+  its move; and on the media server from the start with Always relay. About 16 seconds.
+
+### The network tests
+
+Two layers (plans/Comms-Messaging.md §8.4, where the results are kept):
+
+- **In memory**, `cargo test -p moqui-rtc --lib sfu::network_tests` (regression, under a second): two clients through
+  the SFU on `sfu/testnet.rs`'s simulated network, B's link shaped (random and burst loss, jitter that reorders, a slow
+  link, a bandwidth step, outages, a new interface with an ICE restart). They hold RED through 10% loss, 20% and burst
+  loss keeping the call up, no audio gap over 200 ms (and two frames) under 200 ms of jitter, a 3G call connected within
+  2 s, outages of 2 and 10 s back within 2 s and one of 30 s back by the page's join, a new interface losing under a
+  second, a bandwidth step's layer down and up, and the answer's FEC, RED, NACK and RTX. Every profile's numbers:
+  `cargo test -p moqui-rtc --lib network_profiles -- --ignored --nocapture`. A client there sends at a fixed rate, so
+  an uplink's capacity is the browser suite's.
+- **In browsers**, `CallNetwork` (acceptance, basic-comms `test/acceptance/client/`): two Chromium pages in a video call
+  under `tc netem` in Linux network namespaces, each §8.4 profile on both paths (relay and direct): LTE, congested LTE,
+  3G, EDGE and satellite calls; 5, 10 and 20% loss, bursts, 200 ms of jitter and a 50 kbit/s uplink during a call; a
+  bandwidth step; outages of 2, 10 and 30 s; a new address; UDP blocked. It needs root or `CAP_NET_ADMIN`, so it runs
+  only under `sudo scripts/call-network.sh [--debug]` (a `moqui` binary built first), which makes the namespaces
+  (server 10.77.0.1, client 10.77.0.2), starts the server with its fixtures and the shaper
+  (`scripts/call-network-control.py`), and runs the spec in the client's namespace as the user who called sudo.
+  Elsewhere, as in `./moq accept basic-comms`, it skips and says so. Both pages are in one Chromium behind the one
+  shaped link: the relay path is shaped on each page's link to the media server, the direct path (over the client
+  namespace's loopback) once each way. TURN over TLS on 443 is not in it (UDP blocked checks ICE-TCP); a recorded
+  cellular trace is later work.

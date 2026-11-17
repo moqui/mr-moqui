@@ -1057,7 +1057,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="get" noun="RoomBridges" allow-remote="false">
         <description>Internal: the connectors of rooms (chatRoomIdList): bridgeMap chatRoomId to [{chatRoomBridgeId,
             chatBridgeId, name, network, networkName, statusId, connected, externalRoomName, externalRoomUrl, directionEnumId,
-            outbound}], the active mappings; and capabilityMap chatRoomId to {edit, delete, reaction}: what every outbound
+            outbound, encryption}], the active mappings (encryption: its adapter's, None, Transport, BridgeDecrypted or
+            EndToEnd, for the room's label: plans/Comms-Messaging.md §6.2); and capabilityMap chatRoomId to {edit, delete, reaction}: what every outbound
             bridge of the room carries (all true for a room with none). The caller has checked access.</description>
         <in-parameters><parameter name="chatRoomIdList" type="List" required="true"/></in-parameters>
         <out-parameters>
@@ -1082,12 +1083,13 @@ along with this software (see the LICENSE.md file). If not, see
             for (const row of mappings) {
                 const bridge = bridges[row.chatBridgeId] || {}
                 const outbound = row.directionEnumId !== 'CrbIn'
+                const cap = caps[row.chatBridgeId] || {}
                 ;(bridgeMap[row.chatRoomId] = bridgeMap[row.chatRoomId] || []).push({chatRoomBridgeId: row.chatRoomBridgeId,
                     chatBridgeId: row.chatBridgeId, name: bridge.name ?? null, network: types[bridge.typeEnumId]?.enumCode || null,
                     networkName: types[bridge.typeEnumId]?.description || null, statusId: bridge.statusId ?? null,
                     connected: bridge.statusId === 'CbsConnected', externalRoomName: row.externalRoomName ?? null,
-                    externalRoomUrl: row.externalRoomUrl ?? null, directionEnumId: row.directionEnumId ?? null, outbound: outbound})
-                const cap = caps[row.chatBridgeId] || {}
+                    externalRoomUrl: row.externalRoomUrl ?? null, directionEnumId: row.directionEnumId ?? null, outbound: outbound,
+                    encryption: cap.encryption || 'None'})
                 const room = capabilityMap[row.chatRoomId] = capabilityMap[row.chatRoomId] || {edit: true, delete: true, reaction: true}
                 if (outbound) { room.edit = room.edit && cap.edit === true; room.delete = room.delete && cap.delete === true
                     room.reaction = room.reaction && cap.reaction === true }
@@ -1190,7 +1192,8 @@ along with this software (see the LICENSE.md file). If not, see
             last event. Each: the room's fields, displayName (a direct room's: the other members' names), isMember, my
             roleEnumId, notificationLevelEnumId, isPinned, isMuted, archivedByMe (my own archive, until a newer message), lastReadEventSeq, unreadCount (messages from others after
             my read marker), mentionCount, lastMessage {eventSeq, senderUserId, senderName, sentDate, snippet}, bridged (a
-            connector is mapped to it), encrypted (C7: lastMessage then has no snippet and encrypted true), notConnected (one of them is not connected) and bridgeNetworkNames, and for a
+            connector is mapped to it), encrypted (C7: lastMessage then has no snippet and encrypted true), notConnected (one of them is not connected), bridgeNetworkNames and
+            bridgeNetworks [{network, networkName, encryption, outbound}] (for the room's E2EE label, moqui.chat.e2eeLabel), and for a
             direct room otherUserIdList and, with one other member, otherUserId and presence (as get#UserStatuses gives it).
             filter: unread (unread messages or mentions), mentions, direct, rooms (private and public), records; searchText
             matches the name and topic. includeJoinable adds the public rooms the user has not joined (isMember false).
@@ -1306,7 +1309,9 @@ along with this software (see the LICENSE.md file). If not, see
                     encrypted: row.encrypted === 'Y',
                     otherUserIdList: others, otherUserId: others.length === 1 ? others[0] : null, presence: null,
                     bridged: !!bridgeMap[row.chatRoomId], notConnected: (bridgeMap[row.chatRoomId] || []).some((bridge) => !bridge.connected),
-                    bridgeNetworkNames: Array.from(new Set((bridgeMap[row.chatRoomId] || []).map((bridge) => bridge.networkName).filter((name) => name)))}
+                    bridgeNetworkNames: Array.from(new Set((bridgeMap[row.chatRoomId] || []).map((bridge) => bridge.networkName).filter((name) => name))),
+                    bridgeNetworks: (bridgeMap[row.chatRoomId] || []).map((bridge) => ({network: bridge.network, networkName: bridge.networkName,
+                        encryption: bridge.encryption, outbound: bridge.outbound}))}
                 if (text && !(`${displayName} ${row.topic || ''}`.toLowerCase().includes(text))) continue
                 if (filter === 'unread' && !(unreadCount > 0 || mentionCount > 0)) continue
                 if (filter === 'mentions' && !(mentionCount > 0)) continue

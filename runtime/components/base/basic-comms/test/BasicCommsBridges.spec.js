@@ -2,7 +2,8 @@
 // adapter of it in this build) shows the bridge and "not connected" in the room list, the room and its terminal twin; an
 // external member from that network has its badge and its message its network; a message of the room shows that it waits to
 // be sent, and System, Chat Bridges lists the bridge with its last error and the delivery that failed, with Send again, for
-// an administrator only. The delivery itself and its failures are crates/moqui-core/src/service/chat_bridge_tests.rs.
+// an administrator only; the terminal's Info of the message says its delivery per network and who has read up to it. The
+// delivery itself and its failures are crates/moqui-core/src/service/chat_bridge_tests.rs.
 // Run: ./moq test basic-comms --spec BasicCommsBridges
 const root = "component://basic-comms/screen/BasicComms.xml"
 const systemRoot = "component://tools/screen/System.xml"
@@ -79,7 +80,11 @@ feature("a bridged room that is not connected shows its bridge, its external mem
             ec.entity.find("moqui.chat.ChatBridgeDelivery").condition("chatRoomId", room).updateAll({statusEnumId: "CdsFailed",
                 reasonCode: "spec", lastErrorText: "Spec refusal", lastAttemptDate: ec.user.nowTimestamp})
         })
-        const tuiFailed = render(root, "ChatTui", "tui", {chatRoomId: room})
+        // the neighbor reads it: their read marker is at the message, for its Info
+        ec.user.internalLoginUser("basic.comms.bridges")
+        call("org.moqui.chat.ChatServices.mark#Read", {chatRoomId: room})
+        ec.user.internalLoginUser("john.doe")
+        const tuiFailed = render(root, "ChatTui", "tui", {chatRoomId: room, infoSeq: sent.eventSeq})
         const adminQvt = render(systemRoot, "ChatBridges", "qvt", {})
         const adminTui = render(systemRoot, "ChatBridges", "tui", {})
         const delivery = sys(() => ec.entity.find("moqui.chat.ChatBridgeDelivery").condition("chatRoomId", room).one())
@@ -106,9 +111,13 @@ feature("a bridged room that is not connected shows its bridge, its external mem
         timeline.eventList.some(event => event.senderName == "Riley Outside" && event.senderExternal && event.senderExternal.networkName == "SMS")
         timeline.eventList.some(event => event.eventSeq == sent.eventSeq && event.delivery && event.delivery.state == "pending")
         rooms.roomList.some(item => item.chatRoomId == room && item.bridged && item.notConnected && item.bridgeNetworkNames.includes("SMS"))
+        // each bridge says its network's encryption (its adapter's: SMS None), for the room's label (Comms-Messaging §6.2)
+        roomOut.room.bridges.every(bridge => bridge.network == "sms" && bridge.encryption == "None")
+        rooms.roomList.some(item => item.chatRoomId == room && item.bridgeNetworks.some(bridge => bridge.network == "sms" && bridge.encryption == "None"))
         view.room.bridged === true
         !tui.broken
         tui.output.includes("Messages here also go to SMS")
+        tui.output.includes("Texts go through the phone network and the SMS provider")
         tui.output.includes("Not connected")
         tui.output.includes("Riley Outside (SMS)")
         tui.output.includes("Sending")
@@ -116,6 +125,11 @@ feature("a bridged room that is not connected shows its bridge, its external mem
         !tuiFailed.broken
         tuiFailed.output.includes("Not delivered: Spec refusal")
         tuiFailed.output.includes("Send again")
+        // Info in the terminal (Comms-Messaging §4): sent, the delivery per network from its delivery row, who has read up to it
+        tuiFailed.output.includes("Message info")
+        /SMS[^\n]*Not delivered: Spec refusal/.test(tuiFailed.output.slice(tuiFailed.output.indexOf("Message info")))
+        /Read by[^\n]*Bridge Neighbor/.test(tuiFailed.output)
+        tuiFailed.output.includes("not known to the server")
         adminQvt.status == 200
         !adminQvt.broken
         adminQvt.output.includes("Spec SMS line")

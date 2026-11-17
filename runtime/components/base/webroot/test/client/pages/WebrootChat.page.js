@@ -841,3 +841,203 @@ test("the app notifies a message by the room's level, not its own, not on do not
         window.moquiDesktop = before.host;
     }
 });
+
+test("the E2EE label (Comms-Messaging §6.2): a lock only for end to end, the open lock and its banner for the rest, the composer's hint for a text and a bridge", () => {
+    const label = (room, trust) => chat.e2eeLabel(room, trust);
+    // a private room's type icon is people, not a lock (COM-UI-001)
+    assert.equal(chat.roomIcon({ roomTypeEnumId: "CrtPrivate" }), "sym_o_groups");
+    const verified = label({ roomTypeEnumId: "CrtPrivate", encrypted: true }, { allVerified: true });
+    assert.deepEqual([verified.state, verified.lock, verified.verified, verified.icon, verified.verify], ["verified", true, true, "sym_o_lock", false]);
+    assert.ok(verified.banner.startsWith("Messages and calls are end-to-end encrypted"));
+    const sealed = label({ roomTypeEnumId: "CrtDirect", encrypted: true }, { allVerified: false });
+    assert.deepEqual([sealed.state, sealed.lock, sealed.verified, sealed.verify], ["encrypted", true, false, true], "not all verified: Verify");
+    assert.equal(label({ encrypted: true }).state, "encrypted", "trust not known is not verified");
+    for (const room of [{ roomTypeEnumId: "CrtPrivate", visibilityEnumId: "CrvMembers" }, { roomTypeEnumId: "CrtDirect" }]) {
+        const plain = label(room, { allVerified: true });
+        assert.deepEqual([plain.state, plain.lock, plain.icon, plain.hint], ["plain", false, "sym_o_lock_open", ""]);
+        assert.equal(plain.banner, "Not end-to-end encrypted. The server can read these messages.");
+    }
+    const channel = label({ roomTypeEnumId: "CrtPublic", visibilityEnumId: "CrvUsers" });
+    assert.deepEqual([channel.state, channel.lock, channel.banner], ["public", false, ""], "a public channel: the open lock, no banner");
+    assert.ok(channel.text, "but a line of text");
+    assert.equal(label({ roomTypeEnumId: "CrtRecord", visibilityEnumId: "CrvRecord" }).state, "public");
+    // a text: its pair room, or a room bridged to SMS (the adapter's encryption None)
+    for (const room of [{ roomTypeEnumId: "CrtExternal" }, { roomTypeEnumId: "CrtPrivate", bridges: [{ network: "sms", networkName: "SMS", encryption: "None" }] }]) {
+        const text = label(room);
+        assert.deepEqual([text.state, text.lock, text.hint], ["sms", false, "Text message"]);
+        assert.equal(text.banner, "Not end-to-end encrypted. Texts go through the phone network and the SMS provider.");
+    }
+    // a bridge, as get#Room gives it and as find#Rooms does: the network's name in the composer
+    const bridged = label({ roomTypeEnumId: "CrtPrivate", bridges: [{ network: "whatsapp", networkName: "WhatsApp", encryption: "BridgeDecrypted" }] });
+    assert.deepEqual([bridged.state, bridged.lock, bridged.hint], ["bridged", false, "WhatsApp message"]);
+    assert.equal(bridged.banner, "Not end-to-end encrypted on this server. The bridge reads messages to pass them on.");
+    assert.equal(label({ roomTypeEnumId: "CrtPublic", bridgeNetworks: [{ network: "xmpp", networkName: "XMPP", encryption: "Transport" }] }).hint, "XMPP message");
+    assert.equal(label({ roomTypeEnumId: "CrtPublic", bridged: true, bridgeNetworkNames: ["Matrix"] }).state, "bridged", "a cached row with names only");
+    // calls and mail
+    assert.deepEqual([label({ call: { e2ee: true } }).state, label({ call: { e2ee: true } }).lock], ["call-encrypted", true]);
+    assert.deepEqual([label({ call: { phone: true, e2ee: true } }).state, label({ call: { phone: true } }).lock], ["call-phone", false]);
+    assert.equal(label({ call: { phone: true } }).banner, "Phone calls are not end-to-end encrypted.");
+    assert.equal(label({ call: {} }).lock, false);
+    const mail = label({ mail: true });
+    assert.deepEqual([mail.state, mail.lock, mail.icon, mail.text], ["mail", false, null, "Email is not end-to-end encrypted"], "mail never has a lock");
+    assert.equal(label(null).state, "plain");
+});
+
+test("an encrypted room's trust: every other member's devices verified, else Verify; under only verified devices who cannot read, and why the reader cannot (COM-UI-013)", () => {
+    const device = (deviceId, verified) => ({ deviceId, displayName: deviceId + " phone", verified });
+    const all = chat.trustOf({ verifiedOnly: false, users: [{ userId: "ann", devices: [] }, { userId: "bob", devices: [device("B1", true)] }] }, "ann");
+    assert.deepEqual([all.known, all.allVerified, all.leftOut.length], [true, true, 0], "my only device is this one");
+    const some = chat.trustOf({ verifiedOnly: true, users: [{ userId: "ann", devices: [device("A2", false)] }, { userId: "bob", devices: [device("B1", true), device("B2", false)] }] }, "ann");
+    assert.equal(some.allVerified, false);
+    assert.deepEqual(some.leftOut.map((one) => one.userId + "/" + one.deviceId), ["ann/A2", "bob/B2"]);
+    assert.equal(chat.trustOf({ verifiedOnly: false, users: [{ userId: "bob", devices: [device("B2", false)] }] }, "ann").leftOut.length, 0, "shared with all: no one left out");
+    assert.equal(chat.trustOf({ users: [{ userId: "ann", devices: [] }, { userId: "bob", devices: [] }] }, "ann").allVerified, false, "a member with no known device is not verified");
+    assert.equal(chat.trustOf(null, "ann").known, false);
+    assert.equal(chat.leftOutText(some.leftOut, "ann", (id) => (id === "bob" ? "Bob Baker" : id)), "Not readable by Bob Baker, your other devices: their devices are not verified");
+    assert.equal(chat.leftOutText([], "ann"), "");
+    assert.ok(chat.undecryptableText("m.unverified", "Bob").startsWith("Bob has not verified this device"), "the sender withheld it from this device");
+    assert.ok(chat.undecryptableText(null, "Bob").includes("Restore your key backup"), "else the key backup");
+    // a withheld key's reason reaches the message
+    const item = {};
+    chat.applyOpened(item, { error: "unreadable", withheld: "m.unverified" });
+    assert.deepEqual([item.undecryptable, item.withheld], [true, "m.unverified"]);
+});
+
+test("the E2EE label's edges: a members-only record room is plain, a text with another bridge says both, an inbound-only bridge names nothing in the composer", () => {
+    const label = (room) => chat.e2eeLabel(room);
+    assert.equal(label({ roomTypeEnumId: "CrtRecord", visibilityEnumId: "CrvMembers" }).state, "plain", "a record room kept to its members");
+    assert.equal(label({ roomTypeEnumId: "CrtRecord" }).state, "public", "a record's room for those who see the record");
+    const both = label({ roomTypeEnumId: "CrtPrivate", bridges: [{ network: "sms", networkName: "SMS", outbound: true }, { network: "whatsapp", networkName: "WhatsApp", outbound: true }] });
+    assert.equal(both.state, "sms");
+    assert.ok(both.banner.includes("SMS provider") && both.banner.includes("the bridge reads messages"), both.banner);
+    assert.equal(both.hint, "Text message · WhatsApp message");
+    const inbound = label({ roomTypeEnumId: "CrtPrivate", bridges: [{ network: "xmpp", networkName: "XMPP", outbound: false }] });
+    assert.deepEqual([inbound.state, inbound.hint], ["bridged", ""], "nothing goes out through it");
+    assert.equal(label({ roomTypeEnumId: "CrtPrivate", bridges: [{ network: "sms", networkName: "SMS", outbound: false }] }).hint, "", "a text room that sends nothing out");
+});
+
+test("people's checks (§6.1 rule 3): a verified identity or every device verified; a new identity is not verified; Verify asks another person first", () => {
+    const trust = chat.trustOf({ users: [{ userId: "ann", devices: [{ deviceId: "A2", verified: false }] },
+        { userId: "bob", identity: { verified: true }, devices: [{ deviceId: "B1", verified: true }] },
+        { userId: "cy", identity: { verified: false }, devices: [{ deviceId: "C1", verified: true }] },
+        { userId: "dee", identity: { verified: true, changed: true }, devices: [{ deviceId: "D1", verified: false }] },
+        { userId: "eve", devices: [] }] }, "ann");
+    assert.deepEqual(["bob", "cy", "dee", "eve"].map((id) => trust.people[id].verified), [true, true, false, false]);
+    assert.equal(trust.people.dee.changed, true);
+    assert.equal(chat.verifyTarget(trust, "ann"), "dee", "the first other person with a device not verified");
+    assert.equal(chat.verifyTarget(chat.trustOf({ users: [{ userId: "ann", devices: [{ deviceId: "A2", verified: false }] }] }, "ann"), "ann"), null, "only my own: My devices");
+    assert.deepEqual(chat.problemsText([{ userId: "bob", deviceId: "B9", displayName: "Bob's tablet", kind: "newDevice" }, { userId: "dee", kind: "changedIdentity" }],
+        (id) => ({ bob: "Bob", dee: "Dee" })[id]), ["Bob has a new device that is not verified: Bob's tablet", "Dee has a new identity: verify them again"]);
+    assert.ok(chat.undecryptableText("m.unverified", "Bob").includes("Members, Verify"), "the route there is");
+});
+
+test("who could not read my message is kept per account in this browser: from its clientRef to its eventSeq, for a reload or another tab", () => {
+    const priorMe = chat.me, priorScope = moqui.storageScope;
+    try {
+        chat.me = "ann";
+        moqui.storageScope = "acct-1";
+        localStorage.removeItem(chat.leftOutKey());
+        chat.noteLeftOut("c-77", "R9", "Not readable by Bob: their devices are not verified");
+        assert.deepEqual(chat.leftOutOf("R9"), {}, "not before it is sent");
+        chat.emit("sent", { clientRef: "c-77", chatRoomId: "R9", json: { event: { eventSeq: 41 } } });
+        assert.equal(chat.leftOutOf("R9")[41], "Not readable by Bob: their devices are not verified");
+        assert.equal(chat.readLeftOut().refs["c-77"], undefined);
+        // another account in the same browser keeps its own, and so do the banners
+        moqui.storageScope = "acct-2";
+        assert.deepEqual(chat.leftOutOf("R9"), {});
+        chat.closeBanner("R9", "plain");
+        assert.equal(chat.bannerClosed("R9", "plain"), true);
+        moqui.storageScope = "acct-1";
+        assert.equal(chat.bannerClosed("R9", "plain"), false, "a room id of another account is not this one's");
+        assert.equal(chat.leftOutOf("R9")[41], "Not readable by Bob: their devices are not verified");
+    } finally {
+        localStorage.removeItem(chat.leftOutKey());
+        chat.me = priorMe;
+        moqui.storageScope = priorScope;
+    }
+});
+
+test("Info (Comms-Messaging §4, COM-UI-008): Sent, a bridged message's delivery per network, Read by from read markers; receipts off on either side; a thread", () => {
+    const members = [{ userId: "ann", name: "Ann", lastReadEventSeq: 3 }, { userId: "bob", name: "Bob", lastReadEventSeq: 9 },
+        { userId: "cy", name: "Cy", lastReadEventSeq: 5 }, { userId: "dee", name: "Dee", lastReadEventSeq: 4 },
+        // receipts off: the server blanks the marker for others
+        { userId: "eve", name: "Eve", lastReadEventSeq: null }, { userId: "agent", name: "Helper", isAgent: true, lastReadEventSeq: 9 }];
+    const message = event({ eventSeq: 5, sentDate: 1000, senderUserId: "ann" });
+    const when = (millis) => "at " + millis;
+    const texts = (lines) => lines.map((line) => line.text).join(" | ");
+    // read up to here or later; not me, not the sender, not an agent, not one whose receipts are off
+    const info = chat.messageInfo(message, members, { me: "ann" });
+    assert.deepEqual(info.readBy.people.map((person) => person.userId), ["bob", "cy"]);
+    assert.equal(info.delivered, null, "a message that went out on no bridge has no delivery line");
+    assert.equal(info.sent, 1000);
+    let lines = chat.messageInfoLines(info, when);
+    assert.deepEqual(lines.map((line) => line.key), ["sent", "read", "note"]);
+    assert.equal(lines[0].text, "at 1000");
+    assert.equal(lines[1].text, "Bob, Cy");
+    assert.ok(lines[2].text.includes("read receipts off are not listed") && lines[2].text.includes("devices is not known"));
+    // one who joined after the message has a marker past it (a join reads to the latest) but did not read it
+    const joined = members.concat([{ userId: "fay", name: "Fay", lastReadEventSeq: 9, joinedDate: 1500 }, { userId: "gus", name: "Gus", lastReadEventSeq: 9, joinedDate: 1000 }]);
+    assert.deepEqual(chat.messageInfo(message, joined, { me: "ann" }).readBy.people.map((person) => person.userId), ["bob", "cy", "gus"]);
+    // and N more
+    const many = Array.from({ length: 11 }, (unused, n) => ({ userId: "u" + n, name: "User " + n, lastReadEventSeq: 6 }));
+    const more = chat.messageInfo(message, many, { me: "ann", limit: 8 });
+    assert.equal(more.readBy.people.length, 8);
+    assert.equal(more.readBy.more, 3);
+    assert.ok(chat.messageInfoLines(more, when)[1].text.endsWith("User 7 and 3 more"));
+    // no one has read up to it: said so, never "not read"
+    const none = chat.messageInfoLines(chat.messageInfo(event({ eventSeq: 99, senderUserId: "ann" }), members, { me: "ann" }), when);
+    assert.equal(none[1].text, "No one yet, of those with read receipts on");
+    // the viewer's receipts off: no names, and it says why
+    const off = chat.messageInfo(message, members, { me: "ann", receipts: false });
+    assert.deepEqual(off.readBy, { off: true });
+    lines = chat.messageInfoLines(off, when);
+    assert.equal(lines[1].text, "Your read receipts are off, so you do not see who has read it");
+    assert.ok(!/not read\b/i.test(texts(lines)) && !texts(lines).includes("Bob"));
+    // a bridged message: each network's delivery, from its delivery row
+    const bridged = event({ eventSeq: 5, sentDate: 1000, senderUserId: "ann", delivery: { state: "failed", destinations: [
+        { networkName: "SMS", state: "accepted", receipt: "delivered" }, { bridgeName: "Ops Slack", state: "failed", error: "Channel archived" },
+        { networkName: "Telegram", state: "uncertain" }, { networkName: "Matrix", state: "accepted" }, { networkName: "XMPP", state: "pending" }] } });
+    lines = chat.messageInfoLines(chat.messageInfo(bridged, members, { me: "ann" }), when).filter((line) => line.key === "delivered");
+    assert.deepEqual(lines.map((line) => line.label + ": " + line.text), ["SMS: Delivered: the network's receipt says so", "Ops Slack: Not delivered: Channel archived",
+        "Telegram: May not have arrived", "Matrix: Taken by the network", "XMPP: Sending"]);
+    // two bridges of one network: each with its own name
+    const twice = event({ eventSeq: 5, sentDate: 1000, senderUserId: "ann", delivery: { state: "accepted", destinations: [
+        { networkName: "SMS", bridgeName: "Office line", state: "accepted" }, { networkName: "SMS", bridgeName: "Shop line", state: "pending" },
+        { networkName: "Matrix", bridgeName: "Matrix bridge", state: "accepted" }] } });
+    assert.deepEqual(chat.messageInfo(twice, members, { me: "ann" }).delivered.map((one) => one.name), ["SMS · Office line", "SMS · Shop line", "Matrix"]);
+    // a thread: Sent and Delivered only, it has no read markers
+    const reply = event({ eventSeq: 7, sentDate: 2000, senderUserId: "ann", threadRootEventSeq: 5, delivery: bridged.delivery });
+    const thread = chat.messageInfo(reply, members, { me: "ann" });
+    assert.equal(thread.readBy, null);
+    assert.equal(thread.thread, true);
+    lines = chat.messageInfoLines(thread, when);
+    assert.deepEqual(Array.from(new Set(lines.map((line) => line.key))), ["sent", "delivered", "note"]);
+    assert.ok(lines[lines.length - 1].text.includes("A thread has no read receipts."));
+    assert.equal(chat.messageInfo(message, members, { me: "ann", inThread: true }).readBy, null, "the root shown in its thread too");
+    // a message that came in from a network says where from
+    const inbound = chat.messageInfo(event({ eventSeq: 5, senderUserId: null, senderExternal: { network: "sms", networkName: "SMS" } }), members, { me: "ann" });
+    assert.equal(chat.messageInfoLines(inbound, when).find((line) => line.key === "from").text, "SMS");
+});
+
+test("before a send (§6.1 rule 3): a verified person's device not verified is a problem unless let through for the room by its key; one verified by emoji passes; a changed identity until let through by its master key", async () => {
+    const problemsOf = moqui.crypto.problemsOf;
+    const device = (deviceId, more) => Object.assign({ deviceId, displayName: deviceId + " phone", key: "key-" + deviceId, verified: false, locallyTrusted: false }, more || {});
+    // bob's identity is verified: his new device B2 (signed by nobody I trust) is a problem; B1, signed by him, is not
+    const bob = { userId: "bob", identity: { verified: true }, devices: [device("B1", { verified: true }), device("B2")] };
+    assert.deepEqual(problemsOf([bob], []).map((p) => p.kind + ":" + p.deviceId), ["newDevice:B2"]);
+    // verified here by emoji (local trust, not signed by bob): it passes, the same rule the send then shares by
+    assert.deepEqual(problemsOf([{ userId: "bob", identity: { verified: true }, devices: [device("B1", { verified: true }), device("B2", { locallyTrusted: true })] }], []), []);
+    // let through for this room with its key; the same device id with another key is asked again
+    assert.deepEqual(problemsOf([bob], [{ userId: "bob", deviceId: "B2", key: "key-B2" }]), []);
+    assert.equal(problemsOf([bob], [{ userId: "bob", deviceId: "B2", key: "another" }]).length, 1);
+    // a person verified by emoji only (no verified identity) is a verified person too: their new device is asked
+    const cy = { userId: "cy", identity: { verified: false }, devices: [device("C1", { verified: true, locallyTrusted: true }), device("C2")] };
+    assert.deepEqual(problemsOf([cy], []).map((p) => p.deviceId), ["C2"]);
+    // nobody verified dee: no question
+    assert.deepEqual(problemsOf([{ userId: "dee", identity: null, devices: [device("D1")] }], []), []);
+    // a changed identity, until let through by this master key
+    const eve = { userId: "eve", identity: { verified: false, changed: true, masterKey: "mk-2" }, devices: [device("E1")] };
+    assert.deepEqual(problemsOf([eve], []).map((p) => p.kind + ":" + p.masterKey), ["changedIdentity:mk-2"]);
+    assert.deepEqual(problemsOf([eve], [{ userId: "eve", masterKey: "mk-2" }]), []);
+    assert.equal(problemsOf([eve], [{ userId: "eve", masterKey: "mk-1" }]).length, 1, "an identity let through before is not this one");
+});

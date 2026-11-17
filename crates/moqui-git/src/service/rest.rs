@@ -772,20 +772,71 @@ fn forward_merge_request(name: &str, operation: Option<&str>, parameters: &Param
     }
 }
 
-/// The most merge requests one page of `find#MergeRequests` gives through REST.
-pub(crate) const MAX_PAGE_SIZE: i64 = 200;
+/// The most merge requests one page of `find#MergeRequests` gives through REST, when `git-server`
+/// `merge-requests-max-page` does not say.
+pub(crate) const MAX_PAGE_SIZE: usize = 100;
+
+/// The most repositories a REST `find#MergeRequests` that names none looks in, when `git-server`
+/// `merge-requests-max-repositories` does not say.
+pub(crate) const MAX_REPOSITORIES: usize = 500;
+
+/// A `git-server` setting that is a positive number, else `default`.
+fn positive_setting(name: &str, default: usize) -> usize {
+    crate::setting(name)
+        .parse::<usize>()
+        .ok()
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
+}
+
+/// The first `most` repositories the caller may view, by id, archived ones too (as the framework service lists them):
+/// the walk stops there, so one call checks the view right of no more repositories than it must (SEC-GIT-18).
+fn first_visible(facade: &EntityFacade, most: usize) -> Result<Vec<String>, moqui_core::context::Error> {
+    let ids: Vec<String> = {
+        let _rows = rows_guard();
+        facade
+            .find(GIT_REPOSITORY)?
+            .select_field("repositoryId")
+            .order_by("repositoryId", false)
+            .list()?
+            .iter()
+            .filter_map(|row| row.get("repositoryId").map(to_plain_string))
+            .collect()
+    };
+    Ok(ids.into_iter().filter(|id| may(id, "view")).take(most).collect())
+}
 
 /// `find#MergeRequests`: those of a repository, or of every repository the caller may view, by `filter`: `mine` (the
 /// caller's), `review` (waiting for the caller's review), `open` (open and draft; the default) or `all`, with the
-/// framework service's other filters, at most [`MAX_PAGE_SIZE`] a page.
-fn find_merge_requests(parameters: &Parameters, _facade: &EntityFacade) -> Out {
+/// framework service's other filters, at most `git-server` `merge-requests-max-page` (100) a page. A call that names
+/// no repository looks in the first `merge-requests-max-repositories` (500) the caller may view, by id (SEC-GIT-18).
+fn find_merge_requests(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let mut parameters = parameters.clone();
     // the hidden ones are the application's to show, never a REST caller's to ask for
     parameters.remove("includeHidden");
     let size = text(&parameters, "pageSize")
         .and_then(|size| size.trim().parse::<i64>().ok())
         .unwrap_or(20);
-    parameters.insert("pageSize".into(), Value::I64(size.clamp(1, MAX_PAGE_SIZE)));
+    let most = i64::try_from(positive_setting("merge-requests-max-page", MAX_PAGE_SIZE)).unwrap_or(i64::MAX);
+    parameters.insert("pageSize".into(), Value::I64(size.clamp(1, most)));
+    let named = text(&parameters, "repositoryId").is_some()
+        || !super::hosting::list_param(&parameters, "repositoryIdList").is_empty();
+    if !named {
+        let visible = first_visible(
+            facade,
+            positive_setting("merge-requests-max-repositories", MAX_REPOSITORIES),
+        )?;
+        if visible.is_empty() {
+            return Ok(out([
+                ("mergeRequestList", Value::List(Vec::new())),
+                ("mergeRequestListCount", Value::I64(0)),
+            ]));
+        }
+        parameters.insert(
+            "repositoryIdList".into(),
+            Value::List(visible.into_iter().map(Value::string).collect()),
+        );
+    }
     let user = moqui_core::user::current_user_id().ok().flatten();
     let filter = text(&parameters, "filter").unwrap_or_else(|| "open".into());
     let open = || Value::List(vec![Value::string("GmrDraft"), Value::string("GmrOpen")]);

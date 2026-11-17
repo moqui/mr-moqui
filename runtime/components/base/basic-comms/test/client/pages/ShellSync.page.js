@@ -624,7 +624,7 @@ test("the Inbox: a thread change that conflicted says it changed on the server a
         assert.ok(disclosure.getAttribute("aria-label").startsWith("Collapse message from Pat Sender"));
         await until(() => {
             const frame = document.querySelector("#inbox-body-email_KEY1 iframe");
-            return frame && frame.contentDocument && frame.contentDocument.body.textContent.includes("Older body available by keyboard");
+            return frame && frame.contentDocument && frame.contentDocument.body && frame.contentDocument.body.textContent.includes("Older body available by keyboard");
         }, "the older message body");
         const recipients = document.getElementById("inbox-recipients-email_KEY1");
         assert.equal(recipients.tagName, "BUTTON");
@@ -1212,6 +1212,114 @@ test("Back (moqui.back) closes the message sheet, then the pane, then goes back 
         assert.equal(moqui.back.pop(), false);
     } finally {
         vm.width = kept;
+    }
+});
+
+test("one action list (COM-UI-035): the sheet, the More menu and a right click on a desktop row offer the same actions, the apps' and File on a record among them; Info reads the message again (COM-UI-008)", async () => {
+    const vm = await openRoom();
+    const priorItems = moqui.ext.items;
+    const priorTimeline = answers["/apps/BasicComms/Chat/timeline"];
+    const priorPrefs = { recordLink: vm.prefs.recordLink, readReceipts: vm.prefs.readReceipts };
+    moqui.ext.items = () => Promise.resolve({ actions: [{ name: "makeTask", slot: "chat-message-actions", label: "Make a task", kind: "transition", url: "/x" }], panels: [] });
+    // the message read again for Info: its delivery to an SMS bridge and the members' read markers as the server has them
+    answers["/apps/BasicComms/Chat/timeline"] = (params) => {
+        const page = priorTimeline(params);
+        if (params.eventSeq == null) return page;
+        page.eventList.forEach((event) => { event.delivery = { state: "accepted", destinations: [{ networkName: "SMS", state: "accepted", receipt: "delivered" }] }; });
+        page.memberList = [{ userId: "ann", name: "Ann", lastReadEventSeq: 6 }, { userId: "bob", name: "Bob", lastReadEventSeq: 6 }];
+        return page;
+    };
+    vm.prefs.recordLink = true;
+    const keys = (scope) => Array.from(scope.querySelectorAll("[data-action], [data-ext-action]")).map((el) => el.getAttribute("data-action") || "app:" + el.getAttribute("data-ext-action"));
+    const ALL = ["reply", "thread", "copy", "link", "forward", "edit", "pin", "unread", "app:makeTask", "file", "info", "delete"];
+    const closed = async (el, what) => { assert.ok(moqui.back.pop(), "Back closes " + what); await until(() => !el.isConnected, what + " to close"); };
+    try {
+        assert.equal(vm.useBubbles, false, "a desktop's rows");
+        const item = vm.items.find((one) => one.kind === "message" && one.eventSeq === 6);
+        vm.openSheet(item, false);
+        const sheet = await until(() => document.querySelector(".m-chat-sheet [data-ext-action]") && document.querySelector(".m-chat-sheet"), "the sheet with the apps' actions");
+        assert.deepEqual(keys(sheet), ALL);
+        assert.equal(sheet.querySelectorAll(".m-chat-sheet-emoji").length, 6, "the quick reactions, then +");
+        sheet.querySelector(".m-chat-more-reactions").click();
+        assert.ok(await until(() => sheet.querySelector(".m-emoji-picker"), "+ opens the picker in the sheet"));
+        await closed(sheet, "the sheet");
+        // the hover toolbar's More: the same list (its quick reactions are on the toolbar)
+        const row = vm.$el.querySelector('.m-chat-msg[data-seq="6"]');
+        vm.hoverKey = "m6";
+        await Vue.nextTick();
+        row.querySelector('button[aria-label="More"]').click();
+        const more = await until(() => document.querySelector(".q-menu .m-chat-actions [data-ext-action]") && document.querySelector(".q-menu .m-chat-actions"), "the More menu");
+        assert.deepEqual(keys(more), ALL);
+        await closed(more, "the More menu");
+        vm.hoverKey = null;
+        // a right click on the row: the same menu at the pointer, with the quick reactions, and not the browser's
+        const click = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 300, clientY: 200 });
+        row.querySelector(".m-chat-body").dispatchEvent(click);
+        assert.ok(click.defaultPrevented, "the browser's menu is not shown");
+        const menu = await until(() => document.querySelector(".m-chat-context-menu [data-ext-action]") && document.querySelector(".m-chat-context-menu"), "the right-click menu");
+        assert.deepEqual(keys(menu), ALL);
+        assert.equal(menu.querySelectorAll(".m-chat-sheet-emoji").length, 6);
+        // Info: read again; Sent, the SMS delivery from its delivery row, Read by from the markers; never a device's delivery
+        const reads = asked("/apps/BasicComms/Chat/timeline").length;
+        menu.querySelector('[data-action="info"]').click();
+        const info = await until(() => document.querySelector(".m-chat-info [data-info='delivered']") && document.querySelector(".m-chat-info"), "Info with the delivery");
+        assert.equal(asked("/apps/BasicComms/Chat/timeline").length, reads + 1);
+        assert.equal(asked("/apps/BasicComms/Chat/timeline").slice(-1)[0].params.eventSeq, 6);
+        const line = (key) => info.querySelector("[data-info='" + key + "']").textContent.trim();
+        assert.ok(line("sent").startsWith("Sent"));
+        assert.ok(line("delivered").startsWith("SMS") && line("delivered").includes("network's receipt"), line("delivered"));
+        assert.equal(line("read"), "Read by" + "Bob");
+        assert.ok(line("note").includes("not known to the server"));
+        // the viewer's receipts off: no names, said why
+        vm.prefs.readReceipts = false;
+        await Vue.nextTick();
+        assert.ok(line("read").includes("Your read receipts are off") && !line("read").includes("Bob"));
+        await closed(info, "Info");
+        // a right click on a link keeps the browser's menu
+        const link = document.createElement("a");
+        link.href = "https://example.com/";
+        link.textContent = "a link";
+        row.querySelector(".m-chat-body").appendChild(link);
+        const onLink = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+        link.dispatchEvent(onLink);
+        link.remove();
+        assert.equal(onLink.defaultPrevented, false);
+        // a picture keeps the browser's menu too; text selected in another message is not this one's
+        const picture = document.createElement("img");
+        picture.alt = "a picture";
+        row.querySelector(".m-chat-body").appendChild(picture);
+        const onPicture = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+        picture.dispatchEvent(onPicture);
+        picture.remove();
+        assert.equal(onPicture.defaultPrevented, false);
+        window.getSelection().selectAllChildren(vm.$el.querySelector('.m-chat-msg[data-seq="5"] .m-chat-body'));
+        const elsewhere = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 300, clientY: 200 });
+        row.querySelector(".m-chat-body").dispatchEvent(elsewhere);
+        assert.ok(elsewhere.defaultPrevented, "a selection in another message leaves this one's menu");
+        await closed(await until(() => document.querySelector(".m-chat-context-menu"), "the menu"), "the menu");
+        window.getSelection().removeAllRanges();
+        // a reaction chip's own context menu (Android's long press there) and Shift+Enter: who reacted, not the message's menu
+        eventOf(vm, 5).reactions = [{ key: "👀", count: 1, userIds: ["bob"], mine: false }];
+        const chip = await until(() => vm.$el.querySelector('.m-chat-msg[data-seq="5"] .m-chat-reaction'), "a reaction chip");
+        assert.ok(chip.getAttribute("aria-label").includes("Bob") && chip.getAttribute("aria-keyshortcuts") === "Shift+Enter", chip.getAttribute("aria-label"));
+        const onChip = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+        chip.dispatchEvent(onChip);
+        assert.ok(onChip.defaultPrevented);
+        const people = await until(() => document.querySelector(".m-chat-people [data-person='bob']") && document.querySelector(".m-chat-people"), "who reacted");
+        assert.equal(document.querySelector(".m-chat-context-menu"), null, "not the message's menu");
+        await closed(people, "who reacted");
+        // the click that may follow it (a key's, a touch's) is not a tap on the chip
+        chip.click();
+        await Vue.nextTick();
+        assert.ok(!eventOf(vm, 5).reactions.some((reaction) => reaction.mine), "no reaction from the click after it");
+        chip.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true }));
+        await closed(await until(() => document.querySelector(".m-chat-people"), "who reacted by the keyboard"), "who reacted");
+        eventOf(vm, 5).reactions = [];
+    } finally {
+        moqui.ext.items = priorItems;
+        answers["/apps/BasicComms/Chat/timeline"] = priorTimeline;
+        vm.prefs.recordLink = priorPrefs.recordLink;
+        vm.prefs.readReceipts = priorPrefs.readReceipts;
     }
 });
 

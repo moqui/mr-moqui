@@ -36,13 +36,13 @@ For a find that qualifies, each filter set of the record is taken in turn:
 
 - A set whose `applyCond`, on `ArtifactAuthzFilter` or on `EntityFilterSet`, evaluates false is skipped, and its filters are not applied.
 - An `EntityFilter` applies to a find of its `entityName`, and to a find of a view that has that entity as a direct member. Other finds do not evaluate its `filterMap`.
-- On a view the condition goes on each alias of the filtered member field. With no such alias the find gets `1 = 0`, unless the set has `allowMissingAlias="Y"`, and then that field's condition is left out, logged as a warning the first time for each view and field (`filter.rs` `note_missing_alias`, SEC-DAT-11).
+- On a view the condition goes on each alias of the filtered member field, joined as the term's own fields are (`map_conditions`): with two members of the filtered entity aliased (two `Party` members), a term of `MANTLE_PRIVATE_CONTACT`'s `_list` becomes `(from is null and to is null) or (from = me and to = me)`, so a row with one shared party and one of the caller's own personal contacts is not read by its owner either. With no such alias the find gets `1 = 0`, unless the set has `allowMissingAlias="Y"`, and then that field's condition is left out, logged as a warning the first time for each view and field (`filter.rs` `note_missing_alias`, SEC-DAT-11).
 - An error while evaluating an `applyCond` or a `filterMap`, an unknown comparison, or a missing alias without `allowMissingAlias` adds `1 = 0` to the find and logs `entity filter failed closed`.
 - A null value in a `filterMap` is `IS NULL`. An empty list is `1 = 0`.
 
 The conditions are added by `one`, `list`, `count` and `iterator`, and so by the read of `updateAll` and `deleteAll` (`crates/moqui-entity/src/entity/find.rs`, `combined`). A create, update or delete of a value by its primary key is not filtered. A find that a filter may change is not read from the shared entity cache. A view that is not in the entity model (a data document's view) is filtered through its own definition (`apply_view_filters`).
 
-The seeded sets: `MANTLE_USER_ORG` has no `applyCond`. `MANTLE_ACTIVE_ORG` has `applyCond="activeOrgId"` and `allowMissingAlias="Y"`. `MANTLE_PRIVATE_CONTACT` has `allowMissingAlias="Y"` (`runtime/components/addon/mr-mantle/data/MantleSetupData.xml`). `COMMERCE_STORE` has `applyCond="ec.user.context.commerceStoreIds != null"` and `allowMissingAlias="Y"` (`runtime/components/addon/mr-boss/data/BossSetupData.xml`). `BOSS_PROJECT_CLIENT` has `allowMissingAlias="N"`.
+The seeded sets: `MANTLE_USER_ORG` has no `applyCond`. `MANTLE_ACTIVE_ORG` has `applyCond="activeOrgId"` and `allowMissingAlias="Y"`. `MANTLE_PRIVATE_CONTACT` has `allowMissingAlias="N"` (`runtime/components/addon/mr-mantle/data/MantleSetupData.xml`), and the views over `Party` alias `privateOwnerUserId`. `COMMERCE_STORE` has `applyCond="ec.user.context.commerceStoreIds != null"` and `allowMissingAlias="Y"` (`runtime/components/addon/mr-boss/data/BossSetupData.xml`). `BOSS_PROJECT_CLIENT` has `allowMissingAlias="N"`.
 
 ## Finds from request parameters
 

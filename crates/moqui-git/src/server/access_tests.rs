@@ -761,3 +761,51 @@ fn a_repository_is_reached_by_its_path_its_id_and_a_path_it_had() {
         assert_eq!(status, 404, "{path}: {body}");
     }
 }
+
+/// SEC-GIT-18: what the host answers before a request takes a git worker, as the pool would answer it: credentials over
+/// plain HTTP (403), an `Authorization` header in no form this server takes or an empty `api_key` (401, a failed
+/// sign-in). Credentials that may be good, and none, go to the pool; `MoquiLfs` is a credential of the LFS endpoint
+/// only.
+#[test]
+fn credentials_that_cannot_be_taken_are_answered_before_a_git_worker() {
+    use crate::ci::runner_http::MemoryResponse;
+
+    let answer = |authorization: Option<&str>, api_key: Option<&str>, secure: bool, lfs: bool| {
+        super::early_refusal(authorization, api_key, secure, lfs).map(|refusal| {
+            let mut out = MemoryResponse::default();
+            refusal.answer(&mut out);
+            let challenged = out.headers.iter().any(|(name, _)| name == "WWW-Authenticate");
+            (
+                out.status,
+                String::from_utf8_lossy(&out.body).into_owned(),
+                refusal.auth_failure(),
+                challenged,
+            )
+        })
+    };
+    let basic = Some("Basic dXNlcjpwdw==");
+    // over plain HTTP: refused whatever they are, and not asked for again
+    for lfs in [false, true] {
+        let (status, body, failure, challenged) = answer(basic, None, false, lfs).expect("refused");
+        assert_eq!((status, failure, challenged), (403, false, false), "{body}");
+        assert!(body.contains("plain HTTP"), "{body}");
+        assert_eq!(answer(None, Some("key"), false, lfs).map(|a| a.0), Some(403));
+    }
+    // in no form this server takes: a failed sign-in, asked for credentials
+    for header in ["Digest abc", "Basic not-base64!", "Basic bm9jb2xvbg==", "token"] {
+        let (status, body, failure, challenged) = answer(Some(header), None, true, false).expect(header);
+        assert_eq!((status, failure, challenged), (401, true, true), "{header}: {body}");
+    }
+    let (status, body, failure, _) = answer(Some("Digest abc"), None, true, true).expect("an LFS refusal");
+    assert_eq!((status, failure), (401, true));
+    assert!(body.starts_with('{') && body.contains("not credentials"), "{body}");
+    assert_eq!(answer(None, Some("  "), true, false).map(|a| (a.0, a.2)), Some((401, true)));
+    // what may be good goes to the pool, and so does a request with none
+    for header in ["Bearer abc", "bearer abc", "Basic dXNlcjpwdw=="] {
+        assert!(answer(Some(header), None, true, false).is_none(), "{header}");
+    }
+    assert!(answer(Some("MoquiLfs v1.x.y"), None, true, true).is_none());
+    assert!(answer(Some("MoquiLfs v1.x.y"), None, true, false).is_some(), "an LFS token is no git credential");
+    assert!(answer(None, Some("key"), true, false).is_none());
+    assert!(answer(None, None, false, false).is_none());
+}

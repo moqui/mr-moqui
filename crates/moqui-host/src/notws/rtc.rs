@@ -20,6 +20,11 @@
 //! `hand` and `reaction`, `ended`, the notices `recording` (W5, `rtc/recorder.rs`) and `captions` (W6), which a leg
 //! that joins later gets right after its `joined`, and the captions' lines, `caption` (`rtc/captions.rs`).
 //!
+//! The direct path (plans/Comms-Messaging.md §8.3 item 15): a `join` with `direct` (no offer) binds the leg for a
+//! one-to-one call whose media goes peer to peer (`bind#Connection` refuses it, `notDirect`, unless the call is on that
+//! path), and only such a binding sends `peer` frames, which the call's media node passes to the other direct leg.
+//! While a socket carries a call it is pinged every 10 seconds instead of 30 (`notws.rs`).
+//!
 //! A `join` runs `CallServices.bind#Connection` as the socket's user on a request worker: the leg must be theirs and in
 //! the call. That claims the leg's next connection generation, which every later frame of this socket carries, so the
 //! media node refuses an older socket's frames. Frames of a leg this socket has not bound are refused here. The frames
@@ -72,6 +77,15 @@ struct Binding {
     generation: u64,
     media_node: String,
     origin_node: String,
+    /// Bound for the direct path (`join` with `direct`): the page's media goes to the other page, and this socket
+    /// carries their `peer` frames, which no other binding may send.
+    direct: bool,
+}
+
+/// Whether the socket is in a call now: it pings its client more often then ([`super::PING_IN_CALL`]), so a mobile
+/// network's NAT keeps the call's signaling path.
+pub(super) fn in_call(slot_id: u64) -> bool {
+    lock(bindings()).get(&slot_id).is_some_and(|list| !list.is_empty())
 }
 
 fn bindings() -> &'static Mutex<HashMap<u64, Vec<Binding>>> {
@@ -151,6 +165,17 @@ pub(super) fn handle(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, t
                 );
                 return true;
             };
+            if op == "peer" && !binding.direct {
+                error(
+                    slot,
+                    &call,
+                    &leg,
+                    &id,
+                    "notDirect",
+                    "this call goes through the media server",
+                );
+                return true;
+            }
             forward(factory, slot, &binding, &id, frame);
         }
     }
@@ -260,6 +285,11 @@ fn join(
             ("callLegId".to_string(), Value::string(&leg)),
             ("signalingNodeId".to_string(), Value::string(&own)),
         ]);
+        // the direct path (plans/Comms-Messaging.md §8.3 item 15): bind#Connection refuses it unless the call is on it
+        let direct = matches!(who, Who::User(_)) && frame.get("direct").and_then(Json::as_bool) == Some(true);
+        if direct {
+            parameters.insert("direct".to_string(), Value::string("true"));
+        }
         let service = match &who {
             Who::User(_) => BIND_SERVICE,
             Who::Guest(credential) => {
@@ -292,7 +322,15 @@ fn join(
             generation,
             media_node,
             origin_node,
+            direct,
         };
+        // a guest's frame never asks the driver for the direct path
+        let mut frame = frame;
+        if !direct {
+            if let Some(o) = frame.as_object_mut() {
+                o.remove("direct");
+            }
+        }
         {
             let mut all = lock(bindings());
             let list = all.entry(slot.id).or_default();
