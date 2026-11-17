@@ -95,10 +95,14 @@ fn encrypt_audit_and_localized_reads() {
     assert!(stored.contains(':'), "{stored}");
     assert_eq!(stored, ":YWMS3u2Ct95vQrzfkJnX0ujHZwEyoTeuiqWrUb9dlEw=");
 
-    set_password(&facade, "legacy-plain");
-    assert_eq!(password_of(&facade).as_deref(), Some("legacy-plain"));
-    // As Java's `FieldInfo`, a value that does not decrypt reads as a clear placeholder, and writing it back is refused.
+    // Stored text that is not ciphertext reads as itself only while crypt-read-plain is on, for a migration (SEC-DAT-10).
     let failed = moqui_core::entity::field_rw::DECRYPT_FAILED;
+    set_password(&facade, "legacy-plain");
+    assert_eq!(password_of(&facade).as_deref(), Some(failed));
+    facade.set_crypt_read_plain(true);
+    assert_eq!(password_of(&facade).as_deref(), Some("legacy-plain"));
+    facade.set_crypt_read_plain(false);
+    // As Java's `FieldInfo`, a value that does not decrypt reads as a clear placeholder, and writing it back is refused.
     set_password(&facade, "abcd");
     assert_eq!(password_of(&facade).as_deref(), Some(failed));
     set_password(&facade, ":not-base64");
