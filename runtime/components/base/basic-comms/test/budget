@@ -6,4 +6,6 @@ server = 9
 # Nov 5, 2026: client raised with the user's agreement to the measured 6.6 s of the UI refinement's chat checks.
 # Nov 16, 2026: client raised with the user's agreement to 9 s: 8.2 s measured with CryptoFlow's emoji verification of
 # two devices (COM-UI-012).
-client = 9
+# Nov 17, 2026: client raised with the user's agreement to 12 s: 8.2–10.5 s measured after Comms-Messaging phases 1 to 9
+# (ShellSync's phone layout, labels, menu, Info, tabs, notification check and dialer checks; CryptoFlow).
+client = 12
