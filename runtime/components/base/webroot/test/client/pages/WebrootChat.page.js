@@ -500,7 +500,10 @@ test("an encrypted room's decrypted HTML keeps what a plain room's message may h
     assert.equal(chat.ownImages('<p><img src="/richTextImage/9"></p>'), '<p><img src="/richTextImage/9"></p>');
     assert.equal(chat.blobType("image/PNG"), "image/png");
     assert.equal(chat.blobType("image/jpeg"), "image/jpeg");
-    for (const type of ["text/html", "image/svg+xml", "application/xhtml+xml", "application/pdf", "", null]) {
+    // a voice note plays from its blob: a sound or video keeps its type, without its codecs
+    assert.equal(chat.blobType("audio/webm;codecs=opus"), "audio/webm");
+    assert.equal(chat.blobType("video/mp4"), "video/mp4");
+    for (const type of ["text/html", "image/svg+xml", "application/xhtml+xml", "application/pdf", "audio/x-unknown", "", null]) {
         assert.equal(chat.blobType(type), "application/octet-stream", String(type));
     }
 });

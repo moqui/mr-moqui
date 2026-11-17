@@ -16,7 +16,9 @@
 //! and the message's previews are the scripts `get#LinkPreview` and `fetch#LinkPreviews`):
 //!
 //! - `extract#LinkUrls` finds the links of a message to preview: http or https, at most 3, not our own `/qapps` links,
-//!   not a URL with a user or password, not one on a port other than 80 or 443.
+//!   not a URL with a user or password, not one on a port other than 80 or 443. With `listed` it finds the links a room's
+//!   Links list keeps (`ChatEventLink`): every http or https link with no user or password, at most 50, any port and our
+//!   own too, as nothing is fetched.
 //! - `fetch#LinkPage` reads the head of one page and answers its title, description and site name: with the SSRF guard
 //!   of [`moqui_lib::http::RestClient`] (no internal address, also after a redirect), 5 seconds, the first 512 KB, 3
 //!   redirects to any host, `text/html` only. Text only: no image is read, so a reader's address never reaches a third
@@ -46,6 +48,8 @@ pub(in crate::service) fn register(
 
 /// The links of one message that are previewed.
 const MAX_LINKS: usize = 3;
+/// The links of one message that its room's Links list keeps.
+const MAX_LISTED_LINKS: usize = 50;
 /// The part of a page read for its head.
 const MAX_PAGE_BYTES: u64 = 512 * 1024;
 const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -66,10 +70,22 @@ pub struct Preview {
 /// `&amp;` and the like are decoded), http or https only, with no user or password, on the default port, not a `/qapps`
 /// link (our own screens, which the message shows as record cards), at most [`MAX_LINKS`].
 pub fn extract_urls(body: &str) -> Vec<String> {
+    find_urls(body, false)
+}
+
+/// The URLs of a message that its room's Links list keeps, in the order they appear, each once: as [`extract_urls`]
+/// finds them, but on any port and our own `/qapps` links too (nothing is fetched), at most [`MAX_LISTED_LINKS`]. A link
+/// that is also previewed has the same text, so its hash finds its preview.
+pub fn extract_listed_urls(body: &str) -> Vec<String> {
+    find_urls(body, true)
+}
+
+fn find_urls(body: &str, listed: bool) -> Vec<String> {
     let text = body.replace("&amp;", "&").replace("&#38;", "&").replace("&#x26;", "&");
     let mut out: Vec<String> = Vec::new();
     let mut rest = text.as_str();
-    while out.len() < MAX_LINKS {
+    let max = if listed { MAX_LISTED_LINKS } else { MAX_LINKS };
+    while out.len() < max {
         let lower = rest.to_ascii_lowercase();
         let Some(at) = [lower.find("http://"), lower.find("https://")]
             .into_iter()
@@ -84,7 +100,7 @@ pub fn extract_urls(body: &str) -> Vec<String> {
             .unwrap_or(candidate.len());
         let url = candidate[..end].trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}']);
         rest = &candidate[end.max(1)..];
-        if let Some(url) = previewable(url) {
+        if let Some(url) = normalized(url, listed) {
             if !out.contains(&url) {
                 out.push(url);
             }
@@ -95,6 +111,12 @@ pub fn extract_urls(body: &str) -> Vec<String> {
 
 /// `url` as it is fetched, or `None` when it is not previewed: see [`extract_urls`].
 fn previewable(url: &str) -> Option<String> {
+    normalized(url, false)
+}
+
+/// `url` with its scheme and host in lower case and no default port, or `None` when it is not a link: not http or
+/// https, a user or password, no host. `listed` keeps any port and our own `/qapps` links ([`extract_listed_urls`]).
+fn normalized(url: &str, listed: bool) -> Option<String> {
     if url.len() > MAX_URL || url.chars().any(char::is_control) {
         return None;
     }
@@ -119,20 +141,24 @@ fn previewable(url: &str) -> Option<String> {
     if host.is_empty() || host.trim_matches(['[', ']']).is_empty() {
         return None;
     }
+    let mut kept_port = String::new();
     match port {
         None | Some("") => {}
         Some(port) => {
             let number: u16 = port.parse().ok()?;
             if !(number == 80 && scheme == "http" || number == 443 && scheme == "https") {
-                return None;
+                if !listed {
+                    return None;
+                }
+                kept_port = format!(":{number}");
             }
         }
     }
     let path_only = path.split(['?', '#']).next().unwrap_or_default();
-    if path_only == "/qapps" || path_only.starts_with("/qapps/") {
+    if !listed && (path_only == "/qapps" || path_only.starts_with("/qapps/")) {
         return None;
     }
-    Some(format!("{scheme}://{}{path}", host.to_ascii_lowercase()))
+    Some(format!("{scheme}://{}{kept_port}{path}", host.to_ascii_lowercase()))
 }
 
 /// The SHA-256 of `url`, hex: the key of its cached preview.
@@ -305,13 +331,20 @@ fn text(parameters: &BTreeMap<String, Value>, key: &str) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
-/// `extract#LinkUrls`: the URLs of `body` to preview ([`extract_urls`]), as `urlList` [{url, urlHash}].
+/// `extract#LinkUrls`: the URLs of `body` to preview ([`extract_urls`]), or with `listed` those its room's Links list
+/// keeps ([`extract_listed_urls`]), as `urlList` [{url, urlHash}].
 fn extract_link_urls(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
     let body = text(parameters, "body").unwrap_or_default();
-    let list = extract_urls(&body)
+    let listed = text(parameters, "listed").is_some_and(|value| value == "true" || value == "Y");
+    let urls = if listed {
+        extract_listed_urls(&body)
+    } else {
+        extract_urls(&body)
+    };
+    let list = urls
         .into_iter()
         .map(|url| {
             let mut map = IndexMap::default();
@@ -464,6 +497,21 @@ mod tests {
                 "http://[::1]/x".to_string()
             ]
         );
+        // the Links list keeps any port and our own links, never a user or password, and the same text for a previewed one
+        assert_eq!(
+            extract_listed_urls(body),
+            vec![
+                "https://example.com/a?x=1&y=2".to_string(),
+                "http://example.org/page".to_string(),
+                "https://example.com:8443/odd".to_string(),
+                "https://example.com/ok".to_string(),
+                "https://erp.example.com/qapps/Mail/Chat?chatRoomId=1".to_string(),
+                "https://example.edu/in-parens".to_string(),
+                "https://fourth.example/".to_string(),
+            ]
+        );
+        let many: String = (0..60).map(|n| format!("https://example.com/{n} ")).collect();
+        assert_eq!(extract_listed_urls(&many).len(), MAX_LISTED_LINKS);
         assert!(previewable("https://example.com:99999/").is_none());
         assert!(previewable("https://:443/").is_none());
         assert_eq!(url_hash("https://example.com/").len(), 64);

@@ -90,9 +90,16 @@ along with this software (see the LICENSE.md file). If not, see
     used in the room with that message (duplicate true), so a message is never posted twice. The pushed event carries its
     clientRef. get#Timeline with eventSeq reads one event, as a client reads one it missed.
 
-    The lists of a room: find#RoomFiles (its messages' files, newest first, by type and name, paged at whole messages)
-    and find#RoomThreads (its threads, the latest reply first, or the ones the user started or replied in; a thread root
-    keeps threadLastEventSeq, threadLastUserId and threadLastDate, which a redaction of the last reply sets back).
+    The lists of a room (the details tabs, plans/Comms-Messaging.md §5): find#RoomFiles (its messages' files, newest first,
+    by the types to include and to leave out and by name, paged at whole messages), find#RoomLinks (its messages' links,
+    ChatEventLink, with the cached preview's title), find#RoomReactions (the messages with reactions, the latest reaction
+    first) and find#RoomThreads (its threads, the latest reply first, or the ones the user started or replied in; a thread
+    root keeps threadLastEventSeq, threadLastUserId and threadLastDate, which a redaction of the last reply sets back); and
+    the user's feed across rooms, find#ChatActivity (ChatUserActivity: mentions, replies, thread replies, reactions to the
+    user's messages). All read only, for a user who may read the room, limit 1 to 100. One paging rule (§5.2): a page is
+    cut only between messages, its cursor names the page's last message (or activity row), and the cursor, not the count
+    of rows, says there is more, so rows left out after the query never end a list early. An encrypted room's lists have
+    no text: no links, no snippets, no filter by type or reaction key; the browser decrypts what it is given.
 
     A forward is send#Message with forwardOfChatRoomId and forwardOfEventSeq: the server makes content.forwardOf from a
     message of a room the sender is in, so it cannot be forged, with its mentions inert and nothing of its room, and
@@ -117,7 +124,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     Retention: a room's retentionDays keeps its events that many days; the daily job clean#ChatRetention deletes the
     older ones, each room on its own (clean#RoomRetention: one that fails is logged and the rest go on). A message goes
-    with its mentions, files, poll, link previews and search document (clear#MessageContent, which redact#Message uses
+    with its mentions, files, poll, link previews, links and search document (clear#MessageContent, which redact#Message uses
     too), and the edits, reactions and redactions of what goes go with it.
 
     A record room's mentions: a mentioned user who is not a member of a record room (CrvRecord) counts when they may see
@@ -2669,6 +2676,9 @@ along with this software (see the LICENSE.md file). If not, see
             if (!ciphertext) ec.service.special().name('org.moqui.chat.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).registerOnCommit()
             if (html && !externalActor && !ciphertext) ec.service.sync().name('org.moqui.chat.ChatServices.queue#LinkPreviews').parameters({chatRoomId: chatRoomId,
                 eventSeq: eventSeq, senderUserId: sender, body: html}).call()
+            // its links, and a forward's, for the room's Links list (ChatEventLink); none in an encrypted room
+            if (!ciphertext && (html || (forwardOf && forwardOf.body))) ec.service.sync().name('org.moqui.chat.ChatServices.set#EventLinks')
+                    .parameters({chatRoomId: chatRoomId, eventSeq: eventSeq, body: [html, forwardOf ? forwardOf.body : null].filter((part) => part).join(' ')}).call()
             // the counts of the members whose count it changes
             const counted = new Set([sender].concat(mentionIds).filter((id) => id))
             for (const row of memberRows) if (row.userId && current(row) && row.userId !== sender && LEVEL_ALL(row)) counted.add(row.userId)
@@ -2870,6 +2880,12 @@ along with this software (see the LICENSE.md file). If not, see
             if (!ciphertext) ec.service.special().name('org.moqui.chat.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).registerOnCommit()
             if (!externalActor && !ciphertext && !parse(original.linkPreviewJson).removed) ec.service.sync().name('org.moqui.chat.ChatServices.queue#LinkPreviews').parameters({
                 chatRoomId: chatRoomId, eventSeq: eventSeq, senderUserId: me, body: html}).call()
+            // the message's links are the new text's (and a forward's, which an edit keeps)
+            if (!ciphertext) {
+                const forwardBody = (parse(original.contentJson).forwardOf || {}).body || null
+                ec.service.sync().name('org.moqui.chat.ChatServices.set#EventLinks').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq,
+                    body: [html, forwardBody].filter((part) => part).join(' ')}).call()
+            }
             if (added.length || dropped.length) ec.service.sync().name('org.moqui.chat.ChatServices.publish#ChatCounts')
                     .parameter('userIdList', added.concat(dropped)).call()
         ]]></script></actions>
@@ -2994,7 +3010,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal: what a message keeps beside its own row goes, for redact#Message and the retention
             (clean#RoomRetention): its mentions (no longer counted), its activity rows and those of the reactions to it
             (ChatUserActivity), its files (each file on its own: one that cannot be
-            removed is logged), its poll's rows, its link previews and its search document. The caller has checked
+            removed is logged), its poll's rows, its link previews and links (ChatEventLink) and its search document. The caller has checked
             access, and changes or deletes the message row itself. mentionedUserIdList are the users it mentioned, whose
             counts change.</description>
         <in-parameters>
@@ -3011,6 +3027,8 @@ along with this software (see the LICENSE.md file). If not, see
             // what users were to hear about it (ChatUserActivity): its mentions and replies, and the reactions to it
             for (const field of ['eventSeq', 'messageEventSeq'])
                 ec.entity.find('moqui.chat.ChatUserActivity').condition('chatRoomId', chatRoomId).condition(field, eventSeq).deleteAll()
+            // its links (the room's Links list)
+            ec.entity.find('moqui.chat.ChatEventLink').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).deleteAll()
             // the files: each one on its own; a file that cannot be removed is logged. A file put over XMPP (attach#Upload) is
             // under the upload root, and goes with the last chat file on it, with the uploads that serve it (SEC-COM-14).
             for (const file of ec.entity.find('moqui.chat.ChatAttachment').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).list()) {
@@ -3654,14 +3672,23 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="find" noun="RoomFiles">
         <description>The files of a room's messages, newest first, for a user who may read the room: each {chatAttachmentId,
             eventSeq, attachmentSeq, fileName, contentType, fileSize, senderUserId, senderName, sentDate, threadRootEventSeq}.
-            contentTypePrefix keeps those whose type starts with it (image/ for the pictures), searchText those whose name
-            has it. Paged by beforeEventSeq; a page is cut only between messages, so a message with more files than limit
-            comes whole and the page is that much longer, and nextBeforeEventSeq (the page's last message) is where the next
-            one starts, null at the end. A redacted message's files are gone, and a page can come back short of them; the
-            cursor, not the count, says there is more (Comms-Messaging §5.2).</description>
+            contentTypePrefixList keeps those whose type starts with one of them (image/ and video/ for the Media tab, audio/
+            for Voice), excludeContentTypePrefixList leaves out those whose type starts with one of them (the Files tab:
+            all but image/, video/ and audio/; a file with no type stays), contentTypePrefix is one more to keep, and
+            searchText keeps those whose name has it. Paged by beforeEventSeq; a page is cut only between messages, so a
+            message with more files than limit comes whole and the page is that much longer, and nextBeforeEventSeq (the
+            page's last message) is where the next one starts, null at the end. A redacted message's files are gone, and a
+            page can come back short of them; the cursor, not the count, says there is more (Comms-Messaging §5.2).
+
+            An encrypted room's files (C7) have no name or type here, so it refuses every filter (an empty list); each file
+            has encrypted true and its message's ciphertext (encryptedContent, encryptedEventSeq, encryptedSentDate: the
+            current content, an edit's when edited), from which the browser reads the file's name, type and key and sorts the
+            files into its tabs itself.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="contentTypePrefix"/>
+            <parameter name="contentTypePrefixList" type="List"/>
+            <parameter name="excludeContentTypePrefixList" type="List"/>
             <parameter name="searchText"/>
             <parameter name="limit" type="Integer" default="30"/>
             <parameter name="beforeEventSeq" type="Integer"/>
@@ -3676,20 +3703,27 @@ along with this software (see the LICENSE.md file). If not, see
                 const number = Number(value)
                 return Number.isNaN(number) ? new Date(String(value)).getTime() : number
             }
+            // a list of prefixes, as a List or as text with commas; like's own wildcards taken out
+            const prefixes = (value) => (value == null ? [] : Array.isArray(value) || typeof value !== 'string' ? Array.from(value) : String(value).split(','))
+                    .map((part) => String(part || '').trim().replace(/[%_]/g, '')).filter((part) => part)
             fileList = []; nextBeforeEventSeq = null
             const access = ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
             if (ec.message.hasError()) return
             if (!access.canRead) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
+            const include = prefixes(contentTypePrefixList).concat(prefixes(contentTypePrefix))
+            const exclude = prefixes(excludeContentTypePrefixList)
             // an encrypted room's files (C7) are listed without names or types: the browser has them from the messages
             const sealed = !!access.room.encrypted
-            if (sealed && (contentTypePrefix || String(searchText || '').trim())) return
+            if (sealed && (include.length || exclude.length || String(searchText || '').trim())) return
             const size = Math.max(1, Math.min(100, Number(limit) || 30))
             const cf = ec.entity.conditionFactory
             const text = String(searchText || '').trim().replace(/[%_]/g, '')
             // the find of the room's files with the filters; made again for each query
             const filesFind = () => {
                 let find = ec.entity.find('moqui.chat.ChatAttachment').condition('chatRoomId', chatRoomId).condition('eventSeq', 'not-equals', null)
-                if (contentTypePrefix) find = find.condition(cf.makeCondition('contentType', 'like', String(contentTypePrefix).replace(/[%_]/g, '') + '%').ignoreCase())
+                if (include.length) find = find.condition(cf.makeCondition(include.map((prefix) => cf.makeCondition('contentType', 'like', prefix + '%').ignoreCase()), 'or'))
+                for (const prefix of exclude) find = find.condition(cf.makeCondition([cf.makeCondition('contentType', 'equals', null),
+                    cf.makeCondition('contentType', 'not-like', prefix + '%').ignoreCase()], 'or'))
                 if (text) find = find.condition(cf.makeCondition('fileName', 'like', '%' + text + '%').ignoreCase())
                 return find
             }
@@ -3702,27 +3736,471 @@ along with this software (see the LICENSE.md file). If not, see
                 if (Number(rows[size].eventSeq) !== cutSeq) rows = rows.slice(0, size)
                 else {
                     const whole = rows.filter((row) => Number(row.eventSeq) !== cutSeq)
-                    // the page is one message with more files than limit: all of its files
+                    // the page is one message with more files than limit: all of its files, and more only when an older one has some
                     rows = whole.length ? whole : Array.from(filesFind().condition('eventSeq', cutSeq).orderBy('attachmentSeq').list())
                 }
-                nextBeforeEventSeq = Number(rows[rows.length - 1].eventSeq)
+                if (Number(rows[rows.length - 1].eventSeq) !== cutSeq || filesFind().condition('eventSeq', 'less', cutSeq).count() > 0)
+                    nextBeforeEventSeq = Number(rows[rows.length - 1].eventSeq)
             }
             if (!rows.length) return
+            const seqs = Array.from(new Set(rows.map((row) => Number(row.eventSeq))))
             const events = {}
             for (const row of ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId)
-                    .condition('eventSeq', 'in', Array.from(new Set(rows.map((row) => Number(row.eventSeq))))).list()) events[Number(row.eventSeq)] = row
+                    .condition('eventSeq', 'in', seqs).list()) events[Number(row.eventSeq)] = row
             const userIds = Array.from(new Set(Object.values(events).map((row) => row.senderUserId).filter((id) => id)))
             const names = {}
             if (userIds.length) for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', userIds)
                     .selectField('userId').selectField('userFullName').selectField('username').disableAuthz().list())
                 names[account.userId] = account.userFullName || account.username || account.userId
+            // an encrypted room: each message's ciphertext, for the browser to read its files' names and types
+            const summaries = sealed ? ec.service.sync().name('org.moqui.chat.ChatServices.get#MessageSummaries').parameters({chatRoomId: chatRoomId,
+                eventSeqList: seqs}).call()?.summaryMap || {} : {}
             for (const row of rows) {
                 const event = events[Number(row.eventSeq)]
                 if (!event || event.redactedDate) continue
-                fileList.push({chatAttachmentId: row.chatAttachmentId, eventSeq: Number(row.eventSeq), attachmentSeq: Number(row.attachmentSeq || 0),
+                const file = {chatAttachmentId: row.chatAttachmentId, eventSeq: Number(row.eventSeq), attachmentSeq: Number(row.attachmentSeq || 0),
                     fileName: sealed ? null : row.fileName ?? null, contentType: sealed ? null : row.contentType ?? null, encrypted: sealed, fileSize: row.fileSize != null ? Number(row.fileSize) : null,
                     senderUserId: event.senderUserId ?? null, senderName: event.senderUserId ? names[event.senderUserId] || event.senderUserId : null,
+                    sentDate: toMillis(event.sentDate), threadRootEventSeq: event.threadRootEventSeq != null ? Number(event.threadRootEventSeq) : null}
+                if (sealed) {
+                    const summary = summaries[String(row.eventSeq)] || {}
+                    Object.assign(file, {encryptedContent: summary.encrypted ?? null, encryptedEventSeq: summary.encryptedEventSeq ?? null,
+                        encryptedSentDate: summary.encryptedSentDate ?? null})
+                }
+                fileList.push(file)
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="MessageSummaries" allow-remote="false">
+        <description>Internal: what the lists of a room (find#RoomReactions, find#ChatActivity, find#RoomFiles) show of its
+            messages, as summaryMap by eventSeq: {eventSeq, senderUserId, senderActorId, senderName, sentDate, threadRootEventSeq,
+            redacted, snippet (its current text, cut to 100, or its files' names), attachments [{chatAttachmentId, fileName,
+            contentType}], encrypted, encryptedEventSeq, encryptedSentDate}. An encrypted message (C7) has no snippet and no
+            file names: encrypted is the ciphertext of its current content (its last edit's, when edited) and
+            encryptedEventSeq and encryptedSentDate the event it came in, as get#Timeline gives them. The caller has checked
+            the room.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeqList" type="List"/>
+        </in-parameters>
+        <out-parameters><parameter name="summaryMap" type="Map"/></out-parameters>
+        <actions><script><![CDATA[
+            const toMillis = (value) => {
+                if (value == null || value === '') return null
+                const number = Number(value)
+                return Number.isNaN(number) ? new Date(String(value)).getTime() : number
+            }
+            const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
+            summaryMap = {}
+            const seqs = Array.from(new Set(Array.from(eventSeqList || []).map(Number).filter((seq) => Number.isFinite(seq))))
+            if (!seqs.length) return
+            const rows = Array.from(ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', 'in', seqs).list())
+            const editSeqs = rows.filter((row) => row.encrypted === 'Y' && row.lastEditEventSeq != null && !row.redactedDate).map((row) => Number(row.lastEditEventSeq))
+            const edits = {}
+            if (editSeqs.length) for (const edit of ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId)
+                    .condition('eventSeq', 'in', editSeqs).list()) edits[Number(edit.editsEventSeq)] = edit
+            const userIds = Array.from(new Set(rows.map((row) => row.senderUserId).filter((id) => id)))
+            const names = {}
+            if (userIds.length) for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', userIds)
+                    .selectField('userId').selectField('userFullName').selectField('username').disableAuthz().list())
+                names[account.userId] = account.userFullName || account.username || account.userId
+            const actorIds = Array.from(new Set(rows.filter((row) => !row.senderUserId && row.senderActorId).map((row) => row.senderActorId)))
+            const actors = actorIds.length ? ec.service.sync().name('org.moqui.chat.ChatServices.get#ActorNames')
+                    .parameter('chatActorIdList', actorIds).call()?.actorMap || {} : {}
+            for (const row of rows) {
+                const seq = Number(row.eventSeq)
+                const content = parse(row.contentJson)
+                const redacted = !!row.redactedDate
+                const isSealed = row.encrypted === 'Y' && !redacted
+                const files = redacted ? [] : Array.from(content.attachments || []).map((file) => ({chatAttachmentId: file.chatAttachmentId,
+                    fileName: isSealed ? null : file.fileName ?? null, contentType: isSealed ? null : file.contentType ?? null}))
+                const text = String(row.bodyText || '').replace(/\s+/g, ' ').trim()
+                const fileNames = files.map((file) => file.fileName).filter((name) => name)
+                const snippet = redacted || isSealed ? null : text ? (text.length > 100 ? text.slice(0, 99) + '…' : text)
+                        : fileNames.length ? '📎 ' + fileNames.join(', ') : (content.forwardOf && content.forwardOf.bodyText ? String(content.forwardOf.bodyText).slice(0, 100) : '')
+                const edit = isSealed ? edits[seq] : null
+                const editContent = edit ? parse(edit.contentJson) : null
+                summaryMap[String(seq)] = {eventSeq: seq, senderUserId: row.senderUserId ?? null, senderActorId: row.senderActorId ?? null,
+                    senderName: row.senderUserId ? names[row.senderUserId] || row.senderUserId : (actors[row.senderActorId]?.name ?? null),
+                    sentDate: toMillis(row.sentDate), threadRootEventSeq: row.threadRootEventSeq != null ? Number(row.threadRootEventSeq) : null,
+                    redacted: redacted, snippet: snippet, attachments: files,
+                    encrypted: isSealed ? (editContent && editContent.encrypted ? editContent.encrypted : content.encrypted || null) : null,
+                    encryptedEventSeq: isSealed ? (editContent && editContent.encrypted ? Number(edit.eventSeq) : seq) : null,
+                    encryptedSentDate: isSealed ? (editContent && editContent.encrypted ? toMillis(edit.sentDate) : toMillis(row.sentDate)) : null}
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="set" noun="EventLinks" allow-remote="false">
+        <description>Internal (send#Message, edit#Message): the links of a message for its room's Links list, from its body
+            (extract#LinkUrls with listed), in place of the ones it had (ChatEventLink). The caller has checked access, and
+            calls it for a message the server can read only (not in an encrypted room).</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+            <parameter name="body" allow-html="any"/>
+        </in-parameters>
+        <actions><script><![CDATA[
+            ec.entity.find('moqui.chat.ChatEventLink').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).deleteAll()
+            if (!/https?:\/\//i.test(String(body || ''))) return
+            const urls = ec.service.sync().name('org.moqui.chat.ChatServices.extract#LinkUrls').parameters({body: body || '', listed: true}).call()?.urlList || []
+            urls.forEach((link, index) => {
+                const row = ec.entity.makeValue('moqui.chat.ChatEventLink')
+                row.setFields({chatRoomId: chatRoomId, eventSeq: eventSeq, linkSeq: index + 1, url: link.url, urlHash: link.urlHash}, true, null, null)
+                row.create()
+            })
+        ]]></script></actions>
+    </service>
+
+    <service verb="find" noun="RoomLinks">
+        <description>The links of a room's messages (ChatEventLink), newest first, for a user who may read the room: links
+            [{eventSeq, linkSeq, url, title, siteName, senderUserId, senderName, sentDate, threadRootEventSeq}], the title and
+            site name from the ChatLinkPreview cache by the URL's hash (none for a link that was not previewed or could not
+            be read; no image is kept, so there is no imageUrl). searchText keeps the links whose URL or cached title has it.
+            limit 1 to 100 (40). Paged by beforeEventSeq as find#RoomFiles is: a page is cut only between messages, and
+            nextBeforeEventSeq (the page's last message) is where the next one starts, null at the end (Comms-Messaging §5.2).
+            Nothing for an encrypted room (C7): the server cannot read its links; the browser finds them in the messages it
+            has decrypted.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="searchText"/>
+            <parameter name="limit" type="Integer" default="40"/>
+            <parameter name="beforeEventSeq" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="links" type="List"><parameter name="link" type="Map"/></parameter>
+            <parameter name="nextBeforeEventSeq" type="Integer"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const toMillis = (value) => {
+                if (value == null || value === '') return null
+                const number = Number(value)
+                return Number.isNaN(number) ? new Date(String(value)).getTime() : number
+            }
+            links = []; nextBeforeEventSeq = null
+            const access = ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
+            if (ec.message.hasError()) return
+            if (!access.canRead) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
+            if (access.room.encrypted) return
+            const size = Math.max(1, Math.min(100, Number(limit) || 40))
+            const cf = ec.entity.conditionFactory
+            const text = String(searchText || '').trim().replace(/[%_]/g, '')
+            // a search by title: the cached previews whose title has it (a bounded list of their hashes)
+            const titled = text ? Array.from(ec.entity.find('moqui.chat.ChatLinkPreview').condition(cf.makeCondition('title', 'like', '%' + text + '%').ignoreCase())
+                    .condition('failed', 'not-equals', 'Y').selectField('urlHash').limit(500).disableAuthz().list()).map((row) => row.urlHash) : []
+            const linksFind = () => {
+                let find = ec.entity.find('moqui.chat.ChatEventLink').condition('chatRoomId', chatRoomId)
+                if (text) {
+                    const ors = [cf.makeCondition('url', 'like', '%' + text + '%').ignoreCase()]
+                    if (titled.length) ors.push(cf.makeCondition('urlHash', 'in', titled))
+                    find = find.condition(cf.makeCondition(ors, 'or'))
+                }
+                return find
+            }
+            let first = linksFind()
+            if (beforeEventSeq != null) first = first.condition('eventSeq', 'less', beforeEventSeq)
+            let rows = Array.from(first.orderBy('-eventSeq').orderBy('linkSeq').limit(size + 1).list())
+            if (rows.length > size) {
+                // cut only between messages: a message with more links than limit comes whole
+                const cutSeq = Number(rows[size - 1].eventSeq)
+                if (Number(rows[size].eventSeq) !== cutSeq) rows = rows.slice(0, size)
+                else {
+                    const whole = rows.filter((row) => Number(row.eventSeq) !== cutSeq)
+                    rows = whole.length ? whole : Array.from(linksFind().condition('eventSeq', cutSeq).orderBy('linkSeq').list())
+                }
+                if (Number(rows[rows.length - 1].eventSeq) !== cutSeq || linksFind().condition('eventSeq', 'less', cutSeq).count() > 0)
+                    nextBeforeEventSeq = Number(rows[rows.length - 1].eventSeq)
+            }
+            if (!rows.length) return
+            const events = {}
+            for (const row of ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId)
+                    .condition('eventSeq', 'in', Array.from(new Set(rows.map((row) => Number(row.eventSeq))))).selectField('eventSeq').selectField('senderUserId')
+                    .selectField('senderActorId').selectField('sentDate').selectField('redactedDate').selectField('threadRootEventSeq').list()) events[Number(row.eventSeq)] = row
+            const previews = {}
+            const hashes = Array.from(new Set(rows.map((row) => row.urlHash).filter((hash) => hash)))
+            if (hashes.length) for (const row of ec.entity.find('moqui.chat.ChatLinkPreview').condition('urlHash', 'in', hashes)
+                    .selectField('urlHash').selectField('url').selectField('title').selectField('siteName').selectField('failed').disableAuthz().list())
+                previews[row.urlHash] = row
+            const userIds = Array.from(new Set(Object.values(events).map((row) => row.senderUserId).filter((id) => id)))
+            const names = {}
+            if (userIds.length) for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', userIds)
+                    .selectField('userId').selectField('userFullName').selectField('username').disableAuthz().list())
+                names[account.userId] = account.userFullName || account.username || account.userId
+            const actorIds = Array.from(new Set(Object.values(events).filter((row) => !row.senderUserId && row.senderActorId).map((row) => row.senderActorId)))
+            const actors = actorIds.length ? ec.service.sync().name('org.moqui.chat.ChatServices.get#ActorNames')
+                    .parameter('chatActorIdList', actorIds).call()?.actorMap || {} : {}
+            for (const row of rows) {
+                const event = events[Number(row.eventSeq)]
+                if (!event || event.redactedDate) continue
+                // the cache keeps a preview by the hash; the URL is compared too, as get#LinkPreview does
+                const preview = previews[row.urlHash]
+                const shown = preview && preview.failed !== 'Y' && preview.url === row.url ? preview : null
+                links.push({eventSeq: Number(row.eventSeq), linkSeq: Number(row.linkSeq), url: row.url, title: shown ? shown.title ?? null : null,
+                    siteName: shown ? shown.siteName ?? null : null, senderUserId: event.senderUserId ?? null,
+                    senderName: event.senderUserId ? names[event.senderUserId] || event.senderUserId : (actors[event.senderActorId]?.name ?? null),
                     sentDate: toMillis(event.sentDate), threadRootEventSeq: event.threadRootEventSeq != null ? Number(event.threadRootEventSeq) : null})
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="find" noun="RoomReactions">
+        <description>The messages of a room with reactions that stand (reaction events not taken back), for a user who may
+            read the room, the one with the newest reaction first: messages [{eventSeq, senderUserId, senderName, sentDate,
+            threadRootEventSeq, snippet, attachments, reactions (as get#Timeline aggregates them: {key, count, userIds, mine},
+            all of the message's), latestReactionSeq, latestReactionDate}]. reactionKey keeps the messages with a reaction of
+            that key (and orders them by it), onlyToMe the user's own messages. limit 1 to 100 (40) messages. Paged by
+            beforeReactionSeq: the cursor is the eventSeq of the newest reaction of the page's last message (a reaction's own
+            eventSeq, not the message's), and nextBeforeReactionSeq is where the next page starts, null at the end; a message
+            whose newest reaction is after the cursor was on an earlier page and is not listed again (Comms-Messaging §5.2).
+            A redacted message is left out, and a page may come back short of it: the cursor says there is more.
+
+            An encrypted room (C7): no reactionKey filter (the keys are encrypted: an empty list), and no snippet; each
+            message has encrypted, encryptedEventSeq and encryptedSentDate (its ciphertext) and encryptedReactions [{eventSeq,
+            senderUserId, sentDate, encrypted}], as get#Timeline gives them, for the browser to decrypt and count.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="reactionKey"/>
+            <parameter name="onlyToMe" type="Boolean" default="false"/>
+            <parameter name="limit" type="Integer" default="40"/>
+            <parameter name="beforeReactionSeq" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="messages" type="List"><parameter name="message" type="Map"/></parameter>
+            <parameter name="nextBeforeReactionSeq" type="Integer"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const toMillis = (value) => {
+                if (value == null || value === '') return null
+                const number = Number(value)
+                return Number.isNaN(number) ? new Date(String(value)).getTime() : number
+            }
+            const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
+            messages = []; nextBeforeReactionSeq = null
+            const me = ec.user.userId
+            const access = ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
+            if (ec.message.hasError()) return
+            if (!access.canRead) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
+            const sealed = !!access.room.encrypted
+            const key = String(reactionKey || '').trim()
+            if (sealed && key) return
+            const size = Math.max(1, Math.min(100, Number(limit) || 40))
+            // the reactions that stand, newest first; react#Message keeps a plain key as content {key}, so the filter is exact
+            const reactionsFind = () => {
+                let find = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventTypeEnumId', 'CetReaction')
+                        .condition('redactedDate', null)
+                if (key) find = find.condition('contentJson', JSON.stringify({key: key}))
+                return find
+            }
+            // the messages on earlier pages: one with a reaction at or after the cursor (that matches the filter)
+            const shownBefore = (targets) => {
+                if (beforeReactionSeq == null || !targets.length) return new Set()
+                return new Set(Array.from(reactionsFind().condition('relatesToEventSeq', 'in', targets).condition('eventSeq', 'greater-equals', beforeReactionSeq)
+                        .selectField('relatesToEventSeq').list()).map((row) => Number(row.relatesToEventSeq)))
+            }
+            // the reactions are read newest first in batches, each message decided at its newest reaction, until the page has
+            // its messages and one more is seen, or ten batches are read (then the page may be short, and the cursor goes on)
+            const BATCH = Math.max(50, size * 4)
+            const shown = []
+            const latest = {}
+            const decided = new Set()
+            let cursor = beforeReactionSeq != null ? Number(beforeReactionSeq) : null
+            let lastSeen = null
+            let more = false
+            let round = 0
+            for (; round < 10 && !more; round++) {
+                let find = reactionsFind()
+                if (cursor != null) find = find.condition('eventSeq', 'less', cursor)
+                const batch = Array.from(find.selectField('eventSeq').selectField('relatesToEventSeq').selectField('sentDate')
+                        .orderBy('-eventSeq').limit(BATCH).list())
+                const fresh = Array.from(new Set(batch.map((row) => Number(row.relatesToEventSeq)).filter((seq) => !decided.has(seq))))
+                const earlier = shownBefore(fresh)
+                const targets = {}
+                if (fresh.length) for (const row of ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', 'in', fresh)
+                        .selectField('eventSeq').selectField('eventTypeEnumId').selectField('senderUserId').selectField('redactedDate').list()) targets[Number(row.eventSeq)] = row
+                for (const row of batch) {
+                    const seq = Number(row.relatesToEventSeq)
+                    if (!decided.has(seq)) {
+                        // a message not yet decided: the page is full, so there is more after it
+                        if (shown.length === size) { more = true; break }
+                        decided.add(seq)
+                        const target = targets[seq]
+                        // left out: on an earlier page, gone, removed, or another's with onlyToMe
+                        const kept = !earlier.has(seq) && target && target.eventTypeEnumId === 'CetMessage' && !target.redactedDate
+                            && (!onlyToMe || target.senderUserId === me)
+                        if (kept) { shown.push(seq); latest[seq] = {seq: Number(row.eventSeq), date: toMillis(row.sentDate)} }
+                    }
+                    lastSeen = Number(row.eventSeq)
+                }
+                if (more || batch.length < BATCH) break
+                cursor = lastSeen
+            }
+            // ten full batches read and no end: a short page, whose cursor is the last reaction read
+            if (!more && round >= 10) more = true
+            if (more) nextBeforeReactionSeq = shown.length && round < 10 ? latest[shown[shown.length - 1]].seq : lastSeen
+            if (!shown.length) return
+            // each message's reactions that stand, aggregated as the timeline has them
+            const counts = {}
+            const sealedReactions = {}
+            for (const reaction of ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventTypeEnumId', 'CetReaction')
+                    .condition('relatesToEventSeq', 'in', shown).condition('redactedDate', null).orderBy('eventSeq').list()) {
+                const content = parse(reaction.contentJson)
+                const target = Number(reaction.relatesToEventSeq)
+                if (content.encrypted) {
+                    (sealedReactions[target] = sealedReactions[target] || []).push({eventSeq: Number(reaction.eventSeq),
+                        senderUserId: reaction.senderUserId ?? null, sentDate: toMillis(reaction.sentDate), encrypted: content.encrypted})
+                    continue
+                }
+                if (!content.key) continue
+                const byKey = counts[target] = counts[target] || {}
+                const entry = byKey[content.key] = byKey[content.key] || {key: content.key, count: 0, userIds: [], mine: false}
+                const who = reaction.senderUserId || reaction.senderActorId
+                if (entry.userIds.includes(who)) continue
+                entry.userIds.push(who)
+                entry.count++
+                if (reaction.senderUserId === me) entry.mine = true
+            }
+            const summaries = ec.service.sync().name('org.moqui.chat.ChatServices.get#MessageSummaries').parameters({chatRoomId: chatRoomId,
+                eventSeqList: shown}).call()?.summaryMap || {}
+            for (const seq of shown) {
+                const summary = summaries[String(seq)]
+                if (!summary) continue
+                messages.push({eventSeq: seq, senderUserId: summary.senderUserId, senderActorId: summary.senderActorId, senderName: summary.senderName,
+                    sentDate: summary.sentDate, threadRootEventSeq: summary.threadRootEventSeq, snippet: summary.snippet, attachments: summary.attachments,
+                    reactions: Object.values(counts[seq] || {}), latestReactionSeq: latest[seq].seq, latestReactionDate: latest[seq].date,
+                    encrypted: summary.encrypted, encryptedEventSeq: summary.encryptedEventSeq, encryptedSentDate: summary.encryptedSentDate,
+                    encryptedReactions: summary.encrypted ? sealedReactions[seq] || [] : []})
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="find" noun="ChatActivity">
+        <description>The current user's activity across rooms (ChatUserActivity, plans/Comms-Messaging.md §5.2), newest first:
+            items [{kind (mention, reply, threadReply, reaction), chatRoomId, roomName, roomTypeEnumId, eventSeq (the event
+            that made it: the message, the edit that added the mention, the reaction), messageEventSeq (the message it is
+            about), threadRootEventSeq, actorUserId, actorName, snippet (the message's current text), reactionKey (a reaction
+            in a plain room), date, encrypted}]. kinds (a List, or text with commas) keeps those kinds. Only rooms the user can
+            still read (get#RoomAccess, for each room once): the rows of a room left are kept but not listed. limit 1 to 100
+            (40). Paged by cursor, one opaque text of the date, room, event and kind of the page's last row, so rows with the
+            same date keep their order across pages; nextCursor is where the next page starts, null at the end. Rows left out
+            (a room no longer readable) never end the list early: the cursor says there is more.
+
+            An encrypted room (C7): no snippet and no reaction key; encrypted true, and the message's ciphertext
+            (encryptedContent, encryptedEventSeq, encryptedSentDate) and a reaction's (reactionEncrypted, reactionSentDate)
+            for the browser to decrypt.</description>
+        <in-parameters>
+            <parameter name="kinds" type="List"/>
+            <parameter name="limit" type="Integer" default="40"/>
+            <parameter name="cursor"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="items" type="List"><parameter name="item" type="Map"/></parameter>
+            <parameter name="nextCursor"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const toMillis = (value) => {
+                if (value == null || value === '') return null
+                const number = Number(value)
+                return Number.isNaN(number) ? new Date(String(value)).getTime() : number
+            }
+            const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
+            const KINDS = {mention: 'CuaMention', reply: 'CuaReply', threadReply: 'CuaThreadReply', reaction: 'CuaReaction'}
+            const CODES = {CuaMention: 'mention', CuaReply: 'reply', CuaThreadReply: 'threadReply', CuaReaction: 'reaction'}
+            items = []; nextCursor = null
+            const me = ec.user.userId
+            if (!me) return
+            const size = Math.max(1, Math.min(100, Number(limit) || 40))
+            const asked = (kinds == null ? [] : Array.isArray(kinds) || typeof kinds !== 'string' ? Array.from(kinds) : String(kinds).split(','))
+                    .map((kind) => String(kind || '').trim()).filter((kind) => kind)
+            const kindIds = asked.map((kind) => KINDS[kind] || (CODES[kind] ? kind : null)).filter((id) => id)
+            if (asked.length && !kindIds.length) return
+            const cf = ec.entity.conditionFactory
+            // the cursor: date, eventSeq, kind and room, joined by ~ (the room last, whatever its id has); the order is the
+            // date, then the room, the event and the kind, each newest (highest) first
+            const decode = (text) => {
+                const parts = String(text || '').split('~')
+                if (parts.length < 4 || !/^\d+$/.test(parts[0]) || !/^\d+$/.test(parts[1]) || !CODES[parts[2]]) return null
+                return {date: Number(parts[0]), eventSeq: Number(parts[1]), kind: parts[2], chatRoomId: parts.slice(3).join('~')}
+            }
+            const encode = (row) => [toMillis(row.activityDate), Number(row.eventSeq), row.activityKindEnumId, row.chatRoomId].join('~')
+            const after = (at) => cf.makeCondition([cf.makeCondition('activityDate', 'less', String(at.date)),
+                cf.makeCondition([cf.makeCondition('activityDate', 'equals', String(at.date)), cf.makeCondition([
+                    cf.makeCondition('chatRoomId', 'less', at.chatRoomId),
+                    cf.makeCondition([cf.makeCondition('chatRoomId', 'equals', at.chatRoomId), cf.makeCondition([
+                        cf.makeCondition('eventSeq', 'less', at.eventSeq),
+                        cf.makeCondition([cf.makeCondition('eventSeq', 'equals', at.eventSeq), cf.makeCondition('activityKindEnumId', 'less', at.kind)], 'and')], 'or')], 'and')], 'or')], 'and')], 'or')
+            let at = cursor ? decode(cursor) : null
+            if (cursor && !at) { ec.message.addError(ec.l10n.localize('This list was changed: read it again from the start')); return }
+            // the rooms the user can read, asked once each
+            const readable = {}
+            const canRead = (roomId) => {
+                if (!(roomId in readable)) {
+                    const access = ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', roomId).call()
+                    readable[roomId] = access && access.canRead ? access.room : null
+                }
+                return readable[roomId]
+            }
+            // read in batches until the page is full and one more row is seen, or ten batches are read (then the page may be
+            // short: rows of rooms no longer readable are left out, and the cursor goes on past them)
+            const kept = []
+            let last = null
+            let more = false
+            let round = 0
+            const BATCH = Math.max(50, size + 1)
+            for (; round < 10 && !more; round++) {
+                let find = ec.entity.find('moqui.chat.ChatUserActivity').condition('userId', me)
+                if (kindIds.length) find = find.condition('activityKindEnumId', 'in', kindIds)
+                if (at) find = find.condition(after(at))
+                const batch = Array.from(find.orderBy('-activityDate').orderBy('-chatRoomId').orderBy('-eventSeq').orderBy('-activityKindEnumId')
+                        .limit(BATCH).disableAuthz().list())
+                for (const row of batch) {
+                    if (kept.length === size) { more = true; break }
+                    last = row
+                    if (canRead(row.chatRoomId)) kept.push(row)
+                }
+                if (more || batch.length < BATCH) break
+                at = decode(encode(last))
+            }
+            if (!more && round >= 10) more = true
+            if (more && last) nextCursor = encode(last)
+            if (!kept.length) return
+            // what each item is about: its message's summary, a reaction's key, the actors' names
+            const byRoom = {}
+            for (const row of kept) (byRoom[row.chatRoomId] = byRoom[row.chatRoomId] || []).push(row)
+            const summaries = {}
+            const reactions = {}
+            for (const roomId of Object.keys(byRoom)) {
+                const rows = byRoom[roomId]
+                summaries[roomId] = ec.service.sync().name('org.moqui.chat.ChatServices.get#MessageSummaries').parameters({chatRoomId: roomId,
+                    eventSeqList: rows.map((row) => Number(row.messageEventSeq ?? row.eventSeq))}).call()?.summaryMap || {}
+                const reactionSeqs = rows.filter((row) => row.activityKindEnumId === 'CuaReaction').map((row) => Number(row.eventSeq))
+                if (reactionSeqs.length) for (const event of ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', roomId)
+                        .condition('eventSeq', 'in', reactionSeqs).selectField('eventSeq').selectField('contentJson').selectField('sentDate').list())
+                    reactions[roomId + ' ' + Number(event.eventSeq)] = {content: parse(event.contentJson), sentDate: toMillis(event.sentDate)}
+            }
+            const actorIds = Array.from(new Set(kept.map((row) => row.actorUserId).filter((id) => id)))
+            const names = {}
+            if (actorIds.length) for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', actorIds)
+                    .selectField('userId').selectField('userFullName').selectField('username').disableAuthz().list())
+                names[account.userId] = account.userFullName || account.username || account.userId
+            const externalIds = Array.from(new Set(kept.filter((row) => !row.actorUserId && row.chatActorId).map((row) => row.chatActorId)))
+            const actors = externalIds.length ? ec.service.sync().name('org.moqui.chat.ChatServices.get#ActorNames')
+                    .parameter('chatActorIdList', externalIds).call()?.actorMap || {} : {}
+            for (const row of kept) {
+                const room = readable[row.chatRoomId]
+                const sealed = !!room.encrypted
+                const messageSeq = Number(row.messageEventSeq ?? row.eventSeq)
+                const summary = summaries[row.chatRoomId][String(messageSeq)] || {}
+                const reaction = row.activityKindEnumId === 'CuaReaction' ? reactions[row.chatRoomId + ' ' + Number(row.eventSeq)] || null : null
+                items.push({kind: CODES[row.activityKindEnumId] || null, chatRoomId: row.chatRoomId, roomName: room.roomName ?? null,
+                    roomTypeEnumId: room.roomTypeEnumId ?? null, eventSeq: Number(row.eventSeq), messageEventSeq: messageSeq,
+                    threadRootEventSeq: summary.threadRootEventSeq ?? null, actorUserId: row.actorUserId ?? null,
+                    actorName: row.actorUserId ? names[row.actorUserId] || row.actorUserId : (actors[row.chatActorId]?.name ?? null),
+                    snippet: sealed ? null : summary.snippet ?? null, reactionKey: reaction && !sealed ? reaction.content.key ?? null : null,
+                    date: toMillis(row.activityDate), encrypted: sealed,
+                    encryptedContent: sealed ? summary.encrypted ?? null : null, encryptedEventSeq: sealed ? summary.encryptedEventSeq ?? null : null,
+                    encryptedSentDate: sealed ? summary.encryptedSentDate ?? null : null,
+                    reactionEncrypted: sealed && reaction ? reaction.content.encrypted ?? null : null, reactionSentDate: reaction ? reaction.sentDate : null})
             }
         ]]></script></actions>
     </service>
@@ -4130,8 +4608,13 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="extract" noun="LinkUrls" type="rust" location="moqui_core::service::chat_link::extract_link_urls" allow-remote="false"
             transaction="ignore">
         <description>Internal: the links of a message's body to preview, as urlList [{url, urlHash}]: http or https, at most 3,
-            not a /qapps link, not one with a user or password, not on a port other than 80 or 443.</description>
-        <in-parameters><parameter name="body" allow-html="any"/></in-parameters>
+            not a /qapps link, not one with a user or password, not on a port other than 80 or 443. With listed, the links
+            its room's Links list keeps (ChatEventLink): every http or https link with no user or password, at most 50, on
+            any port and our own /qapps ones too, as nothing is fetched; a link also previewed has the same url and urlHash.</description>
+        <in-parameters>
+            <parameter name="body" allow-html="any"/>
+            <parameter name="listed" type="Boolean" default="false"/>
+        </in-parameters>
         <out-parameters><parameter name="urlList" type="List"/></out-parameters>
     </service>
 
