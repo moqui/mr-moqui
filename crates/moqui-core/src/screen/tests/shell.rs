@@ -1178,6 +1178,50 @@ fn the_shell_counts_transition_answers_the_counts_of_the_current_user() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// SEC-RTE-12: the `listViewColumns` and `statusBar` transitions of webroot.xml, as that file writes them, read status
+/// items, enumerations and flows only for a signed-in user: 401 without one.
+#[test]
+fn the_board_and_status_bar_transitions_answer_only_a_user() {
+    let dir = tree("board-transitions");
+    let webroot = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/webroot/screen/webroot.xml"),
+    )
+    .unwrap();
+    let mut transitions = String::new();
+    for name in ["listViewColumns", "statusBar"] {
+        let start = webroot
+            .find(&format!("<transition name=\"{name}\""))
+            .unwrap_or_else(|| panic!("webroot.xml has {name}"));
+        let end = start + webroot[start..].find("</transition>").unwrap() + "</transition>".len();
+        transitions.push_str(&webroot[start..end]);
+        transitions.push('\n');
+    }
+    let root_text = ROOT.replacen(
+        "<subscreens default-item",
+        &format!("{transitions}    <subscreens default-item"),
+        1,
+    );
+    std::fs::write(dir.join("Root.xml"), root_text).unwrap();
+    let world = world(&dir);
+    let root = root_of(&dir);
+    let board = [("values", "STATUS_A,STATUS_B"), ("status", "true")];
+    let bar = [("statusId", "STATUS_A"), ("stages", "STATUS_A,STATUS_B")];
+    let (status, answer) = get(&world, &root, None, "/listViewColumns", &board);
+    assert_eq!(status, 401, "{answer}");
+    assert!(answer.get("columns").is_none(), "{answer}");
+    let (status, answer) = get(&world, &root, None, "/statusBar", &bar);
+    assert_eq!(status, 401, "{answer}");
+    assert!(answer.get("stages").is_none(), "{answer}");
+    // a user passes the gate to the service (not loaded in this world, so the answer carries its error)
+    let (status, answer) = get(&world, &root, Some("plain"), "/listViewColumns", &board);
+    assert_ne!(status, 401, "{answer}");
+    assert!(answer.get("columns").is_some(), "{answer}");
+    let (status, answer) = get(&world, &root, Some("plain"), "/statusBar", &bar);
+    assert_ne!(status, 401, "{answer}");
+    assert!(answer.get("stages").is_some(), "{answer}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// An ext item with a `permission` is listed only for a user who holds it, beside one with none, which every user of the
 /// screen gets (DC-UI-044: a Chat action the user would be refused is not offered).
 #[test]
