@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
     (call_ring_seconds, 45) or canceled; the first answer wins (the session row is locked) and the other tabs hear it. Only
     a group call's host ends it for everyone; anyone else leaves. Repeated requests are safe: start#Call with the same
     idempotencyKey answers the same call, and answering, joining or leaving again answers the state as it is. Refusals
-    carry reasonCode (notFound, callEnded, notRinging, notAllowed, notAdmitted, legClosed, callFull, noCallee,
+    carry reasonCode (notFound, callEnded, notRinging, notAllowed, notAdmitted, legClosed, callFull, tooManyJoins, noCallee,
     mediaUnavailable, notSignedIn; for end-to-end encrypted calls unsupportedClient, noCryptoDevice, callNotEncrypted,
     encryptedNoGuests, notEncrypted).
 
@@ -387,7 +387,9 @@ along with this software (see the LICENSE.md file). If not, see
         <description>A guest opens a call link with their name: the link's meeting (started when none is going) gets them as a
             participant with no login and a guest leg, admitted at once by a link policy, else waiting in the lobby (the
             people in the call and the link's owner hear of it). credential is for the guest's page only: it sends it in the
-            first frame of its call socket (/callws), never in a URL; it lasts 4 hours.</description>
+            first frame of its call socket (/callws), never in a URL; it lasts 4 hours. Refused with callFull while 50 guests
+            are waiting or in the call (an open leg), and with tooManyJoins past call_guest_joins_per_minute joins by the link
+            in the last minute.</description>
         <in-parameters>
             <parameter name="token" required="true"/>
             <parameter name="displayName" required="true"/>

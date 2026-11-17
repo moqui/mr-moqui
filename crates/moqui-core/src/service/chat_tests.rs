@@ -1458,6 +1458,27 @@ fn presence_follows_the_heartbeat_the_status_and_its_clear_at_time() {
     assert_eq!(field(&out_map(&set, "myStatus"), "presence"), "offline");
     login("prb");
     assert_eq!(field(&presence_of("pra"), "presence"), "offline");
+    // ... and others are not told the invisible user's last activity or call; the user still sees their own
+    {
+        let _authz = ctx.disable_authz();
+        let mut stored = facade
+            .find("moqui.security.UserStatus")
+            .unwrap()
+            .eq("userId", text("pra"))
+            .one()
+            .unwrap()
+            .unwrap();
+        stored.set("inCall", text("Y"));
+        stored.update(&facade).unwrap();
+    }
+    let hidden = presence_of("pra");
+    assert_eq!(hidden.get("lastActiveDate"), Some(&Value::Null), "{hidden:?}");
+    assert_eq!(hidden.get("inCall"), Some(&Value::Bool(false)), "{hidden:?}");
+    login("pra");
+    let own = presence_of("pra");
+    assert_eq!(own.get("inCall"), Some(&Value::Bool(true)), "{own:?}");
+    assert_ne!(own.get("lastActiveDate"), Some(&Value::Null), "{own:?}");
+    login("prb");
     refused(
         "set#UserStatus",
         &[("userId", text("pra")), ("status", text("online"))],

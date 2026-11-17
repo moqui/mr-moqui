@@ -125,10 +125,17 @@ fn member_url(
     }
     let now = super::db_now(facade);
     let window = window_millis(factory);
+    let own = lock(&state.member).clone();
     let member = load_members(facade)?
         .into_iter()
         .find(|m| m.instance_id == instance_id && is_live(m.heartbeat, now, window))
         .ok_or_else(|| Error::new(format!("cluster member {instance_id} is not live")))?;
+    // only a member of this cluster's material gets its messages (SEC-CLU-04)
+    if !super::same_material(&member, own.as_ref()) {
+        return Err(Error::new(format!(
+            "cluster member {instance_id} names another session key or cluster certificate"
+        )));
+    }
     let url = trim_base(&member.base_url);
     lock(&state.direct)
         .urls

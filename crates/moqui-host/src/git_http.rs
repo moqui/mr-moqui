@@ -229,7 +229,7 @@ pub(crate) async fn handle(
     {
         return plain(413, &format!("the git request is over {limit} bytes"));
     }
-    let secure = secure(&state, over_tls, &parts.headers, peer);
+    let secure = secure(&state, over_tls, &parts, peer);
     let token_shaped = crate::guard::ci_credential(parts.uri.path(), &parts.headers).is_some();
     let git_request = GitHttpRequest {
         repository,
@@ -289,11 +289,12 @@ struct Origin {
 }
 
 /// Whether credentials may be taken: over TLS (the listener's, or a believed proxy's `X-Forwarded-Proto`), from
-/// loopback, or with the conf's `git-server` `allow-http="true"`.
-fn secure(state: &HttpState, over_tls: bool, headers: &axum::http::HeaderMap, peer: SocketAddr) -> bool {
+/// loopback (not a client an edge node names, SEC-CLU-01), or with the conf's `git-server` `allow-http="true"`.
+fn secure(state: &HttpState, over_tls: bool, parts: &axum::http::request::Parts, peer: SocketAddr) -> bool {
+    let via = parts.extensions.get::<moqui_core::web::RequestVia>().copied().unwrap_or_default();
     over_tls
-        || forwarded_https(headers, peer.ip(), state.guard.conf().addressing())
-        || peer.ip().is_loopback()
+        || forwarded_https(&parts.headers, peer.ip(), state.guard.conf().addressing())
+        || crate::http::local_peer(peer.ip(), via)
         || state.factory.conf_flag("git-server", "allow-http", false)
 }
 
@@ -322,7 +323,7 @@ async fn handle_lfs(
         return plain(413, &format!("the LFS request is over {limit} bytes"));
     }
     let Origin { peer, client, over_tls } = from;
-    let secure = secure(&state, over_tls, &parts.headers, peer);
+    let secure = secure(&state, over_tls, &parts, peer);
     let token_shaped = crate::guard::ci_credential(parts.uri.path(), &parts.headers).is_some();
     let request = lfs::LfsHttpRequest {
         repository,
@@ -420,7 +421,7 @@ pub(crate) async fn handle_runner(
         query: parts.uri.query().unwrap_or("").to_string(),
         authorization: header("authorization"),
         content_length,
-        secure: secure(&state, over_tls, &parts.headers, peer),
+        secure: secure(&state, over_tls, &parts, peer),
         client_ip: client.to_string(),
     };
     let idle = idle_timeout(&state);

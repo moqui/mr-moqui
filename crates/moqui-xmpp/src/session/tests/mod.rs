@@ -924,3 +924,11 @@ async fn resumption_is_bounded_per_user_and_by_what_was_kept() {
     assert!(john.session.resumable().is_none());
     assert!(!john.session.detach(), "not kept to resume with stanzas missing");
 }
+
+#[test]
+fn an_upload_is_logged_by_its_file_name_not_its_token() {
+    let url = "https://chat.example.com/xmpp-upload/S3cr3tT0ken/photo.jpg";
+    let logged = super::chat::upload_file_name(url);
+    assert_eq!(logged, "photo.jpg");
+    assert!(!logged.contains("S3cr3tT0ken"));
+}

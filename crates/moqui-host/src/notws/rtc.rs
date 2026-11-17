@@ -49,8 +49,8 @@ const LEAVE_SERVICE: &str = "org.moqui.call.CallServices.leave#Call";
 const GUEST_BIND_SERVICE: &str = "org.moqui.call.CallServices.bind#GuestConnection";
 const GUEST_LEAVE_SERVICE: &str = "org.moqui.call.CallServices.leave#AsGuest";
 const GUEST_STATE_SERVICE: &str = "org.moqui.call.CallServices.get#GuestState";
-/// A guest's socket must send its credential this soon.
-const GUEST_AUTH_WAIT: Duration = Duration::from_secs(10);
+/// A guest's socket must send its credential this soon (its page sends it as the socket opens).
+const GUEST_AUTH_WAIT: Duration = Duration::from_secs(5);
 /// A guest's credential is checked again this often; one that no longer works closes the socket.
 const GUEST_CHECK: Duration = Duration::from_secs(30);
 const HEARTBEAT_SERVICE: &str = "org.moqui.call.CallServices.heartbeat#Connections";
@@ -657,11 +657,13 @@ struct GuestScope {
 }
 
 /// `GET /callws`: the socket of a guest's page (the /call/<token> page), with no session. Its first frame is
-/// `{rtc: 'guestAuth', credential}`, within 10 seconds; the credential (from `join#AsGuest`) is checked with
+/// `{rtc: 'guestAuth', credential}`, within 5 seconds; the credential (from `join#AsGuest`) is checked with
 /// `get#GuestState` and names one call and leg. After that the socket takes only `rtc` frames of that call and leg:
 /// no topics, no co-editing, nothing else. The credential is checked again every 30 seconds; when it no longer works
 /// (revoked, expired, the guest denied or removed) the page is told the call ended and the socket closes. At most
-/// [`MAX_GUEST_WAITING`] sockets on a node wait for their credential; another is answered 503.
+/// [`MAX_GUEST_WAITING`] sockets on a node wait for their credential, [`GUEST_WAITING_PER_SOURCE`] of them from one
+/// client address (SEC-COM-04); another is answered 503. A socket refused for its first frame (none, not a credential,
+/// or one that does not work) counts as a failed sign-in of its client for web protection.
 /// Adds `/callws` to the routes.
 pub(crate) fn guest_route(app: axum::Router<Arc<crate::http::HttpState>>) -> axum::Router<Arc<crate::http::HttpState>> {
     app.route("/callws", axum::routing::get(guest_upgrade).connect(guest_upgrade))
@@ -676,40 +678,34 @@ pub(crate) async fn guest_upgrade(
     if !super::origin_allowed(&state.factory, &headers, &site, "call") {
         return crate::http::plain(403, "origin not allowed");
     }
-    // a socket with no credential yet holds one of a few places until its first frame is checked (HL-027)
-    let Some(waiting) = GuestWaiting::take() else {
+    // a socket with no credential yet holds one of a few places until its first frame is checked (HL-027), a share of
+    // them per client (SEC-COM-04)
+    let client = site.client();
+    let source = client.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    let Ok(waiting) = guest_waiting().take(source) else {
         return state.guard.unavailable("too many call sockets are waiting to sign in");
     };
     let factory = Arc::clone(&state.factory);
     let shutdown = state.shutdown.clone();
+    let guard = Arc::clone(&state.guard);
+    let failed = move || {
+        if let Some(client) = client {
+            guard.record(client, crate::guard::Event::AuthFailure);
+        }
+    };
     ws.max_message_size(MAX_FRAME)
         .max_frame_size(MAX_FRAME)
-        .on_upgrade(move |socket| run_guest(socket, factory, shutdown, waiting))
+        .on_upgrade(move |socket| run_guest(socket, factory, shutdown, waiting, failed))
 }
 
-/// Guest sockets open on this node whose credential is not checked yet, at most [`MAX_GUEST_WAITING`].
-static GUEST_WAITING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// The guest sockets on this node that may wait for their credential at once, and those of one client address.
 const MAX_GUEST_WAITING: usize = 64;
+const GUEST_WAITING_PER_SOURCE: usize = 4;
 
-/// One place in [`GUEST_WAITING`], given back when it drops.
-struct GuestWaiting;
-
-impl GuestWaiting {
-    fn take() -> Option<Self> {
-        use std::sync::atomic::Ordering;
-        GUEST_WAITING
-            .try_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
-                (count < MAX_GUEST_WAITING).then_some(count + 1)
-            })
-            .ok()
-            .map(|_| Self)
-    }
-}
-
-impl Drop for GuestWaiting {
-    fn drop(&mut self) {
-        GUEST_WAITING.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-    }
+/// The places of guest sockets on this node whose credential is not checked yet.
+fn guest_waiting() -> &'static moqui_lib::source_guard::SourceSlots {
+    static WAITING: OnceLock<moqui_lib::source_guard::SourceSlots> = OnceLock::new();
+    WAITING.get_or_init(|| moqui_lib::source_guard::SourceSlots::new(MAX_GUEST_WAITING, GUEST_WAITING_PER_SOURCE))
 }
 
 /// The guest's state by credential: (admission, callSessionId, callLegId), or None when the check could not run.
@@ -731,7 +727,8 @@ async fn run_guest(
     mut socket: axum::extract::ws::WebSocket,
     factory: Arc<ExecutionContextFactory>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
-    waiting: GuestWaiting,
+    waiting: moqui_lib::source_guard::SourceSlot,
+    failed: impl FnOnce(),
 ) {
     use axum::extract::ws::Message;
     let first = tokio::time::timeout(GUEST_AUTH_WAIT, socket.recv()).await;
@@ -744,12 +741,14 @@ async fn run_guest(
         _ => None,
     };
     let Some(credential) = credential else {
+        failed();
         return refuse_guest(socket, "badRequest").await;
     };
     let Some((admission, call, leg)) = guest_state(&factory, &credential).await else {
         return refuse_guest(socket, "unavailable").await;
     };
     if !matches!(admission.as_str(), "admitted" | "waiting") || call.is_empty() || leg.is_empty() {
+        failed();
         return refuse_guest(socket, "notFound").await;
     }
     drop(waiting);

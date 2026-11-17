@@ -269,6 +269,11 @@ pub(crate) async fn upgrade(
 pub(crate) struct RequestSite(Option<SiteOrigin>, Option<std::net::IpAddr>);
 
 impl RequestSite {
+    /// The client's address as web protection sees it (a believed proxy's client header, else the peer).
+    pub(crate) fn client(&self) -> Option<std::net::IpAddr> {
+        self.1
+    }
+
     pub(crate) fn record_auth_failure(&self, state: &HttpState) {
         if let Some(client) = self.1 {
             state.guard.record(client, crate::guard::Event::AuthFailure);

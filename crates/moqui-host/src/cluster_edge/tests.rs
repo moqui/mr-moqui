@@ -352,7 +352,7 @@ mod shares {
 
     #[test]
     fn a_base_urls_host_and_port() {
-        use super::super::listen::url_host;
+        use super::super::url_host;
         assert_eq!(
             url_host("https://node2.example:8444"),
             Some(("node2.example".to_string(), 8444))

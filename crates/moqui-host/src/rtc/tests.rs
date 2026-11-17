@@ -121,3 +121,40 @@ fn a_cascaded_room_goes_between_media_nodes_by_its_whole_key() {
         "100"
     );
 }
+
+#[test]
+fn a_relayed_frame_keeps_only_its_own_short_fields_and_names_its_sender() {
+    use super::driver::relayed_frame;
+    use serde_json::json;
+    let sent = json!({"rtc": "mute", "id": 4, "callSessionId": "100", "callLegId": "L1", "audioMuted": true,
+        "cameraOff": "yes", "from": "L9", "admin": true, "padding": "x".repeat(100_000)});
+    let relayed = relayed_frame("mute", "L1", &sent).unwrap();
+    assert_eq!(
+        relayed,
+        json!({"rtc": "mute", "from": "L1", "callLegId": "L1", "audioMuted": true, "cameraOff": false})
+    );
+    let reaction = relayed_frame("reaction", "L1", &json!({"emoji": "👍", "html": "<img>"})).unwrap();
+    assert_eq!(reaction["emoji"], "👍");
+    assert!(reaction.get("html").is_none());
+    let long = relayed_frame("reaction", "L1", &json!({"emoji": "x".repeat(65)})).unwrap();
+    assert_eq!(long["emoji"], "", "a long reaction is not relayed");
+    assert_eq!(
+        relayed_frame("hand", "L1", &json!({"raised": true})).unwrap()["raised"],
+        true
+    );
+    assert!(relayed_frame("offer", "L1", &json!({})).is_none());
+    assert!(relayed.to_string().len() < 200);
+}
+
+#[test]
+fn a_leg_relays_a_burst_and_then_a_few_frames_a_second() {
+    use super::driver::RelayBucket;
+    let start = std::time::Instant::now();
+    let mut bucket = RelayBucket::new(start);
+    let taken = (0..100).filter(|_| bucket.take(start)).count();
+    assert_eq!(taken, 20, "the burst");
+    assert!(!bucket.take(start));
+    let later = start + std::time::Duration::from_secs(1);
+    let refilled = (0..100).filter(|_| bucket.take(later)).count();
+    assert_eq!(refilled, 5, "five a second after it");
+}

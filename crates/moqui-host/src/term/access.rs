@@ -117,11 +117,13 @@ impl Facts {
         }
     }
 
-    /// The facts of an SSH connection from `peer`.
+    /// The facts of an SSH connection from `peer`, through an edge node's tunnel when `via_edge` (then `peer` is the
+    /// address the edge node names, never this machine).
     #[cfg_attr(not(all(feature = "ssh", feature = "devtools", unix)), allow(dead_code))]
-    pub fn over_ssh(peer: IpAddr) -> Self {
+    pub fn over_ssh(peer: IpAddr, via_edge: bool) -> Self {
         Self {
             peer: Some(peer),
+            via: if via_edge { RequestVia::Edge } else { RequestVia::Direct },
             https: true,
             client_ip: peer.to_string(),
             ssh: true,
@@ -173,14 +175,15 @@ impl Facts {
         if self.via == RequestVia::InProcess {
             return Place::Local;
         }
-        let loopback_peer = self.peer.is_some_and(|peer| peer.to_canonical().is_loopback());
+        // a loopback address an edge node names is not this machine (SEC-CLU-01)
+        let loopback_peer = self.peer.is_some_and(|peer| crate::http::local_peer(peer, self.via));
         if self.ssh {
             return if loopback_peer {
                 Place::Local
             } else {
                 Place::Remote {
                     secure: true,
-                    via_edge: false,
+                    via_edge: self.via == RequestVia::Edge,
                 }
             };
         }

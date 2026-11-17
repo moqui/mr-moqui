@@ -463,6 +463,63 @@ feature("a link that lets guests straight in, guests who leave, and a meeting no
     }
 })
 
+// SEC-COM-05: 50 guests who joined and left kept a link's meeting full; now a place is an open guest leg, and a link
+// takes call_guest_joins_per_minute (20) joins a minute whatever the client
+feature("a link's places are held by guests with an open leg, and a link takes only so many joins a minute", {
+    when() {
+        const open = as(A, "create#CallLink", {name: "Busy door", policy: "link"})
+        const first = anon("join#AsGuest", {token: open.token, displayName: "First"})
+        const linkId = open.callLinkId
+        // 50 guests who joined two minutes ago and left: admitted, their legs closed
+        const seeded = sys(() => {
+            const guestIds = []
+            const legIds = []
+            for (let i = 0; i < 50; i++) {
+                const g = ec.entity.makeValue("moqui.call.CallGuest")
+                g.setSequencedIdPrimary()
+                g.setFields({callLinkId: linkId, callSessionId: first.callSessionId, displayName: "Gone " + i,
+                    createdDate: new Date(Date.now() - 120000)}, true, null, null)
+                g.create()
+                const p = ec.entity.makeValue("moqui.call.CallParticipant")
+                p.setSequencedIdPrimary()
+                p.setFields({callSessionId: first.callSessionId, identityKindEnumId: "CikGuest", callGuestId: g.callGuestId,
+                    displayName: "Gone " + i, roleEnumId: "CprGuest", admissionStatusId: "CasAdmitted"}, true, null, null)
+                p.create()
+                const l = ec.entity.makeValue(LEG)
+                l.setSequencedIdPrimary()
+                l.setFields({callSessionId: first.callSessionId, callParticipantId: p.callParticipantId, legTypeEnumId: "CltGuest",
+                    statusId: "ClsLeft", offeredDate: new Date(Date.now() - 120000)}, true, null, null)
+                l.create()
+                guestIds.push(g.callGuestId)
+                legIds.push(l.callLegId)
+            }
+            return {guestIds, legIds}
+        })
+        const freed = anon("join#AsGuest", {token: open.token, displayName: "Next"})
+        const setLegs = status => sys(() => {
+            for (const l of ec.entity.find(LEG).condition("callLegId", "in", seeded.legIds).list()) { l.set("statusId", status); l.update() }
+        })
+        setLegs("ClsAnswered")
+        const full = anon("join#AsGuest", {token: open.token, displayName: "Too many"})
+        setLegs("ClsLeft")
+        sys(() => {
+            for (const g of ec.entity.find("moqui.call.CallGuest").condition("callGuestId", "in", seeded.guestIds).list()) {
+                g.set("createdDate", new Date())
+                g.update()
+            }
+        })
+        const rushed = anon("join#AsGuest", {token: open.token, displayName: "Rushed"})
+        for (const g of [first, freed]) anon("leave#AsGuest", {credential: g.credential})
+        return {first, freed, full, rushed}
+    },
+    then({first, freed, full, rushed}) {
+        first.admission == "admitted"
+        freed.admission == "admitted"
+        full.reasonCode == "callFull"
+        rushed.reasonCode == "tooManyJoins"
+    }
+})
+
 const LEG_NODE = "calls-spec-leg-node"
 feature("with cascading media nodes a leg's media is on its signaling node, and losing that node ends only its legs", {
     when() {

@@ -267,6 +267,12 @@ impl Worker {
         let mut next = Instant::now() + TICK;
         let mut buf = vec![0u8; 2048];
         let mut pcm = Vec::with_capacity(FRAME);
+        // where RTP may go is judged against the address this leg's socket is bound to
+        let local = self
+            .socket
+            .local_addr()
+            .map_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), |a| a.ip());
+        let mut refused: Option<SocketAddr> = None;
         loop {
             // commands, waiting until the tick
             let wait = next.saturating_duration_since(Instant::now());
@@ -331,7 +337,14 @@ impl Worker {
             }
             let Some(media) = self.media.as_mut() else { continue };
             if let Some(packet) = media.send(&out) {
-                if let Err(err) = self.socket.send_to(&packet, media.remote()) {
+                let to = media.remote();
+                if !moqui_sip::media::media_target_allowed(to, local) {
+                    // the SDP named an address no phone can be (SEC-COM-27)
+                    if refused != Some(to) {
+                        tracing::warn!("SIP leg {}: no RTP to {to}: not an address a phone can be", self.leg);
+                        refused = Some(to);
+                    }
+                } else if let Err(err) = self.socket.send_to(&packet, to) {
                     tracing::debug!("SIP leg {}: RTP not sent: {err}", self.leg);
                 }
             }

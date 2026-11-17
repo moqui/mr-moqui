@@ -533,8 +533,33 @@ fn a_guest_by_link_joins_over_its_own_socket_and_revoking_the_link_ends_it() {
     };
     assert!(!call_id.is_empty() && !host_leg.is_empty() && !guest_leg.is_empty() && !credential.is_empty());
 
+    // one client holds at most 4 of the places of sockets that have not sent their credential (SEC-COM-04)
+    let idle: Vec<Ws> = (0..4).map(|_| open_guest_socket(http)).collect();
+    let uri: tungstenite::http::Uri = format!("ws://{http}/callws").parse().unwrap();
+    match connect(ClientRequestBuilder::new(uri)) {
+        Err(tungstenite::Error::Http(answer)) => assert_eq!(answer.status(), 503),
+        other => panic!(
+            "a fifth waiting socket from one client is refused: {:?}",
+            other.map(|_| ())
+        ),
+    }
+    drop(idle);
+    let until = Instant::now() + Duration::from_secs(5);
+    let mut bad = loop {
+        let uri: tungstenite::http::Uri = format!("ws://{http}/callws").parse().unwrap();
+        match connect(ClientRequestBuilder::new(uri)) {
+            Ok((socket, _)) => {
+                if let MaybeTlsStream::Plain(tcp) = socket.get_ref() {
+                    tcp.set_read_timeout(Some(Duration::from_millis(5))).unwrap();
+                }
+                break socket;
+            }
+            Err(_) if Instant::now() < until => std::thread::sleep(Duration::from_millis(50)),
+            Err(e) => panic!("the places come back when the sockets close: {e}"),
+        }
+    };
+
     // a socket whose first frame is no credential that works is refused
-    let mut bad = open_guest_socket(http);
     bad.send(Message::Text(
         json!({"rtc": "guestAuth", "credential": "x".repeat(40)})
             .to_string()
@@ -592,6 +617,24 @@ fn a_guest_by_link_joins_over_its_own_socket_and_revoking_the_link_ends_it() {
         !guest.frames.iter().any(|f| f.get("rtc").is_none()),
         "no notification reached the guest"
     );
+
+    // a relayed frame keeps only its own fields, and a leg relays a few a second (SEC-COM-08)
+    guest.send(json!({"rtc": "reaction", "emoji": "👍", "from": host_leg, "padding": "x".repeat(10_000)}));
+    let reacted = run_until(&mut [&mut host, &mut guest], Duration::from_secs(3), |p| {
+        p[0].frame("reaction").is_some()
+    });
+    assert!(reacted, "host frames {:?}", host.frames);
+    let reaction = host.frame("reaction").cloned().unwrap();
+    assert_eq!(reaction["from"], json!(guest_leg), "{reaction}");
+    assert_eq!(reaction["emoji"], json!("👍"));
+    assert!(reaction.get("padding").is_none(), "{reaction}");
+    for n in 0..40 {
+        guest.send(json!({"rtc": "reaction", "id": 100 + n, "emoji": "🎉"}));
+    }
+    let limited = run_until(&mut [&mut host, &mut guest], Duration::from_secs(3), |p| {
+        p[1].frames.iter().any(|f| f["code"] == json!("rateLimited"))
+    });
+    assert!(limited, "guest frames {:?}", guest.frames);
 
     // revoking the link removes the guest: its page hears the call ended for it
     {

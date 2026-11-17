@@ -1682,3 +1682,33 @@ fn a_live_member_with_another_ssh_host_key_is_named() {
     );
     assert!(super::ssh_key_differs(&members, "self", "", 1_100, 500).is_empty());
 }
+
+/// A row with another session key or cluster certificate gets no cluster message (SEC-CLU-04).
+#[test]
+fn messages_go_only_to_a_row_of_this_members_material() {
+    let row = |session_fp: &str, cert_fp: &str| super::LoadedMember {
+        instance_id: "peer".to_string(),
+        base_url: "ssh://198.51.100.9:22".to_string(),
+        heartbeat: Some(1_000),
+        session_fp: session_fp.to_string(),
+        cert_fp: cert_fp.to_string(),
+        ssh_fp: String::new(),
+        version: String::new(),
+        edge_link_url: String::new(),
+    };
+    let own = super::Member {
+        instance_id: "self".to_string(),
+        base_url: String::new(),
+        heartbeat: Value::Null,
+        session_fp: "S".to_string(),
+        cert_fp: "C".to_string(),
+        ssh_fp: String::new(),
+        version: String::new(),
+        edge_link_url: String::new(),
+    };
+    assert!(super::same_material(&row("S", "C"), Some(&own)));
+    assert!(!super::same_material(&row("S", "other"), Some(&own)));
+    assert!(!super::same_material(&row("other", "C"), Some(&own)));
+    assert!(!super::same_material(&row("", ""), Some(&own)));
+    assert!(super::same_material(&row("", ""), None), "before this member started");
+}

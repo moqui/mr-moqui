@@ -189,7 +189,7 @@ The only credential among them is `VoiceTrunk.authJson`. It is encrypted on the 
 
 Replication is one way. There is no call by which an edge node writes a replicated record back, and the edge node's copies are read only there. `get#ReplicaValues` on the edge node returns each record's fields as stored, `authJson` included, to a caller authorized for it. No screen calls it.
 
-The receiving side of `Link.Replicate` has these bounds only: the link's key and generation, the 16 MiB message, and the pool's sender-lock check on the set's cursor. `apply_batch_rows` (`crates/moqui-core/src/edge/replica.rs`) writes one `EdgeReplicaValue` row for each change with the set and entity names the sender gives. It does not compare those names with the edge node's own `<replicate>` conf. It has no limit on the changes of a batch and no total for a pairing. The 500 records and 4 MiB are where the sender splits.
+The receiving side of `Link.Replicate` has these bounds only: the link's key and generation, the 16 MiB message, and the pool's sender-lock check on the set's cursor. Before it applies a batch the edge node refuses one with more than 500 records (where the sender splits), a set its own `<replicate>` conf does not name, or an entity that set does not have (`replica::batch_refused`, SEC-CLU-02). `apply_batch_rows` (`crates/moqui-core/src/edge/replica.rs`) then writes one `EdgeReplicaValue` row for each change. There is no total of rows or bytes for a pairing.
 
 ### Received queue content and receipts
 

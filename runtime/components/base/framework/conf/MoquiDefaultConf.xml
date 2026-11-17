@@ -254,11 +254,13 @@
         of a call sends its media to (ICE and DTLS-SRTP through the server's SFU), off while empty; 0 is a free port.
         rtc_media_host: the address it binds (loopback by default); rtc_public_address: the address it tells browsers, an
         IP or IP:port, for a server behind 1:1 NAT (the bound address by default; required when rtc_media_host binds every
-        address). call_ring_seconds: how long a call rings before it is missed. -->
+        address). call_ring_seconds: how long a call rings before it is missed. call_guest_joins_per_minute: the most guests
+        who join by one call link in a minute, whatever their client. -->
     <default-property name="rtc_media_port" value=""/>
     <default-property name="rtc_media_host" value="127.0.0.1"/>
     <default-property name="rtc_public_address" value=""/>
     <default-property name="call_ring_seconds" value="45"/>
+    <default-property name="call_guest_joins_per_minute" value="20"/>
     <!-- Live captions (W6; docs/interfaces/WebRTC.md, Captions): off unless call_captions_enabled is true. Someone in a call
         turns them on; its media node sends each speaker's audio, in chunks of at most call_captions_chunk_seconds, to the
         speech provider (the model bound to the transcribe feature; call_captions_provider local is speech-local, not built

@@ -163,6 +163,51 @@ fn grpc_sender(_config: &rustls::ClientConfig, rest: Arc<dyn Sender>) -> Arc<dyn
     rest
 }
 
+/// The addresses the members' `clusterBaseUrl` hosts resolve to, for the cluster listener's member slots and the SSH
+/// channel's login (SEC-CLU-03). One that does not resolve is left out.
+#[cfg(any(feature = "axum", feature = "ssh"))]
+pub(crate) fn member_addresses(
+    factory: &Arc<ExecutionContextFactory>,
+) -> Result<std::collections::HashSet<IpAddr>, String> {
+    let facade = factory.entity().ok_or("no entity facade")?;
+    let context = factory.new_context();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    let rows = facade
+        .find("moqui.server.ClusterMember")
+        .and_then(|find| find.select_field("clusterBaseUrl").list())
+        .map_err(|err| err.to_string())?;
+    let mut addresses = std::collections::HashSet::new();
+    for row in rows.values() {
+        let url = moqui_core::service::util::field_text(row, "clusterBaseUrl");
+        let Some((host, port)) = url_host(&url) else {
+            continue;
+        };
+        match std::net::ToSocketAddrs::to_socket_addrs(&(host.as_str(), port)) {
+            Ok(resolved) => addresses.extend(resolved.map(|address| address.ip().to_canonical())),
+            Err(err) => tracing::debug!("cluster member {url} does not resolve: {err}"),
+        }
+    }
+    Ok(addresses)
+}
+
+/// The host and port of a base URL (`https://host:port/...`, `ssh://[v6]:port`), the port 0 when it has none.
+#[cfg_attr(not(any(feature = "axum", feature = "ssh")), allow(dead_code))]
+pub(crate) fn url_host(url: &str) -> Option<(String, u16)> {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = rest.split(['/', '?']).next()?.rsplit('@').next()?;
+    if let Some(inner) = authority.strip_prefix('[') {
+        let (host, after) = inner.split_once(']')?;
+        let port = after.strip_prefix(':').and_then(|port| port.parse().ok()).unwrap_or(0);
+        return Some((host.to_string(), port));
+    }
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) => (host, port.parse().unwrap_or(0)),
+        None => (authority, 0),
+    };
+    (!host.is_empty()).then(|| (host.to_string(), port))
+}
+
 /// The shared cluster key `cluster_tls_key`, as DER, for the SSH channel's derived login key.
 #[cfg(feature = "ssh")]
 pub(crate) fn cluster_key_der() -> Result<Vec<u8>, HostError> {

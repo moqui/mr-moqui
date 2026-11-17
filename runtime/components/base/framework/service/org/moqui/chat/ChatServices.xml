@@ -4182,7 +4182,8 @@ along with this software (see the LICENSE.md file). If not, see
             to {userId, presence, statusText, emoji, clearAtDate, inCall, lastActiveDate}. presence is offline without a
             heartbeat in the last 3 minutes and for an invisible user, else dnd or away as set, else away when the user
             has been idle for their CHAT_AUTO_AWAY_MINUTES preference (10 by default), else online. A clear-at time that
-            has come clears the text and emoji and puts the status back to online (expire#UserStatuses writes it). With the
+            has come clears the text and emoji and puts the status back to online (expire#UserStatuses writes it). Another
+            user who is offline (invisible included) is answered with no lastActiveDate and inCall false. With the
             current user among them, myStatus adds statusEnumId and status (online, away, dnd, invisible: what the user
             chose) and autoAwayMinutes. An external current user (EXTERNAL_USER) gets only their own: others are left out of
             statusMap.</description>
@@ -4231,6 +4232,8 @@ along with this software (see the LICENSE.md file). If not, see
                 const item = {userId: id, presence: presence, statusText: row && !expired ? row.statusText ?? null : null,
                     emoji: row && !expired ? row.emoji ?? null : null, clearAtDate: row && !expired ? toMillis(row.clearAtDate) : null,
                     inCall: !!row && row.inCall === 'Y', lastActiveDate: active}
+                // an offline (or invisible) user's activity and call are not told to others
+                if (presence === 'offline' && id !== me) { item.inCall = false; item.lastActiveDate = null }
                 statusMap[id] = item
                 if (id === me) myStatus = Object.assign({}, item, {statusEnumId: chosen, status: CODES[chosen] || 'online', autoAwayMinutes: minutes,
                     connected: !!seen && now - seen <= OFFLINE_AFTER})
@@ -4256,7 +4259,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (!force && row && row.lastPresence === item.presence) return
             if (row) { row.set('lastPresence', item.presence); row.update() }
             const message = {userId: userId, presence: item.presence, statusText: item.statusText, emoji: item.emoji,
-                clearAtDate: item.clearAtDate, inCall: item.inCall}
+                clearAtDate: item.clearAtDate, inCall: item.presence !== 'offline' && !!item.inCall}
             const roomIds = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('userId', userId).condition('leftDate', null)
                     .selectField('chatRoomId').disableAuthz().list()).map((member) => member.chatRoomId)
             const others = new Set()
@@ -4268,7 +4271,7 @@ along with this software (see the LICENSE.md file). If not, see
             const CODES = {UpsOnline: 'online', UpsAway: 'away', UpsDnd: 'dnd', UpsInvisible: 'invisible'}
             const expired = row && row.clearAtDate && Number(row.clearAtDate) <= Number(ec.user.nowTimestamp)
             ec.service.sync().name('org.moqui.chat.ChatServices.push#Signal').parameters({topic: 'userStatus', userIdList: [userId],
-                message: Object.assign({}, message, {self: true, status: row && !expired ? CODES[row.statusEnumId] || 'online' : 'online'})}).call()
+                message: Object.assign({}, message, {self: true, inCall: !!row && row.inCall === 'Y', status: row && !expired ? CODES[row.statusEnumId] || 'online' : 'online'})}).call()
             published = true
         ]]></script></actions>
     </service>

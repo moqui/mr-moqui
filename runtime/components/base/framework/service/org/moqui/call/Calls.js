@@ -51,6 +51,8 @@ const NEVER_CONNECTED_MS = 120000
 const MEDIA_NODE_STALE_MS = 60000
 /** The most people a call rings. */
 const MAX_INVITEES = 50
+/** The most guests who join by one link in a minute (call_guest_joins_per_minute, 20 by default). */
+const guestJoinsPerMinute = () => Math.max(1, Number(System.getProperty('call_guest_joins_per_minute')) || 20)
 /** How long a guest's credential lasts. */
 const GUEST_HOURS = 4
 /** How long a call link lasts by default, and at most, in hours. */
@@ -1522,8 +1524,15 @@ function guestJoin(p) {
   const session = linkSession(link)
   if (!session) return refuse('mediaUnavailable', 'Calls are not available: no media server is running')
   if (isE2ee(session)) return refuse('encryptedNoGuests', 'This meeting is end-to-end encrypted: guests cannot join it')
-  const guests = find(PARTICIPANT).condition('callSessionId', session.callSessionId).condition('identityKindEnumId', 'CikGuest')
-    .condition('admissionStatusId', 'in', ['CasWaiting', 'CasAdmitted']).count()
+  // joins by one link are limited whatever the client: each makes rows and pushes the name to the people in the call
+  const joinedLately = find(GUEST).condition('callLinkId', link.callLinkId)
+    .condition('createdDate', '>=', new Date(nowMs() - 60000)).count()
+  if (joinedLately >= guestJoinsPerMinute()) {
+    return refuse('tooManyJoins', 'Many people are joining by this link: try again in a minute')
+  }
+  // a place is held by a guest who is waiting or in the call (an open leg), not by one who left or whose leg timed out
+  const guests = find(LEG).condition('callSessionId', session.callSessionId).condition('legTypeEnumId', 'CltGuest')
+    .condition('statusId', 'in', OPEN_LEG).count()
   if (guests >= MAX_INVITEES) return refuse('callFull', 'The call is full')
   const now = ec.user.nowTimestamp
   const credential = ec.user.randomString(40)

@@ -524,7 +524,7 @@ where
     let intake = moqui_lib::sync::lock(&factory.extension(|_| IntakeSlot::default()).0).clone();
     match intake {
         Some(intake) if !*intake.shutdown.borrow() => {
-            intake.serve(stream, peer);
+            intake.serve(stream, peer, true);
             true
         }
         _ => false,
@@ -550,13 +550,14 @@ async fn accept_loop(listener: TcpListener, intake: Arc<Intake>) {
             continue;
         };
         let _ = stream.set_nodelay(true);
-        intake.serve(stream, peer);
+        intake.serve(stream, peer, false);
     }
 }
 
 impl Intake {
-    /// Serve one connection from `peer` in a task of its own, or close it when too many wait to log in.
-    fn serve<S>(&self, stream: S, peer: SocketAddr)
+    /// Serve one connection from `peer` in a task of its own, or close it when too many wait to log in. `via_edge`: a
+    /// tunnel stream an edge link handed over, `peer` the client the edge node names.
+    fn serve<S>(&self, stream: S, peer: SocketAddr, via_edge: bool)
     where
         S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     {
@@ -579,6 +580,7 @@ impl Intake {
             shared: Arc::clone(&self.shared),
             slot: Arc::clone(&slot),
             peer,
+            via_edge,
             username: None,
             login_name: None,
             dialog_used: false,
@@ -635,6 +637,9 @@ struct Connection {
     /// This connection's place in the pre-auth and session counts.
     slot: Arc<Slot>,
     peer: SocketAddr,
+    /// Through an edge node's SSH tunnel: `peer` is the client the edge node names, never this machine (SEC-CLU-01),
+    /// and no cluster peer comes this way (SEC-CLU-03).
+    via_edge: bool,
     /// The user logged in by key or password; `None` before, and for a connection let in for the login dialog.
     username: Option<String>,
     /// Let in with no user (keyboard-interactive): the name the client gave, which the login dialog starts with. Such
@@ -833,7 +838,7 @@ impl Connection {
             factory: std::sync::Weak::clone(&self.shared.factory),
             username: username.to_string(),
             size: pty.size.subscribe(),
-            facts: crate::term::access::Facts::over_ssh(self.peer.ip()),
+            facts: crate::term::access::Facts::over_ssh(self.peer.ip(), self.via_edge),
             session_id: format!("ssh-{}", self.peer),
         })
     }
@@ -982,6 +987,27 @@ impl russh::server::Handler for Connection {
         let public_key = offer.public_key;
         if user == super::cluster::CLUSTER_USER {
             if super::cluster::is_cluster_key(public_key) {
+                // only a member of a cluster on the ssh transport, directly (SEC-CLU-03)
+                let factory = std::sync::Weak::clone(&self.shared.factory);
+                let members = tokio::task::spawn_blocking(move || {
+                    factory
+                        .upgrade()
+                        .map(|factory| crate::cluster_edge::member_addresses(&factory))
+                })
+                .await;
+                let members = match members {
+                    Ok(Some(Ok(members))) => members,
+                    Ok(Some(Err(err))) => {
+                        tracing::warn!("cluster login from {}: the members could not be read: {err}", self.peer);
+                        return Ok(Auth::reject());
+                    }
+                    Ok(None) | Err(_) => return Ok(Auth::reject()),
+                };
+                let takes_ssh = super::cluster::takes_ssh_channel();
+                if let Some(why) = super::cluster::login_refused(takes_ssh, self.via_edge, self.peer.ip(), &members) {
+                    tracing::warn!("cluster login from {} refused: {why}", self.peer);
+                    return Ok(Auth::reject());
+                }
                 if let Err(refused) = self.slot.log_in(Who::Cluster) {
                     tracing::warn!(
                         "cluster peer from {} refused: ssh-server {} sessions are open",

@@ -306,7 +306,8 @@ impl Session {
                     attachments.push(backend::text(&found, "chatAttachmentId"));
                     body = body.replace(url.as_str(), "").trim().to_string();
                 }
-                Err(err) => tracing::warn!("XMPP: upload {url} not attached: {err}"),
+                // the URL's token alone reads the file, so the log names only the file
+                Err(err) => tracing::warn!("XMPP: upload {} not attached: {err}", upload_file_name(url)),
             }
         }
         if !attachments.is_empty() {
@@ -1089,6 +1090,11 @@ impl Session {
         }
         Some(message.build())
     }
+}
+
+/// The file name of an upload URL (`<base>/xmpp-upload/<token>/<name>`), without the token that reads the file.
+pub(super) fn upload_file_name(url: &str) -> &str {
+    url.rsplit('/').next().unwrap_or_default()
 }
 
 /// The body without the part a fallback element (XEP-0428) marks for `for_ns`.

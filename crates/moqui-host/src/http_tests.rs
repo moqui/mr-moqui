@@ -766,17 +766,22 @@ fn empty_webapp_http_port_is_8080() {
 
 #[test]
 fn status_routes_allow_loopback_only() {
-    assert!(status_allowed("", "127.0.0.1"));
-    assert!(status_allowed("", "::1"));
-    assert!(status_allowed("", "0:0:0:0:0:0:0:1"));
+    use moqui_core::web::RequestVia::{Direct, Edge};
+    assert!(status_allowed("", "127.0.0.1", Direct));
+    assert!(status_allowed("", "::1", Direct));
+    assert!(status_allowed("", "0:0:0:0:0:0:0:1", Direct));
     // an IPv4 peer seen through a dual-stack socket is its IPv4 address
     let mapped: std::net::IpAddr = "::ffff:127.0.0.1".parse().unwrap();
-    assert!(status_allowed("", &mapped.to_canonical().to_string()));
-    assert!(!status_allowed("127.0.0.1", "203.0.113.5"));
+    assert!(status_allowed("", &mapped.to_canonical().to_string(), Direct));
+    assert!(!status_allowed("127.0.0.1", "203.0.113.5", Direct));
     // all of 127.0.0.0/8 is loopback (a client spec's own address on a test server)
-    assert!(status_allowed("", "127.1.0.7"));
-    assert!(!status_allowed("", "128.0.0.1"));
-    assert!(status_allowed("10.0.0.9, 203.0.113.5", "203.0.113.5"));
+    assert!(status_allowed("", "127.1.0.7", Direct));
+    assert!(!status_allowed("", "128.0.0.1", Direct));
+    assert!(status_allowed("10.0.0.9, 203.0.113.5", "203.0.113.5", Direct));
+    // the loopback client an edge node names is not this machine (SEC-CLU-01); a listed address still is allowed
+    assert!(!status_allowed("", "127.0.0.1", Edge));
+    assert!(!status_allowed("", "::1", Edge));
+    assert!(status_allowed("203.0.113.5", "203.0.113.5", Edge));
 }
 
 #[tokio::test]

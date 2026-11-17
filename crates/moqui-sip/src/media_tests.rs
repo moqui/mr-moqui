@@ -287,3 +287,32 @@ fn plain_rtp_from_a_phone_behind_a_nat_latches_only_to_its_signaling_address() {
     );
     assert_eq!(leg.remote(), nat);
 }
+
+#[test]
+fn rtp_goes_to_no_address_a_phone_cannot_be() {
+    let at = |s: &str| s.parse::<SocketAddr>().unwrap();
+    let public: IpAddr = "198.51.100.1".parse().unwrap();
+    let loopback: IpAddr = "127.0.0.1".parse().unwrap();
+    // a phone behind NAT names its private address, and a trunk its public one
+    assert!(media_target_allowed(at("192.168.1.20:40000"), public));
+    assert!(media_target_allowed(at("203.0.113.5:40000"), public));
+    // a server bound to a public or private address sends nothing to loopback, link-local, multicast, broadcast,
+    // nowhere, port 0 or itself
+    for refused in [
+        "127.0.0.1:5432",
+        "[::1]:6379",
+        "[::ffff:127.0.0.1]:5432",
+        "169.254.169.254:80",
+        "[fe80::1]:80",
+        "224.0.0.251:5353",
+        "255.255.255.255:9",
+        "0.0.0.0:40000",
+        "203.0.113.5:0",
+        "198.51.100.1:20000",
+    ] {
+        assert!(!media_target_allowed(at(refused), public), "{refused}");
+    }
+    // in development a server bound to loopback reaches a phone on the same machine
+    assert!(media_target_allowed(at("127.0.0.1:40000"), loopback));
+    assert!(!media_target_allowed(at("169.254.169.254:80"), loopback));
+}

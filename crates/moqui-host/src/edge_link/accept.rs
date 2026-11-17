@@ -2915,6 +2915,13 @@ impl Link for LinkService {
         self.edge_set()?;
         let batch = super::replicate::batch_of(request.into_inner());
         let set = batch.set_name.clone();
+        // only the sets and entities this node's conf replicates, in batches as a sender makes them (SEC-CLU-02)
+        if let Some(why) = self.server.factory.upgrade().and_then(|factory| {
+            moqui_core::edge::replica::batch_refused(&moqui_core::edge::settings(&factory).sets, &batch)
+        }) {
+            tracing::warn!("Edge link of {node}: a batch of set {set} is refused: {why}");
+            return Err(Status::invalid_argument(why));
+        }
         let key = node.to_string();
         let answer = self
             .server
