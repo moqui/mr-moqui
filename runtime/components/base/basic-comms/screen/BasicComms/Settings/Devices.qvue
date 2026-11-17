@@ -60,38 +60,9 @@ along with this software (see the LICENSE.md file). If not, see
             <q-btn unelevated no-caps color="primary" :label="t('Restore')" :loading="restore.busy" class="m-chat-restore-go" @click="restoreBackup"></q-btn>
         </div>
     </q-card>
-    <q-card v-for="v in verifications" :key="v.flowId" flat bordered class="q-pa-md m-chat-verification">
-        <div class="text-subtitle1">{{v.weStarted ? t('Verifying') : t('Asked to verify')}} {{v.otherDeviceId || v.otherUserId}}</div>
-        <div v-if="v.done" class="text-positive">{{t('Verified')}}</div>
-        <template v-else-if="v.cancelled">
-            <div class="m-muted m-chat-verification-ended">{{v.timedOut ? t('The verification timed out: the other device did not answer in time.') : t('Cancelled')}}
-                <span v-if="v.cancelReason && !v.timedOut">({{v.cancelReason}})</span></div>
-            <div class="row q-gutter-xs q-mt-xs">
-                <q-btn v-if="retryDevice(v)" unelevated no-caps color="primary" :label="t('Try again')" class="m-chat-verification-retry" @click="retry(v)"></q-btn>
-                <q-btn flat no-caps :label="t('Dismiss')" @click="dismiss(v)"></q-btn>
-            </div>
-        </template>
-        <template v-else>
-            <div v-if="v.started && !v.emojis && !v.qrImage && !v.scanned" class="m-muted q-my-sm m-chat-verification-waiting" role="status">
-                {{t('Waiting for the other device…')}}<span v-if="v.remainingMs"> {{timeLeft(v.remainingMs)}}</span></div>
-            <div v-else-if="v.confirmed" class="m-muted q-my-sm m-chat-verification-waiting" role="status">{{t('Waiting for the other device to confirm')}}</div>
-            <div v-if="v.emojis" class="row q-gutter-md q-my-sm">
-                <div v-for="e in v.emojis" :key="e.description" class="column items-center"><span style="font-size:32px">{{e.symbol}}</span><span class="text-caption">{{t(e.description)}}</span></div>
-            </div>
-            <div v-if="v.emojis" class="text-caption m-muted">{{t('Do the same emoji show on the other device, in the same order?')}}</div>
-            <img v-if="v.qrImage && !v.emojis" :src="v.qrImage" alt="QR" style="width:220px;height:220px" class="q-my-sm">
-            <div class="row q-gutter-xs q-mt-xs">
-                <q-btn v-if="!v.weStarted && v.phase === 'requested'" unelevated no-caps color="primary" :label="t('Accept')" @click="step(v, 'accept')"></q-btn>
-                <q-btn v-if="v.ready && !v.emojis" flat no-caps icon="sym_o_mood" :label="t('Compare emoji')" @click="step(v, 'sas')"></q-btn>
-                <q-btn v-if="v.ready && !v.emojis && !v.qrImage" flat no-caps icon="sym_o_qr_code_2" :label="t('Show a QR code')" @click="step(v, 'showQr')"></q-btn>
-                <q-btn v-if="v.ready && !v.emojis && canScan" flat no-caps icon="sym_o_qr_code_scanner" :label="t('Scan their code')" @click="scan(v)"></q-btn>
-                <q-btn v-if="v.scanned" unelevated no-caps color="primary" :label="t('They scanned it')" @click="step(v, 'qrConfirm')"></q-btn>
-                <q-btn v-if="v.emojis && !v.confirmed" unelevated no-caps color="primary" :label="t('They match')" @click="step(v, 'confirm')"></q-btn>
-                <q-btn v-if="v.emojis && !v.confirmed" flat no-caps color="negative" :label="t('They differ')" @click="step(v, 'mismatch')"></q-btn>
-                <q-btn flat no-caps :label="t('Cancel')" @click="step(v, 'cancel')"></q-btn>
-            </div>
-        </template>
-    </q-card>
+    <!-- each verification going on (the shared m-chat-verification card, also Chat's for another person) -->
+    <m-chat-verification v-for="v in verifications" :key="v.flowId" :flow="v" :who="whoOf(v)" :can-retry="!!retryDevice(v)" @retry="retry(v)"
+            @step="stepped"></m-chat-verification>
     <div v-if="loaded && !devices.length" class="m-muted">{{t('No devices yet.')}}</div>
     <q-list bordered separator class="rounded-borders" style="min-width:0" v-if="devices.length">
         <q-item v-for="d in devices" :key="d.deviceId" :class="phone ? 'column items-stretch' : ''">
@@ -129,7 +100,6 @@ module.exports = {
         // a phone: the device's actions under it, so nothing runs off the screen
         phone() { return this.$q.screen.lt.sm; },
         problem() { return (moqui.crypto && moqui.crypto.state.problem) || null; },
-        canScan() { return typeof window.BarcodeDetector === 'function' && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia); },
         backupText() {
             const b = this.backup;
             if (!this.thisId) return t('This browser has no encryption keys yet.');
@@ -226,32 +196,15 @@ module.exports = {
         },
         // one of this user's own devices can be asked again
         retryDevice(v) { return v.otherDeviceId && v.otherDeviceId !== this.thisId ? this.devices.find((d) => d.deviceId === v.otherDeviceId) || null : null; },
-        retry(v) { const d = this.retryDevice(v); this.dismiss(v); if (d) this.verify(d); },
-        dismiss(v) { if (moqui.crypto && moqui.crypto.dismissVerification) moqui.crypto.dismissVerification(v.flowId); },
-        timeLeft(ms) {
-            const seconds = Math.max(0, Math.round(Number(ms) / 1000));
-            return '(' + (seconds >= 60 ? Math.ceil(seconds / 60) + ' ' + t('min left') : seconds + ' ' + t('s left')) + ')';
-        },
-        step(v, action, arg) {
-            moqui.crypto.verification(v.flowId, action, arg).then(() => { if (action === 'confirm' || action === 'qrConfirm') setTimeout(() => this.loadCrypto(), 1500); },
-                (err) => moqui.notifyMessages([], (err && err.errors) || t('The verification step failed')));
-        },
-        // the other device's QR code read with the camera (BarcodeDetector), its bytes handed to the verification
-        scan(v) {
-            const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
-            navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }).then((stream) => {
-                const video = document.createElement('video');
-                video.srcObject = stream;
-                video.play();
-                const stop = () => stream.getTracks().forEach((track) => track.stop());
-                const started = Date.now();
-                const look = () => detector.detect(video).then((codes) => {
-                    if (codes.length) { stop(); this.step(v, 'scanned', Array.from(codes[0].rawValue, (ch) => ch.charCodeAt(0) & 0xff)); }
-                    else if (Date.now() - started < 30000) setTimeout(look, 300);
-                    else stop();
-                }, () => setTimeout(look, 300));
-                look();
-            }, () => moqui.notifyMessages([], t('The camera is not available')));
+        // a match confirmed: the devices' trust read again once the other side is done
+        stepped(action) { if (action === 'confirm' || action === 'qrConfirm') setTimeout(() => this.loadCrypto(), 1500); },
+        // the card dismisses it first (m-chat-verification's retry)
+        retry(v) { const d = this.retryDevice(v); if (d) this.verify(d); },
+        // whom a verification is with: one of my devices by its name, another person by their userId (Chat names them)
+        whoOf(v) {
+            if (v.otherUserId && v.otherUserId !== this.$root.userId) return v.otherUserId;
+            const d = v.otherDeviceId ? this.devices.find((one) => one.deviceId === v.otherDeviceId) : null;
+            return d ? d.displayName || d.deviceId : v.otherDeviceId || '';
         },
         copy(text) { if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => moqui.notifyMessages([{ type: 'success', message: t('Copied') }]), () => null); },
         rename(d) {

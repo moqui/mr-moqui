@@ -505,16 +505,21 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="bind" noun="Connection" allow-remote="false">
         <description>Internal (the host's /notws, as the socket's user): bind the socket to the user's leg of the
             call. The leg must be the user's, admitted and in the call, and the call not ended. Claims the leg's next
-            generation and fences the older connection (CcsReplaced); the answer tells the socket which media node to signal.</description>
+            generation and fences the older connection (CcsReplaced); the answer tells the socket which media node to signal.
+            With direct, the page sends its media to the other page peer to peer and the socket carries only their
+            signaling, through the call's media node: refused (notDirect) unless the call is on the direct path (the call
+            view's direct; docs/interfaces/WebRTC.md "The direct path").</description>
         <in-parameters>
             <parameter name="callSessionId" required="true"/>
             <parameter name="callLegId" required="true"/>
             <parameter name="signalingNodeId"/>
+            <parameter name="direct" type="Boolean"/>
         </in-parameters>
         <out-parameters>
             <parameter name="callConnectionId"/>
             <parameter name="callLegId"/>
             <parameter name="generation" type="Integer"/>
+            <parameter name="direct" type="Boolean"/>
             <parameter name="mediaNodeId"><description>The node holding the leg's media: the call's, or with rtc_cascade_enabled the signaling node (W7)</description></parameter>
             <parameter name="originNodeId"><description>The call's media node (W7)</description></parameter>
             <parameter name="call" type="Map"/>
@@ -587,6 +592,29 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="callSessionId" required="true"/></in-parameters>
         <out-parameters><parameter name="iceServers" type="List"/><parameter name="reasonCode"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Calls.js').execute('iceServers', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="CallPreferences">
+        <description>The current user's call preferences kept on the server (Settings, Calls): alwaysRelay, whether their
+            calls stay on the media server so the person they call never sees their network address, and whether this
+            server sends one-to-one calls peer to peer at all (call_direct_path).</description>
+        <out-parameters>
+            <parameter name="alwaysRelay" type="Boolean"/>
+            <parameter name="directPathEnabled" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Calls.js').execute('preferences', context))</script></actions>
+    </service>
+    <service verb="set" noun="CallPreferences">
+        <description>Sets the current user's call preferences: alwaysRelay (Always relay my calls) keeps their calls on
+            the media server. It holds from their next call or reconnect.</description>
+        <in-parameters><parameter name="alwaysRelay" type="Boolean"/></in-parameters>
+        <out-parameters>
+            <parameter name="alwaysRelay" type="Boolean"/>
+            <parameter name="directPathEnabled" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Calls.js').execute('setPreferences', context))</script></actions>
     </service>
 
     <service verb="get" noun="GuestIceServers" authenticate="anonymous-all">

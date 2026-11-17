@@ -29,8 +29,11 @@ connection", the gaps of what is kept) shows only there
 
 Test ([the two suites](../../../../docs/Build-Test.md#the-two-suites)): the regression suite is `./moq test basic-comms`,
 the shell's sync states (no server) `./moq test-client basic-comms --offline` and the crypto walk
-`./moq test-client basic-comms --serve`; the acceptance suite, the call and encrypted chat walks, the phone's chat in
-the bundled shell at 390 × 844 and the E2EE labels there and at a desktop's width (`test/acceptance/client/`), is `./moq accept basic-comms` with a binary that has the `rtc` feature
+`./moq test-client basic-comms --serve`; the acceptance suite, the call and encrypted chat walks, the direct path, the
+phone's chat in the bundled shell at 390 × 844 (and reactions, who reacted and Info there by touch) and the E2EE labels there and at a desktop's width
+(`test/acceptance/client/`), is `./moq accept basic-comms` with a binary that has the `rtc` feature; its calls on shaped
+networks (`CallNetwork`) run only under `sudo scripts/call-network.sh` and skip otherwise
+([WebRTC, The network tests](../../../../docs/interfaces/WebRTC.md#the-network-tests)). See also
 (calls: [docs/interfaces/WebRTC.md](../../../../docs/interfaces/WebRTC.md); voicemail, the Voicemail tab, Calls/Voicemail and Settings/Phone:
 [docs/interfaces/Voicemail.md](../../../../docs/interfaces/Voicemail.md); the Dialer and Settings/Call handling:
 [docs/interfaces/SIP.md](../../../../docs/interfaces/SIP.md#call-handling); Calls/Queues and transfer in the call:

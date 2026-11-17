@@ -88,7 +88,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="pin"><default-field title="New PIN (${pinMinDigits} to 12 digits)"><password size="12"/></default-field></field>
                 <field name="submitButton"><default-field title="Save PIN"><submit/></default-field></field>
             </form-single>
-            <link url="clearPin" text="Remove the PIN" icon="sym_o_lock_open" condition="hasPin" confirmation="Remove the PIN? Your voicemail can no longer be reached by phone."/>
+            <link url="clearPin" text="Remove the PIN" icon="sym_o_key_off" condition="hasPin" confirmation="Remove the PIN? Your voicemail can no longer be reached by phone."/>
         </box-body></container-box>
         <container-box><box-header title="Voicemail notices"/><box-body>
             <form-single name="NoticeForm" transition="saveNotices" map="notices">

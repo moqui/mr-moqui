@@ -157,4 +157,54 @@ fn a_leg_relays_a_burst_and_then_a_few_frames_a_second() {
     let later = start + std::time::Duration::from_secs(1);
     let refilled = (0..100).filter(|_| bucket.take(later)).count();
     assert_eq!(refilled, 5, "five a second after it");
+    // a direct leg's peer frames: a call's offer, answer and candidates at once
+    let mut peer = RelayBucket::for_peer(start);
+    assert_eq!((0..100).filter(|_| peer.take(start)).count(), 60);
+}
+
+/// The direct path (plans/Comms-Messaging.md §8.3 item 15): a page's `peer` frame reaches the other page with only its
+/// kind and what that kind carries, named by its sender; an unknown kind, or an offer without its SDP or with one too
+/// long, goes nowhere.
+#[test]
+fn a_peer_frame_keeps_only_what_its_kind_carries() {
+    use super::driver::peer_frame;
+    use serde_json::json;
+    let offer = peer_frame(
+        "L1",
+        &json!({"rtc": "peer", "kind": "offer", "to": "L2", "sdp": "v=0", "from": "L9", "callLegId": "L1", "admin": 1}),
+    )
+    .unwrap();
+    assert_eq!(
+        offer,
+        json!({"rtc": "peer", "kind": "offer", "from": "L1", "sdp": "v=0"})
+    );
+    let candidate = peer_frame(
+        "L1",
+        &json!({"kind": "candidate", "candidate": "candidate:1 1 udp 1 10.0.0.2 5000 typ host", "sdpMid": "0",
+            "sdpMLineIndex": 0}),
+    )
+    .unwrap();
+    assert_eq!(candidate["sdpMid"], "0");
+    assert_eq!(candidate["sdpMLineIndex"], 0);
+    assert_eq!(
+        peer_frame("L1", &json!({"kind": "hello", "sdp": "v=0"})).unwrap(),
+        json!({"rtc": "peer", "kind": "hello", "from": "L1"})
+    );
+    assert!(
+        peer_frame("L1", &json!({"kind": "offer"})).is_none(),
+        "an offer without SDP"
+    );
+    assert!(peer_frame("L1", &json!({"kind": "offer", "sdp": "x".repeat(70_000)})).is_none());
+    assert!(peer_frame("L1", &json!({"kind": "candidate", "candidate": "x".repeat(2_000)})).is_none());
+    assert!(peer_frame("L1", &json!({"kind": "mute"})).is_none());
+}
+
+/// A direct join, as the SFU's join, takes only a newer generation than the leg's peer or route here.
+#[test]
+fn a_direct_join_of_an_older_generation_is_refused() {
+    use super::driver::newer_generation;
+    assert!(newer_generation(None, 1));
+    assert!(newer_generation(Some(1), 2));
+    assert!(!newer_generation(Some(2), 2), "the same generation");
+    assert!(!newer_generation(Some(3), 2), "an older one");
 }

@@ -44,6 +44,10 @@ pub(super) fn handle(_factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, 
 
 pub(super) fn socket_closed(_factory: &Arc<ExecutionContextFactory>, _slot_id: u64) {}
 
+pub(super) fn in_call(_slot_id: u64) -> bool {
+    false
+}
+
 pub(crate) fn install(_factory: &Arc<ExecutionContextFactory>, _shutdown: tokio::sync::watch::Receiver<bool>) {}
 
 /// No calls here, so no reply of an edge node's media driver is for a socket of this server.

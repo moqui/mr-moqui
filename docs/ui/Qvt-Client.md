@@ -1091,6 +1091,29 @@ the message text out of the user's `ChatMention` notifications (no `summary`, an
 `CHAT_READ_RECEIPTS` `N` sends no read marker of the user to the room and blanks it in the member lists others read; `CHAT_LINK_PREVIEWS`
 `N` fetches no link previews of the user's messages.
 
+**Info** (Comms-Messaging §4): `chat.messageInfo(event, memberList, {me, receipts, inThread, limit})` is what a message's
+Info may say, from the event as `get#Timeline` gives it and the room's members: `sent`, `from` (the network an inbound
+bridged message came from), `delivered` (per network, from the event's `delivery` destinations: only a message that
+went out on a bridge has it), `readBy` (`null` in a thread, which has no read markers; `{off: true}` when the viewer's
+read receipts are off; else `{people, more, count}`: the members other than the viewer, the sender and agents whose
+`lastReadEventSeq` is at or after the message, which the server blanks for a member with receipts off). Delivery to a
+member's device is never in it. `chat.messageInfoLines(info, when)` words it as `[{key, label, text}]`; a missing read
+is never said to be "not read". Chat reads the message again for it (`timeline?eventSeq=`), and the terminal twin
+(`ChatTui.xml`, `infoSeq`) says the same in text.
+
+## Emoji picker
+
+`WebrootEmoji.js` is `moqui.emoji` and `<m-emoji-picker :user-id @pick>`, loaded before `WebrootVue.qvt.js` (qapps.xml, the
+desktop shell's `index.html`; its template is precompiled in `WebrootVue.qvt.render.js`). Its data is
+`libs/emoji/emoji.json`, vendored by `libs/refresh.mjs` from `unicode-emoji-json` (MIT, the Unicode data's license in
+`libs/NOTICES.md`): `{version, groups: [{slug, name, emoji: [[emoji, name]]}]}`, Emoji 15.1 and earlier, fetched once when
+a picker first opens (`moqui.emoji.load()`; the desktop shell stages `libs/emoji`). The picker has a search line (every
+word typed starts a word of the name; `:` and `_` count as spaces; Enter picks the first), the groups as tabs and, first
+once there is one, Recent: the user's last 24 picks, kept in `localStorage` under `moqui.scopedKey('moqui.emoji.recent.' +
+userId)` (`recent`, `remember`; storage that is missing or throws keeps nothing and the pick still goes on). A pick is
+remembered and emitted as `pick`. Chat uses it for a reaction (the hover toolbar's "+", the sheet's and the right-click
+menu's "+") and in the composer. The terminal has no picker. Tests: `test/client/WebrootEmoji.spec.js` (webroot, offline).
+
 ## Notification listeners
 
 The shell root's `notificationClient` (`moqui.NotificationClient` of `MoquiLib.js`; null when no notification endpoint is

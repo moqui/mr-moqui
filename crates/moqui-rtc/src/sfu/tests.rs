@@ -75,7 +75,7 @@ fn simulcast_layer_follows_the_bandwidth_estimate() {
     let layer = |net: &Net| net.client("B").last_video_len.get("A").copied();
     assert_eq!(layer(&net), Some(LAYER_BYTES[2]), "unconstrained: the high layer");
 
-    net.client_mut("B").downlink_bps = Some(350_000);
+    net.client_mut("B").down.bps = Some(350_000);
     net.run(secs(8));
     assert_eq!(layer(&net), Some(LAYER_BYTES[0]), "constrained: the low layer");
     assert!(net
@@ -83,7 +83,7 @@ fn simulcast_layer_follows_the_bandwidth_estimate() {
         .iter()
         .any(|e| matches!(e, SfuEvent::Layer { key, layer: Some(Layer::Low), .. } if &*key.leg == "B")));
 
-    net.client_mut("B").downlink_bps = None;
+    net.client_mut("B").down.bps = None;
     net.run(secs(10));
     assert!(layer(&net) > Some(LAYER_BYTES[0]), "freed again: a higher layer");
 }
@@ -94,7 +94,7 @@ fn a_subscriber_below_the_floor_gets_audio_only() {
     net.join("A", true);
     net.join("B", false);
     net.run(secs(2));
-    net.client_mut("B").downlink_bps = Some(60_000);
+    net.client_mut("B").down.bps = Some(60_000);
     // the switch to audio only comes about 4 s in; what was queued before it is then paced out at the low estimate
     net.run(secs(10));
     let video = net.received("B", "A", MediaKind::Video);

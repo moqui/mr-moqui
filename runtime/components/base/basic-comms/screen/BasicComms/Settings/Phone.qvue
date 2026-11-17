@@ -60,7 +60,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <q-input v-model="pin" dense outlined type="password" inputmode="numeric" autocomplete="new-password" maxlength="12"
                     :label="box.hasPin ? t('New PIN') : t('PIN') + ' (' + pinMinDigits + '–12)'" style="width:200px"></q-input>
                 <q-btn unelevated no-caps color="primary" :label="box.hasPin ? t('Change PIN') : t('Set PIN')" :disable="!pin" @click="savePin"></q-btn>
-                <q-btn v-if="box.hasPin" flat no-caps icon="sym_o_lock_open" :label="t('Remove the PIN')" @click="clearPin"></q-btn>
+                <q-btn v-if="box.hasPin" flat no-caps icon="sym_o_key_off" :label="t('Remove the PIN')" @click="clearPin"></q-btn>
             </div>
         </q-card-section>
         <q-separator></q-separator>

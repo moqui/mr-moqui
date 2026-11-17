@@ -830,3 +830,111 @@ test("an encrypted room's trust: every other member's devices verified, else Ver
     chat.applyOpened(item, { error: "unreadable", withheld: "m.unverified" });
     assert.deepEqual([item.undecryptable, item.withheld], [true, "m.unverified"]);
 });
+
+test("the E2EE label's edges: a members-only record room is plain, a text with another bridge says both, an inbound-only bridge names nothing in the composer", () => {
+    const label = (room) => chat.e2eeLabel(room);
+    assert.equal(label({ roomTypeEnumId: "CrtRecord", visibilityEnumId: "CrvMembers" }).state, "plain", "a record room kept to its members");
+    assert.equal(label({ roomTypeEnumId: "CrtRecord" }).state, "public", "a record's room for those who see the record");
+    const both = label({ roomTypeEnumId: "CrtPrivate", bridges: [{ network: "sms", networkName: "SMS", outbound: true }, { network: "whatsapp", networkName: "WhatsApp", outbound: true }] });
+    assert.equal(both.state, "sms");
+    assert.ok(both.banner.includes("SMS provider") && both.banner.includes("the bridge reads messages"), both.banner);
+    assert.equal(both.hint, "Text message · WhatsApp message");
+    const inbound = label({ roomTypeEnumId: "CrtPrivate", bridges: [{ network: "xmpp", networkName: "XMPP", outbound: false }] });
+    assert.deepEqual([inbound.state, inbound.hint], ["bridged", ""], "nothing goes out through it");
+    assert.equal(label({ roomTypeEnumId: "CrtPrivate", bridges: [{ network: "sms", networkName: "SMS", outbound: false }] }).hint, "", "a text room that sends nothing out");
+});
+
+test("people's checks (§6.1 rule 3): a verified identity or every device verified; a new identity is not verified; Verify asks another person first", () => {
+    const trust = chat.trustOf({ users: [{ userId: "ann", devices: [{ deviceId: "A2", verified: false }] },
+        { userId: "bob", identity: { verified: true }, devices: [{ deviceId: "B1", verified: true }] },
+        { userId: "cy", identity: { verified: false }, devices: [{ deviceId: "C1", verified: true }] },
+        { userId: "dee", identity: { verified: true, changed: true }, devices: [{ deviceId: "D1", verified: false }] },
+        { userId: "eve", devices: [] }] }, "ann");
+    assert.deepEqual(["bob", "cy", "dee", "eve"].map((id) => trust.people[id].verified), [true, true, false, false]);
+    assert.equal(trust.people.dee.changed, true);
+    assert.equal(chat.verifyTarget(trust, "ann"), "dee", "the first other person with a device not verified");
+    assert.equal(chat.verifyTarget(chat.trustOf({ users: [{ userId: "ann", devices: [{ deviceId: "A2", verified: false }] }] }, "ann"), "ann"), null, "only my own: My devices");
+    assert.deepEqual(chat.problemsText([{ userId: "bob", deviceId: "B9", displayName: "Bob's tablet", kind: "newDevice" }, { userId: "dee", kind: "changedIdentity" }],
+        (id) => ({ bob: "Bob", dee: "Dee" })[id]), ["Bob has a new device that is not verified: Bob's tablet", "Dee has a new identity: verify them again"]);
+    assert.ok(chat.undecryptableText("m.unverified", "Bob").includes("Members, Verify"), "the route there is");
+});
+
+test("who could not read my message is kept per account in this browser: from its clientRef to its eventSeq, for a reload or another tab", () => {
+    const priorMe = chat.me, priorScope = moqui.storageScope;
+    try {
+        chat.me = "ann";
+        moqui.storageScope = "acct-1";
+        localStorage.removeItem(chat.leftOutKey());
+        chat.noteLeftOut("c-77", "R9", "Not readable by Bob: their devices are not verified");
+        assert.deepEqual(chat.leftOutOf("R9"), {}, "not before it is sent");
+        chat.emit("sent", { clientRef: "c-77", chatRoomId: "R9", json: { event: { eventSeq: 41 } } });
+        assert.equal(chat.leftOutOf("R9")[41], "Not readable by Bob: their devices are not verified");
+        assert.equal(chat.readLeftOut().refs["c-77"], undefined);
+        // another account in the same browser keeps its own, and so do the banners
+        moqui.storageScope = "acct-2";
+        assert.deepEqual(chat.leftOutOf("R9"), {});
+        chat.closeBanner("R9", "plain");
+        assert.equal(chat.bannerClosed("R9", "plain"), true);
+        moqui.storageScope = "acct-1";
+        assert.equal(chat.bannerClosed("R9", "plain"), false, "a room id of another account is not this one's");
+        assert.equal(chat.leftOutOf("R9")[41], "Not readable by Bob: their devices are not verified");
+    } finally {
+        localStorage.removeItem(chat.leftOutKey());
+        chat.me = priorMe;
+        moqui.storageScope = priorScope;
+    }
+});
+
+test("Info (Comms-Messaging §4, COM-UI-008): Sent, a bridged message's delivery per network, Read by from read markers; receipts off on either side; a thread", () => {
+    const members = [{ userId: "ann", name: "Ann", lastReadEventSeq: 3 }, { userId: "bob", name: "Bob", lastReadEventSeq: 9 },
+        { userId: "cy", name: "Cy", lastReadEventSeq: 5 }, { userId: "dee", name: "Dee", lastReadEventSeq: 4 },
+        // receipts off: the server blanks the marker for others
+        { userId: "eve", name: "Eve", lastReadEventSeq: null }, { userId: "agent", name: "Helper", isAgent: true, lastReadEventSeq: 9 }];
+    const message = event({ eventSeq: 5, sentDate: 1000, senderUserId: "ann" });
+    const when = (millis) => "at " + millis;
+    const texts = (lines) => lines.map((line) => line.text).join(" | ");
+    // read up to here or later; not me, not the sender, not an agent, not one whose receipts are off
+    const info = chat.messageInfo(message, members, { me: "ann" });
+    assert.deepEqual(info.readBy.people.map((person) => person.userId), ["bob", "cy"]);
+    assert.equal(info.delivered, null, "a message that went out on no bridge has no delivery line");
+    assert.equal(info.sent, 1000);
+    let lines = chat.messageInfoLines(info, when);
+    assert.deepEqual(lines.map((line) => line.key), ["sent", "read", "note"]);
+    assert.equal(lines[0].text, "at 1000");
+    assert.equal(lines[1].text, "Bob, Cy");
+    assert.ok(lines[2].text.includes("read receipts off are not listed") && lines[2].text.includes("devices is not known"));
+    // and N more
+    const many = Array.from({ length: 11 }, (unused, n) => ({ userId: "u" + n, name: "User " + n, lastReadEventSeq: 6 }));
+    const more = chat.messageInfo(message, many, { me: "ann", limit: 8 });
+    assert.equal(more.readBy.people.length, 8);
+    assert.equal(more.readBy.more, 3);
+    assert.ok(chat.messageInfoLines(more, when)[1].text.endsWith("User 7 and 3 more"));
+    // no one has read up to it: said so, never "not read"
+    const none = chat.messageInfoLines(chat.messageInfo(event({ eventSeq: 99, senderUserId: "ann" }), members, { me: "ann" }), when);
+    assert.equal(none[1].text, "No one yet, of those with read receipts on");
+    // the viewer's receipts off: no names, and it says why
+    const off = chat.messageInfo(message, members, { me: "ann", receipts: false });
+    assert.deepEqual(off.readBy, { off: true });
+    lines = chat.messageInfoLines(off, when);
+    assert.equal(lines[1].text, "Your read receipts are off, so you do not see who has read it");
+    assert.ok(!/not read\b/i.test(texts(lines)) && !texts(lines).includes("Bob"));
+    // a bridged message: each network's delivery, from its delivery row
+    const bridged = event({ eventSeq: 5, sentDate: 1000, senderUserId: "ann", delivery: { state: "failed", destinations: [
+        { networkName: "SMS", state: "accepted", receipt: "delivered" }, { bridgeName: "Ops Slack", state: "failed", error: "Channel archived" },
+        { networkName: "Telegram", state: "uncertain" }, { networkName: "Matrix", state: "accepted" }, { networkName: "XMPP", state: "pending" }] } });
+    lines = chat.messageInfoLines(chat.messageInfo(bridged, members, { me: "ann" }), when).filter((line) => line.key === "delivered");
+    assert.deepEqual(lines.map((line) => line.label + ": " + line.text), ["SMS: Delivered: the network's receipt says so", "Ops Slack: Not delivered: Channel archived",
+        "Telegram: May not have arrived", "Matrix: Taken by the network", "XMPP: Sending"]);
+    // a thread: Sent and Delivered only, it has no read markers
+    const reply = event({ eventSeq: 7, sentDate: 2000, senderUserId: "ann", threadRootEventSeq: 5, delivery: bridged.delivery });
+    const thread = chat.messageInfo(reply, members, { me: "ann" });
+    assert.equal(thread.readBy, null);
+    assert.equal(thread.thread, true);
+    lines = chat.messageInfoLines(thread, when);
+    assert.deepEqual(Array.from(new Set(lines.map((line) => line.key))), ["sent", "delivered", "note"]);
+    assert.ok(lines[lines.length - 1].text.includes("A thread has no read receipts."));
+    assert.equal(chat.messageInfo(message, members, { me: "ann", inThread: true }).readBy, null, "the root shown in its thread too");
+    // a message that came in from a network says where from
+    const inbound = chat.messageInfo(event({ eventSeq: 5, senderUserId: null, senderExternal: { network: "sms", networkName: "SMS" } }), members, { me: "ann" });
+    assert.equal(chat.messageInfoLines(inbound, when).find((line) => line.key === "from").text, "SMS");
+});

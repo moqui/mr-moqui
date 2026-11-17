@@ -50,7 +50,18 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   chat) takes one person, several (with a name they become a private room), or, for a user with a number that texts, a
   phone number typed in its search, which opens that number's room as Calls' Text a number does. On a phone a swipe to
   the right on a message replies to it, Attach offers the camera, the gallery or a file, and Back closes a menu or sheet,
-  then a pane or thread, then the room. When the last owner leaves, the
+  then a pane or thread, then the room. A message's actions are one list wherever they show: a long press on a phone
+  opens them as a sheet, a right click on a desktop row (not on a link, an editor or selected text, which keep the
+  browser's menu) opens them at the pointer, and the hover toolbar's More has them too. The sheet and the right-click
+  menu start with the quick reactions and "+", which opens the emoji picker (a search by name, the groups, and your
+  recent emoji, kept in this browser); then Reply, Reply in thread, Copy text, Copy link, Forward, Edit, Pin, Mark
+  unread from here, the apps' actions, File on a record, Info and Delete. A tap on a reaction adds or takes back yours;
+  a long press on it (or a hover) lists who reacted, and the same on a poll option lists who voted. **Info** says only
+  what the server knows: when the message was sent, for a message that went to another network (SMS, a bridge) its
+  delivery there per network, and who has read up to it (the members' read markers, "and N more"). A member with read
+  receipts off is not listed, and with your own off you see no names: Info says so, and never "not read". A thread has
+  no read markers, so its Info shows sent and delivery only; delivery to someone's devices is not known and is never
+  shown. The terminal's room has Info for each message, as text. When the last owner leaves, the
   longest-standing moderator (else member) becomes an owner: Leave names them, and the room says they became an owner
   when the owner left.
 - <a id="encrypted-rooms"></a>**Encrypted rooms** (C7). New room has Encrypted for a private room (and an encrypted direct
@@ -71,7 +82,14 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   messages: the server, for a plain private room or a direct chat; the phone network and the SMS provider, for a
   phone number's texts (its composer says Text message); the bridge, for a room bridged to another network (its composer
   names the network). A public room has the open lock and no note. A private room's own icon is people, not a lock. The
-  terminal shows the same as one line. Mail never has a lock.
+  members pane and Room settings say the same for every room, and the terminal shows it as one line. Mail never has a
+  lock: a private mailbox or list shows people, a closed thread a crossed-out comment.
+- <a id="verify-people"></a>**Verifying people.** In an encrypted room, Members has Verify by each person who is not
+  verified (the room's note and a message that someone cannot read have it too): pick their device and compare emoji
+  with them; when the emoji match on both sides their device is verified, and with cross-signing every device they sign.
+  A verified person has a check by their name, in Members and on their messages. When someone you verified adds a device
+  you have not verified, or gets a new identity, your next message waits: Verify them, or Send anyway, which lets that
+  device or identity read it. A request from another person to verify shows in the room you have open and on My devices.
 - <a id="bridged-rooms"></a>**Bridged rooms** (C1). A room an administrator connected to another network (SMS, WhatsApp,
   XMPP, Matrix and others, as their adapters come) has the network's mark in the room list and its name in the room's
   header ("Messages here also go to ..."). People from that network are members with the network's badge, and their
@@ -111,8 +129,11 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   The link's address is shown once, when it is made; Open starts its meeting with you as host, and Revoke takes its
   guests out. Calls also lists your meetings of the next week from an app that has them (IronStone: your calendar),
   with Join. Settings, Calls has the microphone, camera and speaker, the ringtone, and whether calls start muted
-  or with the camera off, for this browser. Calls need a media server (`rtc_media_port`); the Calls screen says when
-  there is none. In the terminal a call is not live: its screen shows who is in it, with Answer, Decline and Leave.
+  or with the camera off, for this browser, and Always relay my calls, for all your devices: a call with one other
+  person here goes straight between your devices when it can, and relayed it goes through the server, so they never
+  see your network address ([WebRTC, The direct path](../interfaces/WebRTC.md#the-direct-path)). The call's header shows
+  the connection's quality, "Reconnecting…" while it comes back, and "Your network is weak" when your side is the cause.
+  Calls need a media server (`rtc_media_port`); the Calls screen says when there is none. In the terminal a call is not live: its screen shows who is in it, with Answer, Decline and Leave.
 - <a id="encrypted-calls"></a>**End-to-end encrypted calls.** New call and a call link have End-to-end encrypted, and a
   room's owner or moderator can make all of the room's calls so (Room settings, Calls in this room are end-to-end
   encrypted). In such a call only the people in it hear and see each other: each browser encrypts what it sends with a
