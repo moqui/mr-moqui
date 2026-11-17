@@ -2,7 +2,7 @@
 // mount (IronStone's /qapps/Comms, when it is installed) with that app's extensions, and the launcher has one Comms; a
 // user with no party (users only) uses the mail settings; the user search leaves out disabled and system accounts; the
 // provider hooks answer for the apps the user may open, and a hook nobody declares is unavailable; Settings, Chat apps
-// says which app passwords work with XMPP apps. The every-screen render is not a regression test (one sweep per app per
+// says which app passwords work with XMPP apps; Settings, Chat keeps the people whose calls ring through do not disturb. The every-screen render is not a regression test (one sweep per app per
 // mode belongs in test/acceptance/).
 // Run: ./moq test basic-comms --spec BasicComms
 const root = "component://basic-comms/screen/BasicComms.xml"
@@ -210,6 +210,81 @@ feature("the user search finds active people by name and leaves out disabled and
         byName.map(user => user.id).includes(USER)
         !byName.map(user => user.id).includes(DISABLED)
         agent.length == 0
+    }
+})
+
+// plans/Comms-Messaging.md §7.2 rule 4: the people whose calls ring through do not disturb (CHAT_DND_ALLOWED, read by
+// org.moqui.chat.ChatPushServices.filter#RingUsers), kept beside the hours in Settings, Chat (its qvt render)
+feature("the do not disturb allowed list keeps users, not oneself, and Settings Chat lists them by name", {
+    when() {
+        login("john.doe")
+        // the screen's transitions call these as the user (the screen's grant); here directly
+        const store = (action, userId) => {
+            try {
+                sys(() => call("org.moqui.comms.ChatScreenServices.store#DndAllowed", {action, userId}))
+                return ""
+            } catch (err) {
+                return String(err && err.message ? err.message : err)
+            } finally {
+                ec.message.clearErrors()
+            }
+        }
+        const prefsNow = () => sys(() => call("org.moqui.comms.ChatScreenServices.get#ChatPrefs", {})).prefs
+        const added = store("add", USER)
+        const again = store("add", USER)
+        const self = store("add", ec.user.userId)
+        const nobody = store("add", "NO_SUCH_USER")
+        const prefs = prefsNow()
+        const page = render(root, "Settings/Chat", "qvt", {})
+        const removed = store("remove", USER)
+        const after = prefsNow()
+        return {added, again, self, nobody, prefs, page, removed, after}
+    },
+    then({added, again, self, nobody, prefs, page, removed, after}) {
+        added == "" && again == "" && removed == ""
+        self.includes("Choose a person") && nobody.includes("Choose a person")
+        prefs.dndAllowed.length == 1 && prefs.dndAllowed[0].userId == USER && prefs.dndAllowed[0].name == "Basic Comms basic.comms.spec"
+        page.status == 200 && !page.broken
+        page.output.includes("Calls that ring through") && page.output.includes("Basic Comms basic.comms.spec")
+        after.dndAllowed.length == 0
+    }
+})
+
+// plans/Comms-Messaging.md §7.3, Health: System, Push Health (find#PushHealth, PushHealthAdmin) lists each device with
+// its counts, a device with pushes of the last day not acknowledged first and marked (its qvt render)
+feature("Push Health lists each device with its counts and marks one whose pushes went unacknowledged", {
+    when() {
+        login("john.doe")
+        const now = Number(ec.user.nowTimestamp)
+        sys(() => {
+            if (!ec.entity.find("moqui.security.UserPermission").condition("userPermissionId", "PushHealthAdmin").count())
+                ec.entity.makeValue("moqui.security.UserPermission").setAll({userPermissionId: "PushHealthAdmin"}).create()
+            if (!ec.entity.find("moqui.security.UserGroupPermission").condition("userGroupId", "ADMIN").condition("userPermissionId", "PushHealthAdmin").count())
+                ec.entity.makeValue("moqui.security.UserGroupPermission").setAll({userGroupId: "ADMIN", userPermissionId: "PushHealthAdmin",
+                    fromDate: new Date(0)}).create()
+            ec.entity.find("moqui.chat.PushOutbox").condition("subscriptionId", "BC_SPEC_PHONE").deleteAll()
+            ec.entity.find("moqui.security.user.WebPushSubscription").condition("subscriptionId", "BC_SPEC_PHONE").deleteAll()
+            ec.entity.makeValue("moqui.security.user.WebPushSubscription").setAll({subscriptionId: "BC_SPEC_PHONE", userId: USER,
+                pushProviderEnumId: "PushFcm", endpoint: "bc-spec-token", endpointHash: "bc-spec-token-hash", platform: "android",
+                sentCount: 3, ackedCount: 2, failedCount: 1, lastPushDate: new Date(now - 3600000)}).create()
+            ec.entity.makeValue("moqui.chat.PushOutbox").setAll({pushOutboxId: "BC_SPEC_PUSH", subscriptionId: "BC_SPEC_PHONE", userId: USER,
+                chatRoomId: "BC_SPEC_ROOM", eventSeq: 1, kindEnumId: "PokMessage", statusEnumId: "PosSent", createdDate: new Date(now - 3600000),
+                sentDate: new Date(now - 3600000)}).create()
+        })
+        const found = sys(() => call("org.moqui.ui.NotificationServices.find#PushHealth", {}))
+        const page = render("component://tools/screen/System.xml", "PushHealth", "qvt", {})
+        sys(() => {
+            ec.entity.find("moqui.chat.PushOutbox").condition("subscriptionId", "BC_SPEC_PHONE").deleteAll()
+            ec.entity.find("moqui.security.user.WebPushSubscription").condition("subscriptionId", "BC_SPEC_PHONE").deleteAll()
+        })
+        return {device: Array.from(found.deviceList).find(device => device.subscriptionId == "BC_SPEC_PHONE"), first: found.deviceList[0], page}
+    },
+    then({device, first, page}) {
+        device.sentCount == 3 && device.ackedCount == 2 && device.failedCount == 1
+        device.unackedCount == 1 && device.missedAcks == true && !device.keyed
+        first.missedAcks == true
+        page.status == 200 && !page.broken
+        page.output.includes("Push health") && page.output.includes("Basic Comms basic.comms.spec") && page.output.includes("1 not acknowledged")
     }
 })
 

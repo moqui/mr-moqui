@@ -20,7 +20,8 @@ along with this software (see the LICENSE.md file). If not, see
     nor shows the user's read marker), typing, and the link previews of the user's messages (CHAT_LINK_PREVIEWS: off, the
     framework fetches none); when the user shows as away
     (CHAT_AUTO_AWAY_MINUTES, which the framework's presence reads); the do not disturb hours (apply#DndHours puts an online user
-    on do not disturb in them); and the status presets (CHAT_STATUS_PRESETS) the Chat rail's status menu and the account menu's
+    on do not disturb in them) and the people whose calls still ring then (CHAT_DND_ALLOWED, store#DndAllowed, read by the
+    framework's filter#RingUsers, plans/Comms-Messaging.md §7.2 rule 4); and the status presets (CHAT_STATUS_PRESETS) the Chat rail's status menu and the account menu's
     status dialog offer (Use sets one now). The Chat screens read these when they open. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Chat" default-menu-index="6" server-static="qvt" menu-image="sym_o_chat" menu-image-type="icon">
@@ -44,6 +45,17 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
         <error-response url="."/>
     </transition>
+    <transition name="addDndAllowed">
+        <service-call name="org.moqui.comms.ChatScreenServices.store#DndAllowed" in-map="{action:'add', userId:allowedUserId}"/>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="removeDndAllowed">
+        <service-call name="org.moqui.comms.ChatScreenServices.store#DndAllowed" in-map="{action:'remove', userId:userId}"/>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition-include name="searchUsers" location="component://basic-comms/template/VoiceTransitions.xml"/>
     <transition name="applyNotifyDefault">
         <service-call name="org.moqui.comms.ChatScreenServices.apply#NotifyDefault" out-map="applyOut"/>
         <actions><if condition="!ec.message.hasError()"><script><![CDATA[
@@ -80,6 +92,8 @@ along with this software (see the LICENSE.md file). If not, see
                 typing: yn(prefs.typing), linkPreviews: yn(prefs.linkPreviews), autoAwayMinutes: String(prefs.autoAwayMinutes)}
             dndPrefs = {dndFrom: prefs.dndFrom || '', dndTo: prefs.dndTo || ''}
             hasDnd = !!(prefs.dndFrom && prefs.dndTo)
+            allowedList = Array.from(prefs.dndAllowed || [])
+            addAllowed = {allowedUserId: ''}
             dndText = hasDnd ? ec.resource.expand('Every day from ${from} to ${to}, in your time zone (${zone}).', '', {from: prefs.dndFrom, to: prefs.dndTo,
                 zone: ec.user.timeZone || 'UTC'}) : L('None set')
             const clears = {'0': "Don't clear", '30': 'After 30 minutes', '60': 'After an hour', '240': 'After 4 hours', today: 'At the end of today', week: 'At the end of the week'}
@@ -136,6 +150,28 @@ along with this software (see the LICENSE.md file). If not, see
                     </widgets></section>
                     <label type="p" text="In these hours you show as do not disturb when you are online: no sounds or pop-ups, and others see it. Your status comes back when they end, unless you changed it. Hours from 22:00 to 07:00 run over midnight."
                             style="text-caption m-muted q-mb-none q-mt-sm"/>
+                </box-body></container-box>
+                <container-box><box-header title="Calls that ring through"/><box-body>
+                    <label type="p" text="On do not disturb your phones stay quiet. A call from these people still rings, and so does anyone's second call within 3 minutes."
+                            style="text-caption m-muted q-mt-none"/>
+                    <section name="NoAllowed" condition="!allowedList.length"><widgets>
+                        <label type="p" text="Nobody yet" style="text-body2"/>
+                    </widgets></section>
+                    <section name="AllowedSection" condition="allowedList.length"><widgets>
+                        <form-list name="AllowedList" list="allowedList" paginate="false" skip-form="true">
+                            <field name="name"><default-field title="Person"><display/></default-field></field>
+                            <field name="removeLink"><default-field title="">
+                                <link url="removeDndAllowed" link-type="hidden-form-link" icon="sym_o_delete" text="" tooltip="Remove" style="m-btn-flat"
+                                        parameter-map="{userId:userId}" confirmation="Take ${name} off the list?"/></default-field></field>
+                        </form-list>
+                    </widgets></section>
+                    <form-single name="AddAllowed" transition="addDndAllowed" map="addAllowed">
+                        <field name="allowedUserId"><default-field title="Person">
+                            <drop-down allow-empty="true"><dynamic-options transition="searchUsers" server-search="true" min-length="1"/></drop-down>
+                        </default-field></field>
+                        <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                        <field-layout><field-row><field-ref name="allowedUserId"/><field-ref name="submitButton"/></field-row></field-layout>
+                    </form-single>
                 </box-body></container-box>
                 <container-box><box-header title="Status presets"/><box-body-nopad>
                     <label type="p" text="The statuses the Chat status menu offers, with when each clears." style="text-caption m-muted q-pa-sm q-mb-none"/>
