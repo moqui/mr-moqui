@@ -17,7 +17,8 @@ along with this software (see the LICENSE.md file). If not, see
     tab load them: pinned first, then by the last message; limit for the tab's short list) with their unread and mention
     counts and last message, each opening its room in Chat, and Mark all read. With chatRoomId, the room (get#RoomView, which
     refuses a room the user may not read: "not found") with its latest messages, a Send form posting through send#ChatMessage
-    as the user (a member of the room), Mark read, and Join for a room the user may join. A bridged room (C1) says where else
+    as the user (a member of the room), Mark read, and Join for a room the user may join. The room says its E2EE label in one
+    line (Comms-Messaging §6.2: end-to-end encrypted, or what can read it: the server, the SMS provider, a bridge). A bridged room (C1) says where else
     its messages go and whether a bridge is not connected; an external member's messages carry their network, and each message
     of a bridged room its delivery, with Send again for one that failed or is uncertain (its sender or a moderator). Threads,
     reactions, files, polls and the room's settings (its bridges' mappings among them) are the browser's; the terminal names each
@@ -114,6 +115,7 @@ along with this software (see the LICENSE.md file). If not, see
             canPost = false
             canJoin = false
             encryptedRoom = false
+            e2eeText = ''
             unreadTotal = 0
             bridgeText = ''
             notConnected = false
@@ -132,6 +134,15 @@ along with this software (see the LICENSE.md file). If not, see
                         .filter((name) => name)))
                     bridgeText = networks.length ? ec.resource.expand(ec.l10n.localize('Messages here also go to ${names}'), '', {names: networks.join(', ')}) : ''
                     notConnected = !!room.notConnected
+                    // the room's E2EE label as one line: the rule of moqui.chat.e2eeLabel (Comms-Messaging §6.2), with no device
+                    // trust, which only a browser knows
+                    const sms = room.roomTypeEnumId === 'CrtExternal' || Array.from(room.bridges || []).some((bridge) => bridge.network === 'sms')
+                    const open = room.roomTypeEnumId === 'CrtPublic' || room.roomTypeEnumId === 'CrtRecord' || ['CrvUsers', 'CrvRecord'].includes(room.visibilityEnumId)
+                    e2eeText = ec.l10n.localize(encryptedRoom ? 'End-to-end encrypted'
+                        : sms ? 'Not end-to-end encrypted. Texts go through the phone network and the SMS provider.'
+                        : room.bridged ? 'Not end-to-end encrypted on this server. The bridge reads messages to pass them on.'
+                        : open ? 'Not end-to-end encrypted: the server can read this room'
+                        : 'Not end-to-end encrypted. The server can read these messages.')
                     const STATES = {accepted: 'Delivered', pending: 'Sending', failed: 'Not delivered', uncertain: 'May not have arrived'}
                     const page = out.timeline || {}
                     const names = page.userNames || {}
@@ -205,6 +216,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <link url="join" link-type="hidden-form-link" text="Join" condition="canJoin" parameter-map="{chatRoomId:chatRoomId}"/>
             </container>
             <section name="ChatTuiTopic" condition="roomTopic"><widgets><label type="p" text="${roomTopic}" style="text-caption m-muted"/></widgets></section>
+            <label type="p" text="${e2eeText}" style="text-caption m-muted"/>
             <section name="ChatTuiEncrypted" condition="encryptedRoom"><widgets>
                 <label type="p" text="This room is end-to-end encrypted: open it in a browser to read and write its messages" style="text-caption text-info"/></widgets></section>
             <section name="ChatTuiBridged" condition="bridgeText"><widgets><label type="p" text="${bridgeText}" style="text-caption text-info"/></widgets></section>

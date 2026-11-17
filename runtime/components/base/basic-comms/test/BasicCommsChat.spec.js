@@ -128,6 +128,8 @@ feature("a user with no party makes a room with john.doe and they talk in it", {
         // the terminal says a room's events in words, as the browser does, not by their type
         terminal.includes("Hello from the framework")
         terminal.includes("Chat basic.comms.chat created the room")
+        // and its E2EE label in one line (Comms-Messaging §6.2): a plain private room
+        terminal.includes("Not end-to-end encrypted. The server can read these messages.")
         !terminal.includes("(system")
     }
 })

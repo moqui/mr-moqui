@@ -597,10 +597,14 @@ function setLegDevice(session, leg, deviceId) {
   leg.update()
 }
 
-/** Whether a room asks every call of it to be end-to-end encrypted (its owners' policy). */
+/**
+ * Whether every call of a room is end-to-end encrypted: an encrypted room's always, a direct one too (Comms-Messaging
+ * §6.1 rule 4), and another room's when its owners' policy asks. A plain direct room keeps the caller's choice.
+ */
 function roomRequiresE2ee(chatRoomId) {
   if (!chatRoomId) return false
-  return one('moqui.chat.ChatRoom', { chatRoomId })?.callE2eeRequired === 'Y'
+  const room = one('moqui.chat.ChatRoom', { chatRoomId })
+  return room?.encrypted === 'Y' || room?.callE2eeRequired === 'Y'
 }
 
 /**
@@ -637,6 +641,8 @@ function setRoomEncryption(p) {
   if (!access.canModerate && !access.isOwner) return refuse('notAllowed', 'Only a moderator or owner may change the room')
   const room = find('moqui.chat.ChatRoom').condition('chatRoomId', p.chatRoomId).forUpdate(true).one()
   const flag = truthy(p.required) ? 'Y' : 'N'
+  // an encrypted room's calls are encrypted, and that is not a setting (rule 4)
+  if (room.encrypted === 'Y' && flag === 'N') return refuse('notAllowed', 'Every call in an encrypted room is end-to-end encrypted')
   if ((room.callE2eeRequired || 'N') !== flag) {
     room.set('callE2eeRequired', flag)
     room.update()

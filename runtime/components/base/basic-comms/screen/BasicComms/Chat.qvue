@@ -31,7 +31,12 @@ along with this software (see the LICENSE.md file). If not, see
     its links (no pictures; its sender removes them). An encrypted room (C7, New room's Encrypted; docs/interfaces/Chat-Keys.md
     "Encrypted rooms") is encrypted and decrypted in this browser (moqui.chat.sealMessage, openEvents, openEvent over
     moqui.crypto): its outbox items and drafts keep no text, its files go up encrypted and show from decrypted blobs, and
-    it has no forward, filing, app actions or polls; its header and settings say what it gives up. The desktop client's shell
+    it has no forward, filing, app actions or polls; its header and settings say what it gives up. Every room shows its E2EE
+    label (moqui.chat.e2eeLabel, Comms-Messaging §6.2): the lock in the header and the rail for an encrypted room only (with
+    a check when every device is verified), else the open lock; a banner under the header (closed per room) and in the
+    room's start says what reads its messages, with Verify (My devices) in an encrypted room; a text's or a bridged
+    network's composer says so; with only verified devices on, my message says who cannot read it, and a message whose
+    key its sender withheld from this unverified device says that (COM-UI-013). The desktop client's shell
     bundles it (crates/moqui-desktop/shell); with its server out of reach (moqui.connection, never on the web) a room shows
     where the stretch kept on the device ends, a room not kept says so, and what needs the server (edit, delete, react, pin,
     polls, forward, filing, members and settings, search, threads, files, new rooms, calls) says it needs a connection.
@@ -127,6 +132,8 @@ along with this software (see the LICENSE.md file). If not, see
                             <q-item-label class="row no-wrap items-center">
                                 <span class="ellipsis" :class="countsOf(room).unread || countsOf(room).mentions ? 'text-weight-bold' : ''">{{room.displayName}}</span>
                                 <q-icon v-if="room.isPinned" name="sym_o_keep" size="12px" class="m-muted q-ml-xs"></q-icon>
+                                <q-icon v-if="labelOf(room).lock" name="sym_o_lock" size="12px" class="q-ml-xs text-positive m-chat-e2ee-lock" :data-e2ee="room.chatRoomId"
+                                        :aria-label="labelOf(room).text"><q-tooltip>{{labelOf(room).text}}</q-tooltip></q-icon>
                                 <q-icon v-if="room.bridged" :name="room.notConnected ? 'sym_o_link_off' : 'sym_o_hub'" size="12px" class="q-ml-xs"
                                         :class="room.notConnected ? 'text-warning' : 'm-muted'" :data-bridged="room.chatRoomId"><q-tooltip>{{bridgeText(room)}}</q-tooltip></q-icon>
                                 <q-space></q-space>
@@ -252,6 +259,8 @@ const needsConnection = () => {
     moqui.notifyMessages([{ type: 'info', message: t('This needs a connection to the server: try again when it is back') }]);
     return true;
 };
+// who could not read a sealed message, by its clientRef until it is sent (COM-UI-013): in this page only
+const leftOutByRef = {};
 // the drafts of encrypted rooms: in this page only (C7)
 const sealedDrafts = {};
 const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
@@ -374,7 +383,7 @@ const messageTemplate = `
             </div>
         </div>
         <div v-if="item.redacted" class="text-body2 m-muted text-italic">{{item.removedLabel || room.t('Message removed')}}</div>
-        <div v-else-if="item.undecryptable" class="text-body2 m-muted text-italic m-chat-undecryptable"><q-icon name="sym_o_lock" size="16px" class="q-mr-xs"></q-icon>{{room.t('Encrypted message: this device has no key for it yet. Restore your key backup in Settings, My devices, or keep this page open while another of your devices shares it.')}}</div>
+        <div v-else-if="item.undecryptable" class="text-body2 m-muted text-italic m-chat-undecryptable" :data-withheld="item.withheld || undefined"><q-icon name="sym_o_lock" size="16px" class="q-mr-xs"></q-icon>{{room.undecryptableText(item)}}</div>
         <template v-else>
             <chat-edit v-if="room.isEditing(item)" :room="room" :item="item"></chat-edit>
             <div v-else-if="item.bodyHtml && !item.poll" class="m-rich-text-content text-body2" style="padding:0;cursor:auto;max-height:none;overflow:visible;overflow-wrap:anywhere"
@@ -438,6 +447,11 @@ const messageTemplate = `
             <div v-if="!inThread && item.threadReplyCount" class="q-mt-xs">
                 <a href="#" class="text-primary text-caption text-weight-medium" @click.prevent.stop="room.openThread(item.eventSeq)">{{room.repliesText(item.threadReplyCount)}}</a>
                 <span class="text-caption m-muted"> · {{room.t('last reply')}} {{room.shortWhen(item.threadLastDate)}}</span>
+            </div>
+            <!-- my message in an encrypted room with only verified devices on: who cannot read it, and Verify (COM-UI-013) -->
+            <div v-if="item.mine && room.leftOutBySeq[item.eventSeq]" class="row items-center no-wrap q-mt-xs text-caption text-warning m-chat-left-out">
+                <q-icon name="sym_o_no_encryption" size="14px" class="q-mr-xs"></q-icon><span class="ellipsis">{{room.leftOutBySeq[item.eventSeq]}}</span>
+                <q-btn flat dense no-caps size="sm" color="primary" class="q-ml-xs" :label="room.t('Verify')" @click.stop="room.openDevices()"></q-btn>
             </div>
             <!-- its delivery to the room's bridges: sending, delivered, not delivered (with Send again) or uncertain -->
             <div v-if="item.event.delivery" class="row items-center no-wrap q-mt-xs text-caption m-chat-delivery" :class="room.deliveryClass(item)"
@@ -801,8 +815,12 @@ const roomTemplate = `
                     <q-icon v-if="member && (member.isMuted || member.notificationLevelEnumId === 'CnlNone')" name="sym_o_notifications_off" size="14px" class="q-ml-xs m-muted">
                         <q-tooltip>{{t('Muted')}}</q-tooltip></q-icon>
                     <q-chip v-if="room.archivedDate" dense square class="m-tonal text-warning q-ml-xs">{{t('Archived')}}</q-chip>
-                    <q-chip v-if="sealed" dense square icon="sym_o_lock" class="m-tonal text-positive q-ml-xs m-chat-encrypted">{{t('Encrypted')}}
-                        <q-tooltip>{{t('End-to-end encrypted: only the devices of its members read it. Search, link previews, agents, polls, bridges, forwards and filing on records are off here.')}}</q-tooltip></q-chip>
+                    <!-- the room's E2EE label (moqui.chat.e2eeLabel): the lock for end to end only, else the open lock (COM-UI-001) -->
+                    <q-chip v-if="label.lock" dense square icon="sym_o_lock" class="m-tonal text-positive q-ml-xs m-chat-encrypted" :data-e2ee="label.state">{{t('Encrypted')}}
+                        <q-icon v-if="label.verified" name="sym_o_check" size="14px" class="q-ml-xs m-chat-verified"></q-icon>
+                        <q-tooltip>{{label.text}}. {{t('Search, link previews, agents, polls, bridges, forwards and filing on records are off here.')}}</q-tooltip></q-chip>
+                    <q-icon v-else name="sym_o_lock_open" size="16px" class="q-ml-xs m-muted m-chat-not-e2ee" :data-e2ee="label.state" :aria-label="label.text">
+                        <q-tooltip>{{label.text}}</q-tooltip></q-icon>
                     <q-chip v-if="room.bridged" dense square icon="sym_o_hub" class="m-tonal text-info q-ml-xs m-chat-bridged">{{bridgeNames}}
                         <q-tooltip>{{bridgeTooltip}}</q-tooltip></q-chip>
                     <q-chip v-if="room.notConnected" dense square icon="sym_o_link_off" class="m-tonal text-warning q-ml-xs m-chat-not-connected">{{t('Not connected')}}
@@ -869,6 +887,14 @@ const roomTemplate = `
         </template>
     </div>
     <q-separator></q-separator>
+    <!-- the room's E2EE banner (Comms-Messaging §6.2): what reads its messages, with Verify in an encrypted room not all verified -->
+    <div v-if="room && label.banner && !bannerHidden" class="row no-wrap items-center q-px-sm q-py-xs text-caption m-tonal m-chat-e2ee-banner" :data-e2ee="label.state">
+        <q-icon :name="label.icon" size="16px" :class="label.lock ? 'text-positive' : 'm-muted'"></q-icon>
+        <q-icon v-if="label.verified" name="sym_o_check" size="12px" class="text-positive"></q-icon>
+        <span class="col q-ml-xs m-chat-e2ee-banner-text">{{label.banner}}</span>
+        <q-btn v-if="label.verify" flat dense no-caps size="sm" color="primary" class="q-ml-xs m-chat-verify" :label="t('Verify')" @click="openDevices"></q-btn>
+        <q-btn flat round dense size="xs" icon="sym_o_close" class="q-ml-xs" :aria-label="t('Close the note')" @click="closeBanner"></q-btn>
+    </div>
 
     <div class="col row no-wrap" style="min-height:0">
         <!-- the timeline and the composer -->
@@ -907,6 +933,7 @@ const roomTemplate = `
                             <q-avatar v-else size="48px" rounded class="m-tonal text-primary" :icon="roomIcon"></q-avatar>
                             <div class="text-subtitle1 text-weight-medium q-mt-sm">{{displayName}}</div>
                             <div class="text-caption m-muted">{{startText}}</div>
+                            <div v-if="label.banner" class="text-caption m-muted q-mt-xs m-chat-e2ee-intro"><q-icon :name="label.icon" size="14px" class="q-mr-xs"></q-icon><span class="m-chat-e2ee-intro-text">{{label.banner}}</span></div>
                         </div>
                         <template v-for="item in items" :key="item.key">
                             <div v-if="item.kind === 'day'" class="row items-center no-wrap q-my-sm q-px-sm">
@@ -1121,6 +1148,7 @@ const roomTemplate = `
                     <q-item-section>
                         <q-item-label>{{bridge.networkName || bridge.name}}<span v-if="bridge.externalRoomName"> · <a v-if="bridge.externalRoomUrl" :href="bridge.externalRoomUrl" target="_blank" rel="noopener noreferrer">{{bridge.externalRoomName}}</a><template v-else>{{bridge.externalRoomName}}</template></span></q-item-label>
                         <q-item-label caption>{{directionText(bridge.directionEnumId)}} · <span :class="bridge.connected ? 'text-positive' : 'text-warning'">{{bridge.connected ? t('connected') : t('not connected')}}</span></q-item-label>
+                        <q-item-label caption class="m-chat-bridge-encryption" :data-encryption="bridge.encryption">{{bridgeEncryptionText(bridge.encryption)}}</q-item-label>
                     </q-item-section>
                     <q-item-section v-if="me && me.bridgeAdmin" side class="row no-wrap">
                         <div class="row no-wrap">
@@ -1147,8 +1175,11 @@ const roomTemplate = `
                 </div>
             </template>
         </template>
-        <q-toggle v-model="settings.callE2ee" :label="t('Calls in this room are end-to-end encrypted')" class="q-mt-sm"></q-toggle>
-        <div class="text-caption m-muted">{{t('Only the people in a call hear and see it: no recording, captions, phones or guests. This is apart from the encryption of the messages.')}}</div>
+        <!-- an encrypted room's calls are encrypted, and that is not a setting (Comms-Messaging §6.1 rule 4) -->
+        <q-toggle :model-value="sealed || settings.callE2ee" :disable="sealed" :label="t('Calls in this room are end-to-end encrypted')" class="q-mt-sm m-chat-room-call-e2ee"
+                @update:model-value="(value) => { settings.callE2ee = value; }"></q-toggle>
+        <div v-if="sealed" class="text-caption m-muted">{{t('Every call in an encrypted room is end-to-end encrypted: no recording, captions, phones or guests.')}}</div>
+        <div v-else class="text-caption m-muted">{{t('Only the people in a call hear and see it: no recording, captions, phones or guests. This is apart from the encryption of the messages.')}}</div>
         <div class="row q-gutter-sm q-mt-md items-center">
             <q-btn unelevated no-caps color="primary" :label="t('Save')" :loading="settings.busy" @click="saveSettings"></q-btn>
             <q-btn flat no-caps :label="t('Cancel')" v-close-popup></q-btn>
@@ -1264,7 +1295,7 @@ const chatRoom = {
             settings: { open: false, roomName: '', topic: '', visibility: '', busy: false },
             bridgeForm: { open: false, chatRoomBridgeId: null, chatBridgeId: null, externalRoomId: '', externalRoomName: '', externalRoomUrl: '', directionEnumId: 'CrbBoth', busy: false },
             bridgeChoices: [], previewBox: { open: false, src: '', name: '', download: '', file: null },
-            tick: Date.now(), width: 0, dragOver: false, anchor: null,
+            tick: Date.now(), width: 0, dragOver: false, anchor: null, trust: null, bannerTick: 0, leftOutBySeq: {},
             fileOn: { open: false, item: null, value: null, busy: false },
             quickReactions: QUICK_REACTIONS, emoji: EMOJI, levels: LEVELS
         };
@@ -1300,6 +1331,10 @@ const chatRoom = {
         bridgeTooltip() { return fill(t('Messages here also go to {names}'), { names: this.bridgeNames }); },
         displayName() { return this.room ? (this.room.displayName || this.room.roomName || this.room.chatRoomId) : ''; },
         roomIcon() { return moqui.chat.roomIcon(this.room); },
+        // the room's E2EE label (Comms-Messaging §6.2): its state, icon, banner and composer hint, from the room, its bridges
+        // and, in an encrypted room, its devices' trust
+        label() { return moqui.chat.e2eeLabel(this.room, this.trust); },
+        bannerHidden() { void this.bannerTick; return !!this.room && moqui.chat.bannerClosed(this.roomId, this.label.state); },
         recordLabel() { const record = this.room && this.room.record; return record ? [record.typeLabel, record.title].filter((part) => part).join(' · ') : ''; },
         roomKindText() {
             if (!this.room) return '';
@@ -1332,6 +1367,8 @@ const chatRoom = {
         noConnection() { return noConnection(); },
         // an encrypted room in a desktop client's app window, whose shell owns the crypto device: it opens in Chat there
         cryptoElsewhere() { return this.sealed && !!(moqui.crypto && moqui.crypto.elsewhere && moqui.crypto.elsewhere()); },
+        // this page's crypto device is open: an encrypted room's trust can be asked of it
+        cryptoReady() { return !!(moqui.crypto && moqui.crypto.state && moqui.crypto.state.status === 'ready'); },
         // the outbox's messages of this room and of the open thread (the chat store's state, so they follow other tabs)
         pendingMain() { void (moqui.chat && moqui.chat.state.outbox && moqui.chat.state.sending); return moqui.chat && moqui.chat.pendingIn ? moqui.chat.pendingIn(this.roomId, null) : []; },
         pendingThread() {
@@ -1344,7 +1381,8 @@ const chatRoom = {
             const options = this.pollBox.options.map((text) => String(text || '').trim()).filter((text) => text);
             return !!String(this.pollBox.question || '').trim() && options.length >= 2 && !this.pollBox.busy;
         },
-        composerPlaceholder() { return fill(this.isDirect ? t('Message {name}') : t('Message {name}… @ to mention'), { name: this.displayName }); },
+        // a text or a bridged network's message says so (Comms-Messaging §6.2)
+        composerPlaceholder() { return this.label.hint || fill(this.isDirect ? t('Message {name}') : t('Message {name}… @ to mention'), { name: this.displayName }); },
         visibilityOptions() {
             if (this.room && this.room.roomTypeEnumId === 'CrtRecord')
                 return [{ value: 'CrvRecord', label: t('Anyone who can see the record') }, { value: 'CrvMembers', label: t('Members only: added by a member') }];
@@ -1381,6 +1419,7 @@ const chatRoom = {
     },
     watch: {
         seq(value) { if (value && this.state === 'ready') this.jumpTo(Number(value)); },
+        cryptoReady(value) { if (value) this.loadTrust(); },
         thread(value) {
             if (this.state !== 'ready') return;
             if (value && Number(value) !== this.threadView.rootSeq) this.openThread(Number(value), true);
@@ -1429,6 +1468,27 @@ const chatRoom = {
         needsConnection() { return needsConnection(); },
         // the members' userIds, who get an encrypted room's keys
         memberIds() { return this.members.filter((person) => person.userId).map((person) => person.userId); },
+        // ---- the room's E2EE label (Comms-Messaging §6.2) ----
+        // an encrypted room's devices: verified or not (the lock's check, Verify), and who the next message leaves out. Asked
+        // only of a crypto device that is open (the room's messages open it), never to open one for the label.
+        loadTrust() {
+            const crypto = moqui.crypto;
+            if (!this.sealed || this.cryptoElsewhere || !crypto || !crypto.roomTrust || !crypto.state || crypto.state.status !== 'ready') return;
+            const roomId = this.roomId;
+            crypto.roomTrust(roomId, this.memberIds()).then((answer) => {
+                if (roomId === this.roomId) this.trust = moqui.chat.trustOf(answer, this.me.userId);
+            }, () => { if (roomId === this.roomId) this.trust = null; });
+        },
+        closeBanner() { moqui.chat.closeBanner(this.roomId, this.label.state); this.bannerTick += 1; },
+        // Verify: My devices, where a device is verified by emoji or QR code
+        openDevices() { this.go(this.linkBase.replace(/\/Chat$/, '/Settings/Devices')); },
+        undecryptableText(item) { return moqui.chat.undecryptableText(item.withheld, item.senderName); },
+        bridgeEncryptionText(encryption) {
+            if (encryption === 'EndToEnd') return t('End-to-end encrypted through the bridge');
+            if (encryption === 'BridgeDecrypted') return t('End-to-end encrypted on that network; the bridge here decrypts it');
+            if (encryption === 'Transport') return t('Encrypted in transit only: the network can read it');
+            return t('Not encrypted: the network and its providers can read it');
+        },
         // new room keys came (from a member, or the key backup): the messages that could not be read are tried again
         onRoomKeys() {
             if (!this.sealed || this.state !== 'ready') return;
@@ -1487,7 +1547,7 @@ const chatRoom = {
                 const item = { kind: 'message', key: 'e' + event.eventSeq, eventSeq: Number(event.eventSeq), event, senderUserId: event.senderUserId,
                     senderName: this.nameOf(event.senderUserId, event.senderName), sentDate: sent, timeText: timeText(sent), timeShort: timeText(sent), fullTime: fullTime(sent),
                     bodyHtml: event.redacted ? null : (event.body ? decorateBody(event.body, me) : null), redacted: !!event.redacted, removedLabel: event.removedLabel,
-                    undecryptable: !event.redacted && !!event.undecryptable,
+                    undecryptable: !event.redacted && !!event.undecryptable, withheld: event.withheld || null,
                     edited: !!event.edited, editedText: event.editedDate ? fill(t('Edited {when}'), { when: fullTime(event.editedDate) }) : t('Edited'),
                     attachments: event.attachments || [], records: event.records || [], reactions: event.reactions || [],
                     forwardOf: event.forwardOf ? Object.assign({}, event.forwardOf, { body: event.forwardOf.body && moqui.chat && moqui.chat.ownImages ? moqui.chat.ownImages(event.forwardOf.body) : event.forwardOf.body }) : null, poll: event.poll || null, linkPreviews: event.linkPreviews || [],
@@ -1549,6 +1609,7 @@ const chatRoom = {
             this.members = json.memberList || [];
             this.members.forEach((person) => { if (person.name) this.names[person.userId] = person.name; });
             if (moqui.chat) moqui.chat.watchUsers(this.members.map((person) => person.userId));
+            this.loadTrust();
         },
         reloadMeta() {
             return this.get('room', { chatRoomId: this.roomId }).then((json) => { if (json.room) this.applyMeta(json); }, () => {});
@@ -1788,8 +1849,13 @@ const chatRoom = {
                     moqui.chat.sealedTexts[clientRef] = plainOf(html) || t('Files');
                     const sealedParams = { encryptedJson: sealed.encryptedJson, mentionUserIds: sealed.mentionUserIds, replyToEventSeq: params.replyToEventSeq,
                         threadRootEventSeq: params.threadRootEventSeq, chatAttachmentIds: params.chatAttachmentIds };
-                    return moqui.chat.send({ clientRef, chatRoomId: this.roomId, url: this.url('send'), params: sealedParams, text: '', sealed: true,
-                        threadRootEventSeq: threadRoot, hasFiles: !!(message.attachmentIds || []).length });
+                    // who cannot read it: the devices only verified devices left out (COM-UI-013), shown under it once it is sent
+                    const leftOut = moqui.crypto && moqui.crypto.leftOut ? moqui.crypto.leftOut(this.roomId).catch(() => []) : Promise.resolve([]);
+                    return leftOut.then((devices) => {
+                        if (devices && devices.length) leftOutByRef[clientRef] = moqui.chat.leftOutText(devices, this.me.userId, (id) => this.nameOf(id));
+                        return moqui.chat.send({ clientRef, chatRoomId: this.roomId, url: this.url('send'), params: sealedParams, text: '', sealed: true,
+                            threadRootEventSeq: threadRoot, hasFiles: !!(message.attachmentIds || []).length });
+                    });
                 }).then((outcome) => {
                     if (outcome && outcome.failed && outcome.error) moqui.notifyMessages([{ type: 'warning', message: outcome.error }]);
                     return outcome;
@@ -1827,6 +1893,10 @@ const chatRoom = {
             const me = this.me.userId;
             const threadRoot = payload.threadRootEventSeq != null ? Number(payload.threadRootEventSeq) : null;
             const seq = Number(event.eventSeq);
+            if (payload.clientRef && leftOutByRef[payload.clientRef]) {
+                this.leftOutBySeq = Object.assign({}, this.leftOutBySeq, { [seq]: leftOutByRef[payload.clientRef] });
+                delete leftOutByRef[payload.clientRef];
+            }
             this.myLastRead = Math.max(this.myLastRead, seq);
             if (this.room) this.room.lastEventSeq = Math.max(Number(this.room.lastEventSeq || 0), seq);
             this.dividerSeq = null;
@@ -2587,7 +2657,7 @@ const chatRoom = {
             if (this.isOwner && this.settings.visibility && this.settings.visibility !== this.room.visibilityEnumId) params.visibilityEnumId = this.settings.visibility;
             this.settings.busy = true;
             // the calls' encryption (W8) is its own setting, saved first
-            const e2ee = !!this.settings.callE2ee !== !!this.room.callE2eeRequired
+            const e2ee = !this.sealed && !!this.settings.callE2ee !== !!this.room.callE2eeRequired
                 ? this.post('setCallEncryption', { chatRoomId: this.roomId, required: this.settings.callE2ee ? 'true' : 'false' }).then((json) => {
                     if (json.errors) { moqui.notifyMessages([], json.errors); throw json; }
                 }) : Promise.resolve();
@@ -2793,6 +2863,8 @@ module.exports = {
             });
         },
         roomIcon(room) { return moqui.chat.roomIcon(room); },
+        // the room's E2EE label (moqui.chat.e2eeLabel): a row shows its lock when it is end to end only
+        labelOf(room) { return moqui.chat.e2eeLabel(room); },
         bridgeText(room) {
             const names = (room.bridgeNetworkNames || []).join(', ');
             return room.notConnected ? fill(t('Not connected to {names}: messages wait here'), { names }) : fill(t('Also on {names}'), { names });
