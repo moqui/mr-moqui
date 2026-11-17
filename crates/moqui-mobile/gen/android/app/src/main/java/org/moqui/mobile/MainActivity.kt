@@ -47,10 +47,12 @@ class NetworkWatch(private val webView: () -> WebView?) : ConnectivityManager.Ne
     val was = current
     current = network
     if (was == null || was == network || !CallManager.inCall()) return
-    val view = webView() ?: return
     Log.i(CallManager.TAG, "The network changed during a call: the page restarts ICE")
-    view.post {
-      view.evaluateJavascript("window.moqui && moqui.call && moqui.call.networkChanged && moqui.call.networkChanged()", null)
+    // the views are the main thread's
+    Handler(Looper.getMainLooper()).post {
+      webView()?.evaluateJavascript(
+        "window.moqui && moqui.call && moqui.call.networkChanged && moqui.call.networkChanged()", null
+      )
     }
   }
 
@@ -73,13 +75,17 @@ class NetworkWatch(private val webView: () -> WebView?) : ConnectivityManager.Ne
   }
 }
 
-class MainActivity : TauriActivity() {
-  private var webView: WebView? = null
-  private val networkWatch = NetworkWatch { webView }
-
-  override fun onWebViewCreate(webView: WebView) {
-    this.webView = webView
+/** The activity's WebView, found in its views (the page the call is in). */
+fun findWebView(view: View?): WebView? {
+  if (view is WebView) return view
+  if (view is android.view.ViewGroup) {
+    for (i in 0 until view.childCount) findWebView(view.getChildAt(i))?.let { return it }
   }
+  return null
+}
+
+class MainActivity : TauriActivity() {
+  private val networkWatch = NetworkWatch { findWebView(window?.decorView) }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     ActivityEnd.started()
@@ -138,7 +144,6 @@ class MainActivity : TauriActivity() {
 
   override fun onDestroy() {
     networkWatch.unregister(applicationContext)
-    webView = null
     CallManager.appScreenShown(null)
     // before Rust hears of the end (super.onDestroy)
     ActivityEnd.note(this)

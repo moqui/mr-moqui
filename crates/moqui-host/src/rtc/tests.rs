@@ -198,3 +198,13 @@ fn a_peer_frame_keeps_only_what_its_kind_carries() {
     assert!(peer_frame("L1", &json!({"kind": "candidate", "candidate": "x".repeat(2_000)})).is_none());
     assert!(peer_frame("L1", &json!({"kind": "mute"})).is_none());
 }
+
+/// A direct join, as the SFU's join, takes only a newer generation than the leg's peer or route here.
+#[test]
+fn a_direct_join_of_an_older_generation_is_refused() {
+    use super::driver::newer_generation;
+    assert!(newer_generation(None, 1));
+    assert!(newer_generation(Some(1), 2));
+    assert!(!newer_generation(Some(2), 2), "the same generation");
+    assert!(!newer_generation(Some(3), 2), "an older one");
+}

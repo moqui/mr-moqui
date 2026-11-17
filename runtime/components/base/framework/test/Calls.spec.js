@@ -244,7 +244,7 @@ feature("a call that rings out is missed", {
 // The direct path (plans/Comms-Messaging.md §8.3 item 15): a one-to-one call of two users goes peer to peer; either
 // one's Always relay my calls, or a third person rung in, keeps it on the media server, and a socket that asks for the
 // direct path then is refused.
-feature("a one-to-one call goes direct unless either person always relays, or a third person is rung", {
+feature("a one-to-one call goes direct unless either person always relays or a third person is rung, and a media-server join moves it for good", {
     when() {
         endAll()
         const started = as(A, "start#Call", {calleeUserIdList: [B]})
@@ -263,9 +263,22 @@ feature("a one-to-one call goes direct unless either person always relays, or a 
         ec.user.internalLoginUser(A.toLowerCase().replace(/_/g, "."))
         const third = sys(() => call("org.moqui.call.CallServices.get#Call", {callSessionId: id})).call
         endAll()
-        return {before, bound, relay, relayed, refused, plain, back, prefs, again, third}
+        // a page that joins a direct call through the media server moves it there for good, for both pages
+        const next = as(A, "start#Call", {calleeUserIdList: [B]})
+        const nextAnswer = as(B, "answer#Call", {callSessionId: next.callSessionId})
+        as(B, "bind#Connection", {callSessionId: next.callSessionId, callLegId: nextAnswer.callLegId, direct: true})
+        const moved = as(A, "bind#Connection", {callSessionId: next.callSessionId, callLegId: next.callLegId})
+        const movedView = as(B, "get#Call", {callSessionId: next.callSessionId}).call
+        const backDirect = as(B, "bind#Connection", {callSessionId: next.callSessionId, callLegId: nextAnswer.callLegId, direct: true})
+        const relayedDate = session(next.callSessionId).relayedDate
+        endAll()
+        return {before, bound, relay, relayed, refused, plain, back, prefs, again, third, moved, movedView, backDirect, relayedDate}
     },
-    then({before, bound, relay, relayed, refused, plain, back, prefs, again, third}) {
+    then({before, bound, relay, relayed, refused, plain, back, prefs, again, third, moved, movedView, backDirect, relayedDate}) {
+        moved.generation == 1 && moved.call.direct == false
+        movedView.direct == false
+        backDirect.reasonCode == "notDirect"
+        relayedDate != null
         before == true
         bound.direct == true && bound.generation == 1
         relay.alwaysRelay == true

@@ -84,6 +84,8 @@ struct LegRoute {
     /// so it has no SFU peer here, and its `peer` frames ([`peer_frame`]) go to the other direct leg of the room.
     direct: bool,
     peer: RelayBucket,
+    /// The direct leg's first `connected` was noted (`note#MediaEvent`); later ones of this generation are not.
+    noted: bool,
 }
 
 /// A leg's relayed frames: [`RELAY_BURST`] at once, refilled at [`RELAY_PER_SECOND`].
@@ -435,22 +437,32 @@ impl Driver<'_> {
             // the direct path: the socket bound the leg for it (bind#Connection with direct), so its route is kept for
             // the pages' signaling and the room's frames, with no SFU peer; a peer it had (an older generation) goes
             "join" if frame.get("direct").and_then(Json::as_bool) == Some(true) => {
-                if let Some(old) = self.sfu.generation(&key) {
-                    let _ = self.sfu.leave(now, &key, old);
+                // as the SFU's join: an older or the same generation is refused, a newer one replaces
+                let held = self
+                    .sfu
+                    .generation(&key)
+                    .max(self.routes.get(&key).map(|r| r.generation));
+                if !newer_generation(held, generation) {
+                    Err(SfuError::StaleGeneration)
+                } else {
+                    if let Some(old) = self.sfu.generation(&key) {
+                        let _ = self.sfu.leave(now, &key, old);
+                    }
+                    self.routes.insert(
+                        key.clone(),
+                        LegRoute {
+                            generation,
+                            route: route.clone(),
+                            relayed: RelayBucket::new(now),
+                            direct: true,
+                            peer: RelayBucket::for_peer(now),
+                            noted: false,
+                        },
+                    );
+                    Ok(Some(
+                        json!({"rtc": "joined", "callLegId": leg, "generation": generation, "direct": true}),
+                    ))
                 }
-                self.routes.insert(
-                    key.clone(),
-                    LegRoute {
-                        generation,
-                        route: route.clone(),
-                        relayed: RelayBucket::new(now),
-                        direct: true,
-                        peer: RelayBucket::for_peer(now),
-                    },
-                );
-                Ok(Some(
-                    json!({"rtc": "joined", "callLegId": leg, "generation": generation, "direct": true}),
-                ))
             }
             "peer" => self.peer(&route, room, leg, generation, frame, now).map(|()| None),
             "join" => self
@@ -476,6 +488,7 @@ impl Driver<'_> {
                             relayed: RelayBucket::new(now),
                             direct: false,
                             peer: RelayBucket::for_peer(now),
+                            noted: false,
                         },
                     );
                     Some(json!({"rtc": "joined", "callLegId": leg, "generation": generation, "sdp": answer}))
@@ -600,8 +613,18 @@ impl Driver<'_> {
         }
         let to = frame.get("to").and_then(Json::as_str).unwrap_or_default();
         let to_key = LegKey::new(room, to);
-        let Some(other) = self.routes.get(&to_key).filter(|r| r.direct && to != leg) else {
-            return Ok(());
+        let other = match self.routes.get(&to_key) {
+            Some(other) if other.direct && to != leg => other,
+            // the other page is on the media server: this one is told to follow, as by the other's `relay`
+            Some(_) if to != leg => {
+                self.reply(
+                    route,
+                    room,
+                    json!({"rtc": "peer", "kind": "relay", "from": to, "callLegId": leg}),
+                );
+                return Ok(());
+            }
+            _ => return Ok(()),
         };
         let Some(relayed) = peer_frame(leg, frame) else {
             return Err(SfuError::BadSdp(
@@ -609,7 +632,12 @@ impl Driver<'_> {
             ));
         };
         let other_generation = other.generation;
-        if relayed.get("kind").and_then(Json::as_str) == Some("connected") {
+        let first_connected = relayed.get("kind").and_then(Json::as_str) == Some("connected")
+            && self
+                .routes
+                .get_mut(&key)
+                .is_some_and(|own| !std::mem::replace(&mut own.noted, true));
+        if first_connected {
             // the two pages' own connection is up: the leg is in the call's media, as an SFU peer's Connected says
             super::note(
                 self.factory,
@@ -958,6 +986,12 @@ pub(super) fn relayed_frame(op: &str, leg: &str, frame: &Json) -> Option<Json> {
     o.insert("from".to_string(), Json::String(leg.to_string()));
     o.insert("callLegId".to_string(), Json::String(leg.to_string()));
     Some(relay)
+}
+
+/// Whether a join with `generation` may replace what a leg holds here (its SFU peer's or its route's generation), as
+/// [`Sfu::join`] rules: only a newer one.
+pub(super) fn newer_generation(held: Option<u64>, generation: u64) -> bool {
+    held.is_none_or(|g| g < generation)
 }
 
 /// What of a direct leg's `peer` frame goes to the other page (plans/Comms-Messaging.md §8.3 item 15): its kind, with the

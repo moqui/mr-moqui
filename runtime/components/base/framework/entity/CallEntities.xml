@@ -50,6 +50,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="endReasonEnumId" type="id"/>
         <field name="mediaNodeId" type="text-medium"/>
         <field name="mediaGeneration" type="number-integer" default="1"/>
+        <field name="relayedDate" type="date-time"><description>When a one-to-one call on the direct path moved to the
+            media server (a page joined it there, docs/interfaces/WebRTC.md "The direct path"): it never goes direct
+            again, for either page</description></field>
         <field name="voicemailBoxId" type="id"><description>A phone call that went to voicemail: the box begin#Voicemail
             chose, which a message the SIP engine of the call's edge node queued is stored in (E8)</description></field>
         <field name="voicemailAccessBoxId" type="id"><description>A phone call whose caller gave a box's PIN

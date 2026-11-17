@@ -228,7 +228,7 @@ function alwaysRelays(userId) {
  * stops being one. An encrypted call stays encrypted on either path: the SFrame keys are the same.
  */
 function directPath(session, legs, participants) {
-  if (!directPathOn() || session.kindEnumId !== 'CskDirect' || session.statusId === 'CssEnded') return false
+  if (!directPathOn() || session.kindEnumId !== 'CskDirect' || session.statusId === 'CssEnded' || session.relayedDate) return false
   const open = legs.filter((leg) => OPEN_LEG.includes(leg.statusId))
   if (open.some((leg) => leg.statusId === 'ClsAnswered' && leg.legTypeEnumId !== 'CltWeb')) return false
   const people = participants.filter((p) => open.some((leg) => leg.callParticipantId === p.callParticipantId))
@@ -1097,8 +1097,20 @@ function bind(p) {
   if (direct && (leg.legTypeEnumId !== 'CltWeb' || !directPath(session, legsOf(session.callSessionId), participantsOf(session.callSessionId)))) {
     return refuse('notDirect', 'This call goes through the media server')
   }
+  // a browser leg of a call on the direct path that joins the media server moves the call there for good: the other
+  // page's view flips and it follows, whatever this page's reason (a timeout, a reload, another device, an older page)
+  const moving = !direct && leg.legTypeEnumId === 'CltWeb' && !session.relayedDate &&
+    directPath(session, legsOf(session.callSessionId), participantsOf(session.callSessionId))
   const bound = bindLeg(session, leg, participant, p.signalingNodeId, me, direct)
-  if (direct && !bound.reasonCode) bound.direct = true
+  if (bound.reasonCode) return bound
+  if (direct) bound.direct = true
+  if (moving) {
+    session.set('relayedDate', ec.user.nowTimestamp)
+    bump(session)
+    session.update()
+    pushState(session, 'relayed', { callLegId: leg.callLegId })
+    bound.call = view(session, me)
+  }
   return bound
 }
 

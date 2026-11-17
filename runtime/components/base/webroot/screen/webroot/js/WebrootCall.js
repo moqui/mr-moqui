@@ -578,8 +578,12 @@
             return Promise.resolve(asked).then((json) => (json && Array.isArray(json.iceServers) ? json.iceServers : []), () => []);
         },
         connect(stream) {
-            return call.fetchIceServers(state.current).then((iceServers) =>
-                call.useDirect(state.current) ? call.connectDirect(stream, iceServers) : call.connectWith(stream, iceServers));
+            // the latest connect wins: one that overlapped an earlier (a rejoin while a join was going) makes the only pc
+            const attempt = (call.connectAttempt = (call.connectAttempt || 0) + 1);
+            return call.fetchIceServers(state.current).then((iceServers) => {
+                if (attempt !== call.connectAttempt) return null;
+                return call.useDirect(state.current) ? call.connectDirect(stream, iceServers) : call.connectWith(stream, iceServers);
+            });
         },
         connectWith(stream, iceServers) {
             const id = state.current;
@@ -636,7 +640,10 @@
             call.watch(pc);
             return pc.createOffer().then((offer) => pc.setLocalDescription(offer)).then(() => {
                 call.publish = [audioTx, videoTx].filter((tx) => tx && tx.mid).map((tx) => ({ mid: tx.mid, source: tx === videoTx ? "camera" : "microphone" }));
-                call.send({ rtc: "join", callSessionId: id, callLegId: legId, sdp: pc.localDescription.sdp, id: call.nextId++ });
+                if (pc !== call.pc) return;
+                // the join's id: its "joined" (which carries it) is applied to this pc only, not to a later one's
+                call.joinId = call.nextId++;
+                call.send({ rtc: "join", callSessionId: id, callLegId: legId, sdp: pc.localDescription.sdp, id: call.joinId });
             });
         },
 
@@ -671,6 +678,8 @@
                 case "peer":
                     return call.onPeer(frame);
                 case "joined":
+                    // the answer to an earlier join of this page (its pc is closed): not this pc's
+                    if (frame.id != null && call.joinId != null && frame.id !== call.joinId) return null;
                     call.generation = frame.generation;
                     if (frame.direct) return call.onDirectJoined(frame);
                     return pc.setRemoteDescription({ type: "answer", sdp: call.withDtx(frame.sdp) }).then(() => {
@@ -685,7 +694,8 @@
                 case "offer":
                     // impolite: while this page's own offer is out, the SFU's waits; the SFU gives way and offers again
                     if (call.pendingOffer || pc.signalingState !== "stable") return null;
-                    return pc.setRemoteDescription({ type: "offer", sdp: frame.sdp })
+                    // DTX again: the browser takes its Opus parameters from the latest description of the other side
+                    return pc.setRemoteDescription({ type: "offer", sdp: call.withDtx(frame.sdp) })
                         .then(() => pc.getTransceivers().forEach((tx) => call.audioCodecs(tx, state.current)))
                         .then(() => pc.createAnswer())
                         .then((answer) => pc.setLocalDescription(answer))
@@ -1239,8 +1249,13 @@
             call.direct = { pc, peer: null, polite: false, making: false, ignoreOffer: false, started: false, timer: null, candidates: [], iceServers };
             const audio = stream && stream.getAudioTracks()[0];
             const camera = stream && stream.getVideoTracks()[0];
-            const audioTx = pc.addTransceiver(audio || "audio", { direction: audio ? "sendrecv" : "recvonly", streams: stream ? [stream] : [] });
-            const videoTx = pc.addTransceiver(camera || "video", { direction: camera ? "sendrecv" : "recvonly", streams: stream ? [stream] : [] });
+            // What each page sends goes on transceivers of its own, send only, and what it receives on the ones the other's
+            // offer makes, as on the media server's path: Chrome's receive transform (SFrame) sees no frames on a
+            // transceiver that also sends with one. So the answering page sends after its own offer, a second round the
+            // first answer starts (negotiationneeded).
+            const audioTx = audio ? pc.addTransceiver(audio, { direction: "sendonly", streams: [stream] }) : null;
+            const videoTx = camera ? pc.addTransceiver(camera, { direction: "sendonly", streams: [stream] }) : null;
+            if (!audio && !camera) pc.addTransceiver("audio", { direction: "recvonly" });
             call.audioCodecs(audioTx, id);
             if (call.keysOn(id)) {
                 if (audio) moqui.callKeys.attachSender(audioTx.sender, "audio");
@@ -1275,8 +1290,16 @@
                 }
             };
             call.watch(pc);
-            call.send({ rtc: "join", direct: true, callSessionId: id, callLegId: legId, id: call.nextId++ });
+            call.joinId = call.nextId++;
+            call.send({ rtc: "join", direct: true, callSessionId: id, callLegId: legId, id: call.joinId });
             return Promise.resolve();
+        },
+        // The direct path's wait: armed once the other page is in the call (it answered, or said hello), so a page whose
+        // other has gone to the media server (an older page, another device, a reload there) does not wait for ever.
+        armDirectWait() {
+            const d = call.direct;
+            if (!d || d.timer) return;
+            d.timer = setTimeout(() => { if (call.direct === d && d.pc.connectionState !== "connected") call.toRelay("timeout"); }, DIRECT_WAIT_MS);
         },
         sendPeer(frame) {
             const d = call.direct;
@@ -1286,12 +1309,15 @@
         hello(to) {
             if (!to || !state.current) return;
             call.send({ rtc: "peer", kind: "hello", callSessionId: state.current, callLegId: state.legId, to });
+            call.armDirectWait();
         },
         onDirectJoined(frame) {
             const d = call.direct;
             if (!d) return null;
             d.joined = true;
-            call.hello(call.otherLeg(state.calls[state.current]));
+            const other = call.otherLeg(state.calls[state.current]);
+            d.helloTo = other;
+            call.hello(other);
             return null;
         },
         // the call's new view: the other page answered (hello to it), or the call left the direct path (to the media server)
@@ -1315,8 +1341,14 @@
             d.peer = from;
             d.polite = String(state.legId) > String(from);
             d.candidates.splice(0).forEach((c) => call.sendPeer(c));
-            d.timer = setTimeout(() => { if (call.direct === d && d.pc.connectionState !== "connected") call.toRelay("timeout"); }, DIRECT_WAIT_MS);
+            call.armDirectWait();
             return true;
+        },
+        // the first offer, once: the lower leg id makes it on hello or on ready, whichever comes first
+        firstOffer() {
+            const d = call.direct;
+            if (!d || d.polite || d.started || d.making || d.pc.signalingState !== "stable") return null;
+            return call.directOffer();
         },
         onPeer(frame) {
             const d = call.direct;
@@ -1326,10 +1358,10 @@
                 case "hello":
                     if (!call.knowPeer(frame.from)) return null;
                     call.sendPeer({ kind: "ready" });
-                    return d.polite ? null : call.directOffer();
+                    return call.firstOffer();
                 case "ready":
                     if (!call.knowPeer(frame.from)) return null;
-                    return d.polite ? null : call.directOffer();
+                    return call.firstOffer();
                 case "offer": {
                     if (!call.knowPeer(frame.from)) return null;
                     const collision = d.making || pc.signalingState !== "stable";
@@ -1349,7 +1381,8 @@
                     return pc.addIceCandidate({ candidate: frame.candidate, sdpMid: frame.sdpMid, sdpMLineIndex: frame.sdpMLineIndex })
                         .catch((err) => { if (!d.ignoreOffer) console.warn("call: direct candidate", err); });
                 case "relay":
-                    if (frame.from === d.peer) call.toRelay("peer");
+                    // from the other page, or from the media node for it (its page is on the media server already)
+                    if (!d.peer || frame.from === d.peer) call.toRelay("peer");
                     return null;
                 default:
                     return null;
@@ -1390,6 +1423,8 @@
             call.tracks = {};
             call.trackSources = {};
             state.phase = "joining";
+            // a connect still fetching its ICE servers makes no pc after this one
+            call.connectAttempt = (call.connectAttempt || 0) + 1;
             return call.connectWith(state.localStream, d.iceServers).catch((err) => (state.error = String((err && err.message) || err)));
         },
         endDirect() {

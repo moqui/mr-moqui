@@ -106,9 +106,13 @@ rung in keeps the call on the media server.
    `ready`, `offer` and `answer` with their SDP, `candidate`, `connected`, `relay`), 60 at once and 20 a second. The page
    with the lower leg id offers; the two negotiate as perfect negotiation does. ICE uses the STUN of the call's TURN
    servers (the TURN servers relay only to media servers), so each page has its public address.
-3. When they do not connect within 8 s, the connection fails after a restart, or a third person, a recording, captions
-   or a screen share comes, the page moves the call to the media server (a `join` with its offer, the next generation)
-   and tells the other (`relay`), which follows. A call that moved stays there for that page.
+3. When they do not connect within 8 s of the other page being in the call (it answered, or said hello), the connection
+   fails after a restart, or a third person, a recording, captions or a screen share comes, the page moves the call to
+   the media server (a `join` with its offer, the next generation) and tells the other (`relay`), which follows. A
+   browser leg of a direct call that binds through the media server, for whatever reason (a timeout, a reload, another
+   device, an older page), moves the call for good: `CallSession.relayedDate`, and a pushed view with `direct` false, so
+   the other page follows and a page that joins again goes to the media server. A `peer` frame to a leg on the media
+   server is answered with a `relay` for it.
 4. `mute`, `hand` and `reaction` reach the other page through the media node as on the SFU path; recording and
    captions notices reach a direct leg too, which is how its page learns to move.
 
@@ -450,8 +454,9 @@ between the edge node and a local media node is later work.
 - `./moq test framework --spec Calls`: the direct path's rule (a call of two, refused for Always relay and once a third
   person is rung) and the minute a leg is kept. `cargo test -p moqui-host --lib rtc::tests`: what a `peer` frame carries
   to the other page. `./moq accept basic-comms --spec CallDirect` (acceptance): a one-to-one call peer to peer in two
-  pages, moved to the media server when a third person is rung, and on the media server from the start with Always
-  relay. About 10 seconds.
+  pages, moved to the media server when a third person is rung; one page's move taking the other along and a page that
+  joins again after it going to the media server; an encrypted call SFrame-decrypted on the direct path and again after
+  its move; and on the media server from the start with Always relay. About 16 seconds.
 
 ### The network tests
 
