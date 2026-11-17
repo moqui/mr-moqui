@@ -10,6 +10,8 @@ import android.os.Looper
 import android.util.Log
 import android.view.View
 import android.view.WindowManager
+import android.webkit.WebView
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -30,6 +32,10 @@ object ActivityEnd {
   @JvmStatic
   fun endedForGood(): Boolean = forGood
 }
+
+/** What Android's back asks the page first: true when it closed something of its own (`moqui.back.pop()`). */
+private const val BACK_SCRIPT =
+  "(function(){try{return !!(window.moqui&&window.moqui.back&&window.moqui.back.pop());}catch(e){return false;}})()"
 
 class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -93,6 +99,28 @@ class MainActivity : TauriActivity() {
     // the process ends with a finished activity: the background send kept first
     if (isFinishing && !isChangingConfigurations) FlushWorker.background(this, ending = true)
     super.onDestroy()
+  }
+
+  /**
+   * Android's back asks the page first (docs/ui/Mobile-Client.md "Back"): a dialog, menu, sheet, pane or room it
+   * opened, then the shell's own history. When the page closes nothing, Tauri's own back (its app plugin: the webview's
+   * history, then [onBackPressed]) goes on. Added once the webview is made, after Tauri's callback (made with the
+   * plugins, before the webview), so the dispatcher asks this one first; with the activity as its owner it is added
+   * again after Tauri's at each start too.
+   */
+  override fun onWebViewCreate(webView: WebView) {
+    super.onWebViewCreate(webView)
+    val callback = object : OnBackPressedCallback(true) {
+      override fun handleOnBackPressed() {
+        webView.evaluateJavascript(BACK_SCRIPT) { answer ->
+          if (answer == "true") return@evaluateJavascript
+          isEnabled = false
+          onBackPressedDispatcher.onBackPressed()
+          isEnabled = true
+        }
+      }
+    }
+    onBackPressedDispatcher.addCallback(this, callback)
   }
 
   @Deprecated("Android's back, past the webview's own history")
