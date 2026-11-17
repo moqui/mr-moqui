@@ -1266,6 +1266,11 @@ Done 2026-11-17 in `fdd1ab597` ([review](ui-review-basic-comms.md) COM-UI-001, 0
   bridge; the withheld code when the sync fails; `requireE2ee` on an encrypted room's call. Tests: `WebrootChat`;
   acceptance `EncryptedChatFlow` (john.doe verifies b by emoji and the label has its check; b's new device stops the next
   send until Send anyway) and `ChatLabels` (the members pane, Verify from the banner).
+- Second review (`b33d3213a`): Send anyway is kept in the browser per account and room (by device key or master key),
+  never as the SDK's trust, so "only verified devices" stays strict; the check before a send is the one gate and then
+  shares with all devices, so Verify then send works; a person verified by emoji only is covered; the sender's check
+  needs a verified device (`verifiedSender`); edits and reactions ask too; incoming requests named, cancelled on close.
+  Acceptance `EncryptedChatFlow` covers Verify then send and Send anyway under only verified devices.
 - Left: the call screen's label (phase 4, from `e2eeLabel`'s call states); the label in a notification (phase 2's
   payload); Mail's line beside a person's chats (phase 8, the `mail` state); a request from another person when no
   encrypted room is open shows only on My devices.
