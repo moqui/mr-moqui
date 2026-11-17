@@ -68,6 +68,10 @@ pub struct EdgeSettings {
     pub sets: Vec<ReplicaSet>,
     pub retention_days: u32,
     pub max_bytes: u64,
+    /// The replicated records an edge node keeps for one pairing at most (`replica-max-rows`), all its sets together;
+    /// a pairing's `EdgeClient.replicaMaxRows` above 0 in place of it. At it the pairing pauses (SEC-CLU-02,
+    /// [`super::caps`]).
+    pub replica_max_rows: u64,
     pub max_attempts: u32,
     /// The wait after the first refusal, doubled after each up to [`MAX_RETRY`].
     pub retry_first: Duration,
@@ -105,6 +109,9 @@ pub const MAX_SSH_TUNNELS: usize = 1_000_000;
 /// would overflow the clock it is added to.
 pub const MAX_WAIT: Duration = Duration::from_secs(86_400);
 
+/// The default of `replica-max-rows`.
+pub const DEFAULT_REPLICA_MAX_ROWS: u64 = 1_000_000;
+
 /// The longest wait between a receiver's refusals of an item.
 pub const MAX_RETRY: Duration = Duration::from_secs(600);
 
@@ -118,6 +125,7 @@ impl Default for EdgeSettings {
             sets: Vec::new(),
             retention_days: 14,
             max_bytes: 1024 * 1024 * 1024,
+            replica_max_rows: DEFAULT_REPLICA_MAX_ROWS,
             max_attempts: 10,
             retry_first: Duration::from_secs(5),
             sticky_cookie: crate::user::SESSION_COOKIE_NAME.to_string(),
@@ -173,6 +181,7 @@ impl EdgeSettings {
         };
         settings.retention_days = u32::try_from(number("queue-retention-days", 14)).unwrap_or(14);
         settings.max_bytes = number("queue-max-megabytes", 1024).saturating_mul(1024 * 1024);
+        settings.replica_max_rows = number("replica-max-rows", DEFAULT_REPLICA_MAX_ROWS);
         settings.max_attempts = u32::try_from(number("queue-max-attempts", 10)).unwrap_or(10).max(1);
         let retry = edge.attribute("queue-retry-seconds").unwrap_or_default();
         if !retry.trim().is_empty() {

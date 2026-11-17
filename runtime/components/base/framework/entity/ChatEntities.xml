@@ -330,6 +330,32 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="fetchedDate" type="date-time"/>
     </entity>
 
+    <entity entity-name="ChatEventLink" package="moqui.chat" use="transactional" cache="never">
+        <description>A link of a message, so a room's Links list is one find (find#RoomLinks, plans/Comms-Messaging.md §5.2):
+            written by send#Message (extract#LinkUrls with listed: every http or https link of the body and of a forward's,
+            at most 50) and replaced by edit#Message; a redaction and the retention remove them (clear#MessageContent).
+            urlHash is the URL's SHA-256, the key of its ChatLinkPreview, which gives the title and site name. None in an
+            encrypted room: the server cannot read its links.</description>
+        <field name="chatRoomId" type="id" is-pk="true"/>
+        <field name="eventSeq" type="number-integer" is-pk="true"/>
+        <field name="linkSeq" type="number-integer" is-pk="true"><description>Its place in the message, from 1</description></field>
+        <field name="url" type="text-very-long"/>
+        <field name="urlHash" type="id-long"/>
+        <relationship type="one" related="moqui.chat.ChatEvent" short-alias="event"/>
+        <relationship type="one-nofk" related="moqui.chat.ChatLinkPreview" short-alias="preview">
+            <key-map field-name="urlHash"/></relationship>
+    </entity>
+    <view-entity entity-name="ChatEventLinkPreview" package="moqui.chat">
+        <description>A room's links with their cached previews, for find#RoomLinks' search by URL or title: every link, and
+            its preview's title when it has one.</description>
+        <member-entity entity-alias="CEL" entity-name="moqui.chat.ChatEventLink"/>
+        <member-entity entity-alias="CLP" entity-name="moqui.chat.ChatLinkPreview" join-from-alias="CEL" join-optional="true">
+            <key-map field-name="urlHash"/></member-entity>
+        <alias-all entity-alias="CEL"/>
+        <alias entity-alias="CLP" name="title"/>
+        <alias entity-alias="CLP" name="previewFailed" field="failed"/>
+    </view-entity>
+
     <entity entity-name="ChatRoomChange" package="moqui.chat" use="transactional" cache="never">
         <description>A message of a room changed after it was sent: an edit, a reaction or its removal, a redaction, a pin,
             or a change with no event of its own (its link previews, its poll; push#Update). Numbered per room (changeSeq,

@@ -411,6 +411,9 @@ pub struct RenderState {
     /// the response could still take that status: written in place as any render error, then the render's answer, as
     /// one from `<pre-actions>` is ([`note_actions_failure`]).
     pub actions_failure: RefCell<Option<Error>>,
+    /// A text was rendered as a template (a `text` with `template` other than `false`): what was written is not one
+    /// file's text as it is, so a qvue of it has no bundle ([`super::qvue_bundle`]).
+    pub templated_text: Cell<bool>,
 }
 
 impl RenderState {
@@ -475,6 +478,7 @@ impl RenderState {
             resolved_paths: RefCell::default(),
             url_types: RefCell::default(),
             actions_failure: RefCell::new(None),
+            templated_text: Cell::new(false),
         }
     }
 }
@@ -833,7 +837,11 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
     if let Some(file) = info.file_resource.as_ref().filter(|_| child_content.is_none()) {
         let versioned = !text_of(job.parameters.get("v")).is_empty();
         let started = Instant::now();
-        super::static_files::respond(factory, job.request, file, versioned)?;
+        if file.ends_with(".qvue") && super::qvue_bundle::asked(job.request) {
+            super::qvue_bundle::answer_file(factory, job.request, file, versioned)?;
+        } else {
+            super::static_files::respond(factory, job.request, file, versioned)?;
+        }
         if info.target_screen.track_artifact_hit && web::output_status() == 200 {
             record_content_telemetry(file, started);
         }
@@ -898,7 +906,11 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
         record_history(job, &state);
         return Ok(());
     }
-    arm_stream(job, &facade, &state);
+    // a qvue asked for as its bundle: the text the render writes is compiled in its place, so it is kept whole
+    let bundle = state.render_mode == "qvue" && super::qvue_bundle::asked(job.request);
+    if !bundle {
+        arm_stream(job, &facade, &state);
+    }
     let begin = state.url_info.begin_transaction;
     let timeout = state.url_info.transaction_timeout;
     in_transaction(begin, timeout, || render_screens(&state, &facade))?;
@@ -909,6 +921,9 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
             web::add_header("X-Moqui-Qvt", state.render_mode.clone());
         }
         add_server_static_header(&state);
+        if bundle {
+            super::qvue_bundle::answer_render(&state, job.request);
+        }
     }
     record_history(job, &state);
     Ok(())

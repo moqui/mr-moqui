@@ -1109,10 +1109,19 @@ test("Send is an icon with bubbles; an encrypted room's search says it is not se
         // COM-UI-002: a room with bubbles (under 640 px, or the stacked Chat) shows Send as its icon, still named Send
         vm.width = 500;
         await Vue.nextTick();
+        // with no text the composer's button records a voice note (Comms-Messaging §5.1), where the browser records sound
+        const voice = vm.$el.querySelector(".m-chat-voice");
+        assert.equal(!!voice, typeof window.MediaRecorder === "function" && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia), "the microphone for no text");
+        if (voice) assert.equal(voice.getAttribute("aria-label"), "Record a voice note");
+        vm.composers.main.body = "<p>hi</p>";
+        await Vue.nextTick();
         const send = vm.$el.querySelector(".m-chat-send");
+        assert.equal(vm.$el.querySelector(".m-chat-voice"), null, "Send once there is text");
         assert.equal(vm.useBubbles, true, "the room has bubbles");
         assert.equal(send.getAttribute("aria-label"), "Send");
         assert.equal(send.querySelector(".block"), null, "no Send text beside the icon");
+        vm.composers.main.body = "";
+        await Vue.nextTick();
         // COM-UI-011: the search pane of an encrypted room says so before a query, and asks the server nothing
         vm.room.encrypted = true;
         vm.side = "search";

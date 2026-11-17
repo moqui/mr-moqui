@@ -2156,17 +2156,8 @@ fn the_files_and_the_threads_of_a_room_are_listed() {
         ],
     );
     assert_eq!(names(&whole), ["a.png", "b.txt"]);
-    assert_eq!(out_number(&whole, "nextBeforeEventSeq"), first);
-    let end = ok(
-        "find#RoomFiles",
-        &[
-            ("chatRoomId", text(&chat)),
-            ("limit", int(1)),
-            ("beforeEventSeq", int(first)),
-        ],
-    );
-    assert!(names(&end).is_empty());
-    assert_eq!(out_text(&end, "nextBeforeEventSeq"), "");
+    // the room's first message: no older file, so no cursor (Comms-Messaging §5.2)
+    assert_eq!(out_text(&whole, "nextBeforeEventSeq"), "");
     login("lsc");
     refused("find#RoomFiles", &[("chatRoomId", text(&chat))], "not found");
     refused("find#RoomThreads", &[("chatRoomId", text(&chat))], "not found");

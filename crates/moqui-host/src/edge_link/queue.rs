@@ -111,10 +111,28 @@ pub(crate) fn applied(reply: &proto::DeliverReply) -> Applied {
     }
 }
 
+/// The metadata key of a refusal for now because the receiver's pairing is paused at a cap (SEC-CLU-02,
+/// `moqui_core::edge::caps`): the sender keeps the item and tries again, uncounted.
+const PAUSED_KEY: &str = "moqui-edge-paused";
+
+/// A `Replicate` or `PutContent` refusal while the pairing is paused at a cap, or would pass one: `unavailable`, which
+/// a sender tries again, marked so a delivery takes it as the receiver's pause ([`delivery_error`]).
+pub(crate) fn paused_status(why: &str) -> tonic::Status {
+    let mut status = tonic::Status::unavailable(format!("the pairing is paused: {why}"));
+    status
+        .metadata_mut()
+        .insert(PAUSED_KEY, tonic::metadata::MetadataValue::from_static("1"));
+    status
+}
+
 /// A Deliver or PutContent call's gRPC error: a request the receiver refused for itself (too large, malformed) is a
-/// counted refusal; a receiver without the call (an older version) does not handle it yet; anything else (the link, a
-/// timeout) is no answer.
+/// counted refusal; a receiver paused at a cap ([`paused_status`]) is paused, tried again uncounted; a receiver without
+/// the call (an older version) does not handle it yet; anything else (the link, a timeout) is no answer.
 pub(crate) fn delivery_error(status: &tonic::Status) -> Result<Applied, String> {
+    if status.metadata().contains_key(PAUSED_KEY) {
+        tracing::warn!("Edge queue: the receiver is paused at a cap: {}", status.message());
+        return Ok(Applied::Paused);
+    }
     match status.code() {
         tonic::Code::ResourceExhausted | tonic::Code::InvalidArgument | tonic::Code::OutOfRange => Ok(Applied::Failed(
             format!("the receiver refused it: {}", status.message()),
@@ -159,13 +177,34 @@ pub(crate) fn content_chunks(
 /// Take the content of an item local node `node`'s link sends before its delivery, and keep it on this node: the
 /// location the delivery names. `generation` checks each chunk's link generation (the local node's own, on the down
 /// connection). A chunk of another item, content over [`queue::MAX_CONTENT_BYTES`] or an id that cannot name a file
-/// is refused for itself (a counted refusal on the sender).
+/// is refused for itself (a counted refusal on the sender). While the pairing is paused, or when the content kept for
+/// it would pass its queue cap, it is refused for now ([`paused_status`], `moqui_core::edge::caps::admit_content`).
 pub(crate) async fn receive_content(
     factory: &Weak<ExecutionContextFactory>,
     node: &str,
     mut stream: tonic::Streaming<proto::ContentChunk>,
     generation: impl Fn(u64) -> Result<(), tonic::Status>,
 ) -> Result<proto::PutContentReply, tonic::Status> {
+    // a paused pairing's content is not read at all
+    let asking = node.to_string();
+    let paused = on_pool(factory, move |factory| {
+        let facade = factory
+            .entity()
+            .ok_or_else(|| moqui_lib::error::Error::new("the entity facade is not installed"))?;
+        if moqui_core::edge::settings(factory).takes_links() {
+            moqui_core::edge::caps::paused(&facade, &asking)
+        } else {
+            Ok(None)
+        }
+    })
+    .await
+    .map_err(|err| {
+        tracing::error!("Edge link of {node}: its pause was not read: {err}");
+        tonic::Status::unavailable("the content could not be taken now")
+    })?;
+    if let Some(why) = paused {
+        return Err(paused_status(&why));
+    }
     let mut id: Option<String> = None;
     let mut content = Vec::new();
     while let Some(chunk) = stream.message().await? {
@@ -208,13 +247,20 @@ pub(crate) async fn receive_content(
         let facade = factory
             .entity()
             .ok_or_else(|| moqui_lib::error::Error::new("the entity facade is not installed"))?;
-        queue::store_received(factory, &facade, &keeping, &item, &content)
+        let settings = moqui_core::edge::settings(factory);
+        let size = u64::try_from(content.len()).unwrap_or(u64::MAX);
+        match moqui_core::edge::caps::admit_content(factory, &facade, &settings, &keeping, size)? {
+            moqui_core::edge::caps::Admit::Take => {}
+            moqui_core::edge::caps::Admit::Paused(why) => return Ok(Err(why)),
+        }
+        queue::store_received(factory, &facade, &keeping, &item, &content).map(Ok)
     })
     .await
     .map_err(|err| {
         tracing::error!("Edge queue item {id} of {node}: its content was not kept: {err}");
         tonic::Status::unavailable("the content could not be kept now")
-    })?;
+    })?
+    .map_err(|why| paused_status(&why))?;
     Ok(proto::PutContentReply { content_location: kept })
 }
 

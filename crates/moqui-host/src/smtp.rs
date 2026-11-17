@@ -46,7 +46,9 @@
 //!
 //! Internet mode (`internet`, `smtp_internet`; the MTA in moqui on port 25, plans/archive/Edge-Node.md §5.4 E5b) takes mail from
 //! any address, with STARTTLS on by default and per-address limits (`max-connections-per-ip`,
-//! `connections-per-minute`, 421 past them). After the data and before the answer it checks SPF, DKIM, DMARC and ARC
+//! `connections-per-minute`, 421 past them), and hourly limits (`internet-messages-per-hour`,
+//! `internet-bytes-per-hour`) on the messages stored from each client address (IPv6 by its /64) and from each envelope
+//! sender, whichever is reached first: a `MAIL` that would go past one is answered 451 4.7.1 (SEC-MAIL-07). After the data and before the answer it checks SPF, DKIM, DMARC and ARC
 //! (`moqui_mail::auth`) and asks Rspamd (`rspamd-url`, `mail_rspamd_url`) for its verdict: its own
 //! `Authentication-Results` and spam fields go on top, any that came claiming its authserv-id, and any spam fields,
 //! are removed; a DMARC failure under a reject policy and Rspamd's reject are 550, quarantine and Rspamd's "add
@@ -94,6 +96,10 @@ const MAX_ERRORS: usize = 20;
 const MAX_INTERNET_MESSAGES: usize = 100;
 /// In internet mode, the bytes of the messages one connection may bring, as [`MAX_INTERNET_MESSAGES`] (SEC-MAIL-07).
 const MAX_INTERNET_BYTES: usize = 256 * 1024 * 1024;
+/// The window of the internet mode's hourly limits.
+const HOUR: Duration = Duration::from_secs(3600);
+/// An hourly window keeps its counts in steps of this long, so it holds at most 61 of them whatever the traffic.
+const HOUR_STEP: Duration = Duration::from_secs(60);
 
 /// A connection's bytes: TCP, then TLS after STARTTLS.
 pub(crate) trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
@@ -210,6 +216,11 @@ pub struct Internet {
     pub max_messages: usize,
     /// The bytes of the messages one connection may bring ([`MAX_INTERNET_BYTES`]).
     pub max_bytes: usize,
+    /// The messages stored in an hour from one client address, and from one envelope sender
+    /// (`internet-messages-per-hour`).
+    pub messages_per_hour: u64,
+    /// The bytes of those messages (`internet-bytes-per-hour`).
+    pub bytes_per_hour: u64,
 }
 
 impl std::fmt::Debug for Internet {
@@ -221,6 +232,8 @@ impl std::fmt::Debug for Internet {
             .field("spam_fields", &self.spam_fields)
             .field("max_messages", &self.max_messages)
             .field("max_bytes", &self.max_bytes)
+            .field("messages_per_hour", &self.messages_per_hour)
+            .field("bytes_per_hour", &self.bytes_per_hour)
             .finish_non_exhaustive()
     }
 }
@@ -355,6 +368,8 @@ impl SmtpConfig {
                 records: None,
                 max_messages: MAX_INTERNET_MESSAGES,
                 max_bytes: MAX_INTERNET_BYTES,
+                messages_per_hour: number("internet-messages-per-hour", 1000),
+                bytes_per_hour: number("internet-bytes-per-hour", 1 << 30),
             }
         });
         Ok(Some(Self {
@@ -513,6 +528,18 @@ pub(crate) enum RcptAnswer {
     Local(String),
     Unknown,
     TempFail(String),
+    /// The account keeps its mailbox quota of mail or more: 452, and the sender tries again later (SEC-MAIL-07).
+    OverQuota,
+}
+
+/// The answer for the server's own account `account`: [`RcptAnswer::OverQuota`] when it is over its mailbox quota
+/// ([`inbound::over_quota`]), else [`RcptAnswer::Local`].
+pub(crate) fn own_account_answer(facade: &moqui_core::entity::EntityFacade, account: String) -> RcptAnswer {
+    match inbound::over_quota(facade, &account) {
+        Ok(true) => RcptAnswer::OverQuota,
+        Ok(false) => RcptAnswer::Local(account),
+        Err(err) => RcptAnswer::TempFail(err.to_string()),
+    }
 }
 
 /// What became of a message in one account.
@@ -567,11 +594,12 @@ impl Backend for FactoryBackend {
             let facade = factory
                 .entity()
                 .ok_or_else(|| CoreError::new("the entity facade is not ready"))?;
-            inbound::find_recipient(&facade, &address, &delimiters).map_err(CoreError::from)
+            let found = inbound::find_recipient(&facade, &address, &delimiters).map_err(CoreError::from)?;
+            Ok(found.map(|account| own_account_answer(&facade, account)))
         })
         .await;
         match found {
-            Ok(Some(account)) => RcptAnswer::Local(account),
+            Ok(Some(answer)) => answer,
             Ok(None) => RcptAnswer::Unknown,
             Err(err) => RcptAnswer::TempFail(err.message().to_string()),
         }
@@ -655,8 +683,10 @@ struct Shared<B> {
     backend: B,
     active: AtomicUsize,
     sessions: AtomicU64,
-    /// In internet mode, each address's connections open now and its recent connection times.
+    /// In internet mode, each address's connections open now, its recent connection times and its last hour's mail.
     per_ip: std::sync::Mutex<std::collections::HashMap<IpAddr, PerIp>>,
+    /// In internet mode, each envelope sender's last hour of mail (lower case; the null reverse path is not counted).
+    per_sender: std::sync::Mutex<std::collections::HashMap<String, Hourly>>,
 }
 
 /// One address's connections, for the internet mode's limits.
@@ -664,6 +694,60 @@ struct Shared<B> {
 struct PerIp {
     open: usize,
     recent: std::collections::VecDeque<Instant>,
+    hour: Hourly,
+}
+
+/// The messages and bytes stored in the last hour, in steps of [`HOUR_STEP`]: (step start, messages, bytes).
+#[derive(Default)]
+struct Hourly(std::collections::VecDeque<(Instant, u64, u64)>);
+
+impl Hourly {
+    /// Forget the steps that started more than an hour before `now`.
+    fn expire(&mut self, now: Instant) {
+        while self.0.front().is_some_and(|(at, _, _)| now.duration_since(*at) >= HOUR) {
+            self.0.pop_front();
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Why one more message of `size` bytes would go past `internet`'s hourly limits, or none.
+    fn over(&mut self, now: Instant, internet: &Internet, size: u64) -> Option<String> {
+        self.expire(now);
+        let (messages, bytes) = self.0.iter().fold((0u64, 0u64), |(messages, bytes), (_, m, b)| {
+            (messages + m, bytes.saturating_add(*b))
+        });
+        if messages.saturating_add(1) > internet.messages_per_hour {
+            return Some(format!(
+                "{messages} messages in the last hour (internet-messages-per-hour)"
+            ));
+        }
+        if bytes.saturating_add(size) > internet.bytes_per_hour {
+            return Some(format!("{bytes} bytes in the last hour (internet-bytes-per-hour)"));
+        }
+        None
+    }
+
+    /// Count a message of `size` bytes stored at `now`.
+    fn charge(&mut self, now: Instant, size: u64) {
+        self.expire(now);
+        match self.0.back_mut() {
+            Some((at, messages, bytes)) if now.duration_since(*at) < HOUR_STEP => {
+                *messages += 1;
+                *bytes = bytes.saturating_add(size);
+            }
+            _ => self.0.push_back((now, 1, size)),
+        }
+    }
+}
+
+/// The key an envelope sender is limited by: its address in lower case, none for the null reverse path (a bounce has
+/// no sender to count; its client address still is).
+fn sender_key(mail_from: &str) -> Option<String> {
+    let address = mail_from.trim();
+    (!address.is_empty()).then(|| address.to_ascii_lowercase())
 }
 
 /// A connection counted against its address's limit, given back on drop.
@@ -677,7 +761,8 @@ impl Drop for IpSlot<'_> {
         let mut map = moqui_lib::sync::lock(self.per_ip);
         if let Some(entry) = map.get_mut(&self.ip) {
             entry.open = entry.open.saturating_sub(1);
-            if entry.open == 0 && entry.recent.is_empty() {
+            entry.hour.expire(Instant::now());
+            if entry.open == 0 && entry.recent.is_empty() && entry.hour.is_empty() {
                 map.remove(&self.ip);
             }
         }
@@ -699,13 +784,15 @@ fn take_ip_slot<'a>(
     let ip = limit_key(ip);
     let mut map = moqui_lib::sync::lock(per_ip);
     let now = Instant::now();
-    // forget the addresses with nothing open and nothing in the last minute, so the map stays small
+    // forget the addresses with nothing open, no connection in the last minute and no mail in the last hour, so the map
+    // stays small
     if map.len() > 10_000 {
         map.retain(|_, entry| {
             entry
                 .recent
                 .retain(|at| now.duration_since(*at) < Duration::from_secs(60));
-            entry.open > 0 || !entry.recent.is_empty()
+            entry.hour.expire(now);
+            entry.open > 0 || !entry.recent.is_empty() || !entry.hour.is_empty()
         });
     }
     let entry = map.entry(ip).or_default();
@@ -724,6 +811,60 @@ fn take_ip_slot<'a>(
     entry.open += 1;
     entry.recent.push_back(now);
     Ok(IpSlot { per_ip, ip })
+}
+
+/// Why a message of `size` bytes from `ip` (by its [`limit_key`]) and from the envelope sender `mail_from` would go
+/// past the internet mode's hourly limits, whichever is reached first, or none (SEC-MAIL-07).
+fn hourly_refusal(
+    per_ip: &std::sync::Mutex<std::collections::HashMap<IpAddr, PerIp>>,
+    per_sender: &std::sync::Mutex<std::collections::HashMap<String, Hourly>>,
+    internet: &Internet,
+    ip: IpAddr,
+    mail_from: &str,
+    size: u64,
+) -> Option<String> {
+    let now = Instant::now();
+    let ip = limit_key(ip);
+    let by_ip = moqui_lib::sync::lock(per_ip)
+        .get_mut(&ip)
+        .and_then(|entry| entry.hour.over(now, internet, size));
+    if let Some(why) = by_ip {
+        return Some(format!("{ip}: {why}"));
+    }
+    let key = sender_key(mail_from)?;
+    let by_sender = moqui_lib::sync::lock(per_sender)
+        .get_mut(&key)
+        .and_then(|hour| hour.over(now, internet, size));
+    by_sender.map(|why| format!("<{}>: {why}", clip(&key)))
+}
+
+/// Count a stored message of `size` bytes against its client address and its envelope sender: once, however many
+/// recipients it had.
+fn charge_hourly(
+    per_ip: &std::sync::Mutex<std::collections::HashMap<IpAddr, PerIp>>,
+    per_sender: &std::sync::Mutex<std::collections::HashMap<String, Hourly>>,
+    ip: IpAddr,
+    mail_from: &str,
+    size: u64,
+) {
+    let now = Instant::now();
+    moqui_lib::sync::lock(per_ip)
+        .entry(limit_key(ip))
+        .or_default()
+        .hour
+        .charge(now, size);
+    let Some(key) = sender_key(mail_from) else {
+        return;
+    };
+    let mut map = moqui_lib::sync::lock(per_sender);
+    // forget the senders with no mail in the last hour, so the map stays small
+    if map.len() > 10_000 {
+        map.retain(|_, hour| {
+            hour.expire(now);
+            !hour.is_empty()
+        });
+    }
+    map.entry(key).or_default().charge(now, size);
 }
 
 /// A place among `smtp-server` `max-connections`, given back on drop.
@@ -765,6 +906,7 @@ fn shared<B: Backend>(config: SmtpConfig, tls: Option<TlsAcceptor>, backend: B) 
         active: AtomicUsize::new(0),
         sessions: AtomicU64::new(0),
         per_ip: std::sync::Mutex::new(std::collections::HashMap::new()),
+        per_sender: std::sync::Mutex::new(std::collections::HashMap::new()),
     })
 }
 
@@ -1332,6 +1474,7 @@ impl<B: Backend> Session<'_, B> {
         let mut utf8 = false;
         let mut ret = String::new();
         let mut envid = String::new();
+        let mut declared_size = 0u64;
         let mut seen: Vec<String> = Vec::new();
         for parameter in parameters.split_whitespace() {
             let (key, value) = parameter.split_once('=').unwrap_or((parameter, ""));
@@ -1350,6 +1493,7 @@ impl<B: Backend> Session<'_, B> {
                             .error("552 5.3.4 Message size exceeds fixed maximum message size")
                             .await;
                     }
+                    declared_size = size;
                 }
                 "BODY" if self.esmtp && matches!(value.to_ascii_uppercase().as_str(), "7BIT" | "8BITMIME") => {}
                 "SMTPUTF8" if self.esmtp && value.is_empty() => utf8 = true,
@@ -1367,6 +1511,28 @@ impl<B: Backend> Session<'_, B> {
                         .await
                 }
             }
+        }
+        // the mail of the last hour from this client address and from this sender, whichever is reached first
+        // (SEC-MAIL-07): a peer, or many peers sending as one address, waits and tries again
+        let over_hour = self.config().internet.as_ref().and_then(|internet| {
+            hourly_refusal(
+                &self.shared.per_ip,
+                &self.shared.per_sender,
+                internet,
+                self.client_ip,
+                &address,
+                declared_size,
+            )
+        });
+        if let Some(why) = over_hour {
+            tracing::warn!(
+                "SMTP session {} answered MAIL FROM <{}> with 451: {why}",
+                self.id,
+                clip(&address)
+            );
+            return self
+                .reply("451 4.7.1 Too much mail from this address in the last hour, try again later")
+                .await;
         }
         self.transaction = Some(Transaction {
             mail_from: address,
@@ -1464,6 +1630,20 @@ impl<B: Backend> Session<'_, B> {
                     return self.error(&line).await;
                 }
                 self.reply(&line).await
+            }
+            RcptAnswer::OverQuota => {
+                // not an error: the sender keeps the mail and tries again once the owner has made room
+                self.refused += 1;
+                tracing::info!(
+                    "SMTP session {} answered recipient {} with 452: its account is over its mailbox quota",
+                    self.id,
+                    clip(&address)
+                );
+                self.reply(&format!(
+                    "452 4.2.2 <{}>: Mailbox full, try again later",
+                    clip(&address)
+                ))
+                .await
             }
             RcptAnswer::TempFail(text) => {
                 self.refused += 1;
@@ -1679,6 +1859,15 @@ impl<B: Backend> Session<'_, B> {
                 if failed.len() < transaction.recipients.len() {
                     self.messages += 1;
                     self.message_bytes = self.message_bytes.saturating_add(size);
+                    if self.config().internet.is_some() {
+                        charge_hourly(
+                            &self.shared.per_ip,
+                            &self.shared.per_sender,
+                            self.client_ip,
+                            &transaction.mail_from,
+                            size as u64,
+                        );
+                    }
                     tracing::info!(
                         "SMTP session {} stored a message of {size} bytes from <{}> to {recipients}: {summary}",
                         self.id,

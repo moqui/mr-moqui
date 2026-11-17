@@ -215,15 +215,16 @@ Threads and Search stay panes of their own. Each tab loads more as the user scro
 
 | Tab | Source | Status |
 |---|---|---|
-| People | Members | Built as a pane |
-| Media | `files` with `image/` and `video/` together. Grid of thumbnails. Full-screen viewer with swipe | Partial: "Pictures" is `image/` only; the viewer has no swipe |
-| Files | `files`, all types except image, video and audio | Partial: "All" includes images |
-| Voice | `files` with `audio/`. Inline player. Voice notes are recorded in the composer (`MediaRecorder`) and sent as an audio attachment | Planned |
-| Links | New `links` transition (§5.2) | Planned |
-| Reactions | New `reactions` transition (§5.2) | Planned |
-| Pinned | Pins | Built as a pane |
+| People | Members | Built (phase 7) |
+| Media | `files` with `image/` and `video/` together. Grid of thumbnails. Full-screen viewer with swipe | Built (phase 7) |
+| Files | `files`, all types except image, video and audio | Built (phase 7) |
+| Voice | `files` with `audio/`. Inline player. Voice notes are recorded in the composer (`MediaRecorder`) and sent as an audio attachment | Built (phase 7); a real phone's recording left (§18.4) |
+| Links | New `links` transition (§5.2) | Built (phase 7) |
+| Reactions | New `reactions` transition (§5.2) | Built (phase 7) |
+| Pinned | Pins | Built (phase 7) |
 
-- `find#RoomFiles` takes one `contentTypePrefix` today. It gets a list of prefixes to include and a list to leave out.
+- `find#RoomFiles` took one `contentTypePrefix`. It has a list of prefixes to include and a list to leave out
+  (`contentTypePrefixList`, `excludeContentTypePrefixList`; phase 7).
 - In an encrypted room the server knows no file type or name (`find#RoomFiles` returns them empty and refuses a
   filter). The client loads the files, decrypts their details and sorts them into the tabs itself.
 - People: when the last owner leaves, the confirmation names the member who becomes the owner and says so
@@ -276,6 +277,13 @@ are acceptance specs.
 
 **Done when:** each tab shows the right items for a test room with photos, a video, a PDF, a voice note, two links
 and three reactions, on a phone and on a desktop (acceptance client spec).
+
+Status (phase 7): built. `ChatEventLink` (every link of a message, from `extract#LinkUrls` with `listed`, at most 50,
+written by `send#Message`, replaced by `edit#Message`, removed by `clear#MessageContent`); `find#RoomLinks`,
+`find#RoomReactions`, `find#ChatActivity`, and `get#MessageSummaries` that the last two and an encrypted room's
+`find#RoomFiles` share for the ciphertext. Regression: `BasicCommsDetails` (each service's paging across a message with
+more items than the limit, equal dates, a stranger, an encrypted room; the links written, replaced and removed; the
+terminal's two lists) and `chat_link`'s listed links. Acceptance: `ChatDetails`.
 
 ## 6. E2EE policy
 
@@ -1134,7 +1142,7 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 | 4 | Calls: flow and screen | §8.3 items 1–7 | Large |
 | 5 | Calls: network tests, then resilience: done 2026-11-17 (`64c002d20`; the browser suite under sudo and real phones left) | §8.3 items 8–15, §8.4 | Large |
 | 6 | Message menu, reactions, Info: done 2026-11-17 (`acc6d1b66`; a real phone's feel left) | §4 | Medium |
-| 7 | Details tabs and services, voice notes | §5 | Medium |
+| 7 | Details tabs and services, voice notes: done 2026-11-17 (`533f3c0f2`; a voice note on a real phone left) | §5 | Medium |
 | 8 | Desktop gaps | §3 | Medium |
 | 9 | The user's phone number | §9 | Medium, plus the user's steps |
 | 10+ | Work that needs a design first, then the other networks | §6.5, §10–§17 | — |
@@ -1410,6 +1418,35 @@ members' read markers.
 
 #### Phase 7: details tabs and services, voice notes
 
+Done 2026-11-17 in `533f3c0f2`.
+
+| Work | Files |
+|---|---|
+| `ChatEventLink`, written by `send#Message` (with a forward's links), replaced by `edit#Message`, removed by `clear#MessageContent` (redaction, retention); `extract#LinkUrls` with `listed` (any port, our own links, at most 50; the same text as a preview, so the hash finds it) | `ChatEntities.xml`, `ChatServices.xml`, `chat_link.rs` |
+| `find#RoomLinks`, `find#RoomReactions`, `find#ChatActivity` (one cursor of date, eventSeq, kind and room), `get#MessageSummaries`; `find#RoomFiles`' lists of types (an encrypted room's files with their message's ciphertext) | `ChatServices.xml` |
+| The transitions `links`, `reactions`, `activity`; `files` takes `contentTypePrefixes` and `excludeContentTypePrefixes`; `attachment` serves a sound or video inline | `Chat.xml` |
+| The details view: tabs People, Media (grid; the viewer, full screen, with swipe, arrows and Left and Right), Files, Voice (player), Links, Reactions (All, To my messages), Pinned, each loading more as it scrolls and read again on a push; an encrypted room's files decrypted and sorted here, its links from the messages opened here | `Chat.qvue` |
+| Voice notes: the microphone in place of Send with no text, the time, Cancel and Send (ten minutes at most), sent through the upload (encrypted in an encrypted room); played in the message and in Voice; a decrypted sound or video keeps its type (`blobType`) | `Chat.qvue`, `WebrootChat.js`, `WebrootVue.qvt.css` |
+| The terminal: a room's Links (`chatView` links) and Activity (`chatView` activity), each with More | `ChatTui.xml`, `Chat.tui.json` |
+| Bundled screens regenerated | `bundled-screens.js` |
+
+- Tests. Regression: `BasicCommsDetails` (the links written, replaced and gone; each service's paging, equal dates, a
+  stranger, an encrypted room; the terminal's lists), `chat_link` (the listed links), `WebrootChat` (`blobType`),
+  `ShellSync` (the microphone in place of Send). Acceptance: `ChatDetails` (each tab's items for a room with photos, a
+  video, a PDF, a voice note, two links and three reactions, the viewer's swipe, and a voice note recorded and sent,
+  at 390×844 and 1280×800 in the bundled shell, offline).
+- Left: a voice note recorded and played on a real phone (§18.4); the Activity view (phase 8 builds it on
+  `find#ChatActivity`).
+- Review fixes: the microphone is asked for once and dropped when the composer went or the recording was cancelled
+  meanwhile (no recorder on a closed room); a voice note goes alone (typed text stays; Enter waits while it records);
+  sounds and videos are served with their type (`content_type_for_name`: webm, ogg, opus, m4a, mp3, mp4, wav, webp);
+  an encrypted edit keeps the message's files in its ciphertext (`moqui.chat.keptFiles`); the tabs' latest request wins
+  and a push merges at the top; `find#RoomReactions` says there is more only when another message passes;
+  `find#ChatActivity`'s cursor has the row's id and refuses a bad one; `find#RoomLinks` searches the room's links joined
+  to their previews (`ChatEventLinkPreview`). Tests: `BasicCommsDetails` (the listed links end to end, the attachment's
+  type, the cursors), `WebrootChat` (an edit's files), `moqui-lib` `resource` (the media types).
+
+Planned:
 - `ChatEventLink`; `find#RoomLinks`, `find#RoomReactions`, `find#ChatActivity`; the include and leave-out type lists
   of `find#RoomFiles`; the transitions `links`, `reactions` and `activity`.
 - The tabbed details view; the viewer's swipe; the client-side sort for an encrypted room.

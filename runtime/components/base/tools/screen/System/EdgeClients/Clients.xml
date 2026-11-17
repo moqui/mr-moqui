@@ -15,7 +15,9 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Edge Clients › Clients (plans/Edge-Node2.md §4.4, §4.5, §4.10): each pairing with its link
     (org.moqui.edge.EdgeServices.get#EdgeClients): state, members linked, version, address, last connect, generation
     and the start of its key; its queue (get#QueueStatus: the items waiting for it, the oldest, the failed ones), its own
-    queue cap (update#EdgeClient queueMaxMegabytes, empty for the conf's queue-max-megabytes) and what happens to a new
+    queue caps (update#EdgeClient queueMaxMegabytes, empty for the conf's queue-max-megabytes, and replicaMaxRows,
+    empty for the conf's replica-max-rows; a pairing at a cap is paused, shown, until Resume, resume#EdgeClient, or new
+    caps, SEC-CLU-02) and what happens to a new
     node that would take it over (hold#NewMembers: admitted with a notice, or held for approval). Below, the members of
     each pairing (get#EdgeMembers: from the links, the member list its linked members send and the nodes refused or held
     lately, all in memory): each one's condition, state, version, address, heartbeat and when it was last heard, with
@@ -103,8 +105,17 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
         <error-response url="."/>
     </transition>
+    <transition name="resumeClient">
+        <service-call name="org.moqui.edge.EdgeServices.resume#EdgeClient" in-map="{pairedNodeId:pairedNodeId}" out-map="resumeOut"/>
+        <actions><if condition="!ec.message.hasError()"><then>
+            <if condition="resumeOut?.resumed"><then><message type="success">${pairedNodeId} is resumed: it pauses again if it still passes a cap</message></then>
+                <else><message type="warning">${pairedNodeId} was not paused</message></else></if>
+        </then></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
     <transition name="setQueueCap">
-        <service-call name="org.moqui.edge.EdgeServices.update#EdgeClient" in-map="{pairedNodeId:pairedNodeId, queueMaxMegabytes:queueMaxMegabytes}" out-map="capOut"/>
+        <service-call name="org.moqui.edge.EdgeServices.update#EdgeClient" in-map="{pairedNodeId:pairedNodeId, queueMaxMegabytes:queueMaxMegabytes, replicaMaxRows:replicaMaxRows}" out-map="capOut"/>
         <actions><if condition="!ec.message.hasError()"><then>
             <if condition="capOut?.queueMaxMegabytes"><then><message type="success">${pairedNodeId}'s queue holds up to ${capOut.queueMaxMegabytes} MB</message></then>
                 <else><message type="success">${pairedNodeId}'s queue has the conf's cap</message></else></if>
@@ -197,7 +208,10 @@ along with this software (see the LICENSE.md file). If not, see
                 versionText: (client.binaryVersion || '') + (client.linkVersion ? ' · ' + L('link') + ' ' + client.linkVersion : ''),
                 keyShort: client.keyFingerprint ? String(client.keyFingerprint).slice(0, 16) + '…' : '',
                 queueText,
-                capText: client.queueMaxMegabytes ? client.queueMaxMegabytes + ' MB' : L('The conf\'s')}
+                paused: !!client.pausedDate,
+                capText: (client.queueMaxMegabytes ? client.queueMaxMegabytes + ' MB' : L('The conf\'s'))
+                    + ' · ' + (client.replicaMaxRows ? client.replicaMaxRows + ' ' + L('records') : L('the conf\'s records'))
+                    + (client.pausedDate ? ' · ' + L('Paused') + ' ' + ec.l10n.format(client.pausedDate, '') + ': ' + (client.pausedReason || '') : '')}
         })
         nodeOptions = clientList.filter((client) => !client.revoked).map((client) => ({nodeId: client.pairedNodeId}))
         // the takeovers noted on each pairing (plans/Edge-Node2.md §4.5): the node displaced stays refused until cleared
@@ -249,7 +263,8 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="pairedNodeId"><default-field title="Local node"><drop-down>
                         <list-options list="nodeOptions" key="${nodeId}" text="${nodeId}"/>
                     </drop-down></default-field></field>
-                    <field name="queueMaxMegabytes"><default-field title="Megabytes" tooltip="The most the items waiting for this node may take; past it the oldest fail. Empty for the conf's queue-max-megabytes, which holds for each pairing alone"><text-line size="8"/></default-field></field>
+                    <field name="queueMaxMegabytes"><default-field title="Megabytes" tooltip="The most the items waiting for this node may take; past it the oldest fail. The content it sends with its deliveries counts against it too: past it the pairing pauses. Empty for the conf's queue-max-megabytes, which holds for each pairing alone"><text-line size="8"/></default-field></field>
+                    <field name="replicaMaxRows"><default-field title="Records" tooltip="The most replicated records this node keeps for it, all its sets; past it the pairing pauses. Empty for the conf's replica-max-rows. Saving resumes a paused pairing"><text-line size="10"/></default-field></field>
                     <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
                 </form-single>
             </container-dialog>
@@ -322,8 +337,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="queueText"><default-field title="Queue"
                         tooltip="Items waiting for the node, sent in order when its link is up; failed ones are kept">
                     <display/></default-field></field>
-                <field name="capText"><default-field title="Queue cap"
-                        tooltip="The most its waiting items may take: its own, or the conf's queue-max-megabytes">
+                <field name="capText"><default-field title="Caps"
+                        tooltip="The most its waiting items and kept content may take (its own, or the conf's queue-max-megabytes) and its replicated records (its own, or replica-max-rows); at a cap it pauses until Resume">
                     <display/></default-field></field>
                 <field name="newNodeText"><default-field title="A new node"
                         tooltip="What happens to a node with a new instance id that takes the pairing over while none of its members is linked, such as a standby (New nodes sets it)">
@@ -331,6 +346,9 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="tools" align="right"><default-field title="">
                     <link url="pingClient" link-type="hidden-form-link" icon="sym_o_network_ping" text="Ping" style="m-btn-flat"
                             condition="linked" parameter-map="{pairedNodeId:pairedNodeId}"/>
+                    <link url="resumeClient" link-type="hidden-form-link" icon="sym_o_play_arrow" text="Resume" style="m-btn-flat"
+                            condition="paused" confirmation="Resume ${pairedNodeId}? It pauses again at its next send over a cap; raise its caps first if it needs more."
+                            parameter-map="{pairedNodeId:pairedNodeId}"/>
                     <link url="revokeClient" link-type="hidden-form-link" icon="sym_o_block" text="Revoke" style="m-btn-flat" btn-type="danger"
                             condition="!revoked &amp;&amp; !notStarted" confirmation="Revoke ${pairedNodeId}? Its link closes, and it can link again only by pairing with a new code."
                             parameter-map="{pairedNodeId:pairedNodeId}"/>

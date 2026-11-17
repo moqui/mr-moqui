@@ -15,9 +15,11 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Chat (design-drawers-commons.md §13 Chat; style-guide §3.8 Split, §4.8 .qvue; impl-drawers-commons.md M10): rooms and
     direct messages. The component is Chat.qvue next to this file, served in the qvue render mode: the rail of rooms
     (search, filters, pinned first, unread and mention badges, presence dots, New direct message, New room, Browse rooms) and
-    the room view (its header, the timeline paged by eventSeq, threads and the room's thread list, members, pinned messages,
-    the room's files, search in the room, the composer with mentions, files and polls, sends that wait in the page's outbox
-    while offline, forwards, link previews, room settings), with the live parts from the page's chat store (moqui.chat). The room
+    the room view (its header, the timeline paged by eventSeq, threads and the room's thread list, the room's details with
+    their tabs (people, media, files, voice, links, reactions, pinned: files, links and reactions, Comms-Messaging §5),
+    search in the room, the composer with mentions, files, voice notes and polls, sends that wait in the page's outbox
+    while offline, forwards, link previews, room settings), with the live parts from the page's chat store (moqui.chat). The
+    user's activity across rooms is activity. The room
     is in the URL (chatRoomId, eventSeq to open at a message, thread; dm to start a direct message with a user;
     recordEntity and recordId to open a record's room, made on first use), so a room is a link. The tray's Chat tab
     (Panel/Chat, ChatPanel.qvue) uses these transitions and the same room view.
@@ -107,10 +109,42 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- the files of the room's messages, newest first: all, or the pictures (contentTypePrefix image/) -->
     <transition name="files" method="get" read-only="true">
         <actions><script><![CDATA[
+            // the type prefixes to keep and to leave out, each a text with commas (image/,video/ for Media)
+            const listOf = (text) => String(text || '').split(',').map((part) => part.trim()).filter((part) => part)
             const out = ec.service.sync().name('org.moqui.chat.ChatServices.find#RoomFiles').parameters({chatRoomId: chatRoomId || '',
-                contentTypePrefix: contentTypePrefix || null, searchText: searchText || null, limit: limit ? Number(limit) : 30,
+                contentTypePrefix: contentTypePrefix || null, contentTypePrefixList: listOf(contentTypePrefixes),
+                excludeContentTypePrefixList: listOf(excludeContentTypePrefixes), searchText: searchText || null, limit: limit ? Number(limit) : 30,
                 beforeEventSeq: beforeEventSeq ? Number(beforeEventSeq) : null}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {fileList: out.fileList, nextBeforeEventSeq: out.nextBeforeEventSeq})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the details tabs (Comms-Messaging §5): the room's links, newest first, with the cached preview's title -->
+    <transition name="links" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.find#RoomLinks').parameters({chatRoomId: chatRoomId || '',
+                searchText: searchText || null, limit: limit ? Number(limit) : 40, beforeEventSeq: beforeEventSeq ? Number(beforeEventSeq) : null}).call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {links: out.links, nextBeforeEventSeq: out.nextBeforeEventSeq})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the room's messages with reactions, the newest reaction first; onlyToMe for those to my messages -->
+    <transition name="reactions" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.find#RoomReactions').parameters({chatRoomId: chatRoomId || '',
+                reactionKey: reactionKey || null, onlyToMe: String(onlyToMe) === 'true', limit: limit ? Number(limit) : 40,
+                beforeReactionSeq: beforeReactionSeq ? Number(beforeReactionSeq) : null}).call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {messages: out.messages, nextBeforeReactionSeq: out.nextBeforeReactionSeq})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- my activity across rooms: mentions, replies, thread replies and reactions to my messages (kinds, with commas) -->
+    <transition name="activity" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.find#ChatActivity').parameters({
+                kinds: String(kinds || '').split(',').map((part) => part.trim()).filter((part) => part), limit: limit ? Number(limit) : 40,
+                cursor: cursor || null}).call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {items: out.items, nextCursor: out.nextCursor})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -139,7 +173,9 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.chat.ChatServices.get#Attachment').parameter('chatAttachmentId', chatAttachmentId || '').call()
             if (ec.message.hasError()) ec.web.sendJsonResponse({})
-            else ec.web.sendResourceResponse(out.location, String(inline) === 'true' && /^image\/(png|jpe?g|gif|webp)$/i.test(out.contentType || ''))
+            // inline: a picture the room shows, or a sound or video its player plays (a voice note); anything else is a download
+            else ec.web.sendResourceResponse(out.location, String(inline) === 'true'
+                && /^(image\/(png|jpe?g|gif|webp)|audio\/(webm|ogg|mpeg|mp4|aac|wav|x-m4a)|video\/(mp4|webm|ogg|quicktime))(\s*;.*)?$/i.test(out.contentType || ''))
         ]]></script></actions>
         <default-response type="none"/>
     </transition>

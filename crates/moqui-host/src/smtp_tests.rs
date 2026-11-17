@@ -17,8 +17,8 @@ use std::sync::Mutex;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
-/// Accounts by address, and every message delivered; the store fails for account `fail@`, and account `gone@`
-/// is removed by the time the message comes.
+/// Accounts by address, and every message delivered; the store fails for account `fail@`, account `gone@`
+/// is removed by the time the message comes, and account `full@` is over its mailbox quota.
 #[derive(Default)]
 struct Fake {
     delivered: Mutex<Vec<Message>>,
@@ -32,6 +32,7 @@ impl Backend for Arc<Fake> {
             }
             "help@example.com" => RcptAnswer::Local("sales@example.com".to_string()),
             "busy@example.com" => RcptAnswer::TempFail("database down".to_string()),
+            "full@example.com" => RcptAnswer::OverQuota,
             _ => RcptAnswer::Unknown,
         }
     }
@@ -800,6 +801,8 @@ async fn internet_mode_checks_the_mail_and_limits_each_address() {
         records: Some(Arc::new(records)),
         max_messages: 100,
         max_bytes: 1 << 20,
+        messages_per_hour: 1000,
+        bytes_per_hour: 1 << 30,
     });
     let (address, fake, _stop) = start(config).await;
     let mut client = Client::connect(address).await;
@@ -888,6 +891,8 @@ async fn internet_mode_counts_unknown_recipients_and_messages_a_connection() {
         records: Some(Arc::new(records)),
         max_messages: 2,
         max_bytes: 1 << 20,
+        messages_per_hour: 1000,
+        bytes_per_hour: 1 << 30,
     });
     let (address, fake, _stop) = start(config).await;
     let mut client = Client::connect(address).await;
@@ -939,6 +944,8 @@ async fn internet_mode_takes_the_mail_when_rspamd_is_not_reached() {
         records: Some(Arc::new(records)),
         max_messages: 100,
         max_bytes: 1 << 20,
+        messages_per_hour: 1000,
+        bytes_per_hour: 1 << 30,
     });
     let (address, fake, _stop) = start(config).await;
     let mut client = Client::connect(address).await;
@@ -953,6 +960,181 @@ async fn internet_mode_takes_the_mail_when_rspamd_is_not_reached() {
     assert!(client.reply().await.starts_with("250 2.0.0 Ok"));
     let delivered = String::from_utf8_lossy(&fake.delivered.lock().unwrap()[0].raw).to_string();
     assert!(delivered.contains("\r\nX-Spam-Flag: NO\r\n"), "{delivered}");
+}
+
+/// Internet mode settings with the hourly limits given, the rest as the conf's defaults.
+fn hourly(messages_per_hour: u64, bytes_per_hour: u64) -> Internet {
+    let records = moqui_mail::dns::Records::offline();
+    records.fix_txt("example.org", "v=spf1 ip4:127.0.0.1 -all").unwrap();
+    Internet {
+        max_per_ip: 5,
+        per_minute: 30,
+        rspamd_url: String::new(),
+        spam_fields: vec!["X-Spam-Flag".to_string()],
+        records: Some(Arc::new(records)),
+        max_messages: 100,
+        max_bytes: 1 << 20,
+        messages_per_hour,
+        bytes_per_hour,
+    }
+}
+
+/// A connection that says EHLO, first sending `proxy` (a PROXY v1 line naming the client) when it is not empty.
+async fn hello(address: SocketAddr, proxy: &str) -> Client {
+    let mut client = Client::connect(address).await;
+    if !proxy.is_empty() {
+        client.send(&format!("PROXY TCP4 {proxy} 127.0.0.1 40000 25\r\n")).await;
+    }
+    assert_eq!(client.reply().await, "220 mx.test ESMTP mr-moqui");
+    assert!(client.command("EHLO gw.example.org").await.starts_with("250-mx.test"));
+    client
+}
+
+/// One message from `from` to `to`, stored.
+async fn send_one(client: &mut Client, from: &str, to: &[&str]) {
+    assert_eq!(client.command(&format!("MAIL FROM:<{from}>")).await, "250 2.1.0 Ok");
+    for rcpt in to {
+        assert_eq!(client.command(&format!("RCPT TO:<{rcpt}>")).await, "250 2.1.5 Ok");
+    }
+    assert_eq!(client.command("DATA").await, "354 End data with <CR><LF>.<CR><LF>");
+    client
+        .send(&format!("From: {from}\r\nSubject: Hi\r\n\r\nHello\r\n.\r\n"))
+        .await;
+    assert!(client.reply().await.starts_with("250 2.0.0 Ok"));
+}
+
+const OVER_HOUR: &str = "451 4.7.1 Too much mail from this address in the last hour, try again later";
+
+/// SEC-MAIL-07: in internet mode the messages and bytes stored in an hour are limited per client address (over all of
+/// its connections) and per envelope sender (over all addresses), whichever is reached first; a message counts once
+/// however many recipients it has, and a MAIL's SIZE counts toward the bytes.
+#[tokio::test]
+async fn internet_mode_limits_the_mail_of_an_hour_by_address_and_by_sender() {
+    let mut by_ip = config("10.9.9.9");
+    by_ip.allowed = Vec::new();
+    by_ip.authserv_id = "mx.test".to_string();
+    by_ip.internet = Some(hourly(2, 1 << 20));
+    let (address, fake, _stop) = start(by_ip).await;
+    let mut client = hello(address, "").await;
+    send_one(
+        &mut client,
+        "ann@example.org",
+        &["sales@example.com", "help@example.com"],
+    )
+    .await;
+    send_one(&mut client, "bob@example.org", &["sales@example.com"]).await;
+    assert_eq!(client.command("MAIL FROM:<cy@example.org>").await, OVER_HOUR);
+    let mut again = hello(address, "").await;
+    assert_eq!(
+        again.command("MAIL FROM:<dee@example.org>").await,
+        OVER_HOUR,
+        "the address's, over connections"
+    );
+    assert_eq!(fake.delivered.lock().unwrap().len(), 2);
+
+    let mut by_sender = config("10.9.9.9");
+    by_sender.allowed = Vec::new();
+    by_sender.authserv_id = "mx.test".to_string();
+    by_sender.proxy_protocol = true;
+    by_sender.max_connections = 10;
+    by_sender.internet = Some(hourly(2, 1 << 20));
+    let (address, fake, _stop) = start(by_sender).await;
+    send_one(
+        &mut hello(address, "192.0.2.1").await,
+        "ann@example.org",
+        &["sales@example.com"],
+    )
+    .await;
+    send_one(
+        &mut hello(address, "192.0.2.2").await,
+        "ann@example.org",
+        &["sales@example.com"],
+    )
+    .await;
+    let mut third = hello(address, "192.0.2.3").await;
+    assert_eq!(
+        third.command("MAIL FROM:<Ann@Example.org>").await,
+        OVER_HOUR,
+        "the sender's, over addresses"
+    );
+    send_one(&mut third, "bob@example.org", &["sales@example.com"]).await;
+    // a bounce has no sender to count
+    send_one(&mut hello(address, "192.0.2.4").await, "", &["sales@example.com"]).await;
+    send_one(&mut hello(address, "192.0.2.4").await, "", &["sales@example.com"]).await;
+    assert_eq!(fake.delivered.lock().unwrap().len(), 5);
+
+    let mut by_bytes = config("10.9.9.9");
+    by_bytes.allowed = Vec::new();
+    by_bytes.authserv_id = "mx.test".to_string();
+    by_bytes.internet = Some(hourly(100, 100));
+    let (address, _fake, _stop) = start(by_bytes).await;
+    let mut client = hello(address, "").await;
+    send_one(&mut client, "ann@example.org", &["sales@example.com"]).await;
+    assert_eq!(client.command("MAIL FROM:<ann@example.org> SIZE=80").await, OVER_HOUR);
+    assert_eq!(
+        client.command("MAIL FROM:<bob@example.org> SIZE=10").await,
+        "250 2.1.0 Ok"
+    );
+}
+
+/// SEC-MAIL-07: an account over its mailbox quota is answered 452 4.2.2 at RCPT, which is not an error even in internet
+/// mode (the sender keeps the mail and tries again), and the message goes to the other recipients.
+#[tokio::test]
+async fn a_recipient_over_its_quota_is_answered_452_and_not_counted_an_error() {
+    let mut internet = config("10.9.9.9");
+    internet.allowed = Vec::new();
+    internet.authserv_id = "mx.test".to_string();
+    internet.max_recipients = 100;
+    internet.internet = Some(hourly(1000, 1 << 30));
+    let (address, fake, _stop) = start(internet).await;
+    let mut client = hello(address, "").await;
+    assert_eq!(client.command("MAIL FROM:<ann@example.org>").await, "250 2.1.0 Ok");
+    for _ in 0..MAX_ERRORS {
+        assert_eq!(
+            client.command("RCPT TO:<full@example.com>").await,
+            "452 4.2.2 <full@example.com>: Mailbox full, try again later"
+        );
+    }
+    assert_eq!(client.command("RCPT TO:<sales@example.com>").await, "250 2.1.5 Ok");
+    assert_eq!(client.command("DATA").await, "354 End data with <CR><LF>.<CR><LF>");
+    client
+        .send("From: ann@example.org\r\nSubject: Hi\r\n\r\nHello\r\n.\r\n")
+        .await;
+    assert!(client.reply().await.starts_with("250 2.0.0 Ok"));
+    let delivered = fake.delivered.lock().unwrap();
+    assert_eq!(delivered.len(), 1);
+    assert_eq!(delivered[0].recipients.len(), 1, "only the account with room");
+}
+
+/// An hourly window counts what was stored in the last hour, in minute steps, and forgets the rest.
+#[test]
+fn an_hourly_window_forgets_mail_older_than_an_hour() {
+    let limits = hourly(2, 1000);
+    let start = Instant::now();
+    let mut hour = Hourly::default();
+    hour.charge(start, 600);
+    hour.charge(start + Duration::from_secs(30), 300);
+    assert_eq!(hour.0.len(), 1, "one step for the first minute");
+    assert!(hour
+        .over(start + Duration::from_secs(40), &limits, 0)
+        .is_some_and(|why| why.contains("2 messages")));
+    let later = start + Duration::from_secs(120);
+    hour.0.clear();
+    hour.charge(start, 600);
+    assert_eq!(hour.over(later, &limits, 400), None);
+    assert!(hour
+        .over(later, &limits, 401)
+        .is_some_and(|why| why.contains("600 bytes")));
+    hour.charge(later, 100);
+    assert_eq!(hour.0.len(), 2);
+    assert_eq!(
+        hour.over(start + HOUR, &limits, 900),
+        None,
+        "the first step is forgotten"
+    );
+    assert_eq!(hour.0.len(), 1);
+    hour.expire(later + HOUR);
+    assert!(hour.is_empty());
 }
 
 #[test]

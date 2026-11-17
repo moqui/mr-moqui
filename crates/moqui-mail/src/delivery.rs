@@ -46,7 +46,10 @@
 //! DSN (RFC 3461, with `smtp-server` `dsn`): a recipient the gateway passed an `ORCPT` for gets an `Original-Recipient`
 //! trace field, and the recipients whose `NOTIFY` has `SUCCESS` and whose account stored the message get one "delivered"
 //! `multipart/report` (RFC 3464) to the envelope sender, from the null reverse path, through the outgoing server of the
-//! first such account. A failure needs no DSN from here: the listener refuses at the time and the gateway reports it.
+//! first such account. The notice goes only when the sender is authenticated ([`notice_authenticated`], SEC-MAIL-06):
+//! `smtp_authserv_id` is set and the trusted results show `spf=pass`, or `dmarc=pass` with its `header.from` aligned
+//! with the envelope sender's domain; otherwise it would be backscatter to an address anyone may write. A failure needs
+//! no DSN from here: the listener refuses at the time and the gateway reports it.
 
 use std::collections::{HashMap, HashSet};
 
@@ -56,13 +59,64 @@ use moqui_lib::object::Value;
 use super::implementation::{find_one, force_cache};
 use super::inbound::{run_stored_ecas, StoredMessage};
 use super::store::{self, header_value, parse_message, Placement, MESSAGE};
-use super::sync::{account_info, after_new_mail, load_folders, publish_counts, run_rules, run_rules_in_frame, ACCOUNT};
+use super::sync::{
+    account_info, after_new_mail, load_folders, property_number, publish_counts, run_rules, run_rules_in_frame,
+    value_number, ACCOUNT,
+};
 use moqui_core::entity::{Condition, EntityFacade, EntityValue};
 use moqui_core::service::util::{field_text, now_millis};
 
 const IDENTITY: &str = "moqui.basic.email.EmailIdentity";
+/// The sum of an account's `EmailMessage.messageSize`, held to its quota.
+const ACCOUNT_BYTES: &str = "moqui.basic.email.EmailAccountBytes";
+/// The bytes of mail an account keeps when its `quotaBytes` is empty and the conf's `email-client` `mailbox-quota`
+/// names none: 10 GiB.
+const DEFAULT_QUOTA: i64 = 10 * 1024 * 1024 * 1024;
 /// The account kinds the listener delivers to.
 const KINDS: [&str; 2] = ["EakHosted", "EakShared"];
+
+/// The accounts found over their quota since they were last found under it, so each going over is warned of once.
+static OVER_QUOTA: std::sync::LazyLock<std::sync::Mutex<HashSet<String>>> = std::sync::LazyLock::new(Default::default);
+
+/// Whether account `account_id` keeps its quota of mail or more (SEC-MAIL-07): the sum of its messages'
+/// `messageSize` (which counts their attachments) against its `quotaBytes`, else the conf's `email-client`
+/// `mailbox-quota` (10 GiB). The listener then answers its recipients 452 at `RCPT TO`, and [`deliver`] holds mail
+/// an edge node queued for it (a temporary failure, tried again), so nothing is lost while its owner makes room. The
+/// first time an account is found over, a warning names it; telling its owner is left for later. False for an account
+/// that is not there.
+///
+/// # Errors
+///
+/// Returns an error when the database cannot be read; the listener answers that with a temporary failure.
+pub fn over_quota(facade: &EntityFacade, account_id: &str) -> Result<bool, LibError> {
+    let Some(row) = find_one(facade, ACCOUNT, "emailAccountId", account_id)? else {
+        return Ok(false);
+    };
+    over_quota_of(facade, &row)
+}
+
+/// [`over_quota`] of an account's row.
+fn over_quota_of(facade: &EntityFacade, account: &EntityValue) -> Result<bool, LibError> {
+    let account_id = field_text(account, "emailAccountId");
+    let quota = value_number(account.get("quotaBytes"))
+        .filter(|bytes| *bytes > 0)
+        .unwrap_or_else(|| property_number("mailbox-quota", DEFAULT_QUOTA));
+    let used = find_one(facade, ACCOUNT_BYTES, "emailAccountId", &account_id)?
+        .and_then(|row| value_number(row.get("totalBytes")))
+        .unwrap_or(0);
+    let over = used >= quota;
+    let mut warned = moqui_lib::sync::lock(&OVER_QUOTA);
+    if !over {
+        warned.remove(&account_id);
+    } else if warned.insert(account_id.clone()) {
+        tracing::warn!(
+            account = %account_id,
+            "Email account {account_id} is over its mailbox quota ({used} of {quota} bytes): the SMTP listener \
+             refuses its mail with 452 until it is under (quotaBytes, email-client mailbox-quota)"
+        );
+    }
+    Ok(over)
+}
 
 /// The hosted or shared account mail to `address` goes to, or none when no account takes it. `delimiters` are the
 /// plus-addressing characters (`+` by default); empty turns plus addressing off.
@@ -592,18 +646,21 @@ pub fn deliver(
             result,
         });
     }
-    send_delivered_notice(facade, head, envelope, recipients, &report);
+    send_delivered_notice(facade, head, envelope, recipients, &report, &authserv_id, &results);
     Ok(report)
 }
 
 /// The "delivered" DSN for the recipients that asked for one (`NOTIFY=SUCCESS`) and whose account stored the message
-/// now (not a `Duplicate`: that was told when it was stored). A failure is logged; the mail stays delivered.
+/// now (not a `Duplicate`: that was told when it was stored), when `results` (the trusted `Authentication-Results`)
+/// authenticate the envelope sender ([`notice_authenticated`]). A failure is logged; the mail stays delivered.
 fn send_delivered_notice(
     facade: &EntityFacade,
     head: &[u8],
     envelope: &Envelope,
     recipients: &[Recipients],
     report: &Report,
+    authserv_id: &str,
+    results: &[String],
 ) {
     let stored = |account: &str| {
         report.deliveries.iter().any(|delivery| {
@@ -629,6 +686,15 @@ fn send_delivered_notice(
     let sender = envelope.mail_from.trim();
     if sender.is_empty() || !sender.contains('@') {
         // a bounce or a sender with no domain: nothing to tell (RFC 3461 section 6.2 for the null reverse path)
+        return;
+    }
+    if !notice_authenticated(authserv_id, results, sender) {
+        tracing::info!(
+            "The delivered notice of SMTP session {} to <{}> is not sent: the sender is not authenticated (no trusted \
+             spf=pass or aligned dmarc=pass)",
+            envelope.session_id,
+            trace_text(sender)
+        );
         return;
     }
     let date = jiff::Zoned::now().strftime("%a, %d %b %Y %H:%M:%S %z").to_string();
@@ -672,6 +738,113 @@ fn send_delivered_notice(
 }
 
 const DELIVERED_SUBJECT: &str = "Delivery Status Notification (delivered)";
+
+/// Whether a delivered notice may go to `mail_from` (SEC-MAIL-06): `authserv_id` is set, so `results` are only the
+/// fields this server or its gateway wrote, and they show `spf=pass` (the envelope sender's domain passed SPF: for a
+/// non-empty MAIL FROM mail-auth checks it, not the HELO name) or `dmarc=pass` with its `header.from` aligned with the
+/// envelope sender's domain ([`relaxed_aligned`]). `dmarc=pass` alone authenticates the header From, not the address
+/// the notice goes to.
+pub(crate) fn notice_authenticated(authserv_id: &str, results: &[String], mail_from: &str) -> bool {
+    if authserv_id.trim().is_empty() {
+        return false;
+    }
+    // the result word of an entry: `pass` of `spf=pass smtp.mailfrom=a.org`
+    let result_of = |entry: &str| {
+        entry
+            .split_whitespace()
+            .next()
+            .and_then(|token| token.split_once('='))
+            .map(|(_, result)| result.to_ascii_lowercase())
+            .unwrap_or_default()
+    };
+    if first_entry(results, "spf").is_some_and(|entry| result_of(&entry) == "pass") {
+        return true;
+    }
+    let Some(dmarc) = first_entry(results, "dmarc") else {
+        return false;
+    };
+    let mut words = dmarc.split_whitespace();
+    if words.next().map(result_of).as_deref() != Some("pass") {
+        return false;
+    }
+    let header_from = words
+        .filter_map(|word| word.split_once('='))
+        .find(|(property, _)| property.eq_ignore_ascii_case("header.from"))
+        .map(|(_, domain)| domain.trim_matches('"').to_string())
+        .unwrap_or_default();
+    let sender_domain = mail_from.rsplit_once('@').map(|(_, domain)| domain).unwrap_or_default();
+    relaxed_aligned(&header_from, sender_domain)
+}
+
+/// The first `method` entry (`dmarc=pass header.from=a.org`) of these `Authentication-Results` values, with its
+/// comments taken out, so that text inside one is never read as a property.
+fn first_entry(values: &[String], method: &str) -> Option<String> {
+    for value in values {
+        for part in entries(value).into_iter().skip(1) {
+            let part = without_comments(part);
+            let named = part
+                .split_whitespace()
+                .next()
+                .and_then(|token| token.split_once('='))
+                .is_some_and(|(name, _)| name.eq_ignore_ascii_case(method));
+            if named {
+                return Some(part.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+/// `text` with its RFC 5322 comments (parenthesized, nested, outside quoted strings) taken out.
+fn without_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let (mut quoted, mut escaped, mut comment) = (false, false, 0usize);
+    for ch in text.chars() {
+        if escaped {
+            escaped = false;
+            if comment == 0 {
+                out.push(ch);
+            }
+            continue;
+        }
+        match ch {
+            '\\' if quoted || comment > 0 => {
+                escaped = true;
+                if comment == 0 {
+                    out.push(ch);
+                }
+                continue;
+            }
+            '"' if comment == 0 => quoted = !quoted,
+            '(' if !quoted => {
+                comment += 1;
+                out.push(' ');
+                continue;
+            }
+            ')' if !quoted && comment > 0 => {
+                comment -= 1;
+                continue;
+            }
+            _ => {}
+        }
+        if comment == 0 {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Whether two domains are aligned in DMARC's relaxed mode, as far as it can be told with no DNS query: the same
+/// domain, or one a subdomain of the other. Siblings under one organizational domain (`a.example.com`,
+/// `b.example.com`) need the public suffix walk and are not counted aligned, so this errs toward no notice.
+pub(crate) fn relaxed_aligned(first: &str, second: &str) -> bool {
+    let tidy = |domain: &str| domain.trim().trim_end_matches('.').to_ascii_lowercase();
+    let (first, second) = (tidy(first), tidy(second));
+    if !first.contains('.') || !second.contains('.') {
+        return false;
+    }
+    first == second || first.ends_with(&format!(".{second}")) || second.ends_with(&format!(".{first}"))
+}
 
 /// The most of the message's header block a delivered notice returns (SEC-MAIL-06): the peer wrote that block, so a
 /// notice to the envelope sender it named would otherwise carry its chosen text, megabytes of it.
@@ -795,6 +968,10 @@ fn deliver_one(
             );
             return Ok(Outcome::Duplicate);
         }
+    }
+    // full since RCPT TO, or queued by an edge node before it was: held, and tried again (SEC-MAIL-07)
+    if over_quota_of(facade, &row).map_err(failed)? {
+        return Err(format!("email account {account_id} is over its mailbox quota"));
     }
     let received = now_millis();
     let place = Placement {

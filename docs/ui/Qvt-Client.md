@@ -16,7 +16,7 @@ The client of the `qvt` render mode and of the `/qapps` shell: Vue 3.5 (the buil
 | `MoquiLib.js` | the `moqui` object: type checks, `deepCopy`, field comparison, `objToSearch` / `searchToObj` / `parseHref` / `makeHref`, `request` (fetch with the session token; it hands a response's `X-CSRF-Token` to `moqui.onSessionToken` and its `X-Moqui-Preferences` to `moqui.onPreferences`), `loadScript` / `loadStylesheet`, `parseVue` and `evalComponentJs` (the `qvue` and `qjs` text), `NotificationClient` (with `send`, below, Notification listeners), `LruMap`. Its page spec is `test/client/MoquiLib.spec.js`. `loadScript(src, callback, validate)` loads a script once (`moqui.scriptLoads`, one promise per src): a call while it loads waits for it; when it fails every waiter is rejected (and the callback gets the error) and the element is removed, so a later call loads it again; a `validate` that never sees its library rejects after its retries (about 20 s). |
 | `MoquiL10n.js` | `moqui.l10n`: `format`, `formatCurrency`, `formatCurrencyNoSymbol` and `localize`. A copy of `crates/moqui-lib` `format.rs` and `datefmt.rs`: Java `DecimalFormat` and date pattern subset, HALF_EVEN on decimal text. `test/client/pages/MoquiL10n.page.js` runs `crates/moqui-lib/testdata/format-vectors.json`. |
 | `WebrootVue.qvt.js` | the `m-*` components and the application. `moqui.qvt.components` holds the definitions. |
-| `WebrootPublic.qvt.js` | the public shell of the anonymous token routes (`/s/<token>`; `docs/data/Revision-Management.md`, Token routes): on the page `webroot/PublicShell.xml` makes, with its own settings block `moqui-public-config` (`route {name, basePath, title, renderModes}`, `context`, the locale and the theme's Quasar configuration), it mounts the route's screen (loaded as `basePath.qvt`, `.qvue` or `.qjs`) with the `m-*` components of `WebrootVue.qvt.js`, which loads before it and starts nothing there. The root offers the parts of `m-qapps-root` the components call; a link under the route stays on the page, any other leaves it. |
+| `WebrootPublic.qvt.js` | the public shell of the anonymous token routes (`/s/<token>`; `docs/data/Revision-Management.md`, Token routes): on the page `webroot/PublicShell.xml` makes, with its own settings block `moqui-public-config` (`route {name, basePath, title, renderModes}`, `context`, the locale and the theme's Quasar configuration), it mounts the route's screen (loaded as `basePath.qvt`, `.qvue` or `.qjs`) with the `m-*` components of `WebrootVue.qvt.js`, which loads before it and starts nothing there. Its page and island roots are render functions, so it mounts on the runtime build of Vue too, where a `.qvue` loads as its bundle (Bundled qvue, below). The root offers the parts of `m-qapps-root` the components call; a link under the route stays on the page, any other leaves it. |
 | `WebrootChat.js` | `moqui.chat`: the chat store and presence of the shell (below, Chat store and presence), and the account menu's status components, in `moqui.qvtComponents`, which `WebrootVue.qvt.js` registers. Loads before it. `test/client/pages/WebrootChat.page.js` runs the store. |
 | `WebrootAssist.js` | `moqui.assist`: the Assist drawer (`m-assist-button`, `m-shell-assist` and its parts, in `moqui.qvtComponents`), its store, transport and follow; the contract with the server is `docs/ai/Assist.md`. Loads after `WebrootChat.js` and before `WebrootVue.qvt.js`; `qvt.registerLate` takes components that load after it. `test/client/pages/WebrootAssist.page.js` runs the store. |
 | `MoquiQzComponent.js` | QZ Tray 2.3 printing, loaded after `/libs/qz-tray/qz-tray.js` and only when the user preference `qz.print.enabled` is `true`. |
@@ -53,7 +53,7 @@ inline script and no inline event handler, and the settings are a data block:
 | `navPlugins`, `accountPlugins` | theme values `STRT_HEADER_NAVBAR_COMP` and `STRT_HEADER_ACCOUNT_COMP`: URLs of components for the header |
 | `qz` | `{enabled}`: print through QZ Tray |
 | `assist` | whether Assist is on for the user (the `llm` feature built and enabled, and `AgentUse`); without it the drawer makes no request |
-| `qvt` | `{build, handles}`: the Vue build this page loaded (`compiler`, or `runtime` with `webapp_qvt_static_only=true`) and the `X-Moqui-Qvt` responses it handles (`merged-fragment`, `static-template`) |
+| `qvt` | `{build, handles}`: the Vue build this page loaded (`compiler`, or `runtime` with `webapp_qvt_static_only=true`) and the `X-Moqui-Qvt` responses it handles (`merged-fragment`, `static-template`, and `bundled-qvue`: a `.qvue` loaded compiled, below) |
 | `userAccount`, `preferences` | the snapshot of the user for the `ec` of a server-static screen: `{partyId, emailAddress, userFullName}` (no password column) and the user's preferences by key |
 | `labels` | text the shell needs localized |
 | `quasar`, `currencies` | optional: Quasar configuration (brand, notify, loading bar), and `{USD: {symbol, fractionDigits}}` for `formatCurrency` |
@@ -75,6 +75,23 @@ screen) with the extra path and query, and gives `callback` a component. It retu
 
 - `205` and `X-Redirect-To`: the shell goes to that address (a redirect of a render that is always standalone).
 - `.qvue`: the text is a component file: `<template>`, `<script>` (`module.exports =`, `export default` or `define(...)`) and `<style>`.
+- **Bundled qvue.** A page on the runtime build of Vue (no template compiler, so a policy without `unsafe-eval`: a PASS island) whose
+  `qvt.handles` lists `bundled-qvue` loads a `.qvue` as `<url>?_qvt=bundle` with a script element (`moqui.loadBundledQvue`,
+  `moqui.qvueBundleUrl`), not with `fetch`, `parseVue` and `new Function`; so too a screen the server answers as `qvue` for a
+  `.qvt` request that named the client modes (a container's). The server answers a screen whose qvue is a
+  `template="false"` text, and a `.qvue` file under a screen, with the file compiled by the vendored Vue compiler
+  (`vue_check::qvue_make`, as the desktop shell's bundled screens are): `text/javascript`, an `ETag`, `X-Moqui-Qvt: bundled-qvue`,
+  and the `Cache-Control` the plain request gets (a public island's stays cacheable), a script that sets
+  `moqui.qvtBundled[<path>]`. The name is the one its script element gives (`data-moqui-bundle`, the path the client asked for),
+  else the URL path it was loaded from without `.qvue`, its extra path and query: the route's public `basePath`, never the screen
+  path the server resolved (a site route or a remote frontend maps one to the other), so the script and its `ETag` are the
+  file's alone, whatever path served it. The client then makes the component with `moqui.bundledComponent(path)`, and later loads of the path make it from there with no
+  request. The screen's render runs as for the plain request (its authorization and actions); its text is compiled once per text
+  and kept with the definition (a file's by location), a failure too until the text changes (500, logged). A qvue the screen
+  renders as a template has no bundle (404). A runtime page that does not list `bundled-qvue` (the desktop shell) still gets none
+  for a `.qvue` it has not bundled, and a `.qjs` is none on the runtime build either way
+  (`crates/moqui-core/src/screen/qvue_bundle.rs`; specs `WebrootPublic.runtime.spec.js` and moqui-core
+  `a_qvue_asked_for_as_its_bundle_is_compiled_and_named_by_its_path`).
 - `.qjs`: an object expression or `define(...)`. Without a `template` the template is the `.qvt` of the same screen.
 - `.qvt`: the response header `X-Moqui-Qvt` chooses the handler in `moqui.qvtHandlers`:
   `merged-fragment` (the default) wraps the text as the template `<div id="divId">text</div>`, and `<script>` and `<link>` in it become
