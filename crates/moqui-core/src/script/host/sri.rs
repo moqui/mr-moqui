@@ -570,6 +570,7 @@ fn render_inline_text(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// screen it renders keeps its place in the text and the output streams (docs/ui/Screen-Output.md).
 fn write_inline_text(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let body = opt_text(call, 0).to_string();
+    read_render(|state| state.templated_text.set(true))?;
     let runner = call.ops.screen_runner()?;
     let rest = crate::script::template::writing(|| runner.render_inline_text(&body)).map_err(|err| thrown(&err))?;
     if !rest.is_empty() {

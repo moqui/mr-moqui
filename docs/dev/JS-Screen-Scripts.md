@@ -346,7 +346,11 @@ module.exports = {
   through the transitions of its XML screen, which keep the parameters, the authorization and the actions.
 - `inject: ["mScreen"]` gives the screen's own `path` and `parameters`, for building a transition's URL.
 - With `template="false"` on its `<text>` element the file is sent as it is: a `${}` in it is not evaluated on the
-  server.
+  server. Such a file (and a `.qvue` file under a screen) is also answered compiled, for a page on the runtime build of
+  Vue with no `unsafe-eval` ([Qvt-Client, Bundled qvue](../ui/Qvt-Client.md#loading-a-screen)): then its script runs once
+  on the server, with no `ec` and a stand-in `moqui`, to find the string templates of its components, so it must not need
+  the browser when it loads (`window`, `document`, `Vue` at the top level; inside methods they are fine), and it cannot be
+  a `<script setup>` or a module.
 - Use the `m-*` components and the shell's feedback ([Practices-App-Dev](Practices-App-Dev.md#6-vue-single-file-screens-qvue)).
 
 The XML screen beside it declares the mode and the file:

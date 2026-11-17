@@ -223,20 +223,45 @@ along with this software (see the LICENSE.md file). If not, see
                 <parameter name="takeoverToId"/>
                 <parameter name="queueMaxMegabytes" type="Long"><description>The pairing's own queue cap; empty for the
                     conf's queue-max-megabytes.</description></parameter>
+                <parameter name="replicaMaxRows" type="Long"><description>The pairing's own cap on its replicated
+                    records; empty for the conf's replica-max-rows.</description></parameter>
+                <parameter name="pausedDate" type="Timestamp"><description>When the pairing paused at a cap
+                    (SEC-CLU-02), with pausedReason: its Replicate and PutContent calls wait until resume#EdgeClient
+                    or update#EdgeClient. Empty while it is not paused.</description></parameter>
+                <parameter name="pausedReason"/>
             </parameter></parameter>
         </out-parameters>
     </service>
 
     <service verb="update" noun="EdgeClient" type="rust" location="moqui_core::service::edge::update_edge_client"
             allow-remote="false" transaction="ignore">
-        <description>On a node that takes links: a pairing's own size cap on the items waiting for it
-            (EdgeClient.queueMaxMegabytes, plans/Edge-Node2.md §4.1), in megabytes above 0, in place of the conf's
-            queue-max-megabytes; empty unsets it. The retention pass reads it.</description>
+        <description>On a node that takes links: a pairing's own caps. queueMaxMegabytes is the size cap on the items
+            waiting for it (EdgeClient.queueMaxMegabytes, plans/Edge-Node2.md §4.1), which the content it sends before
+            its deliveries counts against too, in megabytes above 0, in place of the conf's queue-max-megabytes;
+            replicaMaxRows is the cap on its replicated records (EdgeClient.replicaMaxRows, SEC-CLU-02), above 0, in
+            place of the conf's replica-max-rows. Each empty unsets it. A pause at a cap ends (resumed): a send that
+            still passes a cap pauses it again.</description>
         <in-parameters>
             <parameter name="pairedNodeId" required="true"/>
             <parameter name="queueMaxMegabytes"/>
+            <parameter name="replicaMaxRows"/>
         </in-parameters>
-        <out-parameters><parameter name="queueMaxMegabytes" type="Long"/></out-parameters>
+        <out-parameters>
+            <parameter name="queueMaxMegabytes" type="Long"/>
+            <parameter name="replicaMaxRows" type="Long"/>
+            <parameter name="resumed" type="Boolean"><description>It was paused at a cap.</description></parameter>
+        </out-parameters>
+    </service>
+
+    <service verb="resume" noun="EdgeClient" type="rust" location="moqui_core::service::edge::resume_edge_client"
+            allow-remote="false" transaction="ignore">
+        <description>On a node that takes links: let pairing pairedNodeId send again after it paused at a cap
+            (EdgeClient.capPausedDate, SEC-CLU-02): its replicated records at replicaMaxRows or replica-max-rows, or the
+            content kept for its deliveries at its queue cap. Until then its Replicate and PutContent calls are refused
+            as "try again later", nothing dropped. A send that still passes a cap pauses it again, with a new
+            notice.</description>
+        <in-parameters><parameter name="pairedNodeId" required="true"/></in-parameters>
+        <out-parameters><parameter name="resumed" type="Boolean"><description>It was paused.</description></parameter></out-parameters>
     </service>
 
     <service verb="get" noun="EdgeDomains" type="rust" location="moqui_core::service::edge::get_edge_domains"

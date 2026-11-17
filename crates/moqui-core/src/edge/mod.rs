@@ -30,6 +30,7 @@ use moqui_lib::error::Error;
 use moqui_lib::sync::InstallSlot;
 
 pub mod calls;
+pub mod caps;
 pub mod claims;
 pub mod cluster_list;
 pub mod cluster_state;
@@ -402,6 +403,11 @@ pub struct EdgeClientInfo {
     pub takeover_to_id: String,
     /// Its own size cap on the items waiting for it, in megabytes (`queueMaxMegabytes`); `None` for the conf's.
     pub queue_max_megabytes: Option<i64>,
+    /// Its own cap on the replicated records kept for it (`replicaMaxRows`); `None` for the conf's.
+    pub replica_max_rows: Option<i64>,
+    /// When it paused at a cap (`capPausedDate`, SEC-CLU-02), and why; `None` while it is not paused.
+    pub paused_date: Option<i64>,
+    pub paused_reason: String,
 }
 
 /// A public host name an edge node answers for a paired local node (`moqui.edge.EdgeHost`, §5.3).

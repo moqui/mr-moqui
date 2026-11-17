@@ -416,3 +416,23 @@ fn an_ssh_offer_whose_ports_were_not_read_names_no_port() {
     assert_eq!(ssh.port, 0);
     assert!(!ssh.available);
 }
+
+/// SEC-CLU-02: a refusal because the receiver's pairing is paused at a cap is the receiver's pause to a delivery, tried
+/// again uncounted, so the item is not failed for it; a request refused for itself is still a counted refusal.
+#[test]
+fn a_paused_pairing_s_refusal_is_a_pause_and_not_a_counted_failure() {
+    use moqui_core::edge::queue::Applied;
+    let paused = super::queue::paused_status("its replicated records would be 11, over its cap of 10");
+    assert_eq!(
+        paused.code(),
+        tonic::Code::Unavailable,
+        "a sender's Replicate tries it again"
+    );
+    assert_eq!(super::queue::delivery_error(&paused), Ok(Applied::Paused));
+    let refused = tonic::Status::resource_exhausted("too large");
+    assert!(matches!(super::queue::delivery_error(&refused), Ok(Applied::Failed(_))));
+    assert!(
+        super::queue::delivery_error(&tonic::Status::unavailable("the link")).is_err(),
+        "no answer"
+    );
+}

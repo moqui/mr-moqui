@@ -47,6 +47,7 @@ in the environment or `runtime/.env`), and the others are changed in a runtime o
 | `smtp_tls_cert_file`, `smtp_tls_key_file` | empty | The certificate (with its chain) and private key PEM files, absolute or under the runtime directory (`runtime://` works too); both or neither. Read again when they change. |
 | `smtp-server` `chunking` | `true` | CHUNKING (RFC 3030): `BDAT n [LAST]`, the chunk taken as it is (no dot-stuffing). |
 | `smtp-server` `dsn` | `false` | DSN (RFC 3461): `RET` and `ENVID` on `MAIL`, `NOTIFY` and `ORCPT` on `RCPT`, checked (`501` when they do not parse) and kept. See [DSN](#dsn). |
+| `email-client` `mailbox-quota` | `10737418240` (10 GiB) | The bytes of mail an account keeps when its `EmailAccount.quotaBytes` is empty. See [Mailbox quota](#mailbox-quota). |
 
 The accounts are made as usual (`create#EmailAccount` with `accountKindEnumId` `EakHosted` or `EakShared`, the BOSS
 MailAccounts wizard). An account gets the listener's mail when it is hosted or shared, not removed, and has **no incoming
@@ -146,6 +147,15 @@ with `554`. In LMTP each recipient gets its own answer ([LMTP](#lmtp)).
 The `Received` field names the protocol (RFC 3848, RFC 6531): `ESMTP`, `ESMTPS` after STARTTLS, `LMTP`, `LMTPS`, and
 `UTF8SMTP`, `UTF8LMTPS` and so on for `SMTPUTF8` mail.
 
+### Mailbox quota
+
+An account keeps at most its `EmailAccount.quotaBytes` of mail, else the conf's `email-client` `mailbox-quota` (10 GiB):
+the sum of its messages' `messageSize`, attachments included (the view `EmailAccountBytes`). Once it has that much, a
+`RCPT TO` of its address is answered `452 4.2.2 Mailbox full`, which the sender takes as "try again later" (not an
+error, so it never closes the connection), and the message goes to the other recipients. Mail already accepted, or
+queued by an edge node, when the account filled up is held at delivery (a `451`, or the edge queue's retry) until it is
+under. A warning names the account the first time it goes over; telling its owner is not done yet.
+
 ### DSN
 
 With `dsn="true"` the listener advertises `DSN` and takes the parameters the gateway passes on from the sender: `RET`
@@ -154,7 +164,11 @@ With `dsn="true"` the listener advertises `DSN` and takes the parameters the gat
 `Original-Recipient` field on its copy. The recipients whose `NOTIFY` has `SUCCESS` and whose account stored the message
 get one "delivered" report (`multipart/report`, RFC 3464, with the message's header) to the envelope sender, from the
 null reverse path, through the outgoing server of the first such account (usually the gateway); an account with no
-outgoing server, or a send that fails, is logged and the mail stays delivered. The gateway's resend after a `451` tells
+outgoing server, or a send that fails, is logged and the mail stays delivered. The report goes only when the sender is
+authenticated, so it is never backscatter to an address someone else wrote: `smtp_authserv_id` is set (in internet mode
+it always is) and the kept `Authentication-Results` show `spf=pass`, or `dmarc=pass` with its `header.from` aligned
+with the envelope sender's domain (the same domain, or one a subdomain of the other). Otherwise it is logged and not
+sent. The gateway's resend after a `451` tells
 nothing again. Failures need no DSN from mr-moqui: it refuses at the time and the gateway reports them. With `dsn` off
 the gateway handles `NOTIFY=SUCCESS` itself (Postfix sends a "relayed" notice).
 
@@ -192,6 +206,12 @@ The SMTP listener runs in internet mode (`smtp_internet=true`): set `smtp_listen
 `.env`. It offers STARTTLS with the web certificate, limits each address (`max-connections-per-ip`,
 `connections-per-minute`), checks SPF, DKIM, DMARC and ARC after the data, removes any `Authentication-Results`
 claiming its name, refuses a DMARC failure whose policy is reject (550) and files a quarantine one in Junk.
+
+- **Hourly limits.** `smtp-server` `internet-messages-per-hour` (1000) and `internet-bytes-per-hour` (1073741824, 1 GiB)
+  limit the messages stored in an hour from one client address (IPv6 by its /64), over all its connections, and from
+  one envelope sender (in any case), over all addresses, whichever is reached first. A `MAIL` that would go past one,
+  its `SIZE` counted toward the bytes, is answered `451 4.7.1` and the peer tries again later. A message counts once,
+  whatever its recipients; a bounce (the null reverse path) counts only against its client address.
 
 - **Spam.** With `mail_rspamd_url` (Rspamd's HTTP API, `http://127.0.0.1:11333`) Rspamd's verdict sets `X-Spam-Flag`
   and `X-Spam-Status` (any that came are removed); without it there is no spam check. Both fail open: Rspamd not

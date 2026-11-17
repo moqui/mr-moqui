@@ -120,18 +120,21 @@ fn a_claim_that_read_no_row_does_not_take_a_name_another_inserted_since() {
     assert_eq!(list(&facade, None).unwrap()[0].mode_enum_id, HOST_TERMINATE);
 }
 
-/// The pairings' rows with their own queue cap, which 0 or less is refused for and `None` unsets.
+/// The pairings' rows with their own queue and records caps, which 0 or less is refused for and `None` unsets.
 #[test]
 fn a_pairing_s_queue_cap_is_set_and_unset() {
     let facade = crate::testing::open();
     pairing(&facade, "local-a", ACTIVE);
-    set_queue_cap(&facade, "local-a", Some(64)).unwrap();
+    set_caps(&facade, "local-a", Some(64), Some(5000)).unwrap();
     assert_eq!(clients(&facade).unwrap()[0].queue_max_megabytes, Some(64));
-    assert!(set_queue_cap(&facade, "local-a", Some(0)).is_err());
-    assert!(set_queue_cap(&facade, "local-x", Some(5)).is_err());
-    set_queue_cap(&facade, "local-a", None).unwrap();
+    assert_eq!(clients(&facade).unwrap()[0].replica_max_rows, Some(5000));
+    assert!(set_caps(&facade, "local-a", Some(0), None).is_err());
+    assert!(set_caps(&facade, "local-a", None, Some(0)).is_err());
+    assert!(set_caps(&facade, "local-x", Some(5), None).is_err());
+    set_caps(&facade, "local-a", None, None).unwrap();
     let rows = clients(&facade).unwrap();
     assert_eq!(rows[0].queue_max_megabytes, None);
+    assert_eq!(rows[0].replica_max_rows, None);
     assert_eq!(rows[0].status_id, ACTIVE);
     assert!(!rows[0].linked);
 }
