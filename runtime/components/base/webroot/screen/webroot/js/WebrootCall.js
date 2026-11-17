@@ -2513,6 +2513,9 @@
                 return this.hasVideo && (this.call.cameras.length > 1 || coarse);
             },
             canPip() { return !!root.documentPictureInPicture; },
+            // a phone call (V1): the keypad sends tones to its phone legs
+            hasPhone() { return (this.view.participants || []).some((p) => p.identity === "phone"); },
+            keys() { return ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"]; },
             captionLines() { return this.call.captions.lines.filter((line) => this.now - line.at < 10000); },
             captionNotice() { return captionNotice(this.call.captions); }
         },
@@ -2521,6 +2524,7 @@
         methods: {
             t,
             addPeople() { const actions = this.$refs.actions; if (actions && actions.open) actions.open("add"); },
+            dtmf(key) { moqui.call.request("sendDtmf", { callSessionId: this.view.callSessionId, digits: key }); },
             outputLabel(d, i) { return d.label || t("Speaker") + " " + (i + 1); }
         },
         template:
@@ -2558,6 +2562,8 @@
             '<q-btn round unelevated :color="hasVideo ? \'grey-8\' : \'negative\'" :icon="hasVideo ? \'sym_o_videocam\' : \'sym_o_videocam_off\'" class="m-call-video-toggle" :aria-label="hasVideo ? t(\'Turn off video\') : t(\'Turn on video\')" @click="moquiCall().toggleVideo()"><q-tooltip>{{hasVideo ? t(\'Turn off video\') : t(\'Turn on video\')}}</q-tooltip></q-btn>' +
             '<q-btn v-if="canFlip" round unelevated color="grey-8" icon="sym_o_cameraswitch" :aria-label="t(\'Switch camera\')" @click="moquiCall().flipCamera()"><q-tooltip>{{t(\'Switch camera\')}}</q-tooltip></q-btn>' +
             '<q-btn v-if="view.status !== \'ended\'" round unelevated color="grey-8" icon="sym_o_person_add" :aria-label="t(\'Add people\')" @click="addPeople"><q-tooltip>{{t(\'Add people\')}}</q-tooltip></q-btn>' +
+            '<q-btn v-if="hasPhone" round unelevated color="grey-8" icon="sym_o_dialpad" :aria-label="t(\'Keypad\')"><q-tooltip>{{t(\'Keypad\')}}</q-tooltip><q-menu>' +
+            '<div class="q-pa-sm" style="display:grid;grid-template-columns:repeat(3,48px);gap:4px"><q-btn v-for="key in keys" :key="key" outline dense size="lg" @click="dtmf(key)">{{key}}</q-btn></div></q-menu></q-btn>' +
             '<q-btn round unelevated color="grey-8" icon="sym_o_more_vert" :aria-label="t(\'More\')"><q-menu><q-list dense style="min-width:220px">' +
             '<q-item clickable v-close-popup @click="moquiCall().toggleHand()"><q-item-section avatar><q-icon name="sym_o_back_hand" :color="call.hand ? \'warning\' : undefined"></q-icon></q-item-section><q-item-section>{{call.hand ? t(\'Lower your hand\') : t(\'Raise your hand\')}}</q-item-section></q-item>' +
             '<q-item v-if="call.captions.allowed || call.captions.on" clickable v-close-popup @click="moquiCall().toggleCaptions()"><q-item-section avatar><q-icon name="sym_o_closed_caption"></q-icon></q-item-section><q-item-section>{{call.captions.on ? t(\'Turn off captions\') : t(\'Turn on captions\')}}</q-item-section></q-item>' +

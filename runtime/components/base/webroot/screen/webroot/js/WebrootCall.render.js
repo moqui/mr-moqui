@@ -1486,7 +1486,7 @@
               }, null, 512))
             }
         } },
-        "m-call-compact": { hash: "9caa9bce", make: function (Vue) {
+        "m-call-compact": { hash: "e0a460ab", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, createElementVNode: _createElementVNode, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, normalizeClass: _normalizeClass, normalizeStyle: _normalizeStyle, createElementBlock: _createElementBlock, renderList: _renderList, Fragment: _Fragment, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
 
             return function render(_ctx, _cache) {
@@ -1851,6 +1851,50 @@
                         ]),
                         _: 1
                       }, 8, ["aria-label", "onClick"]))
+                    : _createCommentVNode("", true),
+                  (_ctx.hasPhone)
+                    ? (_openBlock(), _createBlock(_component_q_btn, {
+                        key: 3,
+                        round: "",
+                        unelevated: "",
+                        color: "grey-8",
+                        icon: "sym_o_dialpad",
+                        "aria-label": _ctx.t('Keypad')
+                      }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_tooltip, null, {
+                            default: _withCtx(() => [
+                              _createTextVNode(_toDisplayString(_ctx.t('Keypad')), 1)
+                            ]),
+                            _: 1
+                          }),
+                          _createVNode(_component_q_menu, null, {
+                            default: _withCtx(() => [
+                              _createElementVNode("div", {
+                                class: "q-pa-sm",
+                                style: {"display":"grid","grid-template-columns":"repeat(3,48px)","gap":"4px"}
+                              }, [
+                                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.keys, (key) => {
+                                  return (_openBlock(), _createBlock(_component_q_btn, {
+                                    key: key,
+                                    outline: "",
+                                    dense: "",
+                                    size: "lg",
+                                    onClick: $event => (_ctx.dtmf(key))
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createTextVNode(_toDisplayString(key), 1)
+                                    ]),
+                                    _: 2
+                                  }, 1032, ["onClick"]))
+                                }), 128))
+                              ])
+                            ]),
+                            _: 1
+                          })
+                        ]),
+                        _: 1
+                      }, 8, ["aria-label"]))
                     : _createCommentVNode("", true),
                   _createVNode(_component_q_btn, {
                     round: "",
