@@ -296,17 +296,24 @@ and three reactions, on a phone and on a desktop (acceptance client spec).
 7. Mail is never shown with a lock or a chat E2EE label. Where a person's mail shows beside their chats, it says
    "Email is not end-to-end encrypted" (COM-UI-019).
 
-Server work for rule 4:
-- `roomRequiresE2ee` reads only the room's `callE2eeRequired` today (`Calls.js:599-602`). It also returns true for a
-  room with `encrypted`. The room's call setting then shows on and fixed in an encrypted room.
-- `set#RoomCallEncryption` refuses a direct room (`Calls.js:634`); a plain direct room keeps the per-call choice
-  ("start an encrypted call").
+Rules 1, 2, 4, 6 and 7 are built (phase 3, `fdd1ab597`): the labels of §6.2 in the room and its lists, and rule 4 on the
+server. Rule 3's check marks are the lock's check of a room whose devices are all verified; the warning before a send
+to a verified person's new device is not built. Rule 5 is phase 10.
+
+Server work for rule 4 (built):
+- `roomRequiresE2ee` read only the room's `callE2eeRequired`. It now also returns true for a room with `encrypted`.
+  The room's call setting shows on and fixed in an encrypted room, and `set#RoomCallEncryption` refuses to turn it off
+  there.
+- `set#RoomCallEncryption` refuses a direct room; a plain direct room keeps the per-call choice ("start an encrypted
+  call").
 - The refusals exist and stay: `callNotEncrypted`, `unsupportedClient`, `noCryptoDevice` (`Calls.js:717-722`,
   `749-754`).
 
 ### 6.2 Labels
 
-This is the one table of labels. §16.5 adds only the RCS rows.
+This is the one table of labels. §16.5 adds only the RCS rows. Built in phase 3 (`fdd1ab597`): `moqui.chat.e2eeLabel` in
+`WebrootChat.js` answers each state (the call states too, for the call screen of phase 4); the room's header, banner,
+start and composer, Chat's rail and the home list use it, and the terminal shows it as one line.
 
 | State | Icon | Banner at the top of the room | Composer hint |
 |---|---|---|---|
@@ -326,7 +333,7 @@ This is the one table of labels. §16.5 adds only the RCS rows.
 - A bridge's label comes from its adapter: `Capabilities` (`chat_bridge.rs:110-119`) gets an `encryption` field with
   the values `None`, `Transport`, `BridgeDecrypted` and `EndToEnd`, and `get#BridgeCapabilities` returns it.
 
-States the review found without a label today:
+States the review found without a label (both built: COM-UI-013 in phase 3, `fdd1ab597`; COM-UI-011 in phase 0):
 - **A recipient who cannot read a message.** With "verified devices only" on, a message goes out and looks sent, and
   a member with an unverified device gets "missing key" (COM-UI-013). The sender sees who cannot read it, with a
   Verify link. The recipient's text says the sender has not verified this device; it is not the "restore from backup"
@@ -381,7 +388,7 @@ The UI explains this when the user picks an encrypted room:
   hidden WebView and no crypto store in Rust is planned for it; revisit only if daily use asks for it.
 
 **Labels done when:** each state in §6.2 shows on a phone and on a desktop, and the SMS room shows the SMS banner
-(acceptance client spec). A regression spec covers rule 4: a call in an encrypted room is encrypted, a phone and a
+(acceptance client spec `ChatLabels`; the call states on the call screen come with phase 4). A regression spec covers rule 4: a call in an encrypted room is encrypted, a phone and a
 guest are refused, and an encrypted direct room's call is encrypted.
 
 ## 7. Notifications
@@ -1066,7 +1073,7 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 | 0 | Fixes from the UI review: done 2026-11-16 (`82affc535`) | §5.2 paging, §6.5 | Small |
 | 1 | Shared helpers and the rest of the phone layout: done 2026-11-17 (`c88df4a3f`) | §2 | Medium |
 | 2 | Notifications | §7 | Large |
-| 3 | E2EE labels and the call rule | §6.1–§6.4 | Medium |
+| 3 | E2EE labels and the call rule: done 2026-11-17 (`fdd1ab597`) | §6.1–§6.4 | Medium |
 | 4 | Calls: flow and screen | §8.3 items 1–7 | Large |
 | 5 | Calls: network tests, then resilience | §8.3 items 8–14, §8.4 | Large |
 | 6 | Message menu, reactions, Info | §4 | Medium |
@@ -1181,6 +1188,31 @@ Server first, then the Android app, then the desktop and the check screen.
 
 #### Phase 3: E2EE labels and the call rule
 
+Done 2026-11-17 in `fdd1ab597` ([review](ui-review-basic-comms.md) COM-UI-001, 004, 013).
+
+| Work | Files |
+|---|---|
+| `moqui.chat.e2eeLabel` (state, icon, banner, hint, Verify, one line), `trustOf`, `leftOutText`, `undecryptableText`; `ROOM_ICONS.CrtPrivate` is people | `WebrootChat.js` |
+| The lock (with its check) in the header and the rail and the home list for E2EE only, the open lock otherwise; the banner under the header (closed per room) and at the room's start; the composer's Text message and network name; the bridges' encryption and the calls' setting (on and fixed in an encrypted room) in Room settings | `Chat.qvue`, `ChatPanel.qvue` |
+| `Capabilities.encryption` (`None`, `Transport`, `BridgeDecrypted`, `EndToEnd`); `get#BridgeCapabilities`, the room's `bridges` and `find#Rooms`' `bridgeNetworks`; Telnyx SMS says `None` | `chat_bridge.rs`, `telnyx.rs`, `ChatServices.xml` |
+| Rule 4: `roomRequiresE2ee` for an encrypted room; `set#RoomCallEncryption` refuses to turn it off there | `Calls.js`, `CallServices.xml` |
+| COM-UI-013: the devices a share left out (`moqui.crypto.leftOut`), a room's device trust (`roomTrust`, asked only of a device already open), the withheld code in `decryptRoom` | `WebrootCrypto.js`, `Chat.qvue` |
+| The terminal's one line | `ChatTui.xml` |
+| Bundled screens regenerated | `bundled-screens.js` |
+
+- SMS is `None`, not `Transport` (§6.3: "Never"): Telnyx is reached over TLS, but the provider, the carriers and the
+  phone network read every text.
+- Tests. Regression: the label's rules, the trust and the texts (`WebrootChat`); rule 4 (`CallEncryption`: an encrypted
+  room's call, a phone and a guest refused, the setting fixed, an encrypted direct room, a plain direct room's choice);
+  the terminal's line (`BasicCommsChat`, `BasicCommsEncrypted`, `BasicCommsBridges`); the bridges' encryption
+  (`BasicCommsBridges`, `chat_bridge_tests`, moqui-channels). Acceptance: `ChatLabels` (each room state at 390×844 and
+  1280×800 in the bundled shell, offline) and `EncryptedChatFlow`'s verified-only feature (who was left out, and
+  `m.unverified` to the reader).
+- Left: the call screen's label (phase 4, from `e2eeLabel`'s call states); the warning before a send to a verified
+  person's new device (rule 3); the label in a notification (phase 2's payload); Mail's line beside a person's chats
+  (phase 8, the `mail` state).
+
+Planned:
 - The label state function in `moqui.chat`; the lock and the room type icons; the banners and composer hints of §6.2
   in the header, room info, room list and home list.
 - `Capabilities.encryption` on the adapter trait, `get#BridgeCapabilities` and the Telnyx SMS adapter.
