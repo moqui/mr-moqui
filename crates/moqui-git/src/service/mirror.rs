@@ -30,6 +30,9 @@ use super::{add_error, count, out, provider_and_id, text};
 use crate::mirror::{self, GIT_REPOSITORY_MIRROR};
 use crate::{rows_guard, GitProvider};
 
+/// The most push mirrors a repository has, when `git-server` `max-mirrors` does not say.
+const DEFAULT_MAX_MIRRORS: i64 = 10;
+
 pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::RustServiceFn>) -> Result<(), String> {
     rust_service!(map, store_mirror)?;
     rust_service!(map, delete_mirror)?;
@@ -188,6 +191,20 @@ fn store_mirror(parameters: &Parameters, facade: &EntityFacade) -> Out {
     // read before the rows' guard turns authorization off
     let by_application = authz_disabled();
     let _rows = rows_guard();
+    // a repository has so many mirrors, each pushed by the queue in turn (SEC-GIT-18)
+    if existing.is_none() {
+        let most = super::max_per_repository("max-mirrors", DEFAULT_MAX_MIRRORS);
+        let had = facade
+            .find(GIT_REPOSITORY_MIRROR)?
+            .eq("repositoryId", Value::string(&repository_id))
+            .count()?;
+        if had >= most {
+            add_error(format!(
+                "repository {repository_id} has {had} push mirrors, the most it may have (git-server max-mirrors)"
+            ));
+            return none();
+        }
+    }
     let was_enabled = existing
         .as_ref()
         .is_none_or(|row| field(row, "enabled").as_deref() != Some("N"));

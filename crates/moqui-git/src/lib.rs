@@ -160,6 +160,57 @@ pub(crate) fn setting(name: &str) -> String {
         .unwrap_or_default()
 }
 
+/// How long one pass of the webhook retries or of the mirror queue sends, when `git-server` `queue-pass-seconds` does
+/// not say.
+pub(crate) const DEFAULT_QUEUE_PASS_SECONDS: u64 = 300;
+
+/// The seconds one pass of a queue that sends out of the server (the webhook retries, the push mirrors) goes on
+/// starting sends: `git-server` `queue-pass-seconds` (300); None when it is 0, no bound. What is left waits for the
+/// next run of its job, so one repository's slow endpoints hold the others' back for no longer (SEC-GIT-18).
+pub(crate) fn queue_pass_seconds() -> Option<u64> {
+    match setting("queue-pass-seconds").parse::<u64>() {
+        Ok(0) => None,
+        Ok(seconds) => Some(seconds),
+        Err(_) => Some(DEFAULT_QUEUE_PASS_SECONDS),
+    }
+}
+
+/// How long after a pass of a queue starts the next may, when `git-server` `queue-pass-gap-seconds` does not say.
+pub(crate) const DEFAULT_QUEUE_PASS_GAP_SECONDS: u64 = 300;
+
+/// When each queue's last pass started on this node (milliseconds), by queue name; one per factory, so a conf reload
+/// starts over.
+struct QueuePassStarts(std::sync::Mutex<std::collections::HashMap<&'static str, i64>>);
+
+/// Whether a pass of `queue` (the webhook retries, the push mirrors) may start now: at least `git-server`
+/// `queue-pass-gap-seconds` (300; 0 no gap) after the last pass of it on this node started (SEC-GIT-18). A pass that
+/// may start is recorded as started. Outside a context (no factory) it may.
+pub(crate) fn queue_pass_may_start(queue: &'static str) -> bool {
+    let gap = match setting("queue-pass-gap-seconds").parse::<u64>() {
+        Ok(seconds) => seconds,
+        Err(_) => DEFAULT_QUEUE_PASS_GAP_SECONDS,
+    };
+    if gap == 0 {
+        return true;
+    }
+    let now = jiff::Timestamp::now().as_millisecond();
+    let gap_millis = i64::try_from(gap.saturating_mul(1000)).unwrap_or(i64::MAX);
+    moqui_core::context::ExecutionContext::with_current(|ec| {
+        let starts = ec
+            .factory()
+            .conf_derived(|_| QueuePassStarts(std::sync::Mutex::new(std::collections::HashMap::new())));
+        let mut map = starts.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        match map.get(queue) {
+            Some(last) if now.saturating_sub(*last) < gap_millis => false,
+            _ => {
+                map.insert(queue, now);
+                true
+            }
+        }
+    })
+    .unwrap_or(true)
+}
+
 /// What a repository sends out of the server: its webhooks' deliveries, its push mirror's pushes, a fetch with a
 /// credential, and a deployment's call to its target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

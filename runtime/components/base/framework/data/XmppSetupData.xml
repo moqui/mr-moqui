@@ -14,8 +14,9 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- XMPP for local users (framework/entity/XmppEntities.xml, org.moqui.chat.XmppServices, C3a): the cleanup job. -->
 <entity-facade-xml type="seed-initial">
-    <!-- Upload slots never put within an hour, with their files, and expired FAST tokens. Each on its own. -->
-    <moqui.service.job.ServiceJob jobName="clean_XmppUploads_daily" description="Delete unused XMPP upload slots and expired FAST tokens"
+    <!-- Upload slots never put within an hour, uploads no message was given within xmpp_upload_unattached_hours, with
+         their files, and expired FAST tokens. Each on its own. -->
+    <moqui.service.job.ServiceJob jobName="clean_XmppUploads_daily" description="Delete unused XMPP upload slots, unattached uploads and expired FAST tokens"
             serviceName="org.moqui.chat.XmppServices.clean#Uploads" cronExpression="0 37 4 * * ?" paused="N"
             errorHistoryOnly="Y"/>
 </entity-facade-xml>

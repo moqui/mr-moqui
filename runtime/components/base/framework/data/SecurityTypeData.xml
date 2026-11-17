@@ -122,6 +122,10 @@ along with this software (see the LICENSE.md file). If not, see
             artifactName="org\.moqui\.admin\.(AccessServices\.(find#Groups|get#Group|create#Group|store#Group|store#Membership|end#Membership|preview#Grants|apply#Grants|store#GroupPreference|check#GrantProposal|apply#GrantProposal)|IdentityServices\.(check#AdministrationPath|find#Sessions|revoke#Sessions|get#AccountCredentials|revoke#AccountAccess))"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="AdminAccessServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminAccessServices"
             authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    <!-- The account's own "sign out everywhere and end my keys and app passwords" (SEC-WEB-06), the caller's own account
+        only, with its sign-in in the last five minutes checked by the service; a member row of its own -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminAccessServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="N"
+            artifactName="org.moqui.admin.IdentityServices.revoke#OwnAccess"/>
     <!-- Admin P9: AccessServices' read projections (the capability matrix, the row rules and the access review), each checking
         ADMIN_ACCESS_VIEW itself; a member row of its own, so an installed database gets it beside the row above -->
     <moqui.security.ArtifactGroupMember artifactGroupId="AdminAccessServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"

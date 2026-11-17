@@ -2322,13 +2322,15 @@ pub fn cookie_value(header: &str, name: &str) -> Option<String> {
     None
 }
 
+/// The session cookie of a request, by the name of its scheme ([`crate::user::session_cookie_name`]): over https only
+/// `__Host-moqui.session`, so a plain `moqui.session` another host of the domain set is no session there (SEC-WEB-05).
 pub(crate) fn session_cookie_of(request: &WebRequest) -> Option<String> {
     if let Some(value) = request.session_cookie.as_ref().filter(|text| !text.is_empty()) {
         return Some(value.clone());
     }
     request
         .header("cookie")
-        .and_then(|header| cookie_value(header, crate::user::SESSION_COOKIE_NAME))
+        .and_then(|header| cookie_value(header, crate::user::session_cookie_name(request.https)))
 }
 
 pub(crate) fn visitor_cookie_of(request: &WebRequest) -> Option<String> {
@@ -2463,7 +2465,7 @@ pub fn finish_response(
     // the same decision as refused_origin, so an origin that got through gets its CORS headers
     if let Some(origin) = request.header("origin").filter(|text| !text.trim().is_empty()) {
         if handle_cors(Some(factory)) && refused_origin(factory, request).is_none() {
-            apply_cors(factory, &mut response.headers, origin, preflight);
+            apply_cors(factory, request, &mut response.headers, origin, preflight);
         }
     }
     response
@@ -2535,8 +2537,12 @@ pub(crate) fn host_without_port(host: &str) -> &str {
 }
 
 /// The allowed origin, then the conf's `cors-preflight` or `cors-actual` headers, as `MoquiServlet.handleCors`.
+/// The CORS headers for an allowed `origin`. An origin that only `*` allows gets no `Access-Control-Allow-Credentials`,
+/// so a browser sends it no cookie and lets it read no signed-in answer; the request's own origin and the ones
+/// `allow-origins` names keep it (SEC-WEB-10).
 fn apply_cors(
     factory: &crate::context::ExecutionContextFactory,
+    request: &WebRequest,
     headers: &mut Vec<(String, String)>,
     origin: &str,
     preflight: bool,
@@ -2544,6 +2550,10 @@ fn apply_cors(
     headers.push(("Access-Control-Allow-Origin".to_string(), origin.to_string()));
     let kind = if preflight { "cors-preflight" } else { "cors-actual" };
     apply_conf_headers(Some(factory), kind, headers, false);
+    let own = origin::request_own_origins(factory, request);
+    if !origin::origin_credentialed_by(Some(factory), Some(origin), &own) {
+        headers.retain(|(name, _)| !name.eq_ignore_ascii_case("access-control-allow-credentials"));
+    }
 }
 
 /// Names a response never carries: `WebUtilities.stripCredentialParameters`, compared without case.

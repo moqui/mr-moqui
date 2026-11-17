@@ -253,7 +253,7 @@ fn two_runners_of_a_pool_with_room_for_one_job_get_one_between_them() {
     let fixture = claims_fixture("ci-claim-pool");
     let entity = fixture.entity.clone();
     let claimed = race(&fixture, 2, move |index| {
-        registered::claim(&entity, &runner_token(["RA", "RB"][index])).unwrap()
+        registered::claim(&entity, &runner_token(["RA", "RB"][index]), false).unwrap()
     });
     assert_eq!(claimed.iter().flatten().count(), 1, "{claimed:?}");
     let running: Vec<String> = ["J1", "J2"]
@@ -335,4 +335,53 @@ fn a_container_runner_is_given_an_https_url_or_a_loopback_one() {
         refused.contains("git-ci server-url") && refused.contains("git_public_url") && refused.contains("linux"),
         "{refused}"
     );
+}
+
+/// SEC-GIT-19: a pool of registered runners that takes untrusted runs gives a job only to a runner that runs its steps
+/// as another user (`ci-run poll --step-user`, `stepUser` in the claim); another is given none, told why, and the run
+/// stays queued for such a runner.
+#[test]
+fn an_untrusted_run_goes_only_to_a_runner_that_runs_its_steps_as_another_user() {
+    let fixture = claims_fixture("ci-claim-step-user");
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        for (entity, key, id) in [(RUNNER_POOL, "runnerPoolId", "P1"), (PIPELINE_RUN, "pipelineRunId", "R1")] {
+            let mut row = super::one(&fixture.entity, entity, key, id).unwrap().unwrap();
+            row.set("trusted", s("N"));
+            row.update(&fixture.entity).unwrap();
+        }
+    }
+    let claim = |runner: &str, body: &str| -> (u16, serde_json::Value) {
+        let request = RunnerHttpRequest {
+            method: "POST".into(),
+            path: "claim".into(),
+            query: String::new(),
+            authorization: Some(format!("Bearer {}", runner_token(runner))),
+            content_length: Some(body.len() as u64),
+            secure: true,
+            client_ip: "127.0.0.1".into(),
+        };
+        let _entered = fixture.context.enter();
+        let mut response = MemoryResponse::default();
+        runner_http::serve(&request, &mut body.as_bytes(), &mut response);
+        (response.status, serde_json::from_slice(&response.body).unwrap())
+    };
+    let (status, none) = claim("RA", "{}");
+    assert_eq!(status, 200, "{none}");
+    assert!(none.get("jobRunId").is_none(), "{none}");
+    assert!(none["notice"].as_str().unwrap_or_default().contains("--step-user"), "{none}");
+    assert_eq!((status_of(&fixture, "J1"), status_of(&fixture, "J2")), ("queued".into(), "queued".into()));
+    let (status, given) = claim("RB", r#"{"stepUser":true}"#);
+    assert_eq!(status, 200, "{given}");
+    assert_eq!(given["jobRunId"], "J1", "{given}");
+    assert!(given.get("notice").is_none(), "{given}");
+    // a trusted pool needs no step user
+    let _entered = fixture.context.enter();
+    assert!(registered::needs_step_user(&fixture.entity, "P1").unwrap());
+    let _authz = fixture.context.disable_authz();
+    let mut pool = super::one(&fixture.entity, RUNNER_POOL, "runnerPoolId", "P1").unwrap().unwrap();
+    pool.set("trusted", s("Y"));
+    pool.update(&fixture.entity).unwrap();
+    assert!(!registered::needs_step_user(&fixture.entity, "P1").unwrap());
 }

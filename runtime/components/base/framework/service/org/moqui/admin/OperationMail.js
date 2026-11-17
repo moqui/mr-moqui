@@ -151,7 +151,7 @@ function ownerClaims(emailMessageIds) {
     const claims = new Map()
     if (!emailMessageIds.length) return {claims, unanswered}
     for (const owner of owners) {
-        const asked = lib.callRegistered(owner.ownerService, {emailMessageIdList: emailMessageIds})
+        const asked = lib.callOwner(owner.ownerService, {emailMessageIdList: emailMessageIds})
         if (asked.failure) {
             ec.logger.error("Mail outcome owner " + owner.ownerKey + " did not answer: " + asked.failure)
             unanswered.push(owner.ownerKey)
@@ -435,7 +435,7 @@ const answerOf = emailMessageId => {
 }
 // An owner's own action on its message, by its registered service: its answer, read as data.
 function ownerAction(claim, emailMessageId, action, reason, key) {
-    const asked = lib.callRegistered(claim.recoverService, {
+    const asked = lib.callOwner(claim.recoverService, {
         emailMessageId,
         ownerRef: claim.ownerRef,
         action,

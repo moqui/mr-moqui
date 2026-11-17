@@ -9,6 +9,9 @@ const REVOKED_SECRET = "sec-device-fixed-secret-of-43-characters-00"
 const refused = (res) => res.status == 403
 let device
 
+// the session cookie's name, over https __Host-moqui.session (SEC-WEB-05)
+const SESSION_COOKIE = server.secure ? "__Host-moqui.session" : "moqui.session"
+
 feature("a registration code makes one browser the device, once, with an HttpOnly SameSite=Strict cookie", {
     when() {
         device = session()
@@ -30,7 +33,7 @@ feature("a registration code makes one browser the device, once, with an HttpOnl
 
 feature("the device opens only its route group, signs in as no one, and its session holds no user", {
     when() {
-        const sessionCookie = device.cookies().find((cookie) => cookie.name == "moqui.session")
+        const sessionCookie = device.cookies().find((cookie) => cookie.name == SESSION_COOKIE)
         return {
             home: device.get("/apps/AppList"),
             page: device.get("/Device"),
@@ -40,7 +43,7 @@ feature("the device opens only its route group, signs in as no one, and its sess
             login: device.post("/rest/login", { form: { username: params.user ?? "john.doe", password: params.password ?? "moqui" }, accept: "json", csrf: false }),
             after: device.get("/apps/ScreenTree"),
             // the browser's session cookie alone, without the device cookie: nobody is signed in on it
-            sessionOnly: session().get("/apps/AppList", { headers: { Cookie: "moqui.session=" + (sessionCookie ? sessionCookie.value : "") } }),
+            sessionOnly: session().get("/apps/AppList", { headers: { Cookie: SESSION_COOKIE + "=" + (sessionCookie ? sessionCookie.value : "") } }),
             socket: ws.connect("/notws", { session: device, timeout: 5 }),
         }
     },
@@ -66,7 +69,7 @@ feature("a forged or revoked device cookie is refused and removed (#name)", {
         res.status == 403
         res.text.includes(text)
         res.cookie("moqui.device") != null && res.cookie("moqui.device").maxAge == 0
-        res.cookie("moqui.session") == null
+        res.cookie(SESSION_COOKIE) == null
     },
 })
 

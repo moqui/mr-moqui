@@ -40,7 +40,7 @@ This server terminates TLS itself with rustls (`crates/moqui-host/src/tls.rs`) w
 
 **Defaults** are `runtime/components/base/framework/conf/MoquiDefaultConf.xml`. **On** and **off** mean those defaults. Rows say what untrusted input can reach, and what to keep in mind during a review. Designed admin tools are privileged on purpose.
 
-`./moq run` merges `runtime/conf/MoquiDevConf.xml` on top of that file. The dev file sets `instance_purpose` to `dev`, `webapp_allow_origins` to `*`, and `ssh_port` to `2222`, and it sets `tarpit-enabled` false for screens, screen transitions, and services. It does not declare an H2 console. The Jackrabbit repository element in it is commented out. The tables below stay on the default conf unless a row says otherwise.
+`./moq run` merges `runtime/conf/MoquiDevConf.xml` on top of that file. The dev file sets `instance_purpose` to `dev`, `webapp_allow_origins` to `localhost,127.0.0.1` (this machine on any port), and `ssh_port` to `2222`, and it sets `tarpit-enabled` false for screens, screen transitions, and services. It does not declare an H2 console. The Jackrabbit repository element in it is commented out. The tables below stay on the default conf unless a row says otherwise.
 
 ## Heavy lock-down
 
@@ -50,7 +50,7 @@ A production install keeps the default conf's closed switches and does not publi
 - Do not leave `entity_ds_crypt_pass` or `session_cookie_key` as `CHANGEME`. Startup writes generated values into `runtime/.env` when they still end in `CHANGEME`. Keep that file private (mode `0600`). The same generator fills `ssh_host_key`, the cluster certificate and key, and `git_lfs_token_key`. `entity_ds_crypt_pass_old` stays the sentinel on purpose.
 - Do not load demo users.
 - Leave tarpits on. The dev conf turns them off for screens, transitions, and services.
-- Leave `webapp_allow_origins` empty. The dev conf sets `*`. A foreign origin is then refused. Own origin stays allowed.
+- Leave `webapp_allow_origins` empty. The dev conf names localhost and 127.0.0.1. A foreign origin is then refused. Own origin stays allowed.
 - Leave SSH off unless you want it. The default port is empty. The dev conf sets `2222` on `127.0.0.1`.
 - Leave A2A, MCP, and the gateway off unless a client is configured. The model facade can stay on without those servers.
 - Leave git `allow-http` false, and DAV `account-password` false.

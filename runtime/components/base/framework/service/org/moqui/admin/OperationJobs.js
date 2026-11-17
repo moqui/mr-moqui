@@ -1130,7 +1130,7 @@ function runItems(run) {
         ec.logger.error("Recovery descriptor " + descriptor.descriptorKey + " names an items service that is not defined")
         return none(false, "Its owner's detail of the run is not available")
     }
-    const asked = lib.callRegistered(service, {
+    const asked = lib.callOwner(service, {
         jobName: run.jobName,
         jobRunId: run.jobRunId,
         startTime: ms(run.startTime),

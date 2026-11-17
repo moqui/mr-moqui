@@ -367,6 +367,17 @@ fn the_sticky_cookie_is_read_from_every_cookie_header() {
     assert_eq!(sticky_value(&headers, "JSESSIONID"), None);
     headers.insert(header::COOKIE, HeaderValue::from_static("moqui.session="));
     assert_eq!(sticky_value(&headers, "moqui.session"), None, "an empty one is none");
+    // the session cookie's https name (SEC-WEB-05) is the default name's too, before the plain one
+    headers.insert(
+        header::COOKIE,
+        HeaderValue::from_static("moqui.session=plain.mac; __Host-moqui.session=secure.mac"),
+    );
+    assert_eq!(sticky_value(&headers, "moqui.session").as_deref(), Some("secure.mac"));
+    assert_eq!(
+        sticky_value(&headers, "own.cookie"),
+        None,
+        "a host's own name is only its own"
+    );
 }
 
 /// A request body fed by a test: each chunk as it is sent, ended when the sender drops.

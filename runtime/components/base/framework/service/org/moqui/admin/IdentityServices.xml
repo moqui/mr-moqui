@@ -133,6 +133,21 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Identity.js').execute('revokeAccountAccess', context))</script></actions>
     </service>
+    <service verb="revoke" noun="OwnAccess" allow-remote="false">
+        <description>The account Security page's "sign out everywhere and end my keys and app passwords" (SEC-WEB-06): the
+            caller's own sessions on every server end, the current one included (the account's hasLoggedOut is set, so it
+            signs out at its next request), with the caller's login keys (access tokens, device and sign-in keys) and app
+            passwords, each kind on its own as revoke#AccountAccess ends them (one that fails is named in failedKinds and
+            the others still end); SSH keys and phones are left. Self-service, so it needs no permission but the caller's
+            sign-in in the last five minutes (org.moqui.sso.RecentAuthServices.require#RecentAuth: an error, reasonCode
+            reauthRequired and the X-Moqui-Reauth header, which a browser form answers by asking and sending again).</description>
+        <out-parameters>
+            <parameter name="revokedCounts" type="Map"/>
+            <parameter name="failedKinds" type="List"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Identity.js').execute('revokeOwnAccess', context))</script></actions>
+    </service>
     <!-- The owned-resource contract of an account's lifecycle (mr-boss plan/impl-admin.md P6, design-admin §14 Lifecycle participant):
         an owner of a kind of resource a user can own (a shared drive, a shared mail account, a calendar, a contact book, the
         assignments of a work app, a report schedule) answers what a user owns and moves one to a new owner through its own

@@ -2,7 +2,8 @@
 // UserDetail AccessCredentials; F3, F4, F42): the caller's own sessions without any permission and another user's only with
 // ADMIN_IDENTITY_VIEW, named by visit and never by cookie or token; a revoked session's visit ended and its web session gone,
 // so its next request starts over signed out; and revoke#AccountAccess ending another user's sessions, keys, app passwords,
-// SSH keys and agent triggers at once, refused without ADMIN_IDENTITY_MANAGE. The session refresh that signs a disabled
+// SSH keys and agent triggers at once, refused without ADMIN_IDENTITY_MANAGE; and revoke#OwnAccess, the account's own sign
+// out everywhere with its keys and app passwords, after a recent sign-in (SEC-WEB-06). The session refresh that signs a disabled
 // account out on its next request, and the cluster end of a session, are cargo's (user::session_tests
 // every_session_of_a_user_ends_and_a_disabled_account_signs_out).
 // Run: ./moq test framework --spec AdminSessions
@@ -18,6 +19,9 @@ const confirm = () =>
         .parameters({password: operatorPassword})
         .disableAuthz()
         .call()
+const self = "spec.sessions.self"
+const selfId = "SPEC_SES_SELF"
+const selfPassword = "Spec-sessions-self-9!"
 const viewerId = "SPEC_SES_VIEWER"
 const targetId = "SPEC_SES_TARGET"
 const sealedId = "SPEC_SES_SEALED"
@@ -114,6 +118,17 @@ spec({
         })
         make("moqui.security.UserGroupMember", {userGroupId: "SPEC_SES_SEALED", userId: sealedId, fromDate: 0})
         browser(6, sealedId, "Mozilla/5.0 (X11; Linux x86_64) Firefox/140.0")
+        // an account that signs itself out everywhere: two browsers, a key, an app password and an SSH key
+        make("moqui.security.UserAccount", {userId: selfId, username: self, userFullName: "Spec self service",
+            currentPassword: ec.user.hashPassword(selfPassword), passwordHashType: "argon2", passwordSalt: "", passwordBase64: "N"})
+        browser(7, selfId, "Mozilla/5.0 (X11; Linux x86_64) Firefox/140.0")
+        browser(8, selfId, "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0) Safari/604.1")
+        make("moqui.security.UserLoginKey", {loginKey: "SPEC_SES_SELF_KEY", userId: selfId, fromDate: ec.user.nowTimestamp,
+            description: "Spec self token"})
+        make("moqui.security.UserAppPassword", {appPasswordId: "SPEC_SES_SELF_APP", userId: selfId, name: "Spec self mail",
+            passwordHash: "y", createdDate: ec.user.nowTimestamp})
+        make("moqui.security.UserSshKey", {sshKeyId: "SPEC_SES_SELF_SSH", userId: selfId, fingerprint: "SHA256:specself",
+            publicKey: "ssh-ed25519 AAAA specself", fromDate: ec.user.nowTimestamp})
         // the target's credentials and an agent trigger that runs as the target
         make("moqui.security.UserLoginKey", {
             loginKey: "SPEC_SES_KEY_HASH",
@@ -155,7 +170,12 @@ spec({
             ["moqui.server.Visit", {userId: targetId}],
             ["moqui.server.Visit", {userId: operatorId}],
             ["moqui.server.HttpSession", {userId: sealedId}],
-            ["moqui.server.Visit", {userId: sealedId}]
+            ["moqui.server.Visit", {userId: sealedId}],
+            ["moqui.security.UserSshKey", {userId: selfId}],
+            ["moqui.security.UserAppPassword", {userId: selfId}],
+            ["moqui.security.UserLoginKey", {userId: selfId}],
+            ["moqui.server.HttpSession", {userId: selfId}],
+            ["moqui.server.Visit", {userId: selfId}]
         ])
             ec.entity.find(entityName).condition(conditions).disableAuthz().deleteAll()
         ec.artifactExecution.enableAuthz()
@@ -263,6 +283,36 @@ feature("revoke#AccountAccess ends another user's sessions, keys, app passwords,
         one("moqui.agent.AgentTrigger", {triggerId: "SPEC_SES_TRIGGER"}).paused == "Y"
         one("moqui.security.UserAccount", {userId: targetId}).hasLoggedOut == "Y"
         // the operator's own sessions are untouched
+        one("moqui.server.HttpSession", {sessionId: "SPEC_SES_SESSION_4"}) != null
+    }
+})
+
+// SEC-WEB-06: the account Security page's "sign out everywhere and end my keys and app passwords", self-service with no
+// permission, needs a sign-in in the last five minutes; then every session of the account ends (hasLoggedOut, so this
+// one too at its next request) with its login keys and app passwords, and its SSH keys and other accounts are left.
+feature("revoke#OwnAccess signs the account out everywhere and ends its keys and app passwords after a recent sign-in", {
+    when() {
+        const stale = as(self, () => invoke(S + "revoke#OwnAccess"))
+        const staleKept = one("moqui.security.UserLoginKey", {loginKey: "SPEC_SES_SELF_KEY"}).thruDate == null &&
+            one("moqui.server.HttpSession", {sessionId: "SPEC_SES_SESSION_7"}) != null
+        const done = as(self, () => {
+            ec.service.sync().name("org.moqui.sso.RecentAuthServices.reauthenticate#User")
+                .parameters({password: selfPassword}).disableAuthz().call()
+            return invoke(S + "revoke#OwnAccess")
+        })
+        return {stale, staleKept, done}
+    },
+    then({stale, staleKept, done}) {
+        stale.error.includes("Confirm it is you") && stale.reasonCode == "reauthRequired"
+        staleKept
+        done.error == "" && done.failedKinds.length == 0
+        done.revokedCounts.sessions == 2 && done.revokedCounts.loginKeys == 1 && done.revokedCounts.appPasswords == 1
+        one("moqui.server.HttpSession", {sessionId: "SPEC_SES_SESSION_7"}) == null
+        one("moqui.server.HttpSession", {sessionId: "SPEC_SES_SESSION_8"}) == null
+        one("moqui.security.UserLoginKey", {loginKey: "SPEC_SES_SELF_KEY"}).thruDate != null
+        one("moqui.security.UserAppPassword", {appPasswordId: "SPEC_SES_SELF_APP"}).revokedDate != null
+        one("moqui.security.UserSshKey", {sshKeyId: "SPEC_SES_SELF_SSH"}).thruDate == null
+        one("moqui.security.UserAccount", {userId: selfId}).hasLoggedOut == "Y"
         one("moqui.server.HttpSession", {sessionId: "SPEC_SES_SESSION_4"}) != null
     }
 })

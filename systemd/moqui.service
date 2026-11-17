@@ -30,9 +30,14 @@ RestartSec=5
 LimitNOFILE=65536
 NoNewPrivileges=true
 PrivateTmp=true
+# The whole file system is read-only to the server but its runtime: the database, logs, certificates, the generated
+# secrets in .env, and the components a deploy writes (docs/tools/Component-Deploy.md). The binary and the conf stay
+# read-only inside it, whoever owns them, so a compromised server cannot replace what runs at its next start
+# (SEC-OUT-13). A path that is not there (the conf of a single-binary install) is skipped.
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/moqui
+ReadWritePaths=/opt/moqui /opt/moqui/components
+ReadOnlyPaths=/opt/moqui/moqui -/opt/moqui/MoquiConf.xml -/opt/moqui/conf
 
 [Install]
 WantedBy=multi-user.target

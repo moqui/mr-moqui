@@ -335,6 +335,22 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationRecovery.js').execute('executeRecovery', context))</script></actions>
     </service>
 
+    <service verb="call" noun="OwnerService" allow-remote="false">
+        <description>An owner's service that a registration names (a RecoveryDescriptor's describeService, recoverService
+            or itemsService, a MailOutcomeOwner's ownerService or recoverService), with the parameters given, under the
+            caller's own authorization: the operation services call an owner only through this one (OperationLib.js
+            callOwner). Its ALL_USERS ALLOW (AdminOperationCall) is not inheritable, so the grant of the service that
+            dispatches does not carry into the owner's service: one the caller is not authorized for is refused, as a direct
+            call is, and the owner's service carries a grant of its own besides its own permission check (SEC-ADM-10). A
+            service no registration names is refused. result is the owner's answer.</description>
+        <in-parameters>
+            <parameter name="serviceName" required="true"/>
+            <parameter name="parameters" type="Map"/>
+        </in-parameters>
+        <out-parameters><parameter name="result" type="Map"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationRecovery.js').execute('callOwnerService', context))</script></actions>
+    </service>
+
     <service verb="find" noun="RecoveryTargets" type="interface">
         <description>What the owner of a registered recovery answers about its records (moqui.server.RecoveryDescriptor
             describeService): for those of the given ids that are its own (targetList: targetId, ownerRef the owner's own
@@ -585,8 +601,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="find" noun="MessageJobRunItems" allow-remote="false">
         <implements service="org.moqui.admin.OperationServices.find#JobRunItems"/>
         <description>The framework's own items of its two system message jobs (the registered itemsService of
-            send_AllProducedSystemMessages_frequent and consume_AllReceivedSystemMessages_frequent; in no group's
-            grant): the messages a run tried, by the time of their last attempt, each with its id, type and state now and,
+            send_AllProducedSystemMessages_frequent and consume_AllReceivedSystemMessages_frequent; in the
+            AdminOperationServices grant, as call#OwnerService calls it with the caller's own): the messages a run tried, by the time of their last attempt, each with its id, type and state now and,
             as a SystemMessage recovery target, its id. Needs ADMIN_OPERATION_VIEW.</description>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationJobs.js').execute('findMessageJobRunItems', context))</script></actions>
     </service>

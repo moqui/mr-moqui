@@ -94,8 +94,8 @@ Against `./moq run` (the dev conf) the specs that pass on any conf pass, and two
   `--serve` runs. For a server it did not start, run that spec on the server's database, such as
   `moqui test framework --spec ClientFixtures --db existing`. Without the fixtures the features that need them skip,
   naming the command.
-- **Conf.** A spec that needs a conf says so. `SecurityCors` needs a server that allows no foreign origin, and fails in
-  its `setupSpec` on the dev conf (`webapp_allow_origins=*`). A real load run needs the tarpits off
+- **Conf.** A spec that needs a conf says so. `SecurityCors` needs a server that allows no foreign origin, and fails on
+  the dev conf, which allows localhost on any port (`webapp_allow_origins=localhost,127.0.0.1`). A real load run needs the tarpits off
   (`conf/MoquiLoadTestConf.xml`; see Load). Start such a server with `./moq run -c conf/MoquiLoadTestConf.xml` or
   `MOQUI_CONF`.
 

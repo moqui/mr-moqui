@@ -384,8 +384,11 @@ for 600 seconds is closed, and a write the client does not take for 60 seconds e
   or nested over 32 deep, ends the stream; a session whose pushes back up (512) is closed. Stream management keeps at
   most 1,000 unacknowledged stanzas and 10 detached sessions a user; PEP 200 nodes a user and 256 items a node;
   uploads 60 slots a user an hour.
-  A PEP item is at most 262,144 characters. `block#Jids` takes 500 JIDs a call with no total, and `enable#Push` adds a
-  row for each `pushJid` and `node` with no total. There is no per-session stanza rate limit; a session's stanzas are
+  A PEP item is at most 262,144 characters, and `publish#PepItem` keeps one only while the user's PEP items stay within
+  `xmpp_pep_max_bytes` (20 MiB) of UTF-8 (`XmppPepItem.payloadBytes`, the replaced item not counted). `block#Jids` takes
+  500 JIDs a call and blocks none past `xmpp_block_max_jids` (1,000); `enable#Push` adds a row for each `pushJid` and
+  `node` and keeps none past `xmpp_push_max_registrations` (50, a replacement not counted). Past a cap the IQ is refused
+  with `resource-constraint` (type wait); 0 is no cap. There is no per-session stanza rate limit; a session's stanzas are
   worked one at a time.
 - **Authorization** is the user's: most stanzas become a service call as the signed-in user, through
   `XmppClientServices` (granted ALWAYS to `ALL_USERS`): those services check the room (`get#RoomAccess`) or work on the
@@ -426,11 +429,12 @@ for 600 seconds is closed, and a write the client does not take for 60 seconds e
   type is the one the uploader gave the slot. A type that starts with `image/`, `audio/` or `video/` is served inline,
   except the exact text `image/svg+xml` (a type with a parameter or another case, such as `image/svg+xml;
   charset=utf-8`, is inline). Every answer has `nosniff` and `Content-Security-Policy: sandbox; default-src 'none'`. A
-  user's slots are limited to 60 an hour and ten times `xmpp_upload_max_bytes` an hour; there is no total per user and
-  no drive quota. `attach#Upload` makes a `ChatAttachment` of the room on the same stored file, with the uploader's file
+  user's slots are limited to 60 an hour and ten times `xmpp_upload_max_bytes` an hour, and uploads count toward no
+  drive quota. `attach#Upload` makes a `ChatAttachment` of the room on the same stored file, with the uploader's file
   name and content type. It refuses an upload that is not the caller's own completed one, and the session then logs the
-  upload by its file name at WARN, never the URL whose token reads it. `clean_XmppUploads_daily` (`XmppServices.clean#Uploads`) removes only slots never
-  put within an hour, and expired FAST tokens. `ChatServices.clear#MessageContent` and `clean#PendingAttachments` remove each chat
+  upload by its file name at WARN, never the URL whose token reads it. `clean_XmppUploads_daily` (`XmppServices.clean#Uploads`) removes slots never
+  put within an hour, a completed upload no chat file has `xmpp_upload_unattached_hours` (24) after it was put (so a
+  file shared only inside an OMEMO message goes then), and expired FAST tokens. `ChatServices.clear#MessageContent` and `clean#PendingAttachments` remove each chat
   file through `ChatServices.remove#AttachmentFile`: a file under the upload root goes, with its `XmppUpload` rows, when
   no other `ChatAttachment` has its location, so a file put over XMPP goes with the last message that has it (deletion or
   retention); and the `XmppUpload` rows made to serve a chat file to XMPP clients (`get#AttachmentUrls`) always go with

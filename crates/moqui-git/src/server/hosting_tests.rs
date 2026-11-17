@@ -1496,6 +1496,126 @@ fn webhooks_are_signed_logged_and_retried() {
     assert_eq!(last.0.get("x-moqui-event").map(String::as_str), Some("ping"));
 }
 
+/// SEC-GIT-18: a repository has at most `git-server` `max-webhooks` webhooks (one more is refused, a change of one is
+/// not), and a pass of the retries starts no send once `queue-pass-seconds` have gone by: the rest wait for the next.
+#[test]
+fn webhooks_are_capped_and_a_pass_of_the_retries_is_bounded_by_time() {
+    let fixture = fixture_with(
+        "hosting-hook-caps",
+        moqui_core::context::framework_dir(),
+        r#"<git-server webhook-private-network="true" max-webhooks="1" queue-pass-seconds="1"/>"#,
+    );
+    grant_entities(&fixture);
+    framework_rules(&fixture);
+    define(&fixture, "capped", "db");
+    {
+        moqui_core::testing::seed_status_flows(&fixture.entity);
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        create(
+            &fixture.entity,
+            "moqui.service.message.SystemMessageType",
+            &[
+                ("systemMessageTypeId", "GitWebhook"),
+                ("sendServiceName", "org.moqui.git.GitServices.send#GitWebhookDelivery"),
+            ],
+        );
+    }
+    // a receiver that takes a second and a bit to answer, so one send fills the pass
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://127.0.0.1:{}/hook", listener.local_addr().unwrap().port());
+    let answered = Arc::new(Mutex::new(0));
+    let counted = Arc::clone(&answered);
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 || line.trim_end().is_empty() {
+                    break;
+                }
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = value.trim().parse().unwrap_or(0);
+                }
+            }
+            let mut body = vec![0; length];
+            let _ = reader.read_exact(&mut body);
+            std::thread::sleep(std::time::Duration::from_millis(1200));
+            *counted.lock().unwrap() += 1;
+            let mut stream = stream;
+            let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        }
+    });
+    let store = |webhook_id: Option<&str>| {
+        let mut parameters = vec![("repositoryId", s("capped")), ("url", s(&url))];
+        if let Some(id) = webhook_id {
+            parameters.push(("webhookId", s(id)));
+        }
+        call(&fixture, WRITER, "org.moqui.git.GitServices.store#GitWebhook", &parameters)
+    };
+    let (stored, errors) = store(None);
+    assert!(errors.trim().is_empty(), "{errors}");
+    let webhook_id = get(&stored, "webhookId").to_string();
+    let (_, errors) = store(None);
+    assert!(errors.contains("max-webhooks"), "{errors}");
+    let (_, errors) = store(Some(&webhook_id));
+    assert!(errors.trim().is_empty(), "a change is no new webhook: {errors}");
+
+    // two deliveries that failed an hour ago, due again
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let hour_ago = moqui_core::user::stamp_value(moqui_core::user::now_millis() - 3_600_000);
+        for id in ["HOOK_1", "HOOK_2"] {
+            let mut message = EntityValue::make(&fixture.entity, "moqui.service.message.SystemMessage").unwrap();
+            for (name, value) in [
+                ("systemMessageId", s(id)),
+                ("systemMessageTypeId", s("GitWebhook")),
+                ("statusId", s("SmsgProduced")),
+                ("isOutgoing", s("Y")),
+                ("receiverId", s(&webhook_id)),
+                ("messageText", s("{}")),
+                ("failCount", Value::I64(1)),
+                ("initDate", hour_ago.clone()),
+                ("lastAttemptDate", hour_ago.clone()),
+            ] {
+                message.set(name, value);
+            }
+            message.create(&fixture.entity).unwrap();
+        }
+    }
+    let (out, errors) = crate::service::commit::tests::internal(
+        &fixture,
+        WRITER,
+        "org.moqui.git.GitServices.retry#GitWebhookDeliveries",
+        &[],
+    );
+    assert!(errors.trim().is_empty(), "{errors}");
+    assert_eq!(
+        out.get("retriedCount").map(text_of).as_deref(),
+        Some("1"),
+        "the pass ran its second on the first: {out:?}"
+    );
+    assert_eq!(*answered.lock().unwrap(), 1);
+    let produced = produced(&fixture);
+    assert_eq!(produced.len(), 1, "the other waits for the next pass: {produced:?}");
+    // the next run of the job, at once: within queue-pass-gap-seconds (300) of the last pass, it starts none
+    let (again, errors) = crate::service::commit::tests::internal(
+        &fixture,
+        WRITER,
+        "org.moqui.git.GitServices.retry#GitWebhookDeliveries",
+        &[],
+    );
+    assert!(errors.trim().is_empty(), "{errors}");
+    assert_eq!(
+        again.get("retriedCount").map(text_of).as_deref(),
+        Some("0"),
+        "a pass so soon after the last starts no send: {again:?}"
+    );
+    assert_eq!(*answered.lock().unwrap(), 1);
+}
+
 #[test]
 fn commit_statuses_post_over_rest_with_an_access_token() {
     if !git_available() {
