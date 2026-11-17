@@ -7,8 +7,9 @@ reviewer reported them and have not been read a second time; the Status column s
 2026-11-16 the Medium findings were fixed in the same way, with follow-ups the same day: all 77 are fixed (SEC-RTE-02
 and SEC-OUT-08 finished later the same day), each entry's **Fix** in [Security-Review-Medium](Security-Review-Medium.md)
 saying how. The Low findings that were confirmed in code were then fixed in batches the same day, each entry's **Fix**
-in [Security-Review-Low](Security-Review-Low.md) saying how: of the 215 Low and Info findings 101 are fixed, 18 in
-part and 13 deferred, none refuted, and 83 (40 Low, 43 Info) are as reported. What is left is under
+in [Security-Review-Low](Security-Review-Low.md) saying how, and a first batch of the owner's decisions on the ones they
+left was carried out after them: of the 215 Low and Info findings 115 are fixed, 11 in part and 6 deferred, none refuted,
+and 83 (40 Low, 43 Info) are as reported. What is left is under
 [What is left](#what-is-left).
 
 This is the findings register of the security review that the pre-0.1.0 notice in the [README](../README.md) names:
@@ -175,26 +176,26 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
    approval, parsers of untrusted input, the mobile app's native code, and the helper-read parts of the PASS services.
 3. **Fixes.** The High findings are fixed (2026-11-15, what they left on 2026-11-16), and the Medium ones
    (2026-11-16). Of the Medium findings none is open, none deferred, none refuted and none fixed only in part. Of the
-   169 Low and 46 Info findings, 101 are fixed (98 Low, 3 Info), 18 Low are fixed in part and 13 Low deferred; none is
-   refuted whole (SEC-GIT-19 and SEC-PSS-28 are in part); 40 Low and 43 Info are as reported.
+   169 Low and 46 Info findings, 115 are fixed (112 Low, 3 Info), 11 Low are fixed in part and 6 Low deferred; none is
+   refuted whole (SEC-GIT-19 and SEC-PSS-28 are in part); 40 Low and 43 Info are as reported. The first batch of the
+   owner's decisions (2026-11-16) finished 14 of them: SEC-WEB-05, SEC-WEB-06, SEC-WEB-10, SEC-RTE-17, SEC-ADM-10,
+   SEC-GIT-18, SEC-GIT-19, SEC-COM-20, SEC-DAT-11, SEC-PSS-26, SEC-PSS-27, SEC-PSS-28, SEC-PSS-44 and SEC-OUT-13.
 
-   The Low findings fixed in part, by what is left: SEC-WEB-05 (the session cookie has no `__Host-` name), SEC-WEB-06
-   (the `hasLoggedOut` race; ending keys at a password change), SEC-TLS-08 (the deploy fetch resolves the host again),
-   SEC-TLS-17 (an ingest key is checked after the gRPC message is decoded), SEC-MAIL-06 (no SPF or DMARC gate on a
-   delivered notice), SEC-MAIL-07 (no hourly cap per address, no mailbox quota), SEC-COM-21 (no protocol scope on an app
+   The Low findings fixed in part, by what is left: SEC-TLS-08 (the deploy fetch resolves the host again), SEC-TLS-17
+   (an ingest key is checked after the gRPC message is decoded), SEC-MAIL-06 (no SPF or DMARC gate on a delivered
+   notice), SEC-MAIL-07 (no hourly cap per address, no mailbox quota), SEC-COM-21 (no protocol scope on an app
    password), SEC-CLU-02 (no total per pairing; received `PutContent` outside the queue cap), SEC-CLU-04 (an `ssh://`
-   peer's host is checked by its own row), SEC-DAT-09 (no page size cap on screens), SEC-DAT-11 (mr-mantle's
-   `MANTLE_PRIVATE_CONTACT` is still `allowMissingAlias="Y"`), SEC-PSF-04 (`'unsafe-eval'` while PASS's islands compile in
-   the browser), SEC-PSS-05 (a guest party made at the first add), SEC-PSS-26 (no cap on a supplier's open bills per
-   order), SEC-PSS-27 (the payment return key reads the invoice), SEC-PSS-28 (a form-filed sender is not marked
-   unverified), SEC-PSS-44 (a list link's token has no default expiry and can subscribe again) and SEC-BAP-06 (no
-   carrier host list). Deferred, each for an owner's decision or a design: SEC-WEB-10 (the dev conf's `*` origin with
-   credentials), SEC-RTE-17 (the Login page's test sign-in, which the public demo uses), SEC-ADM-10 (grants for the
-   owner services, a framework and mr-mantle change together), SEC-GIT-18 (git workers for unauthenticated requests,
-   the merge request walk, webhook and mirror caps), SEC-GIT-19 (a registered pool taking untrusted runs; its token half
-   refuted), SEC-COM-19 and SEC-COM-26 (each a design of its own), SEC-COM-20 (XMPP storage totals), SEC-PSS-23 (a guest
-   order link is a write credential), SEC-CLI-03, SEC-CLI-04 and SEC-CLI-05 (the desktop and Tauri clients, not built
-   here) and SEC-OUT-13 (the systemd unit's writable paths and sandbox).
+   peer's host is checked by its own row), SEC-DAT-09 (no page size cap on screens), SEC-PSF-04 (`'unsafe-eval'` while
+   PASS's islands compile in the browser), SEC-PSS-05 (a guest party made at the first add) and SEC-BAP-06 (no carrier
+   host list). Deferred, each for an owner's decision or a design: SEC-COM-19 and SEC-COM-26 (each a design of its
+   own), SEC-PSS-23 (a guest order link is a write credential), and SEC-CLI-03, SEC-CLI-04 and SEC-CLI-05 (the desktop
+   and Tauri clients, waiting for the desktop build machine). The owner has decided SEC-MAIL-06, SEC-MAIL-07, SEC-CLU-02,
+   SEC-CLU-04, SEC-PSF-04, SEC-PSS-05 and SEC-PSS-23 too; they wait for a later batch.
+
+   Found while fixing and not fixed: with two `Party` members aliased (InvoiceFinance, PaymentFinance,
+   InvoicePaymentApplicationSummary, WorkEffortProductionRunDetailFind), `filter.rs` `map_conditions` ANDs the two
+   aliases inside one filter term, so a row with one shared party and one of the caller's own personal contacts is
+   hidden from its owner too (it fails closed, not open; per-member conditions would be the exact rule; SEC-DAT-11).
 
    Found while fixing and fixed the same day: an account-owned email server written or polled through `PATCH email/servers/{id}`, `/rest/e1` and `servers/{id}/poll` (`update#RelayServer`,
    `sensitive::account_owned_email_server`); IronStone's people search and mention ids outside the chat-target rule
@@ -244,11 +245,11 @@ Map file: [Attack-Surface-Web.md](../docs/security/Attack-Surface-Web.md). Revie
 | SEC-WEB-03 | `crates/moqui-core/src/user/login.rs:1303-1310`, `:449-470`, `:1736-1746` | A locked account stays locked while anything keeps trying, its own API key included | Medium | fixed |
 | SEC-WEB-04 | `crates/moqui-core/src/screen/render.rs:2667-2672`, `:2070-2098` | Transitions with the default method run their actions on a GET with no token | Medium | fixed |
 | SEC-WEB-08 | `Login.xml:116-120` | The first caller creates the administrator | Medium | fixed |
-| SEC-WEB-05 | `crates/moqui-core/src/user/login.rs:54-61`, `:403-416`, `:514-516` | Several sign-ins keep the session id; the forced password change flow never changes it | Low | partly fixed |
-| SEC-WEB-06 | `crates/moqui-core/src/user/login.rs:1042-1071`, `:1227-1245` | Logout keeps the session and its attributes; a password change ends nothing | Low | partly fixed |
+| SEC-WEB-05 | `crates/moqui-core/src/user/login.rs:54-61`, `:403-416`, `:514-516` | Several sign-ins keep the session id; the forced password change flow never changes it | Low | fixed |
+| SEC-WEB-06 | `crates/moqui-core/src/user/login.rs:1042-1071`, `:1227-1245` | Logout keeps the session and its attributes; a password change ends nothing | Low | fixed |
 | SEC-WEB-07 | `crates/moqui-host/src/guard.rs:295-300`, `:1010-1035` | The `login` rate limit covers part of the password checks and is passed by a dot segment | Low | fixed |
 | SEC-WEB-09 | `UserServices.xml:404-462` | `reset#Password` rewrites `requirePasswordChange` for any account | Low | fixed |
-| SEC-WEB-10 | `runtime/conf/MoquiDevConf.xml:9` | Dev conf: every origin is allowed with credentials | Low | deferred |
+| SEC-WEB-10 | `runtime/conf/MoquiDevConf.xml:9` | Dev conf: every origin is allowed with credentials | Low | fixed |
 | SEC-WEB-11 | `crates/moqui-host/src/http.rs:957-963`, `:1679-1684` | `/health` and `/metrics` trust a loopback TCP peer | Low | fixed |
 | SEC-WEB-12 | `crates/moqui-core/src/user/totp.rs:89-106` | Second factor details: a TOTP code works more than once; code sends are not limited in the login flow | Low | fixed |
 | SEC-WEB-13 | `crates/moqui-core/src/user/session.rs:3057-3065` | A `session_cookie_key` set by the operator is not checked | Low | fixed |
@@ -276,7 +277,7 @@ Map file: [Attack-Surface-Routes.md](../docs/security/Attack-Surface-Routes.md).
 | SEC-RTE-14 | `crates/moqui-core/src/service/rest.rs:731` | Service REST entity lists have no upper bound | Low | fixed |
 | SEC-RTE-15 | `crates/moqui-core/src/script/host/user.rs:120` | `getPreferences` builds a JavaScript regular expression from the request | Low | reported (to check) |
 | SEC-RTE-16 | `crates/moqui-core/src/screen/token_route.rs:300`-`365` | A refused token-route token is not counted | Low | reported (to check) |
-| SEC-RTE-17 | `runtime/components/base/webroot/screen/webroot/Login.xml:191`-`193`, `:249`-`256` | The Login page verifies a password on every render and offers a one-click admin sign-in | Low | deferred |
+| SEC-RTE-17 | `runtime/components/base/webroot/screen/webroot/Login.xml:191`-`193`, `:249`-`256` | The Login page verifies a password on every render and offers a one-click admin sign-in | Low | fixed |
 | SEC-RTE-18 | `runtime/components/base/webroot/screen/webroot/PublicShell.xml:24` | `/PublicShell` takes `tokenRoute` from a JSON body | Info | reported (to check) |
 
 ### Administration, identity and sign-in
@@ -294,7 +295,7 @@ Map file: [Attack-Surface-Admin.md](../docs/security/Attack-Surface-Admin.md). R
 | SEC-ADM-07 | `crates/moqui-core/src/service/user_keys.rs:216-229, 382-401, 137-176` | Long-lived credentials are minted from a session with no recent sign-in | Low | fixed |
 | SEC-ADM-08 | `base/tools/screen/System/Security/UserAccount/UserAccountDetail.xml:31-43` | Login-as leaves no evidence and has no bound | Low | fixed |
 | SEC-ADM-09 | `base/webroot/screen/webroot/sso.xml:40-45` | `/sso/logout` signs the browser out on a GET | Low | fixed |
-| SEC-ADM-10 | `admin/OperationLib.js:59-72` | Owner services run below `OperationServices` with inherited authorization | Low | deferred |
+| SEC-ADM-10 | `admin/OperationLib.js:59-72` | Owner services run below `OperationServices` with inherited authorization | Low | fixed |
 | SEC-ADM-11 | `crates/moqui-core/src/service/sso.rs:601-650, 762-777` | The SSO sync writes an unverified `email` claim to `UserAccount.emailAddress` | Low | reported (likely) |
 | SEC-ADM-12 | `UserServices.xml:404-462` | An anonymous reset can force a password change | Low | fixed |
 | SEC-ADM-13 | `UserServices.xml:464-505` | `create#InitialAdminAccount` on a fresh instance | Info | fixed |
@@ -368,8 +369,8 @@ Map file: [Attack-Surface-Git.md](../docs/security/Attack-Surface-Git.md). Revie
 | SEC-GIT-15 | `crates/moqui-git/src/storage.rs:160-171` | `delete#GitRepository` leaves the repository's push mirror rows | Low | fixed |
 | SEC-GIT-16 | `GitServices.xml:1123` | A webhook URL may be plain http and carry a user and password; `remoteUrl` is shown to every viewer | Low | fixed |
 | SEC-GIT-17 | `crates/moqui-git/src/ci/driver/docker.rs:732`, `:769-792`, `:273-279` | The run services put their parameters into the Docker API path and remove a container by any id | Low | fixed |
-| SEC-GIT-18 | `crates/moqui-host/src/git_http.rs:251`, `:345`, `:432` | Unauthenticated requests take a git worker, and one call can walk every repository | Low | deferred |
-| SEC-GIT-19 | `crates/moqui-git/src/ci/token.rs:150-160` | Runner tokens never expire, and a pool of registered runners may take untrusted runs | Low | deferred |
+| SEC-GIT-18 | `crates/moqui-host/src/git_http.rs:251`, `:345`, `:432` | Unauthenticated requests take a git worker, and one call can walk every repository | Low | fixed |
+| SEC-GIT-19 | `crates/moqui-git/src/ci/token.rs:150-160` | Runner tokens never expire, and a pool of registered runners may take untrusted runs | Low | fixed |
 | SEC-GIT-20 | `crates/moqui-git/src/server/pack_in.rs:269-277` | Pushed trees are not checked for unsafe names, and `write_commit` has no limits | Info | reported (confirmed in code) |
 | SEC-GIT-21 | `crates/moqui-git/src/service/rest.rs:546-565` | `get#AuthorSigned` answers for any user id or e-mail address | Info | reported (to check) |
 
@@ -447,7 +448,7 @@ Map file: [Attack-Surface-Comms.md](../docs/security/Attack-Surface-Comms.md). R
 | SEC-COM-17 | `crates/moqui-rtc/src/turn/mod.rs:495-503` | TURN allocation quotas are per username, and a leg or user can get many usernames | Low | fixed |
 | SEC-COM-18 | `crates/moqui-rtc/src/turn/mod.rs:340-358` | An XMPP user's TURN credential can relay to the host's own public addresses | Low | reported (likely) |
 | SEC-COM-19 | `crates/moqui-xmpp/src/registry.rs:182-190` | One user can close another user's XMPP sessions with routed stanzas | Low | deferred |
-| SEC-COM-20 | `XmppServices.xml:507-514` (PEP), `592-598` (block list), `611-626` (push), `660-667` and `738-750` (uploads) | Per-user storage over XMPP has no total bound | Low | deferred |
+| SEC-COM-20 | `XmppServices.xml:507-514` (PEP), `592-598` (block list), `611-626` (push), `660-667` and `738-750` (uploads) | Per-user storage over XMPP has no total bound | Low | fixed |
 | SEC-COM-21 | `runtime/components/base/basic-comms/screen/BasicComms/Settings/ChatApps.xml:22-27` | Chat apps makes a long-lived, unscoped credential with no recent sign-in | Low | partly fixed |
 | SEC-COM-22 | `crates/moqui-xmpp/src/session/auth.rs:411-421` | SCRAM and FAST sign-ins leave no login history and no last-used date | Low | fixed |
 | SEC-COM-26 | `crates/moqui-sip/src/ua.rs:492-499`, `crates/moqui-lib/src/source_guard.rs:214-215` | Unauthenticated connections can hold every SIP TCP and TLS slot | Low | deferred |
@@ -490,7 +491,7 @@ Map file: [Attack-Surface-Data.md](../docs/security/Attack-Surface-Data.md). Rev
 | SEC-DAT-08 | `crates/moqui-core/src/service/system_sync/entity_sync.rs:246-299`, `:220-240` | `get#EntitySyncData` reads any entity, and `put#EntitySyncData` takes `UserAccount` and job rows | Low | fixed |
 | SEC-DAT-09 | `crates/moqui-entity/src/entity/search_form.rs:98-113` | No upper bound on `pageSize`, and `pageNoLimit=true` is honored, for screens and Service REST | Low | partly fixed |
 | SEC-DAT-10 | `crates/moqui-entity/src/entity/field_rw.rs:187-198` | Stored text that is not ciphertext is read as a valid value | Low | fixed |
-| SEC-DAT-11 | `crates/moqui-core/src/user/filter.rs:155`, `:376-378` | Row filters fail open when the set has `allowMissingAlias="Y"` or its `applyCond` is false | Low | partly fixed |
+| SEC-DAT-11 | `crates/moqui-core/src/user/filter.rs:155`, `:376-378` | Row filters fail open when the set has `allowMissingAlias="Y"` or its `applyCond` is false | Low | fixed |
 | SEC-DAT-12 | `runtime/components/addon/mr-mantle/entity/AccountingAccountEntities.xml:1144-1145` | Regulated identifiers stored in clear | Info | confirmed (second check) |
 | SEC-DAT-13 | `deny.toml:6-8`, `:10-18` | The advisory check covers one target and the default features | Info | not confirmed (second check) |
 
@@ -551,11 +552,11 @@ Map file: [Attack-Surface-Apps-PASS-Commerce.md](../docs/security/Attack-Surface
 | SEC-PSS-23 | `request/SupportPortal.js:149-166` (`askers`), `order/CustomerOrders.js:133-162`, `order/CustomerReturns.js:287-341`, `request/SupportPortal.js:806-809` | A guest's order link (`OrderView`, a read scope) authorizes cancel, return and case writes | Low | deferred |
 | SEC-PSS-24 | `account/Portal.js:426-438`, `:467-475` | The BillUpload page shows the purchase order's current total to a superseded or not-yet-sent revision's link | Low | fixed |
 | SEC-PSS-25 | `request/SupportPortal.js:466`, `:472-503` | `rateArticle`'s "nonce" is any text the client sends | Low | fixed |
-| SEC-PSS-26 | `account/Portal.js:309-360` (`startInvoicePayment`), `:485-554` (`submitSupplierBill`), `:195-206` (`getInvoice`) | Billing's and the bill upload's writes have no post limit; a signed-in contact has none at all | Low | partly fixed |
-| SEC-PSS-27 | `account/Portal.js:336-340`, `:364-382` | The invoice payment's return key rides in URL parameters the request log does not redact | Low | partly fixed |
-| SEC-PSS-28 | `request/SupportPortal.js:767-804`, `request/Channels.js:720-763`, `request/RequestServices.xml:887-921` | The public case form takes the typed email as the sender | Low | partly fixed |
+| SEC-PSS-26 | `account/Portal.js:309-360` (`startInvoicePayment`), `:485-554` (`submitSupplierBill`), `:195-206` (`getInvoice`) | Billing's and the bill upload's writes have no post limit; a signed-in contact has none at all | Low | fixed |
+| SEC-PSS-27 | `account/Portal.js:336-340`, `:364-382` | The invoice payment's return key rides in URL parameters the request log does not redact | Low | fixed |
+| SEC-PSS-28 | `request/SupportPortal.js:767-804`, `request/Channels.js:720-763`, `request/RequestServices.xml:887-921` | The public case form takes the typed email as the sender | Low | fixed |
 | SEC-PSS-43 | `service/mantle/forum/Forum.js` redeemInvitation (starts 2323) | Redeeming an invitation reactivates a member the site's staff suspended or removed | Low | fixed |
-| SEC-PSS-44 | `service/mantle/party/ConsentServices.xml` create#UnsubscribeToken (starts 1289), resolve#UnsubscribeToken (1428), apply#UnsubscribePreferences (1506) | A list link's token does not expire by default, is not single use, has no lookup limit and also subscribes | Low | partly fixed |
+| SEC-PSS-44 | `service/mantle/party/ConsentServices.xml` create#UnsubscribeToken (starts 1289), resolve#UnsubscribeToken (1428), apply#UnsubscribePreferences (1506) | A list link's token does not expire by default, is not single use, has no lookup limit and also subscribes | Low | fixed |
 | SEC-PSS-45 | `service/mantle/public/AccountHub.js:360-368` | PASS's one-click unsubscribe is not a confirmed unsubscribe on a list that asks confirmation | Low | reported (likely; a helper reader's item, not checked by the slice's reviewer) |
 | SEC-PSS-62 | crates/moqui-core/src/script/theme/markup.rs:124 (DENIED_ELEMENTS), :175 (DENIED_ATTRIBUTES), :628 (check_url, navigation) | A theme may hold a `<meta>` element and links to any host | Low | reported (to check) |
 | SEC-PSS-65 | runtime/components/addon/mr-mantle/service/mantle/party/PortalMedia.js:20 | `PortalMedia.sniff` reads the whole staged upload into memory to compare eight bytes | Low | fixed |
@@ -666,7 +667,7 @@ Map file: [Attack-Surface-Outbound.md](../docs/security/Attack-Surface-Outbound.
 | SEC-OUT-10 | crates/moqui-core/src/service/mail_capture.rs:86 | Mail capture has no test-run gate | Low | fixed |
 | SEC-OUT-11 | crates/moqui-llm/src/provider/mod.rs:1669 | The LLM endpoint check reads only an address written in the URL | Low | fixed |
 | SEC-OUT-12 | crates/moqui-lib/src/net.rs:42 | `internal_address` leaves out some non-public ranges; proxy variables may take names past the guard | Low | fixed |
-| SEC-OUT-13 | systemd/moqui.service:23 | The systemd unit and the image leave the binary and confs writable by the service user | Low | deferred |
+| SEC-OUT-13 | systemd/moqui.service:23 | The systemd unit and the image leave the binary and confs writable by the service user | Low | fixed |
 | SEC-OUT-14 | moq:1476 | The default release build carries `devtools`; `moq` downloads Chromium and add-on zips with no checksum | Info | reported (to check) |
 
 ### Development tools
