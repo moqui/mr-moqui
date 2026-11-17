@@ -1,6 +1,8 @@
 # MR Moqui — UI review: System administration
 
-**Status — 2026-11-16:** planned; every activity pending. Source inspection only; no review or test results claimed.
+**Status — 2026-11-16:** review pass started. Batch 01 exercised bounded read-only administration paths in Material
+light; two findings await consolidated triage. No activity is complete, no refinement was made and no automated
+tests were run.
 
 Contents: [scope](#1-purpose-scope-and-sources) · [method](#2-review-method-and-refinement-criteria) ·
 [inventory](#3-screen-and-surface-inventory) · [activities](#4-end-to-end-activities) ·
@@ -595,13 +597,13 @@ execution records it; “exercised” never implies that all modes and recovery 
 
 | Activity | Status | Outcome / remaining branches | Evidence / findings |
 | --- | --- | --- | --- |
-| SYS-01 — Assess the instance and follow a readiness problem | pending | All steps, modes and recovery branches pending. | — |
-| SYS-02 — Manage a disposable account through its lifecycle | pending | All steps, modes and recovery branches pending. | — |
-| SYS-03 — Grant a coherent capability and inspect its scope | pending | All steps, modes and recovery branches pending. | — |
+| SYS-01 — Assess the instance and follow a readiness problem | exercised — partial | Home, Health state filter/recheck, Support summary and telemetry Fix handoff exercised. Readiness explanation conflicts with searchable recent telemetry. Other filters, refresh authorization, corrected readiness, JSON/print and remaining modes pending. | Batch 01: 01–04, 12; SYS-UI-001 |
+| SYS-02 — Manage a disposable account through its lifecycle | exercised — partial | Username no-match search/reset, existing John Doe detail and membership navigation exercised. Disposable creation, validation, lifecycle, audit/password/factor actions, scoped actors and remaining modes pending. | Batch 01: 05–07 |
+| SYS-03 — Grant a coherent capability and inspect its scope | exercised — partial | Existing ADMIN group, sealed-grant explanation, members and return to John Doe inspected. Groups search, capabilities comparison, row rules, every grant/change/refusal branch and remaining modes pending. | Batch 01: 06–07 |
 | SYS-04 — Configure sign-in and revoke a selected session | pending | All steps, modes and recovery branches pending. | — |
-| SYS-05 — Change a registered setting and localize its consumer | pending | All steps, modes and recovery branches pending. | — |
-| SYS-06 — Inspect, validate and reload configuration | pending | All steps, modes and recovery branches pending. | — |
-| SYS-07 — Deploy and remove a disposable component | pending | All steps, modes and recovery branches pending. | — |
+| SYS-05 — Change a registered setting and localize its consumer | exercised — partial | Effective value/source table inspected; Instance name draft closed without Save and blank value verified on return/reopen. Save, invalid/stale input, consumer localization, restricted actors and remaining modes pending. | Batch 01: 08–09, 13 |
+| SYS-06 — Inspect, validate and reload configuration | exercised — partial | Settings → Open the conf, merged-source search for telemetry_enabled and Runtime source entry exercised; editor opened without edits. Validation/save/reload/conflict/Logging handoff, keyboard and other modes pending. | Batch 01: 10; SYS-UI-002 |
+| SYS-07 — Deploy and remove a disposable component | inspected — partial | Loaded six-component inventory and empty deployment history inspected. Fetch/preview/deploy/load/remove, failure recovery, refusal and remaining modes pending. | Batch 01: 11 |
 | SYS-08 — Manage an instance definition and its actual lifecycle | pending | All steps, modes and recovery branches pending. | — |
 | SYS-09 — Inspect cache and thread pressure | pending | All steps, modes and recovery branches pending. | — |
 | SYS-10 — Configure a safe job and explain its partial run | pending | All steps, modes and recovery branches pending. | — |
@@ -623,7 +625,8 @@ presentation; P3 is a localized refinement. Label evidence as observed behavior,
 
 | ID / severity | Actor, activity step, route, mode / viewport | Reproduction and impact | Evidence / owning layer | State / correction / retest |
 | --- | --- | --- | --- | --- |
-| — | — | No findings recorded. | — | — |
+| SYS-UI-001 / P2 / observed | `john.doe`, SYS-01, Home → Operations/Health → Monitor/Sources, Material light; initial Home 1280×720, Health/Sources 1920×1080 | Health says “Telemetry is off or not searchable, so health is unknown,” including after recheck more than five minutes after startup. Its Fix destination shows recent local telemetry, 14,686 exported / zero failed or dropped; Logs searches and trace navigation work. Sources also lists an older startup/loading instance with no telemetry in five minutes. The aggregate explanation does not distinguish a stale publisher from an unavailable pipeline and directs the operator toward the wrong diagnosis. | System evidence 01–04, 10, 12; Monitor batch 01 evidence 03–10. Primary owner: readiness wording/aggregation in `framework/service/org/moqui/admin/Readiness.js` (`admin.telemetry`); Monitor owns source diagnosis. Static support: any `unknown` source, or an empty source list, maps to the same message. Exact triggering source remains unproven. | Open for consolidated triage; no fix/retest. Recheck with active-only and mixed fresh/stale publishers, then verify Home, Health and Support summary agree with Sources. |
+| SYS-UI-002 / P3 / observed accessibility | `john.doe`, SYS-06, `Conf/View`, Material light 1920×1080 | The visually identifiable “Search settings” field is exposed in the accessibility tree as a generated `f_…` identifier when empty and “Clear” after entering a query. Its purpose is not represented by a stable accessible name, making this configuration filter hard to identify through assistive navigation. Filtering itself succeeds. | Batch 01 evidence 10; live empty/full AX inspection. `tools/screen/System/Conf/View.qvue:33` supplies placeholder text without an explicit label/aria-label. This is accessibility-tree evidence, not a completed screen-reader or keyboard walk. | Open for consolidated triage; no fix/retest. Verify an explicit name remains “Search settings” with empty and populated values. |
 
 ### Bounded batch record
 
@@ -635,7 +638,81 @@ For each later batch record:
 - In refinement only: decisions, owning files/components, correction, focused verification commands/results and retest.
 - Temporary settings/grants/files/jobs restored, remaining cleanup and companion handoffs.
 
-No execution batches have been started.
+### Batch 01 — Administration orientation and read-only handoffs — 2026-11-16
+
+**Intent and bounds.** Start SYS-01/02/03/05/06/07 with visible navigation, existing records, empty-search recovery
+and cancellation. Review pass only: no application changes, configuration/grant saves, account lifecycle actions,
+jobs, component deployment or automated tests. The separate review → findings triage → refinement sequence remains
+in force.
+
+**Runtime and actor.** Current checkout `83cf05b3b6b069812a6ac2802d95f918db6a9802`, freshly built debug binary
+SHA-256 `f799a82c681a7c3c9a7973cf5e030a5d1ebf41fa8935280f0d527dbf61bb2004`; fresh embedded PostgreSQL at
+`/tmp/mr-ui-four-apps-zf5098dh`, started 2026-11-16 23:49 UTC. Six loaded components: framework, webroot,
+basic-comms, tools, dev-aide and example; no addons/test components. Telemetry enabled with sample ratio 1 before
+startup; scheduled jobs disabled, no external mail/media/provider fixture. Existing seed `john.doe` / `EX_JOHN_DOE`
+with ADMIN + ADMIN_ADV supplied the baseline; none of the proposed restricted identities was prepared or exercised.
+The root reviewer coordinated runtime lifecycle and the build; this worker ran no build or test commands.
+
+Use `http://127.0.0.1:18872/qapps/system` for this browser session. An initial shared-cookie return-URL collision
+with the parallel review on `localhost` was resolved by hostname isolation and is a harness artifact, not a finding.
+Material light, default/comfortable presentation; initial Home was captured at 1280×720 (1265×720 content), then
+the agreed desktop viewport was set and measured at 1920×1080 for the rest. This is not responsive-mode coverage.
+Dark, 390px, deliberate 1280px breakpoint checks, keyboard, Standard, TUI and output branches remain pending.
+
+**Observed walk.**
+
+1. Home rendered readiness, integration/listener states, six loaded components and administration links. Missing
+   platform measurements were represented by em dashes; Activity panels had no data in the initial time range.
+   Health showed separately explained warnings for the deliberately unconfigured mail and backup fixtures.
+2. Health's State = Unavailable filter returned the telemetry row. Check again re-evaluated that provider and
+   replaced the state-filter URL with `providerKey=admin.telemetry`. Support summary rendered readiness, protocol
+   and effective-setting sections with Print/Download JSON affordances; those output actions were not executed.
+3. Security's user list showed four seed/system accounts. Find Options → Username `ui-review-no-user` → Find
+   displayed “No results found,” the active filter and Reset filters to default. Reset restored John Doe; opening
+   the account showed identity, ADMIN/ADMIN_ADV memberships, factors and login history. ADMIN opened its group
+   with one current member and sealed grants; the John Doe member link returned to the correct account.
+4. Settings showed effective values, origins and when changes take effect. Entered `UI review cancelled name`
+   in the Instance name dialog, then used Close dialog without Save. After leaving and returning, the table still
+   said Not set and reopening showed an empty Value. No setting was persisted. Open the conf led to the merged
+   tree; searching `telemetry_enabled` exposed Runtime:12 and the resolved telemetry node (`true`, sample ratio 1).
+   Runtime opened its source editor with Review and save disabled; no edit/save/reload was attempted.
+5. Components listed exactly the six expected loaded components and an explicit empty deployment-history message.
+   Deploy and Load Data controls were inspected only.
+6. The bounded [Monitor batch](ui-review-system-monitoring.md#6-coverage-findings-and-running-record) used the same
+   session to recover an invalid log query, follow a real log through context → trace → logs, and inspect Sources.
+   Returning to Health at 17:54 local still produced the unavailable explanation; its Fix link reached Sources
+   with recent searchable telemetry. SYS-UI-001 owns this disagreement; it does not establish a telemetry outage.
+
+**Evidence.** Ignored local directory `plans/ui-refinement-evidence/system/batch-01/`: `runtime-metadata.json`,
+`UiReviewConf.xml`, `preflight.md` (supporting source notes only), and the numbered AX text / JPEG captures below.
+These files are local evidence, not committed artifacts; filenames identify precisely what was observed.
+
+| Evidence prefix | Captured outcome |
+| --- | --- |
+| `01-home` | Initial Home, including attention and integration states |
+| `02-health-unavailable`, `03-health-recheck` | Filtered unavailable row and provider recheck |
+| `04-support-summary` | Readiness/protocol/effective-settings summary; outputs remain pending |
+| `05-users-empty`, `06-user-detail`, `07-admin-group` | Empty search, recovered detail and member/grant context |
+| `08-settings`, `09-settings-cancel`, `13-settings-cancel-verified` | Provenance, unsaved draft and verified cancellation after return |
+| `10-conf-telemetry` | Filtered merged configuration and accessible field name |
+| `11-components` | Loaded inventory and deployment empty state |
+| `12-health-after-telemetry` | Repeated unavailable explanation after current Monitor data was observed |
+
+Monitor evidence is in `plans/ui-refinement-evidence/system-monitoring/batch-01/`; `09-sources` and
+`10-health-fix-sources` support the cross-plan finding. Screenshots are selected viewport captures, not proof that
+every off-screen row was visually reviewed; AX text records the additional displayed controls/data.
+
+**Pending and cleanup.** Every unlisted branch remains pending, especially restricted actors, successful writes and
+their consumers, failures/refusals, validation, all remaining modes and outputs. No finding was fixed or retested.
+No grants or global preferences were intentionally changed; the browser may retain normal find/page-size/query
+history from navigation. The unsaved settings dialog was closed, viewport override reset and session left signed
+in for the coordinated batch. Runtime/database/evidence retention and final shutdown remain with the root reviewer.
+
+**Coordinated shutdown.** After the four browser batches, root stopped the shared server with SIGINT at
+2026-11-17 00:02:38 UTC (Nov 16 locally), exit 0. Server/HTTP listener and runtime PostgreSQL processes/PID file
+were absent; curl cookie file removed. Browser viewport overrides were reset. Session logout was not established;
+server shutdown ended availability. Scratch runtime/database and ignored local evidence are retained. See
+`runtime-cleanup.json` in this batch's evidence directory.
 
 ## 7. Decisions
 

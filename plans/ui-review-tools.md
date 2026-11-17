@@ -1,6 +1,8 @@
 # MR Moqui — UI review: Tools
 
-**Status — 2026-11-16:** planned; every activity pending. Source inspection only; no review or test results claimed.
+**Status — 2026-11-16:** review pass in progress. B01 exercised bounded Home → Grid → Record and SQL
+read/explain/error/history branches in Material light; two findings await consolidated triage. Editing, schema,
+access/refusal branches and other modes remain pending. No fixes or tests performed.
 
 Contents: [scope](#1-purpose-scope-and-sources) · [method](#2-review-method-and-refinement-criteria) ·
 [inventory](#3-screen-and-surface-inventory) · [activities](#4-end-to-end-activities) ·
@@ -512,16 +514,16 @@ execution records it; “exercised” never implies that all modes and recovery 
 
 | Activity | Status | Outcome / remaining branches | Evidence / findings |
 | --- | --- | --- | --- |
-| TOOL-01 — Choose the database and resume an artifact | pending | All steps, modes and recovery branches pending. | — |
-| TOOL-02 — Edit and save a bounded grid | pending | All steps, modes and recovery branches pending. | — |
+| TOOL-01 — Choose the database and resume an artifact | exercised — partial | Home chooser opened the selected entity; returning Home listed that entity and four SQL history entries. Database switching, reopening from recents, denied/missing artifacts and other modes pending. | B01: 01, 10 |
+| TOOL-02 — Edit and save a bounded grid | exercised — partial | Selected entity loaded 11 rows; EX_100 Record and Back to Find retained identity. Date rendering and filter accessibility findings; edits, filtering/sorting, undo/save/conflicts, layouts and other modes pending. | B01: 02–03; TOOL-UI-001/002 |
 | TOOL-03 — Open a file or result as a grid and spreadsheet | pending | All steps, modes and recovery branches pending. | — |
-| TOOL-04 — Browse and edit related records | pending | All steps, modes and recovery branches pending. | — |
+| TOOL-04 — Browse and edit related records | exercised — partial | Inspected EX_100 Record values and related-record links only. Browse/master/detail navigation, relationship links, edits, cancellation/refusal and other modes pending. | B01: 03 |
 | TOOL-05 — Define and reuse a database view | pending | All steps, modes and recovery branches pending. | — |
 | TOOL-06 — Define, index and inspect a data document | pending | All steps, modes and recovery branches pending. | — |
 | TOOL-07 — Load data and inspect per-file outcomes | pending | All steps, modes and recovery branches pending. | — |
 | TOOL-08 — Export exactly the intended records | pending | All steps, modes and recovery branches pending. | — |
 | TOOL-09 — Retain and reload a disposable snapshot | pending | All steps, modes and recovery branches pending. | — |
-| TOOL-10 — Run, explain and recover a SQL query | pending | All steps, modes and recovery branches pending. | — |
+| TOOL-10 — Run, explain and recover a SQL query | exercised — partial | Read-only result, Explain, syntax error with retained editor, corrected run and history selection without execution observed. Database changes, saved queries, parameters, writes/refusals, cancel/timeout, downloads, keyboard walk and other modes pending. | B01: 04–09 |
 | TOOL-11 — Compare the entity model with the database | pending | All steps, modes and recovery branches pending. | — |
 | TOOL-12 — Investigate database pressure without losing source context | pending | All steps, modes and recovery branches pending. | — |
 | TOOL-13 — Follow maintenance and connection operations | pending | All steps, modes and recovery branches pending. | — |
@@ -537,7 +539,8 @@ presentation; P3 is a localized refinement. Label evidence as observed behavior,
 
 | ID / severity | Actor, activity step, route, mode / viewport | Reproduction and impact | Evidence / owning layer | State / correction / retest |
 | --- | --- | --- | --- | --- |
-| — | — | No findings recorded. | — | — |
+| TOOL-UI-001 / P2 | `john.doe`, TOOL-02 read/TOOL-04 comparison; `/qapps/tools/Data/Grid?entityName=moqui.example.Example` → Record EX_100; Material light, 1920×1080 | **Observed:** Grid displays Example Date `1792400400000` and Example End Date `1792405800000`; the same record's form displays `2026-10-19 04:00` and `2026-10-19 05:30`. Epoch values make dates difficult to scan or compare in the primary record list. | B01 `02-grid.jpg`, `02-grid.txt`, `03-record.txt`; Tools Grid formatter at `Grid.qvue:476–490` and shared `MoquiL10n.js:399–411`. Formatter catches errors and falls back to raw text; the exact grid-response type boundary remains to diagnose. | Open — review finding only; no correction or retest. |
+| TOOL-UI-002 / P2 | `john.doe`, TOOL-02 column filters; same Grid route; Material light, 1920×1080 accessibility-tree inspection | **Observed:** Ten column filter inputs expose only unnamed “search text field” nodes, although adjacent headers name their columns. Users navigating inputs by accessible name cannot distinguish which field a filter targets. This finding concerns exposed names; actual screen-reader and keyboard task completion remain pending. | B01 `02-grid.txt` (filter nodes 324, 329, 334, 339, 344, 349, 354, 359, 364, 369); Tools `Grid.qvue:418–445` generic Tabulator header-filter configuration. | Open — review finding only; no correction or retest. |
 
 ### Bounded batch record
 
@@ -549,7 +552,51 @@ For each later batch record:
 - In refinement only: decisions, owning files/components, correction, focused verification commands/results and retest.
 - Temporary settings/grants/files/jobs restored, remaining cleanup and companion handoffs.
 
-No execution batches have been started.
+### B01 — Read records and recover a SQL query (2026-11-16)
+
+**Intent and boundary.** Start TOOL-01/02/04/10 with existing demo data and read-only SQL. The parent reviewer
+performed the visible browser walk; a supporting agent inspected source and reconciled this record with the saved
+accessibility snapshots. TOOL-11 schema navigation was considered but not exercised; it remains pending. No data
+editing, database switching, schema/maintenance/load action, provider connection or application change was attempted.
+
+**Runtime and actor.** Checkout `83cf05b3b6b069812a6ac2802d95f918db6a9802`; rebuilt debug binary `moqui 0.1.0`,
+SHA-256 `f799a82c681a7c3c9a7973cf5e030a5d1ebf41fa8935280f0d527dbf61bb2004`. Isolated runtime
+`/tmp/mr-ui-four-apps-zf5098dh`, `http://localhost:18872`, fresh embedded PostgreSQL; framework, webroot, tools,
+basic-comms, dev-aide and example components, no addons. Scheduled jobs disabled; telemetry sampling was an explicit
+startup fixture. Actor `john.doe` / `EX_JOHN_DOE` with `ADMIN` and `ADMIN_ADV`; this broad demo identity does not
+establish the planned restricted-operator or refusal outcomes. Material light, default comfortable density,
+1920×1080 only. Review records:
+`moqui.example.Example`, existing demo rows EX_100–EX_110; no review-owned business rows were created.
+
+**Observed sequence and outcomes.** Evidence below is under ignored
+`plans/ui-refinement-evidence/tools/batch-01/`; it supports only the named branches.
+
+| Step | Visible actions and result | Evidence |
+| --- | --- | --- |
+| Home → Grid | Used Open an entity to select `moqui.example.Example`; selection opened Grid automatically. Grid showed the entity identity and 11 rows. | `01-home.txt`, `02-grid.txt`, `02-grid.jpg` |
+| Grid → Record → Grid | Opened EX_100's Record cell; form showed `Warehouse layout study`, status `EXST_IN_DESIGN`, relationship links and readable dates. Back to Find returned the same entity and 11 rows. Raw Grid dates and unnamed column filters are TOOL-UI-001/002. Related links and Update were not activated. | `02-grid.txt`, `03-record.txt`; return observed in live walk |
+| SQL read and Explain | Entered SQL from Tools navigation; ran `select 1 as review_value` with changes off. Result showed one row/value `1`. Explain the statement opened a plan dialog with Result, estimated rows `1` and cost `0.01`. | `04-sql-result.txt`, `05-sql-explain.txt` |
+| Invalid SQL and recovery | Ran `select from`; inline PostgreSQL syntax error appeared, editor retained the statement and prior results were removed. Corrected to `select 2 as review_value`; result showed one row/value `2`. | `06-sql-invalid.txt`, `07-sql-recovered.txt` |
+| History and Home | History listed all four runs, including Explain and the failed statement. Selecting the EXPLAIN entry populated the editor and closed History; existing value-2 result remained, with no automatic execution. Home's Pick Up Where You Left Off listed the entity and four queries. | `08-sql-history.txt`, `09-history-selected.txt`, `10-home-return.txt`, `10-home-return.jpg` |
+
+**Supporting inspection.** `source-preflight.md` records navigation/service anchors, the Grid formatter fallback
+and filter/action semantics. Source inspection is not extra live coverage. Record's JSON display also represents
+timestamps as strings; the Grid's actual response type was not captured, so this does not establish the formatter's
+root cause. Record cell keyboard activation remains pending; source-only click-handler inspection is not a keyboard
+failure finding. No tests were executed and no application files changed.
+
+**Remaining branches and cleanup.** All unmentioned activities and branches remain pending, including schema,
+mutations/conflicts, access restrictions, exports, dark/compact/mobile layouts, a full keyboard walk, TUI and Standard.
+The four SQL runs created history/audit state in the scratch database; SQL itself did not mutate queried data and
+Allow changes stayed off. Runtime lifecycle and disposal are coordinated by the parent review batch; no shared
+database, persistent grant or global setting was changed by this Tools walk. `runtime-metadata.json` and
+`UiReviewConf.xml` retain the exact environment setup. Preserve findings for consolidated triage before refinement.
+
+**Coordinated shutdown.** After all four browser batches, root stopped the server with SIGINT at
+2026-11-17 00:02:38 UTC (Nov 16 locally), exit 0. Server/HTTP listener and runtime PostgreSQL processes/PID file
+were absent. Viewport override reset and root tab closed; Logout confirmation was not submitted, so no logout
+success is claimed. Curl cookie file removed; scratch runtime/database and ignored local evidence retained.
+See `runtime-cleanup.json` in the batch evidence directory.
 
 ## 7. Decisions
 

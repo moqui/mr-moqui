@@ -85,3 +85,35 @@ feature("an account's own server is neither changed nor polled by id; a relay is
         !JSON.stringify(relayUpdate).includes("spec-mailbox-secret")
     },
 })
+
+// PATCH email/servers/{id} keeps Admin's endpoint-change rule: a new host clears the stored password not given again,
+// saves the relay disabled and waiting for a test; a change that is not of the endpoint leaves it as it was
+feature("a relay repointed by PATCH is disabled until a test, and its password is not kept for the new host", {
+    when() {
+        ec.user.internalLoginUser("john.doe")
+        const read = () => sys(() => ec.entity.find("moqui.basic.email.EmailServer").condition("emailServerId", RELAY).useCache(false).one())
+        const check = () => sys(() => ec.entity.find("moqui.server.ConnectionCheck").condition({adapterKey: "relay", connectionKey: RELAY})
+            .useCache(false).one())
+        sys(() => {
+            const row = read()
+            row.setFields({disabled: "N", mailPassword: "spec-mailbox-secret", smtpHost: "smtp.example.com"}, true, null, null)
+            row.update()
+        })
+        const plain = call("update#RelayServer", {emailServerId: RELAY, allowedToDomains: "example.com"})
+        const afterPlain = read()
+        const asksEnabled = call("update#RelayServer", {emailServerId: RELAY, smtpHost: "smtp.example.org", disabled: "N"})
+        const afterAsk = read()
+        const repointed = call("update#RelayServer", {emailServerId: RELAY, smtpHost: "smtp.example.org"})
+        return {plain, afterPlain, asksEnabled, afterAsk, repointed, after: read(), check: check()}
+    },
+    then({plain, afterPlain, asksEnabled, afterAsk, repointed, after, check}) {
+        plain.errors == "" && afterPlain.disabled != "Y" && afterPlain.mailPassword != null
+        asksEnabled.errors.includes("test it as it is now") && afterAsk.smtpHost == "smtp.example.com"
+        repointed.errors == ""
+        after.smtpHost == "smtp.example.org"
+        after.disabled == "Y"
+        after.mailPassword == null
+        check.pendingTest == "Y" && check.secretCleared == "Y" && check.testedConfigHash == null
+    },
+})
+

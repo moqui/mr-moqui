@@ -48,6 +48,8 @@ pub struct TreeNode {
     pub id: String,
     pub text: String,
     pub url: String,
+    /// The link goes through a transition that changes data (`a_attr.loadMethod` post, SEC-RTE-08): it is posted.
+    pub post: bool,
     /// The `treeNodeName` its children are asked for with.
     pub name: String,
     pub children: Option<Vec<TreeNode>>,
@@ -81,6 +83,7 @@ impl TreeNode {
         };
         Some(Self {
             text: crate::model::clean_text(&shell::json_text(value, "text")),
+            post: attr("a_attr", "loadMethod") == "post",
             url,
             name: attr("li_attr", "treeNodeName"),
             children,
@@ -127,6 +130,7 @@ impl TreeState {
                 depth,
                 text: node.text.clone(),
                 url: node.url.clone(),
+                post: node.post,
                 mark,
             });
             if open {
@@ -392,7 +396,7 @@ impl Session {
                     }
                 }
                 // Classic follows a leaf with Right as Lynx does; Modern leaves that to Enter.
-                TreeMark::Leaf if self.scheme == KeyScheme::Classic => self.follow_url(&row.url),
+                TreeMark::Leaf if self.scheme == KeyScheme::Classic => self.follow_tree_row(&row),
                 TreeMark::Leaf => {}
             },
             Key::Left => {
@@ -409,6 +413,17 @@ impl Session {
             _ => return false,
         }
         true
+    }
+
+    /// A tree row's link: followed, or, for one through a transition that changes data, posted with its parameters (as the
+    /// browser clients do; a GET of it is refused), after which the screen's data is asked for again.
+    fn follow_tree_row(&mut self, row: &TreeRow) {
+        if row.post {
+            let location = crate::nav::Location::of_url(&row.url);
+            self.post_simple(&location.path, location.parameters);
+        } else {
+            self.follow_url(&row.url);
+        }
     }
 
     fn set_tree_at(&mut self, id: &str, at: usize) {
@@ -442,7 +457,7 @@ impl Session {
             return;
         };
         if !row.url.is_empty() {
-            self.follow_url(&row.url);
+            self.follow_tree_row(&row);
             return;
         }
         match row.mark {

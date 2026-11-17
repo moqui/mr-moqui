@@ -1,8 +1,8 @@
 # MR Moqui — UI review: Shared shell and Gallery
 
-**Status — 2026-11-16:** review pass started. Batch SH-B01 exercised selected shell and Gallery branches and
-recorded five open findings. Every activity remains incomplete; unrecorded branches are pending. No refinement,
-build or automated test execution has started.
+**Status — 2026-11-16:** review pass in progress. SH-B01/B02 exercised bounded shell, Gallery, saved-view and
+output branches; seven findings remain open. Every activity remains incomplete. SH-B02 built the current debug
+binary for the pulled changes; no refinement or automated tests were performed.
 
 Contents: [scope](#1-purpose-scope-and-sources) · [method](#2-review-method-and-refinement-criteria) ·
 [inventory](#3-screen-and-surface-inventory) · [activities](#4-end-to-end-activities) ·
@@ -597,9 +597,9 @@ execution records it; “exercised” never implies that all modes and recovery 
 | SH-01 — Sign in, recover and continue to the intended work | exercised — partial | Protected Gallery deep link, wrong password/retry and protected-route refusal after logout passed in browser. Recovery mail, MFA, expired password, SSO, initial setup, ReAuth, narrow login and TUI remain pending. | SH-B01; `20-signed-out-protected-route.txt` |
 | SH-02 — Find work and keep a reliable navigation history | exercised — partial | Launcher, desktop/narrow menus, filtered list/detail and Back/Forward exercised. Site Map fails; launcher still recovers. Restricted users, new tab, missing/deleted routes, expired session and TUI remain pending. | SH-B01; SH-UI-004/005; `12-list-back.txt` |
 | SH-03 — Choose an appearance and read every state | exercised — partial | Light/dark, reload persistence, live Appearance dialog switch and compact/comfortable exercised. Task text clips in compact. Locked policy, full contrast measurements, other appearance controls, save failure and terminal branches pending. | SH-B01; SH-UI-003; screenshots `01`–`03`, `10`–`11` |
-| SH-04 — Find a record, save the view and resume it | exercised — partial | Landing count → filtered List → Detail → Back, Find Options/Escape, no-match search and reset exercised. Saved Finds, Columns, sorting/paging, export, edit dialogs, invalid filters, 390 and other modes pending. | SH-B01; `12-list-back.txt`, `14-list-empty-1280.jpg`, `15-list-reset.txt` |
+| SH-04 — Find a record, save the view and resume it | exercised — partial | Landing count → filtered List → Detail → Back, Find Options/Escape, no-match search and reset exercised. SH-B02 exercised Saved Find create/default/update/reload/clear/delete-cancel/delete, keyboard Columns reorder/hide/save/reload/reset and descending sort/page. CSV navigation and missing identity failed. Edit dialogs, invalid filters, expired choices, 390 and other modes pending. | SH-B01/B02; SH-UI-006/007; batch-02 evidence `01`–`05` |
 | SH-05 — Understand and act on a record | inspected — partial | Opened STRT_APPEARANCE_POLICY Detail and checked identity/context at 1280. Actions, editing, related records, 360/Contact, history, refusal and all other modes pending. | SH-B01; `13-detail-1280.jpg` |
-| SH-06 — Complete and recover shared forms | pending | All steps, modes and recovery branches pending. | — |
+| SH-06 — Complete and recover shared forms | exercised — partial | Widgets Equipment required-Serial refusal and corrected demo submit, Part conditional field change, server-search selection and Markdown preview exercised. All other control families, settings persistence, nested dialogs, cancellation/refusal, dark/narrow/TUI/Standard remain pending. | SH-B02; evidence `06`–`07` |
 | SH-07 — Leave and resume a multi-step task | exercised — partial | Empty-name validation, Back draft retention, normal finish/reset and skipped-Options deep link exercised; incomplete draft incorrectly finishes. Cancel/navigation-away, invalid Options, stale/repeated finish, dark/narrow and other modes pending. | SH-B01; SH-UI-001; evidence `04`–`06` |
 | SH-08 — Move work across boards, calendars and trees | exercised — partial | Calendar month rendering, quick-create demo, invalid month and Today recovery, 390 layout exercised. Views/Board/tree, persistence, drag/keyboard moves, date-range validation, day/week fallback and other modes pending. | SH-B01; SH-UI-002; `07-calendar-invalid-month.jpg`, `08-calendar-390.jpg` |
 | SH-09 — Finish a scan-driven task | exercised — partial | At 390: unmatched scan, ambiguous chooser cancellation, single match, put-away confirmation, Task Enter-confirm and Skip through final boundary exercised. Choosing among matches, GS1, duplicate/error/quantity branches, Short, dark, desktop and TUI pending. No business persistence exists in these demos. | SH-B01; SH-UI-003; evidence `09`–`11` |
@@ -625,6 +625,8 @@ presentation; P3 is a localized refinement. Label evidence as observed behavior,
 | SH-UI-003 / P2 | Observed; john.doe; SH-03/09; `/qapps/gallery/Task?lineIndex=7`; Material light, 390×844, compact | Set Compact, open Task, Skip through the final line. Large Location/Product values are vertically clipped inside read-only fields with internal scrollbars. Product textarea has 24px client height, 39px scroll height and 19.2px font; the bin/product cannot be read at a glance. Comfortable plus reload gives 30px client/scroll height and readable values. | `10-task-final-line-390.jpg`, `11-task-comfortable-390.jpg`; [Task.xml](../runtime/components/dev/example/screen/Gallery/Task.xml) large display styles; shared display/density sizing is the candidate owning layer, to confirm during triage. | Open; provisional priority. Comfortable is a review workaround, not a fix. Wider/dark and second-consumer reproduction pending. |
 | SH-UI-004 / P2 | Observed; john.doe; SH-02/17; `/qapps/ScreenTree` and `/apps/ScreenTree`; light, comfortable, 1280×900 | Click footer Site Map. Both Material and Standard replace the tree with a raw render error: `not a function`, at `currentScreenDef = sri.getRootScreenDef();`. Site Map and its nested walk are unavailable. Launcher/Home remain usable. | `16-site-map-error-1280.jpg`, `16-site-map-error.txt`, `19-site-map-standard.txt`; [ScreenTree.xml](../runtime/components/base/webroot/screen/webroot/apps/ScreenTree.xml) line 22 and screen-script API integration. | Open; provisional priority. No correction/retest. Nested tree branch blocked by this finding. |
 | SH-UI-005 / P2 | Observed; john.doe; SH-02/17; `/qapps/AppList`; Material light, comfortable, 1280×900 | Click Standard in the launcher. Its href is `/apps/AppList`, but the observed browser URL briefly becomes `/qapps/AppList/apps/AppList`, then returns to `/qapps/AppList`, with Material still selected. Direct `/apps/AppList` successfully opens Standard. The interface switch is broken through its visible entry path. | `17-standard-link-result.{json,jpg}` (settled Material page), `review-observations.md` (transient URL), `18-standard-direct.jpg`; [AppList.xml](../runtime/components/base/webroot/screen/webroot/apps/AppList.xml) mode link and shared client navigation. Precise cause remains for triage. | Open; provisional priority. Direct URL is the documented review workaround; no correction/retest. |
+| SH-UI-006 / P2 | Observed; john.doe; SH-04 List export; Material light/comfortable, 1920×1080 | Sort ID descending, go to page 2, Export → CSV. The shell navigates to `/qapps/gallery/List?...renderMode=csv` and displays raw CSV inside the Material page instead of producing the requested download. Back restores the list. | Batch-02 `05-csv-action.{jpg,txt,json}`; shared [ScreenQvt.js](../runtime/components/base/framework/template/screen/ScreenQvt.js) export anchor and [WebrootVue.qvt.js](../runtime/components/base/webroot/screen/webroot/js/WebrootVue.qvt.js) navigation interception. Supporting inspection finds the `/apps` link intercepted without excluding output modes; source notes retain exact lines. Canonical `/apps/gallery/List` downloaded with curl separately. | Open; provisional priority. No correction/retest. Separate from SH-UI-005 until triage; XLS and other consumers pending. |
+| SH-UI-007 / P2 | Observed output; john.doe; SH-04 CSV contents; canonical `/apps/gallery/List` with `renderMode=csv`, `pageNoLimit=true`, descending ID | Curl download returns 538 data rows / 33,196 bytes, but every ID and State cell is blank despite populated IDs in the visible list. Description, Type and Changed are populated. Exported records lose their identity; ID sort correctness cannot be verified from these blank cells. | Batch-02 `EnumList-apps.csv`, `EnumList-apps.summary.json`, `export-source-notes.md`; shared [ScreenCsv.js](../runtime/components/base/framework/template/screen/ScreenCsv.js) emits link text only for explicit `anchor`/`hidden-form-link`, while Gallery [List.xml](../runtime/components/dev/example/screen/Gallery/List.xml) ID has the default link type and State uses `anchor-button`. | Open; provisional priority. No correction/retest. Independent of shell navigation; text/XLS/other consumers remain pending. |
 
 ### Bounded batch record
 
@@ -705,6 +707,58 @@ no grants/providers changed, wizard drafts cleared by final actions, account log
 rechecked. Browser viewport override reset. The server exited cleanly after SIGINT at 22:50:34 UTC; HTTP/cluster ports had no listeners and refused
 connections, the server process was absent, and the embedded PostgreSQL PID file/processes were gone. See
 `runtime-cleanup.json` and `runtime-errors.txt`. Scratch runtime and local evidence are retained for reproducibility.
+
+### SH-B02 — Saved views, shared controls and CSV output, 2026-11-16
+
+**Scope and environment.** Second bounded review batch, alongside System administration, Monitoring and Tools.
+Source `83cf05b3b6b069812a6ac2802d95f918db6a9802`; the pulled Rust changes required a current binary. Built with
+`cargo build --profile dev --no-default-features --features maximal,devtools -p moqui -j 4` (passed; linker warned
+that the large exception frame could affect exception-handling performance). No tests or application fixes.
+`target/debug/moqui` SHA-256 `f799a82c681a7c3c9a7973cf5e030a5d1ebf41fa8935280f0d527dbf61bb2004`;
+fresh embedded PostgreSQL runtime `/tmp/mr-ui-four-apps-zf5098dh`, six components framework/webroot/tools/basic-comms/
+dev-aide/example, no addons/test/demo/template. HTTP loopback `18872`; root browser used `localhost` and the parallel
+System browser used `127.0.0.1` to isolate cookies after an initial shared return-URL collision. That collision is
+harness context, not a product finding. Telemetry enabled/sample ratio 1 before startup; scheduled jobs and external
+protocol listeners disabled. No provider/mail/media fixture; automatic new-device email failed for missing From
+address. Actor `john.doe` (`EX_JOHN_DOE`, ADMIN + ADMIN_ADV), no restricted-role evidence. Material light/default,
+comfortable, 1920×1080 only. Browser walks ran from 23:49 UTC on Nov 16 into 00:02 UTC Nov 17 (local date Nov 16).
+The five SH-B01 findings were not retested and retain their earlier binary/source scope.
+
+**Observed branches.**
+
+1. Landing's ScreenThemeResourceType count opened 34 matching List rows. Saved Find `SH-B02 Theme types` (100000)
+   was created and made default. Description `Shell` narrowed to 11; Update to Current and reload retained the
+   filter/results. Columns hid Code and moved Description into the preceding ID column using keyboard Return;
+   Save Changes and reload retained the configuration. Reset to Default restored columns. Clear Default restored
+   all 538 rows. Delete named the saved find; Cancel returned focus to Delete, then confirmed deletion removed it
+   from the reopened menu. No saved find from this batch remains.
+2. ID descending sort and Next page showed rows 21–40/538 with the expected query parameters. Export → CSV
+   displayed raw CSV inside the shell (SH-UI-006). The browser download wait timed out; this alone is not evidence
+   of a server export failure. Following the user's transfer preference, curl retrieved the source-backed canonical
+   `/apps/gallery/List` output with the same query: HTTP 200, CSV attachment, 538 rows. All ID/State cells were blank
+   (SH-UI-007). The copied shell `/qapps` output URL returned zero bytes; it is not the supported canonical output
+   route and is not counted as another defect. XLS, print and other output consumers remain pending.
+3. Widgets Field rules: Equipment + empty Serial refused submission with Required and focus on Serial. Filling
+   `SH-B02-SERIAL` and Save showed “Nothing changed: the gallery writes nothing,” reset the form and refreshed the
+   dynamic timestamp. Part hid Detail and showed Note, without required Serial. Server search for Screen returned
+   options and selection displayed `Screen [AT_XML_SCREEN]`. Markdown `**SH-B02 preview**` rendered bold preview
+   text. These are demo/controller observations, not persistent business writes. Browser locator/clipboard errors
+   were recovered with fresh state and semantic controls; they are not recorded as application findings.
+
+**Evidence and limits.** Ignored local `plans/ui-refinement-evidence/shared-gallery/batch-02/` contains runtime
+metadata/configuration/build log, `01-saved-find-reloaded`, `02-columns-reloaded`, `03-saved-find-cleanup`,
+`04-sort-page`, `05-csv-action`, `06-widget-conditional-success`, `07-widget-search-preview`, canonical CSV bytes,
+summary and supporting export source notes. Text captures record controls/data; selected screenshots establish
+layout. No dark/narrow/Standard/TUI expansion, complete keyboard walk, provider fixture, full control-family sweep
+or prior-finding retest was performed. SH-15 remains pending; the overlapping CSV branch is recorded under SH-04.
+Continue with remaining forms/dialogs, records, board/tree/content/files and shell/provider workflows in later
+bounded batches; keep review → consolidated triage → refinement separate.
+
+**Cleanup.** Saved Find deleted, default and column preferences restored; no grants or providers changed.
+Widget drafts were disposable. Root viewport reset and temporary tab closed; Logout reached confirmation but was
+not submitted, so no logout success is claimed. After all four reviews, SIGINT stopped the server at
+2026-11-17 00:02:38 UTC with exit 0. Server/HTTP listener and runtime PostgreSQL processes/PID file were absent.
+The curl cookie file was removed; scratch runtime/database and local evidence retained. See `runtime-cleanup.json`.
 
 ## 7. Decisions
 

@@ -144,6 +144,34 @@ fn a_tree_loads_its_roots_opens_a_node_by_its_children_and_follows_a_leaf() {
         .any(|call| matches!(call, LinkCall::Level { path, parameters } if path == "/gl" && parameters.get("id").map(String::as_str) == Some("2000"))));
 }
 
+/// A tree link through a transition that changes data (the server marks it `loadMethod` post, as the data document field
+/// tree's createFieldDynamic, SEC-RTE-08) is posted with its parameters, never got: a GET of it is refused.
+#[test]
+fn a_tree_link_that_changes_data_is_posted_with_its_parameters() {
+    let link = FakeLink::from_json(&[TREE_JSON]).unwrap();
+    link.answer_json(
+        "/tree/actions/Accounts",
+        map(&[("orgId", "O1"), ("treeNodeId", "#"), ("treeOpenPath", "")]),
+        serde_json::json!([
+            { "id": "3000", "text": "Add field", "children": false,
+              "a_attr": { "urlText": "/tree/createFieldDynamic?fieldPath=partyId", "loadMethod": "post", "loadId": "Fields" } }
+        ]),
+    );
+    let mut session = Session::start("/tree");
+    session.run_now(&link);
+    focus(&mut session, &link, "Accounts");
+    press(&mut session, &link, Key::Enter);
+    let calls = link.calls();
+    assert!(
+        calls.iter().any(|call| matches!(call, LinkCall::Transition { url, method, fields }
+            if url == "/tree/createFieldDynamic" && method == "post" && fields.get("fieldPath").map(String::as_str) == Some("partyId"))),
+        "{calls:?}"
+    );
+    assert!(!calls
+        .iter()
+        .any(|call| matches!(call, LinkCall::Level { path, .. } if path == "/tree/createFieldDynamic")));
+}
+
 /// Home and End go to a tree's first and last rows; a search finds a tree's row (made its current row) and a button
 /// menu by one of its items.
 #[test]
