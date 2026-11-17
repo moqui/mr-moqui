@@ -2244,9 +2244,17 @@ mod tests {
 
     #[test]
     fn a_webhook_to_an_internal_address_is_refused_by_default() {
-        let refused = deliver("http://127.0.0.1:9/hook", "push", "1", None, "{}").unwrap_err();
+        let refused = deliver("https://127.0.0.1:9/hook", "push", "1", None, "{}").unwrap_err();
         assert!(refused.contains("internal address"), "{refused}");
+        // plain http and a credential in the URL only as a mirror's URL takes them (SEC-GIT-16)
+        let refused = deliver("http://hooks.example.com/hook", "push", "1", None, "{}").unwrap_err();
+        assert!(refused.contains("webhook-private-network"), "{refused}");
+        let refused = deliver("https://u:p@hooks.example.com/hook", "push", "1", None, "{}").unwrap_err();
+        assert!(
+            refused.contains("user or password") && !refused.contains("u:p"),
+            "{refused}"
+        );
         let refused = deliver("ftp://example.com/hook", "push", "1", None, "{}").unwrap_err();
-        assert!(refused.contains("not an http or https URL"), "{refused}");
+        assert!(refused.contains("not an https URL"), "{refused}");
     }
 }
