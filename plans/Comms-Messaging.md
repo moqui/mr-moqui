@@ -384,16 +384,22 @@ promised, and what happens when a push cannot be sent.
 
 ### 7.1 Today
 
+The server side of phase 2 (steps 2a to 2d, 2h) is built (2026-11-17): the rows below marked "since phase 2". The
+Android app (2e), the desktop and mobile `notify` (2f) and the check screen (2g) are not yet.
+
 | Path | What it does |
 |---|---|
 | Chat socket | Each event goes to members' open pages (`chatRoom:<id>`). Nothing when the app is closed |
-| Mentions | `notify#Mention` makes a notification on topic `ChatMention`. It is stored and pushed only if an app seeds the topic. mr-mantle does; a server with only the framework and BasicComms stores and pushes no mention |
-| Direct and room messages | Not pushed: a socket-only message never is (`notify/message.rs:400`; [Qvt-Client](../docs/ui/Qvt-Client.md)) |
-| Web Push | Title, link, topic and tag, encrypted to the browser (RFC 8291). Never the body, but Mantle's `ChatMention` title holds up to 120 characters of the message for a user with previews on. Disabled after 404, 410 or 5 failures in a row. No retry |
-| FCM | Data messages of kind `ring`, `ringEnded` and `notification`, with the title and link in clear text, so Google can read a mention's summary. Three tries in the request, then dropped. A registration is removed when FCM says the token is gone. The app shows `ring` and `ringEnded` and drops `notification` (`CallManager.kt:94`). The registration is tied to the device key |
-| Order | The mention notification and the call ring are sent before the message's transaction commits, so one that rolls back can still notify |
+| Mentions | Since phase 2: the framework seeds the `ChatMention` topic (`ChatSetupData.xml`), so `notify#Mention` stores every mention in the list. It is not pushed by `send#WebPush`; the chat push worker pushes it with its message (no double push) |
+| Activity | Since phase 2: `ChatUserActivity` (mention, reply, thread reply, reaction), written by `send#Message`, `edit#Message` and `react#Message` in the message's transaction, removed by a redaction, a reaction taken back and the retention. The feed service (`find#ChatActivity`) is phase 7 |
+| Direct and room messages | Since phase 2: pushed by the chat push worker (`service/chat_push.rs`, `ChatPushServices.xml`): `append#Event` writes a `ChatPushJob` in the transaction; after the commit the worker applies rules 1, 3 and 4 and writes a `PushOutbox` row per device, merged per device and room with a count ([Qvt-Client, Chat push](../docs/ui/Qvt-Client.md#install-and-web-push)) |
+| Web Push | Title, link, topic and tag, encrypted to the browser (RFC 8291). Never the body, but Mantle's `ChatMention` title holds up to 120 characters of the message for a user with previews on (since phase 2 that topic is not pushed by `send#WebPush`). Disabled after 404, 410 or 5 failures in a row. A chat push to a browser is the encrypted chat payload, with TTL, `Urgency` and a `Topic` per room, and retries |
+| FCM | Data messages of kind `ring`, `ringEnded` and `notification`, and since phase 2 `chat` and `clear`. Since phase 2 a device gives its push keys at `register#PushDevice` and a `notification` or chat push carries only `{kind, pushId, enc}` (encrypted, COM-UI-031); a device with no keys gets no text. `send#WebPush` tries three times in the request; the chat outbox retries 429 and 5xx with backoff, jitter and `Retry-After`, at most an hour a wait, 12 tries or the 4-week TTL, and deletes a registration FCM says is gone. A ring still carries its caller in clear text until the app decrypts (2e). The app shows `ring` and `ringEnded` and drops the others (`CallManager.kt:94`). The registration is tied to the device key |
+| UnifiedPush | Since phase 2: `register#PushDevice` with `provider=unifiedpush` keeps a distributor's endpoint (`PushUnified`, keys required); the worker and `send#WebPush` post the same encrypted payload to it as Web Push |
+| Order | Since phase 2 the push of a message and the call's ring and its end go after the commit (`registerOnCommit`, COM-UI-032); the mention notification is still stored in the transaction (force-cache), but not pushed |
 | Settings | Room level `CnlAll`, `CnlMentions`, `CnlNone`; `CHAT_NOTIFY_DEFAULT`; `CHAT_NOTIFY_PREVIEW`. A muted room counts and notifies as Mentions (`ChatEntities.xml:107`) |
-| Do not disturb | A server job sets and clears the `dnd` status by the user's hours every 5 minutes (`apply#DndHours`). No server path reads the status before a notification or a ring: only the client silences toasts and sounds (COM-UI-015) |
+| Do not disturb | A server job sets and clears the `dnd` status by the user's hours every 5 minutes (`apply#DndHours`). Since phase 2 the push worker holds a user's chat pushes while the status is `dnd` and sends one summary per room and device when it ends, and a call rings the devices only from a person on the user's allowed list (`CHAT_DND_ALLOWED`, Settings, Chat) or as the same person's second call within 3 minutes (`filter#RingUsers`). The client still silences toasts and sounds itself (COM-UI-015) |
+| Health | Since phase 2: each device keeps sent, acknowledged and failed counts and its last registration, push and acknowledgement (`ack#Push`, `/qapps/ackClientPush`); System, Push Health lists them, the devices with unacknowledged pushes of the last day first |
 
 ### 7.2 Rules
 
@@ -1145,16 +1151,22 @@ done too.
 
 Server first, then the Android app, then the desktop and the check screen.
 
+The server side is done (2026-11-17, `ce99f253c`, `9fe2bde2e`): steps 2a to 2d and the server of 2h. `service/chat_push.rs` and
+`ChatPushServices.xml` are the worker; `ChatUserActivity`, `ChatPushJob` and `PushOutbox` are in `ChatEntities.xml`;
+the Settings, Chat list "Calls that ring through" keeps `CHAT_DND_ALLOWED`; System, Push Health is basic-comms'
+`screen/System/PushHealth.xml`. The rules are regression tests of `chat_push_tests.rs` on the worker's clock. Left for
+2e: the app's push key pair and its decryption of `enc` (and then the ring's own fields, which still go in clear text).
+
 | Step | Work | Files |
 |---|---|---|
-| 2a | Seed `ChatMention` in the base data. `ChatUserActivity`, written by `send#Message` and `react#Message`, removed by redaction and retention (§5.2). The feed service comes in phase 7 | `ChatEntities.xml`, `ChatServices.xml`, the base setup data |
-| 2b | `ChatPushJob` written by `append#Event`; the worker; `PushOutbox` with merge, retries, TTL, collapse and priority; the ring sent after the commit | new `crates/moqui-core/src/service/chat_push.rs`, `fcm.rs`, `web_push.rs`, `Calls.js` |
-| 2c | Rules 1 to 4 in the worker: level, mute as Mentions, read marker, `clear` on a read, DND hold and summary | `chat_push.rs`, `ChatServices.xml` (`mark#Read`) |
-| 2d | The device's push key at `register#PushDevice`; the encrypted payload; `ack#Push`; the System health screen | `NotificationServices.xml`, `web_push.rs`, `notify/push_crypto.rs`, a System screen |
+| 2a (done) | Seed `ChatMention` in the base data. `ChatUserActivity`, written by `send#Message` and `react#Message`, removed by redaction and retention (§5.2). The feed service comes in phase 7 | `ChatEntities.xml`, `ChatServices.xml`, the base setup data |
+| 2b (done) | `ChatPushJob` written by `append#Event`; the worker; `PushOutbox` with merge, retries, TTL, collapse and priority; the ring sent after the commit | new `crates/moqui-core/src/service/chat_push.rs`, `fcm.rs`, `web_push.rs`, `Calls.js` |
+| 2c (done) | Rules 1 to 4 in the worker: level, mute as Mentions, read marker, `clear` on a read, DND hold and summary | `chat_push.rs`, `ChatServices.xml` (`mark#Read`) |
+| 2d (done) | The device's push key at `register#PushDevice`; the encrypted payload; `ack#Push`; the System health screen | `NotificationServices.xml`, `web_push.rs`, `notify/push_crypto.rs`, a System screen |
 | 2e | Android: decrypt and show in Kotlin, channels, `MessagingStyle`, Reply and Mark read through the Rust outbox, `clear`, the permission and battery prompts, token retry | `PushService.kt`, `CallManager.kt`, a new notifications class, `Native.kt`, `crates/moqui-mobile/src` |
 | 2f | Desktop and mobile `notify` with tag and link; missed messages on start; the browser payload | `crates/moqui-desktop/src/bridge.rs`, `crates/moqui-mobile/src/bridge.js`, `MoquiLib.js` |
 | 2g | The check screen in the shell with its host command; "Send a test notification" | `Root.qvue`, `bridge.js`, `commands.rs` |
-| 2h | UnifiedPush: the app registers a distributor's endpoint where the phone has no Google Play; the worker sends the same encrypted payload to it (§7.4) | `web_push.rs` or a new `unified_push.rs`, `PushService.kt`, `NotificationServices.xml` |
+| 2h (server done) | UnifiedPush: the app registers a distributor's endpoint where the phone has no Google Play; the worker sends the same encrypted payload to it (§7.4) | `web_push.rs` or a new `unified_push.rs`, `PushService.kt`, `NotificationServices.xml` |
 
 - Reuse: the bridge delivery worker's pattern (`chat_bridge.rs`: lease, backoff, sweep, a round at a given time);
   `push_crypto::encrypt`; `WebPushSubscription`'s key fields; the Rust outbox kinds `chat-send` and `chat-read` with

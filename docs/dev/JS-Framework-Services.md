@@ -302,6 +302,8 @@ Rooms, members, messages and presence in `ChatServices`; end-to-end encryption k
 | `ChatServices.search#ChatEvents` | `searchText*`, `chatRoomId`, `limit`, `pageIndex` → `eventList`, `total` |
 | `ChatServices.create#Poll`, `vote#Poll`, `close#Poll` | `chatRoomId*`, `question*`, `optionList*`, `anonymous`, `multiple` → `eventSeq` |
 | `ChatServices.set#UserStatus`, `get#UserStatuses` | `status` (online, away, dnd, invisible), `statusText`, `emoji`, `clearAfterMinutes` → `myStatus` |
+| `ChatPushServices.run#ChatPush` | `nowMillis` → `jobCount`, `queuedCount`, `sentCount`, `retriedCount`, `failedCount`, `droppedCount`: one round of the chat push worker (internal; the tests' clock; [Qvt-Client, Chat push](../ui/Qvt-Client.md#install-and-web-push)) |
+| `ChatPushServices.filter#RingUsers` | `userIdList*`, `fromUserId`, `callSessionId` → `ringUserIdList`: whose devices a call rings through do not disturb (internal) |
 
 The rest of `ChatServices` is link previews, retention jobs, room and user change logs for clients, and the internal services of delivery. The Comms screens call the wrappers in [basic-comms](#comms-screens-basic-comms).
 
@@ -441,7 +443,9 @@ What the shell and shared widgets call. `NotificationServices` is inline actions
 | `NotificationServices.mark#NotificationsViewed` | `notificationMessageId` or `notificationMessageIdList`, `inboxEnumId` → `viewedCount` |
 | `NotificationServices.approve#NotificationMessage`, `refuse#NotificationMessage` | `notificationMessageId*`, `reason` → `results`: calls the topic's approve or refuse service |
 | `NotificationServices.store#WebPushSubscription`, `delete#WebPushSubscription`, `get#WebPushStatus` | `endpoint*`, `p256dhKey*`, `authSecret*` → `subscriptionId` |
-| `NotificationServices.register#PushDevice`, `unregister#PushDevice` | `provider*`, `token*`, `appId`, `platform`: a native app's FCM token |
+| `NotificationServices.register#PushDevice`, `unregister#PushDevice` | `provider*` (fcm, unifiedpush), `token*`, `p256dhKey`, `authSecret`, `appId`, `platform`: a native app's FCM token or UnifiedPush endpoint, with its push keys |
+| `NotificationServices.ack#Push` | `ackId*` → `acked`: the current user's device showed the push |
+| `NotificationServices.find#PushHealth` | → `deviceList`, `totals`: every user's push devices and their counts (PushHealthAdmin) |
 | `NotificationServices.send#WebPush` | `userIdList*`, `title`, `link`, `topic`, `tag` → `sentCount`, `failedCount`. Internal; a persisted notification sends it |
 | `ShellServices.get#ShellCounts`, `publish#ShellCounts` | `userId` → `counts`; `userIdList*`: the badge counts of the shell |
 | `ShellServices.get#Providers`, `call#Providers` | `hook*`, `parameters`, `sourceId` → `providerList`; `results`, `failedParts`: the shell providers the apps declare, then those a component's conf registers (`screen-facade/shell-providers`, `sms-consent` only) |
