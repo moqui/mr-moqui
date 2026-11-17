@@ -964,6 +964,14 @@ fn the_documents_name_the_endpoint() {
         "{setup}"
     );
     assert_eq!(super::tools::mcp_name("enum#type find/all"), "enum_type_find_all");
+    // the endpoint they name comes from the request's host: a shared cache keeps one per host (SEC-AI-10)
+    let reply = server::public_reply(card.to_string(), "application/json");
+    let vary = reply
+        .headers
+        .iter()
+        .find(|(name, _)| name == "vary")
+        .map(|(_, value)| value.as_str());
+    assert!(vary.is_some_and(|vary| vary.contains("Host")), "{:?}", reply.headers);
 }
 
 #[test]
