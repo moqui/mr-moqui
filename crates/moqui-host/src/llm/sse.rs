@@ -22,11 +22,13 @@
 //! Both authenticate as `/notws` does (the session cookie, else a `login_key` header, with the origin check), and only
 //! the run's owner sees a run: for anyone else it is not found. The stream is written by a thread of its own into the
 //! response body ([`crate::channel_body::ChannelBody`]), so it holds no request worker; at most 256 are open on a node,
-//! and one more is answered 503 with `Retry-After`. A client that takes nothing for a minute ends its stream. The stream follows the hub with a `Follower`, which fills a gap
+//! and one more is answered 503 with `Retry-After`; at most 16 are one user's, and that user's next one is answered 429
+//! (SEC-AI-06), so one client does not hold every stream of the node. A client that takes nothing for a minute ends its stream. The stream follows the hub with a `Follower`, which fills a gap
 //! in the stored sequence from the database.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
@@ -35,6 +37,7 @@ use bytes::Bytes;
 use moqui_core::context::{ErrorKind, ExecutionContextFactory};
 use moqui_core::entity::EntityFacade;
 use moqui_core::user::verify_session_cookie;
+use moqui_lib::sync::lock;
 use moqui_llm::run::{self, events};
 use serde_json::{json, Value as Json};
 use tokio::sync::mpsc;
@@ -45,29 +48,68 @@ use crate::notws::{key_user, origin_allowed, session_cookie, session_user, Reque
 
 /// Event streams open at once on this node; one more is answered 503, and the client tries again.
 const MAX_STREAMS: usize = 256;
+/// Event streams of one user open at once on this node; one more is answered 429 (SEC-AI-06), as an A2A wait is.
+pub(crate) const MAX_STREAMS_PER_USER: usize = 16;
 /// How long the stream's thread waits for a client that takes nothing before it ends the stream.
 pub(crate) const SEND_STALL: std::time::Duration = std::time::Duration::from_secs(60);
 
-static STREAMS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static STREAMS: AtomicUsize = AtomicUsize::new(0);
+static STREAMS_BY_USER: Mutex<Option<HashMap<String, usize>>> = Mutex::new(None);
 
-/// One open stream, counted until its thread ends.
-struct Open;
+/// One open stream, counted for the node and its user until its thread ends.
+pub(crate) struct Open(String);
+
+/// Why no stream could be opened.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Full {
+    Node,
+    User,
+}
 
 impl Open {
-    fn take() -> Option<Self> {
-        let open = STREAMS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        if open >= MAX_STREAMS {
-            STREAMS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-            return None;
+    pub(crate) fn take(user_id: &str) -> Result<Self, Full> {
+        let mut by_user = lock(&STREAMS_BY_USER);
+        let by_user = by_user.get_or_insert_with(HashMap::new);
+        let mine = by_user.get(user_id).copied().unwrap_or(0);
+        if mine >= MAX_STREAMS_PER_USER {
+            return Err(Full::User);
         }
-        Some(Open)
+        if STREAMS.fetch_add(1, Ordering::SeqCst) >= MAX_STREAMS {
+            STREAMS.fetch_sub(1, Ordering::SeqCst);
+            return Err(Full::Node);
+        }
+        by_user.insert(user_id.to_string(), mine + 1);
+        Ok(Open(user_id.to_string()))
     }
 }
 
 impl Drop for Open {
     fn drop(&mut self) {
-        STREAMS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        STREAMS.fetch_sub(1, Ordering::SeqCst);
+        let mut by_user = lock(&STREAMS_BY_USER);
+        if let Some(by_user) = by_user.as_mut() {
+            if let Some(count) = by_user.get_mut(&self.0) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    by_user.remove(&self.0);
+                }
+            }
+        }
     }
+}
+
+/// 503 when the node has no room, 429 when the user has [`MAX_STREAMS_PER_USER`] open; both with `Retry-After`.
+fn busy(full: &Full) -> Response {
+    let (status, text) = match full {
+        Full::Node => (503, "too many event streams"),
+        Full::User => (429, "too many event streams of yours are open; close one and try again"),
+    };
+    Response::builder()
+        .status(status)
+        .header("retry-after", "5")
+        .header("content-type", "text/plain; charset=utf-8")
+        .body(axum::body::Body::from(text))
+        .unwrap_or_else(|_| plain(status, text))
 }
 
 /// The user of the request, as `/notws` finds it; else the response to send.
@@ -142,12 +184,13 @@ async fn owner_checked(
     headers: &HeaderMap,
     site: &RequestSite,
     run_id: &str,
-) -> Result<(), Box<Response>> {
+) -> Result<String, Box<Response>> {
     let user_id = user_of(state, headers, site).await?;
     let factory = Arc::clone(&state.factory);
     let run_id = run_id.to_string();
-    match tokio::task::spawn_blocking(move || owns(&factory, &run_id, &user_id)).await {
-        Ok(Ok(true)) => Ok(()),
+    let owner = user_id.clone();
+    match tokio::task::spawn_blocking(move || owns(&factory, &run_id, &owner)).await {
+        Ok(Ok(true)) => Ok(user_id),
         Ok(Ok(false)) => Err(Box::new(plain(404, "not found"))),
         Ok(Err(error)) => Err(Box::new(crate::http::internal_error(error.message()))),
         Err(_) => Err(Box::new(plain(500, "the lookup stopped"))),
@@ -162,17 +205,14 @@ pub(crate) async fn events(
     headers: HeaderMap,
     site: RequestSite,
 ) -> Response {
-    if let Err(response) = owner_checked(&state, &headers, &site, &run_id).await {
-        return *response;
-    }
+    let user_id = match owner_checked(&state, &headers, &site, &run_id).await {
+        Ok(user_id) => user_id,
+        Err(response) => return *response,
+    };
     let after = after_of(&headers, &query);
-    let Some(open) = Open::take() else {
-        return Response::builder()
-            .status(503)
-            .header("retry-after", "5")
-            .header("content-type", "text/plain; charset=utf-8")
-            .body(axum::body::Body::from("too many event streams"))
-            .unwrap_or_else(|_| plain(503, "too many event streams"));
+    let open = match Open::take(&user_id) {
+        Ok(open) => open,
+        Err(full) => return busy(&full),
     };
     let (tx, rx) = mpsc::channel::<Chunk>(64);
     let factory = Arc::clone(&state.factory);
@@ -317,3 +357,7 @@ pub(crate) async fn events_json(
         Err(_) => plain(500, "the catch-up stopped"),
     }
 }
+
+#[cfg(test)]
+#[path = "sse_tests.rs"]
+mod tests;
