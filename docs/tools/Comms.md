@@ -67,6 +67,22 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   shown. The terminal's room has Info for each message, as text. When the last owner leaves, the
   longest-standing moderator (else member) becomes an owner: Leave names them, and the room says they became an owner
   when the owner left.
+- <a id="room-details"></a>**A room's details.** The room's header (Media, files and links; on a phone its menu, or the
+  members' faces) opens its details: full screen on a phone, the right pane on a desktop, with tabs. **People** (the
+  members, Add people, Verify in an encrypted room), **Media** (the pictures and videos as a grid; a tap opens the
+  viewer, where a swipe, the arrows or Left and Right go to the next and the previous), **Files** (all but pictures,
+  videos and sounds), **Voice** (the voice notes and other sounds, each with its player), **Links** (every link of the
+  messages, the newest first, with the title of its preview when it had one), **Reactions** (the messages with
+  reactions, the latest reaction first, or only those to your messages) and **Pinned**. Each loads more as it scrolls;
+  Show in chat opens a message (in its thread when it is a reply there). Threads and Search stay panes of their own. In
+  an encrypted room the server knows no file's type and no link, so this browser sorts the files into the tabs and lists
+  the links of the messages it has opened. **Voice notes:** with no text in the message box, its Send button is a
+  microphone; a tap records (the time shows, with Cancel and Send; ten minutes at most, then it is sent), and Send sends
+  it alone as a sound file (text typed meanwhile stays in the box), which plays in the message and in Voice. **Activity** across rooms (your mentions, replies to you,
+  replies in your threads and reactions to your messages) is the `activity` transition, which the Activity view of the
+  desktop builds on. The terminal has a room's Links and your Activity as lists; the media grid, voice and reactions are
+  the browser's. The lists are the services `find#RoomFiles`, `find#RoomLinks`, `find#RoomReactions` and
+  `find#ChatActivity` of `org.moqui.chat.ChatServices`, which page by a cursor that never cuts a message in two.
 - <a id="encrypted-rooms"></a>**Encrypted rooms** (C7). New room has Encrypted for a private room (and an encrypted direct
   room beside the plain one). Its messages, reactions and files are encrypted in your browser and read only on the
   devices of its members; the room shows a lock, and the room list says "Encrypted message". It cannot be turned off,

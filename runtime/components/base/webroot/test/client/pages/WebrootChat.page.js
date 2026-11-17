@@ -477,6 +477,27 @@ test("a card's button posts to chatAssistCard; an agent's typing carries its sta
     assert.equal(state.typingText.R1._AGENT_ASSIST_, undefined);
 });
 
+test("an encrypted message's edit keeps its files: their names, types and keys go in the edit's ciphertext, and read back from it", async () => {
+    await chat.loadPurify();
+    const encryptRoom = moqui.crypto.encryptRoom;
+    let sealedContent = null;
+    moqui.crypto.encryptRoom = (roomId, memberIds, type, content) => { sealedContent = content; return Promise.resolve({ algorithm: "m.megolm.v1.aes-sha2" }); };
+    try {
+        // the message as the timeline has it once decrypted: a voice note with its key (sealed), and a file never decrypted
+        const attachments = [{ chatAttachmentId: "A1", attachmentSeq: 1, fileName: "Voice note.webm", contentType: "audio/webm", fileSize: 900, sealed: { key: "k1" } },
+            { chatAttachmentId: "A2", attachmentSeq: 2, fileName: null, contentType: null, fileSize: 5, sealed: null }];
+        assert.deepEqual(chat.keptFiles(attachments).map((one) => one.chatAttachmentId), ["A1"], "only what this device can read is kept");
+        await chat.sealMessage("R1", ["ann"], "<p>Now with text</p>", chat.keptFiles(attachments));
+        assert.deepEqual(sealedContent["io.moqui.files"], [{ chatAttachmentId: "A1", name: "Voice note.webm", type: "audio/webm", size: 900, file: { key: "k1" } }]);
+        // read back as the timeline reads an edited message: the server's attachments (no names) and the edit's content
+        const item = { attachments: [{ chatAttachmentId: "A1", attachmentSeq: 1, fileName: null, contentType: null, fileSize: 900 }] };
+        await chat.applyOpened(item, { content: sealedContent });
+        assert.deepEqual([item.attachments[0].fileName, item.attachments[0].contentType, item.attachments[0].sealed.key], ["Voice note.webm", "audio/webm", "k1"]);
+    } finally {
+        moqui.crypto.encryptRoom = encryptRoom;
+    }
+});
+
 test("an encrypted room's decrypted HTML keeps what a plain room's message may have, and a decrypted file opens as an image or bytes", async () => {
     await chat.loadPurify();
     const kept = '<p>Hi <span data-mention-id="bob">@Bob</span> <a href="https://example.com/x" hreflang="en">link</a> <b>bold</b></p>'
@@ -500,7 +521,10 @@ test("an encrypted room's decrypted HTML keeps what a plain room's message may h
     assert.equal(chat.ownImages('<p><img src="/richTextImage/9"></p>'), '<p><img src="/richTextImage/9"></p>');
     assert.equal(chat.blobType("image/PNG"), "image/png");
     assert.equal(chat.blobType("image/jpeg"), "image/jpeg");
-    for (const type of ["text/html", "image/svg+xml", "application/xhtml+xml", "application/pdf", "", null]) {
+    // a voice note plays from its blob: a sound or video keeps its type, without its codecs
+    assert.equal(chat.blobType("audio/webm;codecs=opus"), "audio/webm");
+    assert.equal(chat.blobType("video/mp4"), "video/mp4");
+    for (const type of ["text/html", "image/svg+xml", "application/xhtml+xml", "application/pdf", "audio/x-unknown", "", null]) {
         assert.equal(chat.blobType(type), "application/octet-stream", String(type));
     }
 });

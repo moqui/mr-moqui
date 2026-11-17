@@ -871,10 +871,12 @@
             });
             return changed ? box.innerHTML : text;
         },
-        // the type a decrypted file's blob is made with: an image the room shows inline keeps its type, anything else is
-        // bytes to save (a blob URL is of this origin, so a decrypted page or SVG must never open as one)
+        // the type a decrypted file's blob is made with: an image the room shows inline, or a sound or video its player plays
+        // (a voice note), keeps its type, anything else is bytes to save (a blob URL is of this origin, so a decrypted page or
+        // SVG must never open as one; media types run no script)
         blobType(contentType) {
-            return /^image\/(png|jpe?g|gif|webp)$/i.test(String(contentType || "")) ? String(contentType).toLowerCase() : "application/octet-stream";
+            const type = String(contentType || "").split(";")[0].trim().toLowerCase();
+            return /^(image\/(png|jpe?g|gif|webp)|audio\/(webm|ogg|mpeg|mp4|aac|wav|x-m4a)|video\/(mp4|webm|ogg|quicktime))$/.test(type) ? type : "application/octet-stream";
         },
         escapeHtml(text) {
             return String(text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/\n/g, "<br>");
@@ -889,6 +891,12 @@
             if (list.length) content["io.moqui.files"] = list;
             return moqui.crypto.encryptRoom(roomId, memberIds, "m.room.message", content).then((encrypted) => ({
                 encryptedJson: JSON.stringify(encrypted), mentionUserIds: chat.mentionsIn(html).join(",") }));
+        },
+        // the files of an encrypted message (decrypted, each with its key: sealed) as sealMessage takes them, so an edit
+        // carries them in its ciphertext too: the timeline and the details' tabs read an edited message's files there
+        keptFiles(attachments) {
+            return (attachments || []).filter((file) => file && file.chatAttachmentId && file.sealed).map((file) => ({ chatAttachmentId: file.chatAttachmentId,
+                fileName: file.fileName || null, contentType: file.contentType || null, fileSize: file.fileSize || null, info: file.sealed }));
         },
         sealReaction(roomId, memberIds, key) {
             return moqui.crypto.encryptRoom(roomId, memberIds, "m.reaction", { key }).then((encrypted) => JSON.stringify(encrypted));
