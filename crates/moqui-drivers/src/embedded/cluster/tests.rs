@@ -1410,3 +1410,44 @@ fn a_cluster_under_a_path_with_a_space_starts_with_its_socket_in_temp() {
     let rows = conn.query_once("SELECT 1", &[]).unwrap();
     assert_eq!(rows[0].columns[0].1, Value::I32(1));
 }
+
+/// SEC-DAT-06: the superuser's password file is written `0600` before the setup reads it, and one already there (an
+/// older run's, made with the umask) is made so, its password kept.
+#[test]
+fn the_password_file_is_this_user_s_alone() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = temp_cluster_dir();
+    let _guard = DirGuard(dir.clone());
+    let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    let fresh = dir.join("embedded/pgpass");
+    private_password_file(&fresh, "pw-1").unwrap();
+    assert_eq!(mode(&fresh), 0o600);
+    assert_eq!(std::fs::read_to_string(&fresh).unwrap(), "pw-1");
+    std::fs::set_permissions(&fresh, std::fs::Permissions::from_mode(0o664)).unwrap();
+    private_password_file(&fresh, "pw-2").unwrap();
+    assert_eq!(mode(&fresh), 0o600);
+    assert_eq!(std::fs::read_to_string(&fresh).unwrap(), "pw-1");
+}
+
+/// SEC-OUT-06: a socket directory under temp that was already there is used only when it is this user's with mode
+/// 0700; one another user could write in is refused before the server starts.
+#[test]
+fn a_socket_dir_that_is_not_this_user_s_alone_is_refused() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = temp_cluster_dir();
+    let _guard = DirGuard(dir.clone());
+    let owned = dir.join("pgpass");
+    private_password_file(&owned, "pw").unwrap();
+    let socket_dir = dir.join("socket");
+    std::fs::create_dir(&socket_dir).unwrap();
+    std::fs::set_permissions(&socket_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(socket_dir_private(&socket_dir, &owned).is_ok());
+    std::fs::set_permissions(&socket_dir, std::fs::Permissions::from_mode(0o1777)).unwrap();
+    let refused = socket_dir_private(&socket_dir, &owned).unwrap_err().to_string();
+    assert!(refused.contains("not this user's alone"), "{refused}");
+    // a symlink to a directory is not the directory
+    std::fs::set_permissions(&socket_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let link = dir.join("link");
+    std::os::unix::fs::symlink(&socket_dir, &link).unwrap();
+    assert!(socket_dir_private(&link, &owned).is_err());
+}

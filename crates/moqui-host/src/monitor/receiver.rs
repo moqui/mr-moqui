@@ -77,6 +77,20 @@ pub(crate) async fn authorize(factory: &Arc<ExecutionContextFactory>, token: Str
     .unwrap_or_else(|_| Err((503, "ingest authentication worker stopped".into())))
 }
 
+/// Tell web protection of a refused ingest key as a failed sign-in of `client`, so a flood of made-up keys, each a
+/// permit and a database read, bans its client as wrong passwords do (SEC-TLS-17). A request with no key, a busy
+/// receiver and a rate limit are not failed sign-ins.
+pub(crate) fn note_refusal(
+    guard: &crate::guard::Guard,
+    client: std::net::IpAddr,
+    token_given: bool,
+    refusal: &Refusal,
+) {
+    if token_given && refusal.0 == 401 {
+        guard.record(client, crate::guard::Event::AuthFailure);
+    }
+}
+
 /// Run `work` on a blocking thread in a context logged in as `username`, with telemetry of its own suppressed.
 pub(crate) async fn run_as<T: Send + 'static>(
     factory: &Arc<ExecutionContextFactory>,
@@ -188,9 +202,25 @@ async fn ingest(
     let token = header("api_key")
         .or_else(|| header("authorization").and_then(|v| v.strip_prefix("Bearer ").map(str::to_owned)))
         .unwrap_or_default();
+    let client = request
+        .extensions()
+        .get::<crate::http::ClientAddr>()
+        .map(|client| client.0)
+        .or_else(|| {
+            request
+                .extensions()
+                .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                .map(|peer| peer.0.ip())
+        });
+    let token_given = !token.is_empty();
     let authorized = match authorize(&state.factory, token).await {
         Ok(authorized) => authorized,
-        Err((status, message)) => return refused(status, message),
+        Err(refusal) => {
+            if let Some(client) = client {
+                note_refusal(&state.guard, client, token_given, &refusal);
+            }
+            return refused(refusal.0, refusal.1);
+        }
     };
     let limit = body_limit(&state.factory);
     let body = match tokio::time::timeout(
@@ -328,3 +358,7 @@ fn partial_response(rejected: u64, message: &str) -> Vec<u8> {
     response.extend(partial);
     response
 }
+
+#[cfg(test)]
+#[path = "receiver_tests.rs"]
+mod tests;

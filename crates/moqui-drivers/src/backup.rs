@@ -190,6 +190,10 @@ fn dump_one(dir: &Path, target: &ToolTarget, name: &str, timeout: Duration) -> R
     args.push("--format=custom".to_string());
     args.push("--file".to_string());
     args.push(partial.display().to_string());
+    // pg_dump writes into the file made here, so the dump is never readable by others while it runs (SEC-DAT-06)
+    if let Err(err) = private_partial(&partial) {
+        return Err(Error::new(format!("create {}", partial.display())).with_source(err));
+    }
     if let Err(err) = run_bounded(&bin, &args, &target.password, timeout) {
         remove_partial(&partial);
         return Err(err);
@@ -204,6 +208,16 @@ fn dump_one(dir: &Path, target: &ToolTarget, name: &str, timeout: Duration) -> R
         return Err(Error::new(format!("publish {name}")).with_source(err));
     }
     Ok(())
+}
+
+/// An empty file at `path` that only this user may read (`0600`), an older partial one emptied.
+fn private_partial(path: &Path) -> std::io::Result<()> {
+    moqui_lib::private_fs::file_options()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)?;
+    moqui_lib::private_fs::restrict(path)
 }
 
 /// `from` set means a block incremental against that manifest. `None` is a full `pg_basebackup`.
@@ -526,7 +540,7 @@ fn backup_directory(request: &BackupRequest, runtime: &Path, targets: &[ToolTarg
     };
     let resolved = resolve_path(&raw)?;
     ensure_outside(&resolved, targets)?;
-    std::fs::create_dir_all(&resolved)
+    moqui_lib::private_fs::create_dir_all(&resolved)
         .map_err(|err| Error::new(format!("create backup directory {}", resolved.display())).with_source(err))?;
     Ok(resolved)
 }

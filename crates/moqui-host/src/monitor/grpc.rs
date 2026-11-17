@@ -105,7 +105,17 @@ impl Otlp {
             return Err(Status::unimplemented("the telemetry receiver is disabled"));
         }
         let token = token(request.metadata());
-        let authorized = receiver::authorize(&self.factory, token).await.map_err(status)?;
+        let caller = request.extensions().get::<crate::grpc_listen::Caller>().cloned();
+        let token_given = !token.is_empty();
+        let authorized = match receiver::authorize(&self.factory, token).await {
+            Ok(authorized) => authorized,
+            Err(refusal) => {
+                if let Some(caller) = &caller {
+                    receiver::note_refusal(&caller.guard, caller.client, token_given, &refusal);
+                }
+                return Err(status(refusal));
+            }
+        };
         let message = request.into_inner();
         let username = authorized.username.clone();
         receiver::run_as(&self.factory, username, move |factory, ec| {

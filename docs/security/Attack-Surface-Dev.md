@@ -68,7 +68,7 @@ The sim (`moqui_llm::approval::preview::run_in_sim_within`) runs a body as the c
 
 ### File paths
 
-A file path of a request is relative to a root and goes through `confine::resolve` (`src/confine.rs`). It refuses a NUL byte, a leading `/` or `\`, a drive letter, and any `..` part. It canonicalizes the deepest part that exists, so a symlink is followed, and refuses a result outside the root. It refuses a path with a `.git` part, a path whose first part under the root is `target`, and a path inside the runtime's `db`, `log`, `txlog`, `tmp`, `.env` or `cert`. It refuses a path inside `runtime/worktrees` unless the root itself is there.
+A file path of a request is relative to a root and goes through `confine::resolve` (`src/confine.rs`). It refuses a NUL byte, a leading `/` or `\`, a drive letter, and any `..` part. It canonicalizes the deepest part that exists, so a symlink is followed, and refuses a result outside the root. It refuses a path with a `.git` part, a path whose first part under the root is `target`, and a path inside the runtime's `db`, `log`, `txlog`, `tmp`, `.env`, `cert`, `save`, `sftp`, `install` or `opensearch`, or a name at the top of the runtime that starts with `.env` (a copy of it). It refuses a path inside `runtime/worktrees` unless the root itself is there. Below the full tier a path inside `runtime/conf` is refused too (`Context::resolve`, `confine::hidden_below_full`), and `search#Files` leaves out the `git grep` lines of what an open would refuse (SEC-DEV-04).
 
 The deny list has those six runtime names. `runtime/conf`, `runtime/save`, `runtime/sftp` and `runtime/install` are not on it.
 
@@ -78,7 +78,7 @@ A write needs the extend tier, a root that Settings has not made read only, and 
 
 ### Roots
 
-The roots are the git repositories that hold the loaded components (found by looking up from each component directory for `.git`), each loaded component in no repository, `runtime/conf` when no repository holds it, and the rows of `moqui.dev.DevAideRoot` (`src/roots.rs`). `store#Root` (full tier) takes `location`, canonicalizes it, needs a directory, and refuses only a location inside one of the six denied runtime names. Any other directory the server's OS user can read becomes a root.
+The roots are the git repositories that hold the loaded components (found by looking up from each component directory for `.git`), each loaded component in no repository, `runtime/conf` when no repository holds it, and the rows of `moqui.dev.DevAideRoot` (`src/roots.rs`). `store#Root` (full tier) takes `location`, canonicalizes it, needs a directory, and refuses a location inside one of the denied runtime names. A location outside the runtime and the current roots (`/`, a home directory) needs `ADMIN` (`confine::root_location_open`, SEC-DEV-04); an admin can make any other directory the server's OS user can read a root.
 
 ### Git
 

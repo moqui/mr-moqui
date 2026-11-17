@@ -961,10 +961,12 @@ async fn health(
     State(state): State<Arc<HttpState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     via: Option<axum::Extension<moqui_core::web::RequestVia>>,
+    client: Option<axum::Extension<ClientAddr>>,
 ) -> Response {
-    if !status_allowed(
+    if !status_request_allowed(
         &state.factory.webapp_setting("webroot", "status-ips"),
-        &peer.ip().to_canonical().to_string(),
+        peer.ip(),
+        client.map_or(peer.ip(), |client| client.0 .0),
         via.map(|via| via.0).unwrap_or_default(),
     ) {
         return plain(404, "not found");
@@ -980,17 +982,19 @@ async fn health(
 }
 
 /// `name value` lines, or Prometheus text for a scrape (`crate::monitor::wants_prometheus`). Both answer only
-/// `status-ips` and loopback peers, as `/health` does.
+/// `status-ips` and loopback peers, and a client a proxy names only when it is in `status-ips`, as `/health` does.
 async fn metrics(
     State(state): State<Arc<HttpState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     via: Option<axum::Extension<moqui_core::web::RequestVia>>,
+    client: Option<axum::Extension<ClientAddr>>,
     uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
 ) -> Response {
-    if !status_allowed(
+    if !status_request_allowed(
         &state.factory.webapp_setting("webroot", "status-ips"),
-        &peer.ip().to_canonical().to_string(),
+        peer.ip(),
+        client.map_or(peer.ip(), |client| client.0 .0),
         via.map(|via| via.0).unwrap_or_default(),
     ) {
         return plain(404, "not found");
@@ -1847,6 +1851,22 @@ fn status_allowed(configured: &str, ip: &str, via: moqui_core::web::RequestVia) 
         .map(str::trim)
         .any(|item| !item.is_empty() && item == ip)
         || ip.parse::<IpAddr>().is_ok_and(|address| local_peer(address, via))
+}
+
+/// Whether `/health` and `/metrics` answer a request: its connection's `peer` passes [`status_allowed`], and when a
+/// believed `client-ip-header` names another `client`, that client is listed in `status-ips` too. A reverse proxy on
+/// this machine forwards every client from loopback, and an address a header names is never this machine's own
+/// (SEC-WEB-11).
+fn status_request_allowed(configured: &str, peer: IpAddr, client: IpAddr, via: moqui_core::web::RequestVia) -> bool {
+    let (peer, client) = (peer.to_canonical(), client.to_canonical());
+    let listed = |address: IpAddr| {
+        let text = address.to_string();
+        configured
+            .split(',')
+            .map(str::trim)
+            .any(|item| !item.is_empty() && item == text)
+    };
+    status_allowed(configured, &peer.to_string(), via) && (client == peer || listed(client))
 }
 
 /// Whether a request's peer is this machine: a loopback address that is the connection's own. The client an edge

@@ -478,6 +478,37 @@ fn sftp_and_the_admin_shell_run_on_the_built_in_server() {
     assert!(out.contains("SFTP_ONLY"), "{out}");
     let (out, status) = exec(address, "john.doe", "moqui", "service no.such#Service").unwrap();
     assert_eq!(status, 1, "{out}");
+    // SEC-FIL-62: each line that ran has an audit row (who, from where, what, its exit), a js line by its code's digest
+    let audited: Vec<(String, String, i64)> = factory
+        .entity()
+        .unwrap()
+        .find("moqui.terminal.TerminalSession")
+        .unwrap()
+        .disable_authz()
+        .eq("username", Value::string("john.doe"))
+        .eq("kind", Value::string("command"))
+        .list()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            let text = |field: &str| row.get(field).map(to_plain_string).unwrap_or_default();
+            let exit = text("exitStatus").parse().unwrap_or(-1);
+            (text("commandLine"), text("clientIp"), exit)
+        })
+        .collect();
+    let line = |start: &str| audited.iter().find(|(line, _, _)| line.starts_with(start));
+    let js = line("js sha256:").unwrap_or_else(|| panic!("{audited:?}"));
+    assert!(
+        !audited
+            .iter()
+            .any(|(line, _, _)| line.contains("6 * 7") || line.contains("ec.user")),
+        "{audited:?}"
+    );
+    assert_eq!((js.1.as_str(), js.2), ("127.0.0.1", 0), "{audited:?}");
+    let entity = line("entity moqui.security.UserAccount").unwrap_or_else(|| panic!("{audited:?}"));
+    assert!(!entity.0.contains("sftp.only"), "{audited:?}");
+    assert_eq!(line("service no.such#Service").map(|row| row.2), Some(1), "{audited:?}");
+    assert!(line("status").is_none(), "{audited:?}");
     let refused = exec(address, "sftp.only", "moqui", "status");
     assert_eq!(refused, Err("channel request refused".to_string()));
     let mut sftp_only = SftpClient::new(&host, "sftp.only", None).unwrap();

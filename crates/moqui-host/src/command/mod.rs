@@ -287,11 +287,12 @@ async fn complete<S: tokio::io::AsyncWrite + Unpin>(
 /// The interactive loop: a prompt, a line, its output. With a PTY the client does not echo, so the line editor
 /// ([`line`]) echoes and edits: the cursor keys, history (kept per user), Tab completion and a bracketed paste. With
 /// none (an SSH exec) lines are only gathered. `apps` runs the terminal client on the stream, and the prompt comes back
-/// when it ends. Returns the exit status.
+/// when it ends. `from` is the client's address, for the audit of each command ([`shell::run`]). Returns the exit status.
 pub(crate) async fn interactive<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
     mut stream: S,
     factory: &Weak<ExecutionContextFactory>,
     username: &str,
+    from: &str,
     pty: bool,
     apps: AppsAccess,
     mut host: HostCommand,
@@ -384,7 +385,7 @@ pub(crate) async fn interactive<S: tokio::io::AsyncRead + tokio::io::AsyncWrite 
                     let code = lines.join("\n");
                     block = None;
                     editor.set_prompt(PROMPT);
-                    let outcome = shell::run(factory, username, &format!("js {code}")).await;
+                    let outcome = shell::run(factory, username, from, &format!("js {code}")).await;
                     if write_outcome(&mut stream, &outcome.text, newline).await.is_err() {
                         return 1;
                     }
@@ -425,7 +426,7 @@ pub(crate) async fn interactive<S: tokio::io::AsyncRead + tokio::io::AsyncWrite 
                     return 1;
                 }
             } else {
-                let outcome = shell::run(factory, username, &text).await;
+                let outcome = shell::run(factory, username, from, &text).await;
                 if outcome.exit {
                     let _ = stream.write_all(format!("bye{newline}").as_bytes()).await;
                     if pty {

@@ -7,6 +7,13 @@ const fail = (kind, text) => {
 }
 const digest = (s) => ec.user.singleUseCodeHash(String(s))
 const now = () => ec.user.timestampMillis(ec.user.nowTimestamp)
+// An account that is gone, disabled for good (no disabledDateTime, as disable#UserAccount leaves it) or past its
+// terminateDate, as the framework's own closed-account test. A tarpit lock (disabled with a disabledDateTime) stops new
+// password sign-ins only, so failed logins by someone else do not end the owner's delegation (SEC-PSA-02).
+const closed = (ua) =>
+    !ua ||
+    (ua.disabled === 'Y' && !ua.disabledDateTime) ||
+    (ua.terminateDate && ec.user.timestampMillis(ua.terminateDate) <= now())
 const find = (name, p) => ec.entity.find(prefix + name).condition(p)
 const create = (name, p) => {
     const v = ec.entity.makeValue(prefix + name)
@@ -354,12 +361,7 @@ function authenticateDelegation(token, clientId, siteId) {
         .find('moqui.security.UserAccount')
         .condition('userId', v.userId)
         .one()
-    if (
-        !ua ||
-        ua.disabled === 'Y' ||
-        (ua.terminateDate && ec.user.timestampMillis(ua.terminateDate) <= now())
-    )
-        fail('AuthenticationRequired', 'Session expired')
+    if (closed(ua)) fail('AuthenticationRequired', 'Session expired')
     if (
         v.accountStamp &&
         v.accountStamp !==
@@ -487,11 +489,8 @@ function completeSso(p) {
     const ua = ec.user.userAccount
     if (!ua)
         fail('AuthenticationRequired', 'Complete account authentication first')
-    if (
-        ua.disabled === 'Y' ||
-        (ua.terminateDate && ec.user.timestampMillis(ua.terminateDate) <= now())
-    )
-        fail('AuthenticationRequired', 'Account is unavailable')
+    // the SSO sign-in itself passed the framework's own test, which a tarpit lock does not stop
+    if (closed(ua)) fail('AuthenticationRequired', 'Account is unavailable')
     const code = ec.user.randomString(64)
     row.set('userId', ua.userId)
     row.set('codeHash', digest(code))
@@ -524,12 +523,7 @@ function exchangeSso(p) {
         .find('moqui.security.UserAccount')
         .condition('userId', row.userId)
         .one()
-    if (
-        !ua ||
-        ua.disabled === 'Y' ||
-        (ua.terminateDate && ec.user.timestampMillis(ua.terminateDate) <= now())
-    )
-        fail('AuthenticationRequired', 'Account is unavailable')
+    if (closed(ua)) fail('AuthenticationRequired', 'Account is unavailable')
     ec.user.internalLoginUser(ua.username)
     row.set('consumedAt', ec.user.nowTimestamp)
     row.update()

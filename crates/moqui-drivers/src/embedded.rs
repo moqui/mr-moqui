@@ -585,6 +585,7 @@ mod cluster {
         adopt_port: Option<u16>,
     ) -> Result<(EmbeddedCluster, PostgresDriver), Error> {
         let settings = settings(dir, data_dir, options, adopt_port);
+        private_password_file(&settings.password_file, &settings.password)?;
         // A socket directory under temp (socket_dir_for) is this user's alone; the data directory already is.
         #[cfg(unix)]
         if let Some(socket_dir) = settings
@@ -600,6 +601,7 @@ mod cluster {
                 .map_err(|err| {
                     Error::new(format!("create embedded postgres socket dir {}", socket_dir.display())).with_source(err)
                 })?;
+            socket_dir_private(socket_dir, &settings.password_file)?;
         }
         install(&settings.installation_dir)?;
         let mut server = PostgreSQL::new(settings);
@@ -838,6 +840,50 @@ mod cluster {
         }
         reuse_password(&mut settings);
         settings
+    }
+
+    /// The superuser's password file, only this user's (`0600`): written here with `password` when it is missing (the
+    /// setup then leaves it as it is), else its mode set (SEC-DAT-06).
+    fn private_password_file(path: &Path, password: &str) -> Result<(), Error> {
+        use std::io::Write as _;
+        let failed = |err: std::io::Error| {
+            Error::new(format!("embedded postgres password file {}", path.display())).with_source(err)
+        };
+        if path.exists() {
+            return moqui_lib::private_fs::restrict(path).map_err(failed);
+        }
+        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+            moqui_lib::private_fs::create_dir_all(parent).map_err(failed)?;
+        }
+        moqui_lib::private_fs::file_options()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .and_then(|mut file| file.write_all(password.as_bytes()))
+            .map_err(failed)
+    }
+
+    /// Refuses a socket directory under temp that is not this user's alone: another user who made it first (it was
+    /// there, so `create` kept its owner and mode) could replace the socket and take the server's connections
+    /// (SEC-OUT-06). This user is the owner of `owned`, the password file just written or made private.
+    #[cfg(unix)]
+    fn socket_dir_private(socket_dir: &Path, owned: &Path) -> Result<(), Error> {
+        use std::os::unix::fs::MetadataExt as _;
+        let meta = |path: &Path| {
+            std::fs::symlink_metadata(path)
+                .map_err(|err| Error::new(format!("embedded postgres socket dir {}", path.display())).with_source(err))
+        };
+        let (dir, me) = (meta(socket_dir)?, meta(owned)?.uid());
+        if !dir.is_dir() || dir.uid() != me || dir.mode() & 0o777 != 0o700 {
+            return Err(Error::new(format!(
+                "the embedded postgres socket dir {} is not this user's alone (owner {}, mode {:o}): remove it, or make \
+                 it this user's with mode 0700",
+                socket_dir.display(),
+                dir.uid(),
+                dir.mode() & 0o7777
+            )));
+        }
+        Ok(())
     }
 
     fn reuse_password(settings: &mut Settings) {

@@ -14,8 +14,9 @@
 
 //! Path confinement (plans/design-dev-aide.md 4.1): a path the client names is relative to a root, and resolves inside
 //! the root's canonical directory or not at all: no absolute path (`/x`, `C:\x`, `\\server\share`, `\\?\`), no `..`, no
-//! symlink that leads out, nothing under `.git`, and nothing on the deny list (the runtime's database, logs, transaction
-//! log, temporary files, `.env` and certificates, and a root's `target`).
+//! symlink that leads out, nothing under `.git`, and nothing on the deny list (the runtime's database and its saved
+//! copies, logs, transaction log, temporary files, `.env` and its copies, certificates, SFTP root and installed
+//! programs, and a root's `target`). The runtime's conf files are for the full tier only.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -24,8 +25,28 @@ use moqui_lib::error::Error;
 /// Names never shown or opened under a root.
 pub const HIDDEN: &[&str] = &[".git"];
 
-/// The runtime directories and files no root may reach, relative to the runtime directory.
-pub const DENIED_RUNTIME: &[&str] = &["db", "log", "txlog", "tmp", ".env", "cert"];
+/// The runtime directories and files no root may reach, relative to the runtime directory: the database and its saved
+/// copies (`save`), the logs, the transaction log, temporary files, the generated secrets (`.env`, and any copy of it
+/// beside it, [`ENV_PREFIX`]), the certificates, the SFTP root, and the installed programs (`install`, `opensearch`).
+pub const DENIED_RUNTIME: &[&str] = &[
+    "db",
+    "log",
+    "txlog",
+    "tmp",
+    ".env",
+    "cert",
+    "save",
+    "sftp",
+    "install",
+    "opensearch",
+];
+
+/// A name at the top of the runtime that starts so is the secrets file or a copy of it (`.env.bak`, `.env.local`).
+pub const ENV_PREFIX: &str = ".env";
+
+/// The runtime directory of the conf files (datasource passwords, the crypt pass when set there): read and written
+/// only at the full tier ([`hidden_below_full`]).
+pub const CONF: &str = "conf";
 
 /// The runtime directory of the agents' worktrees (plans/design-dev-aide.md 21.8): reached only as their own roots.
 pub const WORKTREES: &str = "worktrees";
@@ -102,6 +123,11 @@ pub fn resolve(root: &Path, runtime: &Path, relative: &str) -> Result<Resolved, 
                 )));
             }
         }
+        if env_copy(&canonical, &runtime) {
+            return Err(Error::new(format!(
+                "{relative} is a copy of runtime/.env, which the dev-aide does not open"
+            )));
+        }
         // the agents' worktrees are roots of their own (crate::worktree), not files of the tree that holds the runtime
         let worktrees = runtime.join(WORKTREES);
         if inside(&canonical, &worktrees) && !inside(root, &worktrees) {
@@ -125,6 +151,34 @@ pub fn resolve(root: &Path, runtime: &Path, relative: &str) -> Result<Resolved, 
         relative: parts.join("/"),
         real,
     })
+}
+
+/// Whether `path` (canonical) is a name at the top of `runtime` (canonical) that starts with [`ENV_PREFIX`], or under one.
+fn env_copy(path: &Path, runtime: &Path) -> bool {
+    path.strip_prefix(runtime).is_ok_and(|after| {
+        after
+            .components()
+            .next()
+            .is_some_and(|first| first.as_os_str().to_string_lossy().starts_with(ENV_PREFIX))
+    })
+}
+
+/// Whether `path` (a resolved one) is in the runtime's conf directory, which a tier below full does not read or write
+/// (SEC-DEV-04): the conf files hold the datasource passwords.
+#[must_use]
+pub fn hidden_below_full(path: &Path, runtime: &Path) -> bool {
+    runtime
+        .canonicalize()
+        .is_ok_and(|runtime| inside(path, &runtime.join(CONF)))
+}
+
+/// Whether `location` (canonical) may become a root of a user who is not an admin: a directory in the runtime or in a
+/// root there is already, never one elsewhere on the host such as `/` or a home directory, which every tier would then
+/// read (SEC-DEV-04).
+#[must_use]
+pub fn root_location_open(location: &Path, runtime: &Path, roots: &[&Path]) -> bool {
+    let in_runtime = runtime.canonicalize().is_ok_and(|runtime| inside(location, &runtime));
+    in_runtime || roots.iter().any(|root| inside(location, root))
 }
 
 /// The parts of a relative path, refusing an absolute one and `..`.
@@ -267,11 +321,44 @@ mod tests {
     fn a_runtime_root_does_not_reach_the_denied_directories() {
         let (_scratch, _root, runtime) = scratch("runtime");
         let runtime_root = runtime.canonicalize().unwrap();
-        for path in ["db/x", "log/moqui.log", ".env", "cert/key.pem", "txlog/x", "tmp/x"] {
+        // SEC-DEV-04: the saved databases, the SFTP root, the installed programs and copies of .env too
+        for path in [
+            "db/x",
+            "log/moqui.log",
+            ".env",
+            "cert/key.pem",
+            "txlog/x",
+            "tmp/x",
+            "save/copy/db",
+            "sftp/x",
+            "install/x",
+            "opensearch/config/x",
+            ".env.bak",
+            ".env.local",
+        ] {
             let err = resolve(&runtime_root, &runtime, path).unwrap_err().to_string();
             assert!(err.contains("does not open"), "{path}: {err}");
         }
         assert!(resolve(&runtime_root, &runtime, "conf/MoquiDevConf.xml").is_ok());
+        assert!(resolve(&runtime_root, &runtime, "environment.md").is_ok());
+    }
+
+    /// SEC-DEV-04: the conf files are the full tier's; a root a non-admin adds is in the runtime or a root there is.
+    #[test]
+    fn conf_files_are_the_full_tier_s_and_a_non_admin_s_root_stays_near() {
+        let (scratch, root, runtime) = scratch("conf");
+        let runtime_root = runtime.canonicalize().unwrap();
+        let conf = resolve(&runtime_root, &runtime, "conf/MoquiDevConf.xml").unwrap();
+        assert!(hidden_below_full(&conf.path, &runtime));
+        let service = resolve(&root, &runtime, "service/A.xml").unwrap();
+        assert!(!hidden_below_full(&service.path, &runtime));
+        let elsewhere = scratch.0.join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let elsewhere = elsewhere.canonicalize().unwrap();
+        assert!(root_location_open(&root.join("service"), &runtime, &[]));
+        assert!(!root_location_open(&elsewhere, &runtime, &[]));
+        assert!(!root_location_open(Path::new("/"), &runtime, &[&root]));
+        assert!(root_location_open(&elsewhere, &runtime, &[&elsewhere]));
     }
 
     #[cfg(windows)]

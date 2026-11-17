@@ -83,8 +83,8 @@ pub(crate) fn starts_block(line: &str) -> bool {
     line.trim() == "js"
 }
 
-/// Run one command line as `username`.
-pub(crate) async fn run(factory: &Weak<ExecutionContextFactory>, username: &str, line: &str) -> Outcome {
+/// Run one command line as `username`, who is at `from` (the client's address, for the audit).
+pub(crate) async fn run(factory: &Weak<ExecutionContextFactory>, username: &str, from: &str, line: &str) -> Outcome {
     let line = line.trim();
     let (command, rest) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
     let rest = rest.trim().to_string();
@@ -99,13 +99,19 @@ pub(crate) async fn run(factory: &Weak<ExecutionContextFactory>, username: &str,
         "status" | "service" | "entity" | "cache" | "js" => {
             let command = command.to_string();
             let username = username.to_string();
+            let from = from.to_string();
             let ran = on_pool(factory, move |factory| {
                 moqui_core::user::internal_login_user(&username)?;
-                if matches!(command.as_str(), "service" | "entity" | "js") {
+                let ran = if matches!(command.as_str(), "service" | "entity" | "js") {
                     in_tools_app(|| execute(factory, &username, &command, &rest))
                 } else {
                     execute(factory, &username, &command, &rest)
+                };
+                if command != "status" {
+                    let status = ran.as_ref().map_or(1, |outcome| outcome.status);
+                    record(&username, &from, &audit_text(&command, &rest), status);
                 }
+                ran
             })
             .await;
             match ran {
@@ -114,6 +120,60 @@ pub(crate) async fn run(factory: &Weak<ExecutionContextFactory>, username: &str,
             }
         }
         other => Outcome::failed(format!("unknown command {other}; try help")),
+    }
+}
+
+/// What the audit keeps of a command line (SEC-FIL-62): the command word with the service or entity name, or the cache
+/// command, and for `js` a SHA-256 digest of the code; never the code itself or a call's parameters, which can carry
+/// secrets.
+fn audit_text(command: &str, rest: &str) -> String {
+    match command {
+        "service" | "entity" => format!("{command} {}", rest.split_whitespace().next().unwrap_or_default()),
+        "js" => {
+            use sha2::Digest as _;
+            let digest = sha2::Sha256::digest(rest.as_bytes());
+            let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+            format!("js sha256:{hex}")
+        }
+        _ => format!("{command} {rest}").trim().to_string(),
+    }
+}
+
+/// The audit of one command line that ran (SEC-FIL-62), as the terminal's sessions have: an INFO line, and a
+/// `moqui.terminal.TerminalSession` row of kind `command` (who, from where, what, its exit status), as the signed-in
+/// user on this thread. A row that cannot be written is logged and the command's answer stands.
+fn record(username: &str, from: &str, text: &str, status: u32) {
+    tracing::info!("admin shell of {username} from {from}: {text} (exit {status})");
+    let written = ExecutionContext::with_current(|ec| -> Result<(), Error> {
+        let _authz = ec.disable_authz();
+        let facade = ec
+            .factory()
+            .entity()
+            .ok_or_else(|| Error::new("the entity facade is not installed"))?;
+        let mut row = facade.make_value("moqui.terminal.TerminalSession")?;
+        row.set(
+            "terminalSessionId",
+            Value::string(&moqui_core::user::random_string(22)?),
+        );
+        if let Ok(Some(user_id)) = moqui_core::user::current_user_id() {
+            row.set("userId", Value::string(&user_id));
+        }
+        row.set("username", Value::string(username));
+        row.set("kind", Value::string("command"));
+        row.set("commandLine", Value::string(text));
+        row.set("clientIp", Value::string(from));
+        let now = moqui_core::user::now_value();
+        row.set("fromDate", now.clone());
+        row.set("thruDate", now);
+        row.set("exitStatus", Value::I64(i64::from(status)));
+        row.create(&facade)?;
+        Ok(())
+    });
+    if let Some(Err(err)) = written {
+        tracing::error!(
+            "admin shell of {username}: the audit row of '{text}' was not written: {}",
+            err.message()
+        );
     }
 }
 

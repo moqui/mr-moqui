@@ -39,6 +39,7 @@ pub mod markdown;
 pub mod net;
 pub mod node;
 pub mod object;
+pub mod private_fs;
 pub mod reconnect;
 pub mod remote_login;
 pub mod resource;

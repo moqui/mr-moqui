@@ -104,8 +104,16 @@ impl Context {
         roots::find(&self.roots, id).ok_or_else(|| LibError::new(format!("no root {id}")))
     }
 
+    /// `relative` of `root`, confined ([`confine::resolve`]); the runtime's conf files only at the full tier.
     pub(crate) fn resolve(&self, root: &Root, relative: &str) -> Result<confine::Resolved, LibError> {
-        confine::resolve(&root.path, self.factory.runtime_dir(), relative)
+        let resolved = confine::resolve(&root.path, self.factory.runtime_dir(), relative)?;
+        if self.tier != Tier::Full && confine::hidden_below_full(&resolved.path, self.factory.runtime_dir()) {
+            return Err(LibError::new(format!(
+                "{relative} is runtime/{}, which only the full tier opens",
+                confine::CONF
+            )));
+        }
+        Ok(resolved)
     }
 
     pub(crate) fn git(&self) -> Git {
@@ -991,6 +999,10 @@ fn search_files(
         for line in output.stdout.lines().take(LIMIT) {
             let mut parts = line.splitn(3, '\0');
             if let (Some(path), Some(number), Some(text)) = (parts.next(), parts.next(), parts.next()) {
+                // what an open would refuse is not shown: the runtime's denied files, its conf below the full tier
+                if context.resolve(root, path).is_err() {
+                    continue;
+                }
                 results.push(
                     serde_json::json!({ "path": path, "line": number.parse::<u64>().unwrap_or(0), "text": text }),
                 );
@@ -1254,6 +1266,11 @@ fn store_root(
         if confine::inside(&location, &runtime.join(denied)) {
             return Err(LibError::new(format!("runtime/{denied} is not a root")));
         }
+    }
+    // a directory elsewhere on the host (`/`, a home directory) is an admin's to add: every tier reads a root
+    let roots: Vec<&Path> = context.roots.iter().map(|root| root.path.as_path()).collect();
+    if !confine::root_location_open(&location, context.factory.runtime_dir(), &roots) {
+        require_admin("A root outside the runtime and the repositories")?;
     }
     let mut row = match roots::root_row(&context.facade, &location) {
         Some(row) => row,

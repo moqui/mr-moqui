@@ -24,6 +24,7 @@ async fn an_overlong_shell_line_or_js_block_is_refused() {
             server,
             &std::sync::Weak::new(),
             "tester",
+            "127.0.0.1",
             false,
             Err("no apps"),
             Default::default(),

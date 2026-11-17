@@ -291,8 +291,9 @@ along with this software (see the LICENSE.md file). If not, see
         <description>A shared drive of the current user (its owner). storage: folder (the database tree, each file with its
             own versions; the default), gitDb (a git repository in the database), gitLocal (a bare git repository on disk
             that can be cloned), or mirror (admins only: a read-only mirror of remoteUrl, fetched on its interval by the
-            fetch_AllGitRepositories_frequent job). A records drive (driveKindEnumId RdkRecords) or any explicit
-            rootLocation is for admins or internal setup (authorization disabled). memberList holds maps of userId or
+            fetch_AllGitRepositories_frequent job). A records drive (driveKindEnumId RdkRecords), any explicit
+            rootLocation and a git drive's localPath (its repository's place on disk; runtime/git/DRIVE_id when left out)
+            are for admins or internal setup (authorization disabled). memberList holds maps of userId or
             userGroupId with a permissionEnumId (RdpView by default).</description>
         <in-parameters>
             <parameter name="driveName" required="true"/>
@@ -331,7 +332,8 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.message.addError('A mirror URL has no user or password in it: give them as the username and access token'); return }
             if (!driveKindEnumId) driveKindEnumId = storage === 'mirror' ? 'RdkMirror' : 'RdkShared'
             if (driveKindEnumId === 'RdkPersonal') { ec.message.addError('A personal drive is made by ensure#PersonalDrive'); return }
-            if ((driveKindEnumId === 'RdkRecords' || rootLocation) && !isAdmin) { ec.message.addError('Only an administrator sets a drive location'); return }
+            // localPath is a place on the server's disk, used as given (an absolute path, '..'), as rootLocation is
+            if ((driveKindEnumId === 'RdkRecords' || rootLocation || localPath) && !isAdmin) { ec.message.addError('Only an administrator sets a drive location'); return }
             const row = ec.entity.makeValue('moqui.resource.ResourceDrive')
             row.setSequencedIdPrimary()
             driveId = row.driveId

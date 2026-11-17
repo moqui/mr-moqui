@@ -639,10 +639,14 @@ fn write_new<T>(
         .parent()
         .filter(|parent| make_parents && !parent.as_os_str().is_empty())
     {
-        std::fs::create_dir_all(parent)
+        moqui_lib::private_fs::create_dir_all(parent)
             .map_err(|err| Error::new(format!("could not create {}", parent.display())).with_source(err))?;
     }
-    let file = File::create_new(path)
+    // an export or snapshot holds decrypted fields: this user's alone, whatever the umask (SEC-DAT-06)
+    let file = moqui_lib::private_fs::file_options()
+        .write(true)
+        .create_new(true)
+        .open(path)
         .map_err(|err| Error::new(format!("could not write {}", path.display())).with_source(err))?;
     let mut out = BufWriter::new(file);
     let result = body(&mut out).and_then(|value| {

@@ -37,6 +37,46 @@ fn a_deploy_fetches_over_https_or_ssh_only() {
     }
 }
 
+/// SEC-OUT-05: the request's token reaches git in its environment, which only this user can read, never in its
+/// arguments, which any local user can.
+#[test]
+fn the_deploy_token_is_in_git_s_environment_not_its_arguments() {
+    use base64::Engine as _;
+    let request = DeployRequest {
+        url: "https://example.com/r.git".to_string(),
+        branch: "main".to_string(),
+        username: Some("deployer".to_string()),
+        token: Some("s3cret-token".to_string()),
+        ..DeployRequest::default()
+    };
+    let command = super::git_process(None, &request, &["fetch", "origin"], None);
+    let args: Vec<String> = command
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(args, ["fetch", "origin"]);
+    let basic = base64::engine::general_purpose::STANDARD.encode("deployer:s3cret-token");
+    let env: Vec<(String, String)> = command
+        .get_envs()
+        .filter_map(|(name, value)| {
+            Some((
+                name.to_string_lossy().into_owned(),
+                value?.to_string_lossy().into_owned(),
+            ))
+        })
+        .collect();
+    for (name, value) in [
+        ("GIT_CONFIG_COUNT", "1".to_string()),
+        ("GIT_CONFIG_KEY_0", "http.extraHeader".to_string()),
+        ("GIT_CONFIG_VALUE_0", format!("Authorization: Basic {basic}")),
+    ] {
+        assert!(env.contains(&(name.to_string(), value)), "{name} in {env:?}");
+    }
+    // with no token, no configuration is added
+    let plain = super::git_process(None, &DeployRequest::default(), &["status"], None);
+    assert!(plain.get_envs().all(|(name, _)| name != "GIT_CONFIG_COUNT"));
+}
+
 /// SEC-TLS-08: on a production instance user info does not hide an internal host, and a host that does not resolve is
 /// refused rather than taken as public.
 #[test]

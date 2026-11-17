@@ -418,6 +418,13 @@ fn generated_secrets_are_32_random_bytes_and_secret_names_are_known() {
     assert!(secret("fcm_service_account", Some("true")));
     assert!(!secret("webapp_http_port", None));
     assert!(!secret("ssh_host_key", Some("false")));
+
+    // the request log's rule: a PASS payment result's returnKey reads the attempt's outcome (SEC-PSA-09)
+    let parameter = super::secret_parameter;
+    assert!(parameter("returnKey"));
+    assert!(parameter("downloadToken"));
+    assert!(!parameter("primaryKeyId"));
+    assert!(!parameter("returnKeyId"));
 }
 
 /// SEC-WEB-13: a `session_cookie_key` an operator set is checked before the server starts: still `CHANGEME`, not

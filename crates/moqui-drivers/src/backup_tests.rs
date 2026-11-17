@@ -275,3 +275,24 @@ fn a_chained_incremental_is_taken_from_the_newest_archive_of_its_generation() {
     assert_eq!(incremental_parent(&archives, full, &generation, false).name, "full");
     assert_eq!(incremental_parent(&archives, full, &generation, true).name, "incr2");
 }
+
+/// SEC-DAT-06: pg_dump writes into a partial file made `0600` before it runs, an older partial emptied and made so too,
+/// so a dump is never readable by others while it is written.
+#[cfg(unix)]
+#[test]
+fn a_dump_s_partial_file_is_this_user_s_alone_before_pg_dump_writes_it() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = temp_dir();
+    let _guard = DirGuard(dir.clone());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    let fresh = dir.join("fresh.dump.partial");
+    private_partial(&fresh).unwrap();
+    assert_eq!(mode(&fresh), 0o600);
+    let stale = dir.join("stale.dump.partial");
+    std::fs::write(&stale, "an older run's dump").unwrap();
+    std::fs::set_permissions(&stale, std::fs::Permissions::from_mode(0o644)).unwrap();
+    private_partial(&stale).unwrap();
+    assert_eq!(mode(&stale), 0o600);
+    assert_eq!(std::fs::metadata(&stale).unwrap().len(), 0);
+}

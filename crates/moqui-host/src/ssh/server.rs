@@ -1285,9 +1285,10 @@ impl russh::server::Handler for Connection {
         let factory = std::sync::Weak::clone(&self.shared.factory);
         let handle = session.handle();
         let newline = if self.ptys.contains_key(&channel) { "\r\n" } else { "\n" };
+        let from = self.peer.ip().to_canonical().to_string();
         tokio::spawn(async move {
             let mut stream = open.into_stream();
-            let outcome = shell::run(&factory, &username, &line).await;
+            let outcome = shell::run(&factory, &username, &from, &line).await;
             let text = with_newlines(&outcome.text, newline);
             if !text.is_empty() {
                 let _ = stream.write_all(text.as_bytes()).await;
@@ -1354,8 +1355,9 @@ impl russh::server::Handler for Connection {
             return Ok(());
         }
         let host = self.host_access(channel, &username);
+        let from = self.peer.ip().to_canonical().to_string();
         tokio::spawn(async move {
-            let status = interactive(open.into_stream(), &factory, &username, pty, access, host).await;
+            let status = interactive(open.into_stream(), &factory, &username, &from, pty, access, host).await;
             let _ = handle.exit_status_request(channel, status).await;
             let _ = handle.eof(channel).await;
             let _ = handle.close(channel).await;
