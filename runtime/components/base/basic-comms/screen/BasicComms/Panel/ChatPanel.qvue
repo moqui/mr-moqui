@@ -14,9 +14,11 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- ChatPanel (design-drawers-commons.md §4 ChatPanel), the component Panel/Chat.xml serves in the qvue render mode: the Chat
     tab of the tray panel, and the + menu's Chat message (in the quick-create dialog it opens on New message). One pane with
     two modes: the rooms, those with mentions or unread messages first, each with its avatar and presence dot, last message,
-    time and badges, with New message (people, one or several), Mark all read and Open in Comms; and a room opened in place,
+    time and badges, with New message (people, one or several; with several, a name makes a private room; a phone number,
+    for a user with a number that texts, opens its room), Mark all read and Open in Comms; and a room opened in place,
     which is Chat.qvue's chat-room component at 400 px (compact: its side panes and threads open over the timeline), loaded
-    the first time a room opens, with a back arrow and Open in Chat.
+    the first time a room opens, with a back arrow and Open in Chat. The room, the picker, a room's actions and the archive
+    are back layers (moqui.back), so Back closes them one at a time.
 
     The transitions are those of Comms/Chat. The panel listens to the page's chat store (moqui.chat.on), so a chat push updates
     the rooms instead of reloading the tab; the tray's refresh of the tab (the shell's shellCounts push and its poll) calls
@@ -25,7 +27,7 @@ along with this software (see the LICENSE.md file). If not, see
 <template><div class="m-chat-panel column no-wrap relative-position" :class="home ? 'm-chat-home' : ''" :style="{height: height + 'px'}">
     <template v-if="!roomId">
         <div v-if="archivedView" class="row items-center no-wrap q-pb-xs">
-            <q-btn flat round dense icon="sym_o_arrow_back" :aria-label="t('Back')" @click="archivedView = false"></q-btn>
+            <q-btn flat round dense icon="sym_o_arrow_back" :aria-label="t('Back to chats')" @click="archivedView = false"></q-btn>
             <div class="col ellipsis text-h6 q-pl-sm">{{t('Archived')}}</div>
         </div>
         <div v-else class="row items-center no-wrap q-pb-xs">
@@ -38,9 +40,12 @@ along with this software (see the LICENSE.md file). If not, see
         <q-input v-if="home && rooms.length > 6" v-model="filter" dense outlined rounded clearable class="q-px-sm q-pb-sm m-chat-home-search" :placeholder="t('Search conversations')">
             <template #prepend><q-icon name="sym_o_search"></q-icon></template></q-input>
         <div v-if="newOpen && !home" class="q-pb-sm">
-            <m-drop-down v-model="newUserIds" name="panelDirectUserIds" multiple server-search :options-url="url('searchUsers')" :label="t('To: one person or several')"></m-drop-down>
+            <m-drop-down v-model="newUserIds" name="panelDirectUserIds" multiple server-search :options-url="url('searchUsers')" :options-parameters="pickParameters" :label="toLabel"></m-drop-down>
+            <m-text-line v-if="pickKind === 'group'" v-model="newName" name="panelRoomName" :label="t('Name (optional): makes a room')" class="q-mt-xs"></m-text-line>
+            <m-drop-down v-if="pickKind === 'number' && numbers.length > 1" v-model="fromNumber" name="panelFromNumber" :options="numbers" :label="t('From')" class="q-mt-xs"></m-drop-down>
+            <div v-if="pickKind === 'mixed'" class="text-caption text-negative q-mt-xs">{{pickHint}}</div>
             <div class="row q-gutter-x-sm q-mt-xs">
-                <q-btn dense unelevated no-caps color="primary" icon="sym_o_chat" :label="t('Start')" :disable="!(newUserIds || []).length" :loading="busy" @click="startDirect"></q-btn>
+                <q-btn dense unelevated no-caps color="primary" icon="sym_o_chat" :label="t('Start')" :disable="pickKind === 'none' || pickKind === 'mixed'" :loading="busy" @click="startDirect"></q-btn>
                 <q-btn dense flat no-caps :label="t('Cancel')" @click="newOpen = false"></q-btn>
             </div>
         </div>
@@ -103,16 +108,18 @@ along with this software (see the LICENSE.md file). If not, see
         <q-dialog v-if="home" v-model="newOpen" maximized transition-show="slide-up" transition-hide="slide-down">
             <q-card class="column no-wrap m-chat-new">
                 <div class="row items-center no-wrap q-pa-sm">
-                    <q-btn flat round dense icon="sym_o_arrow_back" :aria-label="t('Back')" v-close-popup></q-btn>
+                    <q-btn flat round dense icon="sym_o_arrow_back" :aria-label="t('Back to chats')" v-close-popup></q-btn>
                     <div class="text-h6 q-ml-sm col">{{t('New conversation')}}</div>
                 </div>
                 <div class="q-px-md">
-                    <m-drop-down v-model="newUserIds" name="panelDirectUserIds" multiple server-search :options-url="url('searchUsers')" :label="t('To: one person or several')"></m-drop-down>
-                    <div class="text-caption m-muted q-mt-sm">{{t('Pick one person for a direct chat, or several for a group.')}}</div>
+                    <m-drop-down v-model="newUserIds" name="panelDirectUserIds" multiple server-search :options-url="url('searchUsers')" :options-parameters="pickParameters" :label="toLabel"></m-drop-down>
+                    <m-text-line v-if="pickKind === 'group'" v-model="newName" name="panelRoomName" :label="t('Name (optional): makes a room')" class="q-mt-sm"></m-text-line>
+                    <m-drop-down v-if="pickKind === 'number' && numbers.length > 1" v-model="fromNumber" name="panelFromNumber" :options="numbers" :label="t('From')" class="q-mt-sm"></m-drop-down>
+                    <div class="text-caption q-mt-sm m-chat-new-hint" :class="pickKind === 'mixed' ? 'text-negative' : 'm-muted'">{{pickHint}}</div>
                 </div>
                 <q-space></q-space>
-                <div class="q-pa-md"><q-btn unelevated no-caps color="primary" class="full-width" size="lg" icon="sym_o_chat" :label="t('Start')"
-                        :disable="!(newUserIds || []).length" :loading="busy" @click="startDirect"></q-btn></div>
+                <div class="q-pa-md"><q-btn unelevated no-caps color="primary" class="full-width m-chat-new-start" size="lg" icon="sym_o_chat" :label="t('Start')"
+                        :disable="pickKind === 'none' || pickKind === 'mixed'" :loading="busy" @click="startDirect"></q-btn></div>
             </q-card>
         </q-dialog>
         <q-dialog v-model="roomSheet.open" position="bottom" @hide="roomSheet.room = null">
@@ -164,7 +171,8 @@ module.exports = {
     inject: { mScreen: { default: null } },
     data() {
         return { loaded: !!memo.rooms, rooms: memo.rooms || [], me: memo.me || {}, prefs: memo.prefs || {}, roomId: null, componentVersion: 0,
-            height: 520, newOpen: false, newUserIds: [], busy: false, filter: '', archivedView: false, roomSheet: { open: false, room: null } };
+            height: 520, newOpen: false, newUserIds: [], newName: '', fromNumber: '', numbers: [], busy: false, filter: '', archivedView: false,
+            roomSheet: { open: false, room: null } };
     },
     computed: {
         // Qvue screens have no container ID wrapper; the loader supplies its identity before mount or measurement.
@@ -188,6 +196,18 @@ module.exports = {
                 return (right.lastEventDate || 0) - (left.lastEventDate || 0);
             });
             return this.home ? list : list.slice(0, MAX_SHOWN);
+        },
+        // the new-chat picker: what is picked (moqui.chat.pickKind), and phone numbers offered when the user has one that texts
+        pickKind() { return moqui.chat.pickKind(this.newUserIds); },
+        pickParameters() { return { numbers: this.numbers.length ? 'true' : '' }; },
+        toLabel() { return this.numbers.length ? t('To: people or a phone number') : t('To: one person or several'); },
+        pickHint() {
+            const kind = this.pickKind;
+            if (kind === 'number') return t('A text from your number: the conversation with this number opens.');
+            if (kind === 'mixed') return t('A text goes to one phone number: start it with the number alone.');
+            if (kind === 'group') return t('A group chat; with a name it is a room, which can take more people later.');
+            return this.numbers.length ? t('Pick one person for a direct chat, several for a group, or type a phone number to text it.')
+                : t('Pick one person for a direct chat, or several for a group.');
         },
         archivedCount() { return this.rooms.filter((room) => room.isMember && this.isArchived(room)).length; },
         unreadTotal() { return this.rooms.reduce((sum, room) => sum + (this.countsOf(room).unread || 0), 0); }
@@ -298,16 +318,28 @@ module.exports = {
             const room = this.rooms.find((item) => item.chatRoomId === id);
             if (room) { room.unreadCount = 0; room.mentionCount = 0; }
         },
-        toggleNew() { this.newOpen = !this.newOpen; this.newUserIds = []; },
-        openNew() { this.newUserIds = []; this.newOpen = true; },
+        toggleNew() { if (this.newOpen) this.newOpen = false; else this.openNew(); },
+        openNew() {
+            this.newUserIds = [];
+            this.newName = '';
+            this.newOpen = true;
+            // the numbers the user may text from, read again each time (none offline: the picker is people only)
+            moqui.request(this.url('textNumbers')).then((result) => {
+                this.numbers = moqui.chat.numberOptions(((result && result.json) || {}).numberList);
+                if (!this.numbers.some((number) => number.value === this.fromNumber)) this.fromNumber = this.numbers.length ? this.numbers[0].value : '';
+            }, () => {});
+        },
+        // Start: the number's room, a named room, or the direct or group chat (moqui.chat.startChat)
         startDirect() {
-            const ids = this.newUserIds || [];
-            if (!ids.length) return;
+            const pick = { values: this.newUserIds || [], name: this.newName, fromNumber: this.fromNumber };
+            if (moqui.chat.pickKind(pick.values) === 'none') return;
             this.busy = true;
-            this.post('createDirect', { userIds: ids.join(',') }).then((json) => {
+            moqui.chat.startChat((name, params) => this.post(name, params), pick).then((json) => {
                 this.busy = false;
+                if (!json || !json.chatRoomId) return;
                 this.newOpen = false;
                 this.newUserIds = [];
+                this.newName = '';
                 this.scheduleRooms();
                 this.openRoom(json.chatRoomId);
             }, () => { this.busy = false; });
@@ -344,6 +376,9 @@ module.exports = {
         }
     },
     mounted() {
+        // what Back closes (moqui.back): the room opened here, the picker, a room's actions, the archive
+        this.backOff = moqui.back ? [moqui.back.track(this, () => this.roomId, () => this.closeRoom()), moqui.back.track(this, () => this.archivedView, () => { this.archivedView = false; }),
+            moqui.back.track(this, () => this.newOpen, () => { this.newOpen = false; }), moqui.back.track(this, () => this.roomSheet.open, () => { this.roomSheet.open = false; })] : [];
         this.measure();
         if (this.inDialog) this.newOpen = true;
         else if (memo.roomId) this.openRoom(memo.roomId);
@@ -359,6 +394,7 @@ module.exports = {
         this.refresh();
     },
     beforeUnmount() {
+        (this.backOff || []).forEach((off) => off());
         if (this.resizer) this.resizer.disconnect();
         this.holdCancel();
         (this.unsubscribe || []).forEach((off) => off());

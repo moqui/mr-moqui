@@ -973,3 +973,86 @@ test("a Tab ends a scan only after a burst of keys", () => {
     assert.ok(!qvt.scanEndsWithTab(2, 1000, 1010), "too short to be a code");
     assert.ok(!qvt.scanEndsWithTab(12, 0, 1000), "no keys timed");
 });
+
+test("Back layers: the last shown layer closes first, a hidden one waits, one its close left open stays; then the root's history; Esc asks for layers only", () => {
+    const back = moqui.back;
+    const closed = [];
+    const hidden = document.createElement("div");
+    hidden.style.display = "none";
+    document.body.appendChild(hidden);
+    const offRoom = back.push(() => closed.push("room"));
+    const offTray = back.push(() => closed.push("tray"), hidden);
+    let paneOpen = true;
+    let tries = 0;
+    back.push(() => { closed.push("pane"); tries += 1; if (tries > 1) paneOpen = false; }, null, () => paneOpen);
+    try {
+        assert.equal(back.depth(), 2, "the layer in a hidden element is not counted");
+        assert.ok(back.pop());
+        assert.ok(back.pop(), "a close that left the pane open keeps its layer");
+        assert.ok(back.pop());
+        assert.deepEqual(closed, ["pane", "pane", "room"], "the hidden tray's layer waits");
+        assert.equal(back.pop(), false, "nothing shown is open");
+        back.base = () => true;
+        assert.equal(back.pop(), true, "then the root's own history (the shell's)");
+        assert.equal(back.pop({ base: false }), false, "Esc does not go back in the history");
+        back.base = null;
+        offRoom();
+        offRoom();
+    } finally {
+        offTray();
+        hidden.remove();
+        back.base = null;
+    }
+    assert.equal(back.depth(), 0);
+    // an open Quasar dialog or menu closes first, by the Esc it takes (a keydown and a keyup with key code 27, on the window)
+    const keys = [];
+    const note = (event) => keys.push(event.type + " " + event.keyCode);
+    window.addEventListener("keydown", note);
+    window.addEventListener("keyup", note);
+    const menu = document.createElement("div");
+    menu.className = "q-menu";
+    document.body.appendChild(menu);
+    const offLayer = back.push(() => closed.push("sheet"));
+    try {
+        assert.ok(back.popupOpen());
+        assert.equal(back.pop({ popups: false, base: false }), true, "Esc leaves the popup to Quasar and closes a layer");
+        assert.deepEqual(keys, []);
+        assert.equal(back.pop(), true);
+        assert.deepEqual(keys, ["keydown 27", "keyup 27"]);
+        menu.className = "q-menu q-transition--fade-leave-active";
+        assert.equal(back.popupOpen(), false, "a menu on its way out is not open");
+    } finally {
+        offLayer();
+        menu.remove();
+        window.removeEventListener("keydown", note);
+        window.removeEventListener("keyup", note);
+    }
+    // track: a component's state that opens a layer (watched), off when it closes another way or the component goes
+    const watchers = [];
+    const vm = { $el: null, $watch(get, cb, opts) {
+        const watcher = { get, cb, last: get() };
+        watchers.push(watcher);
+        if (opts && opts.immediate) cb(watcher.last);
+        return () => watchers.splice(watchers.indexOf(watcher), 1);
+    } };
+    const tick = () => watchers.forEach((watcher) => { const value = watcher.get(); if (value !== watcher.last) { watcher.last = value; watcher.cb(value); } });
+    let open = false;
+    const stop = back.track(vm, () => open, () => { open = false; tick(); });
+    assert.equal(back.depth(), 0);
+    open = true;
+    tick();
+    assert.equal(back.depth(), 1);
+    assert.ok(back.pop());
+    assert.equal(open, false);
+    assert.equal(back.depth(), 0);
+    open = true;
+    tick();
+    open = false;
+    tick();
+    assert.equal(back.depth(), 0, "closed another way, its layer is off");
+    open = true;
+    tick();
+    stop();
+    assert.equal(back.depth(), 0, "stopped (unmounted), its layer is off");
+    assert.equal(watchers.length, 0);
+});

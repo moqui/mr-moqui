@@ -12,15 +12,18 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Chat (design-drawers-commons.md §13 Chat), the component Chat.xml serves in the qvue render mode: the rail (my status with
-    its presets, New direct message, New room, Browse rooms, a find line, the filter chips All, Unread, Mentions, Direct,
-    Rooms and Records, the pinned rooms and then the rest by their last message, each with its avatar or presence dot, last
-    message, draft pen and unread and mention badges) and the room view (chat-room, below in the script, which the tray's Chat
+    its presets, New direct message (one person, several with an optional name that makes a private room, or a phone
+    number to text for a user with a number that texts), New room, Browse rooms, a find line, the filter chips All, Unread,
+    Mentions, Direct, Rooms and Records, the pinned rooms and then the rest by their last message, each with its avatar or
+    presence dot, last message, draft pen and unread and mention badges) and the room view (chat-room, below in the script, which the tray's Chat
     tab also shows). The room is in the URL (chatRoomId, eventSeq, thread; dm and recordEntity with recordId to start a direct
     message or open a record's room), read from $root.currentParameters, so a room is a link and Back works; below 1024 px
     the rail is the screen and a room opens over it with a back arrow. The live parts come from the page's chat store
     (moqui.chat.on: events, room changes, read markers, typing), the rest from the JSON transitions of Chat.xml. The Chat key
     scope: Alt+Up and Alt+Down change room, with Shift the unread ones, Esc marks the room read and closes the side pane,
-    Shift+Esc marks every room read, Up in an empty composer edits my last message. A message is sent through the chat
+    Shift+Esc marks every room read, Up in an empty composer edits my last message. Back (moqui.back: Esc, the shell's Back,
+    Android's back) closes the message sheet, an edit and the side pane; with bubbles a swipe to the right on a message
+    replies to it and Attach offers the camera, the gallery or a file. A message is sent through the chat
     store's outbox (moqui.chat.send), so one sent offline waits in the page and goes when the page is back: its row shows
     Sending, Waiting or Not sent (Retry, Delete), and after a reconnect the room reads what it missed. The side panes:
     a thread, the room's threads, its files, members, pinned messages, search and the record. A message may be a poll
@@ -172,12 +175,16 @@ along with this software (see the LICENSE.md file). If not, see
     </div>
 </div>
 
-    <!-- NewDirect: one person, or several for a group message -->
+    <!-- NewDirect: one person, or several for a group message (with a name, a room), or a phone number to text -->
     <m-dialog v-model="newDirect.open" :title="t('New direct message')" width="520">
-        <m-drop-down v-model="newDirect.userIds" name="directUserIds" multiple server-search :options-url="url('searchUsers')" :label="t('To')"></m-drop-down>
-        <div class="text-caption m-muted q-mt-xs">{{t('One person, or several for a group message. A conversation you already have with them opens again.')}}</div>
+        <m-drop-down v-model="newDirect.userIds" name="directUserIds" multiple server-search :options-url="url('searchUsers')" :options-parameters="pickParameters"
+                :label="(newDirect.numbers || []).length ? t('To: people or a phone number') : t('To')"></m-drop-down>
+        <m-text-line v-if="pickKind === 'group'" v-model="newDirect.name" name="directRoomName" :label="t('Name (optional): makes a room')" class="q-mt-xs"></m-text-line>
+        <m-drop-down v-if="pickKind === 'number' && (newDirect.numbers || []).length > 1" v-model="newDirect.fromNumber" name="directFromNumber" :options="newDirect.numbers"
+                :label="t('From')" class="q-mt-xs"></m-drop-down>
+        <div class="text-caption m-muted q-mt-xs">{{pickHint}}</div>
         <div class="row q-gutter-sm q-mt-md">
-            <q-btn unelevated no-caps color="primary" icon="sym_o_chat" :label="t('Start')" :loading="newDirect.busy" :disable="!(newDirect.userIds || []).length" @click="startDirect()"></q-btn>
+            <q-btn unelevated no-caps color="primary" icon="sym_o_chat" :label="t('Start')" :loading="newDirect.busy" :disable="pickKind === 'none' || pickKind === 'mixed'" @click="startPicked()"></q-btn>
             <q-btn flat no-caps :label="t('Cancel')" v-close-popup></q-btn>
         </div>
     </m-dialog>
@@ -226,6 +233,8 @@ along with this software (see the LICENSE.md file). If not, see
 const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
 const DAY = 86400000;
 const GROUP_MILLIS = 5 * 60000;
+// how far a bubble is swiped to the right to reply to it
+const SWIPE_REPLY_PX = 64;
 const EDIT_WINDOW = 24 * 3600000;
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '🎉', '👀', '✅'];
 const EMOJI = ['😀', '😃', '😄', '😁', '😅', '😂', '🙂', '😉', '😊', '😍', '🤔', '😐', '😴', '😎', '🥳', '😢', '😮', '😬', '🙃', '🤝',
@@ -343,8 +352,8 @@ const messageTemplate = `
         :data-seq="item.eventSeq" role="article" :tabindex="actionsAvailable ? 0 : -1" :aria-label="messageLabel"
         @focusin="actionFocus = true" @focusout="actionFocus = $event.currentTarget.contains($event.relatedTarget)"
         @mouseenter="room.hover(item, inThread)" @mouseleave="room.unhover(item, inThread)" @click="room.tap(item, inThread)"
-        @touchstart.passive="room.holdStart(item, inThread, $event)" @touchmove.passive="room.holdCancel()" @touchend="room.holdEnd($event)"
-        @contextmenu="room.contextMenu(item, inThread, $event)">
+        @touchstart.passive="room.holdStart(item, inThread, $event)" @touchmove.passive="room.holdMove($event)" @touchend="room.holdEnd($event)"
+        @touchcancel="room.holdEnd($event)" @contextmenu="room.contextMenu(item, inThread, $event)" :style="room.swipeStyle(item, inThread)">
     <div class="self-stretch" :class="item.highlight ? 'bg-primary' : ''" style="width:3px;margin-right:3px;border-radius:2px"></div>
     <div style="width:40px;min-width:40px" class="q-pr-sm m-chat-avatar">
         <m-avatar v-if="!item.grouped" :name="item.senderName" :user-id="item.senderUserId || undefined" size="32px" class="q-mt-xs"></m-avatar>
@@ -552,8 +561,17 @@ const composerTemplate = `
     <m-rich-text ref="editor" v-model="body" :name="'chatBody' + uid" light rows="1" :enter="room.prefs.enterSends === false ? 'newline' : 'submit'"
             :label="editorLabel" :placeholder="placeholder" :mention-url="room.url('mentionUsers')" :mention-parameters="{chatRoomId: room.roomId}" @submit="send"></m-rich-text>
     <div class="row items-center no-wrap q-mt-xs m-chat-composer-actions">
-        <q-btn flat round dense size="sm" icon="sym_o_attach_file" :aria-label="room.t('Attach files')" :disable="room.offline" @click="pickFiles">
-            <q-tooltip>{{room.offline ? room.t('Files go up when you are back online') : room.t('Attach files')}}</q-tooltip></q-btn>
+        <q-btn flat round dense size="sm" icon="sym_o_attach_file" class="m-chat-attach" :aria-label="room.t('Attach files')" :disable="room.offline" @click="attachClick">
+            <q-tooltip>{{room.offline ? room.t('Files go up when you are back online') : room.t('Attach files')}}</q-tooltip>
+            <!-- on a phone (bubbles): the camera, the gallery or a file -->
+            <q-menu v-if="room.useBubbles" anchor="top left" self="bottom left"><q-list class="m-chat-attach-menu" style="min-width:200px">
+                <q-item clickable v-close-popup data-attach="camera" @click="pickNative('camera')"><q-item-section avatar><q-icon name="sym_o_photo_camera"></q-icon></q-item-section>
+                    <q-item-section>{{room.t('Camera')}}</q-item-section></q-item>
+                <q-item clickable v-close-popup data-attach="gallery" @click="pickNative('gallery')"><q-item-section avatar><q-icon name="sym_o_photo_library"></q-icon></q-item-section>
+                    <q-item-section>{{room.t('Photos and videos')}}</q-item-section></q-item>
+                <q-item clickable v-close-popup data-attach="file" @click="pickFiles"><q-item-section avatar><q-icon name="sym_o_draft"></q-icon></q-item-section>
+                    <q-item-section>{{room.t('File')}}</q-item-section></q-item>
+            </q-list></q-menu></q-btn>
         <q-btn flat round dense size="sm" icon="sym_o_mood" :aria-label="room.t('Emoji')"><q-tooltip>{{room.t('Emoji')}}</q-tooltip>
             <q-menu anchor="top left" self="bottom left"><div class="q-pa-xs row" style="width:236px">
                 <q-btn v-for="key in room.emoji" :key="key" flat dense size="sm" class="q-px-xs" :label="key" v-close-popup @click="insert(key)"></q-btn>
@@ -567,7 +585,9 @@ const composerTemplate = `
         <q-btn dense unelevated no-caps color="primary" icon="sym_o_send" class="m-chat-send" :label="room.useBubbles ? undefined : room.t('Send')" :aria-label="room.t('Send')"
                 :disable="!canSend" :loading="sending" @click="send"></q-btn>
     </div>
-    <div class="hidden"><m-file ref="picker" v-model="picked" :name="'chatFile' + uid" multiple @update:model-value="onPicked"></m-file></div>
+    <div class="hidden"><m-file ref="picker" v-model="picked" :name="'chatFile' + uid" multiple @update:model-value="onPicked"></m-file>
+        <input ref="camera" type="file" accept="image/*" capture="environment" :name="'chatCamera' + uid" @change="onNative">
+        <input ref="gallery" type="file" accept="image/*,video/*" multiple :name="'chatGallery' + uid" @change="onNative"></div>
 </div>`;
 
 let composerCount = 0;
@@ -661,6 +681,14 @@ const chatComposer = {
         pickFiles() {
             const input = this.$refs.picker && this.$refs.picker.$el && this.$refs.picker.$el.querySelector('input[type=file]');
             if (input) input.click();
+        },
+        // the attach button: the file picker, or with bubbles its menu (camera, gallery, file)
+        attachClick() { if (!this.room.useBubbles) this.pickFiles(); },
+        pickNative(kind) { const input = this.$refs[kind]; if (input) input.click(); },
+        onNative(event) {
+            const list = Array.from((event.target && event.target.files) || []);
+            if (event.target) event.target.value = '';
+            if (list.length) this.upload(list);
         },
         onPicked(files) {
             const list = Array.isArray(files) ? files : (files ? [files] : []);
@@ -762,7 +790,7 @@ const chatMessage = {
 const roomTemplate = `
 <div class="column no-wrap relative-position" :class="useBubbles ? 'm-chat-phone' : ''" style="height:100%;min-height:0" @dragover.prevent="onDragOver" @dragleave.self="dragOver = false" @drop.prevent="onDrop">
     <div class="row items-center no-wrap q-px-sm q-py-xs" style="min-height:52px">
-        <q-btn v-if="canGoBack" flat round dense icon="sym_o_arrow_back" :aria-label="t('Back')" class="q-mr-xs" @click="$emit('back')"><q-tooltip>{{t('Back')}}</q-tooltip></q-btn>
+        <q-btn v-if="canGoBack" flat round dense icon="sym_o_arrow_back" :aria-label="t('Back to chats')" class="q-mr-xs m-chat-back" @click="$emit('back')"><q-tooltip>{{t('Back to chats')}}</q-tooltip></q-btn>
         <template v-if="room">
             <m-avatar v-if="isDirect && room.otherUserId" :name="displayName" :user-id="room.otherUserId" size="34px"></m-avatar>
             <q-avatar v-else size="34px" rounded class="m-tonal text-primary" :icon="roomIcon"></q-avatar>
@@ -919,7 +947,7 @@ const roomTemplate = `
         <q-separator v-if="side && !sideOverlay" vertical></q-separator>
         <div v-if="side" class="column no-wrap" :class="sideOverlay ? 'col' : ''" :style="sideOverlay ? 'min-width:0' : 'width:360px;min-width:360px'">
             <div class="row items-center no-wrap q-px-sm" style="min-height:44px">
-                <q-btn v-if="sideOverlay" flat round dense icon="sym_o_arrow_back" :aria-label="t('Back')" @click="closeSide"></q-btn>
+                <q-btn v-if="sideOverlay" flat round dense icon="sym_o_arrow_back" :aria-label="t('Back to the room')" class="m-chat-side-back" @click="closeSide"><q-tooltip>{{t('Back to the room')}}</q-tooltip></q-btn>
                 <div class="text-subtitle2 q-ml-xs col ellipsis">{{sideTitle}}</div>
                 <q-btn v-if="!sideOverlay" flat round dense icon="sym_o_close" :aria-label="t('Close')" @click="closeSide"><q-tooltip>{{t('Close')}} (Esc)</q-tooltip></q-btn>
             </div>
@@ -1227,6 +1255,7 @@ const chatRoom = {
             events: [], hasMoreBefore: false, hasMoreAfter: false, gapBefore: false, gapAfter: false, loadingOlder: false, loadingNewer: false,
             myLastRead: 0, dividerSeq: null, highlightSeq: null, atBottom: true, newBelow: 0, holdRead: false,
             hoverKey: null, tapKey: null, sheet: { open: false, item: null, inThread: false, allEmoji: false }, editing: null, replyTo: null, side: null,
+            swipeKey: null, swipeDx: 0,
             threadView: { rootSeq: null, events: [], loading: false }, pinned: { list: [], loading: false },
             threadsPane: { list: [], loading: false, hasMore: false, mine: false, next: null }, filesPane: { list: [], loading: false, next: null, kind: 'all' },
             forward: { open: false, item: null, roomId: null, comment: '', busy: false },
@@ -1915,15 +1944,48 @@ const chatRoom = {
         // a long press on a message (in bubbles, as on a phone) opens its actions as a sheet; a move or a short tap does not
         holdStart(item, inThread, event) {
             this.holdCancel();
+            this.touchFrom = null;
             if (!this.useBubbles || (event.touches && event.touches.length > 1)) return;
             if (event.target && event.target.closest && event.target.closest('input, textarea, [contenteditable="true"], .q-btn')) return;
+            const touch = event.touches && event.touches[0];
+            if (touch) this.touchFrom = { x: touch.clientX, y: touch.clientY, item, inThread: !!inThread };
             this.holdTimer = setTimeout(() => { this.holdTimer = null; this.held = true; this.openSheet(item, inThread); }, 450);
         },
         holdCancel() { if (this.holdTimer) { clearTimeout(this.holdTimer); this.holdTimer = null; } },
+        // a move cancels the long press; in the room's timeline, one to the right is a swipe to reply, which the bubble
+        // follows and which replies when let go past SWIPE_REPLY_PX (an up or down move is a scroll, not a swipe)
+        holdMove(event) {
+            this.holdCancel();
+            const from = this.touchFrom;
+            const touch = event.touches && event.touches[0];
+            if (!from || !touch) return;
+            const dx = touch.clientX - from.x;
+            const dy = Math.abs(touch.clientY - from.y);
+            if (!this.swipeKey) {
+                if (dy > 16 && dy > dx) { this.touchFrom = null; return; }
+                if (dx < 12 || dx < dy * 2 || from.inThread || !this.canPost || from.item.redacted || this.isEditing(from.item)) return;
+                this.swipeKey = 'm' + from.item.eventSeq;
+            }
+            this.swipeDx = Math.max(0, Math.min(dx, SWIPE_REPLY_PX * 1.5));
+        },
         holdEnd(event) {
             this.holdCancel();
+            const from = this.touchFrom;
+            const replying = !!(from && this.swipeKey && this.swipeDx >= SWIPE_REPLY_PX);
+            this.touchFrom = null;
+            this.swipeKey = null;
+            this.swipeDx = 0;
+            if (replying) {
+                this.startReply(from.item);
+                if (navigator.vibrate) { try { navigator.vibrate(10); } catch (e) { /* no vibration here */ } }
+                if (event.cancelable) event.preventDefault();
+                return;
+            }
             // the press that opened the sheet is not also a click on what is under it
             if (this.held) { this.held = false; if (event.cancelable) event.preventDefault(); }
+        },
+        swipeStyle(item, inThread) {
+            return !inThread && this.swipeKey === 'm' + item.eventSeq && this.swipeDx ? { transform: 'translateX(' + this.swipeDx + 'px)' } : null;
         },
         contextMenu(item, inThread, event) {
             if (!this.useBubbles) return;
@@ -2549,10 +2611,12 @@ const chatRoom = {
             else this.openInChat();
         },
         openInChat() { this.$root.setUrl(this.linkBase + '?chatRoomId=' + encodeURIComponent(this.roomId)); },
-        // Esc: the edit, then the side pane, then mark the room read
+        // Esc: an open dialog or menu closes itself; else the edit, then the top back layer (moqui.back: the side pane,
+        // a thread), then mark the room read
         onEscape() {
+            if (moqui.back && moqui.back.popupOpen()) return false;
             if (this.editing) { this.cancelEdit(); return true; }
-            if (this.side) { this.closeSide(); return true; }
+            if (moqui.back ? moqui.back.pop({ popups: false, base: false }) : (this.side && (this.closeSide(), true))) return true;
             this.markRead(true);
             return true;
         },
@@ -2567,6 +2631,12 @@ const chatRoom = {
     mounted() {
         this.composers = {};
         this.unsubscribe = [];
+        // what Back closes (moqui.back): the message sheet, an edit, the side pane or thread
+        if (moqui.back) {
+            this.unsubscribe.push(moqui.back.track(this, () => this.side, () => this.closeSide()));
+            this.unsubscribe.push(moqui.back.track(this, () => this.editing, () => this.cancelEdit()));
+            this.unsubscribe.push(moqui.back.track(this, () => this.sheet.open, () => { this.sheet.open = false; }));
+        }
         if (moqui.chat) {
             this.unsubscribe.push(moqui.chat.on('event', (payload) => this.onEvent(payload)));
             if (moqui.crypto && moqui.crypto.onRoomKeys) this.unsubscribe.push(moqui.crypto.onRoomKeys(() => this.onRoomKeys()));
@@ -2610,7 +2680,7 @@ module.exports = {
     data() {
         return {
             loaded: false, height: 600, me: {}, prefs: {}, rooms: [], filter: 'all', search: '', drafts: {}, roomId: null, seq: null, thread: null,
-            newDirect: { open: false, userIds: [], busy: false }, newRoom: { open: false, type: 'private', name: '', topic: '', userIds: [], busy: false },
+            newDirect: { open: false, userIds: [], busy: false, name: '', fromNumber: '', numbers: [] }, newRoom: { open: false, type: 'private', name: '', topic: '', userIds: [], busy: false },
             browse: { open: false, search: '', list: [], loading: false }
         };
     },
@@ -2631,6 +2701,16 @@ module.exports = {
             return me.statusText || me.emoji ? ((me.emoji ? me.emoji + ' ' : '') + (me.statusText || '')) : option.label;
         },
         memberRooms() { return this.rooms.filter((room) => room.isMember); },
+        // New direct message: what is picked (moqui.chat.pickKind), and phone numbers offered when the user has one that texts
+        pickKind() { return moqui.chat.pickKind(this.newDirect.userIds); },
+        pickParameters() { return { numbers: (this.newDirect.numbers || []).length ? 'true' : '' }; },
+        pickHint() {
+            const kind = this.pickKind;
+            if (kind === 'number') return t('A text from your number: the conversation with this number opens.');
+            if (kind === 'mixed') return t('A text goes to one phone number: start it with the number alone.');
+            if (kind === 'group') return t('A group chat; with a name it is a room, which can take more people later.');
+            return t('One person, or several for a group message. A conversation you already have with them opens again.');
+        },
         filterItems() {
             const unread = this.memberRooms.filter((room) => this.countsOf(room).unread || this.countsOf(room).mentions).length;
             const mentions = this.memberRooms.filter((room) => this.countsOf(room).mentions).length;
@@ -2837,14 +2917,35 @@ module.exports = {
         clearStatus() { if (moqui.chat) moqui.chat.setStatus({ clearStatus: true }); },
 
         // ---- new conversations ----
-        openNewDirect() { if (needsConnection()) return; this.newDirect = { open: true, userIds: [], busy: false }; },
+        openNewDirect() {
+            if (needsConnection()) return;
+            this.newDirect = { open: true, userIds: [], busy: false, name: '', fromNumber: '', numbers: this.newDirect.numbers || [] };
+            // the numbers the user may text from, read again each time
+            this.get('textNumbers').then((json) => {
+                this.newDirect.numbers = moqui.chat.numberOptions(json.numberList);
+                if (!this.newDirect.fromNumber && this.newDirect.numbers.length) this.newDirect.fromNumber = this.newDirect.numbers[0].value;
+            }, () => {});
+        },
+        // Start in New direct message: the number's room, a named room, or the direct chat (moqui.chat.startChat)
+        startPicked() {
+            const pick = { values: this.newDirect.userIds || [], name: this.newDirect.name, fromNumber: this.newDirect.fromNumber };
+            if (moqui.chat.pickKind(pick.values) === 'none') return;
+            this.newDirect.busy = true;
+            moqui.chat.startChat((name, params) => this.post(name, params), pick).then((json) => {
+                this.newDirect.busy = false;
+                if (!json || !json.chatRoomId) return;
+                this.newDirect.open = false;
+                this.scheduleRooms();
+                this.openRoom(json.chatRoomId);
+            }, () => { this.newDirect.busy = false; });
+        },
         openNewRoom() { if (needsConnection()) return; this.newRoom = { open: true, type: 'private', name: '', topic: '', userIds: [], busy: false, encrypted: false }; },
         startDirect(userIds, fromLink) {
             const ids = (userIds || this.newDirect.userIds || []).map((id) => String(id).trim()).filter((id) => id);
             if (!ids.length) return;
             this.newDirect.busy = true;
             this.post('createDirect', { userIds: ids.join(',') }).then((json) => {
-                this.newDirect = { open: false, userIds: [], busy: false };
+                Object.assign(this.newDirect, { open: false, userIds: [], busy: false, name: '' });
                 this.scheduleRooms();
                 if (fromLink) this.replaceRoom(json.chatRoomId); else this.openRoom(json.chatRoomId);
             }, () => { this.newDirect.busy = false; if (fromLink) this.replaceRoom(null); });

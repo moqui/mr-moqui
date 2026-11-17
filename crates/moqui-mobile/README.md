@@ -23,8 +23,9 @@ sent when the server can be reached. How it works on Android is [docs/ui/Mobile-
   `rustls_platform_verifier::android::init_with_env` in the app's setup, its Kotlin component a Maven artifact in
   `gen/android/app/build.gradle.kts`; when it fails the app makes no request and answers from the store.
 - **`gen/android`** is the Gradle project `cargo tauri android init` made, kept in git with the app's changes (the
-  verifier's artifact, `KeyVault.kt`, the SSO intent filter, no backup, the window insets in `MainActivity.kt`, the
-  ProGuard rules); its `.gitignore` files leave out what the Tauri CLI writes on each build.
+  verifier's artifact, `KeyVault.kt`, the SSO intent filter, no backup, the window insets and Android's back asking
+  the page first in `MainActivity.kt`, the ProGuard rules); its `.gitignore` files leave out what the Tauri CLI writes
+  on each build.
 - **Firebase** (native push) is in the build only with `gen/android/app/google-services.json`, the Firebase
   project's, which git ignores; without it push is off and the app still builds. Debug builds take a ring from adb
   (`DebugRingReceiver`, [Mobile-Client](../../docs/ui/Mobile-Client.md#the-incoming-call-mt2)).

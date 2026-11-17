@@ -125,3 +125,28 @@ feature("Text a number opens the pair's room once, with the user in it; the same
         mappings("+442071234000").length == 0
     }
 })
+
+feature("Chat's pickers: a number the texter types is offered to text, their numbers listed, and textRoom opens the pair's room; a stranger gets none of it", {
+    when() {
+        ec.user.internalLoginUser("basic.comms.texter")
+        const offered = JSON.parse(render("Chat/searchUsers", {term: "(555) 222-4000", numbers: "true"}).output || "[]")
+        const plain = JSON.parse(render("Chat/searchUsers", {term: "(555) 222-4000"}).output || "[]")
+        const numbers = JSON.parse(render("Chat/textNumbers", {}).output || "{}")
+        const opened = JSON.parse(render("Chat/textRoom", {textTo: "(555) 222-4000", textFrom: OURS}, "post").output || "{}")
+        ec.user.internalLoginUser("basic.comms.text.stranger")
+        const strangerNumbers = JSON.parse(render("Chat/textNumbers", {}).output || "{}")
+        const refused = render("Chat/textRoom", {textTo: THEIRS, textFrom: OURS}, "post")
+        return {offered, plain, numbers, opened, strangerNumbers, refused, made: mappings(THEIRS)}
+    },
+    then({offered, plain, numbers, opened, strangerNumbers, refused, made}) {
+        offered[0].value == "tel:(555) 222-4000"
+        offered[0].label == "Text (555) 222-4000"
+        !plain.some((option) => String(option.value).startsWith("tel:"))
+        numbers.numberList.length == 1
+        numbers.numberList[0].phoneNumber == OURS
+        made.length == 1
+        opened.chatRoomId == made[0].chatRoomId
+        strangerNumbers.numberList.length == 0
+        !String(refused.output).includes(made[0].chatRoomId)
+    }
+})
