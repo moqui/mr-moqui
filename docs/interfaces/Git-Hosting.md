@@ -210,7 +210,9 @@ repository is looked at: it is checked as no user, against the same records.
 - **A header that is not credentials** is not "no credentials". An `Authorization` header that is neither Bearer nor
   Basic that decodes to `user:password` (another scheme, an empty one), an empty `api_key`, and an LFS token that is
   not good are answered 401 and count as an `auth-failure`, on a public repository too. The anonymous rate limit below
-  goes by the headers alone, so a made-up header buys nothing: it reads nothing and counts toward the ban.
+  goes by the headers alone, so a made-up header buys nothing: it reads nothing and counts toward the ban. Such a
+  header, and any credentials over plain HTTP (403), are answered by the host before the request takes a worker of
+  the git pool (`moqui_git::server::early_refusal`), so they keep no signed-in clone or runner call waiting.
 - **Caps, by client.** With web protection's per-client parts on ([Run and Deploy](../Run-Deploy.md#behind-a-proxy-or-load-balancer)),
   the `git-anonymous` rate limit counts each client's git requests that carry no credentials: 120 a minute sustained,
   240 at once (a clone is three or more requests), under `/git/` and at a page's URL; past it the answer is 429 with
@@ -776,7 +778,9 @@ reopened, merged), all when none is named. The body is JSON (`event`, `ref`, `be
 signature check it unchanged. Each delivery is a SystemMessage of type `GitWebhook` sent at once
 (`send#GitWebhookDelivery`); a status that is not 2xx, or no answer in 10 seconds, leaves it to
 `retry#GitWebhookDeliveries` (the `retry_GitWebhookDeliveries_frequent` job, each minute), which tries again after 1, 2,
-4 ... minutes and gives up after 8 failures. `find#GitWebhookDeliveries` is the delivery log, each attempt's error kept
+4 ... minutes and gives up after 8 failures; one pass starts sends for `git-server` `queue-pass-seconds` (300) and
+leaves the rest for the next run. A repository has at most `max-webhooks` (20) webhooks: `store#GitWebhook` refuses one
+more. `find#GitWebhookDeliveries` is the delivery log, each attempt's error kept
 (`SystemMessageError`); `test#GitWebhook` sends a `ping` now. A webhook URL that names, or resolves to, a loopback,
 private or link-local address is refused unless `git-server` `webhook-private-network="true"` (a CI server on the same
 network). A webhook URL is https, plain http only with that setting, and has no user or password in it: `store#GitWebhook`
@@ -797,7 +801,8 @@ do, and the framework's own, which queues its [pipeline runs](Pipelines.md#event
 
 ### Push mirrors
 
-A repository has any number of push mirrors (`moqui.resource.GitRepositoryMirror`, plans/Dogfood.md F6), each kept
+A repository has at most `git-server` `max-mirrors` (10) push mirrors (`moqui.resource.GitRepositoryMirror`,
+plans/Dogfood.md F6; `store#GitRepositoryMirror` refuses one more), each kept
 by `org.moqui.git.GitServices` with the delete right on the repository, as its webhooks and branch rules are (or
 authorization disabled):
 
@@ -807,7 +812,7 @@ authorization disabled):
 | `find#GitRepositoryMirrors` | `repositoryId*` → `mirrorList`: each row with `hasCredential`, never the credential |
 | `delete#GitRepositoryMirror` | `mirrorId*` → `deleted` |
 | `push#GitRepositoryMirror` | `mirrorId*` → `queued`: a push now, whatever the back-off; while one runs on any member, an error starting `GitMirrorBusy: ` |
-| `run#GitRepositoryMirrors` | `mirrorId` → `pushedIds`, `failedIds`: the queue (`run_GitRepositoryMirrors_frequent`, each minute), with authorization disabled only |
+| `run#GitRepositoryMirrors` | `mirrorId` → `pushedIds`, `failedIds`: the queue (`run_GitRepositoryMirrors_frequent`, each minute), with authorization disabled only; a pass of the due mirrors starts pushes for `queue-pass-seconds` (300), the rest waiting for the next run |
 
 - **Where.** `url` is `https://host/owner/repo.git` with no user or password in it (refused), the credential apart:
   `username` and a password or token in `credential` (GitHub: any user, such as `x-access-token`, and a token with
@@ -1128,7 +1133,10 @@ which. A repository an application keeps is commented through the application's 
 application is asked, so no keeper of a private repository is named. A merge request the application holds hidden
 (`hiddenDate`) is not there for anyone but its author, in the same words as a number that is not there, and a
 framework service's `No merge request <id>` is said as `No merge request !<n> in <repository>`. The keeper's check
-allows only an explicit `allowed` true. One page of `find#MergeRequests` is at most 200.
+allows only an explicit `allowed` true. One page of `find#MergeRequests` is at most `git-server`
+`merge-requests-max-page` (100); one that names no repository (`hosting/mergeRequests`) looks in the first
+`merge-requests-max-repositories` (500) repositories the caller may view, by id, and a caller who sees more names them
+(`repositoryId`, `repositoryIdList`).
 
 **What the server offers** (`get#HostingOffer`), to a caller with or without credentials: `baseUrl`; `user` (`signedIn`,
 `username`: whether the caller's credentials were good); `git` (`httpsBase`, `httpsUrlTemplate` and `sshUrlTemplate`

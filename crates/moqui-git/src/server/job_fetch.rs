@@ -127,9 +127,7 @@ pub(super) fn serve(request: &GitHttpRequest, job_token: &str, body: &mut dyn Re
     let started = (|| -> Result<(Arc<Repo>, ObjectId), Refusal> {
         let provider = provider()?;
         if !request.secure {
-            return Err(Refusal::Forbidden(
-                "credentials over plain HTTP are refused; use HTTPS".into(),
-            ));
+            return Err(Refusal::Forbidden(super::INSECURE_CREDENTIALS.into()));
         }
         let entity = factory()?
             .entity()

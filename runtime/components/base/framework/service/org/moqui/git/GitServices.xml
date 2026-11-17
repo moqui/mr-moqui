@@ -1123,7 +1123,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Create or update a webhook: an https URL (http only with git-server webhook-private-network), with
             no user or password in it, the events (push, tag, merge_request; all when empty), the secret its
             deliveries are signed with (kept when left empty on an update), active. Needs delete on the
-            repository.</description>
+            repository. A repository has at most git-server max-webhooks (20) webhooks: one more is refused.</description>
         <in-parameters>
             <parameter name="webhookId"/>
             <parameter name="repositoryId" required="true"/>
@@ -1156,6 +1156,13 @@ along with this software (see the LICENSE.md file). If not, see
                     hook.setFields(fields, true, null, null)
                     hook.update()
                 } else {
+                    // a repository has so many webhooks, each delivery sent by the queue in turn (SEC-GIT-18)
+                    const most = Number(ec.service.sync().name('org.moqui.git.GitServices.get#GitWebhookLimits').call().maxWebhooks || 0)
+                    const had = ec.entity.find('moqui.resource.GitWebhook').condition('repositoryId', repositoryId).disableAuthz().count()
+                    if (most > 0 && had >= most) {
+                        ec.message.addError(ec.resource.expand('Repository ${repositoryId} has ${had} webhooks, the most it may have (git-server max-webhooks)', '', {repositoryId, had}))
+                        return
+                    }
                     hook = ec.entity.makeValue('moqui.resource.GitWebhook')
                     hook.setSequencedIdPrimary()
                     hook.setFields(fields, true, null, null)
@@ -1187,6 +1194,16 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Whether a webhook may be sent to url, as each delivery checks it: https, or http only with
             git-server webhook-private-network, and no user or password in it. An error says why not.</description>
         <in-parameters><parameter name="url" required="true"/></in-parameters>
+    </service>
+    <service verb="get" noun="GitWebhookLimits" type="rust" location="moqui_git::service::hosting::get_webhook_limits"
+            allow-remote="false" transaction="ignore">
+        <description>The conf's webhook limits, for store#GitWebhook and retry#GitWebhookDeliveries: maxWebhooks, the most
+            webhooks of a repository (git-server max-webhooks; 0 none), and passSeconds, how long one pass of the retries
+            starts sends (git-server queue-pass-seconds; 0 no bound).</description>
+        <out-parameters>
+            <parameter name="maxWebhooks" type="Long"/>
+            <parameter name="passSeconds" type="Long"/>
+        </out-parameters>
     </service>
     <service verb="test" noun="GitWebhook" type="rust" location="moqui_git::service::hosting::test_webhook"
             transaction="ignore">
@@ -1269,17 +1286,22 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="retry" noun="GitWebhookDeliveries" authenticate="anonymous-all">
         <description>Send again the webhook deliveries that failed, each after a wait that doubles with its failures (1,
             2, 4 ... minutes); after retryLimit failures it is in error and no longer tried (for the
-            retry_GitWebhookDeliveries_frequent ServiceJob). One that fails is logged and the others are still tried.</description>
+            retry_GitWebhookDeliveries_frequent ServiceJob). One that fails is logged and the others are still tried.
+            A pass starts sends for git-server queue-pass-seconds (300) and leaves the rest for the next run.</description>
         <in-parameters><parameter name="retryLimit" type="Integer" default="8"/></in-parameters>
         <out-parameters><parameter name="retriedCount" type="Integer"/></out-parameters>
         <actions>
             <script><![CDATA[
                 retriedCount = 0
                 const now = ec.user.timestampMillis(ec.user.nowTimestamp)
+                // a pass is bounded by time, so slow endpoints hold the other repositories' deliveries back no longer (SEC-GIT-18)
+                const passSeconds = Number(ec.service.sync().name('org.moqui.git.GitServices.get#GitWebhookLimits').call().passSeconds || 0)
+                const until = passSeconds > 0 ? Date.now() + passSeconds * 1000 : null
                 const pending = Array.from(ec.entity.find('moqui.service.message.SystemMessage')
                         .condition({systemMessageTypeId: 'GitWebhook', statusId: 'SmsgProduced', isOutgoing: 'Y'})
                         .orderBy('initDate').limit(200).disableAuthz().list())
                 for (const message of pending) {
+                    if (until != null && Date.now() >= until) break
                     const failures = message.failCount || 0
                     if (failures === 0 && message.lastAttemptDate == null && now - ec.user.timestampMillis(message.initDate) < 60000) continue
                     if (failures >= retryLimit) {

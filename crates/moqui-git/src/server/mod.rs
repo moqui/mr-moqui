@@ -484,6 +484,77 @@ impl Refusal {
 /// What a request that is not secure is told where a sign-in would be asked for.
 const INSECURE_SIGN_IN: &str = "this needs a sign-in, which is taken only over HTTPS; use HTTPS";
 
+/// What a request with credentials over plain HTTP is told.
+const INSECURE_CREDENTIALS: &str = "credentials over plain HTTP are refused; use HTTPS";
+
+/// A refusal of a git or LFS request that needs no database and no repository, so the host answers it before the
+/// request takes a worker of the git pool (plans/Security-Review-Low.md SEC-GIT-18): credentials over plain HTTP, an
+/// `Authorization` header this server takes in no form, an empty `api_key`. It is the answer [`serve_http`] and
+/// [`lfs::serve_lfs`] give the same request.
+#[derive(Debug)]
+pub struct EarlyRefusal {
+    refusal: Refusal,
+    lfs: bool,
+    auth_failure: bool,
+}
+
+impl EarlyRefusal {
+    /// Whether the request counts as a failed sign-in, as a wrong password does.
+    pub fn auth_failure(&self) -> bool {
+        self.auth_failure
+    }
+
+    /// Write the answer, as a git or an LFS client gets it.
+    pub fn answer(&self, out: &mut dyn HttpResponder) {
+        if self.lfs {
+            lfs::refuse(out, &self.refusal);
+        } else {
+            refuse_http(out, &self.refusal);
+        }
+    }
+}
+
+/// [`EarlyRefusal`] for a request's credentials (`authorization`, the `api_key` or `login_key` header), whether they
+/// may be taken over its transport (`secure`), and whether it is to the LFS endpoint (`lfs`, which also takes its own
+/// `MoquiLfs` token); None when the request goes to the pool.
+pub fn early_refusal(
+    authorization: Option<&str>,
+    api_key: Option<&str>,
+    secure: bool,
+    lfs: bool,
+) -> Option<EarlyRefusal> {
+    let refused = |refusal: Refusal, auth_failure: bool| {
+        Some(EarlyRefusal {
+            refusal,
+            lfs,
+            auth_failure,
+        })
+    };
+    if (authorization.is_some() || api_key.is_some()) && !secure {
+        return refused(Refusal::Forbidden(INSECURE_CREDENTIALS.into()), false);
+    }
+    if let Some(header) = authorization.map(str::trim) {
+        let usable = header.starts_with("Bearer ")
+            || header.starts_with("bearer ")
+            || moqui_core::web::basic_credentials(header).is_some()
+            || (lfs && header.starts_with("MoquiLfs "));
+        if usable {
+            return None;
+        }
+        return refused(
+            Refusal::Unauthenticated("the Authorization header is not credentials this server takes".into()),
+            true,
+        );
+    }
+    if api_key.is_some_and(|key| key.trim().is_empty()) {
+        return refused(
+            Refusal::Unauthenticated("an empty api_key is not credentials this server takes".into()),
+            true,
+        );
+    }
+    None
+}
+
 fn factory() -> Result<Arc<ExecutionContextFactory>, Refusal> {
     ExecutionContext::with_current(|ec| Arc::clone(ec.factory()))
         .ok_or_else(|| Refusal::Unavailable("no execution context".into()))
@@ -805,9 +876,7 @@ pub fn serve_http(request: &GitHttpRequest, body: &mut dyn Read, out: &mut dyn H
         let provider = provider()?;
         let has_credentials = request.authorization.is_some() || request.api_key.is_some();
         if has_credentials && !request.secure {
-            return Err(Refusal::Forbidden(
-                "credentials over plain HTTP are refused; use HTTPS".into(),
-            ));
+            return Err(Refusal::Forbidden(INSECURE_CREDENTIALS.into()));
         }
         let logged_in = authenticate(request)?;
         let repo = open_path(&provider, &request.repository, request.service, logged_in)?;
