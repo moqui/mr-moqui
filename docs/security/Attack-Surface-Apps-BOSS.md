@@ -35,7 +35,7 @@ Five entity filter sets hang on the authorization rows. How a filter set is eval
 |---|---|---|---|
 | `MANTLE_USER_ORG` | `mr-mantle/data/MantleSetupData.xml:426` | always (no `applyCond`) | By `filterOrgIds`: `Invoice`, `Payment`, `OrderPart`, `ReturnHeader`, `Shipment` (either party), `FinancialAccount`, `AcctgTrans`, `TimePeriod`, `PartyRelationship`, `Party`, `Product`, `ProductCategory`, `ProductFeature`, `ProductFeatureGroup`, `ProductStore`, `Facility`, `UserAccountOrganization`, `InternalOrganization`, `SalesOpportunity`, `SalesForecast`, `Agreement`, `MarketingCampaign`, `MarketSegment`, `ContactList`. |
 | `MANTLE_ACTIVE_ORG` | same file, line 491 | `applyCond="activeOrgId"`; `allowMissingAlias="Y"` | The same entities by `activeOrgId`. |
-| `MANTLE_PRIVATE_CONTACT` | same file, line 555 | always; `allowMissingAlias="Y"` | `mantle.party.Party`: `privateOwnerUserId` is null or the user's id. |
+| `MANTLE_PRIVATE_CONTACT` | same file, line 555 | always; `allowMissingAlias="N"` | `mantle.party.Party`: `privateOwnerUserId` is null or the user's id. A find on a view over `Party` with no alias of `privateOwnerUserId` is refused; every view over `Party` aliases it, one alias for each `Party` member (SEC-DAT-11). |
 | `COMMERCE_STORE` | `BossSetupData.xml:2160` | `applyCond="ec.user.context.commerceStoreIds != null"`; `allowMissingAlias="Y"` | `mantle.product.store.ProductStore` by `productStoreId`. |
 | `BOSS_PROJECT_CLIENT` | `BossSetupData.xml:328` | always; `allowMissingAlias="N"` | `WorkEffort`, `WorkEffortParty`, `Request`, `CommunicationEvent` and further entities, by the lists `clientProjectIds`, `clientPartyIds`, `clientContactPartyIds` and `clientStatusUpdateIds` of the user context, each `['_NA_']` when unset. |
 
