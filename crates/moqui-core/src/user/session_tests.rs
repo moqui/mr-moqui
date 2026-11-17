@@ -757,10 +757,102 @@ fn password_login_rotates_and_a_failed_password_keeps_the_id() {
     assert_eq!(text(&row, "userId"), "ada");
 
     login::logout().unwrap();
-    let stayed = guard.session_id();
+    let signed_out = guard.session_id();
+    assert_ne!(signed_out, new_id, "a logout ends the session");
     login::internal_login_user("ada").unwrap();
-    assert_eq!(guard.session_id(), stayed);
+    let signed_in = guard.session_id();
+    assert_ne!(signed_in, signed_out, "a sign-in of no password moves the session too");
+    login::internal_login_user("ada").unwrap();
+    assert_eq!(guard.session_id(), signed_in, "the same user again keeps the id");
     login::logout().unwrap();
+}
+
+/// SEC-WEB-05: a sign-in that checks no password here (a forced password change's, a second factor's, a key's) moves a
+/// session the client brought to a new id, so an id planted before it does not become a signed-in session; a session
+/// the server made for this request keeps its id.
+#[test]
+fn every_sign_in_moves_a_brought_session_to_a_new_id() {
+    let (_lock, ctx, facade, _key) = setup();
+    let _entered = ctx.enter();
+    let factory = Arc::clone(ctx.factory());
+    create_user(&facade, "ada", "Secret1!");
+    let mut account = facade
+        .find(USER_ACCOUNT)
+        .unwrap()
+        .eq("userId", Value::string("ada"))
+        .one()
+        .unwrap()
+        .unwrap();
+    account.set("requirePasswordChange", Value::string("Y"));
+    account.update(&facade).unwrap();
+    create_login_key(&facade, "ada-key", "ada", None);
+
+    let guard = bind(&factory, None, None, false).unwrap();
+    flush_dirty(&factory).unwrap();
+    let planted = guard.session_id();
+    // the right password of an account that must change it: refused, with the user remembered for the change form
+    assert!(login::login_user("ada", "Secret1!").is_err());
+    assert_eq!(guard.session_id(), planted);
+    // the change form saves the new password, then signs the user in
+    account.set("requirePasswordChange", Value::string("N"));
+    account.update(&facade).unwrap();
+    login::internal_login_user("ada").unwrap();
+    assert_eq!(current_username().unwrap().as_deref(), Some("ada"));
+    assert_ne!(guard.session_id(), planted, "the planted id does not carry the sign-in");
+    assert!(load_session_optional(&facade, &planted).is_none());
+    drop(guard);
+
+    // a key on a session the client brought, and on one made for the request
+    clear_sessions(&factory);
+    let brought = bind(&factory, None, None, false).unwrap();
+    let id = brought.session_id();
+    login::apply_header_keys(Some("ada-key"), None, None).unwrap();
+    assert_ne!(brought.session_id(), id);
+    drop(brought);
+    let _request = RequestSessionScope::begin();
+    let made = bind(&factory, None, None, false).unwrap();
+    let id = made.session_id();
+    login::apply_header_keys(Some("ada-key"), None, None).unwrap();
+    assert_eq!(current_username().unwrap().as_deref(), Some("ada"));
+    assert_eq!(made.session_id(), id);
+}
+
+/// SEC-WEB-06: a logout ends the session with its attributes; the request goes on with a new empty one of no user and
+/// no visit, and the old id names nothing.
+#[test]
+fn a_logout_ends_the_session_and_its_attributes() {
+    let (_lock, ctx, facade, _key) = setup();
+    let _entered = ctx.enter();
+    let factory = Arc::clone(ctx.factory());
+    create_user(&facade, "ada", "Secret1!");
+    let guard = bind(&factory, None, None, false).unwrap();
+    login::login_user("ada", "Secret1!").unwrap();
+    set_session_attribute("newAccessToken", Some("one-time"));
+    flush_dirty(&factory).unwrap();
+    let signed_in = guard.session_id();
+    let token = csrf_token().unwrap();
+    assert!(load_session_optional(&facade, &signed_in).is_some());
+
+    login::logout().unwrap();
+    let signed_out = guard.session_id();
+    assert_ne!(signed_out, signed_in);
+    assert!(current_username().unwrap().is_none());
+    assert_eq!(session_attribute("newAccessToken"), None);
+    assert!(visit_id().unwrap().is_none());
+    assert_ne!(csrf_token().unwrap(), token);
+    assert!(load_session_optional(&facade, &signed_in).is_none());
+    flush_dirty(&factory).unwrap();
+    let row = load_session(&facade, &signed_out);
+    assert_eq!(text(&row, "userId"), "");
+    assert!(!text(&row, "attributes").contains("one-time"));
+    drop(guard);
+
+    // the old cookie starts over: no live session and no row answer to it
+    let cookie = format_session_cookie(&signed_in, false).unwrap();
+    let again = bind(&factory, Some(cookie_value(&cookie)), None, false).unwrap();
+    assert_ne!(again.session_id(), signed_in);
+    assert!(current_username().unwrap().is_none());
+    assert_eq!(session_attribute("newAccessToken"), None);
 }
 
 #[test]
@@ -890,12 +982,15 @@ fn login_key_header_logs_in_and_an_expired_key_does_not() {
     create_user(&facade, "ada", "Secret1!");
     create_login_key(&facade, "temp-key", "ada", None);
     create_login_key(&facade, "old-key", "ada", Some(1));
+    // a request that brought no session: the one made for it keeps its id (every_sign_in_moves_a_brought_session_to_a_new_id)
+    let _request = RequestSessionScope::begin();
     let guard = bind(&factory, None, None, false).unwrap();
     let id = guard.session_id();
     login::apply_header_keys(Some("temp-key"), None, None).unwrap();
     assert_eq!(current_username().unwrap().as_deref(), Some("ada"));
     assert_eq!(guard.session_id(), id);
     login::logout().unwrap();
+    let id = guard.session_id();
     assert!(login::apply_header_keys(None, Some("old-key"), None).is_err());
     assert!(current_username().unwrap().is_none());
     assert_eq!(guard.session_id(), id);

@@ -2,11 +2,12 @@
 // SEC-WEB-02, SEC-ADM-02; ec.user.checkOldPassword): a wrong one counts as a failed login, a locked account refuses
 // even the right one, and every refusal (wrong, locked, unknown user) answers the same message, so the second factor's
 // message never confirms a password to a caller the gate refused. reset#Password leaves requirePasswordChange as it is
-// (SEC-WEB-09, SEC-ADM-12). The Rust side is in crates/moqui-core/src/user/login_tests.rs.
+// (SEC-WEB-09, SEC-ADM-12). A new password ends the account's other sessions (SEC-WEB-06). The Rust side is in crates/moqui-core/src/user/login_tests.rs.
 // Run: ./moq test framework --spec PasswordChangeGate
 const GATED = "PWGATE_SPEC_GATED"
 const FACTOR = "PWGATE_SPEC_FACTOR"
 const RESET = "PWGATE_SPEC_RESET"
+const ENDS = "PWGATE_SPEC_ENDS"
 const PASSWORD = "Gate-spec-9!"
 const NEW_PASSWORD = "Gate-spec-10!"
 const USER = "org.moqui.impl.UserServices."
@@ -57,6 +58,7 @@ spec({
         makeUser(GATED)
         makeUser(FACTOR)
         makeUser(RESET, {requirePasswordChange: "Y"})
+        makeUser(ENDS)
         // a second factor in date, so a right old password with no code is answered "Authentication code required"
         sys(() => ec.service.sync().name("create#moqui.security.UserAuthcFactor").parameters({factorId: "PWGATE_SPEC_TOTP",
             userId: FACTOR, factorTypeEnumId: "UafTotp", factorOption: ec.user.totpSecret(), fromDate: ec.user.nowTimestamp}).call())
@@ -109,5 +111,30 @@ feature("a reset leaves requirePasswordChange as it was", {
     then({reset, after}) {
         after.resetPassword != null
         after.requirePasswordChange == "Y"
+    }
+})
+
+feature("a new password ends the account's other sessions", {
+    when() {
+        ec.user.logoutUser()
+        // a browser of the account somewhere else: its visit and its web session row
+        sys(() => {
+            ec.entity.makeValue("moqui.server.Visit").setAll({visitId: "PWGATE_SPEC_VISIT", userId: ENDS,
+                fromDate: ec.user.nowTimestamp, thruDate: null}).createOrUpdate()
+            ec.entity.makeValue("moqui.server.HttpSession").setAll({sessionId: "PWGATE_SPEC_SESSION", userId: ENDS,
+                visitId: "PWGATE_SPEC_VISIT", sessionToken: "pwgate-token"}).createOrUpdate()
+        })
+        const changed = sys(() => call("update#PasswordInternal", {userId: ENDS, newPassword: NEW_PASSWORD,
+            newPasswordVerify: NEW_PASSWORD}))
+        return sys(() => ({
+            changed,
+            session: ec.entity.find("moqui.server.HttpSession").condition("sessionId", "PWGATE_SPEC_SESSION").one(),
+            visit: ec.entity.find("moqui.server.Visit").condition("visitId", "PWGATE_SPEC_VISIT").one()
+        }))
+    },
+    then({changed, session, visit}) {
+        changed.updateSuccessful == true
+        session == null
+        visit.thruDate != null
     }
 })
