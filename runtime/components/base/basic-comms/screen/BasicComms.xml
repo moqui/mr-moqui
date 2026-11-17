@@ -25,13 +25,14 @@ along with this software (see the LICENSE.md file). If not, see
 
     <subscreens default-item="Inbox" always-use-full-path="true"/>
 
-    <!-- What Comms offers the suite shell: an email and a chat message in the + menu, the palette's Messages and Chat rooms (the #
-        prefix), the mention and new mail notifications, and go-to keys. -->
+    <!-- What Comms offers the suite shell: an email and a chat message in the + menu, the palette's Messages, Chat rooms (the #
+        prefix) and People to message, the mention and new mail notifications, and go-to keys. -->
     <shell-providers>
         <quick-create kind="email" label="Email" icon="sym_o_mail" screen="BasicComms/Inbox/Compose" sequence="60"/>
         <quick-create kind="chatMessage" label="Chat message" icon="sym_o_chat" screen="BasicComms/Panel/Chat" sequence="70"/>
         <palette-source group="Messages" label="Messages" icon="sym_o_mail" service="org.moqui.comms.InboxServices.search#Messages" sequence="30"/>
         <palette-source group="Rooms" label="Chat rooms" icon="sym_o_chat" prefix="#" service="org.moqui.comms.ChatScreenServices.search#PaletteRooms" sequence="31"/>
+        <palette-source group="ChatPeople" label="People to message" icon="sym_o_person_add" service="org.moqui.comms.ChatScreenServices.search#PalettePeople" sequence="32"/>
         <notification-topic topic="ChatMention"/>
         <notification-topic topic="NewMail"/>
         <keymap>
