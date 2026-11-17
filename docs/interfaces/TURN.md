@@ -51,6 +51,9 @@ Open these ports on the firewall:
   refused; a channel to any other address or port is refused; nothing is relayed to or from another port of a media
   node's address (its SSH, database or HTTP port) or from any other address. A plain TURN credential would let a
   client relay anywhere; this rule ties it to calls. TURN relays only UDP here, so the ICE-TCP port is no relay peer.
+- A call on the direct path ([WebRTC, The direct path](WebRTC.md#the-direct-path)) uses these servers only for STUN:
+  the page asks their UDP addresses for its public address (a binding, no credential), and relays nothing through them,
+  since the other page is no media node. Two pages that cannot reach each other move the call to the media server.
 - The exception is an XMPP user's own credential, for calls between XMPP clients ([XMPP](XMPP.md), XEP-0215), issued
   only while `xmpp_turn_enabled` is true (off by default), never to an external user (`EXTERNAL_USER`), and at most
   `xmpp_turn_per_hour` (30) a user an hour: `XmppServices.get#IceServers` makes it with the leg `xmpp.<userId>`
