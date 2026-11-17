@@ -197,6 +197,12 @@ The SMTP listener runs in internet mode (`smtp_internet=true`): set `smtp_listen
 `connections-per-minute`), checks SPF, DKIM, DMARC and ARC after the data, removes any `Authentication-Results`
 claiming its name, refuses a DMARC failure whose policy is reject (550) and files a quarantine one in Junk.
 
+- **Hourly limits.** `smtp-server` `internet-messages-per-hour` (1000) and `internet-bytes-per-hour` (1073741824, 1 GiB)
+  limit the messages stored in an hour from one client address (IPv6 by its /64), over all its connections, and from
+  one envelope sender (in any case), over all addresses, whichever is reached first. A `MAIL` that would go past one,
+  its `SIZE` counted toward the bytes, is answered `451 4.7.1` and the peer tries again later. A message counts once,
+  whatever its recipients; a bounce (the null reverse path) counts only against its client address.
+
 - **Spam.** With `mail_rspamd_url` (Rspamd's HTTP API, `http://127.0.0.1:11333`) Rspamd's verdict sets `X-Spam-Flag`
   and `X-Spam-Status` (any that came are removed); without it there is no spam check. Both fail open: Rspamd not
   reached, or a check that fails, is logged and the mail taken (as not spam); checks that do not finish in 45 seconds

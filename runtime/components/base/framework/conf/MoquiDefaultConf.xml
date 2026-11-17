@@ -1439,13 +1439,18 @@
         STARTTLS. chunking: BDAT (RFC 3030). dsn: the DSN parameters (RFC 3461) and "delivered" reports; a delivered
         report goes only when the sender is authenticated: authserv-id is set and its Authentication-Results show
         spf=pass, or dmarc=pass with header.from aligned with the envelope sender's domain.
+        internet-messages-per-hour and internet-bytes-per-hour: in internet mode, the messages and their bytes stored in
+        an hour from one client address (IPv6 by its /64) and from one envelope sender, whichever is reached first; a
+        MAIL that would go past one (with its SIZE) is answered 451 4.7.1. A message counts once, whatever its
+        recipients.
     -->
     <smtp-server listen-port="${smtp_listen_port}" listen-host="${smtp_listen_host}"
             allowed-addresses="${smtp_allowed_addresses}" hostname="${smtp_hostname}" authserv-id="${smtp_authserv_id}"
             proxy-protocol="false" spam-headers="X-Spam-Flag,X-Spam-Status,X-Spam" plus-separator="+"
             max-message-size="26214400" max-recipients="100" max-connections="20" command-timeout="300"
             session-timeout="1800" protocol="smtp" starttls="false" require-tls="false"
-            tls-cert-file="${smtp_tls_cert_file}" tls-key-file="${smtp_tls_key_file}" chunking="true" dsn="false"/>
+            tls-cert-file="${smtp_tls_cert_file}" tls-key-file="${smtp_tls_key_file}" chunking="true" dsn="false"
+            internet-messages-per-hour="1000" internet-bytes-per-hour="1073741824"/>
 
     <!-- How work crosses the edge link (plans/archive/Edge-Node.md §5.2), read by both ends. The queue: items delivered or
         failed are kept queue-retention-days from their delivery or failure (receipts as long; both nodes should keep
