@@ -164,6 +164,99 @@ pub(crate) fn page_call_state(id: &str, state: &str) -> Result<(), String> {
     })
 }
 
+/// The phone's notification state, as the check screen shows it (`PushCheck.state(context)`, JSON: notifications
+/// allowed, channels on, battery optimization, the last push received).
+pub(crate) fn push_check_state() -> Result<String, String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.PushCheck"))?;
+        let state = env
+            .call_static_method(
+                &class,
+                jni_str!("state"),
+                jni_sig!("(Landroid/content/Context;)Ljava/lang/String;"),
+                &[JValue::Object(app)],
+            )?
+            .l()?;
+        let state = env.cast_local::<jni::objects::JString>(state)?;
+        state.try_to_string(env)
+    })
+}
+
+/// Open the system's screen that fixes `what` (`notifications`, `channels`, `battery`, `fullScreen`:
+/// `PushCheck.fix(context, what)`).
+pub(crate) fn push_check_fix(what: &str) -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.PushCheck"))?;
+        let what = env.new_string(what)?;
+        env.call_static_method(
+            &class,
+            jni_str!("fix"),
+            jni_sig!("(Landroid/content/Context;Ljava/lang/String;)V"),
+            &[JValue::Object(app), JValue::Object(&what)],
+        )?;
+        Ok(())
+    })
+}
+
+/// A room of `account` read in the app: its notification from a push goes (`ChatNotifications.clearRoom`).
+pub(crate) fn chat_clear(account: &str, room: &str) -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.ChatNotifications"))?;
+        let (account, room) = (env.new_string(account)?, env.new_string(room)?);
+        env.call_static_method(
+            &class,
+            jni_str!("clearRoom"),
+            jni_sig!("(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V"),
+            &[JValue::Object(app), JValue::Object(&account), JValue::Object(&room)],
+        )?;
+        Ok(())
+    })
+}
+
+/// The room of `account` the shell shows now (empty: none): its pushes show nothing while the app is in front
+/// (`ChatNotifications.roomShown`).
+pub(crate) fn chat_room_shown(account: &str, room: &str) -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.ChatNotifications"))?;
+        let (account, room) = (env.new_string(account)?, env.new_string(room)?);
+        env.call_static_method(
+            &class,
+            jni_str!("roomShown"),
+            jni_sig!("(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V"),
+            &[JValue::Object(app), JValue::Object(&account), JValue::Object(&room)],
+        )?;
+        Ok(())
+    })
+}
+
+/// A push registration failed: the native code's worker tries again (`RegisterWorker.start`).
+pub(crate) fn register_worker_start() -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.RegisterWorker"))?;
+        env.call_static_method(
+            &class,
+            jni_str!("start"),
+            jni_sig!("(Landroid/content/Context;)V"),
+            &[JValue::Object(app)],
+        )?;
+        Ok(())
+    })
+}
+
+/// The UnifiedPush instances registered for the accounts signed in here (`UnifiedPushes.registerAll`).
+pub(crate) fn unified_register_all() -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.UnifiedPushes"))?;
+        env.call_static_method(
+            &class,
+            jni_str!("registerAll"),
+            jni_sig!("(Landroid/content/Context;)V"),
+            &[JValue::Object(app)],
+        )?;
+        Ok(())
+    })
+}
+
 /// The phone's model (`android.os.Build.MODEL`), for its name in the user's device list.
 pub(crate) fn device_model() -> Result<String, String> {
     with_context(|env, _| {

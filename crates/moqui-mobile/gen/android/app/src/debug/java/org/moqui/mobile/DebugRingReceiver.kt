@@ -16,6 +16,8 @@ import android.util.Log
  *       --es pushId 100050 --es caller 'John Doe' --es video false --el ringSeconds 40
  *   adb shell am broadcast -n org.moqui.mobile/.DebugRingReceiver --es kind ringEnded --es callSessionId 100100 --es reason timedOut
  *   adb shell am broadcast -n org.moqui.mobile/.DebugRingReceiver --es kind token --es token debug-token-1
+ *   adb shell am broadcast -n org.moqui.mobile/.DebugRingReceiver --es kind debugChat \
+ *       --es payload '{"kind":"message","account":"a1","chatRoomId":"100","eventSeq":5,"senderName":"Ann","snippet":"Hi"}'
  *
  * `pushId` is the account's registration (`subscriptionId` in the app's `client/push.json`); a ring that is no
  * account's here is dropped. `ringSeconds` is the time it rings, as the server sends it.
@@ -31,8 +33,11 @@ class DebugRingReceiver : BroadcastReceiver() {
         Log.i("moqui-push", "A debug push of kind ${data["kind"]}")
         if (data["kind"] == "token") {
             data["token"]?.let { Push.token(context, it) }
+        } else if (data["kind"] == "debugChat") {
+            // an opened chat payload, as Rust gives it (with its account): shown with no server or Firebase
+            data["payload"]?.let { ChatNotifications.show(context, org.json.JSONObject(it)) }
         } else {
-            CallManager.onPush(context, data)
+            Push.onMessage(context, data)
         }
     }
 }

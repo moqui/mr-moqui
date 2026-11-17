@@ -291,6 +291,68 @@ impl MobileHost {
         log::info!("moqui-mobile: the call {} opens in the shell", link.call_session_id);
     }
 
+    /// The client's directory (`push.json` beside the accounts).
+    pub(crate) fn client_dir(&self) -> &std::path::Path {
+        &self.dir
+    }
+
+    /// Show `path`, a screen of the current account's comms app, in the shell (a notification's tap): kept for the
+    /// shell to take (`client_take_open`), and the shell shown or poked.
+    pub(crate) fn open_shell_path(&self, path: &str) {
+        let Ok(state) = moqui_client_tauri::state(&self.app) else {
+            return;
+        };
+        *moqui_lib::sync::lock(&state.open_pending) = Some(path.to_string());
+        if self.is_shell(MAIN) && self.page.has_nonce() {
+            self.eval("window.moquiShell && window.moquiShell.poke()");
+        } else {
+            self.navigate(&moqui_client_tauri::shell_url(None, None));
+        }
+    }
+
+    /// A room link (`org.moqui.mobile:/room`): opened when this app signed it ([`crate::native::room_link_taken`]), else
+    /// refused (logged).
+    pub(crate) fn open_room_link(&self, url: &tauri::Url) {
+        let Ok(state) = moqui_client_tauri::state(&self.app) else {
+            return;
+        };
+        match crate::native::room_link_taken(&state.core, url) {
+            Some((account, room, seq)) => self.open_room(&account, &room, seq),
+            None => log::warn!("moqui-mobile: a room link this app did not make is refused"),
+        }
+    }
+
+    /// A chat notification's tap (a room link this app signed): the room of `account` at the message, in the shell; the
+    /// account, which must be one signed in here, becomes the current one first.
+    pub(crate) fn open_room(&self, account: &str, room: &str, seq: Option<i64>) {
+        let Ok(state) = moqui_client_tauri::state(&self.app) else {
+            return;
+        };
+        if state.core.keys().get(account).is_none() {
+            log::warn!("moqui-mobile: the room {room} is not opened: its account is not signed in here");
+            return;
+        }
+        let switched = self.signed_in().as_deref() != Some(account);
+        if switched {
+            if let Err(err) = moqui_client_tauri::commands::switch_account(&state, account) {
+                log::warn!("moqui-mobile: the room {room} is not opened: {err}");
+                return;
+            }
+        }
+        let root = state.core.comms_root_of(account);
+        let mut path = format!("{}/Chat?chatRoomId={room}", root.trim_end_matches('/'));
+        if let Some(seq) = seq {
+            path.push_str(&format!("&eventSeq={seq}"));
+        }
+        if switched {
+            // the shell is loading for the account, and takes it then
+            *moqui_lib::sync::lock(&state.open_pending) = Some(path);
+        } else {
+            self.open_shell_path(&path);
+        }
+        log::info!("moqui-mobile: the room {room} opens in the shell");
+    }
+
     /// The answer the native code handed over for the call `id`, taken once by its call screen: only a call the user
     /// answered on the phone is answered by the page by itself.
     pub(crate) fn take_answer(&self, id: &str) -> bool {
@@ -445,13 +507,17 @@ impl ShellHost for MobileHost {
     }
 
     fn account_signed_in(&self, account: &str) {
+        crate::native::account_back(account);
         let (Some(core), true) = (self.core(), self.network_ready()) else {
             return;
         };
         let (dir, account) = (self.dir.clone(), account.to_string());
         let started = std::thread::Builder::new()
             .name("push-register".to_string())
-            .spawn(move || crate::native::register_push(&core, &dir, Some(&account)));
+            .spawn(move || {
+                crate::native::register_or_retry(&core, &dir, Some(&account));
+                unified_register_all();
+            });
         if let Err(err) = started {
             log::warn!("Push: the registration did not start: {err}");
         }
@@ -461,6 +527,16 @@ impl ShellHost for MobileHost {
         if let Some(core) = self.core() {
             crate::native::unregister_push(&core, &self.dir, account, key);
         }
+        unified_register_all();
+    }
+}
+
+/// The UnifiedPush instances follow the accounts signed in here (`UnifiedPushes.registerAll`): one for an account that
+/// signed in, none for one that signed out.
+fn unified_register_all() {
+    #[cfg(target_os = "android")]
+    if let Err(err) = crate::android::unified_register_all() {
+        log::warn!("Push: UnifiedPush was not told of the accounts: {err}");
     }
 }
 

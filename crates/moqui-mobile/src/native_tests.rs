@@ -73,3 +73,64 @@ fn one_client_per_process_until_it_stops_and_the_current_account_is_asked_first(
     ENDING.store(false, std::sync::atomic::Ordering::SeqCst);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The notification's Reply goes to the comms app's send as escaped HTML, its lines kept, and passes the outbox's
+/// check of a chat send.
+#[test]
+fn a_reply_is_the_comms_apps_send_of_plain_escaped_text() {
+    assert_eq!(chat_send_url("/qapps/BasicComms"), "/apps/BasicComms/Chat/send");
+    assert_eq!(chat_send_url("/qapps/Comms/"), "/apps/Comms/Chat/send");
+    assert_eq!(
+        reply_html(" a <b> & \"c\"\nnext "),
+        "<p>a &lt;b&gt; &amp; &quot;c&quot;<br>next</p>"
+    );
+    let payload = serde_json::json!({"clientRef": "h00ff", "chatRoomId": "100", "url": chat_send_url("/qapps/BasicComms"),
+        "params": {"body": reply_html("hi")}, "text": "hi"});
+    let op = moqui_client::sync::outbox::check("chat-send", &payload, &[], 1_000).unwrap();
+    assert_eq!(op.target, "100");
+    let read = moqui_client::sync::outbox::check(
+        "chat-read",
+        &serde_json::json!({"chatRoomId": "100", "lastReadEventSeq": 7}),
+        &[],
+        1_000,
+    )
+    .unwrap();
+    assert_eq!(read.kind, "chat-read");
+}
+
+/// HIGH review findings: each account has its own keys, so of two accounts whose servers gave the same push id, only
+/// the one whose keys open a push gets it (another server's push, or one forged to look like it, opens with none);
+/// and a sealed notification, whose kind is only outside, keeps its outer kind and push id.
+#[test]
+fn a_push_is_the_account_whose_keys_open_it_with_its_outer_kind() {
+    use base64::Engine;
+    let a = crate::push::PushKeys::generate().unwrap();
+    let b = crate::push::PushKeys::generate().unwrap();
+    let enc = |to: &crate::push::PushKeys, json: &str| {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(crate::push::seal(to, json.as_bytes()))
+    };
+    let to_b = enc(&b, r#"{"title":"Board","link":"/apps/x"}"#);
+    let candidates = vec![
+        ("chat.example.com-0123456789ab".to_string(), Some(a)),
+        ("chat.example.org-ba9876543210".to_string(), Some(b)),
+    ];
+    let (account, opened) = open_with(&candidates, &to_b).unwrap();
+    assert_eq!(account, "chat.example.org-ba9876543210");
+    let opened = opened_for(opened, &account, "notification", "100050");
+    assert_eq!(
+        opened["kind"], "notification",
+        "the outer kind of a sealed notification"
+    );
+    assert_eq!(opened["pushId"], "100050");
+    assert_eq!(opened["account"], "chat.example.org-ba9876543210");
+    assert_eq!(opened["title"], "Board");
+    // its own kind stays (a chat push's inner kind is the message's)
+    let inner = opened_for(serde_json::json!({"kind": "message"}), &account, "chat", "1");
+    assert_eq!(inner["kind"], "message");
+    // a push that opens with no account's keys here: none
+    let stranger = crate::push::PushKeys::generate().unwrap();
+    assert!(open_with(&candidates, &enc(&stranger, "{}")).is_none());
+    // keys that cannot be read now are passed over, never made
+    let unread = vec![("chat.example.org-ba9876543210".to_string(), None)];
+    assert!(open_with(&unread, &to_b).is_none());
+}

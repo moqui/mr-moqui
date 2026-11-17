@@ -119,9 +119,10 @@ page loses Android's predictive back animation (the preview of the screen back l
   layout direction, colour mode, keyboard, navigation, touchscreen, mcc and mnc), and one made again keeps the client.
 - **A page's request with a body** (`scheme_fetch`) is made on Tauri's blocking pool: reqwest's blocking client
   panics on an async runtime's thread, so until MT2 every such POST from the shell answered 500.
-- **Notifications:** the page bridge's `notify` shows a native notification (tauri-plugin-notification), asking for
-  Android 13's permission the first time (not yet seen on the emulator: no page notified in the checks); a click opens
-  the app, not the notification's link yet.
+- **Notifications:** the page bridge's `notify` shows a native notification (tauri-plugin-notification). Its `tag` (a
+  room's `chat-<id>`) is the notification's id, so the same tag replaces it and `notifyClear(tag)` removes it; its
+  `link` (a path on the account's server) is kept with it, and a tap opens the app at that path. The chat's own
+  notifications, shown with no WebView, are below ([Chat notifications](#chat-notifications)).
 
 ## The incoming call (MT2)
 
@@ -177,12 +178,23 @@ answered (plans/Mobile-Desktop.md MD6, MT2; a Rust native audio client is later)
   token: when it comes, at the app's start for one not yet registered, and at each sign-in (a new key). It is taken
   back (`unregisterClientPush`) before a sign-out or a removal revokes the key. The server keeps one user per token, so
   of two accounts on one server the last registered gets the rings (and the other's registration is forgotten here).
-  Two servers could give the same `subscriptionId`; the current account is then taken first.
+  With the token go the account's own push public key and auth secret (`p256dhKey`, `authSecret`: a P-256 pair and
+  secret of each account, `src/push.rs`, kept sealed by the Keystore as the device key is, under
+  `<account>.push-keys`), so the server seals what it sends to that account's keys. Two servers can give the same
+  `subscriptionId`, so a sealed push is the account's whose keys open it, never the current one by default; an
+  unsealed ring (or its end) is taken only when one account can be its and that account registered no push keys, and
+  a ring's end ends only that account's call ([Chat notifications](#chat-notifications)). An account whose registration
+  another account of its server took (one user per FCM token) is not tried again until something changes. The
+  registrations post with no lock held, merged after. One that fails schedules `RegisterWorker` (WorkManager, backing
+  off from 30 seconds), which tries until each account's server answers; it is not scheduled at every start, which
+  would start the process again after the user backed out.
 - **Permissions:** `POST_NOTIFICATIONS` (Android 13+) and `RECORD_AUDIO` are asked once an account is signed in, not at
-  the first start's sign-in; Android's permission dialog asks for the unlock first, so on a locked phone the Answer does
-  not ask and the page asks after the unlock. `CAMERA` is asked at a video call's Answer or by the page.
-  `MANAGE_OWN_CALLS`, `FOREGROUND_SERVICE_PHONE_CALL` and `USE_FULL_SCREEN_INTENT` are granted at install (Android 14+
-  lets the user, and Google Play's policy, turn the full-screen intent off).
+  the first start's sign-in, notifications after a dialog that says why (messages, mentions and calls); Android's
+  permission dialog asks for the unlock first, so on a locked phone the Answer does not ask and the page asks after the
+  unlock. `CAMERA` is asked at a video call's Answer or by the page. `MANAGE_OWN_CALLS`,
+  `FOREGROUND_SERVICE_PHONE_CALL` and `USE_FULL_SCREEN_INTENT` are granted at install; Android 14+ lets the user (and
+  Google Play's policy) turn the full-screen intent off, so after the notifications question the app says why calls
+  need it and opens its setting, once. The notification check fixes either later.
 - **Firebase is optional at build time.** With `gen/android/app/google-services.json` the build applies the
   google-services plugin and adds firebase-messaging and `src/fcm` (`PushService`, its manifest); without it the app
   builds and runs with push off (`BuildConfig.FCM`, and `Push.kt` asks for `FcmPush` by name), and no Firebase class is
@@ -220,11 +232,79 @@ above with its `callSessionId`; with the app in the foreground the `/notws` ring
 process; the token's registration from Firebase; a ring on a phone's own lock screen and its full-screen-intent
 setting; Bluetooth and speaker routing; two-way audio; and encrypted calls on a WebView 141+.
 
+## Chat notifications
+
+The chat's pushes are shown by Kotlin with no WebView, also when the push started the process
+([plans/Comms-Messaging.md §7.4](../../plans/Comms-Messaging.md)). The Kotlin is `Push`, `ChatNotifications`,
+`ChatRules`, `ChatActionReceiver`, `PushCheck`, `RegisterWorker` and, for UnifiedPush, `UnifiedPushes`,
+`UnifiedPushService` and `RustKeyManager`; the Rust is `src/push.rs` and `src/native.rs`.
+
+- **Sealed pushes, each account its own keys.** A device that registered its push keys gets only `kind`, `pushId` and
+  `enc` in each FCM data message: every other field, a ring's too, is sealed to the account's keys (RFC 8291
+  aes128gcm). `Push.onMessage` hands `enc` to Rust (`Native.openPush`, on a thread of its own that does no network
+  work), which tries each account registered with that `pushId` and takes the one whose keys open it: two servers'
+  ids may be the same, and a server cannot make a push that opens as another account's. An opened push keeps its outer
+  `kind` (a sealed `notification` has it only outside). A push that is no account's here, or does not open, is dropped
+  (logged); only a push with no `enc` at all (a device registered before it had keys) shows a bare "New message". A
+  ring that does not open shows a missed-call notification rather than nothing, when its push id names an account here.
+  Opening only reads keys: keys a
+  server encrypts to are never replaced because the key store failed for a moment.
+- **UnifiedPush** (a phone without Google Play; `org.unifiedpush.android:connector`): each account is an instance of
+  its own with the distributor (ntfy, for one), whose endpoint Rust registers with that account's server
+  (`provider=unifiedpush`) with the account's same keys. The connector's receiver opens a message with its own default
+  key manager, which has none of the account's keys, so the message comes still sealed and `UnifiedPushService` opens
+  it in Rust (`Native.openFor`) with the account's keys; one the connector says it opened (sealed to its own keys) or
+  that does not open is dropped. A build without Firebase takes the phone's default distributor by itself. Where
+  Firebase works it stays: the notification check offers "Use UnifiedPush" only after asking, and "Use Firebase" to
+  come back. The instances follow the accounts at each sign-in and sign-out (an account signing out has its instance
+  taken back and no keys made again). The server sends no VAPID key to the connector (a distributor that requires one
+  refuses: `VAPID_REQUIRED`, logged).
+- **Channels:** Messages (and the test notification), Mentions, Texts (an SMS or other bridged room's), Missed calls
+  and Other, beside the calls' ringing and ongoing ones; the user sets each one's sound and importance in Android's
+  settings.
+- **One notification per room of an account** (tag `chat-<account>/<room>`: another server's room of the same id is
+  another), a MessagingStyle with the sender and the room, its count when more came, grouped under a summary per
+  account, with a conversation shortcut (Android's conversation section). An encrypted room's push has no text ("open
+  the app to read it"), and previews off on the server leave it out too. The room the app shows in front (the page
+  tells: `chat_room_shown`) shows none.
+- **Actions.** Reply (inline) and Mark read go to the account's outbox in Rust (`chat-send`, `chat-read`) and
+  `FlushWorker` sends them, so they wait for the network; a reply that cannot be queued (the account is gone) shows
+  "not sent" with its text and a tap to the room. An encrypted room's Reply opens the room, since the page encrypts.
+  Mute 1 hour mutes the room on this phone. The account, room and message are the action intent's data, which the
+  Reply's mutable intent cannot have filled in. A tap opens the room at the message
+  (`org.moqui.mobile:/room?account=...&chatRoomId=...&eventSeq=...&sig=...`): the activity is exported, so the link is
+  signed by Rust (`Native.roomLink`, an HMAC with the app's own link key) and another app's opens nothing.
+- **Clear and ack.** The server's `clear` (the room was read on another device) removes the room's notification, and
+  the summary only when no other room's shows; a read in the app removes it too, Mark all read every room's of the
+  account (the page's `notifyClear` reaches
+  `ChatNotifications.clearRoom`, as the server sends no clear to the device that read). After a push is shown the app
+  tells the server (`/qapps/ackClientPush` with its `ackId`), which the server's push health counts.
+- **The notification check** (the shell's account menu, "Notifications on this device"; host commands `push_check`,
+  `push_check_fix`, `push_test`): the permission, each channel on or off, battery optimization (Android's own; a
+  maker's task killer is not detected), the full-screen intent, the push service (Firebase, or the UnifiedPush
+  distributor, with a Fix to pick one), whether the account's server has this device's registration, the last push
+  received, and a stop since; each item that is off has a Fix that opens its system setting (battery optimization
+  asks in place). "Send a test notification" asks the server for one (`/qapps/testClientPush`, `send#TestPush`, once a
+  device in 10 seconds) and shows the time its own push took to arrive (its ack id among the recent ones).
+- **Stopped.** A force-stopped app gets no push until it is opened again; the app says once, at the next open, that it
+  was stopped (Android 11+, `ApplicationExitInfo` `REASON_USER_REQUESTED`, which some makers also give for a swipe from
+  the recent apps, so the notice says "stopped", not "force-stopped").
+
+A chat push without Firebase (debug builds), an opened payload as Rust gives it:
+
+```sh
+adb shell am broadcast -n org.moqui.mobile/.DebugRingReceiver --es kind debugChat --es payload \
+    "'{\"kind\":\"message\",\"account\":\"chat.example.com-0123456789ab\",\"chatRoomId\":\"100\",\"eventSeq\":5,\"roomName\":\"Team\",\"senderName\":\"Ann\",\"snippet\":\"Hi\"}'"
+```
+
 ## Known gaps (MT1)
 
 What fills each gap of MT1 and MT2 is MT3's record ([Mobile-Desktop](../../plans/Mobile-Desktop.md#android-track-md6)).
 
-- A notification's link and tag are not used; the counts and presence (`setCounts`, `setPresence`) do nothing.
+- The counts and presence (`setCounts`, `setPresence`) do nothing.
+- UnifiedPush is not checked with a distributor: the emulator has none, and its opening (the account's keys) is the
+  Rust tests'. A real distributor (ntfy) delivering to a phone is not tried yet. A chat push has no sender avatar (a
+  picture would need a fetch the push path does not make).
 - Downloads and attachments a server page opens are not saved by the host, and an event stream is answered 503.
 - A form posted by navigation is refused with 405 (above), not sent without its body; the bridge's `fetch` covers the
   webroot's requests.
@@ -239,6 +319,23 @@ What fills each gap of MT1 and MT2 is MT3's record ([Mobile-Desktop](../../plans
   sealed key store, the schemes' redirect and `fetch` handling, the build's conf, the bridge's split by origin.
 - `cd crates/moqui-client-tauri && CARGO_TARGET_DIR=../../target cargo test`: the schemes' answer, with no network.
 - `scripts/check-android.sh`: clippy for both Android targets.
+- `./gradlew :app:testUniversalDebugUnitTest` in `gen/android` (`ANDROID_HOME` set): the Kotlin rules' JVM tests
+  (`CallRules`, `ChatRules`: channels, tags, links, mute).
+- Instrumented, on the emulator when asked: `ChatNotificationsTest` shows an opened push and checks its channel and
+  actions, another account's room as another notification, a mention's channel, an encrypted room's lack of text, Reply
+  and Mark read through a stand-in outbox (ids from the intent's data, not its extras), a
+  reply that could not be queued, `clear`, Mute, the room in view, and a push or ring that does not open. Build the
+  test APK without the Rust tasks (the app's `.so` from
+  `./moq android build --target x86_64 --apk` stays), install both, run it:
+
+  ```sh
+  ./gradlew :app:assembleUniversalDebug :app:assembleUniversalDebugAndroidTest -x rustBuildArm64Debug \
+      -x rustBuildX86_64Debug -x rustBuildArmDebug -x rustBuildX86Debug -x rustBuildUniversalDebug
+  adb install -r -g app/build/outputs/apk/universal/debug/app-universal-debug.apk
+  adb install -r -g app/build/outputs/apk/androidTest/universal/debug/app-universal-debug-androidTest.apk
+  adb shell am instrument -w -e class org.moqui.mobile.ChatNotificationsTest \
+      org.moqui.mobile.test/androidx.test.runner.AndroidJUnitRunner
+  ```
 - `scripts/android-smoke.sh`: on the emulator when asked (not in `./moq test-all`): install, start, the shell's ready
   line in logcat, a screenshot, the frame check, then back out and start again. With a release APK
   (`MOQUI_MOBILE_APK`), which has no DevTools socket, it skips the frame check and checks instead that R8 kept the

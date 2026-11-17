@@ -25,6 +25,9 @@
 fn main() {
     let manifest = tauri_build::AppManifest::new().commands(&[
         "notify",
+        "notify_clear",
+        "push_check",
+        "push_test",
         "set_counts",
         "set_presence",
         "open_external",

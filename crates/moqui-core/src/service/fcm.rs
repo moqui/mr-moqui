@@ -704,9 +704,11 @@ pub(crate) enum Attempt {
 /// its accounts a ring or its end is for; and a ring's `ringSeconds`, how long it rings from now, so the app does not
 /// go by its own clock.
 ///
-/// A notification carries no readable text through Google (plans/Comms-Messaging.md §7.2 rule 5, COM-UI-031): for a
-/// device that gave its push keys (`keys`: its public key and auth secret) its title, link, topic and tag are in `enc`,
-/// encrypted to the device (RFC 8291, base64url); one that gave none gets the kind, topic and tag only.
+/// Nothing readable goes through Google (plans/Comms-Messaging.md §7.2 rule 5, COM-UI-031): to a device that gave its
+/// push keys (`keys`: its public key and auth secret) every field but `kind` and `pushId` is in `enc`, encrypted to the
+/// device (RFC 8291, base64url): a notification's title and link, and a ring's caller and call, which the app opens
+/// before it rings. A device that gave none (an app before its keys) gets a notification's kind, topic and tag only,
+/// and a ring as it was.
 pub(crate) fn device_message(
     token: &str,
     device: &str,
@@ -717,25 +719,27 @@ pub(crate) fn device_message(
     let mut body = message(token, notice);
     if let Some(data) = body["message"]["data"].as_object_mut() {
         if matches!(notice.kind, Kind::Notification) {
-            let sealed = keys.and_then(|(p256dh, auth)| {
-                // cut so the base64 of the sealed body stays within the data's budget
-                let plain = serde_json::json!({
-                    "title": cut_bytes(&notice.title, 400), "link": cut_bytes(&notice.link, 800),
-                    "topic": cut_bytes(&notice.topic, MAX_FIELD_BYTES), "tag": cut_bytes(&notice.tag, MAX_FIELD_BYTES),
-                });
-                crate::notify::push_crypto::encrypt(plain.to_string().as_bytes(), p256dh, auth)
-                    .map_err(|reason| tracing::warn!(subscription_id = %device, "FCM notice not encrypted: {reason}"))
-                    .ok()
-            });
-            data.remove("title");
-            data.remove("link");
-            if let Some(sealed) = sealed {
-                data.remove("topic");
-                data.remove("tag");
-                data.insert("enc".to_string(), URL_SAFE_NO_PAD.encode(sealed).into());
-            }
+            data.insert("title".to_string(), cut_bytes(&notice.title, 400).into());
+            data.insert("link".to_string(), cut_bytes(&notice.link, 800).into());
         }
         add_device_fields(data, device, notice, now);
+        let sealed = keys.and_then(|(p256dh, auth)| {
+            let plain: serde_json::Map<String, serde_json::Value> = data
+                .iter()
+                .filter(|(name, _)| !matches!(name.as_str(), "kind" | "pushId"))
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect();
+            crate::notify::push_crypto::encrypt(serde_json::Value::Object(plain).to_string().as_bytes(), p256dh, auth)
+                .map_err(|reason| tracing::warn!(subscription_id = %device, "FCM push not encrypted: {reason}"))
+                .ok()
+        });
+        if let Some(sealed) = sealed {
+            data.retain(|name, _| matches!(name.as_str(), "kind" | "pushId"));
+            data.insert("enc".to_string(), URL_SAFE_NO_PAD.encode(sealed).into());
+        } else if matches!(notice.kind, Kind::Notification) {
+            data.remove("title");
+            data.remove("link");
+        }
     }
     body
 }

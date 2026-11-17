@@ -107,7 +107,7 @@ self.addEventListener("push", event => {
     event.waitUntil(
         self.registration
             .showNotification(title, options)
-            .then(() => (chat ? ack(data.ackId) : null))
+            .then(() => (data.ackId ? ack(data.ackId) : null))
             .then(() =>
                 // an open page refreshes its counts; the server's list is what it shows
                 self.clients

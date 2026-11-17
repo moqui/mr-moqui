@@ -1,4 +1,44 @@
 <resources>
     <string name="app_name">"MR-Moqui"</string>
     <string name="main_activity_title">"MR-Moqui"</string>
+
+    <!-- Notification channels (plans/Comms-Messaging.md §7.4, Channels; ChatNotifications.kt) -->
+    <string name="channel_messages">Messages</string>
+    <string name="channel_messages_about">New messages in your rooms and direct chats, and the test notification</string>
+    <string name="channel_mentions">Mentions</string>
+    <string name="channel_mentions_about">Messages that mention you or reply to you</string>
+    <string name="channel_texts">Texts</string>
+    <string name="channel_texts_about">Texts from outside numbers</string>
+    <string name="channel_missed">Missed calls</string>
+    <string name="channel_missed_about">Calls you missed and voicemail</string>
+    <string name="channel_other">Other</string>
+    <string name="channel_other_about">Other notifications from your apps</string>
+
+    <!-- A chat notification -->
+    <string name="chat_new_message">New message</string>
+    <string name="chat_open_to_read">New message: open the app to read it</string>
+    <string name="chat_new_messages">%1$d new messages</string>
+    <string name="chat_missed_call">Missed call</string>
+    <string name="chat_voicemail">New voicemail</string>
+    <string name="chat_you">You</string>
+    <string name="chat_reply">Reply</string>
+    <string name="chat_reply_hint">Message</string>
+    <string name="chat_mark_read">Mark read</string>
+    <string name="chat_mute_hour">Mute 1 hour</string>
+    <string name="chat_reply_failed">Your reply was not sent: tap to open the room</string>
+    <string name="ring_not_opened">A call came that this phone could not read: open the app to see your calls</string>
+    <string name="force_stopped_title">The app was stopped</string>
+    <string name="force_stopped_reason">The app was stopped (force-stopped, or by the phone), so messages and calls may not have reached this phone until you opened it again. If any seem missing, see Notifications on this device in the account menu.</string>
+    <string name="chat_summary">%1$d conversations</string>
+    <string name="push_test_title">Test notification</string>
+    <string name="push_test_body">Notifications reach this phone.</string>
+
+    <!-- Why the app asks (MainActivity.kt) -->
+    <string name="ask_notifications_title">Notifications</string>
+    <string name="ask_notifications_reason">Allow notifications so messages, mentions and calls reach you when the app is closed or the phone is locked.</string>
+    <string name="ask_full_screen_title">Calls on the lock screen</string>
+    <string name="ask_full_screen_reason">Allow full-screen notifications so an incoming call shows over the lock screen and rings like a phone call.</string>
+    <string name="ask_continue">Continue</string>
+    <string name="ask_not_now">Not now</string>
+    <string name="ask_open_settings">Open settings</string>
 </resources>

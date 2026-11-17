@@ -410,6 +410,32 @@ shared device's hint of what is kept, and the sign-out's list of what is unsent.
   queued send of a server draft carries `baseStamp`, the `draftStamp` Compose last saw, so the conflict is found. An
   internal message offline waits in the outbox when `kinds().internalSend` is true, else it is kept as a draft as in MD4.
 
+## Notifications
+
+The desktop app gets the chat over the account's `/notws` while it runs, so its notifications are the page's, not
+pushes ([plans/Comms-Messaging.md §7.5](../../plans/Comms-Messaging.md)). A phone's are its pushes (rule 7): its page
+leaves them alone (`pushDelivers`) and only tells the host which room shows (`roomShown`).
+
+- **The same rules as the server's pushes** (WebrootChat.js `notification`): a message from someone else, by the room's
+  level (`/chatUnread` `levelMap`: all, mentions, none; a muted room is mentions), kept current by the user's settings
+  changes (`chatUser` `room` `settings`), and a room joined since at the user's default (`CHAT_NOTIFY_DEFAULT`) until
+  the counts are read again; at the mentions level a mention or a reply to the user (`replyTo`; a thread reply only when
+  the event names the thread's starter, which the server's events do not yet); a missed call to the user and a
+  voicemail unless the level is none (rule 6); not on do not disturb, not while its room shows in a window the user
+  sees (`windowSeen`); no text for an encrypted room or with previews off (`CHAT_NOTIFY_PREVIEW`). A group room's name
+  (`/chatUnread` `roomNameMap`) is the title, the sender before the text.
+- **One per room of an account.** `notify` takes a `tag` (`chat-<room>`); the host makes the notification's id of it and
+  the current account, so a room's next message replaces it (the earlier one is closed first where the platform can:
+  Linux and the BSDs), another account's room of the same id is another, and a read of the room, here or on another
+  device, removes it (`notifyClear`, on a node's pages too). Its `link` opens the room at the message.
+- **Missed messages.** At the start, when the socket comes back and when do not disturb ends (after the user's own
+  status is read), the rooms whose unread count went up since the app last showed them get one notification each ("3
+  new messages", the room's name the title), at most five, else one summary. What was shown, live or so, is kept per
+  account (its storage scope) and user in local storage, so a restart does not show it again.
+- **The notification check** (account menu, "Notifications on this device"): whether notifications are allowed and
+  that the socket brings messages; "Send a test notification" shows one from the app itself (`push_test`) and the time
+  it took. A phone's check is the server's full push path ([Mobile-Client](Mobile-Client.md#chat-notifications)).
+
 ## Known gaps
 
 - Device-dependent features refuse with `elsewhere` in app windows (My devices' actions, the key backup, verification),
@@ -435,10 +461,11 @@ All of these are framework tests in the regression suite, run while working on t
   `scripts/check-android.sh` for the Android build.
 - `cd crates/moqui-desktop && CARGO_TARGET_DIR=../../target cargo test`: the schemes, offline answers, pushes, the
   mirror, modes, the outbox and flusher, windows.
-- `moqui test-client webroot --offline`: MoquiLib's drafts and connection, WebrootChat's host outbox and import.
+- `moqui test-client webroot --offline`: MoquiLib's drafts and connection, WebrootChat's host outbox and import, its
+  notification rules and missed rooms.
 - `moqui test-client basic-comms --offline`: MD5's states in the shell (`ShellSync`: a lost answer then a retry, a
   duplicate push, a reconnect after a feed reset, a thread change's and a send's conflict with the copy opened, a
-  refusal with Retry and Discard, a revoked key mid-queue).
+  refusal with Retry and Discard, a revoked key mid-queue) and the notification check's rows, fix and test time.
 - `moqui test basic-comms`: Compose by `clientRef` (`BasicCommsComposeRef`); the mail change cursor, requests once by
   `clientRef`, conflicts, chunked uploads and their clean-up (`BasicCommsSync`); `cargo test -p moqui-mail`: a sync's
   arrivals, flag scan and expunges on the change cursor.

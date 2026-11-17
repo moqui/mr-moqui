@@ -13,6 +13,9 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- The notification check's one-tap fix (PushCheck.kt, plans/Comms-Messaging.md §7.4 Battery): a messaging app
+        whose pushes must arrive asks to be left out of battery optimization, from the user's tap only. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- A network change during a call (Wi-Fi to mobile data, MainActivity's NetworkWatch): the page restarts ICE. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
@@ -53,6 +56,13 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="org.moqui.mobile" android:path="/sso" />
             </intent-filter>
+            <!-- A chat notification's tap and its conversation shortcut (org.moqui.mobile:/room?account=&chatRoomId=&eventSeq=,
+                ChatNotifications.kt): the room in the shell (src/lib.rs). Not BROWSABLE: no web page opens it. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="org.moqui.mobile" android:path="/room" />
+            </intent-filter>
         </activity>
 
         <!-- The ring on the screen, over the lock screen; its own task, so it never shows the app's pages. -->
@@ -81,6 +91,19 @@
         <receiver
             android:name=".CallActionReceiver"
             android:exported="false" />
+        <!-- A chat notification's Reply, Mark read and Mute 1 hour (ChatActionReceiver.kt) -->
+        <receiver
+            android:name=".ChatActionReceiver"
+            android:exported="false" />
+        <!-- UnifiedPush's events: an account's endpoint and its messages (UnifiedPushService.kt; the connector's own
+            receiver, exported, hands them over to this, which is not) -->
+        <service
+            android:name=".UnifiedPushService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.PUSH_EVENT" />
+            </intent-filter>
+        </service>
 
         <provider
           android:name="androidx.core.content.FileProvider"

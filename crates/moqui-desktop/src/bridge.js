@@ -126,6 +126,8 @@
             const given = options || {};
             return invoke("notify", { title: String(given.title || ""), body: text(given.body), link: absolute(given.link), tag: text(given.tag) });
         },
+        // a room read here: its notification goes (plans/Comms-Messaging.md §7.5), on a node's page as in the shell
+        notifyClear: (tag) => invoke("notify_clear", { tag: String(tag || "") }),
         // the shellCounts of the shell, each a number
         setCounts: (counts) => {
             const numbers = {};
@@ -237,6 +239,9 @@
     }
     window.moquiDesktop = Object.freeze(Object.assign({}, pageCommands, {
         socket,
+        // the account view's notification check (§7.6): the platform's permission, and a test notification
+        pushCheck: () => invoke("push_check"),
+        pushTest: (title, body) => invoke("push_test", { title: String(title || ""), body: text(body) }),
         outbox: Object.freeze(Object.assign({ unsent: () => ask("outbox_unsent") }, outbox)),
         drafts,
         // the shell (shell/js/shell.js): the accounts and sign-in, which the host keeps; never the key

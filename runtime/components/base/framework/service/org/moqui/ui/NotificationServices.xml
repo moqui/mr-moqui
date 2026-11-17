@@ -602,6 +602,23 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="acked" type="Boolean"/></out-parameters>
     </service>
 
+    <service verb="send" noun="TestPush" type="rust" location="moqui_core::service::chat_push::send_test_push">
+        <description>A test notification to the calling device through the full path (plans/Comms-Messaging.md §7.6, the
+            app's notification check): the chat push outbox, encrypted to the device, its push service. The device is the
+            app of this request's device key, else the current user's browser with endpoint. ackIdList are the pushes
+            queued (the device acknowledges each, ack#Push, and its check screen shows how long it took); empty, with
+            reasonCode noDevice, for a request that is no push device of the user's, or tooSoon, for a device that had a test
+            in the last 10 seconds (retryAfterSeconds). queuedDate is when, in Unix
+            milliseconds.</description>
+        <in-parameters><parameter name="endpoint"/></in-parameters>
+        <out-parameters>
+            <parameter name="ackIdList" type="List"/>
+            <parameter name="queuedDate" type="Long"/>
+            <parameter name="reasonCode"/>
+            <parameter name="retryAfterSeconds" type="Integer"/>
+        </out-parameters>
+    </service>
+
     <!-- ========== Push health (System, Push Health; plans/Comms-Messaging.md §7.3) ========== -->
 
     <service verb="find" noun="PushHealth">

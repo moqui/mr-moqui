@@ -1123,11 +1123,58 @@ module.exports = {
             view: null, currentPathList: [], extraPathList: [], currentParameters: {}, bodyParameters: null, backStack: [], activeContainers: {},
             // what the client's screens ask of m-qapps-root's: the quick-create dialog (here its screen opens in an app window)
             quickCreateShow: false, quickCreateUrl: '', quickCreateTitle: '', trayOpen: false,
-            signOutBox: { open: false, shared: false, items: [], checked: true, inCall: false }
+            signOutBox: { open: false, shared: false, items: [], checked: true, inCall: false },
+            pushBox: { open: false, loaded: false, state: {}, testing: false, result: '', confirmOpen: false, confirmRow: null }
         };
     },
     computed: {
         accounts() { return (this.state && this.state.accounts) || []; },
+        // the host answers the notification check (the desktop and mobile apps: pushCheck)
+        pushCheckable() { return !!(host() && host().pushCheck); },
+        pushFixable() { return !!(host() && host().pushCheckFix); },
+        // the check's items, as the host's state has them: each {key, ok, label, caption, fix}
+        pushRows() {
+            const state = this.pushBox.state || {};
+            const rows = [];
+            if (state.permission !== undefined) rows.push({ key: 'permission', ok: state.permission === true, label: t('Notifications are allowed'),
+                caption: state.permission === true ? '' : t('Turn notifications on for this app'), fix: 'notifications' });
+            if (moqui.isPlainObject(state.channels) && Object.keys(state.channels).length) {
+                const off = Object.keys(state.channels).filter((id) => state.channels[id] !== true);
+                rows.push({ key: 'channels', ok: !off.length, label: t('Every kind of notification is on'),
+                    caption: off.length ? t('Off') + ': ' + off.join(', ') : '', fix: 'channels' });
+            }
+            if (state.batteryOptimized !== undefined) rows.push({ key: 'battery', ok: state.batteryOptimized === false,
+                label: t('The app may run in the background'), caption: state.batteryOptimized ? t('Battery optimization can hold notifications back') : '', fix: 'battery' });
+            if (state.fullScreen !== undefined) rows.push({ key: 'fullScreen', ok: state.fullScreen === true, label: t('Calls show on the lock screen'), fix: 'fullScreen' });
+            // a push service: Firebase in the build, or a UnifiedPush distributor (a phone without Google Play), which the
+            // user may pick when the phone has one
+            // where Firebase works it stays unless the user switches (asked first), and a switch can be undone here
+            if (state.fcm !== undefined) {
+                const distributors = Number(state.distributors) || 0;
+                const label = t('A push service reaches this app');
+                if (state.distributor) {
+                    rows.push({ key: 'service', ok: true, label, caption: t('UnifiedPush') + ': ' + state.distributor
+                        + (state.fcm === true ? ' (' + t('in place of Firebase') + ')' : ''),
+                        fix: state.fcm === true ? 'firebase' : null, fixLabel: state.fcm === true ? t('Use Firebase') : null });
+                } else if (state.fcm === true) {
+                    rows.push({ key: 'service', ok: true, label, caption: t('Firebase'),
+                        fix: distributors ? 'distributor' : null, fixLabel: distributors ? t('Use UnifiedPush') : null,
+                        confirm: t('Notifications come by Firebase now. Use UnifiedPush through a distributor app on this phone instead? You can come back to Firebase here.') });
+                } else {
+                    rows.push({ key: 'service', ok: false, label,
+                        caption: distributors ? t('Pick a UnifiedPush distributor') : t('No push service: notifications come only while the app is open'),
+                        fix: distributors ? 'distributor' : null });
+                }
+            }
+            if (state.registered !== undefined) rows.push({ key: 'registered', ok: state.registered === true, label: t('This device is registered for push with the server') });
+            if (state.socket) rows.push({ key: 'socket', ok: true, label: t('Messages arrive while the app runs') });
+            if (state.lastPushDate !== undefined) rows.push({ key: 'lastPush', ok: !!state.lastPushDate, label: t('Last notification received'),
+                caption: state.lastPushDate ? this.when(state.lastPushDate) : t('None yet') });
+            // a force-stopped app gets no push until it is opened again
+            if (state.forceStoppedDate) rows.push({ key: 'forceStopped', ok: Date.now() - Number(state.forceStoppedDate) > 86400000,
+                label: t('The app was stopped'), caption: this.when(state.forceStoppedDate) + ': ' + t('notifications may not have come until it was opened again') });
+            return rows;
+        },
         // the sign-out leaves something unsent, or could not tell
         signOutRisky() { return this.signOutBox.items.length > 0 || (!this.signOutBox.checked && this.signOutBox.shared) || this.signOutBox.inCall; },
         // the account is a shared device's (client-conf device-mode): its data goes with the sign-out
@@ -1328,6 +1375,63 @@ module.exports = {
             left.then(() => host().signOut()).catch((err) => this.failed(err));
         },
         // the user's apps and devices (/qapps/clientDevices), each to sign out; this app's own signs out here too
+        // the notification check (plans/Comms-Messaging.md §7.6): the host's state, read again after a fix
+        openPushCheck() {
+            this.pushBox.open = true;
+            this.pushBox.result = '';
+            this.readPushCheck();
+        },
+        readPushCheck() {
+            return Promise.resolve(host().pushCheck()).then((state) => {
+                this.pushBox.state = moqui.isPlainObject(state) ? state : {};
+                this.pushBox.loaded = true;
+                return this.pushBox.state;
+            }, (err) => { this.pushBox.loaded = true; this.failed(err); return {}; });
+        },
+        // a row's fix, after its question where it has one
+        askFix(row) {
+            if (!row.confirm) { this.fixPush(row.fix); return; }
+            this.pushBox.confirmRow = row;
+            this.pushBox.confirmOpen = true;
+        },
+        fixPush(what) {
+            if (!host().pushCheckFix) return;
+            Promise.resolve(host().pushCheckFix(what)).catch((err) => this.failed(err));
+            // the system's screen is open: the state is read again when the window comes back
+            const again = () => { if (!document.hidden) { document.removeEventListener('visibilitychange', again); this.readPushCheck(); } };
+            document.addEventListener('visibilitychange', again);
+        },
+        // a test through the full path: the phone's pushes come from the server (pushTest queues one; the check's last push
+        // shows when it came), the desktop's from the app itself, as its socket's notifications do
+        sendTestPush() {
+            this.pushBox.testing = true;
+            this.pushBox.result = '';
+            const started = Date.now();
+            const done = (text) => { this.pushBox.testing = false; this.pushBox.result = text; };
+            const seconds = (ms) => (Math.max(0, ms) / 1000).toFixed(1);
+            Promise.resolve(host().pushTest(t('Test notification'), t('Notifications reach this device.'))).then((answer) => {
+                const queued = (answer && Array.isArray(answer.ackIdList)) ? answer.ackIdList : null;
+                if (!queued) {
+                    done(t('Shown in') + ' ' + seconds(Date.now() - started) + ' s');
+                    return;
+                }
+                if (answer.reasonCode === 'tooSoon') { done(t('A test was sent a moment ago: try again in a few seconds')); return; }
+                if (!queued.length) { done(t('The server has no push registration of this device')); return; }
+                // the test's own push (its ack id among the recent ones the phone kept), not whichever came last
+                const arrived = (state) => {
+                    const recent = state && moqui.isPlainObject(state.recentAcks) ? state.recentAcks : {};
+                    const id = queued.find((ackId) => recent[ackId]);
+                    return id ? Number(recent[id]) : null;
+                };
+                const poll = () => this.readPushCheck().then((state) => {
+                    const at = arrived(state);
+                    if (at) done(t('Arrived in') + ' ' + seconds(at - started) + ' s');
+                    else if (Date.now() - started > 30000) done(t('Not arrived after 30 s'));
+                    else setTimeout(poll, 500);
+                });
+                poll();
+            }, (err) => { done(''); this.failed(err); });
+        },
         openDevices() {
             this.devicesOpen = true;
             this.devicesLoaded = false;
@@ -1705,6 +1809,31 @@ module.exports = {
                                           }, 8, ["onClick"])), [
                                             [_directive_close_popup]
                                           ]),
+                                          (_ctx.pushCheckable)
+                                            ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                key: 1,
+                                                clickable: "",
+                                                onClick: _ctx.openPushCheck
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                    default: _withCtx(() => [
+                                                      _createVNode(_component_q_icon, { name: "sym_o_notifications" })
+                                                    ]),
+                                                    _: 1
+                                                  }),
+                                                  _createVNode(_component_q_item_section, null, {
+                                                    default: _withCtx(() => [
+                                                      _createTextVNode(_toDisplayString(_ctx.t('Notifications on this device')), 1)
+                                                    ]),
+                                                    _: 1
+                                                  })
+                                                ]),
+                                                _: 1
+                                              }, 8, ["onClick"])), [
+                                                [_directive_close_popup]
+                                              ])
+                                            : _createCommentVNode("", true),
                                           _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                                             clickable: "",
                                             onClick: _ctx.signOut
@@ -1980,6 +2109,173 @@ module.exports = {
                                     "no-caps": "",
                                     label: _ctx.t('Close')
                                   }, null, 8, ["label"]), [
+                                    [_directive_close_popup]
+                                  ])
+                                ]),
+                                _: 1
+                              })
+                            ]),
+                            _: 1
+                          })
+                        ]),
+                        _: 1
+                      }, 8, ["modelValue", "onUpdate:modelValue"]),
+                      _createVNode(_component_q_dialog, {
+                        modelValue: _ctx.pushBox.open,
+                        "onUpdate:modelValue": $event => ((_ctx.pushBox.open) = $event)
+                      }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_card, { class: "m-shell-push-check" }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_card_section, { class: "text-h6" }, {
+                                default: _withCtx(() => [
+                                  _createTextVNode(_toDisplayString(_ctx.t('Notifications on this device')), 1)
+                                ]),
+                                _: 1
+                              }),
+                              _createVNode(_component_q_list, { separator: "" }, {
+                                default: _withCtx(() => [
+                                  (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.pushRows, (row) => {
+                                    return (_openBlock(), _createBlock(_component_q_item, {
+                                      key: row.key,
+                                      class: "m-shell-push-row",
+                                      "data-check": row.key
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_item_section, { avatar: "" }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_icon, {
+                                              name: row.ok ? 'sym_o_check_circle' : 'sym_o_error',
+                                              color: row.ok ? 'positive' : 'warning'
+                                            }, null, 8, ["name", "color"])
+                                          ]),
+                                          _: 2
+                                        }, 1024),
+                                        _createVNode(_component_q_item_section, null, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_item_label, null, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(row.label), 1)
+                                              ]),
+                                              _: 2
+                                            }, 1024),
+                                            (row.caption)
+                                              ? (_openBlock(), _createBlock(_component_q_item_label, {
+                                                  key: 0,
+                                                  caption: ""
+                                                }, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(row.caption), 1)
+                                                  ]),
+                                                  _: 2
+                                                }, 1024))
+                                              : _createCommentVNode("", true)
+                                          ]),
+                                          _: 2
+                                        }, 1024),
+                                        (row.fix && (!row.ok || row.fixLabel) && _ctx.pushFixable)
+                                          ? (_openBlock(), _createBlock(_component_q_item_section, {
+                                              key: 0,
+                                              side: ""
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_btn, {
+                                                  flat: "",
+                                                  dense: "",
+                                                  "no-caps": "",
+                                                  color: "primary",
+                                                  label: row.fixLabel || _ctx.t('Fix'),
+                                                  onClick: $event => (_ctx.askFix(row))
+                                                }, null, 8, ["label", "onClick"])
+                                              ]),
+                                              _: 2
+                                            }, 1024))
+                                          : _createCommentVNode("", true)
+                                      ]),
+                                      _: 2
+                                    }, 1032, ["data-check"]))
+                                  }), 128)),
+                                  (_ctx.pushBox.loaded && !_ctx.pushRows.length)
+                                    ? (_openBlock(), _createBlock(_component_q_item, { key: 0 }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item_section, { class: "m-muted" }, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(_ctx.t('This device says nothing of its notifications')), 1)
+                                            ]),
+                                            _: 1
+                                          })
+                                        ]),
+                                        _: 1
+                                      }))
+                                    : _createCommentVNode("", true)
+                                ]),
+                                _: 1
+                              }),
+                              (_ctx.pushBox.result)
+                                ? (_openBlock(), _createBlock(_component_q_card_section, {
+                                    key: 0,
+                                    class: "text-body2 m-shell-push-result"
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createTextVNode(_toDisplayString(_ctx.pushBox.result), 1)
+                                    ]),
+                                    _: 1
+                                  }))
+                                : _createCommentVNode("", true),
+                              _createVNode(_component_q_card_actions, { align: "right" }, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_btn, {
+                                    flat: "",
+                                    "no-caps": "",
+                                    loading: _ctx.pushBox.testing,
+                                    label: _ctx.t('Send a test notification'),
+                                    onClick: _ctx.sendTestPush
+                                  }, null, 8, ["loading", "label", "onClick"]),
+                                  _withDirectives(_createVNode(_component_q_btn, {
+                                    flat: "",
+                                    "no-caps": "",
+                                    label: _ctx.t('Close')
+                                  }, null, 8, ["label"]), [
+                                    [_directive_close_popup]
+                                  ])
+                                ]),
+                                _: 1
+                              })
+                            ]),
+                            _: 1
+                          })
+                        ]),
+                        _: 1
+                      }, 8, ["modelValue", "onUpdate:modelValue"]),
+                      _createVNode(_component_q_dialog, {
+                        modelValue: _ctx.pushBox.confirmOpen,
+                        "onUpdate:modelValue": $event => ((_ctx.pushBox.confirmOpen) = $event)
+                      }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_card, { class: "m-shell-push-confirm" }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_card_section, { class: "text-body2" }, {
+                                default: _withCtx(() => [
+                                  _createTextVNode(_toDisplayString(_ctx.pushBox.confirmRow && _ctx.pushBox.confirmRow.confirm), 1)
+                                ]),
+                                _: 1
+                              }),
+                              _createVNode(_component_q_card_actions, { align: "right" }, {
+                                default: _withCtx(() => [
+                                  _withDirectives(_createVNode(_component_q_btn, {
+                                    flat: "",
+                                    "no-caps": "",
+                                    label: _ctx.t('Cancel')
+                                  }, null, 8, ["label"]), [
+                                    [_directive_close_popup]
+                                  ]),
+                                  _withDirectives(_createVNode(_component_q_btn, {
+                                    flat: "",
+                                    "no-caps": "",
+                                    color: "primary",
+                                    label: _ctx.pushBox.confirmRow && _ctx.pushBox.confirmRow.fixLabel,
+                                    onClick: $event => (_ctx.fixPush(_ctx.pushBox.confirmRow.fix))
+                                  }, null, 8, ["label", "onClick"]), [
                                     [_directive_close_popup]
                                   ])
                                 ]),

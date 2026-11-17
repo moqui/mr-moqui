@@ -140,6 +140,22 @@ along with this software (see the LICENSE.md file). If not, see
             ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- A test notification to this device through the full push path (send#TestPush; the app's notification check,
+        plans/Comms-Messaging.md §7.6): {ackIdList, queuedDate, reasonCode}. -->
+    <transition name="testClientPush" method="post">
+        <parameter name="endpoint"/>
+        <actions><script><![CDATA[
+            if (!ec.user.userId) ec.web.sendJsonError(401, 'Authentication required')
+            else {
+                const out = ec.service.sync().name('org.moqui.ui.NotificationServices.send#TestPush')
+                    .parameters({endpoint: ec.web.parameters.endpoint || null}).disableAuthz().call() || {}
+                if (ec.message.hasError()) ec.web.sendJsonError(400, ec.message.errorsString)
+                else ec.web.sendJsonResponse({ackIdList: Array.from(out.ackIdList || []), queuedDate: out.queuedDate ?? null,
+                    reasonCode: out.reasonCode ?? null})
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- the browser's service worker sends it too, and holds no session token: it only counts a push of the signed-in
         user's own (a cross-site post could at most count one of theirs that it guessed) -->
     <transition name="ackClientPush" method="post" require-session-token="false">
