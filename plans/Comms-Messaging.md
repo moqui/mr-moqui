@@ -94,7 +94,7 @@ The width selects the layout, with the thresholds in §1. They stay as built: th
 | Area | Phone layout | Status |
 |---|---|---|
 | Home | The room list at full size, not a card. Search bar on top. Start chat button (FAB) at the bottom right | Built (`Root.qvue:154`, `ChatPanel.qvue:102`). The search bar shows only with more than six rooms |
-| Room row | Avatar, name, last message, time, unread badge, E2EE or SMS icon | Partial: no E2EE icon (§6); a phone-number room has no icon on the home (`ChatPanel.qvue:153` has no `CrtExternal`) |
+| Room row | Avatar, name, last message, time, unread badge, E2EE or SMS icon | Partial: no E2EE icon (§6); a phone-number room has the SMS icon (`CrtExternal`, phase 0) |
 | Room row actions | Swipe right: pin. Swipe left: archive. Long press: pin, mute, mark read or unread, archive | Built (`ChatPanel.qvue:56-60`, `118-134`) |
 | New chat | Full-screen picker: search people and phone numbers, select one or several, Start. A name makes it a room | Built (phase 1): `searchUsers` with `numbers=true` offers a typed number, `textRoom` opens its room, a name with two or more people calls `createRoom` (`moqui.chat.startChat`) |
 | Room header | Back, avatar, name, E2EE status icon (§6), call and video buttons, menu | Partial: one call button; the E2EE icon is planned |
@@ -105,6 +105,8 @@ The width selects the layout, with the thresholds in §1. They stay as built: th
 
 ### 2.2 Work
 
+Steps 1 to 7 are built (phase 0 and phase 1); the voice button of step 5 comes with phase 7.
+
 1. **Shared helpers.** `moqui.chat` in `webroot/js/WebrootChat.js` (the shell already loads it) gets the helpers that
    `Chat.qvue` and `ChatPanel.qvue` each have a copy of: the room icon, the unread and mention counts, the snippet,
    the layout thresholds, and the time and day labels on `moqui.l10n`'s zoned helpers. `Chat.qvue`, `ChatPanel.qvue`
@@ -113,8 +115,6 @@ The width selects the layout, with the thresholds in §1. They stay as built: th
      `.qvue` files, so a plain `.js` file with templates would not render in the app. A new component that other
      screens can use (the emoji picker, §4) is an `m-` component in `webroot/js`, added to the list of
      `client_components_are_precompiled`. A chat-only template stays in `Chat.qvue`.
-Steps 1 to 7 are built (phase 0 and phase 1); the voice button of step 5 comes with phase 7.
-
 2. **Back layers.** One registry in the page, `moqui.back`: an open sheet, menu, details pane, thread or room pushes a
    function that closes it, and takes it off when it closes another way. `moqui.back.pop()` closes the top one and
    says if there was one.
@@ -128,8 +128,11 @@ Steps 1 to 7 are built (phase 0 and phase 1); the voice button of step 5 comes w
      the room").
    - As built: the layers are the message sheet, an edit, the side pane or thread (`Chat.qvue`), and the room, the
      picker, a room's actions and the archive of the chat panel (`ChatPanel.qvue`, the phone's home). A room of the Chat
-     screen is not a layer: it is in the history (the browser's, or the shell's, `moqui.back.base`). A link to the place
-     on top of the shell's history is a step back, so a room's Back does not leave the room on the stack.
+     screen is not a layer: it is in the history (the browser's, or the shell's, `moqui.back.base`). The shell's drawer
+     over a narrow window is a layer. A link followed while a layer closes by Back (`moqui.back.closing`: a thread) is a
+     step back in the shell's history, so the next Back does not open the thread again; any other link is a new entry.
+     What is in front closes first: with the tray open (or a floating window focused), Esc closes its layers, then the
+     tray, never a layer of the screen behind.
    - As built on Android: Tauri's `TauriActivity` turns off `WryActivity`'s back callback (`handleBackNavigation` false)
      and handles back in its app plugin, so the app's `MainActivity.kt` adds its own callback after Tauri's, once the
      webview is made; when the page closes nothing, Tauri's back goes on.
@@ -149,7 +152,7 @@ Steps 1 to 7 are built (phase 0 and phase 1); the voice button of step 5 comes w
 | Check | How it is checked |
 |---|---|
 | At 390×844 the list fills the screen, and Start chat opens the full-screen picker | Acceptance client spec (a phone-width check is an acceptance test) |
-| A direct chat with one person, a named group with two, and a text to a number can be started from the phone | Acceptance client spec; the number with the fake SMS adapter |
+| A direct chat with one person, a named group with two, and a text to a number can be started from the phone | Acceptance client spec `PhoneChat`, on a stand-in server; the real `searchUsers` and `textRoom` path is covered by `BasicCommsTexts` |
 | Bubbles show own messages on the right; a list time and a room time agree for a user whose zone is not the browser's | Regression client spec for the time; the rest in the acceptance spec |
 | Back closes a sheet, then a pane, then the room, and does not leave the app from inside a room | Regression client spec for `moqui.back`; the Android gesture on a real phone |
 | The composer stays above the keyboard; a long press vibrates | Real phone. The manifest has no `VIBRATE` permission, so `navigator.vibrate` may do nothing in the app; if so, add a host command |

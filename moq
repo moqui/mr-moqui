@@ -2735,6 +2735,11 @@ has_spec_file() {
     return 1
 }
 
+# spec_is_offline <file>: whether the spec's own spec({ ... }) call sets server: false (comment lines left out)
+spec_is_offline() {
+    perl -e 'local $/; my $s = <> // ""; $s =~ s{^\s*//.*$}{}mg; exit($s =~ /\bspec\(\s*\{[^{}]*?\bserver\s*:\s*false\b/s ? 0 : 1)' "$1"
+}
+
 # named_specs_offline <name>: whether every spec of ACCEPT_SPECS in the component's test/acceptance/client is an offline
 # one (server: false), so a suite that declares a server runs them with --offline (its --serve run skips them).
 named_specs_offline() {
@@ -2744,7 +2749,7 @@ named_specs_offline() {
         for spec in ${ACCEPT_SPECS//,/ }; do
             file=$(find "${d}test/acceptance/client" -name "$spec.spec.js" -print -quit 2>/dev/null)
             [ -n "$file" ] || continue
-            grep -Eq 'server *: *false' "$file" || return 1
+            spec_is_offline "$file" || return 1
             found=1
         done
     done; done

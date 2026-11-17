@@ -1248,14 +1248,18 @@ module.exports = {
                 if (before) this.remember(before);
             }
         },
-        // the shell's history: the place left (before) goes on the back stack, unless the place now is the one on top of
-        // it, which is a step back (a room's or a thread's Back, which links to where it came from)
+        // the shell's history: the place left (before) goes on the back stack. A link a back layer follows as it closes
+        // (moqui.back.closing: a thread closed by Back) is a step back instead: it takes the place now off the top of the
+        // stack when it is there, and puts nothing on, so the next Back does not open the thread again.
         remember(before) {
             const stack = this.backStack;
             const now = this.currentLinkUrl;
             if (now === before) return;
-            if (stack.length && stack[stack.length - 1] === now) this.backStack = stack.slice(0, -1);
-            else this.backStack = stack.concat([before]).slice(-30);
+            if (moqui.back && moqui.back.closing) {
+                if (stack.length && stack[stack.length - 1] === now) this.backStack = stack.slice(0, -1);
+                return;
+            }
+            this.backStack = stack.concat([before]).slice(-30);
         },
         // Back (the header's, and Android's through moqui.back.pop): the top back layer (a dialog, menu, sheet, pane or
         // room the screens opened: moqui.back), else the shell's history (historyBack, moqui.back.base)
@@ -1358,7 +1362,11 @@ module.exports = {
     mounted() {
         // Back with no layer open goes back in the shell's history, and at the home answers that it did nothing (so
         // Android's back leaves the app there)
-        if (moqui.back) moqui.back.base = () => { if (!this.view) return false; this.historyBack(); return true; };
+        if (moqui.back) {
+            moqui.back.base = () => { if (!this.view) return false; this.historyBack(); return true; };
+            // the drawer over the page (a narrow screen) is a layer too
+            this.backOff = moqui.back.track(this, () => this.drawer && this.$q.screen.lt.md, () => { this.drawer = false; });
+        }
         // what the host had to tell after the sign-in (an account kept as a personal device's)
         if (this.state && this.state.notice) this.$q.notify({ type: 'info', message: t(this.state.notice), timeout: 12000 });
         if (moqui.chat) moqui.chat.start(this);
@@ -1380,6 +1388,7 @@ module.exports = {
     unmounted() {
         clearInterval(this.countsTimer);
         if (moqui.back && moqui.back.base) moqui.back.base = null;
+        if (this.backOff) this.backOff();
     }
 };
         })(module.exports);
@@ -2927,7 +2936,7 @@ const composerTemplate = `
         <q-btn flat round dense size="sm" icon="sym_o_attach_file" class="m-chat-attach" :aria-label="room.t('Attach files')" :disable="room.offline" @click="attachClick">
             <q-tooltip>{{room.offline ? room.t('Files go up when you are back online') : room.t('Attach files')}}</q-tooltip>
             <!-- on a phone (bubbles): the camera, the gallery or a file -->
-            <q-menu v-if="room.useBubbles" anchor="top left" self="bottom left"><q-list class="m-chat-attach-menu" style="min-width:200px">
+            <q-menu v-if="room.phoneAttach" anchor="top left" self="bottom left"><q-list class="m-chat-attach-menu" style="min-width:200px">
                 <q-item clickable v-close-popup data-attach="camera" @click="pickNative('camera')"><q-item-section avatar><q-icon name="sym_o_photo_camera"></q-icon></q-item-section>
                     <q-item-section>{{room.t('Camera')}}</q-item-section></q-item>
                 <q-item clickable v-close-popup data-attach="gallery" @click="pickNative('gallery')"><q-item-section avatar><q-icon name="sym_o_photo_library"></q-icon></q-item-section>
@@ -3045,8 +3054,8 @@ const chatComposer = {
             const input = this.$refs.picker && this.$refs.picker.$el && this.$refs.picker.$el.querySelector('input[type=file]');
             if (input) input.click();
         },
-        // the attach button: the file picker, or with bubbles its menu (camera, gallery, file)
-        attachClick() { if (!this.room.useBubbles) this.pickFiles(); },
+        // the attach button: the file picker, or on a phone its menu (camera, gallery, file)
+        attachClick() { if (!this.room.phoneAttach) this.pickFiles(); },
         pickNative(kind) { const input = this.$refs[kind]; if (input) input.click(); },
         onNative(event) {
             const list = Array.from((event.target && event.target.files) || []);
@@ -3682,6 +3691,8 @@ const chatRoom = {
         narrow() { return this.compact || (this.width > 0 && this.width < moqui.chat.NARROW_PX); },
         // a phone messaging layout: mine on the right, the others on the left, each in a bubble (the phone home, the stacked Chat, a narrow room)
         useBubbles() { return this.bubbles || this.narrow; },
+        // the attach choice of a phone (camera, gallery, file): bubbles on a mobile platform, not the desktop's narrow tray
+        phoneAttach() { return this.useBubbles && !!(this.$q.platform && this.$q.platform.is && this.$q.platform.is.mobile); },
         sideOverlay() { return this.compact || (this.width > 0 && this.width < moqui.chat.SIDE_OVERLAY_PX); },
         sideTitle() {
             return { thread: t('Thread'), members: fill(t('Members ({count})'), { count: this.members.length }), pinned: t('Pinned messages'),
@@ -4311,10 +4322,20 @@ const chatRoom = {
             if (!this.useBubbles || (event.touches && event.touches.length > 1)) return;
             if (event.target && event.target.closest && event.target.closest('input, textarea, [contenteditable="true"], .q-btn')) return;
             const touch = event.touches && event.touches[0];
-            if (touch) this.touchFrom = { x: touch.clientX, y: touch.clientY, item, inThread: !!inThread };
+            // a touch in what scrolls sideways (a wide code block or table) is that scroll, never a swipe
+            if (touch && !this.scrollsSideways(event.target, event.currentTarget)) this.touchFrom = { x: touch.clientX, y: touch.clientY, item, inThread: !!inThread };
             this.holdTimer = setTimeout(() => { this.holdTimer = null; this.held = true; this.openSheet(item, inThread); }, 450);
         },
         holdCancel() { if (this.holdTimer) { clearTimeout(this.holdTimer); this.holdTimer = null; } },
+        // whether target, up to the message's row, is in a code block or table, or in an element that scrolls sideways
+        scrollsSideways(target, row) {
+            if (target && target.closest && target.closest('pre, table')) return true;
+            for (let el = target; el && el !== row && el.nodeType === 1; el = el.parentElement) {
+                const overflow = window.getComputedStyle(el).overflowX;
+                if ((overflow === 'auto' || overflow === 'scroll') && el.scrollWidth > el.clientWidth + 1) return true;
+            }
+            return false;
+        },
         // a move cancels the long press; in the room's timeline, one to the right is a swipe to reply, which the bubble
         // follows and which replies when let go past SWIPE_REPLY_PX (an up or down move is a scroll, not a swipe)
         holdMove(event) {
@@ -4979,7 +5000,7 @@ const chatRoom = {
         onEscape() {
             if (moqui.back && moqui.back.popupOpen()) return false;
             if (this.editing) { this.cancelEdit(); return true; }
-            if (moqui.back ? moqui.back.pop({ popups: false, base: false }) : (this.side && (this.closeSide(), true))) return true;
+            if (moqui.back ? moqui.back.pop({ popups: false, base: false, within: this.$el }) : (this.side && (this.closeSide(), true))) return true;
             this.markRead(true);
             return true;
         },
@@ -9381,7 +9402,7 @@ module.exports = {
                             ]),
                             _: 1
                           }),
-                          (_ctx.room.useBubbles)
+                          (_ctx.room.phoneAttach)
                             ? (_openBlock(), _createBlock(_component_q_menu, {
                                 key: 0,
                                 anchor: "top left",

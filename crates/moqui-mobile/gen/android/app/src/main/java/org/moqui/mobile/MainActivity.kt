@@ -34,6 +34,9 @@ object ActivityEnd {
 }
 
 /** What Android's back asks the page first: true when it closed something of its own (`moqui.back.pop()`). */
+/** How long back waits for the page's answer before Tauri's own back goes on. */
+private const val BACK_WAIT_MS = 400L
+
 private const val BACK_SCRIPT =
   "(function(){try{return !!(window.moqui&&window.moqui.back&&window.moqui.back.pop());}catch(e){return false;}})()"
 
@@ -110,13 +113,25 @@ class MainActivity : TauriActivity() {
    */
   override fun onWebViewCreate(webView: WebView) {
     super.onWebViewCreate(webView)
+    val main = Handler(Looper.getMainLooper())
     val callback = object : OnBackPressedCallback(true) {
+      // Tauri's back, past this callback
+      fun onwards() {
+        isEnabled = false
+        onBackPressedDispatcher.onBackPressed()
+        isEnabled = true
+      }
+
       override fun handleOnBackPressed() {
+        // one answer: the page's, or after BACK_WAIT_MS Tauri's back (a page that does not answer); a late answer is dropped
+        var settled = false
+        val timeout = Runnable { if (!settled) { settled = true; onwards() } }
+        main.postDelayed(timeout, BACK_WAIT_MS)
         webView.evaluateJavascript(BACK_SCRIPT) { answer ->
-          if (answer == "true") return@evaluateJavascript
-          isEnabled = false
-          onBackPressedDispatcher.onBackPressed()
-          isEnabled = true
+          if (settled) return@evaluateJavascript
+          settled = true
+          main.removeCallbacks(timeout)
+          if (answer != "true") onwards()
         }
       }
     }

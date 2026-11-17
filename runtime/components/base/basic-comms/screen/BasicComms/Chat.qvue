@@ -564,7 +564,7 @@ const composerTemplate = `
         <q-btn flat round dense size="sm" icon="sym_o_attach_file" class="m-chat-attach" :aria-label="room.t('Attach files')" :disable="room.offline" @click="attachClick">
             <q-tooltip>{{room.offline ? room.t('Files go up when you are back online') : room.t('Attach files')}}</q-tooltip>
             <!-- on a phone (bubbles): the camera, the gallery or a file -->
-            <q-menu v-if="room.useBubbles" anchor="top left" self="bottom left"><q-list class="m-chat-attach-menu" style="min-width:200px">
+            <q-menu v-if="room.phoneAttach" anchor="top left" self="bottom left"><q-list class="m-chat-attach-menu" style="min-width:200px">
                 <q-item clickable v-close-popup data-attach="camera" @click="pickNative('camera')"><q-item-section avatar><q-icon name="sym_o_photo_camera"></q-icon></q-item-section>
                     <q-item-section>{{room.t('Camera')}}</q-item-section></q-item>
                 <q-item clickable v-close-popup data-attach="gallery" @click="pickNative('gallery')"><q-item-section avatar><q-icon name="sym_o_photo_library"></q-icon></q-item-section>
@@ -682,8 +682,8 @@ const chatComposer = {
             const input = this.$refs.picker && this.$refs.picker.$el && this.$refs.picker.$el.querySelector('input[type=file]');
             if (input) input.click();
         },
-        // the attach button: the file picker, or with bubbles its menu (camera, gallery, file)
-        attachClick() { if (!this.room.useBubbles) this.pickFiles(); },
+        // the attach button: the file picker, or on a phone its menu (camera, gallery, file)
+        attachClick() { if (!this.room.phoneAttach) this.pickFiles(); },
         pickNative(kind) { const input = this.$refs[kind]; if (input) input.click(); },
         onNative(event) {
             const list = Array.from((event.target && event.target.files) || []);
@@ -1319,6 +1319,8 @@ const chatRoom = {
         narrow() { return this.compact || (this.width > 0 && this.width < moqui.chat.NARROW_PX); },
         // a phone messaging layout: mine on the right, the others on the left, each in a bubble (the phone home, the stacked Chat, a narrow room)
         useBubbles() { return this.bubbles || this.narrow; },
+        // the attach choice of a phone (camera, gallery, file): bubbles on a mobile platform, not the desktop's narrow tray
+        phoneAttach() { return this.useBubbles && !!(this.$q.platform && this.$q.platform.is && this.$q.platform.is.mobile); },
         sideOverlay() { return this.compact || (this.width > 0 && this.width < moqui.chat.SIDE_OVERLAY_PX); },
         sideTitle() {
             return { thread: t('Thread'), members: fill(t('Members ({count})'), { count: this.members.length }), pinned: t('Pinned messages'),
@@ -1948,10 +1950,20 @@ const chatRoom = {
             if (!this.useBubbles || (event.touches && event.touches.length > 1)) return;
             if (event.target && event.target.closest && event.target.closest('input, textarea, [contenteditable="true"], .q-btn')) return;
             const touch = event.touches && event.touches[0];
-            if (touch) this.touchFrom = { x: touch.clientX, y: touch.clientY, item, inThread: !!inThread };
+            // a touch in what scrolls sideways (a wide code block or table) is that scroll, never a swipe
+            if (touch && !this.scrollsSideways(event.target, event.currentTarget)) this.touchFrom = { x: touch.clientX, y: touch.clientY, item, inThread: !!inThread };
             this.holdTimer = setTimeout(() => { this.holdTimer = null; this.held = true; this.openSheet(item, inThread); }, 450);
         },
         holdCancel() { if (this.holdTimer) { clearTimeout(this.holdTimer); this.holdTimer = null; } },
+        // whether target, up to the message's row, is in a code block or table, or in an element that scrolls sideways
+        scrollsSideways(target, row) {
+            if (target && target.closest && target.closest('pre, table')) return true;
+            for (let el = target; el && el !== row && el.nodeType === 1; el = el.parentElement) {
+                const overflow = window.getComputedStyle(el).overflowX;
+                if ((overflow === 'auto' || overflow === 'scroll') && el.scrollWidth > el.clientWidth + 1) return true;
+            }
+            return false;
+        },
         // a move cancels the long press; in the room's timeline, one to the right is a swipe to reply, which the bubble
         // follows and which replies when let go past SWIPE_REPLY_PX (an up or down move is a scroll, not a swipe)
         holdMove(event) {
@@ -2616,7 +2628,7 @@ const chatRoom = {
         onEscape() {
             if (moqui.back && moqui.back.popupOpen()) return false;
             if (this.editing) { this.cancelEdit(); return true; }
-            if (moqui.back ? moqui.back.pop({ popups: false, base: false }) : (this.side && (this.closeSide(), true))) return true;
+            if (moqui.back ? moqui.back.pop({ popups: false, base: false, within: this.$el }) : (this.side && (this.closeSide(), true))) return true;
             this.markRead(true);
             return true;
         },

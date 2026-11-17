@@ -1056,3 +1056,45 @@ test("Back layers: the last shown layer closes first, a hidden one waits, one it
     assert.equal(back.depth(), 0, "stopped (unmounted), its layer is off");
     assert.equal(watchers.length, 0);
 });
+
+test("Back layers: what is in front goes first; with the tray open only its layers close, and with none pop answers false (Esc then closes the tray); within keeps it to an element", () => {
+    const back = moqui.back;
+    const closed = [];
+    const screen = document.createElement("div");
+    const tray = document.createElement("div");
+    tray.id = "m-tray";
+    screen.textContent = "screen";
+    tray.textContent = "tray";
+    document.body.appendChild(screen);
+    document.body.appendChild(tray);
+    const offPane = back.push(() => closed.push("screen pane"), screen);
+    const before = moqui.webrootVue;
+    moqui.webrootVue = { trayOpen: true };
+    try {
+        assert.equal(back.front(), tray);
+        assert.equal(back.pop({ popups: false, base: false }), false, "the tray has no layer: the screen's pane behind it stays");
+        assert.deepEqual(closed, []);
+        const offTrayRoom = back.push(() => closed.push("tray room"), tray);
+        assert.ok(back.pop({ popups: false, base: false }));
+        assert.deepEqual(closed, ["tray room"], "the tray's layer, though the screen's was pushed earlier");
+        offTrayRoom();
+        moqui.webrootVue.trayOpen = false;
+        assert.equal(back.front(), null);
+        const offOther = back.push(() => closed.push("other"));
+        assert.equal(back.pop({ popups: false, base: false, within: screen }), true);
+        assert.deepEqual(closed, ["tray room", "screen pane"], "within: the element's own layer, not the newer one outside it");
+        offOther();
+    } finally {
+        moqui.webrootVue = before;
+        offPane();
+        screen.remove();
+        tray.remove();
+    }
+    assert.equal(back.depth(), 0);
+    // while a layer closes, closing is true (a link it follows is a step back in the shell's history)
+    let during = null;
+    back.push(() => { during = back.closing; });
+    back.pop();
+    assert.equal(during, true);
+    assert.equal(back.closing, false);
+});

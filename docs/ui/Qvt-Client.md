@@ -443,7 +443,10 @@ scope everywhere, another while its app is the current one. The `KEYMAP` user pr
 opened (a sheet, a details pane, a thread, a room opened in a list): `push(close, el)` returns the function that takes it off,
 and `track(vm, isOpen, close)` (in `mounted`; the returned function in `beforeUnmount`) keeps one while `isOpen()` is true.
 `pop()` closes an open dialog or menu (the Esc Quasar takes), else the top layer whose element is shown, else calls `base`,
-the page root's own history (the desktop and mobile shell's), and answers whether it closed something. Esc asks
+the page root's own history (the desktop and mobile shell's), and answers whether it closed something. What is in front
+goes first (`front()`: the floating window with the focus, else the open tray): while it is there only its layers close,
+and with none `pop` answers false, so Esc then closes the tray. `within` keeps it to the layers inside an element (Chat's
+Esc). `closing` is true while a layer closes, so a link it follows is a step back in the shell's history. Esc asks
 `pop({popups: false, base: false})`; the shell's Back and Android's back gesture ask `pop()`. Layers are not in the browser's
 history, so the browser's Back does not close them.
 

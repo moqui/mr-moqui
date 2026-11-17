@@ -134,8 +134,12 @@
     // room opened in a list) pushes a function that closes it and takes it off when it closes another way. pop() closes,
     // in order: an open Quasar dialog or menu (as Esc does), the top layer whose element is shown (a layer in a hidden
     // tray waits), then the page root's own history (base, the desktop and mobile shell's), and answers whether it closed
-    // one. Esc asks for the layers only (popups: false, base: false); the shell's Back and Android's back gesture
-    // (MainActivity.kt of crates/moqui-mobile) ask for all. Layers are not in the browser's history.
+    // one. What is in front goes first (front(): the floating window that has the focus, else the open tray): while it is
+    // there only its layers close, and with none pop answers false, so the caller closes it (Esc closes the tray). within
+    // keeps pop to the layers inside an element (Chat's own Esc). Esc asks for the layers only (popups: false, base:
+    // false); the shell's Back and Android's back gesture (MainActivity.kt of crates/moqui-mobile) ask for all. While a
+    // layer closes, closing is true: a link it follows is a step back, not a new place (the shell's history). Layers are
+    // not in the browser's history.
     const backLayers = [];
     const shown = (el) => !el || (el.isConnected !== false && (!el.getClientRects || el.getClientRects().length > 0));
     // an open popup: a dialog or menu that is not leaving (Quasar keeps one in the page for its leave transition)
@@ -155,6 +159,17 @@
     };
     moqui.back = {
         base: null,
+        closing: false,
+        // the element in front of the page: the floating window with the focus, else the open tray (m-qapps-root's)
+        front() {
+            const doc = root.document;
+            const active = doc && doc.activeElement;
+            const float = active && active.closest ? active.closest("[id^='m-float-']") : null;
+            if (float) return float;
+            const vm = rootVm();
+            const tray = vm && vm.trayOpen && doc ? doc.getElementById("m-tray") : null;
+            return tray && tray.getClientRects().length ? tray : null;
+        },
         // a layer: close() closes it; el, when given, is the element that shows it, and isOpen, when given, keeps it on when
         // close() left it open. Answers the function that takes it off.
         push(close, el, isOpen) {
@@ -179,14 +194,18 @@
         pop(options) {
             const opts = options || {};
             if (opts.popups !== false && openPopup()) { escapePopup(); return true; }
+            const front = opts.within ? null : moqui.back.front();
+            const scope = opts.within || front;
             for (let at = backLayers.length - 1; at >= 0; at--) {
                 const layer = backLayers[at];
-                if (!shown(layer.el)) continue;
+                if (!shown(layer.el) || (scope && !(layer.el && scope.contains(layer.el)))) continue;
                 backLayers.splice(at, 1);
-                try { layer.close(); } catch (err) { console.error("Back: a layer did not close", err); }
+                moqui.back.closing = true;
+                try { layer.close(); } catch (err) { console.error("Back: a layer did not close", err); } finally { moqui.back.closing = false; }
                 if (layer.isOpen && layer.isOpen() && backLayers.indexOf(layer) < 0) backLayers.splice(at, 0, layer);
                 return true;
             }
+            if (front || opts.within) return false;
             if (opts.base !== false && typeof moqui.back.base === "function") return !!moqui.back.base();
             return false;
         }

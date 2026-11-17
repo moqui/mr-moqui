@@ -163,6 +163,8 @@ const lastPost = (name) => posted.filter((item) => item.path === "/apps/BasicCom
 
 window.phone = {
     async start() {
+        // a phone (Quasar's platform as a phone's WebView has it): the attach choice is a phone's
+        Quasar.Platform.is.mobile = true;
         const shell = document.createElement("div");
         shell.id = "shell";
         document.body.appendChild(shell);
