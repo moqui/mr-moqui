@@ -32,10 +32,12 @@ fn open() -> (ExecutionContext, EntityFacade) {
     client.set("keyFingerprint", Value::string("ab"));
     client.set("statusId", Value::string("EdgeClientActive"));
     client.create(&facade).unwrap();
-    let mut topic = facade.make_value("moqui.security.user.NotificationTopic").unwrap();
-    topic.set("topic", Value::string(PAUSED_TOPIC));
-    topic.set("persistOnSend", Value::string("Y"));
-    topic.create(&facade).unwrap();
+    for name in [PAUSED_TOPIC, REFUSED_TOPIC] {
+        let mut topic = facade.make_value("moqui.security.user.NotificationTopic").unwrap();
+        topic.set("topic", Value::string(name));
+        topic.set("persistOnSend", Value::string("Y"));
+        topic.create(&facade).unwrap();
+    }
     (ctx, facade)
 }
 
@@ -95,10 +97,14 @@ fn keep(facade: &EntityFacade, id: &str) {
 }
 
 fn notices(facade: &EntityFacade) -> i64 {
+    notices_of(facade, PAUSED_TOPIC)
+}
+
+fn notices_of(facade: &EntityFacade, topic: &str) -> i64 {
     facade
         .find(MESSAGE)
         .unwrap()
-        .eq("topic", Value::string(PAUSED_TOPIC))
+        .eq("topic", Value::string(topic))
         .disable_authz()
         .count()
         .unwrap()
@@ -163,7 +169,8 @@ fn a_pairing_at_its_record_cap_pauses_with_a_notice_until_an_administrator_resum
 }
 
 /// SEC-CLU-02: the content kept for a pairing's deliveries counts against its queue cap; past it the pairing pauses.
-/// A local node refuses content its edge node sends past its own cap, for now, with no pause.
+/// A local node refuses content its edge node sends past its own cap, for now, with no pause; its administrators are
+/// told once when it starts refusing and once when it takes content again.
 #[test]
 fn content_kept_for_a_pairing_counts_against_its_queue_cap() {
     let (ctx, facade) = open();
@@ -193,12 +200,57 @@ fn content_kept_for_a_pairing_counts_against_its_queue_cap() {
         admit_content(ctx.factory(), &facade, &local, "me", 10).unwrap(),
         Admit::Take
     );
+    assert_eq!(notices_of(&facade, REFUSED_TOPIC), 0);
     assert!(is_paused(
         &admit_content(ctx.factory(), &facade, &local, "me", 11).unwrap()
     ));
+    assert!(is_paused(
+        &admit_content(ctx.factory(), &facade, &local, "me", 12).unwrap()
+    ));
+    assert_eq!(notices_of(&facade, REFUSED_TOPIC), 1, "told once as refusing starts");
     assert_eq!(
         admit_content(ctx.factory(), &facade, &local, "me", 10).unwrap(),
         Admit::Take,
         "a local node has no pause of its own"
+    );
+    assert_eq!(
+        notices_of(&facade, REFUSED_TOPIC),
+        2,
+        "and once as it takes content again"
+    );
+    admit_content(ctx.factory(), &facade, &local, "me", 1).unwrap();
+    assert_eq!(notices_of(&facade, REFUSED_TOPIC), 2);
+}
+
+/// SEC-CLU-02: the content files kept for a pairing count against `queue-max-content-files` whatever their size, so
+/// empty ones add up too; at it the pairing pauses as at its byte cap.
+#[test]
+fn content_files_kept_for_a_pairing_count_against_their_own_cap() {
+    let (ctx, facade) = open();
+    let _entered = ctx.enter();
+    let settings = EdgeSettings {
+        max_content_files: 2,
+        ..edge(1000, 1_000_000)
+    };
+    crate::edge::queue::store_received(ctx.factory(), &facade, "local-a", "item-1", &[]).unwrap();
+    assert_eq!(
+        admit_content(ctx.factory(), &facade, &settings, "local-a", 0).unwrap(),
+        Admit::Take,
+        "the second file"
+    );
+    crate::edge::queue::store_received(ctx.factory(), &facade, "local-a", "item-2", &[]).unwrap();
+    let over = admit_content(ctx.factory(), &facade, &settings, "local-a", 0).unwrap();
+    assert!(matches!(&over, Admit::Paused(why) if why.contains("files")), "{over:?}");
+    assert!(paused(&facade, "local-a").unwrap().is_some());
+    assert_eq!(notices(&facade), 1);
+    let uncapped = EdgeSettings {
+        max_content_files: 0,
+        ..edge(1000, 1_000_000)
+    };
+    resume(&facade, "local-a").unwrap();
+    assert_eq!(
+        admit_content(ctx.factory(), &facade, &uncapped, "local-a", 0).unwrap(),
+        Admit::Take,
+        "0 is no cap"
     );
 }

@@ -89,8 +89,8 @@ spec({
 feature("an app password gets SCRAM verifiers sharing the user's salt, and PLAIN takes app passwords only", {
     when() {
         ec.user.internalLoginUser(username(A))
-        passwords.first = sys(() => ec.service.sync().name("org.moqui.impl.UserServices.create#UserAppPassword").parameter("name", "phone").call()).password
-        passwords.second = sys(() => ec.service.sync().name("org.moqui.impl.UserServices.create#UserAppPassword").parameter("name", "laptop").call()).password
+        passwords.first = sys(() => ec.service.sync().name("org.moqui.impl.UserServices.create#UserAppPassword").parameter("name", "phone").parameter("scope", "xmpp").call()).password
+        passwords.second = sys(() => ec.service.sync().name("org.moqui.impl.UserServices.create#UserAppPassword").parameter("name", "laptop").parameter("scope", "xmpp").call()).password
         const rows = sys(() => Array.from(ec.entity.find("moqui.security.UserAppPassword").condition("userId", A).list()))
         const credentials = as(null, "get#ScramCredentials", {username: username(A)})
         const nobody = as(null, "get#ScramCredentials", {username: "no.such.user"})
@@ -153,7 +153,7 @@ feature("a session and its FAST token go with the app password signed in with: r
 feature("a session ends when its account passes its terminate date", {
     when() {
         ec.user.internalLoginUser(username(C))
-        const appPasswordId = sys(() => ec.service.sync().name("org.moqui.impl.UserServices.create#UserAppPassword").parameter("name", "terminal").call()).appPasswordId
+        const appPasswordId = sys(() => ec.service.sync().name("org.moqui.impl.UserServices.create#UserAppPassword").parameter("name", "terminal").parameter("scope", "xmpp").call()).appPasswordId
         const check = {userId: C, appPasswordId}
         const before = as(null, "check#Credential", check)
         const terminate = (date) => sys(() => {

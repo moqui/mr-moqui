@@ -31,6 +31,11 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.user.NotificationTopic topic="EdgePairingPaused" inboxEnumId="NinUpdates" description="Edge node: a pairing paused at a cap"
             typeString="danger" showAlert="Y" persistOnSend="Y" receiveNotifications="N" isPrivate="Y"
             linkTemplate="/qapps/system/EdgeClients"/>
+    <!-- On a local node: content its edge node sends is refused at this node's own queue cap (SEC-CLU-02); the edge node
+        keeps it and tries again. Told once when refusing starts and once when content is taken again -->
+    <moqui.security.user.NotificationTopic topic="EdgeContentRefused" inboxEnumId="NinUpdates" description="Edge node: content refused at this node's queue cap"
+            typeString="warning" showAlert="Y" persistOnSend="Y" receiveNotifications="N" isPrivate="Y"
+            linkTemplate="/qapps/system/EdgeNode"/>
 
     <moqui.basic.EnumerationType enumTypeId="EdgeHostMode" description="Edge Host Mode"/>
     <moqui.basic.Enumeration enumId="EdgeHostPassthrough" enumTypeId="EdgeHostMode" sequenceNum="1" description="Passthrough"/>

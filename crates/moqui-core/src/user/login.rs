@@ -31,6 +31,19 @@ use crate::entity::{EntityFacade, EntityValue};
 const USER_ACCOUNT: &str = "moqui.security.UserAccount";
 const USER_LOGIN_KEY: &str = "moqui.security.UserLoginKey";
 const USER_APP_PASSWORD: &str = "moqui.security.UserAppPassword";
+/// The protocols an app password may be made for (`UserAppPassword.scope`, SEC-COM-21): DAV; SSH, SFTP and git over
+/// SSH; git over HTTP; XMPP; the LLM gateway, A2A and MCP. A row with no scope, made before there were scopes, is taken
+/// by each of them.
+pub const APP_PASSWORD_SCOPES: [&str; 5] = ["dav", "ssh", "git", "xmpp", "ai"];
+/// The scope of an XMPP sign-in ([`login_verified_app_password`]).
+const XMPP_SCOPE: &str = "xmpp";
+
+/// Whether an app password's row may be used where `scope` is asked (none: anywhere, for a check before the login that
+/// asks its own): a row with no scope is taken everywhere.
+fn scope_allows(row: &EntityValue, scope: Option<&str>) -> bool {
+    let own = text_field(row, "scope");
+    own.is_empty() || scope.is_none_or(|scope| own == scope)
+}
 const USER_LOGIN_HISTORY: &str = "moqui.security.UserLoginHistory";
 const PASSWORD_HISTORY: &str = "moqui.security.UserPasswordHistory";
 const INVALID_LOGIN: &str = "The username or password is not valid";
@@ -647,8 +660,9 @@ pub fn login_key_user_by_hash(hashed: &str) -> Result<Option<String>, Error> {
 
 /// The user a request's own credentials name, checked before its body is read, without logging in, writing history
 /// or changing a session: the `api_key` or `login_key` header ([`login_key_user_by_hash`]), else `Authorization:
-/// Basic` with an app password or, when `account_password`, the account password. The host asks it of an upload larger
-/// than an anonymous request may send (SEC-RTE-07) and of a DAV `PUT` (SEC-FIL-04). A wrong account password counts
+/// Basic` with an app password (one made for `scope`, or any when none is given) or, when `account_password`, the
+/// account password. The host asks it of an upload larger than an anonymous request may send (SEC-RTE-07) and of a DAV
+/// `PUT` (SEC-FIL-04). A wrong account password counts
 /// as a failed login, as the login of the same request would; none when there are no credentials or they do not hold.
 ///
 /// # Errors
@@ -659,6 +673,7 @@ pub fn credential_user(
     login_key: Option<&str>,
     authorization: Option<&str>,
     account_password: bool,
+    scope: Option<&str>,
 ) -> Result<Option<String>, Error> {
     if let Some(key) = present_key(api_key).or_else(|| present_key(login_key)) {
         return login_key_user_by_hash(&password::hash_login_key(key)?);
@@ -677,7 +692,7 @@ pub fn credential_user(
             .find(USER_APP_PASSWORD)?
             .eq("passwordHash", Value::string(&hashed))
             .one()?
-            .filter(|row| field_millis(row, "revokedDate").is_none())
+            .filter(|row| field_millis(row, "revokedDate").is_none() && scope_allows(row, scope))
         {
             let user_id = text_field(&row, "userId");
             let owner = find_user_id(&facade, &user_id)?;
@@ -826,19 +841,20 @@ fn note_key_used(facade: &EntityFacade, row: &EntityValue, hashed: &str) {
     }
 }
 
-/// Log in with an app password (`UserAppPassword`), the password of one device's DAV or SFTP client, which the web login
-/// does not take. The stored `passwordHash` is [`super::password::hash_login_key`] of the password without its dashes and
-/// spaces, in lower case; the row must not be revoked and must be the user's whose username is given. The account's own
+/// Log in with an app password (`UserAppPassword`), the password of one device's or app's client for one protocol,
+/// which the web login does not take. The stored `passwordHash` is [`super::password::hash_login_key`] of the password
+/// without its dashes and spaces, in lower case; the row must not be revoked, must be made for `scope` (one of
+/// [`APP_PASSWORD_SCOPES`]) or for none, and must be the user's whose username is given. The account's own
 /// checks then apply ([`internal_login_user`]), and `lastUsedDate` is written at most once a minute, in a transaction of
 /// its own. A refusal is noted for the web protection; it is not an account failure, so guesses cannot lock the
 /// account.
 ///
 /// # Errors
 ///
-/// Returns [`INVALID_LOGIN`](Error) when the password is empty, unknown, revoked or another user's, or the account
-/// cannot log in.
-pub fn login_app_password(username: &str, password: &str) -> Result<(), Error> {
-    check_app_password(username, password)
+/// Returns [`INVALID_LOGIN`](Error) when the password is empty, unknown, revoked, made for another protocol or another
+/// user's, or the account cannot log in.
+pub fn login_app_password(username: &str, password: &str, scope: &str) -> Result<(), Error> {
+    check_app_password(username, password, scope)
 }
 
 /// Whether `password` has the form of an app password ([`new_app_password`]): 20 of its letters and digits once the
@@ -860,7 +876,7 @@ pub fn app_password_key(password: &str) -> String {
         .collect()
 }
 
-fn check_app_password(username: &str, password: &str) -> Result<(), Error> {
+fn check_app_password(username: &str, password: &str, scope: &str) -> Result<(), Error> {
     let key = app_password_key(password);
     if username.is_empty() || key.is_empty() {
         return Err(refused_credential());
@@ -878,6 +894,10 @@ fn check_app_password(username: &str, password: &str) -> Result<(), Error> {
     let user_id = text_field(&row, "userId");
     if field_millis(&row, "revokedDate").is_some() {
         save_history(&user_id, false);
+        return Err(refused_credential());
+    }
+    // made for another protocol (SEC-COM-21)
+    if !scope_allows(&row, Some(scope)) {
         return Err(refused_credential());
     }
     let Some(account) = find_user_id(&facade, &user_id)? else {
@@ -920,7 +940,7 @@ fn note_app_password_used(facade: &EntityFacade, row: &EntityValue) {
 /// app password): the account's checks of a key login (lock window, terminate date, a display account, `ipAllowed`
 /// against the [`with_client_ip`] address), recorded in the login history, and the app password's `lastUsedDate`
 /// written, as a PLAIN sign-in ([`login_app_password`]) does (SEC-COM-11, SEC-COM-22). `app_password_id` must be the
-/// user's and not revoked.
+/// user's, not revoked, and made for XMPP or for no protocol (SEC-COM-21).
 ///
 /// # Errors
 ///
@@ -936,6 +956,7 @@ pub fn login_verified_app_password(username: &str, app_password_id: Option<&str>
             };
             let owner = find_user_id(&facade, &text_field(&row, "userId"))?;
             if field_millis(&row, "revokedDate").is_some()
+                || !scope_allows(&row, Some(XMPP_SCOPE))
                 || !owner.is_some_and(|account| text_field(&account, "username").eq_ignore_ascii_case(username.trim()))
             {
                 return Err(Error::new(INVALID_LOGIN));

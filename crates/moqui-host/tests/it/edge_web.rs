@@ -476,7 +476,10 @@ fn the_apps_reach_the_local_node_through_the_edge_node_in_both_modes() {
         moqui_core::user::internal_login_user("john.doe").unwrap();
         let login_key = moqui_core::user::get_login_key(None).unwrap();
         let _authz = context.disable_authz();
-        let parameters = BTreeMap::from([("name".to_string(), Value::string("Edge"))]);
+        let parameters = BTreeMap::from([
+            ("name".to_string(), Value::string("Edge")),
+            ("scope".to_string(), Value::string("dav")),
+        ]);
         let out = moqui_core::service::sync("org.moqui.impl.UserServices.create#UserAppPassword", &parameters).unwrap();
         (login_key, to_plain_string(&out["password"]))
     };

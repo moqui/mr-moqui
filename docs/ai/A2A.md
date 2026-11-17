@@ -45,7 +45,7 @@ The server is off by default; while it is off `/a2a` and `/.well-known/agent-car
 ## Authentication
 
 `Authorization: Bearer <login key>` (`security bearer`), the `api_key` or `login_key` header (`security api-key`), or
-HTTP Basic with an app password (or a login key as the password) — never the account password, which is 401. Credentials are taken
+HTTP Basic with an app password made for `ai` (or before app passwords had a scope), or a login key as the password — never the account password, which is 401. Credentials are taken
 only over TLS, a believed proxy's https or from a client on this machine (behind a believed proxy, the client it names,
 not the proxy's loopback address). Without credentials the answer is 401 with
 `WWW-Authenticate: Bearer realm="a2a", Basic realm="a2a"`; a user without the permissions is 403. A refused login counts

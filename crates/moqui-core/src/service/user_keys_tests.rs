@@ -300,7 +300,10 @@ fn credentials_need_a_recent_sign_in_and_an_access_token_is_for_git_alone() {
     for (name, parameters) in [
         ("create#UserSshKey", vec![("publicKey", text(&key_line(9)))]),
         ("create#UserAccessToken", vec![]),
-        ("create#UserAppPassword", vec![("name", text("phone"))]),
+        (
+            "create#UserAppPassword",
+            vec![("name", text("phone")), ("scope", text("dav"))],
+        ),
     ] {
         let (out, refused) = call_as("", name, &parameters);
         assert!(refused.contains("Confirm it is you"), "{name}: {refused}");

@@ -252,7 +252,7 @@ pub fn credentials_hold(factory: &ExecutionContextFactory, request: &DavRequest)
     }
     let authorization = request.header("authorization");
     let user = moqui_core::user::with_client_ip(&request.client_ip, || {
-        moqui_core::user::credential_user(None, None, authorization, account_password)
+        moqui_core::user::credential_user(None, None, authorization, account_password, Some("dav"))
     });
     match user {
         Ok(Some(_)) => Ok(()),
@@ -366,7 +366,7 @@ fn login(factory: &ExecutionContextFactory, request: &DavRequest) -> bool {
     let account_password = factory.conf_flag("dav-server", "account-password", false);
     moqui_core::user::with_client_ip(&request.client_ip, || {
         if moqui_core::user::looks_like_app_password(&password) || !account_password {
-            if moqui_core::user::login_app_password(&username, &password).is_ok() {
+            if moqui_core::user::login_app_password(&username, &password, "dav").is_ok() {
                 return true;
             }
             if !account_password {

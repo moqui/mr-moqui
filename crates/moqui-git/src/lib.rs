@@ -43,6 +43,7 @@ pub(crate) mod fetch_refs;
 pub(crate) mod file_commit;
 pub(crate) mod fork;
 pub(crate) mod fs;
+pub use fs::{deny_internal, pinned_ssh_command, DenyInternal};
 pub mod gc;
 pub(crate) mod hosting;
 pub(crate) mod index;

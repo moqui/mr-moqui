@@ -294,7 +294,11 @@ pub fn preview(factory: &Arc<ExecutionContextFactory>, request: &DeployRequest) 
                 username: request.username.clone(),
                 token: request.token.clone(),
             };
-            let fetched = git.fetch_branch(&scratch, &request.url, &branch, &credentials);
+            // the fetch connects only to the address checked (SEC-TLS-08)
+            let fetched = {
+                let _deny = moqui_core::web::is_production().then(moqui_git::deny_internal);
+                git.fetch_branch(&scratch, &request.url, &branch, &credentials)
+            };
             let result = fetched.map_err(|err| err.to_string()).and_then(|head| {
                 let manifest = GitProvider::read_head_file(&scratch, &branch, "component.xml")
                     .map_err(|err| err.to_string())?
@@ -329,8 +333,8 @@ pub fn preview(factory: &Arc<ExecutionContextFactory>, request: &DeployRequest) 
             let directory = clone_directory(&runtime, &request.directory, &component_dirs(factory))?;
             std::fs::create_dir_all(&directory).map_err(|err| err.to_string())?;
             let scratch = directory.join(format!(".staging-clone-{stamp}"));
-            network_allowed(factory, &request.url)?;
-            git_command(
+            let pins = network_allowed(factory, &request.url)?;
+            git_command_with(
                 None,
                 request,
                 &[
@@ -342,6 +346,7 @@ pub fn preview(factory: &Arc<ExecutionContextFactory>, request: &DeployRequest) 
                     request.url.trim(),
                 ],
                 Some(&scratch),
+                &pins,
             )?;
             let read = std::fs::read(scratch.join("component.xml"))
                 .map_err(|_| format!("the branch {branch} has no component.xml at its top"))
@@ -498,11 +503,15 @@ pub fn preview_update(factory: &Arc<ExecutionContextFactory>, name: &str) -> Res
         Storage::Database | Storage::Bare => {
             let git = provider(factory)?;
             let id = text(&row, "gitRepositoryId");
-            match storage {
-                Storage::Database => git.import(&id, None).map(|_| ()),
-                _ => git.fetch(&id).map(|_| ()),
+            {
+                // the stored URL's host is checked as it is fetched (SEC-TLS-08)
+                let _deny = moqui_core::web::is_production().then(moqui_git::deny_internal);
+                match storage {
+                    Storage::Database => git.import(&id, None).map(|_| ()),
+                    _ => git.fetch(&id).map(|_| ()),
+                }
+                .map_err(|err| err.to_string())?;
             }
-            .map_err(|err| err.to_string())?;
             let to = git
                 .branch_head(&id)
                 .map_err(|err| err.to_string())?
@@ -519,8 +528,8 @@ pub fn preview_update(factory: &Arc<ExecutionContextFactory>, name: &str) -> Res
         }
         Storage::Clone => {
             let request = request_of(&row);
-            network_allowed(factory, &request.url)?;
-            git_command(Some(&location), &request, &["fetch", "origin"], None)?;
+            let pins = network_allowed(factory, &request.url)?;
+            git_command_with(Some(&location), &request, &["fetch", "origin"], None, &pins)?;
             let branch = text(&row, "branch");
             let to = git_command(
                 Some(&location),
@@ -1483,8 +1492,9 @@ fn final_location(staged: &Path, name: &str) -> PathBuf {
 }
 
 /// The checks a fetch from `url` passes before the system `git` makes it for a working clone, as the in-process
-/// fetch of the other storages does (`moqui_git::checkout`): refused in sim mode and by the RemoteCall fence.
-fn network_allowed(factory: &ExecutionContextFactory, url: &str) -> Result<(), String> {
+/// fetch of the other storages does (`moqui_git::checkout`): refused in sim mode and by the RemoteCall fence. On a
+/// production instance the configuration that pins it to a public address of the host ([`address_pins`]).
+fn network_allowed(factory: &ExecutionContextFactory, url: &str) -> Result<Vec<(String, String)>, String> {
     let redacted = moqui_core::outbound::redacted(url);
     if factory.entity().is_some_and(|facade| facade.sim_active()) {
         return Err(format!("fetch of {redacted} denied because sim mode is active"));
@@ -1493,7 +1503,51 @@ fn network_allowed(factory: &ExecutionContextFactory, url: &str) -> Result<(), S
         moqui_core::entity::fence::Effect::RemoteCall,
         &format!("fetch of {redacted}"),
     )
-    .map_err(|err| err.to_string())
+    .map_err(|err| err.to_string())?;
+    if moqui_core::web::is_production() {
+        address_pins(url)
+    } else {
+        Ok(Vec::new())
+    }
+}
+
+/// The `git` configuration that makes a fetch from `url` connect to a public address of its host, the one checked
+/// here, so a name that resolves elsewhere by the time git connects is not followed (SEC-TLS-08): over https curl's
+/// `http.curloptResolve`, over ssh a `core.sshCommand` pinned to the address that checks the host key known for the
+/// name. A host written as an address needs none; one with an internal address, or none, is refused.
+fn address_pins(url: &str) -> Result<Vec<(String, String)>, String> {
+    let (host, port) = url_host(url.trim()).ok_or_else(|| "the URL has no host".to_string())?;
+    let addresses = moqui_lib::net::public_addresses(&host, port).map_err(|err| {
+        if err.to_string().contains("internal address") {
+            "the URL's host is a loopback, private or link-local address".to_string()
+        } else {
+            format!("the URL's host {host} was not found")
+        }
+    })?;
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return Ok(Vec::new());
+    }
+    let Some(address) = addresses.first().map(std::net::SocketAddr::ip) else {
+        return Err(format!("the URL's host {host} was not found"));
+    };
+    pins_to(url, &host, port, address)
+}
+
+/// The pins of [`address_pins`] for `host` (of `url`) at `address`.
+fn pins_to(url: &str, host: &str, port: u16, address: std::net::IpAddr) -> Result<Vec<(String, String)>, String> {
+    if url.trim().to_ascii_lowercase().starts_with("https://") {
+        let address = match address {
+            std::net::IpAddr::V6(v6) => format!("[{v6}]"),
+            std::net::IpAddr::V4(v4) => v4.to_string(),
+        };
+        Ok(vec![(
+            "http.curloptResolve".to_string(),
+            format!("{host}:{port}:{address}"),
+        )])
+    } else {
+        let command = moqui_git::pinned_ssh_command(host, address).map_err(|err| err.to_string())?;
+        Ok(vec![("core.sshCommand".to_string(), command)])
+    }
 }
 
 /// Run the `git` command with `args` (in `dir` when given, with `target` last when given), the request's token sent as
@@ -1504,7 +1558,18 @@ fn git_command(
     args: &[&str],
     target: Option<&Path>,
 ) -> Result<String, String> {
-    let output = git_process(dir, request, args, target)
+    git_command_with(dir, request, args, target, &[])
+}
+
+/// [`git_command`] with more `git` configuration, as `config` pairs (the address pins of a fetch).
+fn git_command_with(
+    dir: Option<&Path>,
+    request: &DeployRequest,
+    args: &[&str],
+    target: Option<&Path>,
+    config: &[(String, String)],
+) -> Result<String, String> {
+    let output = git_process_with(dir, request, args, target, config)
         .output()
         .map_err(|err| format!("the clone storage needs the git command: {err}"))?;
     if output.status.success() {
@@ -1521,12 +1586,20 @@ fn git_command(
 /// The `git` process of [`git_command`]. The token goes in the child's environment as configuration
 /// (`GIT_CONFIG_COUNT`, git 2.31), which only this user and root can read, never in its argument list, which every
 /// local user can (SEC-OUT-05).
-fn git_process(dir: Option<&Path>, request: &DeployRequest, args: &[&str], target: Option<&Path>) -> Command {
+/// `config` adds more `git` configuration the same way (the address pins of a fetch).
+fn git_process_with(
+    dir: Option<&Path>,
+    request: &DeployRequest,
+    args: &[&str],
+    target: Option<&Path>,
+    config: &[(String, String)],
+) -> Command {
     let mut command = Command::new("git");
     command.env("GIT_TERMINAL_PROMPT", "0");
     if let Some(dir) = dir {
         command.current_dir(dir);
     }
+    let mut entries: Vec<(String, String)> = Vec::new();
     if let Some(token) = request.token.as_deref().filter(|token| !token.is_empty()) {
         use base64::Engine;
         let user = request
@@ -1535,10 +1608,16 @@ fn git_process(dir: Option<&Path>, request: &DeployRequest, args: &[&str], targe
             .filter(|user| !user.is_empty())
             .unwrap_or("git");
         let basic = base64::engine::general_purpose::STANDARD.encode(format!("{user}:{token}"));
-        command
-            .env("GIT_CONFIG_COUNT", "1")
-            .env("GIT_CONFIG_KEY_0", "http.extraHeader")
-            .env("GIT_CONFIG_VALUE_0", format!("Authorization: Basic {basic}"));
+        entries.push(("http.extraHeader".to_string(), format!("Authorization: Basic {basic}")));
+    }
+    entries.extend(config.iter().cloned());
+    if !entries.is_empty() {
+        command.env("GIT_CONFIG_COUNT", entries.len().to_string());
+        for (index, (key, value)) in entries.iter().enumerate() {
+            command
+                .env(format!("GIT_CONFIG_KEY_{index}"), key)
+                .env(format!("GIT_CONFIG_VALUE_{index}"), value);
+        }
     }
     command.args(args);
     if let Some(target) = target {

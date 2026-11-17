@@ -14,7 +14,9 @@ IronStone's screen is Commons, Settings, Sync.
 ## App passwords
 
 `moqui.security.UserAppPassword`: one per device or app, made by `org.moqui.impl.UserServices.create#UserAppPassword`
-(`name`; the password is in the out parameters only, 20 letters and digits in groups of four, about 99 bits) and ended by
+(`name`, and `scope`: `dav` for CalDAV, CardDAV and WebDAV, `ssh` for SFTP, the one protocol that takes it; a row made
+before scopes is taken by each; the password is in the out parameters only, 20 letters and digits in groups of four, about
+99 bits) and ended by
 `revoke#UserAppPassword`; `get#UserAppPasswords` lists them with the last use (written at most once a minute). Only the
 SHA-256 of the password without its dashes, in lower case, is stored, as for a login key. It logs in with the username
 (`moqui_core::user::login_app_password`); the account's own checks apply (disabled, password change, address).

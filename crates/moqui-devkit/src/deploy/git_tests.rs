@@ -49,7 +49,7 @@ fn the_deploy_token_is_in_git_s_environment_not_its_arguments() {
         token: Some("s3cret-token".to_string()),
         ..DeployRequest::default()
     };
-    let command = super::git_process(None, &request, &["fetch", "origin"], None);
+    let command = super::git_process_with(None, &request, &["fetch", "origin"], None, &[]);
     let args: Vec<String> = command
         .get_args()
         .map(|arg| arg.to_string_lossy().into_owned())
@@ -73,8 +73,70 @@ fn the_deploy_token_is_in_git_s_environment_not_its_arguments() {
         assert!(env.contains(&(name.to_string(), value)), "{name} in {env:?}");
     }
     // with no token, no configuration is added
-    let plain = super::git_process(None, &DeployRequest::default(), &["status"], None);
+    let plain = super::git_process_with(None, &DeployRequest::default(), &["status"], None, &[]);
     assert!(plain.get_envs().all(|(name, _)| name != "GIT_CONFIG_COUNT"));
+}
+
+/// SEC-TLS-08: a working clone's fetch on a production instance is pinned to the address its host was checked at: curl's
+/// resolve entry over https, an `ssh` command with the address as its host name and the name as its host key alias over
+/// ssh, in git's environment beside the token. A host written as a public address needs no pin; an internal one is
+/// refused, and a host name the shell would read as more than a word.
+#[test]
+fn a_clone_fetch_is_pinned_to_the_checked_address() {
+    let v4: std::net::IpAddr = "93.184.216.34".parse().unwrap();
+    let v6: std::net::IpAddr = "2606:2800:220:1::1".parse().unwrap();
+    assert_eq!(
+        super::pins_to("https://git.example.com/r.git", "git.example.com", 443, v4).unwrap(),
+        [(
+            "http.curloptResolve".to_string(),
+            "git.example.com:443:93.184.216.34".to_string()
+        )]
+    );
+    assert_eq!(
+        super::pins_to("https://git.example.com:8443/r.git", "git.example.com", 8443, v6).unwrap(),
+        [(
+            "http.curloptResolve".to_string(),
+            "git.example.com:8443:[2606:2800:220:1::1]".to_string()
+        )]
+    );
+    assert_eq!(
+        super::pins_to("git@git.example.com:org/r.git", "git.example.com", 22, v4).unwrap(),
+        [(
+            "core.sshCommand".to_string(),
+            "ssh -o HostName=93.184.216.34 -o HostKeyAlias=git.example.com -o CheckHostIP=no".to_string()
+        )]
+    );
+    assert!(super::pins_to("ssh://x;touch y/r.git", "x;touch y", 22, v4).is_err());
+    assert!(super::address_pins("https://93.184.216.34/r.git").unwrap().is_empty());
+    assert!(super::address_pins("https://127.0.0.1/r.git").is_err());
+    assert!(super::address_pins("https://user@10.0.0.1/r.git").is_err());
+
+    let request = DeployRequest {
+        url: "https://git.example.com/r.git".to_string(),
+        token: Some("t".to_string()),
+        ..DeployRequest::default()
+    };
+    let pins = super::pins_to(&request.url, "git.example.com", 443, v4).unwrap();
+    let command = super::git_process_with(None, &request, &["fetch", "origin"], None, &pins);
+    let env: Vec<(String, String)> = command
+        .get_envs()
+        .filter_map(|(name, value)| {
+            Some((
+                name.to_string_lossy().into_owned(),
+                value?.to_string_lossy().into_owned(),
+            ))
+        })
+        .collect();
+    for (name, value) in [
+        ("GIT_CONFIG_COUNT", "2"),
+        ("GIT_CONFIG_KEY_1", "http.curloptResolve"),
+        ("GIT_CONFIG_VALUE_1", "git.example.com:443:93.184.216.34"),
+    ] {
+        assert!(
+            env.contains(&(name.to_string(), value.to_string())),
+            "{name} in {env:?}"
+        );
+    }
 }
 
 /// SEC-TLS-08: on a production instance user info does not hide an internal host, and a host that does not resolve is

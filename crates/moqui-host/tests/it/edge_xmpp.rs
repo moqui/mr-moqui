@@ -208,7 +208,7 @@ fn outside_xmpp_clients_chat_through_the_edge_nodes_tunnel_ports() {
             get(
                 &call(
                     "org.moqui.impl.UserServices.create#UserAppPassword",
-                    &[("name", Value::string("phone"))],
+                    &[("name", Value::string("phone")), ("scope", Value::string("xmpp"))],
                 ),
                 "password",
             )

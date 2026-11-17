@@ -66,8 +66,8 @@ struct Copies {
 /// Where mail to an address goes, as the edge node's copies say.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Lookup {
-    /// A paired local node's account.
-    Found { node: String, account: String },
+    /// A paired local node's account; `full` when that node marked it over its mailbox quota (SEC-MAIL-07): 452.
+    Found { node: String, account: String, full: bool },
     /// Only a node that is not paired now has it: 451, so the gateway keeps it while the node may pair again.
     NotPaired,
     /// Not found, and some paired node's set has not been sent whole yet: 451.
@@ -135,7 +135,7 @@ impl Copies {
     /// (`joe+x@` and `joe@`), as on an all-in-one node; two at the same level is [`Lookup::Held`].
     fn find(&self, address: &str, delimiters: &str) -> Lookup {
         let mut not_paired = false;
-        let mut found: Vec<(String, String)> = Vec::new();
+        let mut found: Vec<(String, String, bool)> = Vec::new();
         let levels: &[&str] = if delimiters.is_empty() {
             &[""]
         } else {
@@ -145,7 +145,8 @@ impl Copies {
             for (node, map) in &self.nodes {
                 if let Some(account) = map.find(address, level) {
                     if self.active.contains(node) {
-                        found.push((node.clone(), account));
+                        let full = map.is_full(&account);
+                        found.push((node.clone(), account, full));
                     } else {
                         not_paired = true;
                     }
@@ -156,10 +157,10 @@ impl Copies {
             }
         }
         if found.len() > 1 {
-            return Lookup::Held(found.into_iter().map(|(node, _)| node).collect());
+            return Lookup::Held(found.into_iter().map(|(node, _, _)| node).collect());
         }
-        if let Some((node, account)) = found.pop() {
-            return Lookup::Found { node, account };
+        if let Some((node, account, full)) = found.pop() {
+            return Lookup::Found { node, account, full };
         }
         if not_paired {
             Lookup::NotPaired
@@ -250,6 +251,7 @@ fn lookup_answer(lookup: Lookup) -> RcptAnswer {
             tracing::error!("SMTP listener (edge mode): recipient refused, {text}");
             RcptAnswer::TempFail("the address is held by more than one pairing".to_string())
         }
+        Lookup::Found { full: true, .. } => RcptAnswer::OverQuota,
         Lookup::Found { account, .. } => RcptAnswer::Local(account),
         Lookup::Unknown => RcptAnswer::Unknown,
         Lookup::NotPaired => RcptAnswer::TempFail("the local node of the address is not paired now".to_string()),
@@ -296,12 +298,22 @@ fn leveled_lookup(copies: &Copies, address: &str, delimiters: &str) -> (Lookup, 
 /// keeps the mail meanwhile), logged. Else the side that has it, the paired node's account tagged.
 fn choose(address: &str, own: Option<(String, Level)>, replica: (Lookup, Level)) -> RcptAnswer {
     match (own, replica) {
-        (Some((account, own_level)), (Lookup::Found { node, account: theirs }, replica_level)) => {
+        (
+            Some((account, own_level)),
+            (
+                Lookup::Found {
+                    node,
+                    account: theirs,
+                    full,
+                },
+                replica_level,
+            ),
+        ) => {
             if own_level == Level::Exact && replica_level == Level::Stripped {
                 return RcptAnswer::Local(account);
             }
             if own_level == Level::Stripped && replica_level == Level::Exact {
-                return RcptAnswer::Local(node_account(&node, &theirs));
+                return paired_answer(&node, &theirs, full);
             }
             let text = format!(
                 "{}, and also by paired node {node}: an address belongs to one side",
@@ -315,8 +327,17 @@ fn choose(address: &str, own: Option<(String, Level)>, replica: (Lookup, Level))
             RcptAnswer::TempFail(text)
         }
         (Some((account, _)), _) => RcptAnswer::Local(account),
-        (None, (Lookup::Found { node, account }, _)) => RcptAnswer::Local(node_account(&node, &account)),
+        (None, (Lookup::Found { node, account, full }, _)) => paired_answer(&node, &account, full),
         (None, (other, _)) => lookup_answer(other),
+    }
+}
+
+/// The answer for the paired node's account `account` on an all-in-one node: 452 when that node marked it full.
+fn paired_answer(node: &str, account: &str, full: bool) -> RcptAnswer {
+    if full {
+        RcptAnswer::OverQuota
+    } else {
+        RcptAnswer::Local(node_account(node, account))
     }
 }
 

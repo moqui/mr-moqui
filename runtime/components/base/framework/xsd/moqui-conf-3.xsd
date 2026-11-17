@@ -1724,7 +1724,12 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="query-stats" default="false" type="boolean-expandable"/>
             <xs:attribute name="rest-max-page-size" type="non-neg-int-expandable" default="1000"><xs:annotation><xs:documentation>
-                The most rows a page of the entity REST API returns. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
+                The most rows a page returns: of the entity and service REST APIs, and of a find whose page a request names
+                (a screen's pageSize, search-form-inputs). No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="screen-max-rows" type="non-neg-int-expandable" default="100000"><xs:annotation><xs:documentation>
+                The most rows of a find made from a request's search parameters with pageNoLimit=true (a screen's CSV,
+                XLSX, print or text export): pageNoLimit asks for no page, and gets this many rows at most (SEC-DAT-09).
+                No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
@@ -2082,7 +2087,14 @@ along with this software (see the LICENSE.md file). If not, see
                     it); past it that node's oldest fail. The content a paired node's link sends before its
                     deliveries, kept until each is answered, counts against it too: at it the pairing pauses on an
                     edge node (as at replica-max-rows), and a local node refuses more content from its edge node for
-                    now.
+                    now, and tells its administrators (EdgeContentRefused) once until it takes content again.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="queue-max-content-files" type="non-neg-int-expandable" default="10000">
+                <xs:annotation><xs:documentation>The content files a paired node's link sends before its deliveries,
+                    kept until each is answered, at most for one pairing, whatever their size (an empty one counts):
+                    at it the pairing pauses on an edge node, as at queue-max-megabytes, and a local node refuses more
+                    from its edge node for now. 0 for no cap.
                 </xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="replica-max-rows" type="non-neg-int-expandable" default="1000000">

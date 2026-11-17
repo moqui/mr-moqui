@@ -15,15 +15,18 @@
 //! A pairing's caps on what its local node gives an edge node to keep (SEC-CLU-02): the replicated records of all its
 //! sets (`<edge replica-max-rows>`, or the pairing's `EdgeClient.replicaMaxRows`), and the content its link sends
 //! before deliveries, kept under [`CONTENT_IN`]`<node>/` until each delivery is answered, against the pairing's queue
-//! cap (`queue-max-megabytes`, or its `EdgeClient.queueMaxMegabytes`).
+//! cap (`queue-max-megabytes`, or its `EdgeClient.queueMaxMegabytes`) and in files against `queue-max-content-files`,
+//! so empty files add up too.
 //!
 //! At a cap the pairing pauses: its `Replicate` and `PutContent` calls are refused as "try again later", so the sender
 //! keeps what it has and nothing is dropped, and the edge node's administrators are told (the [`PAUSED_TOPIC`]
 //! notification). It stays paused (`EdgeClient.capPausedDate`) until an administrator resumes it
 //! (`resume#EdgeClient`) or sets its caps (`update#EdgeClient`); a send that still passes a cap pauses it again.
 //!
-//! A local node checks the content its edge node sends against its own queue cap, with no pause of its own (it has one
-//! pairing and no `EdgeClient` row): content that would pass the cap is refused for now, logged.
+//! A local node checks the content its edge node sends against its own caps, with no pause of its own (it has one
+//! pairing and no `EdgeClient` row): content that would pass a cap is refused for now, logged, and the edge node keeps
+//! it and tries again. Its administrators are told once when it starts refusing and once when it takes content again
+//! ([`REFUSED_TOPIC`]).
 
 use moqui_lib::error::Error;
 use moqui_lib::json::canonical_sha256;
@@ -39,6 +42,11 @@ use crate::user::{now_millis, stamp_value};
 
 /// The notification an edge node's administrators get when a pairing pauses at a cap.
 pub const PAUSED_TOPIC: &str = "EdgePairingPaused";
+/// The notification a local node's administrators get when it starts refusing its edge node's content at its own
+/// caps, and when it takes content again.
+pub const REFUSED_TOPIC: &str = "EdgeContentRefused";
+/// Whether this local node refuses its edge node's content now, so a change is told once.
+static LOCAL_REFUSING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 const CLIENT: &str = "moqui.edge.EdgeClient";
 /// Who is told: the edge node's administrators, as of a takeover.
 const ADMINISTRATORS: &str = "ADMIN";
@@ -142,9 +150,9 @@ pub fn admit_batch(facade: &EntityFacade, settings: &EdgeSettings, node: &str, b
 }
 
 /// Whether the edge node keeps `size` bytes of content pairing `node` sends before a delivery: not while the pairing
-/// is paused, nor when the content kept for it under [`CONTENT_IN`] would pass its queue cap, which pauses it. On a
-/// local node (`node` its own id) the content its edge node sends is checked against its queue cap alone: refused,
-/// logged, with no pause.
+/// is paused, nor when the content kept for it under [`CONTENT_IN`] would pass its queue cap or `max_content_files`,
+/// which pauses it. On a local node (`node` its own id) the content its edge node sends is checked against those caps
+/// alone: refused, logged, with no pause; its administrators are told when refusing starts and when it ends.
 ///
 /// # Errors
 ///
@@ -163,19 +171,77 @@ pub fn admit_content(
     }
     let cap = node_cap(facade, settings, node);
     let directory = format!("{CONTENT_IN}{node}");
-    let held = transaction(facade, TransactionAttribute::UseOrBegin, || {
-        factory.resource().tree_size(&directory).map_err(Error::from)
+    let (held, files) = transaction(facade, TransactionAttribute::UseOrBegin, || {
+        let resources = factory.resource();
+        let held = resources.tree_size(&directory).map_err(Error::from)?;
+        // the files are all in the pairing's directory (queue::received_location)
+        let files = if resources
+            .stat(&directory)
+            .map_err(Error::from)?
+            .is_some_and(|stat| !stat.is_file)
+        {
+            let entries = resources.list(&directory).map_err(Error::from)?;
+            entries.iter().filter(|entry| entry.is_file).count()
+        } else {
+            0
+        };
+        Ok((held, u64::try_from(files).unwrap_or(u64::MAX)))
     })?;
     let after = held.saturating_add(size);
-    if after <= cap {
+    let reason = if after > cap {
+        format!("the content kept for its deliveries would be {after} bytes, over its queue cap of {cap}")
+    } else if settings.max_content_files > 0 && files >= settings.max_content_files {
+        format!(
+            "the content kept for its deliveries would be {} files, over its cap of {} (queue-max-content-files)",
+            files.saturating_add(1),
+            settings.max_content_files
+        )
+    } else {
+        if !settings.takes_links() {
+            local_refusing(false, "");
+        }
         return Ok(Admit::Take);
-    }
-    let reason = format!("the content kept for its deliveries would be {after} bytes, over its queue cap of {cap}");
+    };
     if settings.takes_links() {
         pause_at_cap(facade, node, reason)
     } else {
         tracing::error!("Edge link: content from the edge node is refused for now: {reason}");
+        local_refusing(true, &reason);
         Ok(Admit::Paused(reason))
+    }
+}
+
+/// Note whether this local node refuses its edge node's content now, and tell its administrators when that changed.
+fn local_refusing(refusing: bool, reason: &str) {
+    use std::sync::atomic::Ordering;
+    if LOCAL_REFUSING.swap(refusing, Ordering::AcqRel) == refusing {
+        return;
+    }
+    let (kind, title) = if refusing {
+        (
+            "warning",
+            format!(
+                "Content from the edge node is refused: {}. The edge node keeps it and tries again; make room or raise                  this node's edge queue caps",
+                reason.replace(['$', '{', '}'], "")
+            ),
+        )
+    } else {
+        ("info", "Content from the edge node is taken again".to_string())
+    };
+    let mut message = moqui_lib::object::ValueMap::default();
+    message.insert("refusing".to_string(), Value::Bool(refusing));
+    message.insert("reason".to_string(), Value::string(reason));
+    let sent = crate::notify::NotificationMessage::new()
+        .topic(REFUSED_TOPIC)
+        .user_group_id(ADMINISTRATORS)
+        .notification_type(kind)
+        .message_map(message)
+        .title(title)
+        .send();
+    if let Err(err) = sent {
+        tracing::error!(
+            "Edge link: the administrators were not told the edge node's content is refused or taken: {err}"
+        );
     }
 }
 

@@ -1377,7 +1377,7 @@ impl Progress {
 }
 
 /// The users of an account: its owner and its current members.
-fn account_users(account_id: &str) -> Result<Vec<String>, LibError> {
+pub(super) fn account_users(account_id: &str) -> Result<Vec<String>, LibError> {
     let Some(facade) = ExecutionContext::with_current(|ec| ec.factory().entity()).flatten() else {
         return Ok(Vec::new());
     };

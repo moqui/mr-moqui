@@ -147,6 +147,19 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="../List"/>
         <error-response url="."/>
     </transition>
+    <!-- a mailbox delivered here: its quota, set by a mail administrator (update#EmailAccount, SEC-MAIL-07); in GB, empty
+        for the server's default -->
+    <transition name="saveQuota">
+        <actions><script><![CDATA[
+            const text = String(quotaGb ?? '').trim()
+            if (text !== '' && !(Number(text) > 0)) { ec.message.addValidationError(null, 'quotaGb', null, ec.l10n.localize('A number of GB, or empty for the default'), null); return }
+            ec.service.sync().name('org.moqui.mail.EmailClientServices.update#EmailAccount').parameters({emailAccountId: emailAccountId,
+                quotaBytes: text === '' ? '' : String(Math.round(Number(text) * 1073741824))}).call()
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Quota saved'), 'success')
+        ]]></script></actions>
+        <default-response url="."><parameter name="emailAccountId"/></default-response>
+        <error-response url="."/>
+    </transition>
     <transition name="searchUsers" read-only="true">
         <actions>
             <service-call name="org.moqui.comms.CommsServices.search#Users" in-map="{term:term}" out-map="found"/>
@@ -218,6 +231,8 @@ along with this software (see the LICENSE.md file). If not, see
         // personal or shared (a hosted account keeps its own kind among them)
         kindOptions = [{key: 'EakExternal', text: L('Personal: my own address')}, {key: 'EakShared', text: L('Shared: a team address read by several people')}]
         if (account.accountKindEnumId === 'EakHosted') kindOptions.unshift({key: 'EakHosted', text: L('Hosted here')})
+        canSetQuota = deliveredHere && ec.user.hasPermission('EMAIL_ACCOUNT_HOSTED')
+        quotaForm = {emailAccountId: emailAccountId, quotaGb: account.quotaBytes ? String(Math.round(account.quotaBytes / 1073741824 * 100) / 100) : ''}
         kindNote = account.isShared && memberRows.length ? L('To make it personal again, remove the people who share it first, so only one is left.') : null
         // the folders a manager maps: what each is used as, and whether the sync reads it
         folderUseOptions = [{key: 'EfkOther', text: L('A folder of its own')}, {key: 'EfkSent', text: L('Sent')}, {key: 'EfkDrafts', text: L('Drafts')},
@@ -533,6 +548,17 @@ along with this software (see the LICENSE.md file). If not, see
                                 <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
                             </form-single>
                             <label type="p" text="${kindNote}" style="text-caption m-muted q-mb-none" condition="kindNote"/>
+                        </box-body></container-box>
+                    </widgets></section>
+
+                    <section name="Quota" condition="canSetQuota"><widgets>
+                        <container-box><box-header title="Mailbox quota"/><box-body>
+                            <form-single name="AccountQuotaEdit" transition="saveQuota" map="quotaForm">
+                                <field name="emailAccountId"><default-field><hidden/></default-field></field>
+                                <field name="quotaGb"><default-field title="Most mail it keeps (GB)" tooltip="Empty for the server's default"><text-line size="8" input-type="number"/></default-field></field>
+                                <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                            </form-single>
+                            <label type="p" text="Once it keeps this much, new mail waits at the sender until there is room." style="text-caption m-muted q-mb-none"/>
                         </box-body></container-box>
                     </widgets></section>
 

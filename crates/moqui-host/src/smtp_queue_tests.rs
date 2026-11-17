@@ -77,6 +77,7 @@ fn the_recipients_of_each_node_come_from_its_copies() {
     let found = |node: &str, account: &str| Lookup::Found {
         node: node.to_string(),
         account: account.to_string(),
+        full: false,
     };
     assert_eq!(copies.find("sales@example.com", "+"), found("node-a", "100"));
     assert_eq!(copies.find("sales+news@example.com", "+"), found("node-a", "100"));
@@ -122,6 +123,53 @@ fn the_recipients_of_each_node_come_from_its_copies() {
     );
 }
 
+/// SEC-MAIL-07: an account its local node marked full (`quotaFullDate`, replicated) is answered 452 on the edge node,
+/// as on its local node, and on an all-in-one node for the paired side; the others are taken.
+#[test]
+fn an_account_its_local_node_marked_full_is_answered_452() {
+    let values = vec![
+        account("node-a", "100", "sales@example.com", "EakHosted", ""),
+        copy(
+            "node-a",
+            ACCOUNT,
+            json!({"emailAccountId": "101"}),
+            json!({"emailAddress": "full@example.com", "accountKindEnumId": "EakHosted", "statusId": "EasActive",
+                "quotaFullDate": "2026-11-17 10:00:00.000"}),
+        ),
+        copy(
+            "node-a",
+            IDENTITY,
+            json!({"emailIdentityId": "9"}),
+            json!({"emailAddress": "alias@example.com", "emailAccountId": "101"}),
+        ),
+    ];
+    let nodes = HashSet::from(["node-a".to_string()]);
+    let copies = Copies {
+        built_at: Some(1),
+        loaded: nodes.clone(),
+        nodes: build(&values),
+        active: nodes,
+    };
+    let answer = |address: &str| lookup_answer(copies.find(address, "+"));
+    assert_eq!(answer("sales@example.com"), RcptAnswer::Local("100".to_string()));
+    assert_eq!(answer("full@example.com"), RcptAnswer::OverQuota);
+    assert_eq!(answer("full+news@example.com"), RcptAnswer::OverQuota);
+    assert_eq!(
+        answer("alias@example.com"),
+        RcptAnswer::OverQuota,
+        "by an identity of the account"
+    );
+    assert_eq!(
+        choose(
+            "full@example.com",
+            None,
+            leveled_lookup(&copies, "full@example.com", "+")
+        ),
+        RcptAnswer::OverQuota,
+        "the paired side of an all-in-one node"
+    );
+}
+
 /// Two pairings of one edge node (plans/Edge-Node2.md §4.1): each address goes to the pairing whose copies have it;
 /// one both have is refused with 451 rather than given to either.
 #[test]
@@ -142,6 +190,7 @@ fn an_address_two_pairings_hold_gets_451_and_each_other_goes_to_its_own() {
     let found = |node: &str, account: &str| Lookup::Found {
         node: node.to_string(),
         account: account.to_string(),
+        full: false,
     };
     assert_eq!(copies.find("ann@a.example", "+"), found("node-a", "100"));
     assert_eq!(copies.find("bob+x@b.example", "+"), found("node-b", "100"));

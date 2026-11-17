@@ -52,6 +52,10 @@ impl EntityFind {
     /// With `always_paginate`, or when the input has `pageIndex` or `pageSize`, the find is paged
     /// (`pageSize` defaults to the find's limit, or 20), and `pageNoLimit=true` removes paging.
     ///
+    /// The input is a request's, so its page is bounded (SEC-DAT-09): a `pageSize` at most the `entity-facade`
+    /// `rest-max-page-size` (1000), and `pageNoLimit` (a screen's export) reads at most `screen-max-rows` (100,000) from
+    /// the first. A limit the caller's code set on the find is its own.
+    ///
     /// # Errors
     ///
     /// Returns an error when the entity is unknown or a period or date in the input is not valid.
@@ -123,6 +127,7 @@ impl EntityFind {
         if (always_paginate || given("pageIndex") || given("pageSize")) && !self.should_cache()? {
             let index = whole(input.get("pageIndex")).unwrap_or(0).max(0);
             let size = whole(input.get("pageSize"))
+                .map(|size| size.min(super::query_rest::rest_max_page_size()))
                 .or(self.limit)
                 .unwrap_or(DEFAULT_PAGE_SIZE)
                 .max(0);
@@ -134,7 +139,7 @@ impl EntityFind {
             .is_some_and(|value| matches!(value, Value::Bool(true)) || to_plain_string(value) == "true")
         {
             self.offset = None;
-            self.limit = None;
+            self.limit = Some(super::query_rest::screen_max_rows());
         }
         Ok(SearchFormResult { find: self, context })
     }

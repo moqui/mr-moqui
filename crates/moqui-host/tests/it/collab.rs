@@ -180,7 +180,7 @@ fn dav_routes_and_coediting_over_the_socket() {
         );
         let password = call(
             "org.moqui.impl.UserServices.create#UserAppPassword",
-            &[("name", Value::string("Gate"))],
+            &[("name", Value::string("Gate")), ("scope", Value::string("dav"))],
         );
         (
             to_plain_string(page.get("wikiPageId").unwrap()),

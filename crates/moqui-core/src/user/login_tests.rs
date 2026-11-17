@@ -230,7 +230,7 @@ fn a_key_or_app_password_login_leaves_has_logged_out_set() {
     assert_eq!(session::current_username().unwrap().as_deref(), Some("race.user"));
     logout_local().unwrap();
     assert_eq!(flag(), "Y", "a login key does not undo the sign-out");
-    login_app_password("race.user", &password).unwrap();
+    login_app_password("race.user", &password, "dav").unwrap();
     logout_local().unwrap();
     assert_eq!(flag(), "Y", "an app password does not undo the sign-out");
     login_external_user("race.user", None).unwrap();
@@ -428,12 +428,12 @@ fn credentials_name_their_user_without_a_login() {
         )
     };
     let right = basic("Secret1!");
-    assert_eq!(credential_user(None, None, Some(&right), true).unwrap().as_deref(), Some("ada"));
-    assert_eq!(credential_user(None, None, Some(&right), false).unwrap(), None);
-    assert_eq!(credential_user(None, None, Some(&basic("wrong")), true).unwrap(), None);
+    assert_eq!(credential_user(None, None, Some(&right), true, None).unwrap().as_deref(), Some("ada"));
+    assert_eq!(credential_user(None, None, Some(&right), false, None).unwrap(), None);
+    assert_eq!(credential_user(None, None, Some(&basic("wrong")), true, None).unwrap(), None);
     assert!(crate::web::take_auth_failure(), "a wrong password counts, as a login with it would");
-    assert_eq!(credential_user(None, None, None, true).unwrap(), None);
-    assert_eq!(credential_user(Some("no-such-key"), None, None, true).unwrap(), None);
+    assert_eq!(credential_user(None, None, None, true, None).unwrap(), None);
+    assert_eq!(credential_user(Some("no-such-key"), None, None, true, None).unwrap(), None);
     assert!(session::current_username().unwrap().is_none(), "nobody is logged in");
 }
 
@@ -668,10 +668,10 @@ fn key_app_password_and_external_logins_leave_history_rows() {
     create_user(&facade, "old", "Secret1!", |_| {});
     let good = app_password("dav", false);
     let revoked = app_password("old", true);
-    login_app_password("dav", &good).unwrap();
+    login_app_password("dav", &good, "dav").unwrap();
     logout().unwrap();
     assert_eq!(history(&user_id("dav")), ["Y"]);
-    assert!(login_app_password("old", &revoked).is_err());
+    assert!(login_app_password("old", &revoked, "dav").is_err());
     assert_eq!(history(&user_id("old")), ["N"]);
 
     // an identity provider login
@@ -694,6 +694,74 @@ fn key_app_password_and_external_logins_leave_history_rows() {
 /// SEC-COM-11, SEC-COM-22: an XMPP SCRAM or FAST sign-in by an app password the session verified checks the account's
 /// ipAllowed against the session's address, and is recorded in the login history with the app password's last use;
 /// another user's or a revoked app password is refused.
+/// SEC-COM-21: an app password made for one protocol is taken by that protocol's login only, the check before a body
+/// too; one made before scopes is taken by each; an XMPP sign-in the protocol verified itself takes one made for XMPP
+/// or for none.
+#[test]
+fn an_app_password_is_taken_only_by_the_protocol_it_was_made_for() {
+    use base64::Engine as _;
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    create_user(&facade, "pat", "Secret1!", |_| {});
+    let made = |id: &str, scope: &str| {
+        let password = new_app_password().unwrap();
+        let mut row = facade.make_value(USER_APP_PASSWORD).unwrap();
+        row.set("appPasswordId", Value::string(id));
+        row.set("userId", Value::string("pat"));
+        row.set(
+            "passwordHash",
+            Value::string(password::hash_login_key(&app_password_key(&password)).unwrap()),
+        );
+        if !scope.is_empty() {
+            row.set("scope", Value::string(scope));
+        }
+        row.create(&facade).unwrap();
+        password
+    };
+    let dav = made("AP_DAV", "dav");
+    let any = made("AP_ANY", "");
+    for scope in super::APP_PASSWORD_SCOPES {
+        assert_eq!(
+            login_app_password("pat", &dav, scope).is_ok(),
+            scope == "dav",
+            "{scope}"
+        );
+        logout().unwrap();
+        assert!(
+            login_app_password("pat", &any, scope).is_ok(),
+            "one with no scope, by {scope}"
+        );
+        logout().unwrap();
+    }
+    let basic = |password: &str| {
+        format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode(format!("pat:{password}"))
+        )
+    };
+    let pat = Some("pat".to_string());
+    assert_eq!(
+        credential_user(None, None, Some(&basic(&dav)), false, Some("dav")).unwrap(),
+        pat
+    );
+    assert_eq!(
+        credential_user(None, None, Some(&basic(&dav)), false, Some("ssh")).unwrap(),
+        None
+    );
+    assert_eq!(
+        credential_user(None, None, Some(&basic(&dav)), false, None).unwrap(),
+        pat,
+        "any, for a check before the login"
+    );
+    assert!(
+        login_verified_app_password("pat", Some("AP_DAV")).is_err(),
+        "not made for XMPP"
+    );
+    logout().unwrap();
+    login_verified_app_password("pat", Some("AP_ANY")).unwrap();
+    logout().unwrap();
+}
+
 #[test]
 fn a_verified_app_password_sign_in_checks_ip_allowed_and_is_recorded() {
     let (ctx, facade) = open_ctx();

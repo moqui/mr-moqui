@@ -910,6 +910,9 @@ along with this software (see the LICENSE.md file). If not, see
             messages' messageSize, attachments included, EmailAccountBytes): once it has that much, mail the SMTP listener
             receives for it is refused with 452 until it is under; empty for the email-client mailbox-quota in the conf
             (10 GiB)</description></field>
+        <field name="quotaFullDate" type="date-time"><description>Set when the account was found to keep its quota of mail
+            or more, cleared when it was found under (moqui-mail delivery over_quota, and the job check#FullMailboxes):
+            replicated to an edge node (mailRecipients), whose listener answers 452 for it too</description></field>
         <field name="syncLockedUntil" type="date-time"><description>A sync of the account holds it until then
             (sync#EmailAccount), so no two run at once, on this server or another; the lock of a server that stopped
             ends then</description></field>

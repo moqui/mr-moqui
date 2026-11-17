@@ -33,8 +33,8 @@ The gateway is off by default; while it is off everything under `/llm/v1` answer
   `model_not_found`; nothing is sent.
 - A caller needs the `LlmGatewayUse` permission and, for its credential, an `LlmApiClient` row (System › LLM › Gateway,
   `store#LlmApiClient`) that names it (`loginKey`, kept as the hash a `UserLoginKey` is stored under, or
-  `appPasswordId`), of the same user, not disabled, with `gateway` in `scopes`. An app password (made for DAV, SFTP or
-  git) always needs one; an account's login key needs one with `require-client` (the default). The row of the credential with
+  `appPasswordId`), of the same user, not disabled, with `gateway` in `scopes`. An app password, made for `ai`
+  (or before app passwords had a scope), always needs one; an account's login key needs one with `require-client` (the default). The row of the credential with
   the gateway scope is the one used (rows for A2A or MCP are not); `store#LlmApiClient` refuses a second gateway row
   for a credential, and two found are refused as ambiguous. The client's `allowedAliases` (empty for all) narrow the
   aliases, and its `dailyTokens`, `dailyCost` and `requestsPerMinute` apply on top of the user's own limits (a client

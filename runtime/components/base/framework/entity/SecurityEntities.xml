@@ -451,10 +451,11 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.security.UserAccount" short-alias="user"/>
     </entity>
     <entity entity-name="UserAppPassword" package="moqui.security" use="transactional" cache="never">
-        <description>A password for one device or app of a user: the CalDAV, CardDAV and WebDAV servers and the SFTP drives
-            take it (with the username) where the web login does not, so an account with a second factor can sync and
-            losing a phone means revoking one password. Shown once when made (create#UserAppPassword); only
-            passwordHash is kept, the SHA-256 of the password without dashes in lower case, as for a login key.</description>
+        <description>A password for one device or app of a user, for one protocol (scope): the DAV servers, SSH and SFTP,
+            git over HTTP, XMPP, or the LLM gateway with A2A and MCP take it (with the username) where the web login does
+            not, so an account with a second factor can sync and losing a phone means revoking one password. Shown once
+            when made (create#UserAppPassword); only passwordHash is kept, the SHA-256 of the password without dashes in
+            lower case, as for a login key.</description>
         <field name="appPasswordId" type="id" is-pk="true"/>
         <field name="userId" type="id" not-null="true"/>
         <field name="name" type="text-medium"><description>What the user called it: the device or app</description></field>
@@ -462,6 +463,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="createdDate" type="date-time"/>
         <field name="lastUsedDate" type="date-time"><description>Written at most once a minute</description></field>
         <field name="revokedDate" type="date-time"/>
+        <field name="scope" type="text-short"><description>The one protocol that takes it: dav, ssh (SSH, SFTP, git over
+            SSH), git (git over HTTP), xmpp, or ai (the LLM gateway, A2A, MCP); set when it is made, never changed. Empty
+            on a row made before scopes, which each of them takes (SEC-COM-21).</description></field>
         <!-- XMPP sign-in (plans/archive/Comms-Framework.md §4.3, docs/interfaces/XMPP.md): SCRAM-SHA-256 verifiers, made with the
             password in create#UserAppPassword (the only place it is in the clear). A user's app passwords share one salt
             and count, so the server's one challenge fits each; one verifier for the password as shown and one for it

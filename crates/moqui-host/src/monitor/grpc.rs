@@ -3,7 +3,8 @@
 //! HTTP receiver's ingest keys, rate limit, concurrency budget, decoder and queue (`receiver.rs`); a refusal is the
 //! matching gRPC status. The services are routes of the host's gRPC listener (`crate::grpc_listen`), which serves TLS
 //! with the HTTPS listener's certificates (ALPN h2), else plain h2c, and admits each connection by the edge guard as
-//! for HTTP.
+//! for HTTP. Each service is wrapped in [`KeyFirst`], which checks the request's key before tonic reads its message
+//! (SEC-TLS-17).
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -61,7 +62,7 @@ pub(crate) fn bind_address_by(setting: Setting, http: SocketAddr) -> Option<Sock
     Some(SocketAddr::new(ip, port))
 }
 
-/// `routes` with the collector services, held to the receiver's `body-limit`.
+/// `routes` with the collector services, held to the receiver's `body-limit`, each behind [`KeyFirst`].
 pub(crate) fn add_routes(
     routes: tonic::service::Routes,
     factory: &Arc<ExecutionContextFactory>,
@@ -71,21 +72,94 @@ pub(crate) fn add_routes(
         factory: Arc::clone(factory),
     });
     routes
-        .add_service(
+        .add_service(KeyFirst::new(
             TraceServiceServer::from_arc(Arc::clone(&otlp))
                 .accept_compressed(CompressionEncoding::Gzip)
                 .max_decoding_message_size(limit),
-        )
-        .add_service(
+            factory,
+        ))
+        .add_service(KeyFirst::new(
             LogsServiceServer::from_arc(Arc::clone(&otlp))
                 .accept_compressed(CompressionEncoding::Gzip)
                 .max_decoding_message_size(limit),
-        )
-        .add_service(
+            factory,
+        ))
+        .add_service(KeyFirst::new(
             MetricsServiceServer::from_arc(otlp)
                 .accept_compressed(CompressionEncoding::Gzip)
                 .max_decoding_message_size(limit),
-        )
+            factory,
+        ))
+}
+
+/// A collector service behind the ingest key's check (SEC-TLS-17): the key in the request's headers is authorized,
+/// with one of the receiver's permits, before the inner service reads and decodes the message, so a made-up key costs
+/// no decode of a message up to `body-limit` and is refused within the concurrency budget. The [`receiver::Authorized`]
+/// goes to the service in the request's extensions and holds its permit until the request is done. A refused key is a
+/// failed sign-in of its client ([`receiver::note_refusal`]). With the receiver disabled the service answers itself.
+#[derive(Clone)]
+pub(crate) struct KeyFirst<S> {
+    inner: S,
+    factory: Arc<ExecutionContextFactory>,
+}
+
+impl<S> KeyFirst<S> {
+    pub(crate) fn new(inner: S, factory: &Arc<ExecutionContextFactory>) -> Self {
+        Self {
+            inner,
+            factory: Arc::clone(factory),
+        }
+    }
+}
+
+impl<S: tonic::server::NamedService> tonic::server::NamedService for KeyFirst<S> {
+    const NAME: &'static str = S::NAME;
+}
+
+impl<S> tonic::codegen::Service<http::Request<tonic::body::Body>> for KeyFirst<S>
+where
+    S: tonic::codegen::Service<
+            http::Request<tonic::body::Body>,
+            Response = http::Response<tonic::body::Body>,
+            Error = std::convert::Infallible,
+        > + Clone
+        + Send
+        + 'static,
+    S::Future: Send + 'static,
+{
+    type Response = http::Response<tonic::body::Body>;
+    type Error = std::convert::Infallible;
+    type Future = tonic::codegen::BoxFuture<Self::Response, Self::Error>;
+
+    fn poll_ready(&mut self, cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, mut request: http::Request<tonic::body::Body>) -> Self::Future {
+        // the service made ready serves this call; a fresh clone waits for the next
+        let ready = self.inner.clone();
+        let mut inner = std::mem::replace(&mut self.inner, ready);
+        let factory = Arc::clone(&self.factory);
+        Box::pin(async move {
+            if receiver::receiver_enabled(&factory) {
+                let token = token(&tonic::metadata::MetadataMap::from_headers(request.headers().clone()));
+                let caller = request.extensions().get::<crate::grpc_listen::Caller>().cloned();
+                let token_given = !token.is_empty();
+                match receiver::authorize(&factory, token).await {
+                    Ok(authorized) => {
+                        request.extensions_mut().insert(Arc::new(authorized));
+                    }
+                    Err(refusal) => {
+                        if let Some(caller) = &caller {
+                            receiver::note_refusal(&caller.guard, caller.client, token_given, &refusal);
+                        }
+                        return Ok(status(refusal).into_http());
+                    }
+                }
+            }
+            inner.call(request).await
+        })
+    }
 }
 
 struct Otlp {
@@ -93,8 +167,9 @@ struct Otlp {
 }
 
 impl Otlp {
-    /// Authenticate the request's key, then decode its message through its serde form, as the HTTP receiver does a
-    /// protobuf body. tonic has decoded the message already, held to `body-limit` by `max_decoding_message_size`.
+    /// Decode the message of a request whose key [`KeyFirst`] authorized through its serde form, as the HTTP receiver
+    /// does a protobuf body. tonic has decoded the message, held to `body-limit` by `max_decoding_message_size`, after
+    /// the key was checked.
     async fn receive<T: Send + 'static>(
         &self,
         signal: Signal,
@@ -104,17 +179,9 @@ impl Otlp {
         if !receiver::receiver_enabled(&self.factory) {
             return Err(Status::unimplemented("the telemetry receiver is disabled"));
         }
-        let token = token(request.metadata());
-        let caller = request.extensions().get::<crate::grpc_listen::Caller>().cloned();
-        let token_given = !token.is_empty();
-        let authorized = match receiver::authorize(&self.factory, token).await {
-            Ok(authorized) => authorized,
-            Err(refusal) => {
-                if let Some(caller) = &caller {
-                    receiver::note_refusal(&caller.guard, caller.client, token_given, &refusal);
-                }
-                return Err(status(refusal));
-            }
+        // KeyFirst puts it there: a service reached without it is not this receiver's
+        let Some(authorized) = request.extensions().get::<Arc<receiver::Authorized>>().cloned() else {
+            return Err(Status::unauthenticated("an ingest key is required"));
         };
         let message = request.into_inner();
         let username = authorized.username.clone();

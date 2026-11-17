@@ -138,6 +138,16 @@ fn each_signal_over_grpc_with_the_ingest_key_limits_and_partial_success() {
             .await
             .unwrap_err();
         assert_eq!(refused.code(), tonic::Code::OutOfRange, "over body-limit: {refused}");
+        // SEC-TLS-17: a made-up key is refused before the message is read, however large it is
+        let refused = client
+            .export(authorized(traces(vec![span(&"x".repeat(5000), now)]), "mqi_not_a_key"))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            refused.code(),
+            tonic::Code::Unauthenticated,
+            "the key before the size: {refused}"
+        );
 
         let mut logs = LogsServiceClient::connect(endpoint.clone()).await.unwrap();
         let answer = logs

@@ -1402,6 +1402,8 @@ async fn upload_has_user(
                     login_key.as_deref(),
                     authorization.as_deref(),
                     true,
+                    // the route's own login asks its protocol's scope
+                    None,
                 )
             });
             if moqui_core::web::take_auth_failure() {

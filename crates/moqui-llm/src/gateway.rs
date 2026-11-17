@@ -678,7 +678,7 @@ fn app_password_owner(facade: &EntityFacade, password: &str) -> Option<(String, 
 fn login_app_password(facade: &EntityFacade, username: Option<&str>, password: &str) -> Option<Credential> {
     match app_password_owner(facade, password) {
         Some((id, owner)) if username.is_none_or(|username| username.eq_ignore_ascii_case(&owner)) => {
-            moqui_core::user::login_app_password(&owner, password)
+            moqui_core::user::login_app_password(&owner, password, "ai")
                 .ok()
                 .map(|()| Credential::AppPassword(id))
         }

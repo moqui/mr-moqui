@@ -141,6 +141,22 @@ fn a_form_value_replaces_the_finds_own_and_the_cache_is_off_unless_asked_for() {
     assert_eq!((paged.find.offset, paged.find.limit), (Some(0), Some(20)));
 }
 
+/// SEC-DAT-09: a request's `pageSize` is held to `rest-max-page-size` (1000 by default), as the REST APIs hold theirs;
+/// a limit the caller's code set stays its own.
+#[test]
+fn a_requests_page_size_is_held_to_the_rest_max_page_size() {
+    let page = search(&[("pageIndex", "1"), ("pageSize", "100000")]);
+    assert_eq!(
+        (page.find.offset_value(), page.find.limit_value()),
+        (Some(1000), Some(1000))
+    );
+    let own = find()
+        .limit(5000)
+        .search_form_map(&BTreeMap::new(), &BTreeMap::new(), "", "", true)
+        .unwrap();
+    assert_eq!(own.find.limit, Some(5000));
+}
+
 #[test]
 fn a_negative_page_gives_no_negative_offset() {
     let page = search(&[("pageIndex", "-3"), ("pageSize", "10")]);
@@ -257,7 +273,11 @@ fn defaults_apply_only_without_input_and_order_and_paging_are_read() {
     let unlimited = find()
         .search_form_map(&input(&[("pageNoLimit", "true")]), &BTreeMap::new(), "", "", true)
         .unwrap();
-    assert_eq!((unlimited.find.offset, unlimited.find.limit), (None, None));
+    assert_eq!(
+        (unlimited.find.offset, unlimited.find.limit),
+        (None, Some(100_000)),
+        "an export reads screen-max-rows at most (SEC-DAT-09)"
+    );
     let skipped = find()
         .search_form_map(&input(&[("testId", "A")]), &BTreeMap::new(), "testId", "", false)
         .unwrap();

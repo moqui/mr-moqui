@@ -1389,7 +1389,11 @@ fn page_keys(form: &MNode, rows: usize) -> Result<Option<PageKeys>, Error> {
         return Ok(None);
     }
     let index = whole("pageIndex").unwrap_or(0).max(0);
-    let size = whole("pageSize").filter(|size| *size > 0).unwrap_or(DEFAULT_PAGE_SIZE);
+    // the find held a request's page to rest-max-page-size (search_form_map, SEC-DAT-09): so does the count
+    let size = whole("pageSize")
+        .filter(|size| *size > 0)
+        .map(|size| size.min(crate::entity::query_rest::rest_max_page_size()))
+        .unwrap_or(DEFAULT_PAGE_SIZE);
     let rows = i64::try_from(rows).unwrap_or(i64::MAX);
     let count = if rows < size {
         rows + index * size

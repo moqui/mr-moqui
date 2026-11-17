@@ -14,7 +14,7 @@
 
 //! Entity find filters from `ArtifactAuthzFilter` and `EntityFilter`.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
 use moqui_db::model::EntityDefinition;
@@ -290,9 +290,13 @@ fn applies_to(entity: &EntityDefinition, filter_entity: &str) -> bool {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Relation {
+enum Relation<'a> {
     Direct,
+    /// A member of the view, every member of the filter's entity at once.
     Member,
+    /// One member of the view, by its entity alias, when the view has several of the filter's entity
+    /// ([`conditions_for`]).
+    OneMember(&'a str),
     None,
 }
 
@@ -318,6 +322,42 @@ fn conditions_for(
     if relation == Relation::None {
         return Ok(None);
     }
+    // A view with several members of the filter's entity (two parties of an invoice): each member is held to the
+    // whole map on its own and the members' conditions are ANDed, so `(a null or a = me) and (b null or b = me)`. Each
+    // field expanded to every member's alias inside the map's own joins would make `(a null and b null) or (a = me
+    // and b = me)`, and hide a row with one public party and one of the caller's own (SEC-DAT-11).
+    if relation == Relation::Member {
+        let mut fields = BTreeSet::new();
+        map_fields(map, &mut fields);
+        let mut members: Vec<&str> = Vec::new();
+        for member in &entity.member_entities {
+            let alias = member.entity_alias.as_str();
+            if member.entity_name == filter_entity
+                && !members.contains(&alias)
+                && fields
+                    .iter()
+                    .any(|field| !member_aliases(entity, filter_entity, field, Some(alias)).is_empty())
+            {
+                members.push(alias);
+            }
+        }
+        if members.len() > 1 {
+            let mut parts = Vec::new();
+            for member in members {
+                if let Some(condition) = map_conditions(
+                    entity,
+                    filter_entity,
+                    Relation::OneMember(member),
+                    map,
+                    (join_or, comparison),
+                    allow_missing,
+                )? {
+                    parts.push(condition);
+                }
+            }
+            return Ok(join_conditions(parts, false));
+        }
+    }
     map_conditions(
         entity,
         filter_entity,
@@ -328,12 +368,33 @@ fn conditions_for(
     )
 }
 
+/// The fields a filter map names, in its `_list` maps too.
+fn map_fields(map: &BTreeMap<String, Value>, fields: &mut BTreeSet<String>) {
+    for (field, value) in map {
+        if field == "_list" {
+            if let Value::List(items) = value {
+                for item in items {
+                    if let Value::Map(entries) = item {
+                        let inner: BTreeMap<String, Value> = entries
+                            .iter()
+                            .map(|(key, value)| (key.clone(), value.clone()))
+                            .collect();
+                        map_fields(&inner, fields);
+                    }
+                }
+            }
+        } else if !field.starts_with('_') {
+            fields.insert(field.clone());
+        }
+    }
+}
+
 /// The condition of one filter map, as Java's `makeCondition(Map)`: `_comp` is the comparison for this map's fields,
 /// `_join` (`or` or `and`) joins them, and `_list` holds more maps, each its own condition in that join.
 fn map_conditions(
     entity: &EntityDefinition,
     filter_entity: &str,
-    relation: Relation,
+    relation: Relation<'_>,
     map: &BTreeMap<String, Value>,
     (join_or, comparison): (bool, &str),
     allow_missing: bool,
@@ -369,9 +430,17 @@ fn map_conditions(
         }
         let names = match relation {
             Relation::Direct => vec![field.clone()],
-            Relation::Member => member_aliases(entity, filter_entity, field),
+            Relation::Member => member_aliases(entity, filter_entity, field, None),
+            Relation::OneMember(member) => member_aliases(entity, filter_entity, field, Some(member)),
             Relation::None => Vec::new(),
         };
+        // a field this member has no alias for, where another member has one, is that member's
+        if names.is_empty()
+            && matches!(relation, Relation::OneMember(_))
+            && !member_aliases(entity, filter_entity, field, None).is_empty()
+        {
+            continue;
+        }
         if names.is_empty() {
             if allow_missing {
                 note_missing_alias(entity, filter_entity, field);
@@ -436,14 +505,17 @@ fn comparison_enum(operator: &str) -> Result<String, moqui_lib::error::Error> {
     .to_string())
 }
 
-/// View aliases that read `field` of the member entity `member_name`. `aliases` already holds
-/// what each `alias-all` expands to.
-fn member_aliases(entity: &EntityDefinition, member_name: &str, field: &str) -> Vec<String> {
+/// View aliases that read `field` of the member entity `member_name`, of the one member with entity alias `only` when
+/// it is given. `aliases` already holds what each `alias-all` expands to.
+fn member_aliases(entity: &EntityDefinition, member_name: &str, field: &str, only: Option<&str>) -> Vec<String> {
     let mut names = Vec::new();
     for alias in &entity.aliases {
         let Some(entity_alias) = alias.entity_alias.as_deref() else {
             continue;
         };
+        if only.is_some_and(|only| only != entity_alias) {
+            continue;
+        }
         let Some(member) = entity.member(entity_alias) else {
             continue;
         };

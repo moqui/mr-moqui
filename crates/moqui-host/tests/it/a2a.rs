@@ -387,10 +387,12 @@ fn the_a2a_server_over_both_bindings_on_postgres() {
         let _entered = context.enter();
         moqui_core::user::internal_login_user("ann.a2a").unwrap();
         let _authz = context.disable_authz();
-        let parameters: std::collections::BTreeMap<String, moqui_lib::object::Value> =
-            [("name".to_string(), moqui_lib::object::Value::string("A2A test"))]
-                .into_iter()
-                .collect();
+        let parameters: std::collections::BTreeMap<String, moqui_lib::object::Value> = [
+            ("name".to_string(), moqui_lib::object::Value::string("A2A test")),
+            ("scope".to_string(), moqui_lib::object::Value::string("ai")),
+        ]
+        .into_iter()
+        .collect();
         let out = moqui_core::service::sync("org.moqui.impl.UserServices.create#UserAppPassword", &parameters).unwrap();
         moqui_lib::object::to_plain_string(out.get("password").expect("an app password"))
     };

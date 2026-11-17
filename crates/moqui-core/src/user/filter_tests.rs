@@ -39,6 +39,15 @@ const PRODUCT_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
         <alias name="productId" entity-alias="PROD" field="productId"/>
         <alias name="ownerPartyId" entity-alias="PROD" field="ownerPartyId"/>
     </view-entity>
+    <view-entity entity-name="ProductPair" package="test.product">
+        <member-entity entity-alias="FROM" entity-name="test.product.Product"/>
+        <member-entity entity-alias="TO" entity-name="test.product.Product" join-from-alias="FROM">
+            <key-map field-name="ownerPartyId" related="productId"/></member-entity>
+        <alias name="fromProductId" entity-alias="FROM" field="productId"/>
+        <alias name="fromOwnerPartyId" entity-alias="FROM" field="ownerPartyId"/>
+        <alias name="toProductId" entity-alias="TO" field="productId"/>
+        <alias name="toOwnerPartyId" entity-alias="TO" field="ownerPartyId"/>
+    </view-entity>
 </entities>
 "#;
 
@@ -92,6 +101,49 @@ fn a_filter_map_joins_a_list_of_maps_with_their_own_comparisons() {
     assert!(!text.contains("_join") && !text.contains("_list"), "{text}");
     assert_eq!(super::comparison_enum("!=").unwrap(), "ENTCO_NOT_EQUALS");
     assert!(super::comparison_enum("sounds-like").is_err());
+}
+
+/// SEC-DAT-11: on a view with two members of the filter's entity (an invoice's from and to parties) each member is held
+/// to the whole map on its own, `(from null or from = me) and (to null or to = me)`, so a row with one public party and
+/// one of the caller's own is kept; the map's own joins over both members' aliases would make `(from null and to null)
+/// or (from = me and to = me)` and hide it.
+#[test]
+fn a_view_with_two_members_of_the_filters_entity_holds_each_member_to_the_map() {
+    let (facade, _model_dir) = product_facade();
+    let as_map = |field: &str, value: Value| Value::Map([(field.to_string(), value)].into_iter().collect());
+    let filter: std::collections::BTreeMap<String, Value> = [
+        ("_join".to_string(), Value::string("or")),
+        (
+            "_list".to_string(),
+            Value::List(vec![
+                as_map("ownerPartyId", Value::Null),
+                as_map("ownerPartyId", Value::string("ME")),
+            ]),
+        ),
+    ]
+    .into();
+    let condition = facade
+        .with_entity("test.product.ProductPair", |entity, _, _| {
+            super::conditions_for(entity, "test.product.Product", &filter, (false, ""), false)
+        })
+        .unwrap();
+    let held = |alias: &str| {
+        Condition::or(vec![
+            Condition::is_null(alias),
+            Condition::equals(alias, Value::string("ME")),
+        ])
+    };
+    assert_eq!(
+        condition,
+        Some(Condition::and(vec![held("fromOwnerPartyId"), held("toOwnerPartyId")]))
+    );
+    // one member of the entity: the map as it is
+    let single = facade
+        .with_entity(VIEW, |entity, _, _| {
+            super::conditions_for(entity, "test.product.Product", &filter, (false, ""), false)
+        })
+        .unwrap();
+    assert_eq!(single, Some(held("ownerPartyId")));
 }
 
 /// SEC-DAT-11: a filter term an `allowMissingAlias` set leaves out of a find on a view with no alias for its field is

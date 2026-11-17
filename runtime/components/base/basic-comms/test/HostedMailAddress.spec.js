@@ -2,6 +2,7 @@
 // is stored in it. So only a holder of EMAIL_ACCOUNT_HOSTED (the ADMIN group), or a call with authorization disabled,
 // makes one, gives one another address, or makes an account one (plans/Security-Review.md SEC-MAIL-01); a mail user
 // still makes an account of another server.
+// The quota of such an account is set by a holder too (SEC-MAIL-07).
 // Run: ./moq test basic-comms --spec HostedMailAddress
 const USER = "SPEC_HMA_USER"
 const HOLDER = "SPEC_HMA_HOLDER"
@@ -88,5 +89,39 @@ feature("a mail user is refused an unclaimed hosted address and its re-address; 
         renamed.error == ""
         stored.emailAddress == `abuse-${run}@hosted.example.invalid`
         stored.accountName == "Abuse desk"
+    },
+})
+
+// SEC-MAIL-07: a mailbox quota is set only by a mail administrator; a new one clears the account's full mark, so an edge
+// node takes its mail again, and empty is the conf's default
+feature("only a mail administrator sets a hosted account's quota, which clears its full mark", {
+    when() {
+        const run = Date.now().toString(36)
+        const held = as(HOLDER, "create#EmailAccount", { accountKindEnumId: "EakHosted", emailAddress: `quota-${run}@hosted.example.invalid` })
+        // the user manages it too, but is no mail administrator
+        const shared = as(HOLDER, "add#EmailAccountUser", { emailAccountId: held.emailAccountId, userId: USER, permissionEnumId: "EapManage" })
+        sys(() => ec.entity.find("moqui.basic.email.EmailAccount").condition("emailAccountId", held.emailAccountId).one()
+            .set("quotaFullDate", ec.user.nowTimestamp).update())
+        const read = () => sys(() => ec.entity.find("moqui.basic.email.EmailAccount").condition("emailAccountId", held.emailAccountId).one())
+        const byOwner = as(USER, "update#EmailAccount", { emailAccountId: held.emailAccountId, quotaBytes: "1" })
+        const afterOwner = read()
+        const notNumber = as(HOLDER, "update#EmailAccount", { emailAccountId: held.emailAccountId, quotaBytes: "lots" })
+        const byHolder = as(HOLDER, "update#EmailAccount", { emailAccountId: held.emailAccountId, quotaBytes: "5368709120" })
+        const afterHolder = read()
+        const cleared = as(HOLDER, "update#EmailAccount", { emailAccountId: held.emailAccountId, quotaBytes: "" })
+        const afterClear = read()
+        return { shared, byOwner, afterOwner, notNumber, byHolder, afterHolder, cleared, afterClear }
+    },
+    then({ shared, byOwner, afterOwner, notNumber, byHolder, afterHolder, cleared, afterClear }) {
+        shared.error == ""
+        byOwner.error.includes("mail administrator")
+        afterOwner.quotaBytes == null
+        afterOwner.quotaFullDate != null
+        notNumber.error.includes("whole number")
+        byHolder.error == ""
+        Number(afterHolder.quotaBytes) == 5368709120
+        afterHolder.quotaFullDate == null
+        cleared.error == ""
+        afterClear.quotaBytes == null
     },
 })
