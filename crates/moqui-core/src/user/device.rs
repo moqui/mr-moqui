@@ -774,12 +774,9 @@ pub(crate) fn check_route(info: &crate::screen::ScreenUrlInfo) -> Result<(), Err
     if info.target_screen.location == DEVICE_SCREEN {
         return Ok(());
     }
-    if info.file_resource.is_some()
-        && !info
-            .render_defs()
-            .iter()
-            .any(|def| def.authentication == crate::screen::Authentication::Required)
-    {
+    // a file under no screen that needs a user, read along the whole path: a lastStandalone request does not take a
+    // parent that needs one out of the check (SEC-RTE-09)
+    if info.file_resource.is_some() && !info.path_requires_authentication() {
         return Ok(());
     }
     let _authz = without_authz();

@@ -182,6 +182,16 @@ impl ScreenUrlInfo {
         self.target_screen.transition(name, method)
     }
 
+    /// Whether a screen of the path requires authentication: every screen from the root, not only those that render,
+    /// so a `lastStandalone` fragment or a standalone screen does not take its parents out of the check, and a screen
+    /// (or its transitions, or a file under it) below a parent that needs a user needs one too, whatever it says itself
+    /// (SEC-RTE-09). The parents' always-actions run for it anyway.
+    pub fn path_requires_authentication(&self) -> bool {
+        self.path_defs
+            .iter()
+            .any(|def| def.authentication == super::definition::Authentication::Required)
+    }
+
     /// Screens that render, from `render_path_difference`.
     pub fn render_defs(&self) -> &[Arc<ScreenDef>] {
         &self.path_defs[self.render_path_difference.min(self.path_defs.len())..]

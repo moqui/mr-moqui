@@ -560,6 +560,45 @@ fn a_screen_under_a_parent_that_needs_a_user_needs_one_as_a_fragment() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// SEC-RTE-09 follow-up: a parent's `allow-web-request="false"` refuses a web request for a screen below it, as a
+/// `lastStandalone` fragment too, as for its full page.
+#[test]
+fn a_parent_that_allows_no_web_request_refuses_a_fragment_below_it() {
+    let dir = std::env::temp_dir().join(format!("moqui-screen-parent-web-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root/Internal")).unwrap();
+    let write = |name: &str, xml: &str| std::fs::write(dir.join(name), xml).unwrap();
+    write(
+        "Root.xml",
+        r#"<screen require-authentication="false"><widgets><subscreens-active/></widgets></screen>"#,
+    );
+    write(
+        "Root/Internal.xml",
+        r#"<screen require-authentication="false"><web-settings allow-web-request="false"/>
+            <widgets><subscreens-active/></widgets></screen>"#,
+    );
+    write(
+        "Root/Internal/Below.xml",
+        r#"<screen require-authentication="false"><widgets><label text="not for the web"/></widgets></screen>"#,
+    );
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = World::open("");
+    let page = serve_at(&world.factory, request("GET", "/Internal/Below.text"), &root);
+    assert_eq!(page.status, 403, "{}", page.body_text());
+    let fragment = serve_at(
+        &world.factory,
+        with_query(request("GET", "/Internal/Below.text"), "lastStandalone", "true"),
+        &root,
+    );
+    assert_eq!(fragment.status, 403, "{}", fragment.body_text());
+    assert!(
+        !fragment.body_text().contains("not for the web"),
+        "{}",
+        fragment.body_text()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// SEC-RTE-13: a path with no screen is a plain 404 for nobody, naming neither the path nor the last screen found; a
 /// signed-in user gets the name and the location to fix a link.
 #[test]

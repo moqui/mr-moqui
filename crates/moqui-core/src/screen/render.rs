@@ -1489,8 +1489,10 @@ fn output_type(facade: &ScreenFacade, info: &ScreenUrlInfo, mode: &str) -> (Stri
     (content_type, encoding.unwrap_or_else(|| DEFAULT_ENCODING.to_string()))
 }
 
+/// A screen of the path that says `allow-web-request="false"` refuses a web request, also when it does not render (a
+/// `lastStandalone` fragment below it), as the user check reads the whole path (SEC-RTE-09).
 fn check_web_settings(info: &ScreenUrlInfo) -> Result<(), Error> {
-    for def in info.render_defs() {
+    for def in &info.path_defs {
         if !def.web.allow_web_request {
             return Err(Error::of_kind(
                 ErrorKind::Unauthorized,
@@ -1543,7 +1545,7 @@ fn redirect_to_login(factory: &ExecutionContextFactory, job: &Job<'_>, info: &Sc
         || super::statics::report_active()
         || user::current_username()?.is_some()
         || user::is_anonymous()?
-        || !path_requires_authentication(info)
+        || !info.path_requires_authentication()
     {
         return Ok(false);
     }
@@ -1584,23 +1586,13 @@ fn check_authentication(info: &ScreenUrlInfo) -> Result<(), Error> {
     if super::statics::report_active() || user::current_username()?.is_some() || user::is_anonymous()? {
         return Ok(());
     }
-    if path_requires_authentication(info) {
+    if info.path_requires_authentication() {
         return Err(Error::of_kind(
             ErrorKind::AuthenticationRequired,
             "Authentication required",
         ));
     }
     Ok(())
-}
-
-/// Whether a screen of the path requires authentication: every screen from the root, not only those that render, so a
-/// `lastStandalone` fragment or a standalone screen does not take its parents out of the check, and a screen (or its
-/// transitions) under a parent that needs a user needs one too, whatever it says itself (SEC-RTE-09). The parents'
-/// always-actions run for it anyway.
-fn path_requires_authentication(info: &ScreenUrlInfo) -> bool {
-    info.path_defs
-        .iter()
-        .any(|def| def.authentication == Authentication::Required)
 }
 
 /// Artifact frames pushed for a request, popped in reverse when this drops. Anonymous-access

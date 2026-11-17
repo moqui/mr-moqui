@@ -344,3 +344,45 @@ fn a_refused_display_gets_a_plain_page_with_nothing_of_the_instance() {
     }
     assert!(refusal_page("<b>").contains("&lt;b&gt;"));
 }
+
+/// SEC-RTE-09 follow-up: a file under a screen that needs no user, below a parent that needs one, is not a file anyone
+/// may have: a device's `lastStandalone` request for it is refused when the route group does not admit it, as its
+/// full path is.
+#[test]
+fn a_file_below_a_parent_that_needs_a_user_is_in_the_device_route_check() {
+    let (_lock, ctx, facade, _key) = setup();
+    let _entered = ctx.enter();
+    let factory = Arc::clone(ctx.factory());
+    let dir = std::env::temp_dir().join(format!("moqui-device-route-file-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root/Locked/Open")).unwrap();
+    let write = |name: &str, text: &str| std::fs::write(dir.join(name), text).unwrap();
+    write(
+        "Root.xml",
+        r#"<screen require-authentication="false"><widgets><subscreens-active/></widgets></screen>"#,
+    );
+    write(
+        "Root/Locked.xml",
+        r#"<screen><widgets><subscreens-active/></widgets></screen>"#,
+    );
+    write(
+        "Root/Locked/Open.xml",
+        r#"<screen require-authentication="false"><widgets><label text="open"/></widgets></screen>"#,
+    );
+    write("Root/Locked/Open/notes.txt", "behind the lock");
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+
+    let code = register(&facade);
+    let redeemed = redeem(&code, "203.0.113.9", "Chrome", false).unwrap().unwrap();
+    let cookie = cookie_of_header(&redeemed.set_cookie);
+    let _session = bind(&factory, None, None, false).unwrap();
+    let _guard = active(&cookie).expect("the device's request");
+    for last_standalone in [0, 1] {
+        let info =
+            crate::screen::ScreenUrlInfo::parse(&factory, &root, "/Locked/Open/notes.txt", last_standalone).unwrap();
+        assert!(info.file_resource.is_some(), "{last_standalone}");
+        let refused = check_route(&info).unwrap_err();
+        assert_eq!(refused.kind(), ErrorKind::Unauthorized, "{last_standalone}: {refused}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
