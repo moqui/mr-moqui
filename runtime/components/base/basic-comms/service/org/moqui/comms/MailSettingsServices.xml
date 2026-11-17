@@ -1223,8 +1223,9 @@ along with this software (see the LICENSE.md file). If not, see
             reply is on now, and the chosen account's reply (emailAccountId, else the first) for the form, from
             org.moqui.mail.EmailClientServices.get#EmailOutOfOffice, with who gets it (replyAudienceEnumId: EraEveryone,
             EraContacts, EraInternal; who is a contact is the hook BossSetupData sets, STRT_EMAIL_CONTACT_SERVICE) and the
-            more domains whose senders count as inside the organization (internalDomains, shown comma and space). Each
-            account's state stands alone: one that fails is logged and shown as unknown.</description>
+            more domains whose senders count as inside the organization (internalDomains, shown comma and space), and
+            hasContactHook: whether a contact hook answers for the chosen account (without one, EraContacts reaches people
+            inside only). Each account's state stands alone: one that fails is logged and shown as unknown.</description>
         <in-parameters><parameter name="emailAccountId"/></in-parameters>
         <out-parameters>
             <parameter name="accountList" type="List"/>
@@ -1235,10 +1236,12 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="statusText"/>
             <parameter name="isActive" type="Boolean"/>
             <parameter name="hasServer" type="Boolean"/>
+            <parameter name="hasContactHook" type="Boolean"/>
         </out-parameters>
         <actions><script><![CDATA[
             const L = (text) => text.length > 255 ? text : ec.l10n.localize(text)
             accountList = []; selectedAccountId = null; reply = null; replyTimestamps = {fromDate:null,thruDate:null}; statusText = null; isActive = false; hasServer = false
+            hasContactHook = false
             const access = ec.service.sync().name('org.moqui.mail.EmailClientServices.get#EmailAccountAccess').call()
             if (ec.message.hasError()) return
             const fmt = (millis) => millis == null ? '' : ec.l10n.format(new Date(Number(millis)), 'yyyy-MM-dd HH:mm')
@@ -1265,6 +1268,7 @@ along with this software (see the LICENSE.md file). If not, see
             hasServer = selected.hasServer
             const current = states[selectedAccountId]?.outOfOffice || null
             isActive = states[selectedAccountId]?.isActive === true
+            hasContactHook = states[selectedAccountId]?.contactHookService != null
             // Keep the existing display-string contract; widgets format each instant once in the viewer's zone.
             replyTimestamps = {fromDate:current?.fromDate == null ? null : Number(current.fromDate),
                 thruDate:current?.thruDate == null ? null : Number(current.thruDate)}

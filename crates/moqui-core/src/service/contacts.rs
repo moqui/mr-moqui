@@ -17,8 +17,8 @@
 //! Mantle's parties), so it asks a hook service, as the shell counts do: the one the `email_contact_service` property
 //! names, else the theme value `STRT_EMAIL_CONTACT_SERVICE` of the user's qapps theme. It is called with `userId` and
 //! `emailAddressList` and answers `contactAddressList`, the addresses of those that are a contact the user can see. No
-//! hook: `contactAddressList` is null, and the caller treats every sender as a contact. It is core's, not moqui-mail's,
-//! so it answers with or without mail built in.
+//! hook: `contactAddressList` is null, and no sender is known as a contact (an automatic reply to contacts then goes to
+//! internal senders only). It is core's, not moqui-mail's, so it answers with or without mail built in.
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Mutex;
@@ -162,7 +162,7 @@ fn filter_contact_addresses(
     let Some(service) = hook_service(&user_id) else {
         if first_time("none") {
             tracing::info!(
-                "No {PROPERTY} property or {THEME_VALUE} theme value: every sender counts as a contact of an automatic reply"
+                "No {PROPERTY} property or {THEME_VALUE} theme value: no sender counts as a contact, so an automatic reply to contacts goes to internal senders only"
             );
         }
         return Ok(answer(None, None, false));

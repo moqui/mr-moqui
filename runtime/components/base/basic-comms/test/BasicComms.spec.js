@@ -480,6 +480,10 @@ feature("out of office retains user-zone date strings and supplies instants to t
             assert.equal(form.fromDate, String(result.replyTimestamps.fromDate), "static JSON serializes a Timestamp as epoch text")
             assert.equal(form.thruDate, String(result.replyTimestamps.thruDate))
             assert.equal(form.enabled, "N", "the fixture never enables an automatic reply")
+            // whether a contact hook answers reaches the screen, which says the contacts audience then means people inside
+            assert.equal(typeof result.hasContactHook, "boolean")
+            assert.equal(data.jsonObject.hasContactHook, result.hasContactHook)
+            assert.ok(String(page.output).includes("No address book is installed for this account"))
             // Local09:00 straddles the fall DST change: it is14:00Z before and15:00Z afterward.
             assert.equal(save("2026-10-31 09:00", "2026-11-02 09:00").storedCount, 1)
             const dst = settings("get#OutOfOfficeSettings", {emailAccountId})

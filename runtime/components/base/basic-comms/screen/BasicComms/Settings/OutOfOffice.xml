@@ -82,6 +82,7 @@ along with this software (see the LICENSE.md file). If not, see
             statusText = oooOut?.statusText || ''
             isActive = oooOut?.isActive === true
             hasServer = oooOut?.hasServer === true
+            hasContactHook = oooOut?.hasContactHook === true
             selectedAccount = oooAccounts.find((account) => account.emailAccountId === selectedAccountId) || null
             manyAccounts = oooAccounts.length > 1
         ]]></script>
@@ -158,6 +159,7 @@ along with this software (see the LICENSE.md file). If not, see
                             </field-col-row>
                         </field-layout>
                     </form-single>
+                    <label type="p" text="No address book is installed for this account, so no one is known as your contact: My contacts and people inside the organization reaches people inside only." style="text-caption text-weight-medium q-mb-xs" condition="!hasContactHook"/>
                     <label type="p" text="Your contacts are the people your address book knows, when this system has one. People inside the organization are the system's users and addresses at the domains of your shared accounts and the other domains you list. Turning the reply on again sends it to everyone again." style="text-caption m-muted q-mb-none"/>
                 </box-body>
             </container-box>

@@ -620,7 +620,7 @@ fn a_folder_kind_a_user_chose_holds_and_an_unsubscribed_folder_is_not_synced() {
 }
 
 /// The automatic reply's audience: everyone, internal senders and the owner's contacts (by the hook of the theme value,
-/// or of the property, which wins; every sender with no hook, none outside with a failing one), or internal only.
+/// or of the property, which wins; none outside with no hook or with a failing one), or internal only.
 #[test]
 fn the_automatic_reply_goes_to_its_audience() {
     let _lock = moqui_core::user::session::cookie_property_lock();
@@ -706,8 +706,8 @@ fn the_automatic_reply_goes_to_its_audience() {
         "dave@acme.example.com",
     ];
 
-    // no hook: every sender is a contact
-    assert_eq!(answered("EraContacts"), everyone);
+    // no hook: no sender is known as a contact, so only the internal sender gets the reply (COM-UI-020)
+    assert_eq!(answered("EraContacts"), ["dave@acme.example.com"]);
     let state = ok("get#EmailOutOfOffice", &[("emailAccountId", text(&account))]);
     let reply = match state.get("outOfOffice") {
         Some(Value::Map(map)) => map.clone(),

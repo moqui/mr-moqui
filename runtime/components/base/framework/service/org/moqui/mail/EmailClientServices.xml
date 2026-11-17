@@ -5121,8 +5121,8 @@ along with this software (see the LICENSE.md file). If not, see
             names, else the theme value STRT_EMAIL_CONTACT_SERVICE of the user's qapps theme. The hook is called with
             authorization disabled, in a transaction of its own (one that fails leaves the caller's as it was), with userId
             and emailAddressList and answers contactAddressList: those that are on a
-            party the user can see as a contact. contactAddressList is null when no hook is configured (every sender then
-            counts as a contact); a hook that fails or answers no list is logged once by name, hookFailed is true and the
+            party the user can see as a contact. contactAddressList is null when no hook is configured (the caller says what
+            that means: an automatic reply to contacts then goes to internal senders only); a hook that fails or answers no list is logged once by name, hookFailed is true and the
             list is empty. Lower case, only addresses asked about.</description>
         <in-parameters>
             <parameter name="userId"/>
@@ -5138,7 +5138,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>An account's automatic reply (read permission); outOfOffice is null when it has none. isActive is
             whether it is on now. replyAudienceEnumId is who gets it (EraEveryone when none was chosen); internalDomains the
             more domains whose senders are internal (a comma list); contactHookService the hook that says who is a contact
-            for EraContacts (null when none is configured: every sender is one).</description>
+            for EraContacts (null when none is configured: no sender is then known as a contact, so the reply reaches
+            internal senders only).</description>
         <in-parameters><parameter name="emailAccountId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="outOfOffice" type="Map"/>
@@ -5170,7 +5171,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="store" noun="EmailOutOfOffice">
         <description>Set an account's automatic reply (manage permission; not the Internal account). replyAudienceEnumId
             is who gets it: EraEveryone (the default), EraContacts (internal senders and the owner's contacts, as
-            filter#ContactAddresses says; every sender when no contact hook is configured) or EraInternal (internal senders
+            filter#ContactAddresses says; internal senders only when no contact hook is configured or the account has no
+            owner) or EraInternal (internal senders
             only). An internal sender is a user of this system, at the domain of a hosted or shared account, or at one of
             internalDomains: more domains of the organization, separated by commas or spaces (a leading @ is dropped);
             they are stored in lower case, comma separated.</description>
@@ -5237,8 +5239,8 @@ along with this software (see the LICENSE.md file). If not, see
               organization's own domains);
             - to the reply's audience (replyAudienceEnumId): everyone; internal senders and the owner's contacts
               (EraContacts: filter#ContactAddresses asks the app's hook, the email_contact_service property or the theme
-              value STRT_EMAIL_CONTACT_SERVICE; with no hook every sender counts as a contact, and a hook that fails
-              counts none, logged); or internal senders only (EraInternal).
+              value STRT_EMAIL_CONTACT_SERVICE; with no hook, or an account with no owner, no sender counts as a contact, and a
+              hook that fails counts none, logged); or internal senders only (EraInternal).
             The subject is the reply's own, else "Automatic reply: " and the mail's subject. Each message is on its own:
             one that fails is logged and the rest go on. Each reply is made, claimed to send and logged in
             EmailOutOfOfficeSent in a transaction of its own, and sent once that commits (deliver#DraftMessage), so a
@@ -5379,7 +5381,9 @@ along with this software (see the LICENSE.md file). If not, see
             const outsideAudience = (sender) => {
                 if (audience === 'EraEveryone' || isInternal(sender)) return null
                 if (audience === 'EraInternal') return 'not an internal sender (the reply is for internal senders only)'
-                if (audience === 'EraContacts' && contacts != null && !contacts.has(sender)) return 'not one of the account owner\'s contacts'
+                // no hook (or no owner) leaves contacts null: no outside sender is known as a contact, so none gets the reply
+                if (audience === 'EraContacts' && contacts == null) return 'no address book is installed to say who is a contact (the reply goes to internal senders only)'
+                if (audience === 'EraContacts' && !contacts.has(sender)) return 'not one of the account owner\'s contacts'
                 return null
             }
             for (const message of messages) {
