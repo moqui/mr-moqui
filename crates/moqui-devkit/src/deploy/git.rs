@@ -1504,6 +1504,24 @@ fn git_command(
     args: &[&str],
     target: Option<&Path>,
 ) -> Result<String, String> {
+    let output = git_process(dir, request, args, target)
+        .output()
+        .map_err(|err| format!("the clone storage needs the git command: {err}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        Err(format!(
+            "git {}: {}",
+            args.first().copied().unwrap_or_default(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
+/// The `git` process of [`git_command`]. The token goes in the child's environment as configuration
+/// (`GIT_CONFIG_COUNT`, git 2.31), which only this user and root can read, never in its argument list, which every
+/// local user can (SEC-OUT-05).
+fn git_process(dir: Option<&Path>, request: &DeployRequest, args: &[&str], target: Option<&Path>) -> Command {
     let mut command = Command::new("git");
     command.env("GIT_TERMINAL_PROMPT", "0");
     if let Some(dir) = dir {
@@ -1517,24 +1535,16 @@ fn git_command(
             .filter(|user| !user.is_empty())
             .unwrap_or("git");
         let basic = base64::engine::general_purpose::STANDARD.encode(format!("{user}:{token}"));
-        command.args(["-c", &format!("http.extraHeader=Authorization: Basic {basic}")]);
+        command
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "http.extraHeader")
+            .env("GIT_CONFIG_VALUE_0", format!("Authorization: Basic {basic}"));
     }
     command.args(args);
     if let Some(target) = target {
         command.arg(target);
     }
-    let output = command
-        .output()
-        .map_err(|err| format!("the clone storage needs the git command: {err}"))?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    } else {
-        Err(format!(
-            "git {}: {}",
-            args.first().copied().unwrap_or_default(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ))
-    }
+    command
 }
 
 /// The deploy request a row was made with: its URL, branch and credentials.
