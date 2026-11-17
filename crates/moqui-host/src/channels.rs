@@ -143,6 +143,11 @@ async fn webhook(
     }
     let request = WebhookRequest {
         method: parts.method.as_str().to_string(),
+        // as received, for a network that signs the URL it posted to (chat_bridge::webhook_public_url)
+        url: parts
+            .uri
+            .path_and_query()
+            .map_or_else(|| parts.uri.path().to_string(), |path| path.as_str().to_string()),
         headers,
         body: body.to_vec(),
         client_ip: client.to_string(),

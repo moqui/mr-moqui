@@ -18,6 +18,7 @@ use crate::service::chat_bridge::WebhookEventKey;
 fn request() -> WebhookRequest {
     WebhookRequest {
         method: "POST".to_string(),
+        url: "/channels/SMS1/webhook?attempt=1".to_string(),
         headers: vec![
             ("telnyx-signature-ed25519".to_string(), "c2ln".to_string()),
             ("telnyx-timestamp".to_string(), "1700000000".to_string()),
@@ -44,6 +45,10 @@ fn a_queued_webhook_is_the_request_again_without_credentials() {
     let again = request_of(&payload).unwrap();
     assert_eq!(again.body, request().body, "the raw bytes, as signed");
     assert_eq!(again.method, "POST");
+    assert_eq!(
+        again.url, "/channels/SMS1/webhook?attempt=1",
+        "the path and query it came to"
+    );
     assert_eq!(again.client_ip, "198.51.100.7");
     assert_eq!(again.now_millis, 1_700_000_000_123, "checked at the time it came");
     assert_eq!(again.header("telnyx-timestamp"), Some("1700000000"));
@@ -224,4 +229,187 @@ fn a_bridge_id_two_pairings_have_goes_by_the_requests_host_name() {
         bridge_owner(&facade, "100000", true, &host("b.example")).unwrap(),
         BridgeOwner::Paired(node, _) if node == "local-b"
     ));
+}
+
+/// The signature header of [`DeferredAdapter`], a network that signs with a secret only the local node holds.
+const DEFERRED_HEADER: &str = "x-test-signature";
+
+/// A network whose webhooks are verified on the local node ([`WebhookVerification::Core`]): signed `ok <url>` over the
+/// path and query the request came to, so a request queued without its URL would not verify. It counts what it applies.
+#[derive(Default)]
+struct DeferredAdapter {
+    applied: std::sync::Mutex<Vec<String>>,
+}
+
+impl crate::service::chat_bridge::ChatBridgeAdapter for DeferredAdapter {
+    fn name(&self) -> &str {
+        "deferred-test"
+    }
+
+    fn capabilities(&self, _bridge: &BridgeInfo) -> crate::service::chat_bridge::Capabilities {
+        crate::service::chat_bridge::Capabilities::default()
+    }
+
+    fn deliver(
+        &self,
+        _bridge: &BridgeInfo,
+        _request: &DeliveryRequest,
+    ) -> crate::service::chat_bridge::DeliveryOutcome {
+        crate::service::chat_bridge::DeliveryOutcome::Uncertain {
+            error: "not sent in this test".to_string(),
+        }
+    }
+
+    fn webhook_verification(&self) -> WebhookVerification {
+        WebhookVerification::Core {
+            signature_header: DEFERRED_HEADER,
+        }
+    }
+
+    fn verify_webhook(&self, bridge: &BridgeInfo, request: &WebhookRequest) -> Option<WebhookResponse> {
+        // the whole configuration is here: the local node's, never the edge node's copy
+        let secret = bridge.config["secret"].as_str().unwrap_or_default();
+        let expected = format!("{secret} {}", request.url);
+        (secret.is_empty() || request.header(DEFERRED_HEADER) != Some(expected.as_str()))
+            .then(WebhookResponse::not_signed)
+    }
+
+    fn webhook_event_id(&self, _bridge: &BridgeInfo, request: &WebhookRequest) -> Option<WebhookEventKey> {
+        Some(WebhookEventKey {
+            event_id: String::from_utf8_lossy(&request.body).to_string(),
+            conversation: None,
+        })
+    }
+
+    fn apply_webhook(&self, _bridge: &BridgeInfo, request: &WebhookRequest) -> WebhookResponse {
+        self.applied
+            .lock()
+            .unwrap()
+            .push(String::from_utf8_lossy(&request.body).to_string());
+        WebhookResponse::json(200, &serde_json::json!({"outcome": "accepted"}))
+    }
+}
+
+fn deferred_request(signature: Option<&str>, body: &str, now_millis: i64) -> WebhookRequest {
+    let mut headers = vec![(
+        "content-type".to_string(),
+        "application/x-www-form-urlencoded".to_string(),
+    )];
+    if let Some(signature) = signature {
+        headers.push((DEFERRED_HEADER.to_string(), signature.to_string()));
+    }
+    WebhookRequest {
+        method: "POST".to_string(),
+        url: "/channels/TW1/webhook?kind=status".to_string(),
+        headers,
+        body: body.as_bytes().to_vec(),
+        client_ip: "198.51.100.7".to_string(),
+        now_millis,
+    }
+}
+
+/// An edge node cannot check the signature of a network that signs with a secret: it refuses a request that is too
+/// large or has no signature header at all (as an unsigned one), and more than the bridge's rate a minute (429, the
+/// network tries again), and queues the rest, unverified, for the local node.
+#[test]
+fn an_edge_node_queues_an_unverifiable_webhook_only_after_its_cheap_checks() {
+    let rates = EdgeRates::default();
+    let now = 1_700_000_000_000;
+    let check = |request: &WebhookRequest, key: &str| deferred_checks(&rates, key, request, DEFERRED_HEADER, 64, 3);
+    let large = deferred_request(Some("any"), &"x".repeat(65), now);
+    assert_eq!(check(&large, "n:TW1").map(|answer| answer.status), Some(413));
+    assert_eq!(
+        check(&deferred_request(None, "a", now), "n:TW1"),
+        Some(WebhookResponse::not_signed())
+    );
+    assert_eq!(
+        check(&deferred_request(Some(" "), "a", now), "n:TW1"),
+        Some(WebhookResponse::not_signed())
+    );
+    // a wrong signature is the local node's to find: it goes in the queue
+    for _ in 0..3 {
+        assert_eq!(check(&deferred_request(Some("wrong"), "a", now), "n:TW1"), None);
+    }
+    let over = check(&deferred_request(Some("wrong"), "a", now), "n:TW1").unwrap();
+    assert_eq!(over.status, 429);
+    assert!(!over.auth_failure, "the network's own rate is not a refused login");
+    // another bridge has its own bucket; this one takes one again after a third of a minute (3 a minute)
+    assert_eq!(check(&deferred_request(Some("s"), "a", now), "n:OTHER"), None);
+    assert_eq!(
+        check(&deferred_request(Some("s"), "a", now + 19_000), "n:TW1").map(|a| a.status),
+        Some(429)
+    );
+    assert_eq!(check(&deferred_request(Some("s"), "a", now + 20_000), "n:TW1"), None);
+}
+
+/// The local node verifies a queued request of a network whose secret only it holds, with the bridge's whole
+/// configuration and the URL the request came to, before it applies it: a good one is applied, a bad one is dropped,
+/// counted, and answered as done so the queue does not try it again.
+#[test]
+fn a_queued_webhook_that_does_not_verify_on_the_local_node_is_dropped() {
+    let ctx = ExecutionContextFactory::test_context();
+    let facade = crate::testing::open();
+    ctx.factory().set_entity(facade.clone());
+    let _entered = ctx.enter();
+    let adapter = std::sync::Arc::new(DeferredAdapter::default());
+    crate::service::chat_bridge::register_adapter(ctx.factory(), adapter.clone());
+    let create = |entity: &str, fields: &[(&str, &str)]| {
+        let mut row = facade.make_value(entity).unwrap();
+        for (name, value) in fields {
+            row.set(*name, Value::string(*value));
+        }
+        row.create(&facade).unwrap();
+    };
+    create(
+        BRIDGE,
+        &[
+            ("chatBridgeId", "TW1"),
+            ("typeEnumId", "CbtSms"),
+            ("adapterName", "deferred-test"),
+            ("statusId", "CbsConnected"),
+            ("configJson", r#"{"secret": "s3cret"}"#),
+        ],
+    );
+    create(
+        "moqui.security.UserAccount",
+        &[
+            ("userId", "EDGE_DELEGATE"),
+            ("username", crate::edge::delegate::EDGE_USERNAME),
+        ],
+    );
+    crate::user::internal_login_user(crate::edge::delegate::EDGE_USERNAME).unwrap();
+    let apply = |item: &str, request: &WebhookRequest| {
+        create(queue::RECEIPT, &[("pairedNodeId", "edge-1"), ("queueItemId", item)]);
+        let key = WebhookEventKey {
+            event_id: item.to_string(),
+            conversation: None,
+        };
+        let queued = webhook_item("TW1", &key, request);
+        let parameters = BTreeMap::from([
+            ("queueItemId".to_string(), Value::string(item)),
+            ("pairedNodeId".to_string(), Value::string("edge-1")),
+            ("payload".to_string(), Value::string(queued.payload.unwrap())),
+        ]);
+        apply_edge_webhook(&parameters, &facade).unwrap()
+    };
+    let received = now_millis() - 3_600_000;
+    let good = deferred_request(Some("s3cret /channels/TW1/webhook?kind=status"), "good", received);
+    assert!(apply("item-1", &good).is_empty(), "applied");
+    assert_eq!(*adapter.applied.lock().unwrap(), vec!["good".to_string()]);
+    assert_eq!(dropped_webhooks(ctx.factory(), "TW1"), 0);
+
+    // signed over another URL, with a wrong secret, or not at all: dropped, not applied, not tried again
+    let other_url = deferred_request(Some("s3cret /channels/TW1/webhook"), "moved", received);
+    let wrong = deferred_request(Some("guess /channels/TW1/webhook?kind=status"), "forged", received);
+    for (item, request) in [("item-2", &other_url), ("item-3", &wrong)] {
+        let answer = apply(item, request);
+        assert_eq!(
+            answer.get("dropped").map(moqui_lib::object::to_plain_string).as_deref(),
+            Some("the signature did not verify")
+        );
+        assert!(!answer.contains_key("retryLater"));
+    }
+    assert_eq!(adapter.applied.lock().unwrap().len(), 1, "nothing dropped was applied");
+    assert_eq!(dropped_webhooks(ctx.factory(), "TW1"), 2);
+    assert_eq!(dropped_webhooks(ctx.factory(), "OTHER"), 0);
 }

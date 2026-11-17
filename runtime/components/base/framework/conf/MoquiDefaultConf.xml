@@ -346,12 +346,15 @@
         signature checked over the raw body, at most channels_webhook_max_bytes) and GET /channels/{chatBridgeId}/media/{token}
         (a picture of an MMS that goes out, which the provider fetches). channels_public_url is the https base the provider
         reaches this server at, for those files; without it an MMS goes out refused (mediaUnreachable). channels_media_key signs
-        the files' addresses (generated when unset), each good for channels_media_minutes. -->
+        the files' addresses (generated when unset), each good for channels_media_minutes. channels_edge_webhooks_per_minute caps,
+        on an edge node, the webhooks a minute it queues for one bridge whose provider signs with a secret only the local
+        node holds (it cannot check them; the local node does). -->
     <default-property name="channels_webhooks_enabled" value="false"/>
     <default-property name="channels_webhook_max_bytes" value="262144"/>
     <default-property name="channels_public_url" value=""/>
     <default-property name="channels_media_key" value="CHANGEME" is-secret="true"/>
     <default-property name="channels_media_minutes" value="60"/>
+    <default-property name="channels_edge_webhooks_per_minute" value="600"/>
     <!-- The registrar for desk and soft phones (V4, docs/interfaces/SIP.md "Registrar"): off unless sip_registrar_enabled is
         true, even with the SIP listeners on. sip_domain is the realm of the digest challenges and the domain phones register
         to (sip_public_address, else moqui, when empty; changing it needs each phone's password made again). A binding's

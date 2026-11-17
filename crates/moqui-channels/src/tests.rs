@@ -37,7 +37,61 @@ const OURS: &str = "+15550001000";
 const THEIRS: &str = "+15557778888";
 const BRIDGE: &str = "SMS1";
 
-// ---- the fake Telnyx ----
+// ---- the provider under test ----
+
+/// The keys the bed signs webhooks with: each provider's (Twilio's and Sinch's secrets join Telnyx's key pair).
+struct Keys {
+    /// Telnyx's: the account's Ed25519 key, whose public half is the bridge's `publicKey`.
+    ed25519: Ed25519KeyPair,
+}
+
+/// A provider the bed runs against: its adapter, its bridge's settings, the fake's answer to a send, and how a webhook
+/// is signed. Batches of other providers add theirs beside [`TELNYX`].
+#[derive(Clone, Copy)]
+struct Provider {
+    adapter_name: &'static str,
+    bridge_name: &'static str,
+    /// The bridge's `configJson`, given the fake's address and the bed's keys.
+    config: fn(base: &str, keys: &Keys) -> Json,
+    /// The fake's answer to the `n`th send (from 1) it has no script for.
+    accepted: fn(n: u64, path: &str) -> Reply,
+    /// The headers that sign `body` at `at_seconds`, posted to `url` (the public URL, for a provider that signs it).
+    sign: Signer,
+}
+
+/// How a provider signs a webhook: the headers of `body` at `at_seconds`, posted to `url`.
+type Signer = fn(keys: &Keys, body: &[u8], at_seconds: i64, url: &str) -> Vec<(String, String)>;
+
+const TELNYX: Provider = Provider {
+    adapter_name: "sms",
+    bridge_name: "Telnyx",
+    config: |base, keys| {
+        let public = base64::engine::general_purpose::STANDARD.encode(keys.ed25519.public_key().as_ref());
+        json!({"apiKey": "KEY-1", "publicKey": public, "apiBaseUrl": base, "allowInternalAddresses": true,
+            "messagingProfileId": "profile-1", "campaignId": "C1234", "maxMediaCount": 3, "maxMediaBytes": 2000})
+    },
+    accepted: |n, _path| {
+        Reply::Status(
+            200,
+            json!({"data": {"id": format!("msg-{n}"), "record_type": "message", "to": [{"status": "queued"}]}})
+                .to_string(),
+        )
+    },
+    sign: |keys, body, at_seconds, _url| {
+        let stamp = at_seconds.to_string();
+        let mut message = stamp.as_bytes().to_vec();
+        message.push(b'|');
+        message.extend_from_slice(body);
+        let signature = base64::engine::general_purpose::STANDARD.encode(keys.ed25519.sign(&message).as_ref());
+        vec![
+            ("telnyx-signature-ed25519".to_string(), signature),
+            ("telnyx-timestamp".to_string(), stamp),
+            ("content-type".to_string(), "application/json".to_string()),
+        ]
+    },
+};
+
+// ---- the fake provider ----
 
 /// What the fake answers a send with next.
 #[derive(Clone, Debug)]
@@ -54,12 +108,13 @@ struct Seen {
     body: String,
 }
 
-#[derive(Default)]
 struct FakeState {
     sends: Vec<Seen>,
     script: VecDeque<Reply>,
     next: u64,
     files: HashMap<String, (String, Vec<u8>)>,
+    /// The provider's answer to a send with no script.
+    accepted: fn(n: u64, path: &str) -> Reply,
 }
 
 struct Fake {
@@ -68,10 +123,17 @@ struct Fake {
 }
 
 impl Fake {
-    fn start() -> Self {
+    /// A fake provider on loopback that answers a send as `provider` does.
+    fn start(provider: &Provider) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
-        let state = Arc::new(Mutex::new(FakeState::default()));
+        let state = Arc::new(Mutex::new(FakeState {
+            sends: Vec::new(),
+            script: VecDeque::new(),
+            next: 0,
+            files: HashMap::new(),
+            accepted: provider.accepted,
+        }));
         let served = Arc::clone(&state);
         std::thread::spawn(move || {
             for stream in listener.incoming() {
@@ -168,14 +230,8 @@ fn serve(mut stream: TcpStream, state: &Mutex<FakeState>) {
             body: body.clone(),
         });
         state.next += 1;
-        let next = state.next;
-        state.script.pop_front().unwrap_or_else(|| {
-            Reply::Status(
-                200,
-                json!({"data": {"id": format!("msg-{next}"), "record_type": "message", "to": [{"status": "queued"}]}})
-                    .to_string(),
-            )
-        })
+        let (next, accepted) = (state.next, state.accepted);
+        state.script.pop_front().unwrap_or_else(|| accepted(next, &path))
     };
     match reply {
         Reply::Status(status, text) => answer(&mut stream, status, "application/json", text.as_bytes()),
@@ -190,8 +246,9 @@ fn serve(mut stream: TcpStream, state: &Mutex<FakeState>) {
 struct Bed {
     ctx: ExecutionContext,
     facade: EntityFacade,
+    provider: Provider,
     fake: Fake,
-    key: Ed25519KeyPair,
+    keys: Keys,
     seq: std::cell::Cell<u64>,
 }
 
@@ -249,11 +306,16 @@ fn login(user_id: &str) {
 /// A number (ours) routed to alice, granted to alice and bob, its texts through bridge SMS1 on a fake Telnyx; the system
 /// texts from it.
 fn bed() -> Bed {
-    bed_with("")
+    bed_for(TELNYX, "")
 }
 
 /// [`bed`] on the conf `conf_text`.
 fn bed_with(conf_text: &str) -> Bed {
+    bed_for(TELNYX, conf_text)
+}
+
+/// [`bed`] for `provider`'s adapter and fake, on the conf `conf_text`.
+fn bed_for(provider: Provider, conf_text: &str) -> Bed {
     moqui_lib::env::set_property("channels_public_url", "https://moqui.example.test");
     moqui_lib::env::set_property("channels_media_key", "a-test-media-key");
     let ctx = ExecutionContextFactory::test_context_in(
@@ -270,9 +332,10 @@ fn bed_with(conf_text: &str) -> Bed {
     // the files (dbresource://) are kept in tables the in-memory facade has
     facade.assume_db_tables();
     ctx.factory().set_entity(facade.clone());
-    let fake = Fake::start();
-    let key = Ed25519KeyPair::from_seed_unchecked(&[7u8; 32]).unwrap();
-    let public = base64::engine::general_purpose::STANDARD.encode(key.public_key().as_ref());
+    let fake = Fake::start(&provider);
+    let keys = Keys {
+        ed25519: Ed25519KeyPair::from_seed_unchecked(&[7u8; 32]).unwrap(),
+    };
     {
         let _entered = ctx.enter();
         for id in ["alice", "bob", "carol"] {
@@ -292,17 +355,10 @@ fn bed_with(conf_text: &str) -> Bed {
             &[
                 ("chatBridgeId", text(BRIDGE)),
                 ("typeEnumId", text("CbtSms")),
-                ("adapterName", text("sms")),
-                ("name", text("Telnyx")),
+                ("adapterName", text(provider.adapter_name)),
+                ("name", text(provider.bridge_name)),
                 ("statusId", text("CbsNotConnected")),
-                (
-                    "configJson",
-                    text(
-                        &json!({"apiKey": "KEY-1", "publicKey": public, "apiBaseUrl": fake.base, "allowInternalAddresses": true,
-                            "messagingProfileId": "profile-1", "campaignId": "C1234", "maxMediaCount": 3, "maxMediaBytes": 2000})
-                        .to_string(),
-                    ),
-                ),
+                ("configJson", text(&(provider.config)(&fake.base, &keys).to_string())),
             ],
         );
         row(
@@ -339,8 +395,9 @@ fn bed_with(conf_text: &str) -> Bed {
     Bed {
         ctx,
         facade,
+        provider,
         fake,
-        key,
+        keys,
         seq: std::cell::Cell::new(0),
     }
 }
@@ -351,21 +408,19 @@ impl Bed {
         self.seq.get()
     }
 
-    /// A webhook request signed at `at_seconds` (the key's own unless `forged`).
+    /// A webhook request of JSON `body`, signed at `at_seconds` as the bed's provider signs.
     fn signed(&self, body: &Json, at_seconds: i64) -> WebhookRequest {
-        let body = body.to_string().into_bytes();
-        let stamp = at_seconds.to_string();
-        let mut message = stamp.as_bytes().to_vec();
-        message.push(b'|');
-        message.extend_from_slice(&body);
-        let signature = base64::engine::general_purpose::STANDARD.encode(self.key.sign(&message).as_ref());
+        self.signed_bytes(body.to_string().into_bytes(), at_seconds)
+    }
+
+    /// A webhook request of `body` as the provider sends it (JSON or a form), signed at `at_seconds`.
+    fn signed_bytes(&self, body: Vec<u8>, at_seconds: i64) -> WebhookRequest {
+        let path = format!("/channels/{BRIDGE}/webhook");
+        let url = format!("https://moqui.example.test{path}");
         WebhookRequest {
             method: "POST".to_string(),
-            headers: vec![
-                ("telnyx-signature-ed25519".to_string(), signature),
-                ("telnyx-timestamp".to_string(), stamp),
-                ("content-type".to_string(), "application/json".to_string()),
-            ],
+            url: path,
+            headers: (self.provider.sign)(&self.keys, &body, at_seconds, &url),
             body,
             client_ip: "198.51.100.7".to_string(),
             now_millis: now(),
@@ -591,18 +646,22 @@ fn body_json(response: &WebhookResponse) -> Json {
 
 /// The bridge's settings as the bed stored them.
 fn bridge_config(bed: &Bed) -> Json {
-    let public = base64::engine::general_purpose::STANDARD.encode(bed.key.public_key().as_ref());
-    json!({"apiKey": "KEY-1", "publicKey": public, "apiBaseUrl": bed.fake.base, "allowInternalAddresses": true})
+    (bed.provider.config)(&bed.fake.base, &bed.keys)
 }
 
 fn bridge_info(bed: &Bed) -> moqui_core::service::chat_bridge::BridgeInfo {
     moqui_core::service::chat_bridge::BridgeInfo {
         chat_bridge_id: BRIDGE.to_string(),
         type_enum_id: "CbtSms".to_string(),
-        adapter_name: "sms".to_string(),
-        name: "Telnyx".to_string(),
+        adapter_name: bed.provider.adapter_name.to_string(),
+        name: bed.provider.bridge_name.to_string(),
         config: bridge_config(bed),
     }
+}
+
+/// The Telnyx adapter, as `lib.rs` registers it.
+fn telnyx() -> crate::sms::SmsAdapter<crate::providers::telnyx::Telnyx> {
+    crate::sms::SmsAdapter::new(crate::providers::telnyx::Telnyx)
 }
 
 /// SMS is never end-to-end encrypted, not even in transit past Telnyx: the room shows the SMS label (Comms-Messaging
@@ -617,10 +676,11 @@ fn a_text_says_it_is_not_encrypted() {
         name: "Telnyx".to_string(),
         config: json!({"apiKey": "KEY-1"}),
     };
-    let caps = crate::telnyx::TelnyxSms::new().capabilities(&bridge);
+    let caps = telnyx().capabilities(&bridge);
     assert_eq!(caps.encryption, Encryption::None);
     assert_eq!(caps.encryption.as_str(), "None");
     assert!(!caps.edit && !caps.delete && !caps.reaction);
+    assert_eq!(caps.group_max, 8, "Telnyx's group MMS");
 }
 
 #[test]
@@ -710,10 +770,10 @@ fn signed_texts_come_in_once_and_bad_or_replayed_ones_are_refused() {
         .unwrap();
     assert_eq!(held, Some(Value::Bool(true)));
     {
+        use moqui_core::service::chat_bridge::ChatBridgeAdapter as _;
         let context = bed.ctx.factory().new_context();
         let _entered = context.enter();
-        let config = crate::telnyx::Config::of(&bridge_config(&bed));
-        let on_another_node = crate::webhook::handle(&bridge_info(&bed), &config, &request);
+        let on_another_node = telnyx().webhook(&bridge_info(&bed), &request);
         assert_eq!(body_json(&on_another_node)["outcome"], "duplicate");
     }
     // a timestamp past what a time can be is refused, not a panic
@@ -887,7 +947,7 @@ fn mms_comes_in_and_goes_out_within_the_limits() {
     // a file over the bridge's inbound bound (maxInboundMediaBytes) is not read past it, whatever bound the caller asks
     let large = bed.fake.file("large.jpg", "image/jpeg", &[7_u8; 3000]);
     use moqui_core::service::chat_bridge::ChatBridgeAdapter as _;
-    let adapter = crate::telnyx::TelnyxSms::new();
+    let adapter = telnyx();
     let bridge = moqui_core::service::chat_bridge::BridgeInfo {
         chat_bridge_id: BRIDGE.to_string(),
         type_enum_id: "CbtSms".to_string(),
@@ -1465,8 +1525,11 @@ fn ec_revoke(bed: &Bed, user: &str) {
 
 #[test]
 fn an_edge_node_keys_a_webhook_by_its_event_and_their_number() {
+    use crate::sms::SmsProvider as _;
+    let event_key = |request: &WebhookRequest| crate::providers::telnyx::Telnyx.event_key(request);
     let request = |body: Json| WebhookRequest {
         method: "POST".to_string(),
+        url: format!("/channels/{BRIDGE}/webhook"),
         headers: vec![("telnyx-signature-ed25519".to_string(), "c2lnbmF0dXJl".to_string())],
         body: body.to_string().into_bytes(),
         client_ip: "198.51.100.7".to_string(),
@@ -1474,19 +1537,19 @@ fn an_edge_node_keys_a_webhook_by_its_event_and_their_number() {
     };
     let text = json!({"data": {"event_type": "message.received", "id": "ev-9",
         "payload": {"from": {"phone_number": THEIRS}, "to": [{"phone_number": OURS}]}}});
-    let key = crate::webhook::event_key(&request(text)).unwrap();
+    let key = event_key(&request(text)).unwrap();
     assert_eq!(key.event_id, "ev-9");
     assert_eq!(key.conversation.as_deref(), Some(THEIRS));
     // a receipt: ordered by the number it went to
     let receipt = json!({"data": {"event_type": "message.finalized", "id": "ev-10",
         "payload": {"to": [{"phone_number": THEIRS, "status": "delivered"}]}}});
-    let key = crate::webhook::event_key(&request(receipt)).unwrap();
+    let key = event_key(&request(receipt)).unwrap();
     assert_eq!(
         (key.event_id.as_str(), key.conversation.as_deref()),
         ("ev-10", Some(THEIRS))
     );
     // no event id: a hash of the body, the same on the provider's retry (whose signature differs); not JSON: none
-    let key = crate::webhook::event_key(&request(json!({"data": {}}))).unwrap();
+    let key = event_key(&request(json!({"data": {}}))).unwrap();
     assert!(
         key.event_id.starts_with("sha256:") && key.event_id.len() == 71,
         "{}",
@@ -1495,10 +1558,10 @@ fn an_edge_node_keys_a_webhook_by_its_event_and_their_number() {
     assert_eq!(key.conversation, None);
     let mut retried = request(json!({"data": {}}));
     retried.headers = vec![("telnyx-signature-ed25519".to_string(), "b3RoZXI=".to_string())];
-    assert_eq!(crate::webhook::event_key(&retried).unwrap().event_id, key.event_id);
+    assert_eq!(event_key(&retried).unwrap().event_id, key.event_id);
     let mut bad = request(json!({}));
     bad.body = b"not json".to_vec();
-    assert!(crate::webhook::event_key(&bad).is_none());
+    assert!(event_key(&bad).is_none());
 }
 
 /// SEC-COM-10: the API base is https, unless `allowInternalAddresses` (a test's fake) allows http; that setting is
@@ -1513,17 +1576,15 @@ fn a_bridge_sends_its_key_over_https_and_reaches_no_internal_address_on_producti
         name: "B".to_string(),
         config,
     };
-    let adapter = crate::telnyx::TelnyxSms::new();
+    let adapter = telnyx();
     let plain = json!({"apiKey": "K", "apiBaseUrl": "http://api.example.test"});
     assert!(adapter.start(&bridge(plain)).is_err());
     let fake = json!({"apiKey": "K", "apiBaseUrl": "http://127.0.0.1:9", "allowInternalAddresses": true});
     assert!(adapter.start(&bridge(fake.clone())).is_ok());
-    assert!(crate::telnyx::Config::of(&fake).allow_internal);
+    let settings = |config: &Json| adapter.settings(&bridge(config.clone()));
+    assert!(settings(&fake).allow_internal);
     moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(Some(true)));
-    let on_production = (
-        crate::telnyx::Config::of(&fake).allow_internal,
-        adapter.start(&bridge(fake)).is_err(),
-    );
+    let on_production = (settings(&fake).allow_internal, adapter.start(&bridge(fake)).is_err());
     moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(None));
     assert_eq!(on_production, (false, true));
 }
@@ -1792,4 +1853,197 @@ fn a_group_texts_people_keep_the_sender_leave_out_ours_and_new_groups_are_limite
         "accepted"
     );
     assert_eq!(bed.messages(&pair_room).len(), 1);
+}
+
+/// Telnyx's API and webhooks with no group texts: a provider such as Sinch's Conversation API, whose adapter says
+/// `group_max` 0.
+struct NoGroups;
+
+impl crate::sms::SmsProvider for NoGroups {
+    type Config = crate::providers::telnyx::Config;
+
+    fn name(&self) -> &'static str {
+        "No-groups"
+    }
+
+    fn adapter_name(&self) -> &'static str {
+        "sms-nogroups"
+    }
+
+    fn defaults(&self) -> crate::sms::Defaults {
+        crate::providers::telnyx::Telnyx.defaults()
+    }
+
+    fn config(&self, config: &Json) -> Self::Config {
+        crate::providers::telnyx::Telnyx.config(config)
+    }
+
+    fn check(&self, config: &Self::Config) -> Result<(), String> {
+        crate::providers::telnyx::Telnyx.check(config)
+    }
+
+    fn group_max(&self) -> usize {
+        0
+    }
+
+    fn request(
+        &self,
+        config: &Self::Config,
+        settings: &crate::sms::Settings,
+        out: &crate::sms::Outgoing<'_>,
+    ) -> crate::sms::ApiRequest {
+        crate::providers::telnyx::Telnyx.request(config, settings, out)
+    }
+
+    fn accepted_id(&self, out: &crate::sms::Outgoing<'_>, body: &str) -> Option<String> {
+        crate::providers::telnyx::Telnyx.accepted_id(out, body)
+    }
+
+    fn error_of(&self, body: &str) -> crate::sms::ProviderError {
+        crate::providers::telnyx::Telnyx.error_of(body)
+    }
+
+    fn refusal(&self, status: u16, error: &crate::sms::ProviderError) -> crate::sms::Refusal {
+        crate::providers::telnyx::Telnyx.refusal(status, error)
+    }
+
+    fn signature_header(&self) -> &'static str {
+        crate::providers::telnyx::Telnyx.signature_header()
+    }
+
+    fn verifies_on_edge(&self) -> bool {
+        true
+    }
+
+    fn verify(
+        &self,
+        bridge: &moqui_core::service::chat_bridge::BridgeInfo,
+        config: &Self::Config,
+        settings: &crate::sms::Settings,
+        request: &WebhookRequest,
+    ) -> bool {
+        crate::providers::telnyx::Telnyx.verify(bridge, config, settings, request)
+    }
+
+    fn event_key(&self, request: &WebhookRequest) -> Option<moqui_core::service::chat_bridge::WebhookEventKey> {
+        crate::providers::telnyx::Telnyx.event_key(request)
+    }
+
+    fn parse(&self, request: &WebhookRequest) -> Result<crate::sms::SmsEvent, WebhookResponse> {
+        crate::providers::telnyx::Telnyx.parse(request)
+    }
+}
+
+/// A bridge whose provider carries no group texts (its capabilities say `groupTexts` false): Text a number with several
+/// numbers is refused saying why, a group room the bridge had is refused at the send (before the provider, not
+/// counted), and a group text that comes in is the sender's pair room; a text to one number still goes.
+#[test]
+fn a_group_room_on_a_bridge_without_group_texts_refuses_to_send() {
+    use crate::sms::SmsProvider as _;
+    const OTHER: &str = "+15553334444";
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    // a group room made while the bridge's provider carried group texts
+    assert_eq!(
+        body_json(&bed.group_in(THEIRS, &[OURS], &[OTHER], "Hi all"))["outcome"],
+        "accepted"
+    );
+    let mut sorted = [THEIRS, OTHER];
+    sorted.sort_unstable();
+    let group_room = bed.room(&sorted.join(",")).expect("the group's room");
+
+    // the bridge moves to a provider without group texts
+    moqui_core::service::chat_bridge::register_adapter(
+        bed.ctx.factory(),
+        Arc::new(crate::sms::SmsAdapter::new(NoGroups)),
+    );
+    {
+        let _authz = bed.ctx.disable_authz();
+        let mut row = bed
+            .facade
+            .find("moqui.chat.ChatBridge")
+            .unwrap()
+            .eq("chatBridgeId", text(BRIDGE))
+            .one()
+            .unwrap()
+            .unwrap();
+        row.set("adapterName", text(NoGroups.adapter_name()));
+        row.update(&bed.facade).unwrap();
+    }
+    login("alice");
+    let caps = ok(
+        "org.moqui.chat.ChatServices.get#BridgeCapabilities",
+        &[("chatBridgeIdList", Value::List(vec![text(BRIDGE)]))],
+    );
+    let Some(Value::Map(caps)) = caps.get("capabilityMap") else {
+        panic!("no capabilityMap: {caps:?}")
+    };
+    let Some(Value::Map(bridge)) = caps.get(BRIDGE) else {
+        panic!("no capabilities of {BRIDGE}: {caps:?}")
+    };
+    assert_eq!(bridge.get("groupTexts"), Some(&Value::Bool(false)));
+    assert_eq!(bridge.get("groupMax").map(to_plain_string).as_deref(), Some("0"));
+
+    // the group room refuses to send, saying why; nothing reached the provider, nothing counted
+    let counted = bed.sent_count("user:alice");
+    let seq = bed.send(&group_room, "Anyone?", &[]);
+    bed.round(0);
+    let (state, reason, ..) = bed.delivery(&group_room, seq);
+    assert_eq!(
+        (state.as_str(), reason.as_str()),
+        ("CdsFailed", "groupTextsNotSupported")
+    );
+    let row = bed.one(
+        "moqui.chat.ChatBridgeDelivery",
+        &[("chatRoomId", text(&group_room)), ("eventSeq", Value::I64(seq))],
+    );
+    assert!(row["lastErrorText"].contains("does not carry group texts"), "{row:?}");
+    assert!(bed.fake.sends().is_empty());
+    assert_eq!(bed.sent_count("user:alice"), counted, "not counted");
+
+    // Text a number with two numbers: refused, saying why, and no room made
+    let refused = call(
+        "org.moqui.call.SmsServices.open#PairRoom",
+        &[
+            ("toNumber", text(&format!("{THEIRS},+15553335555"))),
+            ("fromNumber", text(OURS)),
+        ],
+    );
+    assert_eq!(out_text(&refused, "reasonCode"), "groupTextsNotSupported");
+    assert!(errors().contains("does not carry group texts"));
+    let mut asked = [THEIRS, "+15553335555"];
+    asked.sort_unstable();
+    assert!(bed.room(&asked.join(",")).is_none(), "no room made");
+
+    // a group text that comes in is the sender's pair room, and a reply there goes as a text to one number
+    let response = bed.group_in(THEIRS, &[OURS], &["+15553336666"], "New group?");
+    assert_eq!(body_json(&response)["outcome"], "accepted");
+    let pair = bed.room(THEIRS).expect("the sender's pair room");
+    let reply = bed.send(&pair, "Just you", &[]);
+    bed.round(0);
+    assert_eq!(bed.delivery(&pair, reply).0, "CdsAccepted");
+    assert_eq!(bed.fake.sends()[0].path, "/v2/messages");
+}
+
+/// The URL a send names for its receipts (a provider's status callback): the bridge's `webhookUrl` as it is, else
+/// `channels_public_url` and the bridge's webhook route.
+#[test]
+fn a_send_names_the_bridges_webhook_url_for_its_receipts() {
+    // the value every bed sets
+    moqui_lib::env::set_property("channels_public_url", "https://moqui.example.test");
+    let bridge = |config: Json| moqui_core::service::chat_bridge::BridgeInfo {
+        chat_bridge_id: BRIDGE.to_string(),
+        type_enum_id: "CbtSms".to_string(),
+        adapter_name: "sms".to_string(),
+        name: "B".to_string(),
+        config,
+    };
+    assert_eq!(
+        crate::sms::callback_url(&bridge(json!({}))).as_deref(),
+        Some("https://moqui.example.test/channels/SMS1/webhook")
+    );
+    assert_eq!(
+        crate::sms::callback_url(&bridge(json!({"webhookUrl": "https://hooks.example/sms?b=1"}))).as_deref(),
+        Some("https://hooks.example/sms?b=1")
+    );
 }

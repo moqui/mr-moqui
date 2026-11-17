@@ -2,7 +2,7 @@
 //
 // SMS and MMS (plans/archive/Comms-Framework.md §5.6, §5.4 "One conversation per outside number", C4-SMS): the services of
 // org.moqui.call.SmsServices and org.moqui.SmsServices.send#SmsMessage. A number's texts go through its messagingBridgeId
-// (a ChatBridge whose adapter is the provider's: Telnyx in crates/moqui-channels) and land in the number pair's external room:
+// (a ChatBridge whose adapter is its SMS provider's, crates/moqui-channels) and land in the number pair's external room:
 // one ChatRoom (CrtExternal) for our number and their number, mapped to the bridge by a ChatRoomBridge whose externalRoomId
 // is "ours/theirs". Its members are the users our number reaches: the user it routes to, a ring group's members, and the
 // users granted it as a caller ID (Voice.js grantsOf). Calls and voicemail of the pair link to the same room (Calls.js
@@ -63,12 +63,31 @@ function pairKey(ours, theirs) {
   return ours + '/' + theirs
 }
 
-/** The most outside numbers a group text has (the provider's group MMS: our number, the sender, eight recipients). */
-const GROUP_MAX = 8
+/** The most numbers a group text is read with (typed, or a list); the bridge's provider's maximum is the bound (groupMaxOf). */
+const NUMBERS_READ = 32
 
 /** New group rooms a day that one outside number may start with one of our numbers, and that one of our numbers takes. */
 const GROUP_ROOMS_PER_SENDER = 5
 const GROUP_ROOMS_PER_NUMBER = 50
+
+/**
+ * The most outside numbers of a group text through bridge chatBridgeId: its adapter's (get#BridgeCapabilities groupMax; Telnyx's
+ * group MMS 8), 0 when its provider carries no group texts or this build has no adapter for it.
+ */
+function groupMaxOf(chatBridgeId) {
+  if (blank(chatBridgeId)) return 0
+  const caps = ec.service.sync().name('org.moqui.chat.ChatServices.get#BridgeCapabilities').parameter('chatBridgeIdList', [chatBridgeId])
+    .disableAuthz().call()?.capabilityMap || {}
+  return Number((caps[chatBridgeId] || {}).groupMax || 0)
+}
+
+/** Why a group text of count outside numbers cannot go through bridge chatBridgeId ({reasonCode, text}), or null when it can. */
+function groupRefusal(chatBridgeId, count) {
+  const max = groupMaxOf(chatBridgeId)
+  if (!max) return { reasonCode: 'groupTextsNotSupported', text: 'This number\'s texting provider does not carry group texts' }
+  if (count > max) return { reasonCode: 'tooManyNumbers', text: `A group text has at most ${max} other numbers` }
+  return null
+}
 
 /** A number in E.164 (a short code or an alphanumeric sender is not). */
 const isE164 = (number) => /^\+[0-9]{5,15}$/.test(String(number || ''))
@@ -136,8 +155,9 @@ function ensurePairRoom(p) {
   const ours = p.ourNumber
   // a group text (theirNumberList of two or more outside numbers): one room for that set of numbers; our own numbers
   // are never in it (a group MMS never goes to one of ours)
-  const group = numberSet(p.theirNumberList).filter((number) => number !== ours && !isOurs(number))
-  if (group.length > GROUP_MAX) return refuse('tooManyNumbers', `A group text has at most ${GROUP_MAX} other numbers`)
+  const listed = Array.from(p.theirNumberList || [])
+  if (listed.length > NUMBERS_READ) return refuse('tooManyNumbers', `A group text has at most ${NUMBERS_READ} numbers`)
+  const group = numberSet(listed).filter((number) => number !== ours && !isOurs(number))
   if (group.length === 1 && blank(p.theirNumber)) p.theirNumber = group[0]
   const isGroup = group.length > 1
   const theirs = isGroup ? group.join(', ') : p.theirNumber
@@ -147,6 +167,11 @@ function ensurePairRoom(p) {
   if (!number || blank(number.messagingBridgeId)) return { reasonCode: 'noMessaging' }
   if (!one(BRIDGE, { chatBridgeId: number.messagingBridgeId })) return { reasonCode: 'noMessaging' }
   const chatBridgeId = number.messagingBridgeId
+  // as many others as the bridge's provider takes in a group text; none for one that carries no group texts
+  if (isGroup) {
+    const refusal = groupRefusal(chatBridgeId, group.length)
+    if (refusal) return refuse(refusal.reasonCode, refusal.text)
+  }
   const externalRoomId = isGroup ? groupKey(ours, group) : pairKey(ours, theirs)
   const now = ec.user.nowTimestamp
   let mapping = Array.from(find(MAPPING).condition('chatBridgeId', chatBridgeId).condition('externalRoomId', externalRoomId)
@@ -265,7 +290,7 @@ function openPairRoom(p) {
   if (!me) return refuse('notSignedIn', 'Sign in to send a text')
   // several numbers (comma-separated): a group text, each number checked as a send to it would be
   const typed = String(p.toNumber || '').split(',').map((value) => value.trim()).filter((value) => value)
-  if (typed.length > GROUP_MAX) return refuse('tooManyNumbers', `A group text has at most ${GROUP_MAX} numbers`)
+  if (typed.length > NUMBERS_READ) return refuse('tooManyNumbers', `A group text has at most ${NUMBERS_READ} numbers`)
   const dests = typed.map((value) => voice('classify', { phoneNumber: value }))
   if (!dests.length || dests.some((dest) => !dest.number)) return refuse('badNumber', 'That is not a phone number')
   if (dests.some((dest) => dest.destinationClass === 'emergency')) return refuse('emergency', 'Texts to emergency numbers are not sent from here; call them')
@@ -315,6 +340,9 @@ function openGroupRoom(p, me, dests) {
   }
   const theirNumberList = numberSet(dests.map((dest) => dest.number)).filter((number) => number !== from.fromNumber)
   if (theirNumberList.length < 2) return openPairRoom(Object.assign({}, p, { toNumber: theirNumberList[0] || '' }))
+  // refused here, with its reason (ensure#PairRoom's own refusal would come back as an error alone)
+  const refusal = groupRefusal((one(NUMBER, { phoneNumber: from.fromNumber }) || {}).messagingBridgeId, theirNumberList.length)
+  if (refusal) return refuse(refusal.reasonCode, refusal.text)
   const out = ec.service.sync().name('org.moqui.call.SmsServices.ensure#PairRoom').parameters({ ourNumber: from.fromNumber,
     theirNumberList }).requireNewTransaction(true).disableAuthz().call() || {}
   if (ec.message.hasError()) return {}
@@ -517,10 +545,12 @@ function receive(p) {
   if (!number || number.messagingBridgeId !== p.chatBridgeId) return { outcome: 'ignored', reasonCode: 'unknownNumber' }
   if (!theirs) return { outcome: 'ignored', reasonCode: 'badNumber' }
   // the others it went to: a group's room, the sender and them. Our numbers are left out (two of ours in one group are
-  // both ours), the sender is kept whatever is cut (then at most GROUP_MAX - 1 others), and a sender that is not a
-  // number in E.164 (a short code) keeps a room of its own: never another person's pair room
-  const others = isE164(theirs) ? recipients.filter((value) => value !== theirs && value !== ours && !isOurs(value)) : []
-  let groupNumbers = others.length ? numberSet([theirs].concat(others.slice(0, GROUP_MAX - 1))) : null
+  // both ours), the sender is kept whatever is cut (then at most the bridge's group maximum less one others), and a
+  // sender that is not a number in E.164 (a short code) keeps a room of its own: never another person's pair room; on a
+  // bridge whose provider carries no group texts it is the sender's pair room, as a reply could not go to the group
+  const groupMax = recipients.length > 1 ? groupMaxOf(p.chatBridgeId) : 0
+  const others = isE164(theirs) && groupMax ? recipients.filter((value) => value !== theirs && value !== ours && !isOurs(value)) : []
+  let groupNumbers = others.length ? numberSet([theirs].concat(others.slice(0, groupMax - 1))) : null
   let note = null
   if (groupNumbers) {
     // a new group room: at most GROUP_ROOMS_PER_SENDER a day from one outside number, GROUP_ROOMS_PER_NUMBER for one of

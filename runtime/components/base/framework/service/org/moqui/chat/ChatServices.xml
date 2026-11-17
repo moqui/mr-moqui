@@ -1146,7 +1146,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="get" noun="BridgeCapabilities" type="rust" location="moqui_core::service::chat_bridge::get_bridge_capabilities"
             allow-remote="false" transaction="ignore">
         <description>Internal: what the adapter of each bridge of chatBridgeIdList carries: capabilityMap chatBridgeId to {edit,
-            delete, reaction, idempotent, adapter} (adapter false: this build has no adapter for it, and it carries nothing).</description>
+            delete, reaction, idempotent, encryption, groupTexts, groupMax, adapter} (adapter false: this build has no adapter for
+            it, and it carries nothing; groupMax the most outside numbers of a group text, 0 and groupTexts false when the
+            network carries none).</description>
         <in-parameters><parameter name="chatBridgeIdList" type="List" required="true"/></in-parameters>
         <out-parameters><parameter name="capabilityMap" type="Map"/></out-parameters>
     </service>

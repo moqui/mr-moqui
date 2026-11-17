@@ -96,6 +96,9 @@ pub const WEBHOOK_MARK: &str = "_chatBridgeWebhook";
 #[derive(Clone, Debug, Default)]
 pub struct WebhookRequest {
     pub method: String,
+    /// The request's path and query as received (`/channels/{chatBridgeId}/webhook?...`), for a network that signs the
+    /// URL it posted to ([`webhook_public_url`]).
+    pub url: String,
     /// Header names in lower case; a repeated header joined with `, `.
     pub headers: Vec<(String, String)>,
     /// The raw body, as the network signed it.
@@ -369,6 +372,30 @@ pub fn media_url(bridge_id: &str, attachment_id: &str, now: i64) -> Option<Strin
     Some(format!(
         "{base}/channels/{bridge_id}/media/{attachment_id}.{expiry}.{signature}"
     ))
+}
+
+/// The public URL a network posted `request` to, as it signed it (Twilio signs the exact URL with its query): the
+/// bridge's `webhookUrl` (its `configJson`) when set, used as it is, else `channels_public_url` and the request's path
+/// and query as received. Behind a proxy or an edge node the address the server sees is not the one the network used;
+/// `channels_public_url` names the public one (on a paired local node, the edge node's), and `webhookUrl` covers a
+/// bridge whose URL is another. None when neither is set.
+pub fn webhook_public_url(bridge: &super::BridgeInfo, request: &WebhookRequest) -> Option<String> {
+    let configured = bridge.config.get("webhookUrl").and_then(serde_json::Value::as_str);
+    public_url_of(configured, public_base().as_deref(), &request.url)
+}
+
+/// [`webhook_public_url`] from its parts: the configured URL, else the base (no trailing `/`) and the path and query.
+pub(super) fn public_url_of(configured: Option<&str>, base: Option<&str>, path_and_query: &str) -> Option<String> {
+    if let Some(configured) = configured.map(str::trim).filter(|url| !url.is_empty()) {
+        return Some(configured.to_string());
+    }
+    let base = base?;
+    let path = if path_and_query.starts_with('/') {
+        path_and_query.to_string()
+    } else {
+        format!("/{path_and_query}")
+    };
+    Some(format!("{base}{path}"))
 }
 
 /// `channels_public_url` with no trailing `/`, when it is an http or https address.
@@ -720,7 +747,32 @@ fn send_bridge_direct(
 
 #[cfg(test)]
 mod tests {
-    use super::{media_token_valid, media_url, safe_name, safe_type};
+    use super::{media_token_valid, media_url, public_url_of, safe_name, safe_type};
+
+    /// The URL a network signed: the bridge's webhookUrl as it is, else the public base with the path and query as
+    /// received (query kept, for a network that signs it).
+    #[test]
+    fn a_webhooks_public_url_is_the_configured_one_else_the_base_and_its_path() {
+        let path = "/channels/B1/webhook?x=1&y=two";
+        assert_eq!(
+            public_url_of(None, Some("https://edge.example"), path).as_deref(),
+            Some("https://edge.example/channels/B1/webhook?x=1&y=two")
+        );
+        assert_eq!(
+            public_url_of(
+                Some(" https://hooks.example/sms/B1 "),
+                Some("https://edge.example"),
+                path
+            )
+            .as_deref(),
+            Some("https://hooks.example/sms/B1")
+        );
+        assert_eq!(public_url_of(Some(""), None, path), None);
+        assert_eq!(
+            public_url_of(None, Some("https://edge.example"), "channels/B1/webhook").as_deref(),
+            Some("https://edge.example/channels/B1/webhook")
+        );
+    }
 
     #[test]
     fn a_file_address_is_signed_for_its_bridge_and_runs_out() {

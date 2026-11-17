@@ -22,12 +22,19 @@
 //!   that pairing's copy only; at the edge node's own names the id must be one pairing's. The copy holds the bridge's
 //!   network, adapter, status and the webhook's public key, never its `configJson`, whose provider keys stay on the
 //!   local node. The edge node checks the network's signature with the adapter's
-//!   [`verify_webhook`](super::ChatBridgeAdapter::verify_webhook), and queues the raw request, keyed by the network's
-//!   event id ([`webhook_event_id`](super::ChatBridgeAdapter::webhook_event_id)) so a repeat is dropped, and ordered by
-//!   their number. It answers 200 once the item is committed; a bad signature, an unknown bridge and a disabled one
-//!   answer as on any node. The local node's `apply#EdgeWebhook` rebuilds the request and hands it to the adapter's
-//!   [`apply_webhook`](super::ChatBridgeAdapter::apply_webhook) with the transport-verified mark set, without checking
-//!   the signature again: its time window has passed by then.
+//!   [`verify_webhook`](super::ChatBridgeAdapter::verify_webhook), and queues the raw request with the path and query it
+//!   came to, keyed by the network's event id ([`webhook_event_id`](super::ChatBridgeAdapter::webhook_event_id)) so a
+//!   repeat is dropped, and ordered by their number. It answers 200 once the item is committed; a bad signature, an
+//!   unknown bridge and a disabled one answer as on any node. The local node's `apply#EdgeWebhook` rebuilds the request
+//!   and hands it to the adapter's [`apply_webhook`](super::ChatBridgeAdapter::apply_webhook) with the
+//!   transport-verified mark set, without checking the signature again: its time window has passed by then.
+//! - **Verified on the local node.** A network that signs with a secret (Twilio's auth token, Sinch's webhook secret)
+//!   cannot be checked on the edge node, which never holds one ([`WebhookVerification::Core`]). For its adapter the edge
+//!   node checks only the method, the size (`channels_webhook_max_bytes`), that the signature header is there, and a
+//!   rate cap per bridge (`channels_edge_webhooks_per_minute`, 600, a token bucket on each edge node), then queues the
+//!   request; `apply#EdgeWebhook` verifies it with the bridge's whole configuration, at the time it came, before it
+//!   applies it, and drops one that fails ([`dropped_webhooks`], logged once per bridge every ten minutes): the item is
+//!   done, not applied, and not tried again.
 //! - **Files** (kind [`KIND_MEDIA`], local node to edge node). A paired local node whose conf lists `chatMedia` sends
 //!   every file of a message that goes by address (an MMS picture) through its edge node ([`media_urls`]): it queues
 //!   the file as the item's content, with a token it makes (an HMAC under `channels_media_key`, so a later attempt of
@@ -38,8 +45,8 @@
 //!   the file as a `moqui.edge.EdgeMedia` row by the token's hash, within its own limits (`channels_media_minutes`,
 //!   `channels_edge_media_max_bytes`, `channels_edge_media_node_megabytes`), and [`media`] serves it until it runs
 //!   out; [`sweep_edge_media`] (the link's retention pass, and each store) removes the files that ran out.
-//! - **Keys of older bridges.** [`fill_webhook_keys`], at the delivery worker's start, copies an SMS bridge's
-//!   `configJson` `publicKey` and `webhookToleranceSeconds` to the replicated fields of a bridge saved before E6.
+//! - **Keys of older bridges.** [`fill_webhook_keys`], at the delivery worker's start, copies a bridge's `configJson`
+//!   `publicKey` and `webhookToleranceSeconds` to the replicated fields of a bridge saved before E6.
 //!
 //! Each handler checks the node's role: the local node does not keep files for networks, and the edge node does not
 //! apply webhooks.
@@ -57,7 +64,7 @@ use sha2::Digest;
 use super::web::{marked, media_key, media_minutes, public_base, safe_type};
 use super::{
     adapter_of, bridge_info, current_factory, param, text_of, BridgeInfo, DeliveryRequest, MediaFile, WebhookRequest,
-    WebhookResponse, BRIDGE,
+    WebhookResponse, WebhookVerification, BRIDGE,
 };
 use crate::context::{ExecutionContext, ExecutionContextFactory};
 use crate::edge::queue::{self, NewItem};
@@ -97,6 +104,12 @@ const DEFAULT_MEDIA_NODE_MEGABYTES: i64 = 256;
 const EXPIRED_PAGE: i64 = 500;
 /// Headers of a webhook request that are not kept with the queued request.
 const DROPPED_HEADERS: &[&str] = &["cookie", "authorization", "proxy-authorization"];
+/// The host's bound of a webhook body (`crates/moqui-host/src/channels.rs`), checked again before a request is queued.
+const WEBHOOK_MAX_BYTES: &str = "channels_webhook_max_bytes";
+const DEFAULT_WEBHOOK_MAX_BYTES: usize = 256 * 1024;
+/// The requests a minute an edge node queues for one bridge whose webhooks it cannot verify.
+const WEBHOOKS_PER_MINUTE: &str = "channels_edge_webhooks_per_minute";
+const DEFAULT_WEBHOOKS_PER_MINUTE: u32 = 600;
 
 fn sha256_hex(text: &str) -> String {
     moqui_lib::codec::hex_encode(&sha2::Sha256::digest(text.as_bytes()))
@@ -279,8 +292,29 @@ pub(super) fn webhook(
     }
 }
 
-/// A webhook of bridge `bridge_id` as paired node `node` replicated it (`fields`): its signature checked here and the
-/// request queued for the node.
+/// The replicated copy's webhook key as the configuration an adapter that verifies on the edge node reads: only what
+/// the signature check needs (`publicKey`, `webhookToleranceSeconds`); the provider's keys stay on the local node.
+fn edge_config(bridge_id: &str, node: &str, fields: &serde_json::Value) -> serde_json::Value {
+    let public_key = field(fields, "webhookPublicKey");
+    if public_key.is_empty() {
+        tracing::error!(
+            "chat bridge {bridge_id} of local node {node} has no webhookPublicKey in its replicated copy, so its \
+             webhooks are refused: set publicKey in its configuration on the local node"
+        );
+    }
+    let mut config = serde_json::json!({});
+    if !public_key.is_empty() {
+        config["publicKey"] = serde_json::Value::String(public_key);
+    }
+    if let Some(tolerance) = number_field(fields, "webhookToleranceSeconds") {
+        config["webhookToleranceSeconds"] = serde_json::Value::from(tolerance);
+    }
+    config
+}
+
+/// A webhook of bridge `bridge_id` as paired node `node` replicated it (`fields`): its signature checked here, or (an
+/// adapter that verifies on the local node) the cheap checks of [`deferred_checks`], and the request queued for the
+/// node.
 pub(super) fn paired_webhook(
     factory: &ExecutionContextFactory,
     facade: &EntityFacade,
@@ -289,27 +323,12 @@ pub(super) fn paired_webhook(
     node: &str,
     fields: &serde_json::Value,
 ) -> WebhookResponse {
-    let public_key = field(fields, "webhookPublicKey");
-    if public_key.is_empty() {
-        tracing::error!(
-            "chat bridge {bridge_id} of local node {node} has no webhookPublicKey in its replicated copy, so its \
-             webhooks are refused: set publicKey in its configuration on the local node"
-        );
-    }
-    // only what the signature check needs: the provider's keys stay on the local node
-    let mut config = serde_json::json!({});
-    if !public_key.is_empty() {
-        config["publicKey"] = serde_json::Value::String(public_key);
-    }
-    if let Some(tolerance) = number_field(fields, "webhookToleranceSeconds") {
-        config["webhookToleranceSeconds"] = serde_json::Value::from(tolerance);
-    }
-    let info = BridgeInfo {
+    let mut info = BridgeInfo {
         chat_bridge_id: bridge_id.to_string(),
         type_enum_id: field(fields, "typeEnumId"),
         adapter_name: field(fields, "adapterName"),
         name: String::new(),
-        config,
+        config: serde_json::json!({}),
     };
     let Some(adapter) = adapter_of(factory, facade, &info) else {
         return WebhookResponse::not_signed();
@@ -317,10 +336,29 @@ pub(super) fn paired_webhook(
     if !request.method.eq_ignore_ascii_case("POST") {
         return WebhookResponse::text(405, "a webhook is a POST");
     }
-    match std::panic::catch_unwind(AssertUnwindSafe(|| adapter.verify_webhook(&info, request))) {
-        Ok(None) => {}
-        Ok(Some(refused)) => return refused,
-        Err(_) => return WebhookResponse::not_signed(),
+    match adapter.webhook_verification() {
+        WebhookVerification::Edge => {
+            info.config = edge_config(bridge_id, node, fields);
+            match std::panic::catch_unwind(AssertUnwindSafe(|| adapter.verify_webhook(&info, request))) {
+                Ok(None) => {}
+                Ok(Some(refused)) => return refused,
+                Err(_) => return WebhookResponse::not_signed(),
+            }
+        }
+        WebhookVerification::Core { signature_header } => {
+            let rates = factory.extension(|_| EdgeRates::default());
+            let checked = deferred_checks(
+                &rates,
+                &format!("{node}:{bridge_id}"),
+                request,
+                signature_header,
+                webhook_max_bytes(),
+                webhooks_per_minute(),
+            );
+            if let Some(refused) = checked {
+                return refused;
+            }
+        }
     }
     if field(fields, "statusId") == "CbsDisabled" {
         return WebhookResponse::text(503, "the bridge is disabled");
@@ -350,8 +388,103 @@ pub(super) fn paired_webhook(
     }
 }
 
-/// The queue item of a verified webhook request: the request as the payload (the body in base64), keyed by the
-/// network's event id, ordered by `key.conversation` within the bridge.
+/// The largest webhook body the edge node queues: the host's own bound, `channels_webhook_max_bytes` (256 KiB).
+fn webhook_max_bytes() -> usize {
+    moqui_lib::env::get_prop_or_env(WEBHOOK_MAX_BYTES)
+        .trim()
+        .parse::<usize>()
+        .ok()
+        .filter(|limit| *limit > 0)
+        .unwrap_or(DEFAULT_WEBHOOK_MAX_BYTES)
+}
+
+/// The requests a minute the edge node queues for one bridge whose signature it cannot check:
+/// `channels_edge_webhooks_per_minute` (600).
+fn webhooks_per_minute() -> u32 {
+    moqui_lib::env::get_prop_or_env(WEBHOOKS_PER_MINUTE)
+        .trim()
+        .parse::<u32>()
+        .ok()
+        .filter(|limit| *limit > 0)
+        .unwrap_or(DEFAULT_WEBHOOKS_PER_MINUTE)
+}
+
+/// A token bucket: `per_minute` requests a minute, as a burst or spread out.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Bucket {
+    tokens: f64,
+    at: i64,
+}
+
+impl Bucket {
+    fn full(per_minute: u32, now: i64) -> Self {
+        Self {
+            tokens: f64::from(per_minute),
+            at: now,
+        }
+    }
+
+    /// Take one request at `now`, the bucket refilled since its last take at `per_minute` a minute, up to
+    /// `per_minute`: whether one was there.
+    pub(super) fn take(&mut self, per_minute: u32, now: i64) -> bool {
+        let capacity = f64::from(per_minute);
+        let elapsed = now.saturating_sub(self.at).max(0) as f64;
+        self.tokens = (self.tokens + elapsed * capacity / 60_000.0).min(capacity);
+        self.at = now.max(self.at);
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+/// The edge node's buckets of the bridges whose webhooks it queues unverified, by node and bridge.
+#[derive(Default)]
+pub(super) struct EdgeRates {
+    buckets: std::sync::Mutex<std::collections::HashMap<String, Bucket>>,
+}
+
+/// What an edge node checks of a webhook it cannot verify (the network signs with a secret only the local node holds,
+/// [`WebhookVerification::Core`]), before it queues it: the size bound (413), the signature header there (else the
+/// answer of an unsigned request, counted by web protection), and at most `per_minute` requests a minute for the bridge
+/// (`key`; 429, so the network tries again). None when it may be queued. The local node verifies it before applying.
+pub(super) fn deferred_checks(
+    rates: &EdgeRates,
+    key: &str,
+    request: &WebhookRequest,
+    signature_header: &str,
+    max_bytes: usize,
+    per_minute: u32,
+) -> Option<WebhookResponse> {
+    if request.body.len() > max_bytes {
+        return Some(WebhookResponse::text(
+            413,
+            &format!("the request is over {max_bytes} bytes"),
+        ));
+    }
+    if request
+        .header(signature_header)
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        return Some(WebhookResponse::not_signed());
+    }
+    let now = request.now_millis;
+    let mut buckets = moqui_lib::sync::lock(&rates.buckets);
+    let bucket = buckets
+        .entry(key.to_string())
+        .or_insert_with(|| Bucket::full(per_minute, now));
+    if !bucket.take(per_minute, now) {
+        // not logged at warn: a flood would flood the log too
+        tracing::debug!("chat bridge {key}: more webhooks than {per_minute} a minute; refused for now (429)");
+        return Some(WebhookResponse::text(429, "too many requests; try again later"));
+    }
+    None
+}
+
+/// The queue item of a webhook request: the request as the payload (the body in base64, the path and query it came
+/// to), keyed by the network's event id, ordered by `key.conversation` within the bridge.
 fn webhook_item(bridge_id: &str, key: &super::WebhookEventKey, request: &WebhookRequest) -> NewItem {
     let headers: Vec<[&str; 2]> = request
         .headers
@@ -362,6 +495,7 @@ fn webhook_item(bridge_id: &str, key: &super::WebhookEventKey, request: &Webhook
     let payload = serde_json::json!({
         "chatBridgeId": bridge_id,
         "method": request.method,
+        "url": request.url,
         "headers": headers,
         "body": base64::engine::general_purpose::STANDARD.encode(&request.body),
         "clientIp": request.client_ip,
@@ -406,6 +540,7 @@ fn request_of(payload: &serde_json::Value) -> Result<WebhookRequest, String> {
         .collect();
     Ok(WebhookRequest {
         method: text("method"),
+        url: text("url"),
         headers,
         body,
         client_ip: text("clientIp"),
@@ -431,8 +566,78 @@ fn called_by_queue(facade: &EntityFacade, item: &str, node: &str) -> Result<bool
     Ok(receipt.is_some())
 }
 
-/// `apply#EdgeWebhook`, on the local node: a webhook request its edge node verified and queued, handed to the
-/// bridge's adapter ([`super::ChatBridgeAdapter::apply_webhook`]) with the transport-verified mark set. A bridge that is
+/// How long the local node waits before it logs again that a bridge's queued webhooks were dropped.
+const DROP_LOG_MILLIS: i64 = 10 * 60_000;
+
+/// The queued webhooks the local node dropped, by bridge: in all, and since the last log line.
+#[derive(Default)]
+struct DroppedWebhooks {
+    by_bridge: std::sync::Mutex<std::collections::HashMap<String, DropCount>>,
+}
+
+#[derive(Default)]
+struct DropCount {
+    total: u64,
+    unlogged: u64,
+    logged_at: Option<i64>,
+}
+
+/// The queued webhooks of bridge `bridge_id` this node dropped since it started because their signature did not
+/// verify here ([`WebhookVerification::Core`]).
+pub fn dropped_webhooks(factory: &ExecutionContextFactory, bridge_id: &str) -> u64 {
+    let dropped = factory.extension(|_| DroppedWebhooks::default());
+    let counts = moqui_lib::sync::lock(&dropped.by_bridge);
+    counts.get(bridge_id).map_or(0, |count| count.total)
+}
+
+/// For an adapter that verifies on the local node ([`WebhookVerification::Core`]): the network's signature over the
+/// queued request, checked here with the bridge's whole configuration (the edge node had only the cheap checks). None
+/// when it verifies, or the adapter verified on the edge node; else the item's answer: done and not applied, so the
+/// queue does not try it again. A drop is counted ([`dropped_webhooks`]) and logged once per bridge every
+/// [`DROP_LOG_MILLIS`], with the count since.
+fn verified_here(
+    factory: &ExecutionContextFactory,
+    adapter: &dyn super::ChatBridgeAdapter,
+    info: &BridgeInfo,
+    item: &str,
+    request: &WebhookRequest,
+) -> Option<BTreeMap<String, Value>> {
+    if adapter.webhook_verification() == WebhookVerification::Edge {
+        return None;
+    }
+    let verified = std::panic::catch_unwind(AssertUnwindSafe(|| adapter.verify_webhook(info, request)));
+    if matches!(verified, Ok(None)) {
+        return None;
+    }
+    let bridge_id = &info.chat_bridge_id;
+    let dropped = factory.extension(|_| DroppedWebhooks::default());
+    let now = now_millis();
+    let mut counts = moqui_lib::sync::lock(&dropped.by_bridge);
+    let count = counts.entry(bridge_id.clone()).or_default();
+    count.total += 1;
+    count.unlogged += 1;
+    if count
+        .logged_at
+        .is_none_or(|at| now.saturating_sub(at) >= DROP_LOG_MILLIS)
+    {
+        tracing::error!(
+            "chat bridge {bridge_id}: {} webhook(s) its edge node queued did not verify here and were dropped (the \
+             latest item {item}; {} since this node started); is the bridge's signing secret or webhookUrl right?",
+            count.unlogged,
+            count.total
+        );
+        count.unlogged = 0;
+        count.logged_at = Some(now);
+    }
+    Some(BTreeMap::from([(
+        "dropped".to_string(),
+        Value::string("the signature did not verify"),
+    )]))
+}
+
+/// `apply#EdgeWebhook`, on the local node: a webhook request its edge node queued, handed to the bridge's adapter
+/// ([`super::ChatBridgeAdapter::apply_webhook`]) with the transport-verified mark set. The edge node verified it, or for
+/// an adapter that verifies here this node does first and drops one that fails ([`verified_here`]). A bridge that is
 /// disabled here, or a database that cannot be read, answers `retryLater`, and so does an adapter's 409, 429 or 503;
 /// any other refusal is an error, counted.
 fn apply_edge_webhook(
@@ -490,6 +695,9 @@ fn apply_edge_webhook(
             "chat bridge {bridge_id} has no adapter in this build"
         )));
     };
+    if let Some(dropped) = verified_here(&factory, adapter.as_ref(), &info, &item, &request) {
+        return Ok(dropped);
+    }
     let answer = marked(&bridge_id, || {
         std::panic::catch_unwind(AssertUnwindSafe(|| adapter.apply_webhook(&info, &request)))
     });
@@ -991,8 +1199,8 @@ pub(super) fn media(
 
 /// On a local node, copy each bridge's `configJson` `publicKey` and `webhookToleranceSeconds` to `webhookPublicKey` and
 /// `webhookToleranceSeconds` where they differ (a bridge saved before E6, or its configuration written another way),
-/// so its replicated copy can check its webhooks. An SMS bridge with no key is logged as an error. Each bridge in a
-/// transaction of its own; one that fails is logged and the rest go on. The count changed.
+/// so its replicated copy can check its webhooks. A Telnyx bridge (adapter `sms`) with no key is logged as an error.
+/// Each bridge in a transaction of its own; one that fails is logged and the rest go on. The count changed.
 pub fn fill_webhook_keys(facade: &EntityFacade) -> usize {
     let rows = transaction(facade, BRIDGE, TransactionAttribute::ForceNew, || {
         facade.find(BRIDGE)?.use_cache(false).disable_authz().list()
@@ -1014,9 +1222,11 @@ pub fn fill_webhook_keys(facade: &EntityFacade) -> usize {
             .unwrap_or_default()
             .to_string();
         let tolerance = number_field(&info.config, "webhookToleranceSeconds");
-        let sms = info.adapter_name == "sms" || info.type_enum_id == "CbtSms";
+        // only Telnyx's adapter (`sms`, also a CbtSms bridge that names none) checks with a public key; the other SMS
+        // providers sign with a secret the local node checks (WebhookVerification::Core)
+        let telnyx = info.adapter_name == "sms" || (info.adapter_name.is_empty() && info.type_enum_id == "CbtSms");
         if key.is_empty() {
-            if sms {
+            if telnyx {
                 tracing::error!(
                     "SMS bridge {id} has no publicKey in its configuration, so its webhooks are refused (through an \
                      edge node too)"
