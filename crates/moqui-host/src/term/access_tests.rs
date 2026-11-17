@@ -123,6 +123,27 @@ fn a_proxy_a_tunnel_another_origin_or_the_edge_is_remote() {
 }
 
 #[test]
+fn an_ssh_tunnel_from_the_edge_naming_loopback_is_remote() {
+    let local: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+    assert_eq!(Facts::over_ssh(local, false).place(), Place::Local);
+    // the edge node names the client; loopback there is not this machine (SEC-CLU-01)
+    assert_eq!(
+        Facts::over_ssh(local, true).place(),
+        Place::Remote {
+            secure: true,
+            via_edge: true
+        }
+    );
+    let forwarded = facts(
+        "127.0.0.1",
+        RequestVia::Edge,
+        false,
+        &[("host", "localhost:8080"), ("origin", "http://localhost:8080")],
+    );
+    assert!(matches!(forwarded.place(), Place::Remote { via_edge: true, .. }));
+}
+
+#[test]
 fn the_node_in_process_is_local() {
     let node = facts("127.0.0.1", RequestVia::InProcess, false, &[("host", "moqui.node")]);
     assert_eq!(node.place(), Place::Local);

@@ -65,6 +65,33 @@ pub fn is_cluster_key(key: &PublicKey) -> bool {
     cluster_login_key().is_ok_and(|own| own.public_key().key_data() == key.key_data())
 }
 
+/// Whether this member takes the SSH cluster channel: its base URL is `ssh://` (`cluster_transport=ssh`, or a
+/// `cluster_base_url` of `ssh://`). Peers reach any other member over the cluster port.
+pub(crate) fn takes_ssh_channel() -> bool {
+    moqui_lib::env::get_prop_or_env("cluster_transport") == "ssh"
+        || moqui_lib::env::get_prop_or_env("cluster_base_url").starts_with("ssh://")
+}
+
+/// Why a login with the cluster key is refused, or `None` when it is taken (SEC-CLU-03): only on a member that takes
+/// the SSH channel ([`takes_ssh_channel`]), never through an edge node's tunnel, and only from an address one of the
+/// members' base URLs resolves to (`members`).
+pub(crate) fn login_refused(
+    takes_ssh: bool,
+    via_edge: bool,
+    source: std::net::IpAddr,
+    members: &std::collections::HashSet<std::net::IpAddr>,
+) -> Option<&'static str> {
+    if via_edge {
+        Some("it came through an edge node's tunnel")
+    } else if !takes_ssh {
+        Some("this member's cluster transport is not ssh")
+    } else if !members.contains(&source.to_canonical()) {
+        Some("its address is no cluster member's")
+    } else {
+        None
+    }
+}
+
 /// Install the SSH sender, which keeps the HTTPS one for `https://` peers.
 ///
 /// # Errors
@@ -337,7 +364,21 @@ mod tests {
     use moqui_core::context::Error as CoreError;
     use russh::keys::PrivateKey;
 
-    use super::{PeerSlot, SshSender, PEER_IDLE};
+    use super::{login_refused, PeerSlot, SshSender, PEER_IDLE};
+
+    #[test]
+    fn the_cluster_login_is_taken_only_on_the_ssh_transport_from_a_member() {
+        let member: std::net::IpAddr = "10.0.0.5".parse().unwrap();
+        let stranger: std::net::IpAddr = "203.0.113.9".parse().unwrap();
+        let members = std::collections::HashSet::from([member]);
+        assert_eq!(login_refused(true, false, member, &members), None);
+        // an IPv4 member seen through a dual-stack socket
+        let mapped: std::net::IpAddr = "::ffff:10.0.0.5".parse().unwrap();
+        assert_eq!(login_refused(true, false, mapped, &members), None);
+        assert!(login_refused(true, false, stranger, &members).is_some(), "not a member's address");
+        assert!(login_refused(false, false, member, &members).is_some(), "the transport is https");
+        assert!(login_refused(true, true, member, &members).is_some(), "through an edge tunnel");
+    }
 
     struct NoSender;
 

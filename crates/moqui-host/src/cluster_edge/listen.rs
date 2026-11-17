@@ -91,53 +91,14 @@ async fn refresh_members(factory: std::sync::Weak<ExecutionContextFactory>, memb
         every.tick().await;
         let factory = factory.clone();
         let read =
-            tokio::task::spawn_blocking(move || factory.upgrade().map(|factory| member_addresses(&factory))).await;
+            tokio::task::spawn_blocking(move || factory.upgrade().map(|factory| super::member_addresses(&factory)))
+                .await;
         match read {
             Ok(Some(Ok(addresses))) => *moqui_lib::sync::write(&members) = addresses,
             Ok(Some(Err(err))) => tracing::warn!("the cluster listener could not read its members' addresses: {err}"),
             Ok(None) | Err(_) => return,
         }
     }
-}
-
-/// The addresses the members' `clusterBaseUrl` hosts resolve to. One that does not resolve is left out.
-fn member_addresses(factory: &Arc<ExecutionContextFactory>) -> Result<HashSet<IpAddr>, String> {
-    let facade = factory.entity().ok_or("no entity facade")?;
-    let context = factory.new_context();
-    let _entered = context.enter();
-    let _authz = context.disable_authz();
-    let rows = facade
-        .find("moqui.server.ClusterMember")
-        .and_then(|find| find.select_field("clusterBaseUrl").list())
-        .map_err(|err| err.to_string())?;
-    let mut addresses = HashSet::new();
-    for row in rows.values() {
-        let url = moqui_core::service::util::field_text(row, "clusterBaseUrl");
-        let Some((host, port)) = url_host(&url) else {
-            continue;
-        };
-        match std::net::ToSocketAddrs::to_socket_addrs(&(host.as_str(), port)) {
-            Ok(resolved) => addresses.extend(resolved.map(|address| address.ip().to_canonical())),
-            Err(err) => tracing::debug!("cluster member {url} does not resolve: {err}"),
-        }
-    }
-    Ok(addresses)
-}
-
-/// The host and port of a base URL (`https://host:port/...`, `ssh://[v6]:port`), the port 0 when it has none.
-pub(super) fn url_host(url: &str) -> Option<(String, u16)> {
-    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
-    let authority = rest.split(['/', '?']).next()?.rsplit('@').next()?;
-    if let Some(inner) = authority.strip_prefix('[') {
-        let (host, after) = inner.split_once(']')?;
-        let port = after.strip_prefix(':').and_then(|port| port.parse().ok()).unwrap_or(0);
-        return Some((host.to_string(), port));
-    }
-    let (host, port) = match authority.rsplit_once(':') {
-        Some((host, port)) => (host, port.parse().unwrap_or(0)),
-        None => (authority, 0),
-    };
-    (!host.is_empty()).then(|| (host.to_string(), port))
 }
 
 /// Bind `bind` and serve the cluster port with `config` (its ALPN set here for `protocol`), each message through

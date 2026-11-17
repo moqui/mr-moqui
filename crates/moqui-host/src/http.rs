@@ -957,10 +957,15 @@ pub(crate) fn http_port(raw: &str) -> Result<u16, Error> {
     moqui_core::web::effective_http_port(raw)
 }
 
-async fn health(State(state): State<Arc<HttpState>>, ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
+async fn health(
+    State(state): State<Arc<HttpState>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    via: Option<axum::Extension<moqui_core::web::RequestVia>>,
+) -> Response {
     if !status_allowed(
         &state.factory.webapp_setting("webroot", "status-ips"),
         &peer.ip().to_canonical().to_string(),
+        via.map(|via| via.0).unwrap_or_default(),
     ) {
         return plain(404, "not found");
     }
@@ -979,12 +984,14 @@ async fn health(State(state): State<Arc<HttpState>>, ConnectInfo(peer): ConnectI
 async fn metrics(
     State(state): State<Arc<HttpState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    via: Option<axum::Extension<moqui_core::web::RequestVia>>,
     uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
 ) -> Response {
     if !status_allowed(
         &state.factory.webapp_setting("webroot", "status-ips"),
         &peer.ip().to_canonical().to_string(),
+        via.map(|via| via.0).unwrap_or_default(),
     ) {
         return plain(404, "not found");
     }
@@ -1793,13 +1800,21 @@ fn endpoint_enabled(factory: &ExecutionContextFactory, path: &str) -> bool {
     factory.webapp_child_setting("webroot", &format!("endpoint {path}"), "enabled") != "false"
 }
 
-/// True when `ip` is in `configured` (the webapp's `status-ips`, comma-separated) or is a loopback address: any in
-/// 127.0.0.0/8 (a client spec's own address on a test server, test_peer.rs) or `::1`.
-fn status_allowed(configured: &str, ip: &str) -> bool {
-    configured.split(',').map(str::trim).any(|item| !item.is_empty() && item == ip)
-        || ip
-            .parse::<IpAddr>()
-            .is_ok_and(|address| address.to_canonical().is_loopback())
+/// True when `ip` is in `configured` (the webapp's `status-ips`, comma-separated) or is a [`local_peer`]: any in
+/// 127.0.0.0/8 (a client spec's own address on a test server, test_peer.rs) or `::1`, not named by an edge node.
+fn status_allowed(configured: &str, ip: &str, via: moqui_core::web::RequestVia) -> bool {
+    configured
+        .split(',')
+        .map(str::trim)
+        .any(|item| !item.is_empty() && item == ip)
+        || ip.parse::<IpAddr>().is_ok_and(|address| local_peer(address, via))
+}
+
+/// Whether a request's peer is this machine: a loopback address that is the connection's own. The client an edge
+/// node names for a request it forwards, or a tunnel it carries, is never this machine, even when it names loopback
+/// (a client on the edge node's machine, or an edge node that lies) (SEC-CLU-01).
+pub(crate) fn local_peer(peer: IpAddr, via: moqui_core::web::RequestVia) -> bool {
+    via != moqui_core::web::RequestVia::Edge && peer.to_canonical().is_loopback()
 }
 
 fn from_web(factory: &Arc<moqui_core::context::ExecutionContextFactory>, mut response: WebResponse) -> Response {

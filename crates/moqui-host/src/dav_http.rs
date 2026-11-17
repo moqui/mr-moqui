@@ -57,9 +57,15 @@ pub(crate) async fn handle(
             None => headers.push((name, value.to_string())),
         }
     }
+    // a loopback client an edge node names is not this machine (SEC-CLU-01)
+    let via = parts
+        .extensions
+        .get::<moqui_core::web::RequestVia>()
+        .copied()
+        .unwrap_or_default();
     let secure = over_tls
         || forwarded_https(&parts.headers, peer.ip(), state.guard.conf().addressing())
-        || peer.ip().is_loopback();
+        || crate::http::local_peer(peer.ip(), via);
     let mut dav_request = DavRequest {
         method: parts.method.as_str().to_string(),
         path: parts.uri.path().to_string(),
