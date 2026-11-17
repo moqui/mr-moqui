@@ -7,10 +7,13 @@
  * else: no screen render, transition, /rest, socket or any response that depends on who is signed in, so a shared
  * device keeps no private page and an account switch shows nothing of the last user's.
  *
- * Push: every push shows a notification (a browser may revoke push from a worker that shows none). The payload has the
- * title, link, topic and tag of a notification, never its body. A click focuses an open window and takes it to the
- * link, or opens one. Push is a hint: the notification list is the server's, and the page reads it again when it
- * comes back.
+ * Push: a push shows a notification (a browser may revoke push from a worker that shows none). The payload has the
+ * title, link, topic and tag of a notification, never its body. A chat push (kind message) has its room, sender, count
+ * and, when the server put one in, a snippet: the title and body are built from them, and it is acknowledged
+ * (/qapps/ackClientPush). A clear (kind clear: the room was read on another device) closes the room's notifications
+ * (its tag) and shows nothing; it is sent at normal urgency and only after a push of the room was shown. A click
+ * focuses an open window and takes it to the link, or opens one. Push is a hint: the notification list is the
+ * server's, and the page reads it again when it comes back.
  */
 const CACHE = "moqui-shell-v1"
 
@@ -53,6 +56,29 @@ self.addEventListener("fetch", event => {
     )
 })
 
+// A chat push's title and body from its fields (plans/Comms-Messaging.md §7.3, Chat push): the room and sender, the
+// snippet when the server put one in (a plain room, previews on), and how many messages it stands for.
+function chatTitle(data) {
+    const sender = data.senderName || ""
+    const place = data.roomName || sender
+    if (data.call === "missed") return "Missed call" + (place ? " · " + place : "")
+    if (data.call === "voicemail") return "Voicemail" + (place ? " · " + place : "")
+    if (Number(data.count) > 1) return data.count + " new messages" + (place ? " · " + place : "")
+    return data.roomName && !data.direct ? sender + " · " + data.roomName : sender || data.title || "New message"
+}
+
+// The server counts what the device showed (System, Push Health). The worker has no session token: the transition takes
+// a push id alone, counts only the signed-in user's own push, and a failure changes nothing for the person.
+function ack(ackId) {
+    if (!ackId) return Promise.resolve()
+    return fetch("/qapps/ackClientPush", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {"Content-Type": "application/x-www-form-urlencoded"},
+        body: "ackId=" + encodeURIComponent(ackId)
+    }).catch(() => null)
+}
+
 self.addEventListener("push", event => {
     let data = {}
     try {
@@ -60,21 +86,34 @@ self.addEventListener("push", event => {
     } catch (err) {
         data = {}
     }
-    const title = data.title || "New notification"
+    // a room read on another device: its notifications close, and nothing is shown
+    if (data.kind === "clear") {
+        event.waitUntil(
+            self.registration
+                .getNotifications(data.tag ? {tag: data.tag} : undefined)
+                .then(shown => shown.forEach(notification => notification.close()))
+        )
+        return
+    }
+    const chat = data.kind === "message"
+    const title = chat ? chatTitle(data) : data.title || "New notification"
     const options = {
-        body: data.body || "",
+        body: chat ? data.snippet || (data.encrypted ? "New message" : "") : data.body || "",
         tag: data.tag || undefined,
         icon: "/images/pwa-icon-192.png",
         badge: "/images/pwa-icon-192.png",
         data: {link: data.link || "/qapps", topic: data.topic || ""}
     }
     event.waitUntil(
-        self.registration.showNotification(title, options).then(() =>
-            // an open page refreshes its counts; the server's list is what it shows
-            self.clients
-                .matchAll({type: "window", includeUncontrolled: true})
-                .then(windows => windows.forEach(client => client.postMessage({type: "moqui-push", topic: options.data.topic})))
-        )
+        self.registration
+            .showNotification(title, options)
+            .then(() => (chat ? ack(data.ackId) : null))
+            .then(() =>
+                // an open page refreshes its counts; the server's list is what it shows
+                self.clients
+                    .matchAll({type: "window", includeUncontrolled: true})
+                    .then(windows => windows.forEach(client => client.postMessage({type: "moqui-push", topic: options.data.topic})))
+            )
     )
 })
 

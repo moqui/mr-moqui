@@ -2,7 +2,8 @@
 // /qapps/registerClientPush and unregisterClientPush transitions; service/web_push.rs and service/fcm.rs;
 // plans/Mobile-Desktop.md §5): only a request signed in by a device key registers, the registration is tied to that key
 // (revoking the key deletes it, renewing moves it, an ended key's goes at the next push), and send#WebPush sends it to
-// FCM as a data message, a ring with high priority, disabling a token FCM answers UNREGISTERED.
+// FCM as a data message, a ring with high priority, disabling a token FCM answers UNREGISTERED; an app's push keys seal
+// its notifications (no title in clear text), and a UnifiedPush endpoint registers with keys and https only.
 // Run: ./moq test framework --spec PushDevice
 const SUBSCRIPTION = "moqui.security.user.WebPushSubscription"
 const LOGIN_KEY = "moqui.security.UserLoginKey"
@@ -123,14 +124,14 @@ spec({
         })
     },
     setup() {
-        sys(() => ec.entity.find(SUBSCRIPTION).condition("endpoint", "like", TOKEN_PREFIX + "%").deleteAll())
+        sys(() => ec.entity.find(SUBSCRIPTION).condition("endpoint", "like", "%" + TOKEN_PREFIX + "%").deleteAll())
         login("john.doe")
     },
     cleanup() {
         http.reset()
     },
     cleanupSpec() {
-        sys(() => ec.entity.find(SUBSCRIPTION).condition("endpoint", "like", TOKEN_PREFIX + "%").deleteAll())
+        sys(() => ec.entity.find(SUBSCRIPTION).condition("endpoint", "like", "%" + TOKEN_PREFIX + "%").deleteAll())
     }
 })
 
@@ -284,6 +285,43 @@ feature("a ring goes to FCM as a high-priority data message, and a token FCM ans
         none.sentCount == 0
         none.failedCount == 0
         after == 0
+    }
+})
+
+// plans/Comms-Messaging.md §7.2 rule 5, §7.4 (steps 2d, 2h): the app's push keys (here the RFC 8291 example's), a
+// notification sealed to them with no readable text through Google (COM-UI-031), and a UnifiedPush endpoint
+const UA_PUBLIC = "BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4"
+const AUTH = "BTBZMqHH6r4Tts7J_aSIgg"
+feature("an app's push keys seal its notifications, and a UnifiedPush endpoint registers only with keys and https", {
+    when() {
+        setProperty("fcm_service_account", ACCOUNT)
+        setProperty("fcm_base_url", FCM_BASE)
+        const phone = deviceKey("Push spec keyed phone")
+        const keyed = post("registerClientPush", {provider: "fcm", token: TOKEN_PREFIX + "keyed", p256dhKey: UA_PUBLIC, authSecret: AUTH}, phone.key)
+        const badKey = post("registerClientPush", {provider: "fcm", token: TOKEN_PREFIX + "badkey", p256dhKey: "BAAA", authSecret: AUTH}, phone.key)
+        http.enable()
+        http.add(tokenAnswer)
+        http.add(fcmAnswer(200, {name: "projects/demo-project/messages/2"}))
+        sendPush({title: "Ann mentioned you in Plans: the secret", link: "/qapps/x", topic: "ChatMention", tag: "N1"})
+        const sent = JSON.parse(http.requests().find(request => request.url == SEND_URL).body)
+        const other = deviceKey("Push spec distributor")
+        const noKeys = post("registerClientPush", {provider: "unifiedpush", token: "https://up.pushdevice-spec.invalid/" + TOKEN_PREFIX + "nokeys"}, other.key)
+        const http1 = post("registerClientPush", {provider: "unifiedpush", token: "http://up.pushdevice-spec.invalid/" + TOKEN_PREFIX + "http",
+            p256dhKey: UA_PUBLIC, authSecret: AUTH}, other.key)
+        const endpoint = "https://up.pushdevice-spec.invalid/" + TOKEN_PREFIX + "up"
+        const unified = post("registerClientPush", {provider: "unifiedpush", token: endpoint, p256dhKey: UA_PUBLIC, authSecret: AUTH}, other.key)
+        return {keyed, badKey, sent, stored: row(TOKEN_PREFIX + "keyed"), noKeys, http1, unified, up: row(endpoint)}
+    },
+    then({keyed, badKey, sent, stored, noKeys, http1, unified, up}) {
+        keyed.status == 200 && stored.p256dhKey == UA_PUBLIC && stored.lastRegisteredDate != null
+        badKey.status == 400 && badKey.text.includes("push keys are not valid")
+        sent.message.data.kind == "notification"
+        typeof sent.message.data.enc == "string" && sent.message.data.enc.length > 100
+        sent.message.data.title === undefined && sent.message.data.link === undefined && sent.message.data.topic === undefined
+        !JSON.stringify(sent).includes("secret")
+        noKeys.status == 400 && noKeys.text.includes("p256dhKey")
+        http1.status == 400 && http1.text.includes("UnifiedPush endpoint is not valid")
+        unified.status == 200 && up.pushProviderEnumId == "PushUnified" && up.loginKey != null
     }
 })
 

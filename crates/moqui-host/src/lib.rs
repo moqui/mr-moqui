@@ -1871,6 +1871,8 @@ fn boot_server_factory(
     // the chat bridges' delivery worker (plans/archive/Comms-Framework.md §4.1), after the cluster so its leases name the instance;
     // its first round picks up what a crash left
     moqui_core::service::chat_bridge::start(&factory);
+    // the chat push worker (plans/Comms-Messaging.md §7.3), the same way: its first round takes what a crash left
+    moqui_core::service::chat_push::start(&factory);
     moqui_core::startup::integration(
         &factory,
         "Cluster notify",

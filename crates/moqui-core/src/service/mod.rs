@@ -28,6 +28,7 @@ pub mod call;
 mod call_media;
 mod chat;
 pub mod chat_bridge;
+pub mod chat_push;
 mod chat_keys;
 mod chat_link;
 #[cfg(test)]

@@ -314,7 +314,7 @@ fn adapter_named(factory: &ExecutionContextFactory, name: &str) -> Option<Arc<dy
 
 // ---- helpers ----
 
-fn text_of(row: &EntityValue, field: &str) -> Option<String> {
+pub(super) fn text_of(row: &EntityValue, field: &str) -> Option<String> {
     row.get(field)
         .filter(|value| !is_empty(value))
         .map(to_plain_string)
@@ -322,7 +322,7 @@ fn text_of(row: &EntityValue, field: &str) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
-fn int_of(row: &EntityValue, field: &str) -> Option<i64> {
+pub(super) fn int_of(row: &EntityValue, field: &str) -> Option<i64> {
     match row.get(field)? {
         Value::I32(n) => Some(i64::from(*n)),
         Value::I64(n) => Some(*n),
@@ -331,7 +331,7 @@ fn int_of(row: &EntityValue, field: &str) -> Option<i64> {
     }
 }
 
-fn millis_of(row: &EntityValue, field: &str) -> Option<i64> {
+pub(super) fn millis_of(row: &EntityValue, field: &str) -> Option<i64> {
     match row.get(field)? {
         Value::Timestamp(stamp) => Some(stamp.as_millisecond()),
         Value::I64(n) => Some(*n),
@@ -340,7 +340,7 @@ fn millis_of(row: &EntityValue, field: &str) -> Option<i64> {
     }
 }
 
-fn param(parameters: &BTreeMap<String, Value>, key: &str) -> Option<String> {
+pub(super) fn param(parameters: &BTreeMap<String, Value>, key: &str) -> Option<String> {
     parameters
         .get(key)
         .filter(|value| !is_empty(value))
@@ -349,19 +349,19 @@ fn param(parameters: &BTreeMap<String, Value>, key: &str) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
-fn stamp(millis: i64) -> Value {
+pub(super) fn stamp(millis: i64) -> Value {
     crate::user::stamp_value(millis)
 }
 
-fn now_millis() -> i64 {
+pub(super) fn now_millis() -> i64 {
     jiff::Timestamp::now().as_millisecond()
 }
 
-fn current_factory() -> Option<Arc<ExecutionContextFactory>> {
+pub(super) fn current_factory() -> Option<Arc<ExecutionContextFactory>> {
     ExecutionContext::with_current(|ec| Arc::clone(ec.factory()))
 }
 
-fn force_new<T>(
+pub(super) fn force_new<T>(
     facade: &EntityFacade,
     entity: &str,
     body: impl FnOnce() -> Result<T, LibError>,
@@ -765,7 +765,7 @@ fn run_bridge_deliveries(
     ]))
 }
 
-fn node_id(factory: &ExecutionContextFactory) -> String {
+pub(super) fn node_id(factory: &ExecutionContextFactory) -> String {
     crate::cluster::instance_id(factory).unwrap_or_else(|| format!("node-{}", std::process::id()))
 }
 
@@ -1443,7 +1443,7 @@ fn remote_id_of(
 }
 
 /// The name of an event's sender: the local user's, or the external actor's.
-fn sender_name(facade: &EntityFacade, event: &EntityValue) -> Result<Option<String>, LibError> {
+pub(super) fn sender_name(facade: &EntityFacade, event: &EntityValue) -> Result<Option<String>, LibError> {
     if let Some(user) = text_of(event, "senderUserId") {
         let account = facade
             .find("moqui.security.UserAccount")?
