@@ -715,8 +715,8 @@ Status (phase 9, 2026-11-17):
   outside numbers (sorted, `<ours>/<a>,<b>,...`), whoever of them writes first; a reply goes out as one group text to
   them all, each number checked and counted as a single text is, each recipient's receipt kept; new group rooms are
   limited a day for one sender and one of our numbers. The most recipients is the bridge's (`Capabilities`, the
-  provider's `group_max`): Telnyx 8 (`/v2/messages/group_mms`), Twilio 10 (a Conversation of the room's numbers, US/CA
-  +1 long codes), Sinch none (a group room on a Sinch bridge refuses to send and says why).
+  provider's `group_max`): Telnyx 8 (`/v2/messages/group_mms`), Twilio 9 (a Conversation of the room's numbers, at most 10
+  participants with ours, US/CA +1 long codes), Sinch none (a group room on a Sinch bridge refuses to send and says why).
 - **Providers** ([SMS](../docs/interfaces/SMS.md)): the SMS adapter is one provider-neutral core
   (`crates/moqui-channels/src/sms.rs`, the `SmsProvider` trait: the send rules and limits, refusals, the never-resend
   rule, the webhook's checks, `receive#Sms` and `note#DeliveryReceipt`) with a module per provider in
