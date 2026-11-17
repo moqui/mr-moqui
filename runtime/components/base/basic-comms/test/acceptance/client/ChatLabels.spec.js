@@ -3,7 +3,8 @@
 // stand-in host and server (pages/ChatLabels.page.js). The lock is in the header and the room list for an encrypted room
 // only, with a check when every device is verified and Verify in its banner when not; a plain private room and a direct
 // chat have the open lock and the plain banner; a public channel the open lock and no banner; the phone number's room the
-// SMS banner and "Text message" in its composer; a bridged room the bridge banner and the network in its composer. The call
+// SMS banner and "Text message" in its composer; a bridged room the bridge banner and the network in its composer; the
+// members pane says the label and checks a verified person, and Verify in the banner asks the other person's device. The call
 // states are the call screen's (Comms-Messaging phase 4). An acceptance test (a walk at two widths):
 // ./moq accept basic-comms --spec ChatLabels
 const SCRIPTS = ["/libs/vue/vue.runtime.global.prod.js", "/libs/quasar/quasar.umd.prod.js", "/libs/quasar/lang/en-US.umd.prod.js",
@@ -59,16 +60,22 @@ function problems(rooms) {
 
 feature("on a phone each room shows its E2EE label: the lock for end to end only, the banner of its state, and the composer's hint for a text and a bridge", {
     when() { return pages.phone.evaluate("window.labels.walk()") },
-    then({ width, rooms }) {
+    then({ width, rooms, members, verify }) {
         width == 390
         problems(rooms) == ""
+        // the members pane says the label too (§6.1 rule 1) and checks the verified person (rule 3)
+        members.label == "verified" && members.checks >= 1
+        // Verify asks the other person's device (COM-UI-013)
+        verify.title.includes("Verify Bob Baker") && verify.device.includes("Bob's laptop") && verify.verifyButton
     }
 })
 
 feature("on a desktop each room shows the same labels, in Chat's rail and room", {
     when() { return pages.desktop.evaluate("window.labels.walk()") },
-    then({ width, rooms }) {
+    then({ width, rooms, members, verify }) {
         width == 1280
         problems(rooms) == ""
+        members.label == "verified" && members.checks >= 1
+        verify.title.includes("Verify Bob Baker") && verify.device.includes("Bob's laptop") && verify.verifyButton
     }
 })

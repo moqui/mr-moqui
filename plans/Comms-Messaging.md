@@ -28,7 +28,7 @@ Parts:
 |---|---|---|
 | §2: phone layout | Built (PR #203, phase 1) except voice notes (phase 7) and the checks on a real phone (§2.3) | 1, done |
 | §3: desktop gaps | Planned; the palette and its Rooms source are built for the web | 8 |
-| §4: reactions and the message menu | Partial: the long-press sheet and a fixed emoji grid are built | 6 |
+| §4: reactions and the message menu | Built (phase 6): one action list, the emoji picker, who reacted and voted by touch, Info; a real phone's feel left | 6, done |
 | §5: details tabs and new services | Partial: People, Pinned and Files (All, Pictures) panes are built; the services are planned | 7 |
 | §6: E2EE policy and labels | Planned; the call rule and what E2EE by default makes are decided (§19). First sign-in on a new phone still needs a design (§6.5) | 3 |
 | §7: notifications | Planned; payload encryption reuses the Web Push code | 2 |
@@ -181,11 +181,11 @@ acceptance client spec).
 
 | Item | Phone | Desktop | Status |
 |---|---|---|---|
-| Open the menu | Long-press a bubble (450 ms, with a short vibration) | Hover toolbar and right-click | Built on a phone. On the desktop rows a right-click shows the browser's menu (`Chat.qvue:1938` acts only with bubbles) |
-| Menu | Quick reaction bar with `QUICK_REACTIONS` and "+", then Reply, Reply in thread, Copy text, Copy link, Forward, Edit, Pin, Mark unread from here, the apps' actions, File on a record, Info, Delete | Same list | Partial: the sheet lacks the apps' actions and File on a record, which the hover menu has. One list for both. Info is planned |
-| Full picker | A searchable emoji picker with categories and recent emoji (kept in `storage`) | Same | Planned: an `m-emoji-picker` component with an emoji name data file (a vendored library through `libs/refresh.mjs`). Today a fixed grid of 40 |
-| Who reacted | Long-press a reaction chip: a list of people. A tap still adds or removes my own | Hover a chip | Partial: hover only, so no touch path. The same for who voted in a poll |
-| Info | See below | Same | Planned |
+| Open the menu | Long-press a bubble (450 ms, with a short vibration) | Hover toolbar and right-click | Built (phase 6): a right click on a desktop row opens the menu at the pointer; on a link, an editor or selected text the browser's menu stays |
+| Menu | Quick reaction bar with `QUICK_REACTIONS` and "+", then Reply, Reply in thread, Copy text, Copy link, Forward, Edit, Pin, Mark unread from here, the apps' actions, File on a record, Info, Delete | Same list | Built (phase 6): one list (`chat-message-menu`, `messageActions`) for the sheet, the hover toolbar's More (its quick reactions are on the toolbar) and the right-click menu |
+| Full picker | A searchable emoji picker with categories and recent emoji (kept in `storage`) | Same | Built (phase 6): `m-emoji-picker` (`WebrootEmoji.js`) over `libs/emoji/emoji.json` (unicode-emoji-json 0.9.0, MIT, Emoji 15.1 and earlier); recent emoji per user under the storage scope; also the composer's |
+| Who reacted | Long-press a reaction chip: a list of people. A tap still adds or removes my own | Hover a chip | Built (phase 6), and the same for who voted on a poll option; the tooltip is for a pointer only |
+| Info | See below | Same | Built (phase 6): `moqui.chat.messageInfo`, the message read again (`timeline?eventSeq=`); the terminal's per message (`ChatTui.xml`, `infoSeq`) |
 
 **Info** (COM-UI-008) shows only what the server knows:
 
@@ -296,9 +296,12 @@ and three reactions, on a phone and on a desktop (acceptance client spec).
 7. Mail is never shown with a lock or a chat E2EE label. Where a person's mail shows beside their chats, it says
    "Email is not end-to-end encrypted" (COM-UI-019).
 
-Rules 1, 2, 4, 6 and 7 are built (phase 3, `fdd1ab597`): the labels of §6.2 in the room and its lists, and rule 4 on the
-server. Rule 3's check marks are the lock's check of a room whose devices are all verified; the warning before a send
-to a verified person's new device is not built. Rule 5 is phase 10.
+Rules 1 to 4, 6 and 7 are built (phase 3, `fdd1ab597`, and its review, `1de64af65`): the labels of §6.2 in the room, its
+lists, its members pane and settings; rule 3's checks by a verified person (Members, their messages), verifying another
+person by emoji in Chat, and the warning before a send to a verified person's new device or new identity (Verify, or
+Send anyway); rule 4 on the server and in Chat's call. Rule 7: no lock in Mail; the "Email is not end-to-end encrypted"
+line waits for the place a person's mail shows beside their chats (phase 8, the `mail` state of the label). Rule 5 is
+phase 10.
 
 Server work for rule 4 (built):
 - `roomRequiresE2ee` read only the room's `callE2eeRequired`. It now also returns true for a room with `encrypted`.
@@ -1129,7 +1132,7 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 | 3 | E2EE labels and the call rule: done 2026-11-17 (`fdd1ab597`) | §6.1–§6.4 | Medium |
 | 4 | Calls: flow and screen | §8.3 items 1–7 | Large |
 | 5 | Calls: network tests, then resilience: done 2026-11-17 (`64c002d20`; the browser suite under sudo and real phones left) | §8.3 items 8–15, §8.4 | Large |
-| 6 | Message menu, reactions, Info | §4 | Medium |
+| 6 | Message menu, reactions, Info: done 2026-11-17 (`acc6d1b66`; a real phone's feel left) | §4 | Medium |
 | 7 | Details tabs and services, voice notes | §5 | Medium |
 | 8 | Desktop gaps | §3 | Medium |
 | 9 | The user's phone number | §9 | Medium, plus the user's steps |
@@ -1267,9 +1270,22 @@ Done 2026-11-17 in `fdd1ab597` ([review](ui-review-basic-comms.md) COM-UI-001, 0
   (`BasicCommsBridges`, `chat_bridge_tests`, moqui-channels). Acceptance: `ChatLabels` (each room state at 390×844 and
   1280×800 in the bundled shell, offline) and `EncryptedChatFlow`'s verified-only feature (who was left out, and
   `m.unverified` to the reader).
-- Left: the call screen's label (phase 4, from `e2eeLabel`'s call states); the warning before a send to a verified
-  person's new device (rule 3); the label in a notification (phase 2's payload); Mail's line beside a person's chats
-  (phase 8, the `mail` state).
+- Review (`1de64af65`): verifying another person (Members' Verify, the banner's and the "Not readable by" line's, over the
+  to-device SAS/QR flow, in the shared `m-chat-verification` card My devices uses too; a request from another person in
+  the open room); rule 3 (the checks, `verifiedUserProblem` with Verify or Send anyway, `onTrust` refreshes); the label in
+  the members pane and Room settings; no lock in New room's Private, the not-available state, Mail and Remove the PIN; the
+  "Not readable by" note kept per account; a members-only record room plain, SMS with another bridge, an inbound-only
+  bridge; the withheld code when the sync fails; `requireE2ee` on an encrypted room's call. Tests: `WebrootChat`;
+  acceptance `EncryptedChatFlow` (john.doe verifies b by emoji and the label has its check; b's new device stops the next
+  send until Send anyway) and `ChatLabels` (the members pane, Verify from the banner).
+- Second review (`b33d3213a`): Send anyway is kept in the browser per account and room (by device key or master key),
+  never as the SDK's trust, so "only verified devices" stays strict; the check before a send is the one gate and then
+  shares with all devices, so Verify then send works; a person verified by emoji only is covered; the sender's check
+  needs a verified device (`verifiedSender`); edits and reactions ask too; incoming requests named, cancelled on close.
+  Acceptance `EncryptedChatFlow` covers Verify then send and Send anyway under only verified devices.
+- Left: the call screen's label (phase 4, from `e2eeLabel`'s call states); the label in a notification (phase 2's
+  payload); Mail's line beside a person's chats (phase 8, the `mail` state); a request from another person when no
+  encrypted room is open shows only on My devices.
 
 Planned:
 - The label state function in `moqui.chat`; the lock and the room type icons; the banners and composer hints of §6.2
@@ -1338,6 +1354,25 @@ Planned:
     pages share one Chromium).
 
 #### Phase 6: message menu, reactions, Info
+
+Done 2026-11-17 in `acc6d1b66` ([review](ui-review-basic-comms.md) COM-UI-008, 034, 035). No server transition was
+needed: `timeline?eventSeq=` (get#Timeline, which checks the room) gives the one message with its delivery and the
+members' read markers.
+
+| Work | Files |
+|---|---|
+| One action list (`messageActions`, `chat-message-menu`) for the sheet, the hover toolbar's More and a desktop row's right click; who reacted and who voted by a long press (`pressStart`, `showPeople`); the Info dialog | `Chat.qvue` |
+| `messageInfo`, `messageInfoLines` | `WebrootChat.js` |
+| `moqui.emoji`, `m-emoji-picker`; its data file, license and notice | `WebrootEmoji.js`, `WebrootVue.qvt.css`, `libs/refresh.mjs`, `libs/emoji/`, `MANIFEST.json`, `NOTICES.md` |
+| The script in the pages and the shell, the precompiled client components, the staged library | `qapps.xml`, `index.html`, `libs.txt`, `qvt.rs`, `WebrootVue.qvt.render.js` |
+| Info per message in text | `ChatTui.xml`, `Chat.tui.json` |
+| Bundled screens regenerated | `bundled-screens.js` |
+
+- Tests. Regression: the Info rules (`WebrootChat`: read markers at or after, a member with receipts off not listed,
+  the viewer's receipts off, "and N more", each network's delivery, a thread, never "not read"); the picker
+  (`WebrootEmoji`: search, recent, groups); the one list in the sheet, More and the right click, and Info read again
+  (`ShellSync`); the terminal's Info (`BasicCommsBridges`). Acceptance: `PhoneReactions` (react, who reacted, take it
+  back, the picker and Info by made touch events at 390×844 in the bundled shell, offline).
 
 - One action list for the sheet and the hover menu; right-click on a desktop row.
 - `m-emoji-picker` in `webroot/js` with its data file; recent emoji in `storage`.

@@ -695,6 +695,15 @@ form.q-form.m-status-form, .m-status-form { display: inline-flex; width: auto; }
 .m-rich-text-content .ProseMirror-yjs-selection { border-radius:2px; }
 .body--dark .m-rich-text-content .collaboration-carets__label { box-shadow:0 0 0 1px rgba(0,0,0,0.4); }
 
+/* m-emoji-picker (WebrootEmoji.js): a search line, the group tabs and a grid of plain buttons (a group has up to 400) */
+.m-emoji-picker { width:100%; max-width:360px; }
+.m-emoji-tabs { overflow-x:auto; }
+.m-emoji-tab-on { background:color-mix(in srgb, var(--q-primary) 14%, transparent); }
+.m-emoji-grid { height:260px; max-height:50vh; overscroll-behavior:contain; }
+.m-emoji-cell { width:40px; height:40px; padding:0; border:0; border-radius:8px; background:transparent; font-size:24px; line-height:40px;
+    cursor:pointer; font-family:"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
+.m-emoji-cell:hover, .m-emoji-cell:focus-visible { background:rgba(127,127,127,0.18); outline:none; }
+
 /* Message actions are available from the keyboard as well as pointer hover. Keep the focus ring inside the timeline. */
 .m-chat-msg:focus-visible { outline:2px solid var(--m-link); outline-offset:-2px; }
 

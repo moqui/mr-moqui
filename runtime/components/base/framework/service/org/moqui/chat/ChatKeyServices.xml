@@ -442,6 +442,18 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatKeys.js').execute('findBackupVersions', context))</script></actions>
     </service>
 
+    <service verb="get" noun="PeerNames">
+        <description>The names of the people of userIdList (at most 50) whose devices the current user reaches (the user,
+            and those sharing a room or a live call): nameMap userId to name. The others are left out, as their devices are
+            (My devices names the other person of a verification by it).</description>
+        <in-parameters><parameter name="userIdList" type="List"/></in-parameters>
+        <out-parameters>
+            <parameter name="nameMap" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatKeys.js').execute('peerNames', context))</script></actions>
+    </service>
+
     <!-- ========== Only verified devices ========== -->
 
     <service verb="get" noun="ChatKeySettings">

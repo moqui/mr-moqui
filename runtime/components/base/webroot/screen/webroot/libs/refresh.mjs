@@ -430,6 +430,18 @@ SIL Open Font License 1.1 (the fonts): the full text is in licenses/OFL-1.1.txt,
     licenseFiles: ['LICENSE'],
   },
   {
+    // The emoji and their names of m-emoji-picker (js/WebrootEmoji.js, plans/Comms-Messaging.md §4): Unicode's emoji by group,
+    // made smaller (the emoji and its name only) and left at Emoji 15.1, which current systems draw. Pinned Nov 17, 2026;
+    // 0.9.0 was published Apr 18, 2026.
+    id: 'emoji', name: 'unicode-emoji-json', npm: 'unicode-emoji-json', version: '0.9.0', license: 'MIT',
+    licenseNote: 'The data is from unicode.org (the Unicode License v3 of its data files: https://www.unicode.org/license.txt).',
+    copy: [],
+    build: 'data-by-group.json made into {version, groups: [{slug, name, emoji: [[emoji, name]]}]}, the emoji of ' +
+      'emoji_version 15.1 or earlier, in the order of the file.',
+    produce: (ctx) => [['emoji/emoji.json', ctx.emojiData()]],
+    licenseFiles: ['LICENSE'],
+  },
+  {
     id: 'mermaid', name: 'Mermaid', npm: 'mermaid', version: '11.17.2', license: 'MIT',
     copy: [['dist/mermaid.min.js', 'mermaid/mermaid.min.js']],
     licenseFiles: ['LICENSE'],
@@ -688,6 +700,14 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
         if (text.toLowerCase().includes(banned)) throw new Error(`the OpenUI Lang bundle still names ${banned}`);
       }
       return out;
+    },
+    emojiData() {
+      const lib = LIBS.find((l) => l.id === 'emoji');
+      const groups = JSON.parse(readFileSync(join(packages.emoji.root, 'data-by-group.json'), 'utf8'));
+      const drawn = (version) => { const [major, minor] = String(version).split('.').map(Number); return major < 15 || (major === 15 && (minor || 0) <= 1); };
+      const out = { version: lib.version, groups: groups.map((group) => ({ slug: group.slug, name: group.name,
+        emoji: group.emojis.filter((one) => drawn(one.emoji_version)).map((one) => [one.emoji, one.name]) })) };
+      return Buffer.from(JSON.stringify(out) + '\n', 'utf8');
     },
     esbuildMarked() {
       const src = join(packages.marked.root, 'lib', 'marked.umd.js');
