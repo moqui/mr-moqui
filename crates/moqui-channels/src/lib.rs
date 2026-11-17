@@ -54,7 +54,10 @@ moqui_core::extension::submit! {
 
 /// The adapters of this crate: one for each SMS provider, by its adapter name.
 pub fn adapters() -> Vec<Arc<dyn ChatBridgeAdapter>> {
-    vec![Arc::new(sms::SmsAdapter::new(providers::telnyx::Telnyx))]
+    vec![
+        Arc::new(sms::SmsAdapter::new(providers::telnyx::Telnyx)),
+        Arc::new(sms::SmsAdapter::new(providers::twilio::Twilio::default())),
+    ]
 }
 
 /// Call a framework service with authorization off (the adapters' internal calls), its recorded errors an error here and

@@ -18,5 +18,7 @@
 //! | Module | Adapter (`adapterName`) | Webhook signature, checked on |
 //! | --- | --- | --- |
 //! | [`telnyx`] | `sms` | Ed25519 under the account's public key: the edge node |
+//! | [`twilio`] | `sms-twilio` | HMAC-SHA1 under the Auth Token over the URL and the form: the local node |
 
 pub mod telnyx;
+pub mod twilio;

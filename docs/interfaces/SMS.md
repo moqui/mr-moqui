@@ -241,6 +241,105 @@ sending profile's number, and Mantle answers the `sms-consent` hook from its con
 | Idempotent sends | no: a lost answer is uncertain |
 | Group texts | yes: group MMS, one room for a set of outside numbers (8 recipients at most, plus our number), receipts per recipient |
 
+## Providers
+
+### Twilio
+
+**Not yet tested with Twilio.** The `sms-twilio` adapter (`crates/moqui-channels/src/providers/twilio.rs`, group texts
+in `twilio/group.rs`) is built from Twilio's documentation and checked against a fake Twilio only; have it tested live
+before relying on it. What is above holds for it too (the checks before a send, the pair and group rooms, opt-out,
+the limits); this section is what differs.
+
+1. **The account.** In the Twilio console: a phone number (a US or Canadian long code for group texts), an API key
+   (`SK...` and its secret; or the account's Auth Token for the API too), and the account's primary Auth Token, which
+   signs every webhook. For US texting the number needs A2P 10DLC registration through Twilio (or a verified toll-free
+   number); Moqui does not register or check it (Twilio's 30034 and 30032 are kept as `notRegistered`).
+2. **A Messaging Service** (optional): a text then goes from the service (`MessagingServiceSid`; its sender pool picks
+   the number) instead of `From` our number. Leave the service's own status callback empty: each send names the
+   bridge's webhook as its `StatusCallback`.
+3. **The webhook URL.** On the number (or the Messaging Service's Integration), "A message comes in": `POST
+   https://<server>/channels/<chatBridgeId>/webhook`, exactly as Moqui sees it: `channels_public_url` and that path,
+   or the bridge's `webhookUrl` when Twilio reaches the server at another address (a proxy). Twilio signs the URL it
+   posts to, so a different scheme, host, path or query fails the signature (the default port may be named or not:
+   both are tried). Twilio does not try a webhook again after a 5xx by default: set the number's "Primary handler
+   fails" fallback URL to the same URL, so a text that came while the server was busy is not lost.
+4. **The bridge.** System, Chat Bridges, network SMS, adapter `sms-twilio`, configuration (kept encrypted):
+
+   | Key | What |
+   | --- | --- |
+   | `accountSid` | The account, `AC...`, required |
+   | `authToken` | The primary Auth Token, required: the webhooks' signature key (and the API's auth with no API key) |
+   | `apiKeySid`, `apiKeySecret` | The API key the API calls and file fetches use (Basic auth), both or neither |
+   | `messagingServiceSid` | `MG...`: texts go from the service instead of from our number |
+   | `conversationServiceSid` | `IS...`: the Conversations service group texts are kept in; else the account's default service |
+   | `webhookUrl` | The URL Twilio posts to, when it is not `channels_public_url` and the route's path |
+   | `apiBaseUrl` | `https://api.twilio.com` |
+   | `conversationsBaseUrl`, `mediaContentBaseUrl` | `https://conversations.twilio.com`, `https://mcs.us1.twilio.com` (a test's fake) |
+   | `maxTextLength` | 1600 characters |
+   | `maxMediaCount`, `maxMediaBytes` | 10 files and 5 MB in all for an MMS that goes out |
+   | `maxInboundMediaBytes`, `sendsPerMinute`, `allowInternalAddresses` | As for Telnyx |
+
+**Out.** `POST /2010-04-01/Accounts/{AccountSid}/Messages.json`, form-encoded, Basic auth: `To`, `From` or
+`MessagingServiceSid`, `Body`, a `MediaUrl` for each file (the file's signed address), `StatusCallback`. Twilio's `sid`
+is the delivery's remote id. Twilio has no idempotency key for a send, so an answer lost in flight is uncertain and
+never sent again on its own. Its error codes:
+
+| Code | The delivery |
+| --- | --- |
+| 21610 (the person sent STOP) | `optedOut`, and the pair is marked opted out (`note#SmsKeyword` STOP), so the next text is refused before Twilio |
+| 21211, 21614 | `badNumber` |
+| 21408 (the region is not enabled for the account) | `internationalNotEnabled` |
+| 30007 | `filtered` |
+| 30032, 30034 | `notRegistered` |
+| 20429, 21611, HTTP 429 | tried again after the backoff |
+| another | `providerRefused`, with Twilio's message |
+
+**In.** Every webhook is a form post signed in `X-Twilio-Signature`: Base64 HMAC-SHA1 under the Auth Token of the URL
+and each parameter's name and value, sorted by name (case-sensitive), with no separators; a JSON body is signed by its
+SHA-256 in the URL's `bodySHA256` and the URL alone. It is compared in constant time. The token is a secret, so behind
+an edge node the signature is checked on the local node ([Behind an edge node](#setup)); the edge node only queues.
+The signature has no time in it: a copy is answered `duplicate` while the replay cache holds it, and after that the ids
+make it a no-op (an inbound `MessageSid` is taken once, a receipt's status once). Each answer of 2xx is empty TwiML
+(`<Response/>`, `text/xml`), so Twilio sends no reply of its own making.
+
+- An inbound text (`MessageSid`, `From`, `To`, `Body`, `NumMedia` and `MediaUrl{N}`, `MediaContentType{N}`) goes to
+  `receive#Sms` as Telnyx's does. Its files are fetched with the API's Basic auth (Twilio's media URLs need it); a
+  redirect to another host (Twilio's file store) never gets the `Authorization` header.
+- A status callback (`MessageStatus`, `ErrorCode`), one a change and in no set order: `sent` is sent, `delivered` and
+  `read` delivered, `undelivered`, `failed` and `canceled` failed with Twilio's code (`Twilio error 30003: the phone is
+  unreachable`); `queued`, `accepted`, `scheduled` and `sending` are before the carrier and left. A late `sent` never
+  takes a delivered text back.
+
+**Opt-out.** With Twilio's Advanced Opt-Out on (the default on a Messaging Service), Twilio answers STOP, START and
+HELP itself, blocks sends to a number that sent STOP (21610, above), and still posts the keyword's text with
+`OptOutType` (`STOP`, `START`, `HELP`). Moqui keeps the opt-out from that text once: its own keywords as for Telnyx,
+and an `OptOutType` of a keyword the account added in Twilio (one Moqui does not know) too; the text is still a message
+in the room. Turn Twilio's own replies off in the console only if the organization answers keywords another way.
+
+**Group texts** go through Twilio's Conversations API: its Messages API has no group MMS. A group is our number and at
+most 9 others (a Twilio group Conversation has at most 10 participants), all US or Canadian (+1) long codes; another
+is refused (`groupTextsNotSupported`). A group room's first send makes its Conversation: looked up by a unique name of
+the bridge and the room's numbers first (so a send after a lost answer finds the one made before, never a second), else
+made with that name; our number joins as the chat participant (`MessagingBinding.ProjectedAddress`), each other number
+as an SMS participant (`MessagingBinding.Address`); a webhook of the Conversation names the bridge's webhook URL for
+`onMessageAdded` and `onDeliveryUpdated`; and the room's mapping keeps the Conversation's SID
+(`ChatRoomBridge.externalThreadId`, `store#MappingThread`). Nothing reaches a phone until the message is posted
+(`POST /v1/Conversations/{CH}/Messages`, `Author` our number), so a step before it that fails is tried again; an answer
+lost on the post itself is uncertain. A group text carries words only: Twilio takes a Conversation's files only as
+uploads to its Media Content Service, which the adapter does not do yet, so a group text with files is refused
+(`groupMediaNotSupported`). In: `onMessageAdded` is a text of the Conversation (`Author` the sender), its recipients
+the Conversation's numbers; `onDeliveryUpdated` is one recipient's receipt (`ParticipantSid`, `Status`, `ErrorCode`),
+kept per recipient as Telnyx's are. A Conversation's participants are read from Twilio once a process. A group that
+someone else starts reaches Moqui only when the number's Messaging Service hands inbound messages to Conversations
+(autocreation); set the Conversations service's webhook (post-event, `onMessageAdded`, `onDeliveryUpdated`) to the
+bridge's webhook URL too. Turning that on moves every inbound text of the service into Conversations, so do it only
+for a number kept for group texts.
+
+**Not confirmed in Twilio's documentation** (check them in the live test): the HTTP status Twilio answers for a
+Conversation or participant that is there already (taken as 409); the `Media` parameter of `onMessageAdded` and its
+files' address (`/v1/Services/{IS}/Media/{ME}/Content` on the Media Content Service); whether Twilio signs a URL's
+connection-override fragment (`#rc=...`; use the fallback URL instead); the codes 30032 and 30034.
+
 ## Tests
 
 - `crates/moqui-channels/src/tests.rs`, against a fake Telnyx on loopback (each well under a second): a signed text in,

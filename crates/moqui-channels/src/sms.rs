@@ -371,6 +371,25 @@ pub trait SmsProvider: Send + Sync + Sized + 'static {
     ///
     /// Returns the answer to a body that names no event this adapter can work.
     fn parse(&self, request: &WebhookRequest) -> Result<SmsEvent, WebhookResponse>;
+    /// [`Self::parse`] on the local node with the bridge's whole configuration and the guarded client, for a provider
+    /// whose event needs what it keeps or what its API says (Twilio's Conversations: a group's numbers). The default is
+    /// [`Self::parse`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the answer to a body that names no event this adapter can work, or 503 when what it needs cannot be read
+    /// now.
+    fn parse_on(
+        &self,
+        client: &RestClient,
+        bridge: &BridgeInfo,
+        config: &Self::Config,
+        settings: &Settings,
+        request: &WebhookRequest,
+    ) -> Result<SmsEvent, WebhookResponse> {
+        let _ = (client, bridge, config, settings);
+        self.parse(request)
+    }
     /// The answer the provider gets, from the core's (Twilio wants TwiML); the default is the core's.
     fn respond(&self, response: WebhookResponse) -> WebhookResponse {
         response
@@ -814,9 +833,14 @@ impl<P: SmsProvider> SmsAdapter<P> {
     /// The event step of [`Self::handle`] alone, after the signature and replay checks: on any node after them, and on
     /// a local node for a request its edge node queued (verified there, or by `apply#EdgeWebhook` here).
     fn apply(&self, bridge: &BridgeInfo, request: &WebhookRequest) -> WebhookResponse {
-        let worked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match self.provider.parse(request) {
-            Ok(event) => self.work(bridge, event),
-            Err(answer) => answer,
+        let worked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let settings = self.settings(bridge);
+            let config = self.provider.config(&bridge.config);
+            let client = self.client(settings.allow_internal);
+            match self.provider.parse_on(client, bridge, &config, &settings, request) {
+                Ok(event) => self.work(bridge, event),
+                Err(answer) => answer,
+            }
         }));
         let response = worked.unwrap_or_else(|_| WebhookResponse::text(500, "the request failed"));
         self.provider.respond(response)
