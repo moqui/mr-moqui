@@ -115,3 +115,55 @@ fn a_script_notes_an_auth_failure_for_the_web_protection() {
     assert!(crate::web::take_auth_failure());
     assert!(!crate::web::take_auth_failure(), "taken once");
 }
+
+/// SEC-PSS-25: a script signs a value it hands a client (an article's rating nonce) with the server's own key: the grant
+/// checks for its purpose and subject until it expires, and not for another purpose or subject, with its expiry
+/// changed, or once the server's key changes; with no key there is no grant.
+#[test]
+fn a_server_grant_checks_for_its_purpose_and_subject_until_it_expires() {
+    use crate::script::runtime::{clear_context_stack, eval_value};
+    use base64::Engine as _;
+    let _lock = crate::user::session::cookie_property_lock();
+    let previous = moqui_lib::env::get_prop_or_env("session_cookie_key");
+    let key = |byte: u8| base64::engine::general_purpose::STANDARD.encode([byte; 32]);
+    moqui_lib::env::set_property("session_cookie_key", key(5));
+    clear_context_stack();
+    let checks = eval_value(
+        "const t = ec.user.serverGrant('article-rating', 'site1:page1', 60); \
+         const [expires, tag] = t.split('.'); \
+         [ec.user.checkServerGrant('article-rating', 'site1:page1', t), \
+          !ec.user.checkServerGrant('article-rating', 'site1:page2', t), \
+          !ec.user.checkServerGrant('other-purpose', 'site1:page1', t), \
+          !ec.user.checkServerGrant('article-rating', 'site1:page1', (Number(expires) + 1000) + '.' + tag), \
+          !ec.user.checkServerGrant('article-rating', 'site1:page1', '1.' + tag), \
+          !ec.user.checkServerGrant('article-rating', 'site1:page1', null), \
+          !ec.user.checkServerGrant('article-rating', 'site1:page1', 'x'.repeat(40)), \
+          (() => { try { ec.user.serverGrant('', 'x'); return false } catch (e) { return true } })(), \
+          Number(expires) - Date.now() > 50000 && Number(expires) - Date.now() <= 60000].map(String).join()",
+    );
+    let token = eval_value("ec.user.serverGrant('article-rating', 'site1:page1')")
+        .map(|v| moqui_lib::object::to_plain_string(&v));
+    moqui_lib::env::set_property("session_cookie_key", key(6));
+    let after_new_key = token.as_ref().map(|token| {
+        eval_value(&format!(
+            "ec.user.checkServerGrant('article-rating', 'site1:page1', '{token}')"
+        ))
+        .map(|v| moqui_lib::object::to_plain_string(&v))
+    });
+    moqui_lib::env::clear_property("session_cookie_key");
+    let no_key = eval_value("(() => { try { ec.user.serverGrant('article-rating', 'x'); return 'made' } catch (e) { return 'refused' } })()")
+        .map(|v| moqui_lib::object::to_plain_string(&v));
+    if !previous.is_empty() {
+        moqui_lib::env::set_property("session_cookie_key", &previous);
+    }
+    assert_eq!(
+        moqui_lib::object::to_plain_string(&checks.unwrap()),
+        "true,true,true,true,true,true,true,true,true"
+    );
+    assert_eq!(
+        after_new_key.unwrap().unwrap(),
+        "false",
+        "a new server key ends every grant"
+    );
+    assert_eq!(no_key.unwrap(), "refused");
+}

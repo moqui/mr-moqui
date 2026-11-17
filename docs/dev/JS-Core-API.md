@@ -171,6 +171,8 @@ the user services call.
 | `singleUseCodeHash(code)` | The stored form of a single-use code |
 | `randomCode(width)` | A random number of `width` digits (6) as text, zero padded |
 | `randomString(length)` | Random URL-safe text of the length |
+| `serverGrant(purpose, subject, ttlSeconds)` | A token for the subject, valid `ttlSeconds` (3600; at most 7 days), keyed by a key the server derives for the purpose from its own secret (`session_cookie_key`), which no script reads: to sign a value handed to a client (a page's nonce) where `ec.resource.makeGrant` would need a key of the script's own. An error with no purpose or no server secret |
+| `checkServerGrant(purpose, subject, token)` | Whether the token is a `serverGrant` of this purpose and subject that has not expired; false for a null token. A new `session_cookie_key` ends every grant |
 | `totpSecret()` | A new TOTP shared secret (base32) |
 | `totpCodeValid(secret, code)` | Whether the code is the authenticator code of the secret now, or one period either side |
 | `totpCodeStep(secret, code, afterStep)` | The step (period number) the code is the authenticator code of the secret for now, one period either side, when it is after `afterStep` (the last step a code of the factor was taken for; null for none); else null. A factor keeps the step it took (`UserAuthcFactor.lastTotpStep`), so a code works once |
@@ -340,7 +342,7 @@ Change sets, version notes and change logs are described in
 | `writeTarGz(target, entries)` | A `.tar.gz` of entries |
 | `extractText(location, cacheKey, maxChars, cacheOnly)` | The text of a PDF, spreadsheet or text file (100000 characters), kept under `runtime://tmp/file-text` by the key; `""` when it has none; null with `cacheOnly` when not extracted yet |
 | `readSheetPreview(location, sheetName, maxRows, maxCols)` | The first rows of a sheet (100 by 26): `{sheetNames, sheetName, rows, truncated}`; null when it is not a spreadsheet |
-| `makeGrant(key, subject, ttlSeconds)` | A signed grant for the subject, valid `ttlSeconds` (3600) |
+| `makeGrant(key, subject, ttlSeconds)` | A signed grant for the subject, valid `ttlSeconds` (3600); with no key of the script's own, `ec.user.serverGrant` |
 | `checkGrant(key, subject, token)` | Whether the token is a valid grant of the same key and subject |
 
 ### Barcodes and rendering
@@ -1322,7 +1324,7 @@ Members Moqui Java does not have.
 |---|---|
 | `ec` | `search`, `llm` |
 | `ec.context` | Property reads and writes, `in`, `delete`, `Object.keys` |
-| `ec.user` | `machineTimeZone`, `passwordRules`, `loginRules`, `endVisit`, `hashPassword`, `passwordsMatch`, `checkOldPassword`, `initialAdminLocal`, `initialAdminAllowed`, `singleUseCodeHash`, `randomCode`, `randomString`, `totpSecret`, `totpCodeValid`, `totpCodeStep`, `totpUri`, `timestampMillis` |
+| `ec.user` | `machineTimeZone`, `passwordRules`, `loginRules`, `endVisit`, `hashPassword`, `passwordsMatch`, `checkOldPassword`, `initialAdminLocal`, `initialAdminAllowed`, `singleUseCodeHash`, `randomCode`, `randomString`, `serverGrant`, `checkServerGrant`, `totpSecret`, `totpCodeValid`, `totpCodeStep`, `totpUri`, `timestampMillis` |
 | `ec.l10n` | `getAvailableTimeZones`, `getAvailableLocales`, the time zone argument of `format` |
 | `ec.resource` | `makeChangeSet`, `putContent`, `getLastChange`, `getChildChanges`, `getChangeLog`, `getTreeSize`, `restoreVersion`, `getVersionBytes`, `textDiff`, `readLines`, `digest`, `digestText`, `hmac`, `gunzip`, `extractArchive`, `writeZip`, `writeTarGz`, `extractText`, `readSheetPreview`, `makeThumbnail`, `makePdfPreview`, `imageAvailable`, `makeGrant`, `checkGrant`, `markdownHtml`, `code128Svg`, `barcodeSvg`, `parseGs1`, `isValidGs1CheckDigit`, `theme`; version notes on a reference's `putText`, `putBytes` and `putStream`, and `getVersionDiff` |
 | `ec.artifactExecution` | `runAsSystem`, `runAsUser`, `isPermitted`, `isPermittedOwn` |
