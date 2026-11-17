@@ -1090,7 +1090,10 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="validate-entity" type="xs:string"/>
         <xs:attribute name="validate-field" type="xs:string"/>
     </xs:complexType>
-    <xs:complexType name="form-list-conditional-field"><xs:complexContent><xs:extension base="form-list-default-field">
+    <xs:complexType name="form-list-conditional-field"><xs:annotation><xs:documentation>
+        In a form-list, when neither the header-field nor the default-field has a title, the first conditional-field's title
+        heads the column (an empty one a blank header), not the field name in words as Java does.
+    </xs:documentation></xs:annotation><xs:complexContent><xs:extension base="form-list-default-field">
         <xs:attribute name="condition" type="xs:string" use="required">
             <xs:annotation><xs:documentation>A boolean expression in Groovy.</xs:documentation></xs:annotation>
         </xs:attribute>

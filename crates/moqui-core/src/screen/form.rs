@@ -557,7 +557,44 @@ fn assemble_node(
         let shape = entity_shape(entity_name)?;
         add_auto_entity_columns(&assembled, &base, &shape, displayed);
     }
+    if assembled.has_name("form-list") {
+        for field in assembled.children_named("field") {
+            conditional_header_title(&field);
+        }
+    }
     Ok(assembled)
+}
+
+/// A list column whose title is written only on a `conditional-field` (the column a condition shows: a cost for those who
+/// may read costs, an End link for a manager) is headed by that title, an empty one a blank header, and not by the field
+/// name in words: the first conditional-field's `title` goes to the default-field, else the header-field, when neither has
+/// one. Java heads such a column by the field name ("Rate Text"); every renderer reads the header from these two.
+fn conditional_header_title(field: &MNode) {
+    let header = field.first_named("header-field");
+    let default = field.first_named("default-field");
+    if [&header, &default]
+        .into_iter()
+        .flatten()
+        .any(|sub| sub.has_attribute("title"))
+    {
+        return;
+    }
+    let Some(title) = field
+        .children_named("conditional-field")
+        .iter()
+        .find_map(|sub| sub.attribute("title"))
+    else {
+        return;
+    };
+    match default.or(header) {
+        Some(sub) => sub.set_attribute("title", title),
+        // a field of conditional-fields alone is headed by its first one, as the renderers read it
+        None => {
+            if let Some(first) = field.first_named("conditional-field") {
+                first.set_attribute("title", title);
+            }
+        }
+    }
 }
 
 fn extends_node(
