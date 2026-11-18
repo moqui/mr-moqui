@@ -84,7 +84,7 @@ Telemetry is on by default in builds with the `telemetry` feature (`lite` and `e
 with an `artifact` override and the receiver limits written out:
 
 ```xml
-<telemetry enabled="${telemetry@enabled}" sample-ratio="${telemetry@sample-ratio}" interval-seconds="60"
+<telemetry enabled="true" sample-ratio="0" interval-seconds="60"
         span-retention-days="7" log-retention-days="7" error-retention-days="90"
         minute-retention-days="7" hour-retention-days="90" day-retention-days="730" annotation-retention-days="730">
     <artifact type="AT_ENTITY" spans="true" metrics="true"/>

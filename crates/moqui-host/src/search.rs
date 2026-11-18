@@ -408,14 +408,11 @@ fn signal(args: &[&str]) -> std::io::Result<std::process::ExitStatus> {
     Command::new("kill").args(args).stderr(Stdio::null()).status()
 }
 
-/// Start the install in `dir` when: the `search-facade` `cluster` `run` (`opensearch_run`) is not false, `dir/bin`
+/// Start the install in `dir` when: the `search-facade` `cluster` `run` is not false, `dir/bin`
 /// exists or the binary has OpenSearch `built_in`, there is no `dir/pid` (a node started with `-p pid` is managed
 /// outside this process, as Java leaves it), and the cluster url is this host.
 fn run_local_opensearch(factory: &ExecutionContextFactory, dir: &Path, built_in: bool, url: &str) -> bool {
-    let mut run = factory.conf_setting("search-facade/cluster", "run");
-    if run.is_empty() {
-        run = moqui_lib::env::get_prop_or_env("opensearch_run");
-    }
+    let run = factory.conf_setting("search-facade/cluster", "run");
     if run.trim().eq_ignore_ascii_case("false") {
         return false;
     }

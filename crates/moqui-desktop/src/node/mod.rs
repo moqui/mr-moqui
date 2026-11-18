@@ -294,7 +294,7 @@ pub(crate) fn listen_properties(port: u16) -> Vec<(&'static str, String)> {
         ),
         ("cluster_bind_address", "127.0.0.1".to_string()),
         ("cluster_https_port", "0".to_string()),
-        ("opensearch_run", "false".to_string()),
+        ("moqui_conf__search_facade__cluster__run", "false".to_string()),
     ]
 }
 

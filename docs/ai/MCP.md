@@ -23,13 +23,13 @@ The server is off by default; while it is off `/mcp` and its documents answer 40
 
 ```xml
 <llm-facade>
-    <mcp server-enabled="${mcp_enabled}" protocol-version="2026-07-28" tools-ttl-ms="300000" agent="mcp"
-            public-url="${mcp_public_url}" trust-forwarded-headers="false" request-state-key="${mcp_request_state_key}"
+    <mcp server-enabled="false" protocol-version="2026-07-28" tools-ttl-ms="300000" agent="mcp"
+            public-url="" trust-forwarded-headers="false" request-state-key=""
             approval-wait="20" max-direct-tools="40"/>
 </llm-facade>
 ```
 
-- `mcp_enabled=true` turns it on. A caller needs the `McpServerUse` and `AgentUse` permissions.
+- `moqui_conf__llm_facade__mcp__server_enabled=true` turns it on. A caller needs the `McpServerUse` and `AgentUse` permissions.
 - `agent` names the `AgentDefinition` that bounds the tools: it must serve `mcp` and have `exposeMcp="Y"` (the seed's
   `mcp` agent does). Its `AgentToolPolicy` rows are the server's allowlist and its role group the MCP role group, kept
   apart from the assistant's; what a caller gets is their own authority ∩ that role group ∩ that policy (plan 4.3). The

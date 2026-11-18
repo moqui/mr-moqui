@@ -470,7 +470,6 @@ const FIXED_PROPERTIES: &[&str] = &[
     "default_time_zone",
     "database_time_zone",
     "default_locale",
-    "search_backend",
 ];
 
 /// Why the property `name` is not changed by a conf reload, or `None` when it may be.

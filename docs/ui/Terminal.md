@@ -183,7 +183,7 @@ permission hooks: start the server outside it, or `claude` with those variables 
 
 ```xml
 <terminal max-sessions="16" max-sessions-per-user="4" detach-seconds="120" replay-kb="2048"
-        command-line="${terminal@command-line}" host-sessions="${terminal@host-sessions}" remote="${terminal@remote}"
+        command-line="dev" host-sessions="dev" remote="false"
         remote-reauth-minutes="60" host-max-sessions="32" host-max-sessions-per-user="16" host-detach-hours="72"
         host-directory="">
     <host-profile name="shell" title="Shell" integration="true"/>

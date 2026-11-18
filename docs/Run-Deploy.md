@@ -455,11 +455,11 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `mail-delivery@mx-require-tls` | empty | On an edge node with the MTA in moqui, the recipient domains (comma-separated, `*` for every one) whose MX gets mail only over STARTTLS with a certificate valid for the host, as under an MTA-STS `enforce` policy whatever the domain publishes: an MX with no STARTTLS or a failed handshake or certificate is tried again later and the message bounces after `mail-delivery@days`, never sent in clear text. Empty: STARTTLS when offered, with any certificate, else clear text ([Mail-Inbound](interfaces/Mail-Inbound.md#mail-out)) |
 | `mail-delivery@mx-override`, `mail-delivery@dns-offline` | empty | Testing and staging only: `domain=host:port` pairs (`*` for any) used in place of the MX, and `true` for no DNS query |
 | `logging@level`, `logging@dir` | `info`, `runtime://log` | The console level, and the directory of `moqui.log` and `moqui-error.log` |
-| `search_backend` | `postgres` | `postgres` or `opensearch` ([search](#search)) |
+| `search-facade@backend` | `postgres` | `postgres` or `opensearch` ([search](#search)) |
 | `example_disabled` | `false` | `true` leaves out the example component and its gallery on a dev instance |
 | `demo_disabled` | `true` | `false` loads the demo lock-down on a dev instance; a demo server names the component in its conf instead |
-| `llm_openai_url`, `llm_openai_api_key`, `llm_openai_model` | `https://api.openai.com`, empty, empty | The default model endpoint for Assist and the LLM services (the dev conf points it at `http://127.0.0.1:1234`) |
-| `llm_anthropic_api_key`, `llm_dev_model` | empty, `default` | Dev conf only: the Claude API key of its `claude-haiku` model (Claude Haiku 5.5), and the model id its features (Assist, titles, summaries, classify, AI fields) are bound to; `llm_dev_model=claude-haiku` in `runtime/.env` puts Assist on Claude. The startup report's LLM line names the model Assist is on |
+| `llm-facade/endpoint[default]@url`, `llm-facade/endpoint[default]@api-key`, `llm-facade/model[default]@name` | `https://api.openai.com`, empty, empty | The default model endpoint for Assist and the LLM services (the dev conf points it at `http://127.0.0.1:1234`) |
+| `llm-facade@default-model`, `llm-facade/endpoint[anthropic]@api-key` | `default`, empty | The model of every feature whose `bind` names none (Assist, titles, summaries, classify, AI fields in the default conf), and in the dev conf the Claude API key of its `claude-haiku` model (Claude Haiku 5.5); `moqui_conf__llm_facade__default_model=claude-haiku` with `moqui_conf__llm_facade__endpoint__ANTHROPIC__api_key` in `runtime/.env` puts the dev instance's features on Claude. The startup report's LLM line names the model Assist is on |
 
 The database properties are in [Database and search](#database-and-search), and the cluster properties in
 [Cluster](#cluster).
@@ -524,7 +524,7 @@ Server options:
 | `-p N`, `--port N` | The HTTP port (`webapp-list/webapp[webroot]@http-port`) |
 | `--https-port N` | The HTTPS listen port (`webapp-list/webapp[webroot]@https-listen-port`), or `off` |
 | `-c FILE`, `--conf FILE` | The runtime conf, as `MOQUI_CONF` does |
-| `--no-run-es` | Do not start the OpenSearch in `runtime/opensearch` (`opensearch_run=false`) |
+| `--no-run-es` | Do not start the OpenSearch in `runtime/opensearch` (`moqui_conf__search_facade__cluster__run=false`) |
 | `-D name=value` | Set a property for this run; repeatable |
 
 The Java forms `port=N` and `conf=FILE` also work.
@@ -717,11 +717,11 @@ transactional one, so it needs both external.
 Search runs on Postgres by default: tables in the `search` schema of the entity database, or a dedicated embedded
 cluster when the entity database is not Postgres. OpenSearch is optional:
 
-- set `search_backend=opensearch`, and `elasticsearch_url` (default `http://127.0.0.1:9200`), plus
-  `elasticsearch_user`, `elasticsearch_password` and `elasticsearch_index_prefix` as needed;
+- set `moqui_conf__search_facade__backend=opensearch`, and `search-facade/cluster@url` (default `http://127.0.0.1:9200`), plus
+  `search-facade/cluster@user`, `search-facade/cluster@password` and `search-facade/cluster@index-prefix` as needed;
 - `./moq opensearch-download` installs OpenSearch in `runtime/opensearch`;
-- the server starts that install and stops it on shutdown when `elasticsearch_url` is on this host, nothing answers
-  there, and there is no pid file. `opensearch_run=false` (or `--no-run-es`) turns that off;
+- the server starts that install and stops it on shutdown when `search-facade/cluster@url` is on this host, nothing answers
+  there, and there is no pid file. `moqui_conf__search_facade__cluster__run=false` (or `--no-run-es`) turns that off;
 - `./moq opensearch-start` and `opensearch-stop` run it as a daemon with a pid file.
 
 ### Snapshots
@@ -1724,7 +1724,7 @@ dev conf, with a few properties in their `.env`. Those names and the commands ar
    - grant `LlmGatewayUse` to the developers' group;
    - for each developer's key, add an `LlmApiClient` row with the `gateway` scope (System › LLM › Gateway). Its
      `allowedAliases`, `dailyTokens` and `dailyCost` limit that key.
-4. Optionally, turn on MCP (`mcp_enabled=true` in the conf) for coding agents. `/mcp/setup` gives a client config to paste
+4. Optionally, turn on MCP (`moqui_conf__llm_facade__mcp__server_enabled=true` in `runtime/.env`, or `llm-facade/mcp@server-enabled` in the conf) for coding agents. `/mcp/setup` gives a client config to paste
    ([MCP](ai/MCP.md)).
 
 ### Each dev instance
@@ -1746,8 +1746,8 @@ dev conf, with a few properties in their `.env`. Those names and the commands ar
      give the server's another name;
    - the task source (`moqui-rest`) with your token: Tasks lists your work items, and commits carry the current
      task's trailer;
-   - the LLM gateway's lines in `runtime/.env` (`llm_openai_url`, the alias as `llm_openai_model`, and as
-     `llm_openai_api_key` a key the server makes for its gateway alone, never your account's key), applied at the next
+   - the LLM gateway's lines in `runtime/.env` (`llm-facade/endpoint[default]@url`, the alias as `llm-facade/model[default]@name`, and as
+     `llm-facade/endpoint[default]@api-key` a key the server makes for its gateway alone, never your account's key), applied at the next
      start. The lines you had before are kept and put back by Remove. The gateway needs `LlmGatewayUse`; the key,
      made for the gateway alone, is its own client, so its `require-client` asks no `LlmApiClient` row of it
      ([Gateway](ai/Gateway.md));

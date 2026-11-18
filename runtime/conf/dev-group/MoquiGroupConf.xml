@@ -19,11 +19,9 @@
     <!-- The LLM gateway (docs/ai/Gateway.md) at /llm/v1: grant LlmGatewayUse to the developers' group, and for each
         developer's key add an LlmApiClient row with the gateway scope (System › LLM › Gateway), whose allowedAliases,
         dailyTokens and dailyCost limit that key. Each alias is a model name the developers call: a model of the registry
-        (System › LLM › Models; the endpoints' keys, as llm_openai_api_key, go in .env) or a feature whose binding it
-        follows. -->
-    <default-property name="llm_gateway_enabled" value="true"/>
-    <!-- MCP for coding agents (docs/ai/MCP.md): true turns it on, and /mcp/setup gives a client config to paste -->
-    <default-property name="mcp_enabled" value="false"/>
+        (System › LLM › Models; the endpoints' keys, as moqui_conf__llm_facade__endpoint__DEFAULT__api_key, go in .env)
+        or a feature whose binding it follows. MCP for coding agents (docs/ai/MCP.md): mcp server-enabled true turns it
+        on, and /mcp/setup gives a client config to paste. -->
 
     <!-- Backups: the team's data. The nightly backup_EmbeddedDatabase_daily job, paused in the seed data, runs from each
         boot (false pauses it; docs/Run-Deploy.md, Backups). It backs up the embedded database only. -->
@@ -32,7 +30,8 @@
     <entity-facade query-stats="true"/>
 
     <llm-facade>
-        <gateway enabled="${llm_gateway_enabled}" require-client="true" timeout="300">
+        <mcp server-enabled="false"/>
+        <gateway enabled="true" require-client="true" timeout="300">
             <alias name="default" feature="assist"/>
         </gateway>
     </llm-facade>

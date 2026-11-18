@@ -33,10 +33,10 @@ fn opensearch_backend_proxies_and_exports_telemetry() {
     let url = std::env::var("OPENSEARCH_URL").expect("set OPENSEARCH_URL to run this test");
     let prefix = format!("moqui_server_test_{}_", std::process::id());
     for (name, value) in [
-        ("search_backend", "opensearch"),
-        ("elasticsearch_url", url.as_str()),
-        ("elasticsearch_index_prefix", prefix.as_str()),
-        ("opensearch_run", "false"),
+        ("moqui_conf__search_facade__backend", "opensearch"),
+        ("moqui_conf__search_facade__cluster__url", url.as_str()),
+        ("moqui_conf__search_facade__cluster__index_prefix", prefix.as_str()),
+        ("moqui_conf__search_facade__cluster__run", "false"),
     ] {
         moqui_lib::env::set_property(name, value.to_string());
     }

@@ -103,9 +103,18 @@ fn usage_conf_forms_set_moqui_conf() {
 
 #[test]
 fn usage_no_run_es_sets_opensearch_run_false() {
-    assert_eq!(parse(&["no-run-es"]).value("opensearch_run"), Some("false"));
-    assert_eq!(parse(&["-no-run-es"]).value("opensearch_run"), Some("false"));
-    assert_eq!(parse(&["--no-run-es"]).value("opensearch_run"), Some("false"));
+    assert_eq!(
+        parse(&["no-run-es"]).value("moqui_conf__search_facade__cluster__run"),
+        Some("false")
+    );
+    assert_eq!(
+        parse(&["-no-run-es"]).value("moqui_conf__search_facade__cluster__run"),
+        Some("false")
+    );
+    assert_eq!(
+        parse(&["--no-run-es"]).value("moqui_conf__search_facade__cluster__run"),
+        Some("false")
+    );
 }
 
 #[test]
@@ -178,8 +187,8 @@ fn usage_later_assignment_replaces_an_earlier_one() {
         "8081",
     ]);
     assert_eq!(restored.value(super::HTTP_PORT), Some("8081"));
-    let search = parse(&["--no-run-es", "-D", "opensearch_run=true"]);
-    assert_eq!(search.value("opensearch_run"), Some("true"));
+    let search = parse(&["--no-run-es", "-D", "moqui_conf__search_facade__cluster__run=true"]);
+    assert_eq!(search.value("moqui_conf__search_facade__cluster__run"), Some("true"));
 }
 
 #[test]
@@ -195,7 +204,7 @@ fn usage_combined_server_options() {
     ]);
     assert_eq!(opts.value(super::HTTP_PORT), Some("8081"));
     assert_eq!(opts.value("MOQUI_CONF"), Some("conf/MoquiProductionConf.xml"));
-    assert_eq!(opts.value("opensearch_run"), Some("false"));
+    assert_eq!(opts.value("moqui_conf__search_facade__cluster__run"), Some("false"));
     assert_eq!(opts.value("entity_ds_db_conf"), Some("postgres"));
     assert!(parse(&[]).value(super::HTTP_PORT).is_none());
 }

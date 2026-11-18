@@ -999,7 +999,7 @@ Downloads opensearch-min for Linux (x64 or arm64) into runtime/opensearch. The v
 defaults to $OPENSEARCH_VERSION (.cargo/config.toml, MOQUI_OPENSEARCH_VERSION). The download is
 checked against the SHA-512 OpenSearch publishes beside it. An archive already in runtime/ is used
 instead of downloading. OpenSearch publishes no macOS tarball; on macOS run it another way and set
-elasticsearch_url.
+moqui_conf__search_facade__cluster__url.
 
 The archive is kept in $(embed_cache_dir)
 (MOQUI_EMBED_CACHE moves it), where an --embed-opensearch build (./moq build --embed-opensearch)
@@ -3028,7 +3028,7 @@ task_opensearch_download() {
     done
     case $(uname -s) in
         Linux) ;;
-        Darwin) die "OpenSearch publishes no macOS tarball; run it another way (Docker, Homebrew) and set elasticsearch_url" ;;
+        Darwin) die "OpenSearch publishes no macOS tarball; run it another way (Docker, Homebrew) and set moqui_conf__search_facade__cluster__url" ;;
         *) die "opensearch-download supports Linux only" ;;
     esac
     case $(uname -m) in

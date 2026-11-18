@@ -50,7 +50,7 @@ permission the demo data neither ends nor names there.
   the server stopped): visitors change the demo data.
 - Every visitor is John Doe, so the `ALL_SCREENS` tarpit (120 screens a minute per user) is shared.
 - Keep real keys and passwords out of the database: Tools' Data Grid shows every entity to a VIEW-only user.
-- Leave `llm_openai_api_key` empty, or accept the `llm-facade` `user-daily-cost` as the cap for every visitor together.
+- Leave `llm-facade/endpoint[default]@api-key` empty, or accept the `llm-facade` `user-daily-cost` as the cap for every visitor together.
 - To undo the lock-down on a database, load seed, seed-initial and demo data again with the component off.
 
 ## Tests

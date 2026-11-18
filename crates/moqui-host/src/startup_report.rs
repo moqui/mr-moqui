@@ -200,7 +200,9 @@ fn assist_model(conf_text: &str) -> Option<(String, String)> {
     let expand = |raw: String| moqui_lib::env::expand(&raw).unwrap_or(raw).trim().to_string();
     let conf = moqui_lib::node::MNode::parse_text("conf", conf_text).ok()?;
     let facade = conf.first_named("llm-facade")?;
-    let id = expand(facade.first_named_attrs("bind", &[("feature", "assist")])?.attribute("model")?);
+    // the assist bind's model, else the facade's default-model, which a bind with no model takes
+    let bind = facade.first_named_attrs("bind", &[("feature", "assist")])?;
+    let id = expand(bind.attribute("model").or_else(|| facade.attribute("default-model"))?);
     let name = facade
         .named_iter("model")
         .find(|model| model.attribute("id").map(expand).as_deref() == Some(id.as_str()))
@@ -221,7 +223,10 @@ fn record_agents(factory: &ExecutionContextFactory, report: &moqui_core::startup
     }
     let setting = |path: &str, name: &str| factory.conf_setting(path, name);
     let facade = setting("llm-facade", "enabled") != "false";
-    let model = moqui_lib::env::get_prop_or_env("llm_openai_model").trim().to_string();
+    let model = factory
+        .conf_value("llm-facade/model[default]@name")
+        .map(|found| found.value.trim().to_string())
+        .unwrap_or_default();
     let assist = assist_model(&factory.conf_text()).filter(|(id, _)| id != "default");
     report.record_default(
         Section::Integration,
@@ -230,14 +235,14 @@ fn record_agents(factory: &ExecutionContextFactory, report: &moqui_core::startup
             (false, _, _) => State::off("llm-facade enabled is false"),
             (true, Some((id, name)), _) if name.is_empty() => State::on(format!("Assist on {id}")),
             (true, Some((id, name)), _) => State::on(format!("Assist on {id} ({name})")),
-            (true, None, true) => State::on("no default model (llm_openai_model is not set)"),
+            (true, None, true) => State::on("no default model (llm-facade/model[default]@name is not set)"),
             (true, None, false) => State::on(format!("default model {model}")),
         },
     );
-    for (name, path, attribute, property) in [
-        ("MCP server", "llm-facade/mcp", "server-enabled", "mcp_enabled"),
-        ("A2A server", "llm-facade/a2a", "enabled", "a2a_enabled"),
-        ("LLM gateway", "llm-facade/gateway", "enabled", "llm_gateway_enabled"),
+    for (name, path, attribute) in [
+        ("MCP server", "llm-facade/mcp", "server-enabled"),
+        ("A2A server", "llm-facade/a2a", "enabled"),
+        ("LLM gateway", "llm-facade/gateway", "enabled"),
     ] {
         let on = facade && setting(path, attribute) == "true";
         report.record_default(
@@ -246,7 +251,7 @@ fn record_agents(factory: &ExecutionContextFactory, report: &moqui_core::startup
             if on {
                 State::on("")
             } else if facade {
-                State::off(format!("{property} is not true"))
+                State::off(format!("{path}@{attribute} is not true"))
             } else {
                 State::off("llm-facade enabled is false")
             },

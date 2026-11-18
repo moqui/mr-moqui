@@ -24,14 +24,14 @@ is a few properties.
 ## `.env`
 
 - **Group server**: `webapp-list/webapp[webroot]@http-host` and HTTPS as for one production server; the model endpoints' keys (such as
-  `llm_openai_api_key`); `ssh-server@public-port` when clients reach SSH on another port.
+  `llm-facade/endpoint[default]@api-key`); `ssh-server@public-port` when clients reach SSH on another port.
 - **Dev instance**:
 
   ```sh
   moqui_conf__webapp_list__webapp__WEBROOT__http_bind=127.0.0.1                     # Dev AIDE gives its users code execution
-  llm_openai_url=https://team.example.com/llm    # no /v1: the endpoint adds /v1/chat/completions
-  llm_openai_api_key=<access token>              # from the group server's Projects › Code › Git access
-  llm_openai_model=<alias>
+  moqui_conf__llm_facade__endpoint__DEFAULT__url=https://team.example.com/llm    # no /v1: the endpoint adds /v1/chat/completions
+  moqui_conf__llm_facade__endpoint__DEFAULT__api_key=<access token>              # from the group server's Projects › Code › Git access
+  moqui_conf__llm_facade__model__DEFAULT__name=<alias>
   ```
 
 - **Shared dev-aide server**: `dev_aide_shared=true`, and `webapp-list/webapp[webroot]@allow-origins` set to its own origin, such as

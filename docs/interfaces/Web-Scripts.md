@@ -235,7 +235,7 @@ in chunks) and the names in `skipHeaders`.
 
 | Path | Servlet | Upstream | Permission |
 |---|---|---|---|
-| `/search/*` | `SearchProxy` | the search store at `elasticsearch_url`, signed in as `elasticsearch_user`, bodies up to 100 MB for a bulk load | `SearchRemote` |
+| `/search/*` | `SearchProxy` | the search store at `search-facade/cluster@url`, signed in as `search-facade/cluster@user`, bodies up to 100 MB for a bulk load | `SearchRemote` |
 | `/dashboard/*` | `DashboardProxy` | OpenSearch Dashboards at its `proxyTo` init-param (`http://127.0.0.1:5601`), off when that is empty | `DashboardRemote` |
 
 For `/dashboard`, set `server.basePath: "/dashboard"` in `opensearch_dashboards.yml`.

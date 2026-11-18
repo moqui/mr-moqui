@@ -25,7 +25,7 @@ Each row is a program the server starts. A program named without a path (`git`, 
 
 The `pdf` feature, which every server package includes, starts headless Chromium when a binary is found, with DevTools on a pipe (`--remote-debugging-pipe`) on Unix, so there is no socket another local process could open (SEC-SCR-10); on Windows on `--remote-debugging-port=0` at `127.0.0.1`, with no authentication of its own. The test client's browser (`moqui test-client`) keeps a loopback port. If no Chromium binary is found, the server still starts and PDF is unavailable.
 
-An OpenSearch child starts only when `search_backend` is opensearch, `elasticsearch_url` is loopback (the property default is `http://127.0.0.1:9200`), nothing is already answering, `runtime/opensearch/bin` exists, `opensearch_run` is not `false` (default `true`), and there is no pid file. The default `search_backend` is `postgres`, so the child stays off. User and password properties default to empty.
+An OpenSearch child starts only when `search-facade@backend` is opensearch, `search-facade/cluster@url` is loopback (the property default is `http://127.0.0.1:9200`), nothing is already answering, `runtime/opensearch/bin` exists, `search-facade/cluster@run` is not `false` (default `true`), and there is no pid file. The default `search-facade@backend` is `postgres`, so the child stays off. User and password properties default to empty.
 
 ## Local sockets and secret files
 
@@ -67,12 +67,12 @@ The table gives the purpose, listener, address, role and switch properties each 
 
 | Conf | For | Opens beyond the default |
 |---|---|---|
-| `MoquiDevConf.xml` | Development | `instance_purpose=dev`. `moqui_conf__webapp_list__webapp__WEBROOT__allow_origins=localhost,127.0.0.1` (this machine on any port). `moqui_conf__tools__empty_db_load=all`. `moqui_conf__ssh_server__port=2222` turns the SSH server on. `llm_openai_url=http://127.0.0.1:1234`. `<receiver grpc-enabled="true"/>` under telemetry. The tarpit is off for screens and transitions. Example datasource passwords (`moquiroot`, `moqui`) are in comments |
+| `MoquiDevConf.xml` | Development | `instance_purpose=dev`. `moqui_conf__webapp_list__webapp__WEBROOT__allow_origins=localhost,127.0.0.1` (this machine on any port). `moqui_conf__tools__empty_db_load=all`. `moqui_conf__ssh_server__port=2222` turns the SSH server on. `moqui_conf__llm_facade__endpoint__DEFAULT__url=http://127.0.0.1:1234`. `<receiver grpc-enabled="true"/>` under telemetry. The tarpit is off for screens and transitions. Example datasource passwords (`moquiroot`, `moqui`) are in comments |
 | `MoquiDemoConf.xml` | A demo | `moqui_conf__tools__empty_db_load=all`. Adds the component `components/dev/demo` |
 | `MoquiLoadTestConf.xml` | Load tests | The tarpit is off for screens, transitions and services. `<login history-store="false"/>`. `moqui_conf__ssh_server__port=2222`. SSH and terminal session limits are 1000 |
 | `MoquiProductionConf.xml` | Production | Sets the entity facade's `crypt-pass` from `moqui_conf__entity_facade__crypt_pass`. No listener property |
 | `MoquiSitesConf.xml` | Example public sites | `root-screen` and `public-site` elements by host for `mr-pass` and an example site; `framework-routes` is `refuse` on two hosts and `include` on one |
-| `dev-group/MoquiGroupConf.xml` | A development group's server | `instance_purpose=production`. `moqui_conf__ssh_server__port=2222` with `moqui_conf__ssh_server__host=0.0.0.0`. `llm_gateway_enabled=true`, with `<gateway ... require-client="true">`. `mcp_enabled=false`. `embedded_db_backup_scheduled=true` |
+| `dev-group/MoquiGroupConf.xml` | A development group's server | `instance_purpose=production`. `moqui_conf__ssh_server__port=2222` with `moqui_conf__ssh_server__host=0.0.0.0`. `moqui_conf__llm_facade__gateway__enabled=true`, with `<gateway ... require-client="true">`. `moqui_conf__llm_facade__mcp__server_enabled=false`. `embedded_db_backup_scheduled=true` |
 | `all-in-one/MoquiAllInOneConf.xml` | One node in every role (`node_role=all-in-one`) | `moqui_conf__mail_delivery__mta=moqui`. `channels_webhooks_enabled=true`. `rtc_media_host=0.0.0.0` on port 10000. `turn_port=3478`. `sip_host=0.0.0.0` on ports 5060 and 5061 |
 | `edge/MoquiEdgeConf.xml` | An edge node (`node_role=front_edge`) | `pass_backend_url=edge:`. `edge_xmpp_port=5222`, `edge_xmpp_tls_port=5223`. `moqui_conf__mail_delivery__mta=moqui` with a relay at `127.0.0.1:10025`. `channels_webhooks_enabled=true`. `rtc_media_host=0.0.0.0` on port 10000. `turn_port=3478`. `sip_host=0.0.0.0` on ports 5060 and 5061 |
 | `edge-cluster/MoquiEdgeConf.xml` | An edge node of a cluster | As the edge conf without the SIP properties, plus `cluster_transport`, `cluster_protocol`, `edge_xmpp_host` and `edge_ssh_tunnel_port` |

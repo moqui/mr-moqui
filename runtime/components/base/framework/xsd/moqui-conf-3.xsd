@@ -1554,7 +1554,8 @@ along with this software (see the LICENSE.md file). If not, see
                     embed, or a component's own; fallback is used when that model is disabled or not configured.
                 </xs:documentation></xs:annotation>
                 <xs:attribute name="feature" type="xs:string" use="required"/>
-                <xs:attribute name="model" type="xs:string" use="required"/>
+                <xs:attribute name="model" type="xs:string"><xs:annotation><xs:documentation>Empty for the llm-facade
+                    default-model.</xs:documentation></xs:annotation></xs:attribute>
                 <xs:attribute name="fallback" type="xs:string"/>
                 <xs:attribute name="reasoning" type="xs:string" default="low"/>
             </xs:complexType></xs:element>
@@ -1646,6 +1647,10 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:attribute name="max-part-bytes" type="xs:string" default="65536"/>
                 <xs:attribute name="max-parts" type="xs:string" default="32"/>
                 <xs:attribute name="trust-forwarded-headers" type="boolean-expandable" default="false"/>
+                <xs:attribute name="agent-name" type="xs:string" default="Moqui"><xs:annotation><xs:documentation>The
+                    name, description and version in the agent card.</xs:documentation></xs:annotation></xs:attribute>
+                <xs:attribute name="agent-description" type="xs:string"/>
+                <xs:attribute name="agent-version" type="xs:string" default="1.0.0"/>
                 <xs:attribute name="client-enabled" type="boolean-expandable" default="true">
                     <xs:annotation><xs:documentation>The A2A client: delegate tools (a2a__name) to the remote agents of
                         AgentRemoteA2a rows (docs/ai/A2A.md).</xs:documentation></xs:annotation></xs:attribute>
@@ -1703,6 +1708,8 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:complexType></xs:element>
         </xs:sequence>
         <xs:attribute name="enabled" type="boolean-expandable" default="true"/>
+        <xs:attribute name="default-model" type="xs:string" default="default"><xs:annotation><xs:documentation>The model
+            of a bind that names none.</xs:documentation></xs:annotation></xs:attribute>
     </xs:complexType></xs:element>
 
     <!-- ===================== Entity Facade Conf Root ===================== -->

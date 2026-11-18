@@ -235,19 +235,40 @@ fn each_server_kind_has_its_rest_contract() {
 #[test]
 fn remove_restores_the_env_lines_it_wrote() {
     let current = vec![
-        ("llm_openai_url".to_string(), "https://team.example.com/llm".to_string()),
-        ("llm_openai_api_key".to_string(), "gw-key".to_string()),
-        ("llm_openai_model".to_string(), "mine-now".to_string()),
+        (
+            "moqui_conf__llm_facade__endpoint__DEFAULT__url".to_string(),
+            "https://team.example.com/llm".to_string(),
+        ),
+        (
+            "moqui_conf__llm_facade__endpoint__DEFAULT__api_key".to_string(),
+            "gw-key".to_string(),
+        ),
+        (
+            "moqui_conf__llm_facade__model__DEFAULT__name".to_string(),
+            "mine-now".to_string(),
+        ),
     ];
     let wrote = [
-        ("llm_openai_url", "https://team.example.com/llm".to_string()),
-        ("llm_openai_api_key", "gw-key".to_string()),
-        ("llm_openai_model", "default".to_string()),
+        (
+            "moqui_conf__llm_facade__endpoint__DEFAULT__url",
+            "https://team.example.com/llm".to_string(),
+        ),
+        (
+            "moqui_conf__llm_facade__endpoint__DEFAULT__api_key",
+            "gw-key".to_string(),
+        ),
+        ("moqui_conf__llm_facade__model__DEFAULT__name", "default".to_string()),
     ];
-    let prior = json!({ "llm_openai_api_key": "sk-own" });
+    let prior = json!({ "moqui_conf__llm_facade__endpoint__DEFAULT__api_key": "sk-own" });
     let (set, remove) = env_restore(&current, &wrote, &prior);
-    assert_eq!(set, [("llm_openai_api_key".to_string(), "sk-own".to_string())]);
-    assert_eq!(remove, ["llm_openai_url"]);
+    assert_eq!(
+        set,
+        [(
+            "moqui_conf__llm_facade__endpoint__DEFAULT__api_key".to_string(),
+            "sk-own".to_string()
+        )]
+    );
+    assert_eq!(remove, ["moqui_conf__llm_facade__endpoint__DEFAULT__url"]);
 }
 
 /// What a server hands back is checked before it is stored or given to git: its own origin, https, no user part, no

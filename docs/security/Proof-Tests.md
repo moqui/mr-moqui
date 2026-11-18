@@ -161,7 +161,7 @@ Java's Spock classes check these without an HTTP client. This pass did not look 
 - Integrity: component zip-slip and a contained-entry expand, XML external entities in `MNode`, ElFinder `joinUnderRoot` and hashed `..`, `create#UserAccount` ignoring extra password fields, DataSnapshot `disableEntityEca` restoring `ADMIN` membership, denied entity find writing `ArtifactAuthzFailure`.
 - Authn beyond the HTTP rows: lockout re-enable after `disable-minutes`, password-reset token single use and expiry, `hasLoggedOut`, `loginUserKey` stored as a hash, WebSocket handshake `api_key` in the header versus the query, a handshake not keeping the previous user, `AUTHZA_ALL` without `SQL_RUNNER_WEB` or `GROOVY_SHELL_WEB` (the GroovyShell screen is removed; its permission name stays sealed so no grant can be made to it).
 - Login history stored, and a failed login not storing the password.
-- `/llm/v1` CSRF, a dummy `login_key` or Basic not skipping it, and an empty `allowed-path` failing closed (`LlmServletTests`). A2A with `a2a_enabled` true. HOLD `TransactionCacheDb` not writing production rows.
+- `/llm/v1` CSRF, a dummy `login_key` or Basic not skipping it, and an empty `allowed-path` failing closed (`LlmServletTests`). A2A with `llm-facade/a2a@enabled` true. HOLD `TransactionCacheDb` not writing production rows.
 - Dependency versions that do not exist here (Log4j, Shiro) and the H2 TCP server.
 
 ## Recorded differences
@@ -184,7 +184,7 @@ Three `SecurityScreens` assertions are tighter than the Python ones they port. A
 - `--serve` does not prove the tarpit. `SecurityTarpit` skips while the status is not 429, which is correct for the load-test conf and is a failed proof on the production conf.
 - `/status` is requested from loopback. The three features prove the public JSON shape and that forwarded headers do not hide it. They do not prove that a TCP source outside `webapp-list/webapp[webroot]@status-ips` is rejected.
 - The HMAC replay cache is local unless a distributed cache is configured. A second server does not see the first server's replay.
-- With `search_backend` at its default `postgres`, `/search` and `/dashboard` are 404 after authentication. The `SearchRemote` feature asserts the response is neither 401 nor 403.
+- With `search-facade@backend` at its default `postgres`, `/search` and `/dashboard` are 404 after authentication. The `SearchRemote` feature asserts the response is neither 401 nor 403.
 - The `/resources` feature posts `cmd=put` at the volume root `v0_cm9vdA` and expects JSON containing `write not allowed` or `error`, and not `changed`. That is the root-refusal on every conf. It does not prove a production-only block of writes under `component://`.
 - The menu feature passes when the body is not the Tools menu, including when the status is 500. An anonymous `GET /menuData/apps/tools` logged `cannot read property 'extraPathNameList' of undefined` (`screen_host.rs`). The in-process menu test expects 401 once `getMenuData` runs. The HTTP proof does not require that status.
 - The email pixel proof is `GET /email/NOTAREALID.png`: status 200, `image/png`, inline, and the PNG magic. The client harness records the first four bytes as hex (`89504e47`). The full 68-byte image, and marking a known message `ES_VIEWED` with `receivedDate` set once, are the unit test `view_email_message_sends_the_png_and_marks_a_known_message`. That is Java's `markEmailMessageViewed` side effect. The Spock method that calls it was not ported.

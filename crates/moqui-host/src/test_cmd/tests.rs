@@ -553,16 +553,25 @@ fn worker_units_follow_the_suite_chain_and_depends_on() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// A live agent evaluation takes only the `llm_*` entries of the runtime's `.env` into the scratch runtime's process.
+/// A live agent evaluation takes only the `llm-facade` entries of the runtime's `.env` into the scratch runtime's
+/// process.
 #[cfg(all(feature = "llm", feature = "embedded-postgres"))]
 #[test]
 fn a_live_agent_run_carries_only_the_llm_settings_of_the_dotenv() {
-    let text = "# secrets\nentity_ds_crypt_pass=secret\nllm_anthropic_api_key=sk-ant-test\nllm_dev_model=claude-haiku\nllm_empty=\n";
+    let text = "# secrets\nmoqui_conf__entity_facade__crypt_pass=secret\n\
+        moqui_conf__llm_facade__endpoint__ANTHROPIC__api_key=sk-ant-test\nmoqui_conf__llm_facade__default_model=claude-haiku\n\
+        MOQUI_CONF__LLM_FACADE__MODEL__DEFAULT__NAME=\n";
     assert_eq!(
         super::agents::llm_settings(text),
         vec![
-            ("llm_anthropic_api_key".to_string(), "sk-ant-test".to_string()),
-            ("llm_dev_model".to_string(), "claude-haiku".to_string()),
+            (
+                "moqui_conf__llm_facade__endpoint__ANTHROPIC__api_key".to_string(),
+                "sk-ant-test".to_string()
+            ),
+            (
+                "moqui_conf__llm_facade__default_model".to_string(),
+                "claude-haiku".to_string()
+            ),
         ]
     );
 }

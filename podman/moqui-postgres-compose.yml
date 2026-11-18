@@ -31,7 +31,7 @@ services:
       moqui_conf__entity_facade__datasource__TRANSACTIONAL__user: ${MOQUI_DB_USER:-moqui}
       moqui_conf__entity_facade__datasource__TRANSACTIONAL__password: ${MOQUI_DB_PASSWORD:?set MOQUI_DB_PASSWORD in podman/.env}
       moqui_conf__entity_facade__datasource__TRANSACTIONAL__sslmode: disable
-      search_backend: postgres
+      moqui_conf__search_facade__backend: postgres
     depends_on:
       postgres:
         condition: service_healthy

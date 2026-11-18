@@ -350,34 +350,6 @@
     <default-property name="edge_xmpp_host" value=""/>
     <default-property name="edge_smtp_tunnel_host" value=""/>
     <default-property name="edge_call_legs_per_pairing" value=""/>
-    <!-- SearchFacade backend: postgres (the default, tables in the search schema of the entity Postgres, or a dedicated
-        embedded cluster when the entity database is not Postgres) or opensearch (the cluster settings below) -->
-    <default-property name="search_backend" value="postgres"/>
-    <!-- OpenSearch (or ElasticSearch 7+) cluster for the opensearch backend, and the Proxy Servlet settings -->
-    <default-property name="elasticsearch_url" value="http://127.0.0.1:9200"/>
-    <default-property name="elasticsearch_user" value=""/>
-    <default-property name="elasticsearch_password" value="" is-secret="true"/>
-    <default-property name="elasticsearch_index_prefix" value=""/>
-    <!-- On the opensearch backend, when elasticsearch_url is this host and nothing answers there, the server starts the install in
-        runtime/opensearch (unless it has a pid file, a node run outside the server) and stops it on shutdown. "false" never starts it. -->
-    <default-property name="opensearch_run" value="true"/>
-    <!-- The default model endpoint of the llm-facade (env vars or properties): an OpenAI-compatible server (Chat
-         Completions) at llm_openai_url, its key (blank sends no auth header: Ollama, LM Studio) and the model name
-         (empty until set). llm_log_content keeps the content of calls in LlmCall, redacted. -->
-    <default-property name="llm_openai_url" value="https://api.openai.com"/>
-    <default-property name="llm_openai_api_key" value="" is-secret="true"/>
-    <default-property name="llm_openai_model" value=""/>
-    <default-property name="llm_log_content" value="false"/>
-    <!-- The agent protocols, all off by default: the A2A server (its public URL for the agent card, the issuer and
-         audience of the OIDC tokens it takes), the MCP server and the OpenAI-compatible gateway. -->
-    <default-property name="a2a_enabled" value="false"/>
-    <default-property name="a2a_public_url" value=""/>
-    <default-property name="a2a_oidc_issuer" value=""/>
-    <default-property name="a2a_oidc_audience" value=""/>
-    <default-property name="mcp_enabled" value="false"/>
-    <default-property name="mcp_public_url" value=""/>
-    <default-property name="mcp_request_state_key" value="" is-secret="true"/>
-    <default-property name="llm_gateway_enabled" value="false"/>
 
 
     <!-- worker-pool-max and request-pool-max size the connection pools: (16 + 22) * 2 connections for their
@@ -915,30 +887,37 @@
         <service-file location="component://framework/service/org/moqui/sso/AuthServices.xml"/>
     </service-facade>
 
-    <!-- One search backend. With no postgres element the postgres backend uses the search schema of the entity Postgres;
-        a postgres element with a url points it at another Postgres. The cluster element is used only by the opensearch backend. -->
-    <search-facade backend="${search_backend}">
-        <!-- run: start the install in runtime/opensearch when the url is this host and nothing answers (opensearch_run);
-            start-wait: how many seconds startup waits for that node to answer. -->
-        <cluster url="${elasticsearch_url}" user="${elasticsearch_user}" password="${elasticsearch_password}"
-                index-prefix="${elasticsearch_index_prefix}" run="${opensearch_run}" start-wait="120"/>
+    <!-- One search backend: postgres (the default, tables in the search schema of the entity Postgres, or a dedicated
+        embedded cluster when the entity database is not Postgres) or opensearch (the cluster below). With no postgres
+        element the postgres backend uses the search schema of the entity Postgres; a postgres element with a url points
+        it at another Postgres. -->
+    <search-facade backend="postgres">
+        <!-- The OpenSearch (or ElasticSearch 7+) cluster of the opensearch backend, and of the SearchProxy servlet.
+            run: on the opensearch backend, when the url is this host and nothing answers there, start the install in
+            runtime/opensearch (unless it has a pid file, a node run outside the server) and stop it on shutdown; false
+            never starts it. start-wait: how many seconds startup waits for that node to answer. -->
+        <cluster url="http://127.0.0.1:9200" user="" password="" index-prefix="" run="true" start-wait="120"/>
     </search-facade>
 
     <!-- The models of the agents and the LLM services (crates/moqui-core/src/llm, plans/LLM-A2A-Assist.md section 6).
         LlmEndpoint, LlmModel and LlmFeatureBinding rows (System > LLM > Models) override these entries by id. The default
-        model has no name until llm_openai_model is set; a feature bound to it answers that the model is not configured.
+        endpoint is an OpenAI-compatible server (Chat Completions) at its url, with its api-key (empty sends no auth
+        header: Ollama, LM Studio); the default model has no name until one is set
+        (moqui_conf__llm_facade__model__DEFAULT__name), and a feature bound to it answers that the model is not
+        configured. default-model is the model of a bind that names none (moqui_conf__llm_facade__default_model to move
+        every such feature to another model). content-log enabled keeps the content of calls in LlmCall, redacted.
         A2A, the MCP server and the gateway are off by default. -->
-    <llm-facade enabled="true">
-        <endpoint id="default" protocol="chat-completions" url="${llm_openai_url}" api-key="${llm_openai_api_key}"/>
-        <model id="default" endpoint="default" name="${llm_openai_model}" tier="balanced"/>
-        <bind feature="assist" model="default" reasoning="low"/>
-        <bind feature="title" model="default" reasoning="none"/>
-        <bind feature="summarize" model="default" reasoning="none"/>
-        <bind feature="classify" model="default" reasoning="none"/>
-        <bind feature="ai-field" model="default" reasoning="low"/>
+    <llm-facade enabled="true" default-model="default">
+        <endpoint id="default" protocol="chat-completions" url="https://api.openai.com" api-key=""/>
+        <model id="default" endpoint="default" name="" tier="balanced"/>
+        <bind feature="assist" reasoning="low"/>
+        <bind feature="title" reasoning="none"/>
+        <bind feature="summarize" reasoning="none"/>
+        <bind feature="classify" reasoning="none"/>
+        <bind feature="ai-field" reasoning="low"/>
         <limits max-concurrent-runs="8" run-queue="64" max-steps="40" max-run-seconds="900" user-daily-tokens="2000000"
                 user-daily-cost="20" approval-ttl-minutes="30" lease-seconds="60" heartbeat-seconds="15" event-text-flush-ms="300"/>
-        <content-log enabled="${llm_log_content}" redact="true" retention-days="14"/>
+        <content-log enabled="false" redact="true" retention-days="14"/>
         <screen-sessions max="64" max-per-user="4" idle-minutes="30"/>
         <!-- the entities the data tool reads directly with authorization off (the agent's other reads go through screen
             lists): a package and an entity regular expression; readable="false" turns one off. Every user of an agent
@@ -948,18 +927,22 @@
         <!-- a component adds facts about the user to new conversations (the active organization, say) with a service
             implementing org.moqui.agent.AgentServices.get#UserFacts, in its MoquiConf.xml:
         <user-facts service="mycomponent.MyServices.get#AgentUserFacts"/> -->
-        <a2a enabled="${a2a_enabled}" public-url="${a2a_public_url}" default-agent="assist" blocking-wait="120"
-                max-part-bytes="65536" max-parts="32" trust-forwarded-headers="false">
+        <!-- The A2A server (docs/ai/A2A.md): public-url is its address in the agent card, with agent-name,
+            agent-description and agent-version; security oidc-issuer and oidc-audience: the OIDC tokens it takes. -->
+        <a2a enabled="false" public-url="" default-agent="assist" blocking-wait="120"
+                max-part-bytes="65536" max-parts="32" trust-forwarded-headers="false" agent-name="Moqui"
+                agent-description="The agents of this Moqui server: they work its screens and data for you"
+                agent-version="1.0.0">
             <push allow-http="false" allow-hosts="" timeout="15" max-attempts="6"/>
-            <security api-key="true" bearer="true" oidc-issuer="${a2a_oidc_issuer}" oidc-audience="${a2a_oidc_audience}"/>
+            <security api-key="true" bearer="true" oidc-issuer="" oidc-audience=""/>
         </a2a>
         <!-- The MCP server (docs/ai/MCP.md): agent names the AgentDefinition whose tool policy and role group bound its
             tools; request-state-key (standard base64, 32 bytes or more) signs the requestState of a write waiting for
             its approval, else a key derived from the session cookie key (webapp session-config cookie-key) does; approval-wait is the seconds a retry waits
             for the owner's decision. -->
-        <mcp server-enabled="${mcp_enabled}" protocol-version="2026-07-28" tools-ttl-ms="300000" call-timeout="60"
-                client-enabled="true" max-result-bytes="1000000" agent="mcp" public-url="${mcp_public_url}"
-                trust-forwarded-headers="false" request-state-key="${mcp_request_state_key}" approval-wait="20"
+        <mcp server-enabled="false" protocol-version="2026-07-28" tools-ttl-ms="300000" call-timeout="60"
+                client-enabled="true" max-result-bytes="1000000" agent="mcp" public-url=""
+                trust-forwarded-headers="false" request-state-key="" approval-wait="20"
                 max-direct-tools="40"/>
         <!-- the OpenAI-compatible gateway at /llm/v1 (docs/ai/Gateway.md): each alias names a model or a feature; callers
             use a login key or app password that an LlmApiClient with the gateway scope names
@@ -967,7 +950,7 @@
             <alias name="fast" model="local-qwen"/>
             <alias name="default" feature="assist"/>
         </gateway> -->
-        <gateway enabled="${llm_gateway_enabled}" require-client="true" timeout="300"/>
+        <gateway enabled="false" require-client="true" timeout="300"/>
         <!-- The Assist drawer's composer extras and memory (docs/ai/Assist.md "The calls of 13.14"): the files a message may
             carry, the audio of a dictation (through a model bound to the transcribe feature), the browser's speech API
             when no model is bound (off: it sends the audio to the browser's vendor), the longest inline text action, and
@@ -975,14 +958,15 @@
         <assist max-attachment-bytes="10485760" max-attachments="5" max-audio-bytes="10485760" browser-dictation="false"
                 max-text-action-chars="8000" memory-default="true"/>
 
-        <!-- Examples, not active. Copy an endpoint and model into a runtime conf, set its key property, and bind a feature
-            to the model. Each reasoning element is a JSON patch deep-merged onto the request body at that level (nested
+        <!-- Examples, not active. Copy an endpoint and model into a runtime conf, set its api-key by its environment name
+            in runtime/.env (moqui_conf__llm_facade__endpoint__ANTHROPIC__api_key for the anthropic endpoint, and so on),
+            and bind a feature to the model, or make it the default-model. Each reasoning element is a JSON patch deep-merged onto the request body at that level (nested
             objects combine, scalars and arrays replace, null removes a key); api-config applies to every request first.
             Prices are per million tokens. -->
         <!-- OpenAI Responses. Chat Completions cannot call tools with reasoning on for gpt-5.4 and later. store is sent
             false; replayed reasoning items are tied to the deployment that made them. Temperature is left out when the
             reasoning effort is not none.
-        <endpoint id="openai" protocol="responses" url="https://api.openai.com" api-key="${llm_openai_api_key}"/>
+        <endpoint id="openai" protocol="responses" url="https://api.openai.com" api-key=""/>
         <model id="openai-gpt" endpoint="openai" name="gpt-5.4" tier="thorough" context-window="400000" max-output="32000">
             <reasoning level="low">{"reasoning":{"effort":"low"}}</reasoning>
             <reasoning level="medium">{"reasoning":{"effort":"medium"}}</reasoning>
@@ -990,7 +974,7 @@
         </model>
         -->
         <!-- xAI Responses: the same protocol as OpenAI. No off switch; grok-4.6 and later also take xhigh for max.
-        <endpoint id="xai" protocol="responses" url="https://api.x.ai" api-key="${llm_xai_api_key}"/>
+        <endpoint id="xai" protocol="responses" url="https://api.x.ai" api-key=""/>
         <model id="xai-grok" endpoint="xai" name="grok-4.7" tier="thorough">
             <reasoning level="low">{"reasoning":{"effort":"low"}}</reasoning>
             <reasoning level="medium">{"reasoning":{"effort":"medium"}}</reasoning>
@@ -1000,7 +984,7 @@
         -->
         <!-- Anthropic, native Messages: output_config.effort (low, medium, high; some models also xhigh and max). Its
             OpenAI-compatible endpoint ignores reasoning_effort, so use this protocol.
-        <endpoint id="anthropic" protocol="anthropic-messages" url="https://api.anthropic.com" api-key="${llm_anthropic_api_key}">
+        <endpoint id="anthropic" protocol="anthropic-messages" url="https://api.anthropic.com" api-key="">
             <header name="anthropic-version" value="2023-06-01"/></endpoint>
         <model id="anthropic-sonnet" endpoint="anthropic" name="claude-sonnet-5" tier="balanced" context-window="200000" max-output="16000">
             <reasoning level="low">{"output_config":{"effort":"low"}}</reasoning>
@@ -1011,7 +995,7 @@
         <!-- Gemini, OpenAI-compatible: reasoning_effort maps to thinking_level; gemini-3.8-flash rejects minimal and
             thinking cannot be turned off. The path is /chat/completions, not /v1/chat/completions.
         <endpoint id="gemini" protocol="chat-completions" url="https://generativelanguage.googleapis.com/v1beta/openai"
-                path="/chat/completions" api-key="${llm_gemini_api_key}"/>
+                path="/chat/completions" api-key=""/>
         <model id="gemini-flash" endpoint="gemini" name="gemini-3.8-flash" tier="fast">
             <reasoning level="low">{"reasoning_effort":"low"}</reasoning>
             <reasoning level="medium">{"reasoning_effort":"medium"}</reasoning>
@@ -1044,7 +1028,7 @@
         -->
         <!-- GLM: glm-5.2 can turn thinking off, glm-5.3 cannot. High is max.
         <endpoint id="glm" protocol="chat-completions" url="https://api.z.ai/api/paas/v4" path="/chat/completions"
-                api-key="${llm_glm_api_key}"/>
+                api-key=""/>
         <model id="glm" endpoint="glm" name="glm-5.2" tier="balanced">
             <reasoning level="low">{"thinking":{"type":"disabled"}}</reasoning>
             <reasoning level="medium">{"thinking":{"type":"enabled"},"reasoning_effort":"high"}</reasoning>
@@ -1054,7 +1038,7 @@
         <!-- DeepSeek: thinking is on by default, so low turns it off; max is the step above high. Thinking-mode tool turns
             echo reasoning_content, kept in the replay of the message.
         <endpoint id="deepseek" protocol="chat-completions" url="https://api.deepseek.com" path="/chat/completions"
-                api-key="${llm_deepseek_api_key}"/>
+                api-key=""/>
         <model id="deepseek" endpoint="deepseek" name="deepseek-flash" tier="fast" reasoning-replay="all">
             <reasoning level="low">{"thinking":{"type":"disabled"}}</reasoning>
             <reasoning level="medium">{"thinking":{"type":"enabled"},"reasoning_effort":"low"}</reasoning>

@@ -29,9 +29,9 @@ services:
       moqui_conf__entity_facade__datasource__TRANSACTIONAL__user: ${MOQUI_DB_USER:-moqui}
       moqui_conf__entity_facade__datasource__TRANSACTIONAL__password: ${MOQUI_DB_PASSWORD:?set MOQUI_DB_PASSWORD in podman/.env}
       moqui_conf__entity_facade__datasource__TRANSACTIONAL__sslmode: disable
-      search_backend: opensearch
-      elasticsearch_url: http://opensearch:9200
-      opensearch_run: "false"
+      moqui_conf__search_facade__backend: opensearch
+      moqui_conf__search_facade__cluster__url: http://opensearch:9200
+      moqui_conf__search_facade__cluster__run: "false"
     depends_on:
       mysql:
         condition: service_healthy

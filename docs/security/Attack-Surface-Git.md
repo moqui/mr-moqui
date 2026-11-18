@@ -115,7 +115,7 @@ From `docs/interfaces/Pipelines.md`. The CI engine never runs a step on the serv
 
 ### When pipelines are on, and the built-in pipeline
 
-`git-ci` `enabled` is `${git-ci@enabled}`, which no `default-property` sets. With it empty the engine queues runs only while an enabled `GitRunnerPool` row exists, and the framework seeds none. A push or a write through Moqui that moves a branch or creates a tag queues runs (the rule's `source="push,write"`: not a mirror's fetch and not an import). Merge request events queue theirs.
+`git-ci@enabled` is empty in the default conf. With it empty the engine queues runs only while an enabled `GitRunnerPool` row exists, and the framework seeds none. A push or a write through Moqui that moves a branch or creates a tag queues runs (the rule's `source="push,write"`: not a mirror's fetch and not an import). Merge request events queue theirs.
 
 With `builtin-enabled="true"` (the default) a commit whose root has a `component.xml` and no `ci.xml` gets one pipeline, `component`, on push and merge-request, with one job `test`. Its image is `builtin-image` (`moqui-build`; `{frameworkVersion}` is the version the `component.xml` names) and must match the pool's `allowedImages` like any job's. Its one step is `crates/moqui-git/src/ci/builtin-component.sh`, run by the runner in the container: it copies the checkout into an MR Moqui tree of the image and runs `./moq component-get <name>` and `./moq test <name>`. The built-in run follows the same trust rules as a `ci.xml` run.
 

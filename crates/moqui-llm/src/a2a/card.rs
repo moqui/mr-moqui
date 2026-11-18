@@ -153,17 +153,18 @@ fn security(factory: &ExecutionContextFactory) -> (Json, Json) {
 }
 
 fn card(factory: &ExecutionContextFactory, base: &str, skills: &[Json]) -> Json {
-    let property = |name: &str, default: &str| {
-        Some(moqui_lib::env::get_prop_or_env(name).trim().to_string())
+    // the agent card's own words: the conf's llm-facade a2a agent-name, agent-description and agent-version
+    let setting = |name: &str, default: &str| {
+        Some(factory.conf_setting("llm-facade/a2a", name).trim().to_string())
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| default.to_string())
     };
     let (schemes, requirements) = security(factory);
     json!({
-        "name": property("a2a_agent_name", "Moqui"),
-        "description": property("a2a_agent_description", "The agents of this Moqui server: they work its screens and data for you"),
+        "name": setting("agent-name", "Moqui"),
+        "description": setting("agent-description", "The agents of this Moqui server: they work its screens and data for you"),
         "supportedInterfaces": interfaces(base),
-        "version": property("a2a_agent_version", "1.0.0"),
+        "version": setting("agent-version", "1.0.0"),
         "capabilities": {"streaming": true, "pushNotifications": true, "extendedAgentCard": true},
         "securitySchemes": schemes,
         "securityRequirements": requirements,

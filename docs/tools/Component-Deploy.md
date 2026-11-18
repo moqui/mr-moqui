@@ -248,7 +248,7 @@ A server can be kept to commits that passed a pipeline on the server that hosts 
 deployment, [Pipelines](../interfaces/Pipelines.md#deployments)). In its conf:
 
 ```xml
-<component-deploy require-passed-run="true" attestation-secret="${component-deploy@attestation-secret}"
+<component-deploy require-passed-run="true" attestation-secret=""
         max-age-seconds="300" public-urls="https://demo.example.com">
     <allow component="site" repository-url="https://git.example.com/git/site.git" branch="main"/>
 </component-deploy>

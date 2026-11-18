@@ -721,9 +721,14 @@ impl LlmConf {
                     Err(problem) => problems.push(problem),
                 }
             }
+            // a bind that names no model takes the facade's default-model
+            let default_model = attr(node, "default-model");
             for element in node.named_iter("bind") {
-                let (Some(feature), Some(model)) = (attr(&element, "feature"), attr(&element, "model")) else {
-                    problems.push("llm-facade bind needs a feature and a model".to_string());
+                let model = attr(&element, "model").or_else(|| default_model.clone());
+                let (Some(feature), Some(model)) = (attr(&element, "feature"), model) else {
+                    problems.push(
+                        "llm-facade bind needs a feature, and a model or the llm-facade default-model".to_string(),
+                    );
                     continue;
                 };
                 let reasoning = match attr(&element, "reasoning") {

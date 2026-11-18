@@ -60,7 +60,7 @@ Server options
                      are looked up by domain in runtime/cert (<domain>.crt and <domain>.key). Also: https-port=N.
   -c, --conf FILE    Runtime conf, relative to the runtime directory or absolute.
                      Also: conf=FILE, -conf=FILE, --conf=FILE. Same as MOQUI_CONF for this run.
-  --no-run-es        Do not start OpenSearch (opensearch_run=false). Also: no-run-es, -no-run-es.
+  --no-run-es        Do not start OpenSearch (search-facade/cluster@run false). Also: no-run-es, -no-run-es.
   -D name=value      Set a conf property for this run, or a conf attribute by its environment name
                      (moqui_conf__ssh_server__port; moqui help conf). Repeatable. Use underscore names
                      (moqui_conf__ssh_server__port), not dotted ones.
@@ -906,7 +906,7 @@ pub fn parse_server_args(args: &[impl AsRef<str>]) -> Result<ServerOptions, Erro
             opts.push("MOQUI_CONF", value);
             index += 1;
         } else if matches!(arg, "no-run-es" | "-no-run-es" | "--no-run-es") {
-            opts.push("opensearch_run", "false");
+            opts.push("moqui_conf__search_facade__cluster__run", "false");
         } else if arg == "-D" {
             let token = next_value(&args, index, arg, "name=value")?;
             let (name, value) = split_property(token)?;

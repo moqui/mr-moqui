@@ -96,7 +96,7 @@ The group server connection (`src/hosting/connect.rs`) is refused on a request l
 
 The `serverSignedIn` transition has `require-session-token="false"`.
 
-`apply#ServerSetup` writes instance files only for the full tier with `shared` off. It writes three names to `runtime/.env`: `llm_openai_url` (the server's offered gateway URL, checked by `on_server`), `llm_openai_api_key` (a key the server issues for scope `gateway`), and `llm_openai_model` (the request's `gatewayAlias`, default `default`). The earlier values of those three lines are kept in `envPriorJson`. `moqui_lib::env::update_dotenv_file` refuses a name with `=` or a line break and a value with a line break, and writes the file with mode 0600 on Unix.
+`apply#ServerSetup` writes instance files only for the full tier with `shared` off. It writes three names to `runtime/.env`: `llm-facade/endpoint[default]@url` (the server's offered gateway URL, checked by `on_server`), `llm-facade/endpoint[default]@api-key` (a key the server issues for scope `gateway`), and `llm-facade/model[default]@name` (the request's `gatewayAlias`, default `default`). The earlier values of those three lines are kept in `envPriorJson`. `moqui_lib::env::update_dotenv_file` refuses a name with `=` or a line break and a value with a line break, and writes the file with mode 0600 on Unix.
 
 ### Transitions and request methods
 

@@ -49,10 +49,11 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
 const PENDING_MILLIS: i64 = 15 * 60_000;
 /// Where the server's sign-in hands the code back: this instance's own page, a loopback address on a laptop.
 pub(crate) const SIGNED_IN_PATH: &str = "/qapps/dev/Settings/serverSignedIn";
-/// The `.env` lines of the default model endpoint pointed at a gateway (docs/Run-Deploy.md).
-const ENV_URL: &str = "llm_openai_url";
-const ENV_KEY: &str = "llm_openai_api_key";
-const ENV_MODEL: &str = "llm_openai_model";
+/// The `.env` lines of the default model endpoint pointed at a gateway, by the environment names of its `url` and
+/// `api-key` and of the default model's `name` (docs/Run-Deploy.md).
+const ENV_URL: &str = "moqui_conf__llm_facade__endpoint__DEFAULT__url";
+const ENV_KEY: &str = "moqui_conf__llm_facade__endpoint__DEFAULT__api_key";
+const ENV_MODEL: &str = "moqui_conf__llm_facade__model__DEFAULT__name";
 
 pub(crate) fn current_user() -> String {
     moqui_core::user::current_user_id().ok().flatten().unwrap_or_default()
