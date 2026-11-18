@@ -15,9 +15,9 @@
 //! Backups of the node's database (plans/Mobile-Desktop.md section 4, configuration 1, Backups): the computer is the
 //! system of record.
 //!
-//! - **Scheduled.** The node gets `embedded_db_backup_scheduled=true`, which runs the framework's nightly
+//! - **Scheduled.** The node gets `moqui_conf__database_backup__scheduled=true`, which runs the framework's nightly
 //!   `backup_EmbeddedDatabase_daily` job (paused in the seed data, plans/archive/PostgresBackup.md) with its retention
-//!   ladder, and `embedded_db_backup_dir`, the folder. Both are set in the `backups` file in the app's config directory
+//!   ladder, and `database-backup@dir`, the folder. Both are set in the `backups` file in the app's config directory
 //!   ([`Settings`]). The folder is by default `MR-Moqui Backups` in the user's Documents, where the user sees it and
 //!   their own backup of the computer usually reaches it, and which removing the app's data does not remove; a
 //!   development run keeps the framework's `runtime/db/backup`.
@@ -50,9 +50,9 @@ use crate::{NodeStart, NodeState};
 pub(crate) const SETTINGS_FILE: &str = "backups";
 /// The default folder's name, in the user's Documents.
 pub(crate) const DEFAULT_FOLDER: &str = "MR-Moqui Backups";
-/// The framework's properties (moqui-core `service::backup`).
-const DIR_PROPERTY: &str = "embedded_db_backup_dir";
-const SCHEDULED_PROPERTY: &str = "embedded_db_backup_scheduled";
+/// The environment names of the conf's `database-backup` `dir` and `scheduled`, which the node takes as overrides.
+const DIR_PROPERTY: &str = "moqui_conf__database_backup__dir";
+const SCHEDULED_PROPERTY: &str = "moqui_conf__database_backup__scheduled";
 /// The kinds of a backup the app takes, the last part of its name.
 pub(crate) const MANUAL: &str = "manual";
 pub(crate) const BEFORE_RESTORE: &str = "before-restore";

@@ -501,7 +501,7 @@ pub(crate) async fn listen(
                 &link_factory,
                 crate::grpc_listen::LISTENER,
                 moqui_core::startup::State::off(
-                    "the telemetry receiver's grpc-enabled and pass_authority_grpc_enabled are not true",
+                    "the telemetry receiver's grpc-enabled and pass-authority@grpc-enabled are not true",
                 ),
             );
             None

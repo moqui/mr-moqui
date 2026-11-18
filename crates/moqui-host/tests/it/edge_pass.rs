@@ -13,9 +13,9 @@
  */
 
 //! The PASS authority over gRPC (plans/archive/Edge-Node.md §5.5, E4), with a stub authority service in a test component written
-//! into each runtime (`pass_authority_service`), so no Mantle is needed: Call, Download (several chunks) and Upload
+//! into each runtime (`pass-authority@service`), so no Mantle is needed: Call, Download (several chunks) and Upload
 //! round trips, and an account flow's session handle,
-//! - **direct**, on the local server's gRPC listener (`pass_authority_grpc_enabled`, plain h2c with no certificate), the
+//! - **direct**, on the local server's gRPC listener (`pass-authority@grpc-enabled`, plain h2c with no certificate), the
 //!   client named by `pass_client_id` with its secret; a wrong secret is refused before the authority runs;
 //! - **on the link**, from the edge node down to its local node (`edge:`), where the link is the client
 //!   (`edge/node@pass-client`); with the link down a call fails at once with "local node offline".
@@ -467,12 +467,15 @@ fn pass_authority_calls_round_trip_direct_and_on_the_edge_link() {
     }
     let big = big_file();
     let properties = [
-        ("pass_authority_grpc_enabled", "true"),
-        ("pass_authority_grpc_port", "0"),
-        ("pass_authority_service", "passtest.PassTestServices.handle#Call"),
+        ("moqui_conf__pass_authority__grpc_enabled", "true"),
+        ("moqui_conf__pass_authority__grpc_port", "0"),
+        (
+            "moqui_conf__pass_authority__service",
+            "passtest.PassTestServices.handle#Call",
+        ),
         ("moqui_conf__edge__node__pass_client", "edgefront"),
-        ("pass_client_front_secret", "front-secret"),
-        ("pass_client_front_sites", SITE),
+        ("pass-authority/client[front]@secret", "front-secret"),
+        ("pass-authority/client[front]@sites", SITE),
         ("pass_client_id", "front"),
         ("pass_client_secret", "front-secret"),
     ];

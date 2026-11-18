@@ -27,7 +27,7 @@
 
     <!-- Backups: this node holds the business data. This sets the paused seed job backup_EmbeddedDatabase_daily
         running at each boot (docs/Run-Deploy.md, Backups). -->
-    <default-property name="embedded_db_backup_scheduled" value="true"/>
+    <database-backup scheduled="true"/>
 
     <entity-facade query-stats="true"/>
 </moqui-conf>

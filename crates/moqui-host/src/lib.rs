@@ -369,7 +369,7 @@ impl Server {
 
     /// The host's gRPC listener's address (`grpc_listen`), when this build has the `grpc` feature and a service on it
     /// is on: the OTLP/gRPC receiver (`<telemetry><receiver grpc-enabled="true">`) or the PASS authority
-    /// (`pass_authority_grpc_enabled=true`).
+    /// (`moqui_conf__pass_authority__grpc_enabled=true`).
     #[must_use]
     pub fn grpc_address(&self) -> Option<std::net::SocketAddr> {
         #[cfg(feature = "grpc")]

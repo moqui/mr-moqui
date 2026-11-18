@@ -83,7 +83,7 @@
 
     <!-- Backups: the link's queue (what waits for each pairing while it is away) is the only data here that matters.
         This sets the paused seed job backup_EmbeddedDatabase_daily running at each boot (docs/Run-Deploy.md, Backups). -->
-    <default-property name="embedded_db_backup_scheduled" value="true"/>
+    <database-backup scheduled="true"/>
 
     <entity-facade query-stats="true"/>
 

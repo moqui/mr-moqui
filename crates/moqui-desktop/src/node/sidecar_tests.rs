@@ -79,10 +79,13 @@ fn the_node_gets_the_listen_properties_and_stops_on_stdin_close() {
 
 #[test]
 fn the_node_gets_the_backup_properties_as_defines() {
-    let args = args(51234, &[("embedded_db_backup_dir", "/b/MR Moqui".to_string())]);
+    let args = args(
+        51234,
+        &[("moqui_conf__database_backup__dir", "/b/MR Moqui".to_string())],
+    );
     let at = args
         .iter()
-        .position(|arg| arg == "embedded_db_backup_dir=/b/MR Moqui")
+        .position(|arg| arg == "moqui_conf__database_backup__dir=/b/MR Moqui")
         .unwrap();
     assert_eq!(args[at - 1], "-D");
 }

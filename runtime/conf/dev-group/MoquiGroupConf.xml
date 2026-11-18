@@ -25,7 +25,7 @@
 
     <!-- Backups: the team's data. The nightly backup_EmbeddedDatabase_daily job, paused in the seed data, runs from each
         boot (false pauses it; docs/Run-Deploy.md, Backups). It backs up the embedded database only. -->
-    <default-property name="embedded_db_backup_scheduled" value="true"/>
+    <database-backup scheduled="true"/>
 
     <entity-facade query-stats="true"/>
 

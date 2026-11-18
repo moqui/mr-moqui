@@ -734,9 +734,9 @@ before a restore. These work on the embedded database only; an external database
 ### Backups
 
 The job `backup_EmbeddedDatabase_daily` backs up the embedded clusters while the server runs. It is paused in the seed
-data; set it running on System › Operations › Jobs, or with `embedded_db_backup_scheduled=true`, which each boot applies
+data; set it running on System › Operations › Jobs, or with `moqui_conf__database_backup__scheduled=true`, which each boot applies
 (`false` pauses it). It runs daily at 02:00 and keeps 7 daily, 5 weekly and 12 monthly archives, and every yearly one,
-in `runtime/db/backup`, or the directory in `embedded_db_backup_dir`.
+in `runtime/db/backup`, or the directory in `database-backup@dir`.
 
 - **Modes**: `backupMode=dump`, the default, writes a `pg_dump` file of each database: `moqui-<stamp>-d.dump` and
   `moqui_content-<stamp>-d.dump`, with the same stamp. `incremental` takes `pg_basebackup` fulls and block
@@ -799,7 +799,7 @@ XMPP clients find the server by DNS: `_xmpp-client._tcp.<domain>` (5222, STARTTL
 Through a reverse proxy whose client-ip header is believed, the client it names must be in `webapp-list/webapp[webroot]@status-ips` too:
 list a monitor that probes through the proxy, or have it probe the port directly.
 
-The gRPC listener (4317, `grpc-port` of the telemetry `receiver` or `pass_authority_grpc_port`) and the edge tunnel
+The gRPC listener (4317, `grpc-port` of the telemetry `receiver` or `pass-authority@grpc-port`) and the edge tunnel
 ports (`edge@ssh-tunnel-port`, `edge@xmpp-port`, `edge@xmpp-tls-port`) also open only when they are configured.
 
 Before the database opens, a start checks every port it will bind, over TCP or UDP as the listener uses it, and logs
@@ -1143,7 +1143,7 @@ address.
 
 System › Edge Node shows the outbox and the replicated sets, with Pause and Resync; Edge Clients shows each node's
 queue and sets. The edge node's database holds the queue, and its conf sets the backup job running
-(`embedded_db_backup_scheduled`).
+(`database-backup@scheduled`).
 
 **A cluster or a standby behind it.** Every member of a local cluster links on its own, and the edge node pools and
 balances them ([A local cluster with an edge node](#a-local-cluster-with-an-edge-node)). A second machine started
@@ -1631,7 +1631,7 @@ edge node as the PASS server, the local node's Edge Node wizard writes the clien
    here. Add mr-pass only if this server also serves sites itself.
 2. Register each PASS deployment: in the conf its sites and exact SSO callback (`pass_client_<id>_sites`,
    `pass_client_<id>_callback`), in `.env` its secret (`pass_client_<id>_secret`). The conf turns on gRPC for PASS
-   clients (`pass_authority_grpc_enabled`); the HTTPS listener takes the same calls over [HTTP/2](#http2), so no other
+   clients (`pass-authority@grpc-enabled`); the HTTPS listener takes the same calls over [HTTP/2](#http2), so no other
    port needs to be open.
 3. Create the sites and bind their hosts and mounts with `mantle.public.SiteServices.create#Site` and `store#Mounts`
    (Deployment.md, Provisioning).

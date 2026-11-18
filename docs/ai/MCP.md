@@ -114,7 +114,7 @@ artifacts only (no database, threads, properties or hooks of its own; a Java che
 and read into memory on the first call, which holds only that project; later calls look at its files at most every
 500 ms and read a changed one again (a changed `component.xml`, `MoquiConf.xml`, runtime conf or set of components
 boots it again), so an answer follows the files with no restart; when it does not boot again (a conf saved half-edited),
-the error is logged and the index read before answers until it does. `moqui_devtools_projects` (3) projects are kept, the
+the error is logged and the index read before answers until it does. `dev-reload@projects` (3) projects are kept, the
 least recently used dropped first. A file that does not parse is logged and left out. `describe` answers a service's
 in and out parameters too, for the server's own services and a project's.
 

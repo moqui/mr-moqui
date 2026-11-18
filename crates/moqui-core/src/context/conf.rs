@@ -340,6 +340,14 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
             None => base.append_node(over_push.deep_copy()),
         }
     }
+    // the PASS authority, its clients by id
+    base.merge_child_with_child_key(
+        over,
+        "pass-authority",
+        "client",
+        keys(&["pass-authority", "client"]),
+        None,
+    );
     // call media, with its TURN server merged as one element
     base.merge_child_with_child_key(over, "media-server", "turn-server", &[], None);
     // calls, their queue, recording and captions each merged as one element
@@ -387,6 +395,8 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         "cluster-member",
         // voicemail (docs/interfaces/Voicemail.md)
         "voicemail",
+        // backups of the embedded database
+        "database-backup",
         "ssh-server",
         "terminal",
         "git-server",

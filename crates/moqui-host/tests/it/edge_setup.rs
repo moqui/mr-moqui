@@ -1358,9 +1358,12 @@ fn a_local_node_is_attached_from_the_wizard() {
         "{env}"
     );
     assert!(env.contains("moqui_conf__edge__node__pass_client=edge"), "{env}");
-    assert!(env.contains("pass_client_edge_sites=SITE1"), "{env}");
     assert!(
-        env.contains("pass_client_edge_callback=https://forum.example.com/account/Sso"),
+        env.contains("moqui_conf__pass_authority__client__EDGE__sites=SITE1"),
+        "{env}"
+    );
+    assert!(
+        env.contains("moqui_conf__pass_authority__client__EDGE__callback=https://forum.example.com/account/Sso"),
         "{env}"
     );
     assert_eq!(

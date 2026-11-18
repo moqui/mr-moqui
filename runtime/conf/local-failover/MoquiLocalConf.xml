@@ -26,7 +26,7 @@
         the standby (moqui load-save) before it starts. What was delivered since the backup is not in it: on the edge
         node, System › Edge Clients › Clients, Deliver again since the backup's time; the receipts make an item the
         standby already has do nothing. -->
-    <default-property name="embedded_db_backup_scheduled" value="true"/>
+    <database-backup scheduled="true"/>
 
     <!-- The edge node's part (plans/Edge-Node2.md §4.5): while no machine is linked it holds the queue for its retention
         period, mail for the replicated recipients, the voicemail fallback and the offline page. The standby is admitted

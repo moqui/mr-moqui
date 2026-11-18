@@ -363,6 +363,15 @@ pub static CATALOG: &[Unit] = &[
         single("captions", Class::Live),
     ]),
     single("voicemail", Class::Live),
+    single("pass-authority", Class::Live)
+        .attrs(&[
+            ("grpc-enabled", LISTENER),
+            ("grpc-host", LISTENER),
+            ("grpc-port", LISTENER),
+            ("grpc-insecure", LISTENER),
+        ])
+        .children(&[keyed("client", &["id"], Class::Live).secrets(&[("secret", Secret::Kept)])]),
+    single("database-backup", Class::Live),
     single("sip-server", LISTENER).children(&[single("limits", LISTENER), single("registrar", Class::Live)]),
     single("xmpp-server", LISTENER)
         .secrets(&[("scram-decoy-key", Secret::Generated)])

@@ -257,7 +257,7 @@ along with this software (see the LICENSE.md file). If not, see
             const systemEdge = system?.smtpHost === 'edge:'
             const chatUrl = String(ec.factory.getConfValue('channels@public-url') || '')
             const client = String(ec.factory.getConfValue('edge/node@pass-client') || '') || 'edge'
-            const sites = String(System.getProperty('pass_client_' + client + '_sites') || '')
+            const sites = String(ec.factory.getConfValue('pass-authority/client[' + client + ']@sites') || '')
             setup = {hostsText,
                 mailText: systemEdge || accounts ? (systemEdge ? L('The system') + (accounts ? ', ' : '') : '') +
                     (accounts ? ec.resource.expand('${n} accounts', '', {n: accounts}) : '') + ' ' + L('through the edge node') : L('Not through the edge node'),

@@ -513,8 +513,8 @@ fn apply_pass(env_file: &std::path::Path, pass: &PassChoice, offer: &EdgeOffer) 
         Err(why) => return SetupLine::new("pass", false, why),
     };
     let (client, callback) = (client.as_str(), callback.as_str());
-    let sites_name = format!("pass_client_{client}_sites");
-    let callback_name = format!("pass_client_{client}_callback");
+    let sites_name = format!("pass-authority/client[{client}]@sites");
+    let callback_name = format!("pass-authority/client[{client}]@callback");
     let sites_text = sites.join(",");
     set_env(
         "pass",

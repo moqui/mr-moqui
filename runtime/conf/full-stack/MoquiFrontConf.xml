@@ -35,7 +35,7 @@
         TLS, whose ACME challenge passes through. -->
 
     <!-- Backups: the pairing, host names, the mail port and the certificates are rows (conf/front/MoquiFrontConf.xml). -->
-    <default-property name="embedded_db_backup_scheduled" value="true"/>
+    <database-backup scheduled="true"/>
 
     <entity-facade query-stats="true"/>
 

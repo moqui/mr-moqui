@@ -15,7 +15,7 @@
 //! The indexes of other projects a running dev server answers about, kept in memory (plans/design-dev-aide.md 13.6).
 //!
 //! [`open`] gives a project's [`ProjectIndex`]: booted ([`super::boot`]) and read into a [`MemoryIndex`] on first use,
-//! then kept for the next requests. At most [`capacity`] projects are kept (`moqui_devtools_projects`, 3), the least
+//! then kept for the next requests. At most [`capacity`] projects are kept (`dev-reload@projects`, 3), the least
 //! recently used dropped first. The first build of one project holds only that project's slot, so requests about the
 //! server's own runtime or another project go on meanwhile.
 //!
@@ -423,10 +423,10 @@ struct Slot {
 /// The projects kept, most recently used first.
 static PROJECTS: Mutex<Vec<(PathBuf, Arc<Slot>)>> = Mutex::new(Vec::new());
 
-/// How many projects are kept: `moqui_devtools_projects`, 3 when not set (at least 1).
+/// How many projects are kept: `dev-reload@projects`, 3 when not set (at least 1).
 #[must_use]
 pub fn capacity() -> usize {
-    moqui_lib::env::get_prop_or_env("moqui_devtools_projects")
+    moqui_core::context::conf_env::setting("dev-reload@projects")
         .trim()
         .parse::<usize>()
         .unwrap_or(3)

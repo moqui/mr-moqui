@@ -69,7 +69,7 @@
         every node again. The nightly backup_EmbeddedDatabase_daily job is paused in the seed data; this sets it running
         at each boot (docs/Run-Deploy.md, Backups: its mirror, keeping a copy off this host). It backs up the embedded
         database only: back an external one up with its own tools. -->
-    <default-property name="embedded_db_backup_scheduled" value="true"/>
+    <database-backup scheduled="true"/>
 
     <entity-facade query-stats="true"/>
 

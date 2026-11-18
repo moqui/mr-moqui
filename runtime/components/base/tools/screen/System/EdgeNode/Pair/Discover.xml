@@ -226,7 +226,7 @@ along with this software (see the LICENSE.md file). If not, see
             ? Array.from(ec.entity.find('mantle.public.PublicSite').orderBy('name').limit(200).disableAuthz().list())
                 .map((site) => ({siteId: site.siteId, name: site.name || site.siteId})) : []
         const client = String(pass.clientId || 'edge')
-        const registeredSites = String(System.getProperty('pass_client_' + client + '_sites') || '').split(',').map((site) => site.trim()).filter((site) => site)
+        const registeredSites = String(ec.factory.getConfValue('pass-authority/client[' + client + ']@sites') || '').split(',').map((site) => site.trim()).filter((site) => site)
         const firstHost = passthrough[0] || terminate[0] || ''
         // the system's mail goes through the edge node by default only when it has no server of its own yet
         const systemServer = ec.entity.find('moqui.basic.email.EmailServer').condition('emailServerId', 'SYSTEM').disableAuthz().one()
@@ -250,7 +250,7 @@ along with this software (see the LICENSE.md file). If not, see
             emailAccountIds: accountOptions.map((account) => account.emailAccountId),
             chatOn: chatAvailable && bridgeOptions.length > 0, chatBridgeIds: bridgeOptions.map((bridge) => bridge.chatBridgeId),
             passOn: false, passSites: registeredSites,
-            passCallback: String(System.getProperty('pass_client_' + client + '_callback') || '') ||
+            passCallback: String(ec.factory.getConfValue('pass-authority/client[' + client + ']@callback') || '') ||
                 (firstHost ? 'https://' + firstHost + '/account/Sso' : ''),
             xmppOn: xmppAvailable && !!xmppDomain,
             // on when offered, unless this node turned it off before (edge/node@calls-enabled)

@@ -167,7 +167,7 @@ The attributes are in `moqui-conf-3.xsd` and
 `src/backup.rs`, with a Backups menu in the tray: Back up now, choose and open the folder, Restore from backup, and the
 last backup's time. The folder and whether the nightly backup runs are in `backups` in the app's config directory.
 
-- **Nightly:** the node gets `embedded_db_backup_scheduled=true` and `embedded_db_backup_dir`, which run the
+- **Nightly:** the node gets `moqui_conf__database_backup__scheduled=true` and `database-backup@dir`, which run the
   framework's `backup_EmbeddedDatabase_daily` job into the folder, by default `MR-Moqui Backups` in Documents (a
   development run keeps `runtime/db/backup` and leaves the job's schedule as the repository's runtime has it). See [PostgresBackup](../../plans/archive/PostgresBackup.md).
 - **Back up now:** a `pg_dump` of the live database (`moqui save-db`), named `moqui-<stamp>-manual.dump`, outside the

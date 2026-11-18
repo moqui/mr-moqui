@@ -118,7 +118,7 @@ fn request<T>(message: T, endpoint: &Endpoint) -> Result<tonic::Request<T>, Erro
 
 /// `pass_client_id` and `pass_client_secret`.
 fn direct_client() -> (String, String) {
-    let get = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
+    let get = |name: &str| moqui_core::context::conf_env::setting_or_property(name);
     (get("pass_client_id"), get("pass_client_secret"))
 }
 

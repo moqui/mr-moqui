@@ -2200,7 +2200,7 @@ fn mail_out_problem(facade: &EntityFacade, system: bool, accounts: &[String]) ->
 /// mr-pass.
 fn pass_ready(link: Option<&dyn crate::edge::EdgeLink>, sites: &[String]) -> (bool, String) {
     let client = crate::pass_authority::Client::edge_client_id();
-    let registered = moqui_lib::env::get_prop_or_env(&format!("pass_client_{client}_sites"));
+    let registered = crate::context::conf_env::setting(&format!("pass-authority/client[{client}]@sites"));
     let registered: Vec<&str> = registered
         .split(',')
         .map(str::trim)
@@ -2219,14 +2219,17 @@ fn pass_ready(link: Option<&dyn crate::edge::EdgeLink>, sites: &[String]) -> (bo
         };
         return (
             false,
-            format!("pass_client_{client}_sites does not name {names}: apply again"),
+            format!("pass-authority/client[{client}]@sites does not name {names}: apply again"),
         );
     }
-    if moqui_lib::env::get_prop_or_env(&format!("pass_client_{client}_callback"))
+    if crate::context::conf_env::setting(&format!("pass-authority/client[{client}]@callback"))
         .trim()
         .is_empty()
     {
-        return (false, format!("pass_client_{client}_callback is not set: apply again"));
+        return (
+            false,
+            format!("pass-authority/client[{client}]@callback is not set: apply again"),
+        );
     }
     match link.map(|link| link.offer()) {
         Some(Ok(offer)) if offer.pass.available => (

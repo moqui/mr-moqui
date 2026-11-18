@@ -109,7 +109,7 @@ Off unless `instance@node-role` is set (`front`, `front_edge`, `edge` or `all-in
   - **The screens and confs** (E19 part C): System › Edge Clients › Edge cluster's Front node box (`get#EdgeCluster` `frontList`: each front member's address, link state, last error, the front's name and the pinned fingerprint of its link key, no secret) and System › Edge Node's front pairing are read only and the System app's, as the rest of Edge Clients. Unpair front is the existing `unpair#EdgeNode`. `conf/front` and `conf/full-stack` hold no secrets and name the ones that go in `.env`; the front's nightly backup holds its pairings, host names and ACME certificates (their keys encrypted), so a mirror off the host should be sealed. A local cluster's mail through a front's port 25 is the same code as an edge cluster's, with no test of its own yet.
 - **The example confs** (`runtime/conf/<topology>/`, E13): they hold no secrets, and each says which go in `.env`.
   `conf/edge/MoquiEdgeConf.xml` and `conf/all-in-one/MoquiAllInOneConf.xml` turn on web protection and the nightly
-  backup (`embedded_db_backup_scheduled`), whose archives hold the queued items (mail, messages, recordings) until
+  backup (`database-backup@scheduled`), whose archives hold the queued items (mail, messages, recordings) until
   delivered: a mirror off the host should seal them (`mirrorEncrypt`). `conf/pass/MoquiAuthorityConf.xml` exempts the
   PASS servers from web protection by an example private range (`10.0.2.0/24`), to be replaced by theirs.
 

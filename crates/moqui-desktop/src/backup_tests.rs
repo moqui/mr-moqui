@@ -61,14 +61,14 @@ fn the_node_gets_the_schedule_and_the_folder_unless_it_is_the_frameworks() {
     assert_eq!(
         properties(&chosen, Some(PathBuf::from("/d"))),
         vec![
-            ("embedded_db_backup_scheduled", "true".to_string()),
-            ("embedded_db_backup_dir", "/b".to_string())
+            ("moqui_conf__database_backup__scheduled", "true".to_string()),
+            ("moqui_conf__database_backup__dir", "/b".to_string())
         ]
     );
     let default = Settings::default();
     assert_eq!(
         properties(&default, Some(PathBuf::from("/d")))[1],
-        ("embedded_db_backup_dir", "/d".to_string())
+        ("moqui_conf__database_backup__dir", "/d".to_string())
     );
     let off = Settings {
         folder: None,
@@ -76,7 +76,7 @@ fn the_node_gets_the_schedule_and_the_folder_unless_it_is_the_frameworks() {
     };
     assert_eq!(
         properties(&off, None),
-        vec![("embedded_db_backup_scheduled", "false".to_string())]
+        vec![("moqui_conf__database_backup__scheduled", "false".to_string())]
     );
 }
 

@@ -71,7 +71,7 @@
         Backups). It backs up the embedded database only: with an external one it logs that it skipped, and the
         database is backed up with its own tools. A restore can deliver a queued item again; its receipt applies it
         once. -->
-    <default-property name="embedded_db_backup_scheduled" value="true"/>
+    <database-backup scheduled="true"/>
 
     <entity-facade query-stats="true"/>
 

@@ -15,7 +15,7 @@
 //! The PASS authority's operations over gRPC (plans/archive/Edge-Node.md §5.5), the part that needs no network:
 //! - on the authority, [`serve`] and [`serve_download`] run one call of the host's `PassAuthority` service: they check
 //!   the client, bind the authority session an account flow carries as its handle, and run the authority service
-//!   (`pass_authority_service`, Mantle's `mantle.pass.PassAuthorityServices.handle#Call` by default), the same function
+//!   (`pass-authority@service`, Mantle's `mantle.pass.PassAuthorityServices.handle#Call` by default), the same function
 //!   Mantle's REST servlet calls after its own checks;
 //! - on a PASS frontend, the [`PassSender`] the host installs carries scripts' calls to an authority
 //!   (`ec.service.passAuthority(endpoint)`): a direct gRPC endpoint, or the edge link. With none installed (Lite and Dev
@@ -41,7 +41,7 @@ use crate::resource::source::ByteSource;
 /// What a script's call to a gRPC authority fails with when the host has no gRPC client (Lite, Dev).
 pub const NOT_BUILT: &str = "gRPC not built into this host";
 /// The property naming the service that runs an operation on the authority.
-pub const SERVICE_PROPERTY: &str = "pass_authority_service";
+pub const SERVICE_PROPERTY: &str = "pass-authority@service";
 /// The authority service when [`SERVICE_PROPERTY`] is empty: Mantle's.
 pub const DEFAULT_SERVICE: &str = "mantle.pass.PassAuthorityServices.handle#Call";
 /// The property naming the PASS client the edge node is on its link (`pass_client_<id>_sites` lists its sites).
@@ -588,7 +588,7 @@ fn run(call: &Call, client: &Client, file: Option<UploadFile>) -> Result<Outcome
             crate::web::multipart::UploadedFile::in_memory("file", &file.filename, &file.content_type, file.bytes);
         parameters.insert("file".to_string(), upload.into_value());
     }
-    let service = moqui_lib::env::get_prop_or_env(SERVICE_PROPERTY);
+    let service = crate::context::conf_env::setting(SERVICE_PROPERTY);
     let service = match service.trim() {
         "" => DEFAULT_SERVICE,
         name => name,

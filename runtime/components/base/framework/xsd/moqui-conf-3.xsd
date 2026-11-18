@@ -32,6 +32,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="calls"/>
                 <xs:element minOccurs="0" ref="media-server"/>
                 <xs:element minOccurs="0" ref="voicemail"/>
+                <xs:element minOccurs="0" ref="pass-authority"/>
+                <xs:element minOccurs="0" ref="database-backup"/>
                 <xs:element minOccurs="0" maxOccurs="unbounded" ref="default-property"/>
                 <xs:element minOccurs="0" ref="tools"/>
                 <xs:element minOccurs="0" ref="cache-list"/>
@@ -2302,6 +2304,32 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="pin-min-digits" type="xs:string" default="6"/>
         </xs:complexType>
     </xs:element>
+    <xs:element name="pass-authority">
+        <xs:annotation><xs:documentation>The PASS authority: its gRPC listener, the service that answers a call, the
+            verification template, the SSO flows, and each client by its id.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence><xs:element minOccurs="0" maxOccurs="unbounded" name="client"><xs:complexType>
+                <xs:attribute name="id" type="xs:string" use="required"/>
+                <xs:attribute name="sites" type="xs:string"/>
+                <xs:attribute name="callback" type="xs:string"/>
+                <xs:attribute name="secret" type="xs:string"><xs:annotation><xs:documentation>A secret.</xs:documentation></xs:annotation></xs:attribute>
+            </xs:complexType></xs:element></xs:sequence>
+            <xs:attribute name="grpc-enabled" type="xs:string" default="false"/>
+            <xs:attribute name="grpc-host" type="xs:string"/>
+            <xs:attribute name="grpc-port" type="xs:string" default="4317"/>
+            <xs:attribute name="grpc-insecure" type="xs:string" default="false"/>
+            <xs:attribute name="service" type="xs:string" default="mantle.pass.PassAuthorityServices.handle#Call"/>
+            <xs:attribute name="verification-template" type="xs:string"/>
+            <xs:attribute name="sso-flows" type="xs:string"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="database-backup">
+        <xs:annotation><xs:documentation>Backups of the embedded database.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="scheduled" type="xs:string"/>
+            <xs:attribute name="dir" type="xs:string"/>
+        </xs:complexType>
+    </xs:element>
     <xs:element name="smtp-server">
         <xs:annotation><xs:documentation>The inbound SMTP listener for hosted and shared mail accounts, behind the edge
             gateway (docs/interfaces/Mail-Inbound.md).</xs:documentation></xs:annotation>
@@ -3003,6 +3031,8 @@ along with this software (see the LICENSE.md file). If not, see
             set of its kind, its REST API or skill; an entity, conf or Rust change logs that it needs a restart or a
             rebuild. On unless enabled is false. Not on any other purpose.</xs:documentation></xs:annotation>
         <xs:complexType>
+            <xs:attribute name="projects" type="xs:string" default="3"><xs:annotation><xs:documentation>How many projects
+                the dev tools' project cache keeps.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="enabled" type="xs:string" default="true"/>
             <xs:attribute name="debounce-ms" type="xs:string" default="300"><xs:annotation><xs:documentation>
                 How long after the last change in a burst the reload runs, so an editor's write and rename is one
