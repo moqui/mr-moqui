@@ -184,11 +184,14 @@ along with this software (see the LICENSE.md file). If not, see
                         // a message of someone the user blocked (plans/Comms-Messaging.md §18.3 phase 11): its line says so, nothing of it shows
                         let text = event.hidden ? ec.l10n.localize('Hidden: a message from someone you blocked')
                             : event.redacted ? (event.removedLabel || ec.l10n.localize('Message removed'))
+                            : event.viewOnce ? ec.l10n.localize('View-once photo: open it in the app')
                             : event.encrypted ? ec.l10n.localize('Encrypted message')
                             : (event.bodyText || (event.poll ? ec.l10n.localize('Poll') + ': ' + (event.poll.question || '') : ''))
                         if (files.length) text = (text ? text + ' ' : '') + '[' + files.join(', ') + ']'
                         if (!text && event.type !== 'message') text = systemText(event, names)
                         if (event.edited) text += ' ' + ec.l10n.localize('(edited)')
+                        // a disappearing message (plans/Comms-Messaging.md §18.3 phase 16): the terminal keeps nothing, and says so
+                        if (event.expireDate != null) text += ' · ' + ec.l10n.localize('disappears')
                         if (Number(event.threadReplyCount || 0) > 0) text += ' · ' + event.threadReplyCount + ' ' + ec.l10n.localize(event.threadReplyCount == 1 ? 'reply' : 'replies')
                         const delivery = event.delivery || null
                         const failed = delivery ? Array.from(delivery.destinations || []).find((destination) => destination.error && destination.state !== 'accepted') : null

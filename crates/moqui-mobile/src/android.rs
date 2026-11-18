@@ -206,6 +206,23 @@ pub(crate) fn call_audio_route(route: &str) -> Result<bool, String> {
     })
 }
 
+/// Screen security for `reason` on or off (`ScreenSecurity.set(reason, on)`): whether the flag is on now.
+pub(crate) fn secure_screen(reason: &str, on: bool) -> Result<bool, String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.ScreenSecurity"))?;
+        let reason = env.new_string(reason)?;
+        let held = env
+            .call_static_method(
+                &class,
+                jni_str!("set"),
+                jni_sig!("(Ljava/lang/String;Z)Z"),
+                &[JValue::Object(&reason), JValue::Bool(on)],
+            )?
+            .z()?;
+        Ok(held)
+    })
+}
+
 /// The phone's notification state, as the check screen shows it (`PushCheck.state(context)`, JSON: notifications
 /// allowed, channels on, battery optimization, the last push received).
 pub(crate) fn push_check_state() -> Result<String, String> {

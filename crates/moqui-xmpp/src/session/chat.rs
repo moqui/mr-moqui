@@ -200,13 +200,8 @@ impl Session {
         let Some(meta) = self.room(room, false).await else {
             return self.refuse(message, "cancel", "item-not-found", None);
         };
-        if meta.encrypted {
-            return self.refuse(
-                message,
-                "cancel",
-                "not-acceptable",
-                Some("this room is end-to-end encrypted in Moqui and is not served over XMPP"),
-            );
+        if let Some(reason) = meta.unserved() {
+            return self.refuse(message, "cancel", "not-acceptable", Some(reason));
         }
         let failed = |result: Result<Json, crate::backend::CallError>| result.err().map(|err| err.0);
         if let Some(replace) = message.get_child("replace", ns::CORRECT) {
@@ -530,12 +525,8 @@ impl Session {
                 Some("a direct conversation is a chat with the person"),
             );
         }
-        if meta.encrypted {
-            return error(
-                self,
-                "not-acceptable",
-                Some("this room is end-to-end encrypted in Moqui and is not served over XMPP"),
-            );
+        if let Some(reason) = meta.unserved() {
+            return error(self, "not-acceptable", Some(reason));
         }
         let me = self.user_id();
         if !meta.members.iter().any(|(id, _, _)| *id == me) {
@@ -668,7 +659,7 @@ impl Session {
             match action.as_str() {
                 "joined" => {
                     if let Some(meta) = self.room(&room, true).await {
-                        if !meta.direct && !meta.encrypted && !self.joined.contains_key(&room) {
+                        if !meta.direct && meta.unserved().is_none() && !self.joined.contains_key(&room) {
                             let invitation = E::new("message", ns::CLIENT)
                                 .a("from", self.room_jid(&room))
                                 .a("to", self.my_bare())
@@ -805,7 +796,7 @@ impl Session {
         let Some(meta) = self.room(room, false).await else {
             return;
         };
-        if meta.encrypted || (!meta.direct && !self.joined.contains_key(room)) {
+        if meta.unserved().is_some() || (!meta.direct && !self.joined.contains_key(room)) {
             return;
         }
         let me = self.user_id();
@@ -971,6 +962,10 @@ impl Session {
             let mut text = backend::text(event, "bodyText");
             if text.is_empty() {
                 text = html_to_text(&backend::text(event, "body"));
+            }
+            // a view-once photo (phase 16) opens only in MR Moqui: its file has no URL here
+            if event.get("viewOnce").is_some_and(|once| !once.is_null()) {
+                text = "View-once photo: open it in MR Moqui".to_string();
             }
             let urls = if backend::list(event, "attachments").is_empty() {
                 Vec::new()

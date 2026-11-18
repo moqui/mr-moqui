@@ -3,6 +3,6 @@
 spec({ server: false, timeout: 60 })
 
 browser.runInPage({
-    scripts: ["/js/MoquiLib.js", "/js/MoquiL10n.js", "/js/WebrootChat.js", "/js/WebrootCrypto.js", "/libs/vue/compiler-dom.cjs.js", "/js/WebrootVue.qvt.js"],
+    scripts: ["/js/MoquiLib.js", "/js/MoquiL10n.js", "/js/WebrootChat.js", "/js/WebrootChatExpiry.js", "/js/WebrootCrypto.js", "/libs/vue/compiler-dom.cjs.js", "/js/WebrootVue.qvt.js"],
     test: "/files/component/webroot/test/client/pages/WebrootChat.page.js",
 })

@@ -118,10 +118,26 @@ pub(crate) struct RoomMeta {
     pub name: String,
     pub topic: String,
     pub encrypted: bool,
+    /// A room with disappearing messages (plans/Comms-Messaging.md §18.3 phase 16): not served, as an encrypted room.
+    pub disappearing: bool,
     pub bridged: bool,
     pub public: bool,
     /// userId → (username, role)
     pub members: Vec<(String, String, String)>,
+}
+
+impl RoomMeta {
+    /// Why the room is not served over XMPP: end-to-end encrypted in Moqui, or with disappearing messages (an XMPP
+    /// client keeps what it gets). None for a room that is served.
+    pub(crate) fn unserved(&self) -> Option<&'static str> {
+        if self.encrypted {
+            Some("this room is end-to-end encrypted in Moqui and is not served over XMPP")
+        } else if self.disappearing {
+            Some("this room has disappearing messages in Moqui and is not served over XMPP")
+        } else {
+            None
+        }
+    }
 }
 
 pub struct Session {
@@ -696,6 +712,7 @@ impl Session {
             name: backend::text(room, "roomName"),
             topic: backend::text(room, "topic"),
             encrypted: backend::flag(room, "encrypted"),
+            disappearing: backend::flag(room, "disappearing"),
             bridged: backend::flag(&found, "bridged"),
             public: backend::text(room, "visibilityEnumId") == "CrvUsers",
             members,

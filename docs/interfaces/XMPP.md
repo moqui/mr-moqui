@@ -196,6 +196,9 @@ the chat rules are the web's.
   `...bundles:<id>`, `urn:xmpp:omemo:2:devices`, `urn:xmpp:omemo:2:bundles`), open to read by default.
 - **A Moqui room that is end-to-end encrypted** (C7, Megolm) is not served: the XMPP server could neither read nor
   write its messages. Joining it, or a message to it, is refused with that reason.
+- **A room with disappearing messages** (plans/Comms-Messaging.md §18.3 phase 16) is not served either, with its own
+  reason: an XMPP client keeps what it gets, and Moqui could not delete it there. A view-once photo in a room that is
+  served reaches an XMPP client as the text "View-once photo: open it in MR Moqui", with no upload URL.
 
 ## PEP
 
